@@ -1,4 +1,5 @@
 ﻿using OpenTK.Mathematics;
+using System;
 
 public class Map
 {
@@ -58,8 +59,11 @@ public class Map
             {
                 for (float z = position.Z; z < position.Z + width; z++)
                 {
-                    if (IsSolid(new Vector3(x, y, z)))
+                    Vector3 blockPosition = new Vector3((int)x, (int)y, (int)z);
+                    if (IsSolid(blockPosition))
                     {
+                        // Log the block that caused the collision
+                        Console.WriteLine($"Collision with block at: ({blockPosition.X}, {blockPosition.Y}, {blockPosition.Z})");
                         return true; // Collision detected
                     }
                 }
