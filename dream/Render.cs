@@ -25,28 +25,58 @@ public class Render
         _projection = Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 
-        // Set up floor vertices (unchanged)
-        float[] floorVertices = {
-        // Position
-        0, 0, 0,
-        10, 0, 0,
-        10, 0, 10,
-        0, 0, 10
-    };
+        // Define cube vertices (1x1x1 cube)
+        float[] cubeVertices = {
+            // Front face
+            0.0f, 0.0f, 1.0f, // Bottom-left
+            1.0f, 0.0f, 1.0f, // Bottom-right
+            1.0f, 1.0f, 1.0f, // Top-right
+            0.0f, 1.0f, 1.0f, // Top-left
 
-        // Create and bind the VAO and VBO (unchanged)
+            // Back face
+            0.0f, 0.0f, 0.0f, // Bottom-left
+            1.0f, 0.0f, 0.0f, // Bottom-right
+            1.0f, 1.0f, 0.0f, // Top-right
+            0.0f, 1.0f, 0.0f, // Top-left
+
+            // Left face
+            0.0f, 0.0f, 0.0f, // Bottom-left
+            0.0f, 0.0f, 1.0f, // Bottom-right
+            0.0f, 1.0f, 1.0f, // Top-right
+            0.0f, 1.0f, 0.0f, // Top-left
+
+            // Right face
+            1.0f, 0.0f, 0.0f, // Bottom-left
+            1.0f, 0.0f, 1.0f, // Bottom-right
+            1.0f, 1.0f, 1.0f, // Top-right
+            1.0f, 1.0f, 0.0f, // Top-left
+
+            // Top face
+            0.0f, 1.0f, 1.0f, // Bottom-left
+            1.0f, 1.0f, 1.0f, // Bottom-right
+            1.0f, 1.0f, 0.0f, // Top-right
+            0.0f, 1.0f, 0.0f, // Top-left
+
+            // Bottom face
+            0.0f, 0.0f, 1.0f, // Bottom-left
+            1.0f, 0.0f, 1.0f, // Bottom-right
+            1.0f, 0.0f, 0.0f, // Top-right
+            0.0f, 0.0f, 0.0f  // Top-left
+        };
+
+        // Create and bind the VAO and VBO
         _vertexArrayObject = GL.GenVertexArray();
         _vertexBufferObject = GL.GenBuffer();
 
         GL.BindVertexArray(_vertexArrayObject);
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
-        GL.BufferData(BufferTarget.ArrayBuffer, floorVertices.Length * sizeof(float), floorVertices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer, cubeVertices.Length * sizeof(float), cubeVertices, BufferUsageHint.StaticDraw);
 
-        // Set up vertex attributes (unchanged)
+        // Set up vertex attributes
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), 0);
         GL.EnableVertexAttribArray(0);
 
-        // Unbind VAO and VBO (unchanged)
+        // Unbind VAO and VBO
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
     }
@@ -135,7 +165,7 @@ public class Render
         return shaderProgram;
     }
 
-    private void DrawCubeWireframe(Camera camera, Vector3 position, float size)
+    private void DrawCubeWireframe(Camera camera, Vector3 position, Cube cube)
     {
         // Use the shader program
         GL.UseProgram(_shaderProgram);
@@ -146,7 +176,7 @@ public class Render
 
         // Set the model matrix (scale and translate the cube)
         int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
-        Matrix4 modelMatrix = Matrix4.CreateScale(size) * Matrix4.CreateTranslation(position);
+        Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
         GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
 
         // Set the view and projection matrices
@@ -162,7 +192,7 @@ public class Render
 
         // Bind the VAO and draw the cube
         GL.BindVertexArray(_vertexArrayObject);
-        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 36); // Assuming 36 vertices for a cube
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 24); // 24 vertices for a cube
 
         // Disable wireframe mode
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
@@ -171,7 +201,7 @@ public class Render
         GL.BindVertexArray(0);
     }
 
-    private void DrawCubeTransparent(Camera camera, Vector3 position, float size)
+    private void DrawCubeTransparent(Camera camera, Vector3 position, Cube cube)
     {
         // Use the shader program
         GL.UseProgram(_shaderProgram);
@@ -182,7 +212,7 @@ public class Render
 
         // Set the model matrix (scale and translate the cube)
         int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
-        Matrix4 modelMatrix = Matrix4.CreateScale(size) * Matrix4.CreateTranslation(position);
+        Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
         GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
 
         // Set the view and projection matrices
@@ -199,7 +229,7 @@ public class Render
 
         // Bind the VAO and draw the cube
         GL.BindVertexArray(_vertexArrayObject);
-        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 36); // Assuming 36 vertices for a cube
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 24); // 24 vertices for a cube
 
         // Disable blending
         GL.Disable(EnableCap.Blend);
@@ -208,12 +238,12 @@ public class Render
         GL.BindVertexArray(0);
     }
 
-    public void DrawCube(Camera camera, Vector3 position, float size)
+    public void DrawCube(Camera camera, Vector3 position, Cube cube)
     {
         // Draw the cube with transparency
-        DrawCubeTransparent(camera, position, size);
+        DrawCubeTransparent(camera, position, cube);
 
         // Draw the cube in wireframe mode
-        DrawCubeWireframe(camera, position, size);
+        DrawCubeWireframe(camera, position, cube);
     }
 }

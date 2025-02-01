@@ -13,7 +13,7 @@ public class Game : GameWindow
     {
         _render = new Render();
         _map = new Map();
-        _player = new Player(new Vector3(5, 1, 5)); // Start player on the floor
+        _player = new Player(new Vector3(5, 2, 5)); // Start player on the floor
 
         // Lock the mouse to the center of the window
         CursorState = CursorState.Grabbed;
@@ -49,7 +49,7 @@ public class Game : GameWindow
                         Vector3 cubePosition = new Vector3(x, y, z);
 
                         // Draw the cube
-                        _render.DrawCube(_player.Camera, cubePosition, 1.0f); // Assuming each cube has a size of 1.0f
+                        _render.DrawCube(_player.Camera, cubePosition, _map.Cubes[x, y, z]);
                     }
                 }
             }

@@ -1,7 +1,6 @@
 ﻿using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using System;
 
 public class Player
 {
@@ -16,14 +15,9 @@ public class Player
     // Camera attached to the player
     public Camera Camera { get; private set; }
 
-    // Store the last position to detect changes
-    private Vector3 _lastPosition;
-
     public Player(Vector3 position)
     {
         Position = position;
-        _lastPosition = position; // Initialize last position
-        // Initialize the camera at the player's position
         Camera = new Camera(position);
     }
 
@@ -35,21 +29,32 @@ public class Player
         // Calculate movement direction based on camera orientation
         Vector3 movementDirection = Vector3.Zero;
 
+        // Horizontal movement (forward/backward, left/right)
         if (keyboardState.IsKeyDown(Keys.W))
         {
-            movementDirection += Camera.Front; // Move forward (relative to camera)
+            movementDirection += new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized(); // Move forward (horizontal)
         }
         if (keyboardState.IsKeyDown(Keys.S))
         {
-            movementDirection -= Camera.Front; // Move backward (relative to camera)
+            movementDirection -= new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized(); // Move backward (horizontal)
         }
         if (keyboardState.IsKeyDown(Keys.A))
         {
-            movementDirection -= Camera.Right; // Strafe left (relative to camera)
+            movementDirection -= Camera.Right; // Strafe left
         }
         if (keyboardState.IsKeyDown(Keys.D))
         {
-            movementDirection += Camera.Right; // Strafe right (relative to camera)
+            movementDirection += Camera.Right; // Strafe right
+        }
+
+        // Vertical movement (up/down)
+        if (keyboardState.IsKeyDown(Keys.Space))
+        {
+            movementDirection += Vector3.UnitY; // Move up
+        }
+        if (keyboardState.IsKeyDown(Keys.LeftShift))
+        {
+            movementDirection -= Vector3.UnitY; // Move down
         }
 
         // Normalize movement direction to prevent faster diagonal movement
@@ -64,38 +69,11 @@ public class Player
         // Check for collisions before updating the position
         if (!map.CheckCollision(newPosition, Width, Height))
         {
-            // Log only if the position has changed
-            if (newPosition != _lastPosition)
-            {
-                // Calculate moving speed (distance moved per second)
-                float distanceMoved = Vector3.Distance(_lastPosition, newPosition);
-                float movingSpeed = distanceMoved / deltaTime;
-
-                // Log position change and moving speed
-                Console.WriteLine($"Player moved to: ({newPosition.X:F2}, {newPosition.Y:F2}, {newPosition.Z:F2})");
-                Console.WriteLine($"Moving speed: {movingSpeed:F2} blocks/second");
-
-                // Log current standing block
-                Vector3 standingBlockPosition = new Vector3((int)newPosition.X, (int)(newPosition.Y - 1), (int)newPosition.Z);
-                if (map.IsInBounds(standingBlockPosition))
-                {
-                    Console.WriteLine($"Standing on block at: ({standingBlockPosition.X}, {standingBlockPosition.Y}, {standingBlockPosition.Z})");
-                }
-
-                // Update last position
-                _lastPosition = newPosition;
-            }
-
             Position = newPosition;
-        }
-        else
-        {
-            // Log collision
-            Console.WriteLine("Collision detected! Player hit a wall or solid block.");
         }
 
         // Update the camera's position to follow the player
-        Camera.Position = new Vector3(Position.X, Camera.Position.Y, Position.Z);
+        Camera.Position = new Vector3(Position.X, Position.Y, Position.Z);
 
         // Update the camera's orientation based on mouse input
         Camera.Update(deltaTime, mouseState);
