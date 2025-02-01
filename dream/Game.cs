@@ -11,6 +11,8 @@ public class Game : GameWindow
 
     public Game() : base(GameWindowSettings.Default, NativeWindowSettings.Default)
     {
+        //this.UpdateFrequency = 240; // fps kinda
+
         _render = new Render();
         _map = new Map();
         _player = new Player(new Vector3(5, 2, 5)); // Start player on the floor

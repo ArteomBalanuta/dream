@@ -66,23 +66,19 @@ public class Player
         // Calculate new position
         Vector3 newPosition = Position + movementDirection * Speed * deltaTime;
 
-        // Clamp position to stay within map bounds
-        newPosition.X = MathHelper.Clamp(newPosition.X, 0, map.SideSize - Width);
-        newPosition.Y = MathHelper.Clamp(newPosition.Y, 0, map.SideSize - Height);
-        newPosition.Z = MathHelper.Clamp(newPosition.Z, 0, map.SideSize - Width);
+        // Clamp the position to stay within map bounds, accounting for player size
+        newPosition.X = MathHelper.Clamp(newPosition.X, Width / 2, map.SideSize - Width / 2);
+        newPosition.Y = MathHelper.Clamp(newPosition.Y, Height / 2, map.SideSize - Height / 2);
+        newPosition.Z = MathHelper.Clamp(newPosition.Z, Width / 2, map.SideSize - Width / 2);
 
         // Check for collisions
         if (!map.CheckCollision(newPosition, Width, Height))
         {
             Position = newPosition;
         }
-        else
-        {
-            Console.WriteLine("Collision detected!");
-        }
 
-        // Update the camera's position
-        Camera.Position = new Vector3(Position.X, Position.Y, Position.Z);
+        // Update the camera
+        Camera.Position = Position;
         Camera.Update(deltaTime, mouseState);
     }
 }

@@ -52,28 +52,38 @@ public class Map
 
     public bool CheckCollision(Vector3 position, float width, float height)
     {
-        // Clamp the player's position to stay within map bounds
-        position.X = MathHelper.Clamp(position.X, 0, SideSize - width);
-        position.Y = MathHelper.Clamp(position.Y, 0, SideSize - height);
-        position.Z = MathHelper.Clamp(position.Z, 0, SideSize - width);
+        // Calculate the player's collision box bounds
+        float halfWidth = width / 2;
+        float minX = position.X - halfWidth;
+        float maxX = position.X + halfWidth;
+        float minZ = position.Z - halfWidth;
+        float maxZ = position.Z + halfWidth;
+        float minY = position.Y - height / 2;
+        float maxY = position.Y + height / 2;
 
-        // Check collision for the player's bounding box
-        for (float x = position.X; x < position.X + width; x += 0.5f) // Check in smaller increments
+        // Check all blocks overlapping with the player's collision box
+        for (float x = minX; x <= maxX; x += 0.5f)
         {
-            for (float y = position.Y; y < position.Y + height; y += 0.5f)
+            for (float z = minZ; z <= maxZ; z += 0.5f)
             {
-                for (float z = position.Z; z < position.Z + width; z += 0.5f)
+                for (float y = minY; y <= maxY; y += 0.5f)
                 {
-                    Vector3 blockPosition = new Vector3(
-                        (int)Math.Floor(x),
-                        (int)Math.Floor(y),
-                        (int)Math.Floor(z)
-                    );
+                    int blockX = (int)Math.Floor(x);
+                    int blockY = (int)Math.Floor(y);
+                    int blockZ = (int)Math.Floor(z);
 
                     // Check if the block is solid or out of bounds
-                    if (!IsInBounds(blockPosition) || IsSolid(blockPosition))
+                    if (blockX < 0 || blockX >= SideSize ||
+                        blockY < 0 || blockY >= SideSize ||
+                        blockZ < 0 || blockZ >= SideSize)
                     {
-                        Console.WriteLine($"Collision with block at: ({blockPosition.X}, {blockPosition.Y}, {blockPosition.Z})");
+                        // Treat out-of-bounds as solid
+                        return true;
+                    }
+
+                    if (Cubes[blockX, blockY, blockZ].IsSolid)
+                    {
+                        Console.WriteLine($"Collision with block at: ({blockX}, {blockY}, {blockZ})");
                         return true;
                     }
                 }
