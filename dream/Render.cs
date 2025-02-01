@@ -14,6 +14,10 @@ public class Render
         // Initialize OpenGL settings
         GL.Enable(EnableCap.DepthTest);
 
+        // Enable blending for transparency
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
         // Compile shaders
         _shaderProgram = CreateShaderProgram("D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl", "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
 
@@ -21,16 +25,16 @@ public class Render
         _projection = Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 
-        // Set up floor vertices
+        // Set up floor vertices (unchanged)
         float[] floorVertices = {
-            // Position
-            0, 0, 0,
-            10, 0, 0,
-            10, 0, 10,
-            0, 0, 10
-        };
+        // Position
+        0, 0, 0,
+        10, 0, 0,
+        10, 0, 10,
+        0, 0, 10
+    };
 
-        // Create and bind the VAO and VBO
+        // Create and bind the VAO and VBO (unchanged)
         _vertexArrayObject = GL.GenVertexArray();
         _vertexBufferObject = GL.GenBuffer();
 
@@ -38,15 +42,16 @@ public class Render
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
         GL.BufferData(BufferTarget.ArrayBuffer, floorVertices.Length * sizeof(float), floorVertices, BufferUsageHint.StaticDraw);
 
-        // Set up vertex attributes
+        // Set up vertex attributes (unchanged)
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), 0);
         GL.EnableVertexAttribArray(0);
 
-        // Unbind VAO and VBO
+        // Unbind VAO and VBO (unchanged)
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
     }
 
+    /* ignored */
     public void DrawFloor(Camera camera)
     {
         // Use the shader program
@@ -128,5 +133,87 @@ public class Render
         GL.DeleteShader(fragmentShader);
 
         return shaderProgram;
+    }
+
+    private void DrawCubeWireframe(Camera camera, Vector3 position, float size)
+    {
+        // Use the shader program
+        GL.UseProgram(_shaderProgram);
+
+        // Set the color to white (or any color you want for the wireframe)
+        int colorLocation = GL.GetUniformLocation(_shaderProgram, "color");
+        GL.Uniform3(colorLocation, new Vector3(1.0f, 1.0f, 1.0f)); // WHITE COLOR
+
+        // Set the model matrix (scale and translate the cube)
+        int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
+        Matrix4 modelMatrix = Matrix4.CreateScale(size) * Matrix4.CreateTranslation(position);
+        GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
+
+        // Set the view and projection matrices
+        int viewLocation = GL.GetUniformLocation(_shaderProgram, "view");
+        Matrix4 view = camera.GetViewMatrix();
+        GL.UniformMatrix4(viewLocation, false, ref view);
+
+        int projectionLocation = GL.GetUniformLocation(_shaderProgram, "projection");
+        GL.UniformMatrix4(projectionLocation, false, ref _projection);
+
+        // Enable wireframe mode
+        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+
+        // Bind the VAO and draw the cube
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 36); // Assuming 36 vertices for a cube
+
+        // Disable wireframe mode
+        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+
+        // Unbind the VAO
+        GL.BindVertexArray(0);
+    }
+
+    private void DrawCubeTransparent(Camera camera, Vector3 position, float size)
+    {
+        // Use the shader program
+        GL.UseProgram(_shaderProgram);
+
+        // Set the color to a transparent color (alpha = 0)
+        int colorLocation = GL.GetUniformLocation(_shaderProgram, "color");
+        GL.Uniform3(colorLocation, new Vector3(0.5f, 0.7f, 1.0f)); // Light blue color (alpha is set in the shader)
+
+        // Set the model matrix (scale and translate the cube)
+        int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
+        Matrix4 modelMatrix = Matrix4.CreateScale(size) * Matrix4.CreateTranslation(position);
+        GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
+
+        // Set the view and projection matrices
+        int viewLocation = GL.GetUniformLocation(_shaderProgram, "view");
+        Matrix4 view = camera.GetViewMatrix();
+        GL.UniformMatrix4(viewLocation, false, ref view);
+
+        int projectionLocation = GL.GetUniformLocation(_shaderProgram, "projection");
+        GL.UniformMatrix4(projectionLocation, false, ref _projection);
+
+        // Enable blending for transparency
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
+        // Bind the VAO and draw the cube
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 36); // Assuming 36 vertices for a cube
+
+        // Disable blending
+        GL.Disable(EnableCap.Blend);
+
+        // Unbind the VAO
+        GL.BindVertexArray(0);
+    }
+
+    public void DrawCube(Camera camera, Vector3 position, float size)
+    {
+        // Draw the cube with transparency
+        DrawCubeTransparent(camera, position, size);
+
+        // Draw the cube in wireframe mode
+        DrawCubeWireframe(camera, position, size);
     }
 }

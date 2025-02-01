@@ -6,14 +6,14 @@ using OpenTK.Graphics.OpenGL4;
 public class Game : GameWindow
 {
     private Render _render;
-    private Camera _camera;
+    private Player _player;
     private Map _map;
 
     public Game() : base(GameWindowSettings.Default, NativeWindowSettings.Default)
     {
         _render = new Render();
         _map = new Map();
-        _camera = new Camera(new Vector3(5, 2, 5), _map); // Start camera above the floor
+        _player = new Player(new Vector3(5, 1, 5)); // Start player on the floor
 
         // Lock the mouse to the center of the window
         CursorState = CursorState.Grabbed;
@@ -26,19 +26,42 @@ public class Game : GameWindow
         // Clear the screen
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        // Draw the floor
-        _render.DrawFloor(_camera);
+        // Draw all solid cubes in the map
+        DrawCubes();
 
         // Swap buffers
         SwapBuffers();
+    }
+
+    private void DrawCubes()
+    {
+        // Iterate through the 3D array of cubes
+        for (int x = 0; x < _map.SideSize; x++)
+        {
+            for (int y = 0; y < _map.SideSize; y++)
+            {
+                for (int z = 0; z < _map.SideSize; z++)
+                {
+                    // Check if the cube is solid
+                    if (_map.Cubes[x, y, z].IsSolid)
+                    {
+                        // Calculate the position of the cube
+                        Vector3 cubePosition = new Vector3(x, y, z);
+
+                        // Draw the cube
+                        _render.DrawCube(_player.Camera, cubePosition, 1.0f); // Assuming each cube has a size of 1.0f
+                    }
+                }
+            }
+        }
     }
 
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         base.OnUpdateFrame(args);
 
-        // Handle input and update camera
-        _camera.Update((float)args.Time, KeyboardState, MouseState);
+        // Handle input and update player (which also updates the camera)
+        _player.Update((float)args.Time, _map, KeyboardState, MouseState);
     }
 
     protected override void OnResize(ResizeEventArgs e)

@@ -1,12 +1,10 @@
-﻿
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
 public class Camera
 {
-    public Vector3 Position { get; private set; }
+    public Vector3 Position { get; set; }
     public Vector3 Front { get; private set; } = -Vector3.UnitZ;
     public Vector3 Up { get; private set; } = Vector3.UnitY;
     public Vector3 Right { get; private set; }
@@ -14,46 +12,16 @@ public class Camera
     private float _pitch; // Rotation around the X axis (up and down)
     private float _yaw = -OpenTK.Mathematics.MathHelper.PiOver2; // Rotation around the Y axis (left and right)
 
-    private float _movementSpeed = 5.0f;
-    private float _mouseSensitivity = 3.0f;
+    private float _mouseSensitivity = 5.0f;
 
-    private Map _map; // Reference to the map for collision detection
-
-    public Camera(Vector3 position, Map map)
+    public Camera(Vector3 position)
     {
         Position = position;
-        _map = map;
         UpdateVectors();
     }
 
-    public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState)
+    public void Update(float deltaTime, MouseState mouseState)
     {
-        // Handle keyboard input for movement
-        Vector3 newPosition = Position;
-
-        if (keyboardState.IsKeyDown(Keys.W))
-        {
-            newPosition += Front * _movementSpeed * deltaTime;
-        }
-        if (keyboardState.IsKeyDown(Keys.S))
-        {
-            newPosition -= Front * _movementSpeed * deltaTime;
-        }
-        if (keyboardState.IsKeyDown(Keys.A))
-        {
-            newPosition -= Right * _movementSpeed * deltaTime;
-        }
-        if (keyboardState.IsKeyDown(Keys.D))
-        {
-            newPosition += Right * _movementSpeed * deltaTime;
-        }
-
-        // Check for collisions before updating the position
-        if (!_map.CheckCollision(newPosition, 1.0f, 2.0f))
-        { // Player is 1 block wide and 2 blocks tall
-            Position = newPosition;
-        }
-
         // Handle mouse input for looking around
         _yaw += mouseState.Delta.X * _mouseSensitivity * deltaTime;
         _pitch -= mouseState.Delta.Y * _mouseSensitivity * deltaTime;
