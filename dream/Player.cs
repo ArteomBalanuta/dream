@@ -9,8 +9,8 @@ public class Player
     public float Speed { get; set; } = 5.0f; // Speed in blocks per second
 
     // Player dimensions
-    public float Width { get; } = 1.0f; // 1 block wide
-    public float Height { get; } = 1.0f; // 1 block tall
+    public float Width { get; } = 0.50f; // 0.5 block wide
+    public float Height { get; } = 0.50f;
 
     // Camera attached to the player
     public Camera Camera { get; private set; }
@@ -66,16 +66,23 @@ public class Player
         // Calculate new position
         Vector3 newPosition = Position + movementDirection * Speed * deltaTime;
 
-        // Check for collisions before updating the position
+        // Clamp position to stay within map bounds
+        newPosition.X = MathHelper.Clamp(newPosition.X, 0, map.SideSize - Width);
+        newPosition.Y = MathHelper.Clamp(newPosition.Y, 0, map.SideSize - Height);
+        newPosition.Z = MathHelper.Clamp(newPosition.Z, 0, map.SideSize - Width);
+
+        // Check for collisions
         if (!map.CheckCollision(newPosition, Width, Height))
         {
             Position = newPosition;
         }
+        else
+        {
+            Console.WriteLine("Collision detected!");
+        }
 
-        // Update the camera's position to follow the player
+        // Update the camera's position
         Camera.Position = new Vector3(Position.X, Position.Y, Position.Z);
-
-        // Update the camera's orientation based on mouse input
         Camera.Update(deltaTime, mouseState);
     }
 }

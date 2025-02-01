@@ -52,23 +52,33 @@ public class Map
 
     public bool CheckCollision(Vector3 position, float width, float height)
     {
+        // Clamp the player's position to stay within map bounds
+        position.X = MathHelper.Clamp(position.X, 0, SideSize - width);
+        position.Y = MathHelper.Clamp(position.Y, 0, SideSize - height);
+        position.Z = MathHelper.Clamp(position.Z, 0, SideSize - width);
+
         // Check collision for the player's bounding box
-        for (float x = position.X; x < position.X + width; x++)
+        for (float x = position.X; x < position.X + width; x += 0.5f) // Check in smaller increments
         {
-            for (float y = position.Y; y < position.Y + height; y++)
+            for (float y = position.Y; y < position.Y + height; y += 0.5f)
             {
-                for (float z = position.Z; z < position.Z + width; z++)
+                for (float z = position.Z; z < position.Z + width; z += 0.5f)
                 {
-                    Vector3 blockPosition = new Vector3((int)x, (int)y, (int)z);
-                    if (IsSolid(blockPosition))
+                    Vector3 blockPosition = new Vector3(
+                        (int)Math.Floor(x),
+                        (int)Math.Floor(y),
+                        (int)Math.Floor(z)
+                    );
+
+                    // Check if the block is solid or out of bounds
+                    if (!IsInBounds(blockPosition) || IsSolid(blockPosition))
                     {
-                        // Log the block that caused the collision
                         Console.WriteLine($"Collision with block at: ({blockPosition.X}, {blockPosition.Y}, {blockPosition.Z})");
-                        return true; // Collision detected
+                        return true;
                     }
                 }
             }
         }
-        return false; // No collision
+        return false;
     }
 }
