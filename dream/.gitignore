@@ -1,0 +1,64 @@
+# Ignore Visual Studio specific files
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+*.tlog
+*.pdb
+*.opendb
+
+# Ignore build output
+bin/
+obj/
+*.exe
+*.dll
+*.appx
+*.appxupload
+*.msi
+*.nupkg
+*.snupkg
+*.bundle
+*.publish
+*.deploy
+
+# Ignore package directories
+packages/
+*.nupkg
+.project.lock.json
+
+# Ignore dependencies
+node_modules/
+
+# Ignore Rider/JetBrains files
+.idea/
+*.sln.iml
+
+# Ignore NuGet packages
+*.nuget.props
+*.nuget.targets
+
+# Ignore Resharper files
+_ReSharper*/
+*.DotSettings.user
+
+# Ignore temporary files
+*.tmp
+*.bak
+*.swp
+
+# Ignore coverage and test results
+coverage/
+TestResults/
+
+# Ignore configuration files
+appsettings.*.json
+secrets.json
+
+# Ignore local database files
+*.mdf
+*.ldf
+
+# Ignore generated files
+GeneratedCode/
+ServiceFabricBackup/
