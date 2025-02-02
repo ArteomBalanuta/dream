@@ -20,12 +20,6 @@ public class Game : GameWindow
 
         // Lock the mouse to the center of the window
         CursorState = CursorState.Grabbed;
-
-
-        // fire for now here init 
-        // Initialize animated cube (example)
-        _map.Cubes[2, 2, 2].Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\cube.glb");
-        _map.Cubes[2, 2, 2].Animation.StartAnimation();
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)

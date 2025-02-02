@@ -71,7 +71,7 @@ public class AnimatedModel
                 GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vertex.Size, 0);
                 GL.EnableVertexAttribArray(1);
                 GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, Vertex.Size, 3 * sizeof(float));
-                // GL.EnableVertexAttribPointer(2);
+                GL.EnableVertexAttribArray(2); // Correct: Enable the vertex attribute array for attribute 2.
                 GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, Vertex.Size, 6 * sizeof(float));
 
                 GL.BindVertexArray(0);
