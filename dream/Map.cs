@@ -33,7 +33,8 @@ public class Map
             }
         }
 
-        Cubes[3, 0, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = true };
+        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\fire_block.glb") };
+        //Cubes[3, 0, 2].Animation.StartAnimation();
     }
 
     public bool IsInBounds(Vector3 pos)

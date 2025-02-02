@@ -6,6 +6,8 @@
 
     public bool IsFire { get; set; } = false;
 
+    public AnimatedModel Animation { get; set; } // Add this
+
     // Optional: Add a constructor for initialization
     public Cube(bool isEmpty = true, bool isSolid = false)
     {

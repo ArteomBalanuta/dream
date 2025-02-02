@@ -20,6 +20,12 @@ public class Game : GameWindow
 
         // Lock the mouse to the center of the window
         CursorState = CursorState.Grabbed;
+
+
+        // fire for now here init 
+        // Initialize animated cube (example)
+        _map.Cubes[2, 2, 2].Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\cube.glb");
+        _map.Cubes[2, 2, 2].Animation.StartAnimation();
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
@@ -37,24 +43,37 @@ public class Game : GameWindow
         SwapBuffers();
     }
 
-    private void DrawCubes()
+    private void UpdateCubeAnimations(float deltaTime)
     {
-        // Iterate through the 3D array of cubes
         for (int x = 0; x < _map.SideSize; x++)
         {
             for (int y = 0; y < _map.SideSize; y++)
             {
                 for (int z = 0; z < _map.SideSize; z++)
                 {
-                    // Check if the cube is solid
-                    if (_map.Cubes[x, y, z].IsSolid)
+                    var cube = _map.Cubes[x, y, z];
+                    if (cube.Animation != null)
                     {
-                        // Calculate the position of the cube
-                        Vector3 cubePosition = new Vector3(x, y, z);
-
-                        // Draw the cube
-                        _render.DrawCube(_player.Camera, cubePosition, _map.Cubes[x, y, z]);
+                        cube.Animation.Update(deltaTime);
                     }
+                }
+            }
+        }
+    }
+
+    private void DrawCubes()
+    {
+        for (int x = 0; x < _map.SideSize; x++)
+        {
+            for (int y = 0; y < _map.SideSize; y++)
+            {
+                for (int z = 0; z < _map.SideSize; z++)
+                {
+                    var cube = _map.Cubes[x, y, z];
+                    if (!cube.IsSolid) continue;
+
+                    Vector3 position = new Vector3(x, y, z);
+                    _render.DrawCube(_player.Camera, position, cube);
                 }
             }
         }
@@ -63,14 +82,11 @@ public class Game : GameWindow
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         base.OnUpdateFrame(args);
+        float deltaTime = (float)args.Time;
 
-        // Handle input and update player (which also updates the camera)
-        _player.Update((float)args.Time, _map, KeyboardState, MouseState);
-
-
-        // fire anim
-//        _totalTime += (float) args.Time;
-//        _render.UpdateFireEffect(_totalTime);
+        // Update player and animations
+        _player.Update(deltaTime, _map, KeyboardState, MouseState);
+        UpdateCubeAnimations(deltaTime);
     }
 
     protected override void OnResize(ResizeEventArgs e)

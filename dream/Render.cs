@@ -37,9 +37,6 @@ public class Render
         _projection = Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 
-        // Load animated model
-        _animatedModel = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\fire_block.glb");
-
         // Define cube vertices (1x1x1 cube)
         float[] cubeVertices = {
             // Front face
@@ -96,12 +93,6 @@ public class Render
         GL.BindVertexArray(0);
     }
 
-    public void Update(float deltaTime)
-    {
-        // Update animated model
-        _animatedModel.Update(deltaTime);
-    }
-
     public void DrawFloor(Camera camera)
     {
         // Use the shader program
@@ -131,12 +122,13 @@ public class Render
         // Unbind the VAO
         GL.BindVertexArray(0);
     }
-
+    /*
     public void DrawAnimatedModel(Camera camera)
     {
         // Render the animated model
         _animatedModel.Render(camera.GetViewMatrix(), _projection, _shaderProgram);
     }
+    */
 
     private int CreateShaderProgram(string vertexShaderPath, string fragmentShaderPath)
     {
@@ -266,16 +258,23 @@ public class Render
 
     public void DrawCube(Camera camera, Vector3 position, Cube cube)
     {
-        // Draw the cube with transparency
-        DrawCubeTransparent(camera, position, cube);
-
-        // Draw the cube in wireframe mode
-        DrawCubeWireframe(camera, position, cube);
-
-        // Draw the fire effect
-        if (cube.IsFire)
+        if (cube.Animation != null)
         {
-            // draw fire effect
+            // Draw animated cube
+            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
+            cube.Animation.Render(
+                camera.GetViewMatrix(),
+                _projection,
+                _shaderProgram,
+                modelMatrix
+            );
+        }
+        else
+        {
+            // Original cube drawing logic
+            DrawCubeTransparent(camera, position, cube);
+            DrawCubeWireframe(camera, position, cube);
+
         }
     }
 }

@@ -89,11 +89,14 @@ public class AnimatedModel
         }
     }
 
+    public float AnimationSpeed { get; set; } = 1.0f;
+
     public void Update(float deltaTime)
     {
         if (!_isAnimating) return;
 
-        _animationTime += deltaTime;
+        // Apply animation speed
+        _animationTime += deltaTime * AnimationSpeed;
 
         foreach (var animation in _animations.Values)
         {
@@ -110,7 +113,7 @@ public class AnimatedModel
         }
     }
 
-    public void Render(Matrix4 view, Matrix4 projection, int shaderProgram)
+    public void Render(Matrix4 view, Matrix4 projection, int shaderProgram, Matrix4 baseModel)
     {
         GL.UseProgram(shaderProgram);
 
@@ -122,10 +125,9 @@ public class AnimatedModel
             {
                 GL.BindVertexArray(meshBuffers.VAO);
 
-                // Get the node's world matrix (includes animation)
-                var modelMatrix = node.WorldMatrix.ToOpenTKMatrix();
+                // Combine base model matrix with node's transform
+                var modelMatrix = baseModel * node.WorldMatrix.ToOpenTKMatrix();
 
-                // Set matrices
                 GL.UniformMatrix4(GL.GetUniformLocation(shaderProgram, "model"), false, ref modelMatrix);
                 GL.UniformMatrix4(GL.GetUniformLocation(shaderProgram, "view"), false, ref view);
                 GL.UniformMatrix4(GL.GetUniformLocation(shaderProgram, "projection"), false, ref projection);
