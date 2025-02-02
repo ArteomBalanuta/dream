@@ -32,6 +32,8 @@ public class Map
                 }
             }
         }
+
+        Cubes[3, 0, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = true };
     }
 
     public bool IsInBounds(Vector3 pos)

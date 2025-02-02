@@ -5,6 +5,7 @@ using OpenTK.Graphics.OpenGL4;
 
 public class Game : GameWindow
 {
+    private float _totalTime;
     private Render _render;
     private Player _player;
     private Map _map;
@@ -30,6 +31,7 @@ public class Game : GameWindow
 
         // Draw all solid cubes in the map
         DrawCubes();
+
 
         // Swap buffers
         SwapBuffers();
@@ -64,6 +66,11 @@ public class Game : GameWindow
 
         // Handle input and update player (which also updates the camera)
         _player.Update((float)args.Time, _map, KeyboardState, MouseState);
+
+
+        // fire anim
+//        _totalTime += (float) args.Time;
+//        _render.UpdateFireEffect(_totalTime);
     }
 
     protected override void OnResize(ResizeEventArgs e)

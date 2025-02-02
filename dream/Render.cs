@@ -1,5 +1,6 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using System;
 
 public class Render
 {
@@ -8,6 +9,16 @@ public class Render
     private int _shaderProgram;
 
     private Matrix4 _projection;
+
+    // Fire effect fields
+    private int _fireShaderProgram;
+    private int _fireVAO;
+    private int _fireVBO;
+    private int _noiseTexture;
+    private float _fireTime;
+
+    // Animated model
+    private AnimatedModel _animatedModel;
 
     public Render()
     {
@@ -19,11 +30,15 @@ public class Render
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
         // Compile shaders
-        _shaderProgram = CreateShaderProgram("D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl", "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
+        _shaderProgram = CreateShaderProgram("D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl",
+            "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
 
         // Set up projection matrix
         _projection = Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
+
+        // Load animated model
+        _animatedModel = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\fire_block.glb");
 
         // Define cube vertices (1x1x1 cube)
         float[] cubeVertices = {
@@ -81,7 +96,12 @@ public class Render
         GL.BindVertexArray(0);
     }
 
-    /* ignored */
+    public void Update(float deltaTime)
+    {
+        // Update animated model
+        _animatedModel.Update(deltaTime);
+    }
+
     public void DrawFloor(Camera camera)
     {
         // Use the shader program
@@ -110,6 +130,12 @@ public class Render
 
         // Unbind the VAO
         GL.BindVertexArray(0);
+    }
+
+    public void DrawAnimatedModel(Camera camera)
+    {
+        // Render the animated model
+        _animatedModel.Render(camera.GetViewMatrix(), _projection, _shaderProgram);
     }
 
     private int CreateShaderProgram(string vertexShaderPath, string fragmentShaderPath)
@@ -192,7 +218,7 @@ public class Render
 
         // Bind the VAO and draw the cube
         GL.BindVertexArray(_vertexArrayObject);
-        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 24); // 24 vertices for a cube
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 512); // 48 vertices for a cube
 
         // Disable wireframe mode
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
@@ -245,5 +271,11 @@ public class Render
 
         // Draw the cube in wireframe mode
         DrawCubeWireframe(camera, position, cube);
+
+        // Draw the fire effect
+        if (cube.IsFire)
+        {
+            // draw fire effect
+        }
     }
 }

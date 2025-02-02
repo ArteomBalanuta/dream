@@ -10,7 +10,7 @@ public class Player
 
     // Player dimensions
     public float Width { get; } = 0.50f; // 0.5 block wide
-    public float Height { get; } = 0.50f;
+    public float Height { get; } = 1.78f;
 
     // Camera attached to the player
     public Camera Camera { get; private set; }

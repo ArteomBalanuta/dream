@@ -4,6 +4,8 @@
     public bool IsEmpty { get; set; } = true;
     public bool IsSolid { get; set; } = false;
 
+    public bool IsFire { get; set; } = false;
+
     // Optional: Add a constructor for initialization
     public Cube(bool isEmpty = true, bool isSolid = false)
     {
