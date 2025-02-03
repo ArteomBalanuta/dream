@@ -6,31 +6,27 @@ public class Render
 {
     private int _vertexBufferObject;
     private int _vertexArrayObject;
-    private int _shaderProgram;
+    private Dictionary<string, int> _shaders = new Dictionary<string, int>();
 
     private Matrix4 _projection;
 
-    // Fire effect fields
-    private int _fireShaderProgram;
-    private int _fireVAO;
-    private int _fireVBO;
-    private int _noiseTexture;
-    private float _fireTime;
-
-
-
     public Render()
     {
-        // Initialize OpenGL settings
         GL.Enable(EnableCap.DepthTest);
-
-        // Enable blending for transparency
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
-        // Compile shaders
-        _shaderProgram = CreateShaderProgram("D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl",
+        // Load default shader
+        LoadShader("default",
+            "D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl",
             "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
+
+        LoadShader("ak_shader",
+            "D:\\workspace\\dream-project\\dream\\shaders\\shaderVert.glsl",
+            "D:\\workspace\\dream-project\\dream\\shaders\\shaderFrag.glsl");
+
+        
+        _projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 
         // Set up projection matrix
         _projection = Matrix4.CreatePerspectiveFieldOfView(
@@ -92,10 +88,28 @@ public class Render
         GL.BindVertexArray(0);
     }
 
+    public void LoadShader(string name, string vertexShaderPath, string fragmentShaderPath)
+    {
+        int shaderProgram = CreateShaderProgram(vertexShaderPath, fragmentShaderPath);
+        _shaders[name] = shaderProgram;
+    }
+
+    private void CheckGLError(string context)
+    {
+        var error = GL.GetError();
+        if (error != ErrorCode.NoError)
+        {
+            Console.WriteLine($"[OpenGL Error] {error} in {context}");
+        }
+    }
+
+
     private int CreateShaderProgram(string vertexShaderPath, string fragmentShaderPath)
     {
         // Load and compile vertex shader
         int vertexShader = GL.CreateShader(ShaderType.VertexShader);
+        CheckGLError("GL.CreateShader-Vertex");
+
         string vertexShaderSource = File.ReadAllText(vertexShaderPath);
         GL.ShaderSource(vertexShader, vertexShaderSource);
         GL.CompileShader(vertexShader);
@@ -127,6 +141,13 @@ public class Render
         GL.AttachShader(shaderProgram, vertexShader);
         GL.AttachShader(shaderProgram, fragmentShader);
         GL.LinkProgram(shaderProgram);
+        CheckGLError("GL.LinkProgram");
+
+        GL.GetProgramInfoLog(shaderProgram, out string programLog);
+        if (!string.IsNullOrEmpty(programLog))
+        {
+            Console.WriteLine($"Shader program link log:\n{programLog}");
+        }
 
         // Check for linking errors
         GL.GetProgram(shaderProgram, GetProgramParameterName.LinkStatus, out int programStatus);
@@ -147,24 +168,30 @@ public class Render
 
     private void DrawCubeWireframe(Camera camera, Vector3 position, Cube cube)
     {
-        // Use the shader program
-        GL.UseProgram(_shaderProgram);
+
+        if (!_shaders.TryGetValue(cube.ShaderName, out int shaderProgram))
+        {
+            shaderProgram = _shaders["default"];
+        }
+
+        GL.UseProgram(shaderProgram);
+
 
         // Set the color to white (or any color you want for the wireframe)
-        int colorLocation = GL.GetUniformLocation(_shaderProgram, "color");
+        int colorLocation = GL.GetUniformLocation(shaderProgram, "color");
         GL.Uniform3(colorLocation, new Vector3(1.0f, 1.0f, 1.0f)); // WHITE COLOR
 
         // Set the model matrix (scale and translate the cube)
-        int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
+        int modelLocation = GL.GetUniformLocation(shaderProgram, "model");
         Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
         GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
 
         // Set the view and projection matrices
-        int viewLocation = GL.GetUniformLocation(_shaderProgram, "view");
+        int viewLocation = GL.GetUniformLocation(shaderProgram, "view");
         Matrix4 view = camera.GetViewMatrix();
         GL.UniformMatrix4(viewLocation, false, ref view);
 
-        int projectionLocation = GL.GetUniformLocation(_shaderProgram, "projection");
+        int projectionLocation = GL.GetUniformLocation(shaderProgram, "projection");
         GL.UniformMatrix4(projectionLocation, false, ref _projection);
 
         // Enable wireframe mode
@@ -183,24 +210,30 @@ public class Render
 
     private void DrawCubeTransparent(Camera camera, Vector3 position, Cube cube)
     {
+
+        if (!_shaders.TryGetValue(cube.ShaderName, out int shaderProgram))
+        {
+            shaderProgram = _shaders["default"];
+        }
+
         // Use the shader program
-        GL.UseProgram(_shaderProgram);
+        GL.UseProgram(shaderProgram);
 
         // Set the color to a transparent color (alpha = 0)
-        int colorLocation = GL.GetUniformLocation(_shaderProgram, "color");
+        int colorLocation = GL.GetUniformLocation(shaderProgram, "color");
         GL.Uniform3(colorLocation, new Vector3(0.5f, 0.7f, 1.0f)); // Light blue color (alpha is set in the shader)
 
         // Set the model matrix (scale and translate the cube)
-        int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
+        int modelLocation = GL.GetUniformLocation(shaderProgram, "model");
         Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
         GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
 
         // Set the view and projection matrices
-        int viewLocation = GL.GetUniformLocation(_shaderProgram, "view");
+        int viewLocation = GL.GetUniformLocation(shaderProgram, "view");
         Matrix4 view = camera.GetViewMatrix();
         GL.UniformMatrix4(viewLocation, false, ref view);
 
-        int projectionLocation = GL.GetUniformLocation(_shaderProgram, "projection");
+        int projectionLocation = GL.GetUniformLocation(shaderProgram, "projection");
         GL.UniformMatrix4(projectionLocation, false, ref _projection);
 
         // Enable blending for transparency
@@ -222,21 +255,21 @@ public class Render
     {
         if (cube.Animation != null)
         {
-            // Draw animated cube
+            if (!_shaders.TryGetValue(cube.ShaderName, out int shaderProgram))
+                shaderProgram = _shaders["default"];
+
             Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
             cube.Animation.Render(
                 camera.GetViewMatrix(),
                 _projection,
-                _shaderProgram,
+                shaderProgram,
                 modelMatrix
             );
         }
         else
         {
-            // Original cube drawing logic
             DrawCubeTransparent(camera, position, cube);
             DrawCubeWireframe(camera, position, cube);
-
         }
     }
 }

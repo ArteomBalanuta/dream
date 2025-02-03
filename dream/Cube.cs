@@ -8,6 +8,8 @@
 
     public AnimatedModel Animation { get; set; } // Add this
 
+    public string ShaderName { get; set; } = "default"; // Default shader
+
     // Optional: Add a constructor for initialization
     public Cube(bool isEmpty = true, bool isSolid = false)
     {

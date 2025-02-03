@@ -10,17 +10,19 @@ public class Game : GameWindow
     private Player _player;
     private Map _map;
 
-    public Game() : base(GameWindowSettings.Default, NativeWindowSettings.Default)
+    public Game() : base(GameWindowSettings.Default, new NativeWindowSettings()
     {
-        //this.UpdateFrequency = 240; // fps kinda
-
+        Size = new Vector2i(1440, 1024), // Set resolution to 2K
+        Title = "My 2K Game"
+    })
+    {
         _render = new Render();
         _map = new Map();
-        _player = new Player(new Vector3(5, 2, 5)); // Start player on the floor
+        _player = new Player(new Vector3(5, 2, 5));
 
-        // Lock the mouse to the center of the window
         CursorState = CursorState.Grabbed;
     }
+
 
     protected override void OnRenderFrame(FrameEventArgs args)
     {
