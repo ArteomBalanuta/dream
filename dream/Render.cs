@@ -17,8 +17,7 @@ public class Render
     private int _noiseTexture;
     private float _fireTime;
 
-    // Animated model
-    private AnimatedModel _animatedModel;
+
 
     public Render()
     {
@@ -92,43 +91,6 @@ public class Render
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
     }
-
-    public void DrawFloor(Camera camera)
-    {
-        // Use the shader program
-        GL.UseProgram(_shaderProgram);
-
-        // Set the color to brown
-        int colorLocation = GL.GetUniformLocation(_shaderProgram, "color");
-        GL.Uniform3(colorLocation, new Vector3(0.6f, 0.3f, 0.1f));
-
-        // Set the model matrix (identity matrix for the floor)
-        int modelLocation = GL.GetUniformLocation(_shaderProgram, "model");
-        Matrix4 modelMatrix = Matrix4.Identity; // Store the identity matrix in a variable
-        GL.UniformMatrix4(modelLocation, false, ref modelMatrix); // Pass the variable as a ref parameter
-
-        // Set the view and projection matrices
-        int viewLocation = GL.GetUniformLocation(_shaderProgram, "view");
-        Matrix4 view = camera.GetViewMatrix();
-        GL.UniformMatrix4(viewLocation, false, ref view);
-
-        int projectionLocation = GL.GetUniformLocation(_shaderProgram, "projection");
-        GL.UniformMatrix4(projectionLocation, false, ref _projection);
-
-        // Bind the VAO and draw the floor
-        GL.BindVertexArray(_vertexArrayObject);
-        GL.DrawArrays(PrimitiveType.TriangleFan, 0, 4);
-
-        // Unbind the VAO
-        GL.BindVertexArray(0);
-    }
-    /*
-    public void DrawAnimatedModel(Camera camera)
-    {
-        // Render the animated model
-        _animatedModel.Render(camera.GetViewMatrix(), _projection, _shaderProgram);
-    }
-    */
 
     private int CreateShaderProgram(string vertexShaderPath, string fragmentShaderPath)
     {

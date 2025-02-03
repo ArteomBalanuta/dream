@@ -67,6 +67,7 @@ public class AnimatedModel
                 GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Count * sizeof(uint), indices.ToArray(), BufferUsageHint.StaticDraw);
 
                 // Set vertex attributes
+
                 GL.EnableVertexAttribArray(0);
                 GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vertex.Size, 0);
                 GL.EnableVertexAttribArray(1);
