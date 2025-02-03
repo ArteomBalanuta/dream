@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using System.Numerics;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SharpGLTF.Schema2;
@@ -10,186 +10,270 @@ using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Image = SixLabors.ImageSharp.Image;
 using PrimitiveType = OpenTK.Graphics.OpenGL4.PrimitiveType;
-using TextureWrapMode = OpenTK.Graphics.OpenGL4.TextureWrapMode;
+using Vector2 = OpenTK.Mathematics.Vector2;
+using Vector3 = OpenTK.Mathematics.Vector3;
+using Vector4 = OpenTK.Mathematics.Vector4;
 
-public class AnimatedModel
+public class AnimatedModel : IDisposable
 {
-    private readonly Dictionary<Material, int> _textures = new();
+    #region Structures
+    private struct MeshBuffers
+    {
+        public int VAO;
+        public int VBO;
+        public int EBO;
+        public int IndexCount;
+        public Material Material;
+        public PrimitiveType PrimitiveType;
+    }
+
+    private struct Vertex
+    {
+        public Vector3 Position;
+        public Vector3 Normal;
+        public Vector3 Tangent;
+        public Vector2 TexCoord0;
+        public Vector4 Joints;
+        public Vector4 Weights;
+
+        public const int Size = (3 + 3 + 3 + 2 + 4 + 4) * sizeof(float);
+    }
+    #endregion
+
     private readonly ModelRoot _model;
-    private readonly Dictionary<string, Animation> _animations = new();
+    private readonly Dictionary<Material, MaterialData> _materials = new();
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
+    private readonly Dictionary<string, Animation> _animations = new();
+    private readonly List<int> _textures = new();
     private float _animationTime;
     private bool _isAnimating;
 
     public AnimatedModel(string filePath)
     {
         _model = ModelRoot.Load(filePath);
-        InitializeModel();
+        Initialize();
+    }
+
+    #region Initialization
+    private void Initialize()
+    {
+        LoadMaterials();
+        LoadMeshes();
         LoadAnimations();
+    }
+    private void LoadMaterials()
+    {
+        foreach (var material in _model.LogicalMaterials)
+        {
+            var materialData = new MaterialData
+            {
+                AlphaMode = material.Alpha,
+                AlphaCutoff = material.AlphaCutoff,
+
+                // Retrieve BaseColor channel's Color factor (or default to Vector4.One)
+                BaseColorFactor = GetMaterialColor(material, "BaseColor", Vector4.One),
+
+                // Retrieve Metallic/Roughness factors from the "MetallicRoughness" channel.
+                // We assume here that the channel’s Factor stores Metallic in X and Roughness in Y.
+                MetallicFactor = GetMaterialParameter(material, "MetallicRoughness", "MetallicFactor", 1.0f),
+                RoughnessFactor = GetMaterialParameter(material, "MetallicRoughness", "RoughnessFactor", 1.0f),
+
+                // Retrieve emissive color from the "Emissive" channel and take its XYZ components.
+                EmissiveFactor = GetMaterialColor(material, "Emissive", Vector4.Zero).Xyz
+            };
+
+            // Load textures from each channel if available.
+            materialData.BaseColorTexture = LoadTexture(material, "BaseColor");
+            materialData.NormalTexture = LoadTexture(material, "Normal");
+            materialData.MetallicRoughnessTexture = LoadTexture(material, "MetallicRoughness");
+            materialData.EmissiveTexture = LoadTexture(material, "Emissive");
+            materialData.OcclusionTexture = LoadTexture(material, "Occlusion");
+
+            _materials.Add(material, materialData);
+        }
+    }
+
+    private OpenTK.Mathematics.Vector4 GetMaterialColor(Material material, string channelName, OpenTK.Mathematics.Vector4 defaultValue)
+    {
+        // Attempt to find the specified channel.
+        var channelOpt = material.FindChannel(channelName);
+        if (!channelOpt.HasValue)
+        {
+            return defaultValue;
+        }
+
+        try
+        {
+            // channelOpt.Value.Color returns a System.Numerics.Vector4.
+            System.Numerics.Vector4 sysColor = channelOpt.Value.Color;
+            // Convert to OpenTK.Mathematics.Vector4 by copying the components.
+            return new OpenTK.Mathematics.Vector4(sysColor.X, sysColor.Y, sysColor.Z, sysColor.W);
+        }
+        catch (InvalidOperationException)
+        {
+            return defaultValue;
+        }
     }
 
 
-    private int LoadTexture(SharpGLTF.Schema2.Image image)
+
+    private float GetMaterialParameter(Material material, string channelName, string parameterName, float defaultValue)
     {
-        int handle = GL.GenTexture();
-        CheckGLError("GL.GenTexture");
+        var channel = material.FindChannel(channelName);
+        if (!channel.HasValue) return defaultValue;
 
-
-        GL.BindTexture(TextureTarget.Texture2D, handle);
-        CheckGLError("GL.BindTexture");
-        // Load the image as Rgba32 from the provided stream.
-        using var memoryStream = new MemoryStream(image.Content.Content.ToArray());
-        using var img = Image.Load<Rgba32>(memoryStream);
-        // Flip the image vertically so that it matches OpenGL's coordinate system.
-        img.Mutate(x => x.Flip(FlipMode.Vertical));
-
-        // Allocate a byte array to hold the pixel data.
-        byte[] pixelData = new byte[4 * img.Width * img.Height];
-
-        // Use ProcessPixelRows to iterate over each row of pixels.
-        img.ProcessPixelRows(accessor =>
+        // Use the MaterialChannel's GetFactor method to retrieve a float parameter.
+        // For example, by convention: MetallicFactor is stored in channel.Factor.X and RoughnessFactor in channel.Factor.Y.
+        try
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                // Get the current row as a span.
-                Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
-                for (int x = 0; x < pixelRow.Length; x++)
-                {
-                    // Calculate the correct index into the byte array.
-                    int index = (y * img.Width + x) * 4;
-                    pixelData[index] = pixelRow[x].R;
-                    pixelData[index + 1] = pixelRow[x].G;
-                    pixelData[index + 2] = pixelRow[x].B;
-                    pixelData[index + 3] = pixelRow[x].A;
-                }
-            }
-        });
+            return channel.Value.GetFactor(parameterName);
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
 
-        // Upload the texture data to OpenGL.
-        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
-                      img.Width, img.Height, 0, PixelFormat.Rgba,
-                      PixelType.UnsignedByte, pixelData);
+    private int LoadTexture(Material material, string channelName)
+    {
+        var channelOpt = material.FindChannel(channelName);
+        if (!channelOpt.HasValue || channelOpt.Value.Texture == null)
+        {
+            // No texture available on this channel.
+            return -1;
+        }
 
-        CheckGLError("GL.TexImage2D");
+        // Get the primary image from the channel.
+        var image = channelOpt.Value.Texture.PrimaryImage;
+        if (image == null)
+        {
+            return -1;
+        }
 
-        // Set texture filtering and wrapping parameters.
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-        CheckGLError("GL.TexParameter");
+        // Create an OpenGL texture.
+        int handle = GL.GenTexture();
+        GL.BindTexture(TextureTarget.Texture2D, handle);
 
-        // Add debug output in LoadTexture
-        Console.WriteLine($"Loaded texture: {image.Name ?? "Unnamed"}, Size: {img.Width}x{img.Height}");
+        // Load image data from the image's content stream.
+        using (var stream = new MemoryStream(image.Content.Content.ToArray()))
+        using (var img = Image.Load<Rgba32>(stream))
+        {
+            // Flip the image vertically to match OpenGL coordinate system.
+            img.Mutate(x => x.Flip(FlipMode.Vertical));
+
+            // Allocate a buffer and copy pixel data.
+            byte[] pixelData = new byte[4 * img.Width * img.Height];
+            img.CopyPixelDataTo(pixelData);
+
+            // Upload the texture data to OpenGL.
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                img.Width, img.Height, 0, PixelFormat.Rgba,
+                PixelType.UnsignedByte, pixelData);
+
+            // Set texture filtering and generate mipmaps.
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
+                (int)TextureMinFilter.LinearMipmapLinear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
+                (int)TextureMagFilter.Linear);
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+        }
+
+        // Optionally add the texture handle to a collection to manage its lifetime.
+        _textures.Add(handle);
 
         return handle;
     }
 
-    private void CheckGLError(string context)
+
+    private void LoadMeshes()
     {
-        var error = GL.GetError();
-        if (error != ErrorCode.NoError)
-        {
-            Console.WriteLine($"[OpenGL Error] {error} in {context}");
-        }
-    }
-    private void InitializeModel()
-    {
-        // Load textures first
-        Console.WriteLine("[DEBUG] Initializing model textures...");
-
-        foreach (var material in _model.LogicalMaterials)
-        {
-            Console.WriteLine($"Processing material: {material.Name ?? "Unnamed"}");
-
-            // Try to retrieve the base color texture.
-            // First, check if there's a channel named "BaseColor" and get its texture.
-            // If not found, fall back to checking the material's PBR properties.
-            var baseColorChannel = material.FindChannel("BaseColor");
-            var baseColorTexture = baseColorChannel?.Texture ?? material.FindChannel("BaseColor")?.Texture;
-
-
-            if (baseColorTexture != null && baseColorTexture.PrimaryImage != null)
-            {
-                Console.WriteLine($" - Found texture: {baseColorTexture.PrimaryImage.Name ?? "Unnamed"}");
-                try
-                {
-                    _textures[material] = LoadTexture(baseColorTexture.PrimaryImage);
-                    Console.WriteLine($" - Texture loaded successfully (ID: {_textures[material]})");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($" - Failed to load texture: {ex.Message}");
-                }
-            }
-            else
-            {
-                Console.WriteLine(" - No BaseColor texture found");
-            }
-        }
-
-        // Continue with mesh primitives initialization...
         foreach (var mesh in _model.LogicalMeshes)
         {
             var primitives = new List<MeshBuffers>();
+
             foreach (var primitive in mesh.Primitives)
             {
-                var buffers = new MeshBuffers();
-                var vertices = new List<Vertex>();
-                var indices = new List<uint>();
+                var vertices = ProcessVertices(primitive);
+                var indices = primitive.GetIndices().Select(i => (uint)i).ToArray();
+                var buffers = CreateBuffers(vertices, indices, primitive);
 
-                // Get vertex data
-                var positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
-                var normals = primitive.GetVertexAccessor("NORMAL")?.AsVector3Array();
-                var texCoords = primitive.GetVertexAccessor("TEXCOORD_0")?.AsVector2Array();
-
-                // Convert to OpenTK vectors
-                for (int i = 0; i < positions.Count; i++)
-                {
-                    var vertex = new Vertex
-                    {
-                        Position = new Vector3(positions[i].X, positions[i].Y, positions[i].Z),
-                        Normal = normals != null ? new Vector3(normals[i].X, normals[i].Y, normals[i].Z) : Vector3.Zero,
-                        TexCoord = texCoords != null ? new Vector2(texCoords[i].X, texCoords[i].Y) : Vector2.Zero
-                    };
-                    vertices.Add(vertex);
-                }
-
-                // Get index data
-                indices.AddRange(primitive.GetIndices());
-
-                // Create buffers
-                buffers.VAO = GL.GenVertexArray();
-                buffers.VBO = GL.GenBuffer();
-                buffers.EBO = GL.GenBuffer();
-                buffers.IndexCount = indices.Count;
-
-                // Upload data
-                GL.BindVertexArray(buffers.VAO);
-                GL.BindBuffer(BufferTarget.ArrayBuffer, buffers.VBO);
-                GL.BufferData(BufferTarget.ArrayBuffer, vertices.Count * Vertex.Size, vertices.ToArray(), BufferUsageHint.StaticDraw);
-                GL.BindBuffer(BufferTarget.ElementArrayBuffer, buffers.EBO);
-                GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Count * sizeof(uint), indices.ToArray(), BufferUsageHint.StaticDraw);
-
-                // Set vertex attributes
-                GL.EnableVertexAttribArray(0);
-                GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vertex.Size, 0);
-                GL.EnableVertexAttribArray(1);
-                GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, Vertex.Size, 3 * sizeof(float));
-                GL.EnableVertexAttribArray(2);
-                GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, Vertex.Size, 6 * sizeof(float));
-
-                GL.BindVertexArray(0);
-
-                // Store material reference
-                buffers.Material = primitive.Material;
                 primitives.Add(buffers);
             }
+
             _meshPrimitives.Add(mesh, primitives);
         }
     }
 
+    private Vertex[] ProcessVertices(MeshPrimitive primitive)
+    {
+        var positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
+        var normals = primitive.GetVertexAccessor("NORMAL")?.AsVector3Array();
+        var tangents = primitive.GetVertexAccessor("TANGENT")?.AsVector4Array();
+        var texCoords0 = primitive.GetVertexAccessor("TEXCOORD_0")?.AsVector2Array();
+        var joints = primitive.GetVertexAccessor("JOINTS_0")?.AsVector4Array();
+        var weights = primitive.GetVertexAccessor("WEIGHTS_0")?.AsVector4Array();
 
+        return Enumerable.Range(0, positions.Count).Select(i => new Vertex
+        {
+            Position = positions[i].ToOpenTK(),
+            Normal = normals?[i].ToOpenTK() ?? Vector3.Zero,
+            Tangent = tangents?[i].ToOpenTKTan() ?? Vector3.Zero,
+            TexCoord0 = texCoords0?[i].ToOpenTK() ?? Vector2.Zero,
+            Joints = joints?[i].ToOpenTK() ?? Vector4.Zero,
+            Weights = weights?[i].ToOpenTK() ?? Vector4.Zero
+        }).ToArray();
+    }
+
+    private MeshBuffers CreateBuffers(Vertex[] vertices, uint[] indices, MeshPrimitive primitive)
+    {
+        var vao = GL.GenVertexArray();
+        var vbo = GL.GenBuffer();
+        var ebo = GL.GenBuffer();
+
+        GL.BindVertexArray(vao);
+
+        // Vertex Buffer
+        GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
+        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * Vertex.Size, vertices, BufferUsageHint.StaticDraw);
+
+        // Attributes
+        GL.EnableVertexAttribArray(0); // Position
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vertex.Size, 0);
+
+        GL.EnableVertexAttribArray(1); // Normal
+        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, Vertex.Size, 3 * sizeof(float));
+
+        GL.EnableVertexAttribArray(2); // Tangent
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, Vertex.Size, 6 * sizeof(float));
+
+        GL.EnableVertexAttribArray(3); // TexCoord0
+        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, Vertex.Size, 9 * sizeof(float));
+
+        GL.EnableVertexAttribArray(4); // Joints
+        GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, Vertex.Size, 11 * sizeof(float));
+
+        GL.EnableVertexAttribArray(5); // Weights
+        GL.VertexAttribPointer(5, 4, VertexAttribPointerType.Float, false, Vertex.Size, 15 * sizeof(float));
+
+        // Element Buffer
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, ebo);
+        GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
+
+        GL.BindVertexArray(0);
+
+        return new MeshBuffers
+        {
+            VAO = vao,
+            VBO = vbo,
+            EBO = ebo,
+            IndexCount = indices.Length,
+            Material = primitive.Material,
+            PrimitiveType = GetPrimitiveType(primitive.DrawPrimitiveType)
+        };
+    }
+    #endregion
+
+    #region Animation
     private void LoadAnimations()
     {
         foreach (var animation in _model.LogicalAnimations)
@@ -198,112 +282,142 @@ public class AnimatedModel
         }
     }
 
-    public float AnimationSpeed { get; set; } = 1.0f;
-
     public void Update(float deltaTime)
     {
         if (!_isAnimating) return;
 
-        // Apply animation speed
         _animationTime += deltaTime * AnimationSpeed;
 
         foreach (var animation in _animations.Values)
         {
-            var duration = animation.Duration;
-            var time = _animationTime % duration;
-
-            foreach (var node in _model.LogicalNodes)
-            {
-                if (animation.FindChannels(node).Any())
-                {
-                    node.LocalTransform = node.GetLocalTransform(animation, time);
-                }
-            }
+            var time = _animationTime % animation.Duration;
+            UpdateNodes(animation, time);
         }
     }
-    public void Render(Matrix4 view, Matrix4 projection, int shaderProgram, Matrix4 baseModel)
+
+    private void UpdateNodes(Animation animation, float time)
     {
-        GL.UseProgram(shaderProgram);
-        CheckGLError("GL.UseProgram");
+        foreach (var node in _model.LogicalNodes)
+        {
+            if (!animation.FindChannels(node).Any()) continue;
+            node.LocalTransform = node.GetLocalTransform(animation, time);
+        }
+    }
+    #endregion
 
-        // Get uniform locations
-        int textureLocation = GL.GetUniformLocation(shaderProgram, "texture0");
-        CheckGLError("GL.GetUniformLocation-texture0");
-
-        int modelLocation = GL.GetUniformLocation(shaderProgram, "model");
-        int viewLocation = GL.GetUniformLocation(shaderProgram, "view");
-        int projectionLocation = GL.GetUniformLocation(shaderProgram, "projection");
-
-        // Set matrices
-        GL.UniformMatrix4(viewLocation, false, ref view);
-        GL.UniformMatrix4(projectionLocation, false, ref projection);
+    #region Rendering
+    public void Render(Shader shader, Matrix4 view, Matrix4 projection, Matrix4 modelMatrix)
+    {
+        shader.Use();
+        shader.SetMatrix4("view", view);
+        shader.SetMatrix4("projection", projection);
 
         foreach (var node in _model.DefaultScene.VisualChildren)
         {
-            if (node.Mesh == null || !_meshPrimitives.TryGetValue(node.Mesh, out var primitives)) continue;
+            if (!_meshPrimitives.TryGetValue(node.Mesh, out var primitives)) continue;
 
-            foreach (var meshBuffers in primitives)
-            {
-                // Bind VAO first
-                GL.BindVertexArray(meshBuffers.VAO);
-                CheckGLError("GL.BindVertexArray");
-
-                // Bind texture if available
-                if (meshBuffers.Material != null &&
-                    _textures.TryGetValue(meshBuffers.Material, out int texture))
-                {
-                    GL.ActiveTexture(TextureUnit.Texture0);
-                    GL.BindTexture(TextureTarget.Texture2D, texture);
-                    GL.Uniform1(textureLocation, 0);
-                }
-
-                // Calculate model matrix
-                var modelMatrix = baseModel * node.WorldMatrix.ToOpenTKMatrix();
-                GL.UniformMatrix4(modelLocation, false, ref modelMatrix);
-
-                // Draw elements
-                GL.DrawElements(PrimitiveType.Triangles,
-                              meshBuffers.IndexCount,
-                              DrawElementsType.UnsignedInt,
-                              0);
-
-                CheckGLError($"GL.DrawElements (count: {meshBuffers.IndexCount})");
-            }
+            var nodeMatrix = modelMatrix * node.WorldMatrix.ToOpenTK();
+            RenderNode(primitives, nodeMatrix, shader);
         }
-
-        GL.BindVertexArray(0);
     }
 
+    private void RenderNode(List<MeshBuffers> primitives, Matrix4 modelMatrix, Shader shader)
+    {
+        foreach (var primitive in primitives)
+        {
+            shader.SetMatrix4("model", modelMatrix);
+
+            if (_materials.TryGetValue(primitive.Material, out var material))
+            {
+                SetMaterialProperties(shader, material);
+            }
+
+            GL.BindVertexArray(primitive.VAO);
+            GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
+                DrawElementsType.UnsignedInt, 0);
+        }
+    }
+
+    private void SetMaterialProperties(Shader shader, MaterialData material)
+    {
+        shader.SetVector4("material.baseColorFactor", material.BaseColorFactor);
+        shader.SetFloat("material.metallicFactor", material.MetallicFactor);
+        shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
+        shader.SetVector3("material.emissiveFactor", material.EmissiveFactor);
+        shader.SetFloat("material.alphaCutoff", material.AlphaCutoff);
+        shader.SetInt("material.alphaMode", (int)material.AlphaMode);
+
+        SetTexture(shader, "material.baseColorTexture", 0, material.BaseColorTexture);
+        SetTexture(shader, "material.normalTexture", 1, material.NormalTexture);
+        SetTexture(shader, "material.metallicRoughnessTexture", 2, material.MetallicRoughnessTexture);
+        SetTexture(shader, "material.emissiveTexture", 3, material.EmissiveTexture);
+        SetTexture(shader, "material.occlusionTexture", 4, material.OcclusionTexture);
+    }
+
+    private void SetTexture(Shader shader, string name, int unit, int texture)
+    {
+        if (texture == -1) return;
+
+        GL.ActiveTexture(TextureUnit.Texture0 + unit);
+        GL.BindTexture(TextureTarget.Texture2D, texture);
+        shader.SetInt(name, unit);
+    }
+    #endregion
+
+    #region Helper Methods
+    private PrimitiveType GetPrimitiveType(SharpGLTF.Schema2.PrimitiveType type) => type switch
+    {
+        SharpGLTF.Schema2.PrimitiveType.POINTS => PrimitiveType.Points,
+        SharpGLTF.Schema2.PrimitiveType.LINES => PrimitiveType.Lines,
+        SharpGLTF.Schema2.PrimitiveType.LINE_STRIP => PrimitiveType.LineStrip,
+        SharpGLTF.Schema2.PrimitiveType.TRIANGLES => PrimitiveType.Triangles,
+        SharpGLTF.Schema2.PrimitiveType.TRIANGLE_STRIP => PrimitiveType.TriangleStrip,
+        _ => PrimitiveType.Triangles
+    };
+
+    public void Dispose()
+    {
+        foreach (var texture in _textures) GL.DeleteTexture(texture);
+        foreach (var mesh in _meshPrimitives.Values.SelectMany(p => p))
+        {
+            GL.DeleteVertexArray(mesh.VAO);
+            GL.DeleteBuffer(mesh.VBO);
+            GL.DeleteBuffer(mesh.EBO);
+        }
+    }
+    #endregion
+
+    #region Properties
+    public float AnimationSpeed { get; set; } = 1.0f;
     public void StartAnimation(string name = null) => _isAnimating = true;
     public void StopAnimation() => _isAnimating = false;
 
-    private struct MeshBuffers
+    private class MaterialData
     {
-        public int VAO;
-        public int VBO;
-        public int EBO;
-        public int IndexCount;
-        public Material Material;
+        public Vector4 BaseColorFactor;
+        public Vector3 EmissiveFactor;
+        public float MetallicFactor;
+        public float RoughnessFactor;
+        public float AlphaCutoff;
+        public AlphaMode AlphaMode;
+        public int BaseColorTexture = -1;
+        public int NormalTexture = -1;
+        public int MetallicRoughnessTexture = -1;
+        public int EmissiveTexture = -1;
+        public int OcclusionTexture = -1;
     }
-
-    private struct Vertex
-    {
-        public Vector3 Position;
-        public Vector3 Normal;
-        public Vector2 TexCoord;
-        public const int Size = (3 + 3 + 2) * sizeof(float);
-    }
+    #endregion
 }
 
-public static class MatrixExtensions
+public static class GltfExtensions
 {
-    public static Matrix4 ToOpenTKMatrix(this System.Numerics.Matrix4x4 matrix)
-    {
-        return new Matrix4(
-            matrix.M11, matrix.M12, matrix.M13, matrix.M14,
-            matrix.M21, matrix.M22, matrix.M23, matrix.M24,
-            matrix.M31, matrix.M32, matrix.M33, matrix.M34,
-            matrix.M41, matrix.M42, matrix.M43, matrix.M44
-        );
-    }
+    public static Vector3 ToOpenTK(this System.Numerics.Vector3 v) => new(v.X, v.Y, v.Z);
+    public static Vector2 ToOpenTK(this System.Numerics.Vector2 v) => new(v.X, v.Y);
+    public static Vector4 ToOpenTK(this System.Numerics.Vector4 v) => new(v.X, v.Y, v.Z, v.W);
+    public static Vector3 ToOpenTKTan(this System.Numerics.Vector4 v) => new(v.X, v.Y, v.Z);
+    public static Matrix4 ToOpenTK(this System.Numerics.Matrix4x4 m) => new(
+        m.M11, m.M12, m.M13, m.M14,
+        m.M21, m.M22, m.M23, m.M24,
+        m.M31, m.M32, m.M33, m.M34,
+        m.M41, m.M42, m.M43, m.M44);
 }

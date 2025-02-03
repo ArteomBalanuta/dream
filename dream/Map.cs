@@ -1,5 +1,4 @@
 ﻿using OpenTK.Mathematics;
-using System;
 
 public class Map
 {
@@ -23,17 +22,18 @@ public class Map
                     // Create a solid floor at y = 0
                     if (y == 0)
                     {
-                        Cubes[x, y, z] = new Cube { IsEmpty = false, IsSolid = true };
+                        Cubes[x, y, z] = new Cube { IsEmpty = false, IsSolid = true, Position = new Vector3(x, y, z) };
                     }
                     else
                     {
-                        Cubes[x, y, z] = new Cube();
+                        Cubes[x, y, z] = new Cube { Position = new Vector3(x, y, z) };
                     }
                 }
             }
         }
 
-        Cubes[3, 3, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\blueCubeTexture.gltf"), ShaderName = "ak_shader" };
+        Cubes[3, 3, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, 
+            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\blueCubeTexture.gltf"), ShaderName = "ak_shader" , Position = new Vector3(3,3,2)};
     }
 
     public bool IsInBounds(Vector3 pos)
