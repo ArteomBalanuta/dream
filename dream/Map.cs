@@ -33,7 +33,7 @@ public class Map
             }
         }
 
-        Cubes[3, 9, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\ak-15.gltf"), ShaderName = "ak_shader" };
+        Cubes[3, 3, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\blueCubeTexture.gltf"), ShaderName = "ak_shader" };
     }
 
     public bool IsInBounds(Vector3 pos)

@@ -93,7 +93,6 @@ public class AnimatedModel
             Console.WriteLine($"[OpenGL Error] {error} in {context}");
         }
     }
-
     private void InitializeModel()
     {
         // Load textures first
@@ -103,33 +102,33 @@ public class AnimatedModel
         {
             Console.WriteLine($"Processing material: {material.Name ?? "Unnamed"}");
 
-            if (material.FindChannel("BaseColor") is { } channel && channel.Texture != null)
+            // Try to retrieve the base color texture.
+            // First, check if there's a channel named "BaseColor" and get its texture.
+            // If not found, fall back to checking the material's PBR properties.
+            var baseColorChannel = material.FindChannel("BaseColor");
+            var baseColorTexture = baseColorChannel?.Texture ?? material.FindChannel("BaseColor")?.Texture;
+
+
+            if (baseColorTexture != null && baseColorTexture.PrimaryImage != null)
             {
-                var texture = channel.Texture;
-                if (texture.PrimaryImage != null)
+                Console.WriteLine($" - Found texture: {baseColorTexture.PrimaryImage.Name ?? "Unnamed"}");
+                try
                 {
-                    Console.WriteLine($" - Found texture: {texture.PrimaryImage.Name ?? "Unnamed"}");
-                    try
-                    {
-                        _textures[material] = LoadTexture(texture.PrimaryImage);
-                        Console.WriteLine($" - Texture loaded successfully (ID: {_textures[material]})");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($" - Failed to load texture: {ex.Message}");
-                    }
+                    _textures[material] = LoadTexture(baseColorTexture.PrimaryImage);
+                    Console.WriteLine($" - Texture loaded successfully (ID: {_textures[material]})");
                 }
-                else
+                catch (Exception ex)
                 {
-                    Console.WriteLine(" - Texture has no primary image!");
+                    Console.WriteLine($" - Failed to load texture: {ex.Message}");
                 }
             }
             else
             {
-                Console.WriteLine(" - No BaseColor channel or texture found");
+                Console.WriteLine(" - No BaseColor texture found");
             }
         }
 
+        // Continue with mesh primitives initialization...
         foreach (var mesh in _model.LogicalMeshes)
         {
             var primitives = new List<MeshBuffers>();
@@ -189,6 +188,7 @@ public class AnimatedModel
             _meshPrimitives.Add(mesh, primitives);
         }
     }
+
 
     private void LoadAnimations()
     {
