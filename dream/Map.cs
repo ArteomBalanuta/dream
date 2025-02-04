@@ -1,42 +1,74 @@
-﻿using OpenTK.Mathematics;
+﻿using BulletSharp;
+using BulletSharp.Math;
+using BulletSharp.SoftBody;
+using OpenTK.Mathematics;
+using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Map
 {
-    public int SideSize { get; } = 10;
+    public int SideSize { get; } = 30;
     public Cube[,,] Cubes { get; private set; }
 
-    public Map()
+    private PhysicsIntegrator physicsIntegrator;
+
+    public Map(PhysicsIntegrator physicsIntegrator)
     {
+        this.physicsIntegrator = physicsIntegrator;
         Cubes = new Cube[SideSize, SideSize, SideSize];
         Initialize();
     }
 
     private void Initialize()
     {
+        // First fill the entire array:
         for (int x = 0; x < SideSize; x++)
         {
             for (int y = 0; y < SideSize; y++)
             {
                 for (int z = 0; z < SideSize; z++)
                 {
-                    // Create a solid floor at y = 0
                     if (y == 0)
                     {
+                        // Floor cell: solid.
                         Cubes[x, y, z] = new Cube { IsEmpty = false, IsSolid = true, Position = new Vector3(x, y, z) };
                     }
                     else
                     {
-                        Cubes[x, y, z] = new Cube { Position = new Vector3(x, y, z) };
+                        // Other cells: empty by default.
+                        Cubes[x, y, z] = new Cube { IsEmpty = true, IsSolid = false, Position = new Vector3(x, y, z) };
                     }
                 }
             }
         }
 
-        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube" , Position = new Vector3(3,3,2)};
+        // Now add physics bodies for every solid cube.
+        for (int x = 0; x < SideSize; x++)
+        {
+            for (int y = 0; y < SideSize; y++)
+            {
+                for (int z = 0; z < SideSize; z++)
+                {
+                    Cube cube = Cubes[x, y, z];
+                    if (cube != null && cube.IsSolid)
+                    {
+                        // Create the physics body using your cube's own method.
+                        RigidBody body = cube.CreateRigidBody();
+                        // Store the grid indices for later updates.
+                        body.UserObject = Tuple.Create(x, y, z);
+                        this.physicsIntegrator.World.AddRigidBody(body);
+                        this.physicsIntegrator.MapCubeBodies.Add(body);
+                    }
+                }
+            }
+        }
+
+
+        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, 
+            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube", Position = new Vector3(3, 3, 2) };
+
+        Cubes[6, 6, 6] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, 
+            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube", Position = new Vector3(6, 6, 6) };
         //Cubes[3, 2, 2].Animation.StartAnimation();
-
-
-
     }
 
     public bool IsInBounds(Vector3 pos)
@@ -99,16 +131,21 @@ public class Map
 
     public void AddCube(Vector3 position)
     {
-        // Convert position to cube grid indices (assuming position is in world coordinates)
+        // Con222 vert position to cube grid indices (assuming position is in world coordinates)
         int x = (int)Math.Floor(position.X);
         int y = (int)Math.Floor(position.Y);
         int z = (int)Math.Floor(position.Z);
 
         if (IsInBounds(new Vector3(x, y, z)) && !Cubes[x, y, z].IsSolid && Cubes[x, y, z].IsEmpty)
         {
-            Cubes[x, y, z] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube", Position = new Vector3(x, y, z) };
+            Cube cube = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube", Position = new Vector3(x, y, z) };
+            Cubes[x, y, z] = cube;
 
-
+            RigidBody body = cube.CreateRigidBody();
+            // Store the grid indices for later update.
+            body.UserObject = Tuple.Create(x, y, z);
+            this.physicsIntegrator.World.AddRigidBody(body);
+            this.physicsIntegrator.MapCubeBodies.Add(body);
 
             Console.WriteLine($"Placed a cube at: ({x}, {y}, {z})");
         }
