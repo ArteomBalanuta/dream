@@ -32,8 +32,11 @@ public class Map
             }
         }
 
-        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, 
-            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\blue_cube.gltf"), ShaderName = "cube" , Position = new Vector3(3,3,2)};
+        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\animation.gltf"), ShaderName = "cube" , Position = new Vector3(3,3,2)};
+        Cubes[3, 2, 2].Animation.StartAnimation();
+
+
+
     }
 
     public bool IsInBounds(Vector3 pos)

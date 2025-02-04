@@ -18,6 +18,7 @@ using Vector4 = OpenTK.Mathematics.Vector4;
 
 public class AnimatedModel : IDisposable
 {
+
     #region Structures
     private struct MeshBuffers
     {
@@ -387,10 +388,11 @@ public class AnimatedModel : IDisposable
 
             var nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
             var combinedMatrix = modelMatrix * nodeWorldMatrix;
+            /*
             Console.WriteLine($"Rendering node '{node.Name}'");
             Console.WriteLine($"  Node World Matrix: {nodeWorldMatrix}");
             Console.WriteLine($"  Combined Model Matrix: {combinedMatrix}");
-
+            */
             RenderNode(primitives, combinedMatrix, shader);
         }
 
@@ -417,6 +419,7 @@ public class AnimatedModel : IDisposable
 
     private void SetMaterialProperties(Shader shader, MaterialData material)
     {
+        /*
         // Log material properties for debugging
         Console.WriteLine("Setting Material Properties:");
         Console.WriteLine($"  baseColorFactor: {material.BaseColorFactor}");
@@ -430,6 +433,7 @@ public class AnimatedModel : IDisposable
         Console.WriteLine($"  hasMetallicRoughnessTexture: {material.HasMetallicRoughnessTexture}");
         Console.WriteLine($"  hasEmissiveTexture: {material.HasEmissiveTexture}");
         Console.WriteLine($"  hasOcclusionTexture: {material.HasOcclusionTexture}");
+        */
 
         shader.SetVector4("material.baseColorFactor", material.BaseColorFactor);
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
