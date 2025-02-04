@@ -1,150 +1,85 @@
-﻿using OpenTK.Mathematics;
+﻿// Game.cs
+using BulletSharp.Math;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
-using OpenTK.Graphics.OpenGL4;
-using BulletSharp.Math;
 using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Game : GameWindow
 {
-    private float _totalTime;
     private Render _render;
     private Player _player;
     private Map _map;
-    private PhysicsIntegrator _physicsIntegrator;
+    private PhysicsIntegrator _physics;
 
-    public Game() : base(GameWindowSettings.Default, new NativeWindowSettings()
+    public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
     {
         Size = new Vector2i(1440, 1024),
-        Title = "My 2K Game"
+        Title = "Physics Integrated Game"
     })
     {
+        _physics = new PhysicsIntegrator();
+        _map = new Map(_physics);
+        _player = new Player(_physics.PlayerBody, new Vector3(5, 2, 5));
         _render = new Render();
-        _physicsIntegrator = new PhysicsIntegrator(_map);
-        _map = new Map(_physicsIntegrator);
-        // Initialize the physics integrator with the map.
-        
-
-        _player = new Player(new Vector3(5, 2, 5));
 
         CursorState = CursorState.Grabbed;
+    }
+
+    protected override void OnUpdateFrame(FrameEventArgs args)
+    {
+        base.OnUpdateFrame(args);
+        float delta = (float)args.Time;
+
+        // Update physics first
+        _physics.StepSimulation(delta);
+
+        // Update player and input
+        _player.Update(delta, KeyboardState, MouseState);
+        _player.PlaceCube(_map, MouseState);
+
+        // Update cube positions from physics
+        foreach (var body in _physics.MapCubeBodies)
+        {
+            if (body.UserObject is (Cube cube, Vector3 _))
+            {
+                body.MotionState.GetWorldTransform(out Matrix transform);
+                cube.Position = transform.Origin.ToOpenTK();
+            }
+        }
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         base.OnRenderFrame(args);
-
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        // Draw map cubes at their (possibly updated) positions.
-        RenderSolidMapCubes();
+        // Render all cubes
+        foreach (var cube in _map.Cubes)
+        {
+            if (cube.IsSolid)
+                _render.DrawCube(_player.Camera, cube.Position, cube);
+        }
 
-        // Draw the heavy falling cube.
-        //DrawFallingCube();
+        // Render falling cube
+        _physics.FallingCubeBody.MotionState.GetWorldTransform(out Matrix fallTrans);
+        _render.DrawCube(_player.Camera, fallTrans.Origin.ToOpenTK(), new Cube());
 
         SwapBuffers();
-    }
-
-    /// <summary>
-    /// Draws the map cubes using their current positions.
-    /// </summary>
-    private void RenderSolidMapCubes()
-    {
-        for (int x = 0; x < _map.SideSize; x++)
-        {
-            for (int y = 0; y < _map.SideSize; y++)
-            {
-                for (int z = 0; z < _map.SideSize; z++)
-                {
-                    var cube = _map.Cubes[x, y, z];
-                    if (!cube.IsSolid) continue;
-                    // Use the updated position from the physics simulation.
-                    _render.DrawCube(_player.Camera, cube.Position, cube);
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Retrieves the falling cube’s position from physics and draws it.
-    /// </summary>
-    private void DrawFallingCube()
-    {
-        Matrix fallingCubeTransform;
-        _physicsIntegrator.FallingCubeBody.MotionState.GetWorldTransform(out fallingCubeTransform);
-        BulletSharp.Math.Vector3 fallingCubePos = fallingCubeTransform.Origin;
-        // For demonstration, we create a temporary Cube to render the falling cube.
-
-        Cube fallingCube = new Cube(false, true)
-        {
-            Position = fallingCubePos.ToOpenTK(),
-            ShaderName = "cube"
-        };
-
-        _render.DrawCube(_player.Camera, fallingCube.Position, fallingCube);
-    }
-
-    /// <summary>
-    /// Update physics and game logic.
-    /// </summary>
-    protected override void OnUpdateFrame(FrameEventArgs args)
-    {
-        base.OnUpdateFrame(args);
-        float deltaTime = (float)args.Time;
-
-        // Update player and animations.
-        _player.Update(deltaTime, _map, KeyboardState, MouseState);
-        UpdateCubeAnimations(deltaTime);
-
-        // Step the physics simulation.
-        _physicsIntegrator.StepSimulation(deltaTime);
-
-        /// Updates each solid cube’s position using its corresponding physics body.
-        // Update map cubes’ positions based on their physics bodies.
-        foreach (var body in _physicsIntegrator.MapCubeBodies)
-        {
-            // Retrieve the stored map indices from the body.
-            if (body.UserObject is Tuple<int, int, int> indices)
-            {
-                int x = indices.Item1;
-                int y = indices.Item2;
-                int z = indices.Item3;
-
-                Matrix trans;
-                body.MotionState.GetWorldTransform(out trans);
-                _map.Cubes[x, y, z].Position = trans.Origin.ToOpenTK();
-            }
-        }
-    }
-
-    private void UpdateCubeAnimations(float deltaTime)
-    {
-        for (int x = 0; x < _map.SideSize; x++)
-        {
-            for (int y = 0; y < _map.SideSize; y++)
-            {
-                for (int z = 0; z < _map.SideSize; z++)
-                {
-                    var cube = _map.Cubes[x, y, z];
-                    if (cube.Animation != null)
-                    {
-                        cube.Animation.Update(deltaTime);
-                    }
-                }
-            }
-        }
     }
 
     protected override void OnResize(ResizeEventArgs e)
     {
         base.OnResize(e);
         GL.Viewport(0, 0, e.Width, e.Height);
+       // _player.Camera.AspectRatio = (float)e.Width / e.Height;
     }
 
     protected override void OnUnload()
     {
         base.OnUnload();
-        _physicsIntegrator.Dispose();
-        // Dispose other resources (shaders, buffers, etc.) as needed.
+        _physics.Dispose();
+        //_render.Dispose();
     }
 }

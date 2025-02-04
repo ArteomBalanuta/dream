@@ -1,106 +1,63 @@
-﻿using OpenTK.Mathematics;
+﻿// Player.cs
+using BulletSharp.Math;
+using BulletSharp;
+using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Player
 {
-    public Vector3 Position { get; set; } // Player position
-    public Vector3 Velocity { get; set; } = Vector3.Zero; // Player velocity
-    public float Speed { get; set; } = 5.0f; // Speed in blocks per second
-
-    // Player dimensions
-    public float Width { get; } = 0.50f; // 0.5 block wide
-    public float Height { get; } = 1.78f;
-
-    // Camera attached to the player
+    public RigidBody PhysicsBody { get; private set; }
+    public float Speed { get; set; } = 15.0f;
     public Camera Camera { get; private set; }
 
-    public Player(Vector3 position)
+    public Player(RigidBody physicsBody, Vector3 position)
     {
-        Position = position;
+        PhysicsBody = physicsBody;
         Camera = new Camera(position);
     }
 
-    public void Update(float deltaTime, Map map, KeyboardState keyboardState, MouseState mouseState)
+    public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState)
     {
-        // Reset velocity
-        Velocity = Vector3.Zero;
+        // Movement forces
+        Vector3 movementForce = Vector3.Zero;
 
-        // Calculate movement direction based on camera orientation
-        Vector3 movementDirection = Vector3.Zero;
+        // Get camera-relative directions
+        Vector3 forward = new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized();
+        Vector3 right = Camera.Right;
 
-        // Horizontal movement (forward/backward, left/right)
-        if (keyboardState.IsKeyDown(Keys.W))
-        {
-            movementDirection += new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized(); // Move forward (horizontal)
-        }
-        if (keyboardState.IsKeyDown(Keys.S))
-        {
-            movementDirection -= new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized(); // Move backward (horizontal)
-        }
-        if (keyboardState.IsKeyDown(Keys.A))
-        {
-            movementDirection -= Camera.Right; // Strafe left
-        }
-        if (keyboardState.IsKeyDown(Keys.D))
-        {
-            movementDirection += Camera.Right; // Strafe right
-        }
+        // Horizontal movement
+        if (keyboardState.IsKeyDown(Keys.W)) movementForce += forward;
+        if (keyboardState.IsKeyDown(Keys.S)) movementForce -= forward;
+        if (keyboardState.IsKeyDown(Keys.A)) movementForce -= right;
+        if (keyboardState.IsKeyDown(Keys.D)) movementForce += right;
 
-        // Vertical movement (up/down)
-        if (keyboardState.IsKeyDown(Keys.Space))
+        // Vertical movement
+        if (keyboardState.IsKeyDown(Keys.Space)) movementForce += 2 * Vector3.UnitY;
+        if (keyboardState.IsKeyDown(Keys.LeftShift)) movementForce -= Vector3.UnitY;
+
+        // Apply normalized force
+        if (movementForce != Vector3.Zero)
         {
-            movementDirection += Vector3.UnitY; // Move up
-        }
-        if (keyboardState.IsKeyDown(Keys.LeftShift))
-        {
-            movementDirection -= Vector3.UnitY; // Move down
+            movementForce = Vector3.Normalize(movementForce) * Speed;
+            PhysicsBody.ApplyCentralForce(movementForce.ToBullet());
         }
 
-        // Normalize movement direction to prevent faster diagonal movement
-        if (movementDirection != Vector3.Zero)
-        {
-            movementDirection = Vector3.Normalize(movementDirection);
-        }
-
-        // Calculate new position
-        Vector3 newPosition = Position + movementDirection * Speed * deltaTime;
-
-        // Clamp the position to stay within map bounds, accounting for player size
-        newPosition.X = MathHelper.Clamp(newPosition.X, Width / 2, map.SideSize - Width / 2);
-        newPosition.Y = MathHelper.Clamp(newPosition.Y, Height / 2, map.SideSize - Height / 2);
-        newPosition.Z = MathHelper.Clamp(newPosition.Z, Width / 2, map.SideSize - Width / 2);
-
-        // Check for collisions
-        if (!map.CheckCollision(newPosition, Width, Height))
-        {
-            Position = newPosition;
-        }
-
-        // Update the camera
-        Camera.Position = Position;
+        // Update camera position from physics body
+        PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
+        Camera.Position = transform.Origin.ToOpenTK();
         Camera.Update(deltaTime, mouseState);
-
-        // Handle mouse click to place a new cube
-        if (mouseState.IsButtonDown(MouseButton.Left))
-        {
-            PlaceCube(map);
-        }
     }
 
-    private void PlaceCube(Map map)
+    public void PlaceCube(Map map, MouseState mouseState)
     {
-        // Calculate the direction the camera is facing
-        Vector3 direction = Camera.Front;
-
-        // Calculate where the new cube should go (a bit in front of the player)
-        Vector3 placePosition = Position + direction * 2.0f; // 2.0f is how far in front the cube will be placed
-
-        // Check if the position is inside the map bounds
-        if (map.IsInBounds(placePosition))
+        if (mouseState.IsButtonDown(MouseButton.Left))
         {
-            // Place a new cube in the calculated position
-            map.AddCube(placePosition);
+            Vector3 direction = Camera.Front;
+            PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
+            Vector3 position = transform.Origin.ToOpenTK() + direction * 2.0f;
+            map.AddCube(position);
         }
     }
 }
