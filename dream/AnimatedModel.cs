@@ -2,12 +2,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SharpGLTF.Schema2;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System.Runtime.InteropServices;
 using Image = SixLabors.ImageSharp.Image;
 using PrimitiveType = OpenTK.Graphics.OpenGL4.PrimitiveType;
 using Vector2 = OpenTK.Mathematics.Vector2;
@@ -27,6 +29,7 @@ public class AnimatedModel : IDisposable
         public PrimitiveType PrimitiveType;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
     private struct Vertex
     {
         public Vector3 Position;
@@ -69,25 +72,72 @@ public class AnimatedModel : IDisposable
             {
                 AlphaMode = material.Alpha,
                 AlphaCutoff = material.AlphaCutoff,
-
-                // Retrieve BaseColor channel's Color factor (or default to Vector4.One)
-                BaseColorFactor = GetMaterialColor(material, "BaseColor", Vector4.One),
-
-                // Retrieve Metallic/Roughness factors from the "MetallicRoughness" channel.
-                // We assume here that the channel’s Factor stores Metallic in X and Roughness in Y.
-                MetallicFactor = GetMaterialParameter(material, "MetallicRoughness", "MetallicFactor", 1.0f),
-                RoughnessFactor = GetMaterialParameter(material, "MetallicRoughness", "RoughnessFactor", 1.0f),
-
-                // Retrieve emissive color from the "Emissive" channel and take its XYZ components.
-                EmissiveFactor = GetMaterialColor(material, "Emissive", Vector4.Zero).Xyz
+                BaseColorFactor = GetMaterialColor(material, "BaseColor", Vector4.One)
             };
 
-            // Load textures from each channel if available.
+            // Handle MetallicRoughness parameters
+            var metallicRoughness = material.FindChannel("MetallicRoughness");
+            if (metallicRoughness.HasValue)
+            {
+                // Default values according to glTF spec
+                float metallic = 1.0f;
+                float roughness = 1.0f;
+
+                // Search through parameters list
+                foreach (var param in metallicRoughness.Value.Parameters)
+                {
+                    if (param.Name == "MetallicFactor")
+                    {
+                        metallic = metallicRoughness.Value.GetFactor("MetallicFactor");
+                    }
+                    else if (param.Name == "RoughnessFactor")
+                    {
+                        roughness = metallicRoughness.Value.GetFactor("RoughnessFactor");
+                    }
+                }
+
+                materialData.MetallicFactor = metallic;
+                materialData.RoughnessFactor = roughness;
+            }
+            else
+            {
+                materialData.MetallicFactor = 0.0f;
+                materialData.RoughnessFactor = 1.0f;
+            }
+
+            // Handle Emissive
+            var emissive = material.FindChannel("Emissive");
+            materialData.EmissiveFactor = emissive.HasValue
+                ? emissive.Value.Color.ToOpenTK().Xyz
+                : Vector3.Zero;
+
+            // Load textures
             materialData.BaseColorTexture = LoadTexture(material, "BaseColor");
             materialData.NormalTexture = LoadTexture(material, "Normal");
             materialData.MetallicRoughnessTexture = LoadTexture(material, "MetallicRoughness");
             materialData.EmissiveTexture = LoadTexture(material, "Emissive");
             materialData.OcclusionTexture = LoadTexture(material, "Occlusion");
+
+            // Set texture presence flags
+            materialData.HasBaseColorTexture = materialData.BaseColorTexture != -1;
+            materialData.HasNormalTexture = materialData.NormalTexture != -1;
+            materialData.HasMetallicRoughnessTexture = materialData.MetallicRoughnessTexture != -1;
+            materialData.HasEmissiveTexture = materialData.EmissiveTexture != -1;
+            materialData.HasOcclusionTexture = materialData.OcclusionTexture != -1;
+
+            // Log material properties
+            Console.WriteLine($"Material '{material.Name}':");
+            Console.WriteLine($"  BaseColorFactor: {materialData.BaseColorFactor}");
+            Console.WriteLine($"  EmissiveFactor: {materialData.EmissiveFactor}");
+            Console.WriteLine($"  MetallicFactor: {materialData.MetallicFactor}");
+            Console.WriteLine($"  RoughnessFactor: {materialData.RoughnessFactor}");
+            Console.WriteLine($"  AlphaMode: {materialData.AlphaMode}, AlphaCutoff: {materialData.AlphaCutoff}");
+            Console.WriteLine($"  Has BaseColorTexture: {materialData.HasBaseColorTexture}");
+            Console.WriteLine($"  Has NormalTexture: {materialData.HasNormalTexture}");
+            Console.WriteLine($"  Has MetallicRoughnessTexture: {materialData.HasMetallicRoughnessTexture}");
+            Console.WriteLine($"  Has EmissiveTexture: {materialData.HasEmissiveTexture}");
+            Console.WriteLine($"  Has OcclusionTexture: {materialData.HasOcclusionTexture}");
+
 
             _materials.Add(material, materialData);
         }
@@ -187,8 +237,10 @@ public class AnimatedModel : IDisposable
 
     private void LoadMeshes()
     {
+        Console.WriteLine("Loading Meshes...");
         foreach (var mesh in _model.LogicalMeshes)
         {
+            Console.WriteLine($"Mesh '{mesh.Name}' with {mesh.Primitives.Count} primitives:");
             var primitives = new List<MeshBuffers>();
 
             foreach (var primitive in mesh.Primitives)
@@ -196,6 +248,8 @@ public class AnimatedModel : IDisposable
                 var vertices = ProcessVertices(primitive);
                 var indices = primitive.GetIndices().Select(i => (uint)i).ToArray();
                 var buffers = CreateBuffers(vertices, indices, primitive);
+
+                Console.WriteLine($"  Primitive with {indices.Length} indices, material '{primitive.Material?.Name ?? "None"}'");
 
                 primitives.Add(buffers);
             }
@@ -213,7 +267,7 @@ public class AnimatedModel : IDisposable
         var joints = primitive.GetVertexAccessor("JOINTS_0")?.AsVector4Array();
         var weights = primitive.GetVertexAccessor("WEIGHTS_0")?.AsVector4Array();
 
-        return Enumerable.Range(0, positions.Count).Select(i => new Vertex
+        var vertices = Enumerable.Range(0, positions.Count).Select(i => new Vertex
         {
             Position = positions[i].ToOpenTK(),
             Normal = normals?[i].ToOpenTK() ?? Vector3.Zero,
@@ -222,6 +276,14 @@ public class AnimatedModel : IDisposable
             Joints = joints?[i].ToOpenTK() ?? Vector4.Zero,
             Weights = weights?[i].ToOpenTK() ?? Vector4.Zero
         }).ToArray();
+
+        // Log the normals for the first few vertices.
+        for (int i = 0; i < Math.Min(5, vertices.Length); i++)
+        {
+            Console.WriteLine($"Vertex {i} normal: {vertices[i].Normal}");
+        }
+
+        return vertices;
     }
 
     private MeshBuffers CreateBuffers(Vertex[] vertices, uint[] indices, MeshPrimitive primitive)
@@ -276,8 +338,10 @@ public class AnimatedModel : IDisposable
     #region Animation
     private void LoadAnimations()
     {
+        Console.WriteLine("Loading Animations...");
         foreach (var animation in _model.LogicalAnimations)
         {
+            Console.WriteLine($"Animation '{animation.Name}' with duration {animation.Duration} seconds");
             _animations.Add(animation.Name, animation);
         }
     }
@@ -308,18 +372,31 @@ public class AnimatedModel : IDisposable
     #region Rendering
     public void Render(Shader shader, Matrix4 view, Matrix4 projection, Matrix4 modelMatrix)
     {
+        GL.Enable(EnableCap.DepthTest);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(CullFaceMode.Back);
+
         shader.Use();
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", projection);
 
         foreach (var node in _model.DefaultScene.VisualChildren)
         {
-            if (!_meshPrimitives.TryGetValue(node.Mesh, out var primitives)) continue;
+            if (!_meshPrimitives.TryGetValue(node.Mesh, out var primitives))
+                continue;
 
-            var nodeMatrix = modelMatrix * node.WorldMatrix.ToOpenTK();
-            RenderNode(primitives, nodeMatrix, shader);
+            var nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
+            var combinedMatrix = modelMatrix * nodeWorldMatrix;
+            Console.WriteLine($"Rendering node '{node.Name}'");
+            Console.WriteLine($"  Node World Matrix: {nodeWorldMatrix}");
+            Console.WriteLine($"  Combined Model Matrix: {combinedMatrix}");
+
+            RenderNode(primitives, combinedMatrix, shader);
         }
+
+        GL.BindVertexArray(0);
     }
+
 
     private void RenderNode(List<MeshBuffers> primitives, Matrix4 modelMatrix, Shader shader)
     {
@@ -340,6 +417,20 @@ public class AnimatedModel : IDisposable
 
     private void SetMaterialProperties(Shader shader, MaterialData material)
     {
+        // Log material properties for debugging
+        Console.WriteLine("Setting Material Properties:");
+        Console.WriteLine($"  baseColorFactor: {material.BaseColorFactor}");
+        Console.WriteLine($"  metallicFactor: {material.MetallicFactor}");
+        Console.WriteLine($"  roughnessFactor: {material.RoughnessFactor}");
+        Console.WriteLine($"  emissiveFactor: {material.EmissiveFactor}");
+        Console.WriteLine($"  alphaCutoff: {material.AlphaCutoff}");
+        Console.WriteLine($"  alphaMode: {material.AlphaMode}");
+        Console.WriteLine($"  hasBaseColorTexture: {material.HasBaseColorTexture}");
+        Console.WriteLine($"  hasNormalTexture: {material.HasNormalTexture}");
+        Console.WriteLine($"  hasMetallicRoughnessTexture: {material.HasMetallicRoughnessTexture}");
+        Console.WriteLine($"  hasEmissiveTexture: {material.HasEmissiveTexture}");
+        Console.WriteLine($"  hasOcclusionTexture: {material.HasOcclusionTexture}");
+
         shader.SetVector4("material.baseColorFactor", material.BaseColorFactor);
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
         shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
@@ -347,12 +438,21 @@ public class AnimatedModel : IDisposable
         shader.SetFloat("material.alphaCutoff", material.AlphaCutoff);
         shader.SetInt("material.alphaMode", (int)material.AlphaMode);
 
+        // Set texture presence flags
+        shader.SetBool("material.hasBaseColorTexture", material.HasBaseColorTexture);
+        shader.SetBool("material.hasNormalTexture", material.HasNormalTexture);
+        shader.SetBool("material.hasMetallicRoughnessTexture", material.HasMetallicRoughnessTexture);
+        shader.SetBool("material.hasEmissiveTexture", material.HasEmissiveTexture);
+        shader.SetBool("material.hasOcclusionTexture", material.HasOcclusionTexture);
+
+        // Bind textures
         SetTexture(shader, "material.baseColorTexture", 0, material.BaseColorTexture);
         SetTexture(shader, "material.normalTexture", 1, material.NormalTexture);
         SetTexture(shader, "material.metallicRoughnessTexture", 2, material.MetallicRoughnessTexture);
         SetTexture(shader, "material.emissiveTexture", 3, material.EmissiveTexture);
         SetTexture(shader, "material.occlusionTexture", 4, material.OcclusionTexture);
     }
+
 
     private void SetTexture(Shader shader, string name, int unit, int texture)
     {
@@ -405,6 +505,13 @@ public class AnimatedModel : IDisposable
         public int MetallicRoughnessTexture = -1;
         public int EmissiveTexture = -1;
         public int OcclusionTexture = -1;
+
+        // Add texture presence flags
+        public bool HasBaseColorTexture;
+        public bool HasNormalTexture;
+        public bool HasMetallicRoughnessTexture;
+        public bool HasEmissiveTexture;
+        public bool HasOcclusionTexture;
     }
     #endregion
 }

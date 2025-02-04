@@ -16,6 +16,7 @@ public class Game : GameWindow
         Title = "My 2K Game"
     })
     {
+        //UpdateFrequency = 1;
         _render = new Render();
         _map = new Map();
         _player = new Player(new Vector3(5, 2, 5));

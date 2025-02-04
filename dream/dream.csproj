@@ -8,6 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="animations\BlueCubeGenerator\**" />
+    <EmbeddedResource Remove="animations\BlueCubeGenerator\**" />
+    <None Remove="animations\BlueCubeGenerator\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="OpenTK" Version="4.9.3" />
     <PackageReference Include="SharpGLTF.Core" Version="1.0.3" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />

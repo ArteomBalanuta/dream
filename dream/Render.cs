@@ -61,9 +61,9 @@ public class Render
             "D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl",
             "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
 
-        LoadShader("ak_shader",
-            "D:\\workspace\\dream-project\\dream\\shaders\\shaderVert.glsl",
-            "D:\\workspace\\dream-project\\dream\\shaders\\shaderFrag.glsl");
+        LoadShader("cube",
+            "D:\\workspace\\dream-project\\dream\\shaders\\cubeVertex.glsl",
+            "D:\\workspace\\dream-project\\dream\\shaders\\cubeFragment.glsl");
 
         _projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 
