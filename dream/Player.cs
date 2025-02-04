@@ -80,5 +80,27 @@ public class Player
         // Update the camera
         Camera.Position = Position;
         Camera.Update(deltaTime, mouseState);
+
+        // Handle mouse click to place a new cube
+        if (mouseState.IsButtonDown(MouseButton.Left))
+        {
+            PlaceCube(map);
+        }
+    }
+
+    private void PlaceCube(Map map)
+    {
+        // Calculate the direction the camera is facing
+        Vector3 direction = Camera.Front;
+
+        // Calculate where the new cube should go (a bit in front of the player)
+        Vector3 placePosition = Position + direction * 2.0f; // 2.0f is how far in front the cube will be placed
+
+        // Check if the position is inside the map bounds
+        if (map.IsInBounds(placePosition))
+        {
+            // Place a new cube in the calculated position
+            map.AddCube(placePosition);
+        }
     }
 }

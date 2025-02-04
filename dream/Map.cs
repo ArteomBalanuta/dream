@@ -32,8 +32,8 @@ public class Map
             }
         }
 
-        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\animation.gltf"), ShaderName = "cube" , Position = new Vector3(3,3,2)};
-        Cubes[3, 2, 2].Animation.StartAnimation();
+        Cubes[3, 2, 2] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube" , Position = new Vector3(3,3,2)};
+        //Cubes[3, 2, 2].Animation.StartAnimation();
 
 
 
@@ -95,5 +95,22 @@ public class Map
             }
         }
         return false;
+    }
+
+    public void AddCube(Vector3 position)
+    {
+        // Convert position to cube grid indices (assuming position is in world coordinates)
+        int x = (int)Math.Floor(position.X);
+        int y = (int)Math.Floor(position.Y);
+        int z = (int)Math.Floor(position.Z);
+
+        if (IsInBounds(new Vector3(x, y, z)) && !Cubes[x, y, z].IsSolid && Cubes[x, y, z].IsEmpty)
+        {
+            Cubes[x, y, z] = new Cube { IsEmpty = false, IsSolid = true, IsFire = false, Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"), ShaderName = "cube", Position = new Vector3(x, y, z) };
+
+
+
+            Console.WriteLine($"Placed a cube at: ({x}, {y}, {z})");
+        }
     }
 }
