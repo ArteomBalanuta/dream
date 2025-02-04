@@ -6,15 +6,41 @@ in vec3 fragPos;
 
 out vec4 FragColor;
 
+// Define the Material structure
+struct Material {
+    vec4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    bool hasBaseColorTexture;
+    sampler2D baseColorTexture;
+};
+
+// Declare the uniform variable
+uniform Material material;
+
 void main()
 {
-    vec3 lightPos = vec3(2.0, 5.0, 2.0);  // Try a new light position.
+    vec4 baseColor = material.baseColorFactor;
+    
+    if (material.hasBaseColorTexture) {
+        baseColor *= texture(material.baseColorTexture, texCoord0);
+    }
+
+    // Lighting
+    vec3 lightPos = vec3(4.0, 2.0, 2.0);
     vec3 lightColor = vec3(1.0);
     vec3 norm = normalize(normal);
     vec3 lightDir = normalize(lightPos - fragPos);
     
+    // Ambient lighting
+    float ambientStrength = 0.2;  // Adjust for more/less ambient light
+    vec3 ambient = ambientStrength * lightColor;
+
+    // Diffuse lighting
     float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * lightColor;
     
-    // Output the diffuse factor as grayscale.
-    FragColor = vec4(vec3(diff), 1.0);
+    // Final color calculation
+    vec3 result = (ambient + diffuse) * baseColor.rgb;
+    FragColor = vec4(result, baseColor.a);
 }
