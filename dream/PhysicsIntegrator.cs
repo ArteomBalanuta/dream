@@ -1,6 +1,7 @@
 ﻿// PhysicsIntegrator.cs
 using BulletSharp;
 using BulletSharp.Math;
+using BulletSharp.SoftBody;
 using System.Collections.Generic;
 
 public class PhysicsIntegrator : IDisposable
@@ -24,6 +25,9 @@ public class PhysicsIntegrator : IDisposable
         _solver = new SequentialImpulseConstraintSolver();
         World = new DiscreteDynamicsWorld(_dispatcher, _broadphase, _solver, _collisionConfig);
         World.Gravity = new BulletSharp.Math.Vector3(0, -10, 0);
+        World.SolverInfo.NumIterations = 10;
+        World.SolverInfo.SolverMode = SolverModes.UseWarmStarting;
+        World.DispatchInfo.UseContinuous = true;
 
         // Create player body
         PlayerBody = CreatePlayerBody(new Vector3(5, 2, 5));
@@ -31,17 +35,27 @@ public class PhysicsIntegrator : IDisposable
 
         // Falling cube
         FallingCubeBody = CreateFallingCube();
-        World.AddRigidBody(FallingCubeBody);
+        World.AddRigidBody(PlayerBody);
+
     }
 
     private RigidBody CreatePlayerBody(Vector3 position)
     {
-        const float playerHeight = 1.8f;
-        const float playerRadius = 0.3f;
+        const float playerHeight = 2.2f; // Increased from 1.8
+        const float playerRadius = 0.4f; // Increased from 0.3
+
+
         var shape = new CapsuleShape(playerRadius, playerHeight);
         var mass = 1.0f;
 
-        var startTransform = Matrix.Translation(position); // changed here from .ToBullet() to just position
+        // Adjust player starting position to account for capsule dimensions
+        var startPosition = new Vector3(
+            position.X,
+            position.Y + 1.0f, // Adjust for player height
+            position.Z
+            );
+
+        var startTransform = Matrix.Translation(startPosition);
         var motionState = new DefaultMotionState(startTransform);
 
         shape.CalculateLocalInertia(mass, out var inertia);
@@ -51,10 +65,17 @@ public class PhysicsIntegrator : IDisposable
         {
             Friction = 0.5f,
             Restitution = 0.0f,
-            LinearFactor = new BulletSharp.Math.Vector3(1, 1, 1) // Allow full 3D movement
+            LinearFactor = new BulletSharp.Math.Vector3(1, 1, 1)
         };
 
+        // Enable continuous collision detection
+        body.CcdMotionThreshold = 0.1f;
+        body.CcdSweptSphereRadius = playerRadius * 1.1f;
         body.CollisionFlags |= CollisionFlags.CharacterObject;
+
+        
+        
+
         return body;
     }
 

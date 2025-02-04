@@ -59,25 +59,29 @@ public class Map
         if (!IsInBounds(position) || !Cubes[x, y, z].IsEmpty)
             return;
 
+        Vector3 centerPos = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
         var cube = new Cube
         {
-            Position = position,
+            Position = centerPos,
             IsEmpty = false,
             IsSolid = true,
-            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"),
-            ShaderName = "cube"
+            // Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"),
+            ShaderName = "default"
         };
 
         Cubes[x, y, z] = cube;
-        AddPhysicsBody(cube, position, isStatic);
+        AddPhysicsBody(cube, centerPos, isStatic);
     }
 
     private void AddPhysicsBody(Cube cube, Vector3 position, bool isStatic)
     {
         var shape = new BoxShape(0.5f);
-        var mass = isStatic ? 0f : 1f; // Static cubes have mass 0
+        var mass = isStatic ? 0f : 1f;
 
-        var startTransform = Matrix.Translation(position.ToBullet());
+        // Use the provided position as the center (it's already x+0.5, y+0.5, z+0.5)
+        var centerPosition = position;
+
+        var startTransform = Matrix.Translation(centerPosition.ToBullet());
         var motionState = new DefaultMotionState(startTransform);
 
         shape.CalculateLocalInertia(mass, out var inertia);
@@ -90,8 +94,13 @@ public class Map
             Restitution = 0.2f
         };
 
+        body.SetMassProps(mass, inertia); // Explicitly set mass
+
         _physics.World.AddRigidBody(body);
         _physics.MapCubeBodies.Add(body);
+
+        // In Map.AddPhysicsBody (add debug logging)
+        Console.WriteLine($"Adding cube at {cube.Position.X},{cube.Position.Y},{cube.Position.Z} with center {centerPosition}");
     }
 
     public bool IsInBounds(Vector3 pos) =>

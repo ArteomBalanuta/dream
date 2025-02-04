@@ -106,15 +106,20 @@ public class Render
 
     public void DrawCube(Camera camera, Vector3 position, Cube cube)
     {
+        // Use the cube's pre-calculated center position directly
         if (cube.Animation != null)
         {
-            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
-            // Pass the Shader first, then the view, then projection, then model matrix.
-            cube.Animation.Render(_shaders[cube.ShaderName], camera.GetViewMatrix(), _projection, modelMatrix);
+            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side)
+                                * Matrix4.CreateTranslation(cube.Position);
+            cube.Animation.Render(_shaders[cube.ShaderName],
+                                camera.GetViewMatrix(),
+                                _projection,
+                                modelMatrix);
         }
         else
         {
-            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side) * Matrix4.CreateTranslation(position);
+            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side)
+                                * Matrix4.CreateTranslation(cube.Position);
             DrawCubeTransparent(camera, modelMatrix);
             DrawCubeWireframe(camera, modelMatrix);
         }

@@ -21,7 +21,7 @@ public class Game : GameWindow
     {
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics);
-        _player = new Player(_physics.PlayerBody, new Vector3(5, 2, 5));
+        _player = new Player(_map, _physics, _physics.PlayerBody, new Vector3(5, 2, 5));
         _render = new Render();
 
         CursorState = CursorState.Grabbed;
@@ -48,6 +48,8 @@ public class Game : GameWindow
                 cube.Position = transform.Origin.ToOpenTK();
             }
         }
+
+        Console.Title = $"Player Position: {_player.LastReportedPosition}";
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
