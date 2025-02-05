@@ -39,12 +39,17 @@ public class Player
     {
         PhysicsBody.Activate();
 
-        // Get current position and update camera
+        // Get current position from the physics body and update camera position.
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         Vector3 currentPos = transform.Origin.ToOpenTK();
-        Camera.Position = new Vector3(currentPos.X , currentPos.Y,currentPos.Z); //experiment camera axis 
 
-        // Calculate movement direction
+        // Center the camera at the collision box center.
+        // If you want an offset, e.g., to simulate an eye-level view, add an offset:
+        // float offsetY = 0.25f;
+        // Camera.Position = currentPos + new Vector3(0, offsetY, 0);
+        Camera.Position = currentPos + new Vector3(-0.5f, -0.5f, -0.5f);
+
+        // Calculate movement direction based on the camera’s orientation.
         Vector3 forward = new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized();
         Vector3 right = Camera.Right;
         Vector3 movementDirection = Vector3.Zero;
@@ -54,29 +59,27 @@ public class Player
         if (keyboardState.IsKeyDown(Keys.A)) movementDirection -= right;
         if (keyboardState.IsKeyDown(Keys.D)) movementDirection += right;
 
-        // Normalize and apply horizontal velocity
         if (movementDirection != Vector3.Zero)
             movementDirection = movementDirection.Normalized();
 
         Vector3 targetVelocity = movementDirection * Speed;
         Vector3 currentVelocity = PhysicsBody.LinearVelocity.ToOpenTK();
 
-        // Apply velocity only on X/Z axes
+        // Apply velocity on X/Z axes only.
         Vector3 impulse = new Vector3(
             targetVelocity.X - currentVelocity.X,
             0,
             targetVelocity.Z - currentVelocity.Z
         ) * deltaTime * 10;
-
         PhysicsBody.ApplyCentralImpulse(impulse.ToBullet());
 
-        // Jumping
+        // Jumping.
         if (keyboardState.IsKeyDown(Keys.Space))
         {
             PhysicsBody.ApplyCentralImpulse(new BulletSharp.Math.Vector3(0, 0.5f, 0));
         }
 
-        // Strictly clamp horizontal speed
+        // Clamp horizontal speed.
         Vector3 velocity = PhysicsBody.LinearVelocity.ToOpenTK();
         Vector2 horizontalVelocity = new Vector2(velocity.X, velocity.Z);
         if (horizontalVelocity.Length > Speed)
@@ -89,24 +92,21 @@ public class Player
             );
         }
 
-        ///
-
-
+        // Toggle freeze functionality.
         if (keyboardState.IsKeyDown(Keys.F))
         {
             isFrozen = !isFrozen;
             if (isFrozen)
             {
-                PhysicsBody.Gravity = BulletSharp.Math.Vector3.Zero; // Disable gravity
-                PhysicsBody.LinearVelocity = BulletSharp.Math.Vector3.Zero; // Stop movement
-                PhysicsBody.AngularVelocity = BulletSharp.Math.Vector3.Zero; // Stop rotation
-                PhysicsBody.SetMassProps(0, BulletSharp.Math.Vector3.Zero); // Make it static (mass = 0)
+                PhysicsBody.Gravity = BulletSharp.Math.Vector3.Zero;
+                PhysicsBody.LinearVelocity = BulletSharp.Math.Vector3.Zero;
+                PhysicsBody.AngularVelocity = BulletSharp.Math.Vector3.Zero;
+                PhysicsBody.SetMassProps(0, BulletSharp.Math.Vector3.Zero);
                 Console.WriteLine("Player is now frozen.");
             }
             else
             {
-                //PhysicsBody.SetMassProps(originalMass, originalInertia); // Restore mass
-                PhysicsBody.Gravity = new BulletSharp.Math.Vector3(0, -9.81f, 0); // Restore gravity
+                PhysicsBody.Gravity = new BulletSharp.Math.Vector3(0, -9.81f, 0);
                 Console.WriteLine("Player is now unfrozen.");
             }
         }
@@ -114,10 +114,10 @@ public class Player
         // Prevent rotation.
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
 
-        // Update the camera (e.g., orientation) with mouse input.
+        // Update camera orientation based on mouse input.
         Camera.Update(deltaTime, mouseState);
 
-        // Collision reporting logic (using a cooldown)
+        // Collision reporting logic (using a cooldown).
         _collisionReportTimer += deltaTime;
         if (_collisionReportTimer >= CollisionReportCooldown)
         {
@@ -125,9 +125,12 @@ public class Player
             _collisionReportTimer = 0;
         }
 
-        // Store the current position for display or further logic.
+        // Save the current position.
         LastReportedPosition = currentPos;
     }
+
+
+
     private void CheckAndLogCollisions()
     {
         var collisions = new List<CollisionInfo>();

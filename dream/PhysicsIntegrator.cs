@@ -55,7 +55,6 @@ public class PhysicsIntegrator : IDisposable
         var shape = new BoxShape(0.5f, 0.5f, 0.5f);
         float mass = 1.0f;
 
-
         var startTransform = Matrix.Translation(position);
         var motionState = new DefaultMotionState(startTransform);
 
