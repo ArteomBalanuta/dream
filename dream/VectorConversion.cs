@@ -16,4 +16,15 @@ public static class VectorConversion
     {
         return new OpenTK.Mathematics.Vector3(v.X, v.Y, v.Z);
     }
+
+    public static Matrix ConvertVector3ToMatrix(BulletSharp.Math.Vector3 position)
+    {
+        // Create a transformation matrix with the position as translation
+        return new Matrix(
+            1, 0, 0, 0,    // First row
+            0, 1, 0, 0,    // Second row
+            0, 0, 1, 0,    // Third row
+            position.X, position.Y, position.Z, 1 // Translation
+        );
+    }
 }

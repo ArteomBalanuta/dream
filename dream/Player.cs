@@ -12,7 +12,7 @@ public class Player
 
     public Map map;
     public RigidBody PhysicsBody { get; private set; }
-    public float Speed { get; set; } = 2.0f;
+    public float Speed { get; set; } = 3.0f;
     public Camera Camera { get; private set; }
 
     private bool isFrozen = false;
@@ -42,7 +42,7 @@ public class Player
         // Get current position and update camera
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         Vector3 currentPos = transform.Origin.ToOpenTK();
-        Camera.Position = currentPos;
+        Camera.Position = new Vector3(currentPos.X , currentPos.Y,currentPos.Z); //experiment camera axis 
 
         // Calculate movement direction
         Vector3 forward = new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized();

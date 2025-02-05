@@ -24,7 +24,7 @@ public class PhysicsIntegrator : IDisposable
         _broadphase = new DbvtBroadphase();
         _solver = new SequentialImpulseConstraintSolver();
         World = new DiscreteDynamicsWorld(_dispatcher, _broadphase, _solver, _collisionConfig);
-        World.Gravity = new BulletSharp.Math.Vector3(0, -10, 0);
+        World.Gravity = new BulletSharp.Math.Vector3(0, -9.8f, 0);
         World.SolverInfo.NumIterations = 10;
         World.SolverInfo.SolverMode = SolverModes.UseWarmStarting;
         World.DispatchInfo.UseContinuous = true;
@@ -34,15 +34,25 @@ public class PhysicsIntegrator : IDisposable
         World.AddRigidBody(PlayerBody);
 
         // Falling cube
-        FallingCubeBody = CreateFallingCube();
-        World.AddRigidBody(PlayerBody);
+       // FallingCubeBody = CreateFallingCube();
 
     }
+
+    /*
+    public void UpdatePlayerCollisionCamera(Player player) {
+        // Assuming 'cameraPosition' is a Vector3 containing the camera's position
+        var newTransform = VectorConversion.ToBullet(player.Camera.Position);
+
+        // Update motion state with the new camera position
+        var t = VectorConversion.ConvertVector3ToMatrix(newTransform);
+        player.PhysicsBody.MotionState.SetWorldTransform(ref t);
+    }
+    */
 
     private RigidBody CreatePlayerBody(Vector3 position)
     {
         // Use box shape for sharper collisions
-        var shape = new BoxShape(0.5f, 1f, 0.5f);
+        var shape = new BoxShape(0.5f, 0.5f, 0.5f);
         float mass = 1.0f;
 
 
@@ -57,7 +67,8 @@ public class PhysicsIntegrator : IDisposable
             Friction = 0.5f,
             Restitution = 0.0f,
             // Prevent rotation so that the box remains axis-aligned.
-           // AngularFactor = BulletSharp.Math.Vector3.Zero
+            //AngularFactor = BulletSharp.Math.Vector3.Zero
+            //AngularFactor = new Vector3(1f,1f,1f)
         };
 
         // Enable CCD to prevent tunneling

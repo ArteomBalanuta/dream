@@ -61,6 +61,7 @@ public class Game : GameWindow
         base.OnRenderFrame(args);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
+       // _physics.UpdatePlayerCollisionCamera(_player); // doesn work
         // Render all cubes
         foreach (var cube in _map.Cubes)
         {
@@ -106,6 +107,7 @@ playerTransform.ToOpenTK()
             _render.DrawCollisionShape(modelMatrix, _player.Camera);
         }
 
+       
         SwapBuffers();
     }
 
