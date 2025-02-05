@@ -7,7 +7,7 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Map
 {
-    public int SideSize { get; } = 20;
+    public int SideSize { get; } = 25;
     public Cube[,,] Cubes { get; }
     private readonly PhysicsIntegrator _physics;
 
@@ -85,8 +85,8 @@ public class Map
             Position = spaceCube.Position,
             IsEmpty = false,
             IsSolid = true,
-            //Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\new.gltf"),
-            ShaderName = "default"
+            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\GrassTextureCube.gltf"),
+            ShaderName = "cube"
         };
 
         Cubes[x, y, z] = cube;

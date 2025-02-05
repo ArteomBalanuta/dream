@@ -5,6 +5,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Game : GameWindow
@@ -13,6 +14,10 @@ public class Game : GameWindow
     private Player _player;
     private Map _map;
     private PhysicsIntegrator _physics;
+
+    private double _lastTime;
+    private int _frameCount;
+    public int FPS { get; private set; }
 
     public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
     {
@@ -31,9 +36,25 @@ public class Game : GameWindow
         CursorState = CursorState.Grabbed;
     }
 
+    public void UpdateFPS()
+    {
+        double currentTime = GLFW.GetTime(); // Get current time in seconds
+        _frameCount++;
+
+        if (currentTime - _lastTime >= 1.0) // Every second
+        {
+            FPS = _frameCount;
+            _frameCount = 0;
+            _lastTime = currentTime;
+        }
+    }
+
+
+
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
         base.OnUpdateFrame(args);
+
         float delta = (float)args.Time;
 
         // Update physics first
@@ -109,6 +130,9 @@ playerTransform.ToOpenTK()
 
        
         SwapBuffers();
+
+        UpdateFPS();
+        this.Title = "FPS: " + this.FPS.ToString();
     }
 
     protected override void OnResize(ResizeEventArgs e)
