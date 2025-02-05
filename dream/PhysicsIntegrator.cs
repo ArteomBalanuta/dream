@@ -29,8 +29,8 @@ public class PhysicsIntegrator : IDisposable
         World.SolverInfo.SolverMode = SolverModes.UseWarmStarting;
         World.DispatchInfo.UseContinuous = true;
 
-        // Create player body
-        PlayerBody = CreatePlayerBody(new Vector3(5, 2, 5));
+        // Create player body with corrected Y position
+        PlayerBody = CreatePlayerBody(new Vector3(5.5f, 1.5f, 5.5f)); // Adjusted Y to 1.5
         World.AddRigidBody(PlayerBody);
 
         // Falling cube
@@ -41,21 +41,12 @@ public class PhysicsIntegrator : IDisposable
 
     private RigidBody CreatePlayerBody(Vector3 position)
     {
-        const float playerHeight = 2.2f; // Increased from 1.8
-        const float playerRadius = 0.4f; // Increased from 0.3
+        // Use box shape for sharper collisions
+        var shape = new BoxShape(0.5f, 1f, 0.5f);
+        float mass = 1.0f;
 
 
-        var shape = new CapsuleShape(playerRadius, playerHeight);
-        var mass = 1.0f;
-
-        // Adjust player starting position to account for capsule dimensions
-        var startPosition = new Vector3(
-            position.X,
-            position.Y + 1.0f, // Adjust for player height
-            position.Z
-            );
-
-        var startTransform = Matrix.Translation(startPosition);
+        var startTransform = Matrix.Translation(position);
         var motionState = new DefaultMotionState(startTransform);
 
         shape.CalculateLocalInertia(mass, out var inertia);
@@ -65,16 +56,13 @@ public class PhysicsIntegrator : IDisposable
         {
             Friction = 0.5f,
             Restitution = 0.0f,
-            LinearFactor = new BulletSharp.Math.Vector3(1, 1, 1)
+            // Prevent rotation so that the box remains axis-aligned.
+           // AngularFactor = BulletSharp.Math.Vector3.Zero
         };
 
-        // Enable continuous collision detection
+        // Enable CCD to prevent tunneling
         body.CcdMotionThreshold = 0.1f;
-        body.CcdSweptSphereRadius = playerRadius * 1.1f;
-        body.CollisionFlags |= CollisionFlags.CharacterObject;
-
-        
-        
+        body.CcdSweptSphereRadius = 0.2f;
 
         return body;
     }

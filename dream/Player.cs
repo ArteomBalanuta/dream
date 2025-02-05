@@ -12,7 +12,7 @@ public class Player
 
     public Map map;
     public RigidBody PhysicsBody { get; private set; }
-    public float Speed { get; set; } = 15.0f;
+    public float Speed { get; set; } = 2.0f;
     public Camera Camera { get; private set; }
 
     private bool isFrozen = false;
@@ -28,6 +28,7 @@ public class Player
         this.map = map;
         _physics = physics;
         PhysicsBody = physicsBody;
+        PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
         Camera = new Camera(position);
 
         // Optionally disable deactivation to avoid sleeping issues:
@@ -36,17 +37,14 @@ public class Player
 
     public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState)
     {
-        // Wake up the physics body each frame in case it went to sleep.
         PhysicsBody.Activate();
 
-        // Get the current transform once.
+        // Get current position and update camera
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         Vector3 currentPos = transform.Origin.ToOpenTK();
-
-        // Update the camera's position
         Camera.Position = currentPos;
 
-        // Compute horizontal movement based on camera orientation.
+        // Calculate movement direction
         Vector3 forward = new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized();
         Vector3 right = Camera.Right;
         Vector3 movementDirection = Vector3.Zero;
@@ -55,6 +53,45 @@ public class Player
         if (keyboardState.IsKeyDown(Keys.S)) movementDirection -= forward;
         if (keyboardState.IsKeyDown(Keys.A)) movementDirection -= right;
         if (keyboardState.IsKeyDown(Keys.D)) movementDirection += right;
+
+        // Normalize and apply horizontal velocity
+        if (movementDirection != Vector3.Zero)
+            movementDirection = movementDirection.Normalized();
+
+        Vector3 targetVelocity = movementDirection * Speed;
+        Vector3 currentVelocity = PhysicsBody.LinearVelocity.ToOpenTK();
+
+        // Apply velocity only on X/Z axes
+        Vector3 impulse = new Vector3(
+            targetVelocity.X - currentVelocity.X,
+            0,
+            targetVelocity.Z - currentVelocity.Z
+        ) * deltaTime * 10;
+
+        PhysicsBody.ApplyCentralImpulse(impulse.ToBullet());
+
+        // Jumping
+        if (keyboardState.IsKeyDown(Keys.Space))
+        {
+            PhysicsBody.ApplyCentralImpulse(new BulletSharp.Math.Vector3(0, 0.5f, 0));
+        }
+
+        // Strictly clamp horizontal speed
+        Vector3 velocity = PhysicsBody.LinearVelocity.ToOpenTK();
+        Vector2 horizontalVelocity = new Vector2(velocity.X, velocity.Z);
+        if (horizontalVelocity.Length > Speed)
+        {
+            horizontalVelocity = horizontalVelocity.Normalized() * Speed;
+            PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(
+                horizontalVelocity.X,
+                velocity.Y,
+                horizontalVelocity.Y
+            );
+        }
+
+        ///
+
+
         if (keyboardState.IsKeyDown(Keys.F))
         {
             isFrozen = !isFrozen;
@@ -73,38 +110,6 @@ public class Player
                 Console.WriteLine("Player is now unfrozen.");
             }
         }
-
-
-        if (movementDirection != Vector3.Zero)
-            movementDirection = Vector3.Normalize(movementDirection);
-
-        // Calculate impulse (using deltaTime) only if there's movement input.
-        if (movementDirection != Vector3.Zero)
-        {
-            Vector3 impulse = movementDirection * Speed * deltaTime;
-            // Apply only horizontal impulse.
-            PhysicsBody.ApplyCentralImpulse(new BulletSharp.Math.Vector3(impulse.X, 0, impulse.Z));
-        }
-
-        // Handle jumping: apply vertical impulse if Space is pressed.
-        if (keyboardState.IsKeyDown(Keys.Space))
-        {
-            PhysicsBody.ApplyCentralImpulse(new BulletSharp.Math.Vector3(0, 0.3f, 0));
-        }
-
-        // Limit horizontal speed.
-        Vector3 velocity = PhysicsBody.LinearVelocity.ToOpenTK();
-        Vector2 horizontalVelocity = new Vector2(velocity.X, velocity.Z);
-        if (horizontalVelocity.Length > Speed)
-        {
-            horizontalVelocity = horizontalVelocity.Normalized() * Speed;
-            PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(
-                horizontalVelocity.X,
-                velocity.Y,
-                horizontalVelocity.Y
-            );
-        }
-
 
         // Prevent rotation.
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
@@ -154,7 +159,7 @@ public class Player
                 Console.WriteLine($"Player position: {collision.PlayerPosition}");
 
                 // Log nearby cubes
-                LogNearbyCubes(gridPos, 2);
+               // LogNearbyCubes(gridPos, 2);
             }
             Console.WriteLine("========================");
         }
@@ -218,10 +223,11 @@ public class Player
 
     private Vector3 WorldToGridPosition(Vector3 worldPos)
     {
+        // Snap to grid with epsilon to handle floating-point precision
         return new Vector3(
-            (int)Math.Floor(worldPos.X),
-            (int)Math.Floor(worldPos.Y),
-            (int)Math.Floor(worldPos.Z)
+            (int)Math.Floor(worldPos.X + 1e-6f),
+            (int)Math.Floor(worldPos.Y + 1e-6f),
+            (int)Math.Floor(worldPos.Z + 1e-6f)
         );
     }
 

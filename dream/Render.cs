@@ -14,40 +14,40 @@ public class Render
     // Cube vertex data: note that you might want to use indexed drawing.
     private readonly float[] _cubeVertices = {
            // Front face
-            0.0f, 0.0f, 1.0f, // Bottom-left
-            1.0f, 0.0f, 1.0f, // Bottom-right
-            1.0f, 1.0f, 1.0f, // Top-right
-            0.0f, 1.0f, 1.0f, // Top-left
+                   0.0f, 0.0f, 0.5f, // Bottom-left
+         0.5f, 0.0f, 0.5f, // Bottom-right
+         0.5f, 0.5f, 0.5f, // Top-right
+         0.0f, 0.5f, 0.5f, // Top-left
 
-            // Back face
-            0.0f, 0.0f, 0.0f, // Bottom-left
-            1.0f, 0.0f, 0.0f, // Bottom-right
-            1.0f, 1.0f, 0.0f, // Top-right
-            0.0f, 1.0f, 0.0f, // Top-left
+         // Back face
+         0.0f, 0.0f, 0.0f, // Bottom-left
+         0.5f, 0.0f, 0.0f, // Bottom-right
+         0.5f, 0.5f, 0.0f, // Top-right
+         0.0f, 0.5f, 0.0f, // Top-left
 
-            // Left face
-            0.0f, 0.0f, 0.0f, // Bottom-left
-            0.0f, 0.0f, 1.0f, // Bottom-right
-            0.0f, 1.0f, 1.0f, // Top-right
-            0.0f, 1.0f, 0.0f, // Top-left
+         // Left face
+         0.0f, 0.0f, 0.0f, // Bottom-left
+         0.0f, 0.0f, 0.5f, // Bottom-right
+         0.0f, 0.5f, 0.5f, // Top-right
+         0.0f, 0.5f, 0.0f, // Top-left
 
-            // Right face
-            1.0f, 0.0f, 0.0f, // Bottom-left
-            1.0f, 0.0f, 1.0f, // Bottom-right
-            1.0f, 1.0f, 1.0f, // Top-right
-            1.0f, 1.0f, 0.0f, // Top-left
+         // Right face
+         0.5f, 0.0f, 0.0f, // Bottom-left
+         0.5f, 0.0f, 0.5f, // Bottom-right
+         0.5f, 0.5f, 0.5f, // Top-right
+         0.5f, 0.5f, 0.0f, // Top-left
 
-            // Top face
-            0.0f, 1.0f, 1.0f, // Bottom-left
-            1.0f, 1.0f, 1.0f, // Bottom-right
-            1.0f, 1.0f, 0.0f, // Top-right
-            0.0f, 1.0f, 0.0f, // Top-left
+         // Top face
+         0.0f, 0.5f, 0.5f, // Bottom-left
+         0.5f, 0.5f, 0.5f, // Bottom-right
+         0.5f, 0.5f, 0.0f, // Top-right
+         0.0f, 0.5f, 0.0f, // Top-left
 
-            // Bottom face
-            0.0f, 0.0f, 1.0f, // Bottom-left
-            1.0f, 0.0f, 1.0f, // Bottom-right
-            1.0f, 0.0f, 0.0f, // Top-right
-            0.0f, 0.0f, 0.0f  // Top-left
+         // Bottom face
+         0.0f, 0.0f, 0.5f, // Bottom-left
+         0.5f, 0.0f, 0.5f, // Bottom-right
+         0.5f, 0.0f, 0.0f, // Top-right
+         0.0f, 0.0f, 0.0f  // Top-left
     };
 
     public Render()
@@ -104,13 +104,17 @@ public class Render
         GL.BindVertexArray(0);
     }
 
-    public void DrawCube(Camera camera, Vector3 position, Cube cube)
+    public void DrawCube(Camera camera, Cube cube)
     {
+        /* this is working when applied textures but wireframes are off  */
+        Matrix4 modelMatrix =
+    Matrix4.CreateTranslation(cube.Position)
+  * Matrix4.CreateScale(cube.Side)
+  * Matrix4.CreateTranslation(new Vector3(-0.5f, -0.5f, -0.5f));
+
         // Use the cube's pre-calculated center position directly
         if (cube.Animation != null)
         {
-            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side)
-                                * Matrix4.CreateTranslation(cube.Position);
             cube.Animation.Render(_shaders[cube.ShaderName],
                                 camera.GetViewMatrix(),
                                 _projection,
@@ -118,8 +122,6 @@ public class Render
         }
         else
         {
-            Matrix4 modelMatrix = Matrix4.CreateScale(cube.Side)
-                                * Matrix4.CreateTranslation(cube.Position);
             DrawCubeTransparent(camera, modelMatrix);
             DrawCubeWireframe(camera, modelMatrix);
         }
@@ -155,4 +157,20 @@ public class Render
         GL.BindVertexArray(0);
         GL.Disable(EnableCap.Blend);
     }
+
+    public void DrawCollisionShape(Matrix4 modelMatrix, Camera camera)
+    {
+        Shader shader = _shaders["default"];
+        shader.Use();
+        shader.SetVector3("color", new Vector3(1.0f, 0.0f, 0.0f)); // Red color for collision
+
+        SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
+
+        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, _cubeVertices.Length / 3);
+        GL.BindVertexArray(0);
+        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+    }
+
 }

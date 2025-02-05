@@ -1,4 +1,5 @@
 ﻿// Game.cs
+using BulletSharp;
 using BulletSharp.Math;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -21,7 +22,10 @@ public class Game : GameWindow
     {
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics);
-        _player = new Player(_map, _physics, _physics.PlayerBody, new Vector3(5, 2, 5));
+
+        Vector3 playerStartPos = new Vector3(5, 1.5f, 5); // Adjust based on corrected positioning
+
+        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPos);
         _render = new Render();
 
         CursorState = CursorState.Grabbed;
@@ -61,12 +65,46 @@ public class Game : GameWindow
         foreach (var cube in _map.Cubes)
         {
             if (cube.IsSolid)
-                _render.DrawCube(_player.Camera, cube.Position, cube);
+                _render.DrawCube(_player.Camera, cube);
         }
 
         // Render falling cube
-        _physics.FallingCubeBody.MotionState.GetWorldTransform(out Matrix fallTrans);
-        _render.DrawCube(_player.Camera, fallTrans.Origin.ToOpenTK(), new Cube());
+        //_physics.FallingCubeBody.MotionState.GetWorldTransform(out Matrix fallTrans);
+        //_render.DrawCube(_player.Camera, fallTrans.Origin.ToOpenTK(), new Cube());
+
+        // Render physics collision walls
+        foreach (var body in _physics.MapCubeBodies)
+        {
+            if (body.MotionState is DefaultMotionState motionState)
+            {
+                motionState.GetWorldTransform(out Matrix transform);
+                //Matrix4 modelMatrix = transform.ToOpenTK();
+
+                /* TODO : analyze this! */ 
+                Matrix4 modelMatrix =
+transform.ToOpenTK()
+* Matrix4.CreateScale(1)
+* Matrix4.CreateTranslation(new Vector3(-0.5f, -0.5f, -0.5f));
+
+
+                
+                _render.DrawCollisionShape(modelMatrix, _player.Camera);
+            }
+        }
+
+        // Also draw player bounding box
+        if (_physics.PlayerBody.MotionState is DefaultMotionState playerMotion)
+        {
+            playerMotion.GetWorldTransform(out Matrix playerTransform);
+            //Matrix4 playerModelMatrix = playerTransform.ToOpenTK();
+
+            Matrix4 modelMatrix =
+playerTransform.ToOpenTK()
+* Matrix4.CreateScale(1)
+* Matrix4.CreateTranslation(new Vector3(-0.5f, -0.5f, -0.5f));
+
+            _render.DrawCollisionShape(modelMatrix, _player.Camera);
+        }
 
         SwapBuffers();
     }
@@ -83,5 +121,18 @@ public class Game : GameWindow
         base.OnUnload();
         _physics.Dispose();
         //_render.Dispose();
+    }
+}
+
+public static class BulletSharpExtensions
+{
+    public static Matrix4 ToOpenTK(this Matrix bulletMatrix)
+    {
+        return new Matrix4(
+            bulletMatrix.M11, bulletMatrix.M12, bulletMatrix.M13, bulletMatrix.M14,
+            bulletMatrix.M21, bulletMatrix.M22, bulletMatrix.M23, bulletMatrix.M24,
+            bulletMatrix.M31, bulletMatrix.M32, bulletMatrix.M33, bulletMatrix.M34,
+            bulletMatrix.M41, bulletMatrix.M42, bulletMatrix.M43, bulletMatrix.M44
+        );
     }
 }

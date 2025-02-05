@@ -8,5 +8,7 @@ uniform mat4 projection; // Projection matrix
 
 void main() {
     // Transform the vertex position
-    gl_Position = projection * view * model * vec4(aPosition, 1.0);
+    // When rendering the cube, reduce the scale
+   
+    gl_Position = projection * view * model * vec4(aPosition, 1);
 }

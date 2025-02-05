@@ -8,7 +8,7 @@ using Vector3 = OpenTK.Mathematics.Vector3; // For Matrix and Vector3
 public class Cube
 {
     public Vector3 Position { get; set; }
-    public int Side { get; } = 1;
+    public float Side { get; } = 1.0f;
     public bool IsEmpty { get; set; } = true;
     public bool IsSolid { get; set; } = false;
     public bool IsFire { get; set; } = false;
@@ -28,12 +28,15 @@ public class Cube
     /// - If the cube is on the floor (Y == 0) its mass is set to 0 (static).
     /// - Otherwise, it gets a small dynamic mass.
     /// </summary>
+    /// 
+    /*
     public RigidBody CreateRigidBody()
     {
         // Create a box shape for a 1x1 cube.
-        CollisionShape shape = new BoxShape(0.5f);
+        CollisionShape shape = new BoxShape(0.50f);
+        shape.Margin = 0f;
         // Floor cubes (y == 0) are static; others are dynamic.
-        float mass = (Position.Y == 0) ? 0f : 0.5f;
+        float mass = (Position.Y == 0) ? 0f : 1f;
         BulletSharp.Math.Vector3 inertia = BulletSharp.Math.Vector3.Zero;
         if (mass != 0)
         {
@@ -48,4 +51,5 @@ public class Cube
         };
         return body;
     }
+    */
 }

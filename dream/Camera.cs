@@ -16,7 +16,10 @@ public class Camera
 
     public Camera(Vector3 position)
     {
-        Position = position;
+       
+        Vector3 cameraUpABit = new Vector3(position.X , position.Y, position.Z);
+        Position = cameraUpABit;
+
         UpdateVectors();
     }
 
