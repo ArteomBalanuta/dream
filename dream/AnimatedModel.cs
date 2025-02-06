@@ -268,14 +268,21 @@ public class AnimatedModel : IDisposable
         var joints = primitive.GetVertexAccessor("JOINTS_0")?.AsVector4Array();
         var weights = primitive.GetVertexAccessor("WEIGHTS_0")?.AsVector4Array();
 
-        var vertices = Enumerable.Range(0, positions.Count).Select(i => new Vertex
+        var vertices = Enumerable.Range(0, positions.Count).Select(i =>
         {
-            Position = positions[i].ToOpenTK(),
-            Normal = normals?[i].ToOpenTK() ?? Vector3.Zero,
-            Tangent = tangents?[i].ToOpenTKTan() ?? Vector3.Zero,
-            TexCoord0 = texCoords0?[i].ToOpenTK() ?? Vector2.Zero,
-            Joints = joints?[i].ToOpenTK() ?? Vector4.Zero,
-            Weights = weights?[i].ToOpenTK() ?? Vector4.Zero
+            // Convert the texture coordinate and flip the V component:
+            Vector2 uv = texCoords0 != null ? texCoords0[i].ToOpenTK() : Vector2.Zero;
+            uv.Y = 1 - uv.Y;  // Flip V
+
+            return new Vertex
+            {
+                Position = positions[i].ToOpenTK(),
+                Normal = normals?[i].ToOpenTK() ?? Vector3.Zero,
+                Tangent = tangents?[i].ToOpenTKTan() ?? Vector3.Zero,
+                TexCoord0 = uv,
+                Joints = joints?[i].ToOpenTK() ?? Vector4.Zero,
+                Weights = weights?[i].ToOpenTK() ?? Vector4.Zero
+            };
         }).ToArray();
 
         // Log the normals for the first few vertices.
@@ -286,6 +293,7 @@ public class AnimatedModel : IDisposable
 
         return vertices;
     }
+
 
     private MeshBuffers CreateBuffers(Vertex[] vertices, uint[] indices, MeshPrimitive primitive)
     {
