@@ -94,7 +94,9 @@ public class Game : GameWindow
         //_physics.FallingCubeBody.MotionState.GetWorldTransform(out Matrix fallTrans);
         //_render.DrawCube(_player.Camera, fallTrans.Origin.ToOpenTK(), new Cube());
 
+
         // Render physics collision walls
+        /*
         foreach (var body in _physics.MapCubeBodies)
         {
             if (body.MotionState is DefaultMotionState motionState)
@@ -102,7 +104,7 @@ public class Game : GameWindow
                 motionState.GetWorldTransform(out Matrix transform);
                 //Matrix4 modelMatrix = transform.ToOpenTK();
 
-                /* TODO : analyze this! */ 
+
                 Matrix4 modelMatrix =
 transform.ToOpenTK()
 * Matrix4.CreateScale(1)
@@ -115,6 +117,7 @@ transform.ToOpenTK()
         }
 
         // Also draw player bounding box
+       
         if (_physics.PlayerBody.MotionState is DefaultMotionState playerMotion)
         {
             playerMotion.GetWorldTransform(out Matrix playerTransform);
@@ -125,11 +128,15 @@ playerTransform.ToOpenTK()
 * Matrix4.CreateScale(1)
 * Matrix4.CreateTranslation(new Vector3(-0.5f, -0.5f, -0.5f));
 
-            _render.DrawCollisionShape(modelMatrix, _player.Camera);
+          _render.DrawCollisionShape(modelMatrix, _player.Camera);
         }
+        */
 
-       
+        _render.DrawHUD();
+
         SwapBuffers();
+
+      
 
         UpdateFPS();
         this.Title = "FPS: " + this.FPS.ToString();

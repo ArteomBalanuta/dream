@@ -12,7 +12,7 @@ public class Camera
     private float _pitch; // Rotation around the X axis (up and down)
     private float _yaw = -OpenTK.Mathematics.MathHelper.PiOver2; // Rotation around the Y axis (left and right)
 
-    private float _mouseSensitivity = 5.0f;
+    private float _mouseSensitivity = 3.0f;
 
     public Camera(Vector3 position)
     {
@@ -25,9 +25,10 @@ public class Camera
 
     public void Update(float deltaTime, MouseState mouseState)
     {
-        // Handle mouse input for looking around
-        _yaw += mouseState.Delta.X * _mouseSensitivity * deltaTime;
-        _pitch -= mouseState.Delta.Y * _mouseSensitivity * deltaTime;
+        float adjustedSensitivity = _mouseSensitivity * deltaTime;
+
+        _yaw += mouseState.Delta.X * adjustedSensitivity;
+        _pitch -= mouseState.Delta.Y * adjustedSensitivity;
 
         // Clamp pitch to avoid flipping
         _pitch = OpenTK.Mathematics.MathHelper.Clamp(_pitch, -OpenTK.Mathematics.MathHelper.PiOver2, OpenTK.Mathematics.MathHelper.PiOver2);
@@ -35,6 +36,7 @@ public class Camera
         // Update camera vectors
         UpdateVectors();
     }
+
 
     private void UpdateVectors()
     {

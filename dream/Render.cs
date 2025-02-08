@@ -50,6 +50,45 @@ public class Render
     -0.5f, -0.5f, -0.5f   // Top-left
     };
 
+    // HUD fields in your class:
+    private int _hudVao;
+    private int _hudVbo;
+    private Shader _hudShader;
+
+    private void InitializeHUD()
+    {
+        // Define vertices for the crosshair:
+        // Two line segments:
+        // Horizontal line from (390,300) to (410,300)
+        // Vertical line from (400,290) to (400,310)
+        float[] vertices = {
+        390f, 300f,  // horizontal left point
+        410f, 300f,  // horizontal right point
+
+        400f, 290f,  // vertical top point
+        400f, 310f   // vertical bottom point
+    };
+
+        // Generate and bind VAO and VBO
+        _hudVao = GL.GenVertexArray();
+        _hudVbo = GL.GenBuffer();
+        GL.BindVertexArray(_hudVao);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _hudVbo);
+        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
+
+        // Vertex attribute layout: 2 floats per vertex.
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 2 * sizeof(float), 0);
+
+        // Unbind buffers
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        GL.BindVertexArray(0);
+
+        // Load the shader for HUD rendering.
+        // Ensure these shader files exist and use modern GLSL.
+        _hudShader = new Shader("D:\\workspace\\dream-project\\dream\\shaders\\hudVertex.glsl", "D:\\workspace\\dream-project\\dream\\shaders\\hudFragment.glsl");
+    }
+
 
     public Render()
     {
@@ -81,6 +120,8 @@ public class Render
 
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
+
+        InitializeHUD();
     }
 
     public void LoadShader(string name, string vertexPath, string fragmentPath)
@@ -172,6 +213,38 @@ public class Render
         GL.DrawArrays(PrimitiveType.TriangleFan, 0, _cubeVertices.Length / 3);
         GL.BindVertexArray(0);
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+    }
+
+    public void DrawHUD()
+    {
+        // Disable depth testing so the HUD always appears on top.
+        GL.Disable(EnableCap.DepthTest);
+
+        // Use the HUD shader
+        _hudShader.Use();
+
+        // Create an orthographic projection matrix for 2D screen space.
+        // Here, the screen is assumed to be 800x600.
+        Matrix4 projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
+        _hudShader.SetMatrix4("projection", projection);
+
+        // Set the uniform for the crosshair color (red)
+        _hudShader.SetVector3("color", new Vector3(1.0f, 0.0f, 0.0f));
+
+        // Bind the VAO containing the crosshair geometry.
+        GL.BindVertexArray(_hudVao);
+
+        // Draw the two line segments.
+        // First two vertices make the horizontal line:
+        GL.DrawArrays(PrimitiveType.Lines, 0, 2);
+        // Next two vertices make the vertical line:
+        GL.DrawArrays(PrimitiveType.Lines, 2, 2);
+
+        // Unbind the VAO.
+        GL.BindVertexArray(0);
+
+        // Re-enable depth testing after drawing the HUD.
+        GL.Enable(EnableCap.DepthTest);
     }
 
 }

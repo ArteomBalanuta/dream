@@ -31,13 +31,15 @@ public class Player
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
         Camera = new Camera(position);
 
+        PhysicsBody.Activate();
+
+
         // Optionally disable deactivation to avoid sleeping issues:
         // PhysicsBody.SetActivationState(ActivationState.DISABLE_DEACTIVATION);
     }
 
     public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState)
     {
-        PhysicsBody.Activate();
 
         // Get current position from the physics body and update camera position.
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
