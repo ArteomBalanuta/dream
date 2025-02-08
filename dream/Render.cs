@@ -430,7 +430,7 @@ public class Render
 
         ImGui.Text("Score: 100");
         ImGui.End();
-
+       
         // Render directly without input handling
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
