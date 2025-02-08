@@ -132,11 +132,9 @@ playerTransform.ToOpenTK()
         }
         */
 
-        _render.DrawHUD();
+        _render.DrawHUD(args, IsFocused);
 
         SwapBuffers();
-
-      
 
         UpdateFPS();
         this.Title = "FPS: " + this.FPS.ToString();
