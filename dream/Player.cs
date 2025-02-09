@@ -15,6 +15,7 @@ public class Player
     private BulletSharp.Math.Vector3 _originalInertia;
     private bool _massModified;
 
+    private bool _forceActivation;
 
     public Map map;
     public RigidBody PhysicsBody { get; private set; }
