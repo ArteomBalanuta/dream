@@ -44,7 +44,7 @@ public class PlayScene : IDisposable
 
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
-        _player.PlaceCube(_map, mouseState, allowGameplayInput);
+        _player.PlaceCube(_map);
         _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
     }
 

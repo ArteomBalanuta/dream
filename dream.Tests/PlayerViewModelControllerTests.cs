@@ -36,4 +36,31 @@ public class PlayerViewModelControllerTests
 
         Assert.Equal(ViewModelAnimationRequest.Idle, controller.CurrentFrameState.Hands.AnimationRequest);
     }
+
+    [Fact]
+    public void FinishOneShot_ReturnsHeldItemToIdle()
+    {
+        ViewModelCatalog catalog = ViewModelCatalog.CreateDefault();
+        PlayerViewModelController controller = new(catalog);
+
+        controller.TriggerPrimaryUse();
+        controller.NotifyAnimationFinished(ViewModelSlot.HeldItem);
+
+        Assert.Equal(ViewModelAnimationRequest.Use, controller.CurrentFrameState.Hands.AnimationRequest);
+        Assert.Equal(ViewModelAnimationRequest.Idle, controller.CurrentFrameState.HeldItem.AnimationRequest);
+    }
+}
+
+public class PlayerInteractionTests
+{
+    [Fact]
+    public void CapturePrimaryUse_ReturnsRisingEdgeOnly()
+    {
+        PlayerInteraction interaction = new();
+
+        Assert.True(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
+        Assert.False(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
+        Assert.False(interaction.CapturePrimaryUse(new PlayerInteractionCommand(false)));
+        Assert.True(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
+    }
 }

@@ -21,7 +21,7 @@ public class Player
     public Vector3 LastReportedPosition { get; private set; }
     public float CollisionReportCooldown = 0.5f;
     private float _collisionReportTimer;
-    private bool _wasPrimaryUsePressed;
+    private bool _primaryUseTriggered;
 
     public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position)
     {
@@ -89,18 +89,16 @@ public class Player
         Console.WriteLine("========================");
     }
 
-    public void PlaceCube(Map map, MouseState mouseState, bool allowInput)
+    public void PlaceCube(Map map)
     {
-        PlayerInteractionCommand interaction = _controller.CaptureInteraction(mouseState, allowInput);
-        _interaction.TryPlaceCube(map, interaction, Camera, PhysicsBody);
+        _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
     }
 
     public bool ConsumePrimaryUsePressed(MouseState mouseState, bool allowInput)
     {
-        bool isPressed = _controller.CaptureInteraction(mouseState, allowInput).PlaceCubePressed;
-        bool triggered = isPressed && !_wasPrimaryUsePressed;
-        _wasPrimaryUsePressed = isPressed;
-        return triggered;
+        PlayerInteractionCommand interaction = _controller.CaptureInteraction(mouseState, allowInput);
+        _primaryUseTriggered = _interaction.CapturePrimaryUse(interaction);
+        return _primaryUseTriggered;
     }
 
     public Vector3 GetWorldPosition()
