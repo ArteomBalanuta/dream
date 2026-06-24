@@ -63,6 +63,10 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The world now uses separate width, height, and depth bounds instead of one cubic side length.
 - The floor is represented visually by solid cubes but physically by one merged static floor collider.
 - Changing floor size at runtime rebuilds the square floor as `N x N`, preserves in-bounds placed cubes, and clamps the player back into valid map space if needed.
+- Large-floor rendering now applies a lightweight visibility gate before per-cube drawing, reducing obviously wasted draws for distant or behind-camera cubes.
+- World rendering now also queries nearby spatial sectors before running that visibility gate, so candidate iteration scales better with larger floors.
+- Visible cubes that share the same animated model and shader are now batched through a shared setup path, reducing repeated per-cube model-render overhead.
+- The base floor now uses a dedicated local candidate query, while the spatial index is reserved for placed cubes, reducing generic candidate overhead on larger maps.
 - The player camera now uses a configurable eye-height offset instead of a fixed close-up offset.
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
 - Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.

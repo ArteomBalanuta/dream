@@ -337,6 +337,11 @@ public class Render
 
     public HudRenderer Hud => _hudRenderer;
 
+    public Shader GetShader(string name)
+    {
+        return _shaders[name];
+    }
+
     public void LoadShader(string name, string vertexPath, string fragmentPath)
     {
         _shaders[name] = new Shader(vertexPath, fragmentPath);
@@ -605,6 +610,26 @@ public class Render
         {
             settings.SetShowCollisionGeometry(changes.ShowCollisionGeometry.Value);
         }
+    }
+
+    public void DrawAnimatedCubeBatch(Camera camera, AnimatedModel animation, string shaderName, IReadOnlyList<Cube> cubes)
+    {
+        if (cubes.Count == 0)
+        {
+            return;
+        }
+
+        Shader shader = GetShader(shaderName);
+        Matrix4 view = camera.GetViewMatrix();
+        animation.BeginRender(shader, view, _projection);
+
+        foreach (Cube cube in cubes)
+        {
+            Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side);
+            animation.RenderPrepared(shader, modelMatrix);
+        }
+
+        animation.EndRender();
     }
 
 }

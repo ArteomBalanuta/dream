@@ -383,6 +383,13 @@ public class AnimatedModel : IDisposable
     #region Rendering
     public void Render(Shader shader, Matrix4 view, Matrix4 projection, Matrix4 modelMatrix)
     {
+        BeginRender(shader, view, projection);
+        RenderPrepared(shader, modelMatrix);
+        EndRender();
+    }
+
+    public void BeginRender(Shader shader, Matrix4 view, Matrix4 projection)
+    {
         GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(CullFaceMode.Back);
@@ -390,7 +397,10 @@ public class AnimatedModel : IDisposable
         shader.Use();
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", projection);
+    }
 
+    public void RenderPrepared(Shader shader, Matrix4 modelMatrix)
+    {
         foreach (var node in _model.DefaultScene.VisualChildren)
         {
             if (!_meshPrimitives.TryGetValue(node.Mesh, out var primitives))
@@ -405,7 +415,10 @@ public class AnimatedModel : IDisposable
             */
             RenderNode(primitives, combinedMatrix, shader);
         }
+    }
 
+    public void EndRender()
+    {
         GL.BindVertexArray(0);
     }
 

@@ -54,6 +54,8 @@ Inside `PlayScene.Render()`:
 - `HudRenderer` submits HUD/settings UI and returns runtime requests
 - runtime floor rebuild behavior is applied when requested
 
+`PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
+
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
 
 `Render.DrawCube()` chooses between two rendering paths:

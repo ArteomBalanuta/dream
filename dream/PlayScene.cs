@@ -45,7 +45,9 @@ public class PlayScene : IDisposable
     {
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        _render.World.DrawWorld(_player.Camera, _map.SolidCubes);
+        _render.World.DrawWorld(
+            _player.Camera,
+            _map.GetRenderCandidateCubes(_player.Camera.Position, WorldVisibility.MaxRenderDistance));
 
         if (_settings.ShowCollisionGeometry)
         {
