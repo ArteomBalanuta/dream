@@ -6,7 +6,7 @@ public class ViewModelCatalog
 
     public ViewModelCatalog(IEnumerable<ViewModelDefinition> definitions, ViewModelLoadout defaultLoadout)
     {
-        Dictionary<string, ViewModelDefinition> map = definitions.ToDictionary(d => d.Id, d => d);
+        Dictionary<string, ViewModelDefinition> map = BuildDefinitionMap(definitions);
 
         ValidateSlot(map, defaultLoadout.HandsId, ViewModelSlot.Hands);
         ValidateSlot(map, defaultLoadout.HeldItemId, ViewModelSlot.HeldItem);
@@ -29,15 +29,23 @@ public class ViewModelCatalog
 
     public static ViewModelCatalog CreateDefault()
     {
-        return new ViewModelCatalog(
-            new[]
+        return new ViewModelCatalog(ViewModelAssets.BuiltInDefinitions, ViewModelAssets.DefaultLoadout);
+    }
+
+    private static Dictionary<string, ViewModelDefinition> BuildDefinitionMap(
+        IEnumerable<ViewModelDefinition> definitions)
+    {
+        Dictionary<string, ViewModelDefinition> map = new();
+
+        foreach (ViewModelDefinition definition in definitions)
+        {
+            if (!map.TryAdd(definition.Id, definition))
             {
-                ViewModelAssets.DebugHandsDefinition,
-                ViewModelAssets.DebugHeldItemDefinition
-            },
-            new ViewModelLoadout(
-                ViewModelAssets.DebugHandsDefinition.Id,
-                ViewModelAssets.DebugHeldItemDefinition.Id));
+                throw new ArgumentException($"Duplicate viewmodel id '{definition.Id}' is not allowed.");
+            }
+        }
+
+        return map;
     }
 
     private static void ValidateSlot(

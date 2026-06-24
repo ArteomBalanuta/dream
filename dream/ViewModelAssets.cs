@@ -2,7 +2,7 @@ using OpenTK.Mathematics;
 
 public static class ViewModelAssets
 {
-    public static ViewModelDefinition DebugHandsDefinition => new(
+    public static readonly ViewModelDefinition DebugHandsDefinition = new(
         "hands.debug",
         ViewModelSlot.Hands,
         AssetPaths.Animation("viewmodels/DebugHands.gltf"),
@@ -12,7 +12,7 @@ public static class ViewModelAssets
         new Vector3(8f, 180f, 0f),
         0.55f);
 
-    public static ViewModelDefinition DebugHeldItemDefinition => new(
+    public static readonly ViewModelDefinition DebugHeldItemDefinition = new(
         "held.debug",
         ViewModelSlot.HeldItem,
         AssetPaths.Animation("viewmodels/DebugHeldItem.gltf"),
@@ -21,4 +21,15 @@ public static class ViewModelAssets
         new Vector3(0.28f, -0.28f, -0.48f),
         new Vector3(0f, 20f, 0f),
         0.35f);
+
+    public static readonly IReadOnlyList<ViewModelDefinition> BuiltInDefinitions =
+        Array.AsReadOnly(new[]
+        {
+            DebugHandsDefinition,
+            DebugHeldItemDefinition
+        });
+
+    public static readonly ViewModelLoadout DefaultLoadout = new(
+        DebugHandsDefinition.Id,
+        DebugHeldItemDefinition.Id);
 }
