@@ -42,12 +42,15 @@ public class PlayScene : IDisposable
             _viewModelController.TriggerPrimaryUse();
         }
 
-        if (ModelAssets.Get(_viewModelController.CurrentFrameState.Hands.Definition.ModelPath).Update(delta))
+        ViewModelUpdateResult viewModelUpdateResult =
+            _render.ViewModels.Update(_viewModelController.CurrentFrameState, delta);
+
+        if (viewModelUpdateResult.HandsFinished)
         {
             _viewModelController.NotifyAnimationFinished(ViewModelSlot.Hands);
         }
 
-        if (ModelAssets.Get(_viewModelController.CurrentFrameState.HeldItem.Definition.ModelPath).Update(delta))
+        if (viewModelUpdateResult.HeldItemFinished)
         {
             _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
         }
@@ -72,7 +75,7 @@ public class PlayScene : IDisposable
             _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
         }
 
-        _render.ViewModels.Draw(_player.Camera, _viewModelController.CurrentFrameState);
+        _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
 
         HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState);
         if (hudResult.RequestedResolution.HasValue)

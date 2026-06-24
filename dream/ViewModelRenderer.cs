@@ -1,4 +1,9 @@
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+
+public readonly record struct ViewModelUpdateResult(
+    bool HandsFinished,
+    bool HeldItemFinished);
 
 public class ViewModelRenderer
 {
@@ -10,22 +15,45 @@ public class ViewModelRenderer
         _render = render;
     }
 
-    public void Draw(Camera camera, ViewModelFrameState? frameState)
+    public ViewModelUpdateResult Update(ViewModelFrameState? frameState, float deltaTime)
+    {
+        if (frameState is null)
+        {
+            return default;
+        }
+
+        return new ViewModelUpdateResult(
+            UpdateSlot(frameState.Value.Hands, deltaTime),
+            UpdateSlot(frameState.Value.HeldItem, deltaTime));
+    }
+
+    public void Draw(ViewModelFrameState? frameState)
     {
         if (frameState is null)
         {
             return;
         }
 
-        DrawSlot(ModelAssets.Get(frameState.Value.Hands.Definition.ModelPath), frameState.Value.Hands, 60f);
-        DrawSlot(ModelAssets.Get(frameState.Value.HeldItem.Definition.ModelPath), frameState.Value.HeldItem, 60f);
+        // Viewmodels intentionally render on top of the world pass.
+        // Clearing only depth preserves color while preventing world geometry from clipping the first-person pass.
+        GL.Clear(ClearBufferMask.DepthBufferBit);
+
+        DrawSlot(frameState.Value.Hands, 60f);
+        DrawSlot(frameState.Value.HeldItem, 60f);
     }
 
-    private void DrawSlot(AnimatedModel model, ViewModelSlotState slotState, float fovDegrees)
+    private bool UpdateSlot(ViewModelSlotState slotState, float deltaTime)
     {
+        return ResolveModel(slotState).Update(deltaTime);
+    }
+
+    private void DrawSlot(ViewModelSlotState slotState, float fovDegrees)
+    {
+        AnimatedModel model = ResolveModel(slotState);
+        Vector2i viewportSize = _render.ViewportSize;
         Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.DegreesToRadians(fovDegrees),
-            16f / 9f,
+            (float)viewportSize.X / viewportSize.Y,
             0.01f,
             10f);
 
@@ -62,5 +90,10 @@ public class ViewModelRenderer
         }
 
         model.PlayLoop(clipName);
+    }
+
+    private static AnimatedModel ResolveModel(ViewModelSlotState slotState)
+    {
+        return ModelAssets.Get(slotState.Definition.ModelPath);
     }
 }

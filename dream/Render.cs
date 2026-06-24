@@ -341,6 +341,8 @@ public class Render
 
     public ViewModelRenderer ViewModels => _viewModelRenderer;
 
+    public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
+
     public Shader GetShader(string name)
     {
         return _shaders[name];
