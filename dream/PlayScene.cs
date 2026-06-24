@@ -12,6 +12,7 @@ public class PlayScene : IDisposable
     private readonly PhysicsIntegrator _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly GameSettings _settings;
+    private readonly PlayerViewModelController _viewModelController;
     private bool _wasSettingsTogglePressed;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
@@ -23,6 +24,7 @@ public class PlayScene : IDisposable
         _settings = settings;
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
+        _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault());
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
@@ -34,6 +36,11 @@ public class PlayScene : IDisposable
         float delta = (float)args.Time;
         HandleGlobalInput(keyboardState);
         bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
+        bool primaryUseTriggered = _player.ConsumePrimaryUsePressed(mouseState, allowGameplayInput);
+        if (primaryUseTriggered)
+        {
+            _viewModelController.TriggerPrimaryUse();
+        }
 
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
@@ -55,7 +62,7 @@ public class PlayScene : IDisposable
             _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
         }
 
-        _render.ViewModels.Draw(_player.Camera, null);
+        _render.ViewModels.Draw(_player.Camera, _viewModelController.CurrentFrameState);
 
         HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState);
         if (hudResult.RequestedResolution.HasValue)

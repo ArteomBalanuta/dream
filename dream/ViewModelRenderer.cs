@@ -1,9 +1,5 @@
 using OpenTK.Mathematics;
 
-// Temporary compile placeholder for the Task 1 seam; later tasks replace this
-// with the dedicated frame-state model in its own file.
-public readonly record struct ViewModelFrameState;
-
 public class ViewModelRenderer
 {
     private readonly Render _render;
