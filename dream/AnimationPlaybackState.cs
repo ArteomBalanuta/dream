@@ -35,7 +35,7 @@ public readonly record struct AnimationPlaybackState(
         if (nextTime >= durationSeconds)
         {
             finished = true;
-            return this with { TimeSeconds = durationSeconds, IsPlaying = true };
+            return this with { TimeSeconds = durationSeconds, IsPlaying = false };
         }
 
         return this with { TimeSeconds = nextTime };

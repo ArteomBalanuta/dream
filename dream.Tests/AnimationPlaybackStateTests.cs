@@ -28,6 +28,18 @@ public class AnimationPlaybackStateTests
     }
 
     [Fact]
+    public void Play_SameClipAndMode_IsIdempotent()
+    {
+        AnimationPlaybackState state = AnimationPlaybackState.Stopped
+            .Play("Idle", AnimationPlaybackMode.Loop)
+            .Advance(0.75f, 2f, out _);
+
+        AnimationPlaybackState replayed = state.Play("Idle", AnimationPlaybackMode.Loop);
+
+        Assert.Equal(state, replayed);
+    }
+
+    [Fact]
     public void Advance_ReportsFinishedForOneShot()
     {
         AnimationPlaybackState state = AnimationPlaybackState.Stopped
@@ -37,5 +49,20 @@ public class AnimationPlaybackStateTests
 
         Assert.True(finished);
         Assert.Equal(1f, state.TimeSeconds);
+    }
+
+    [Fact]
+    public void Advance_CompletedOneShot_FinishesOnlyOnce()
+    {
+        AnimationPlaybackState state = AnimationPlaybackState.Stopped
+            .Play("Use", AnimationPlaybackMode.OneShot);
+
+        state = state.Advance(1.25f, 1f, out bool finished);
+        AnimationPlaybackState next = state.Advance(0.1f, 1f, out bool finishedAgain);
+
+        Assert.True(finished);
+        Assert.False(state.IsPlaying);
+        Assert.False(finishedAgain);
+        Assert.Equal(state, next);
     }
 }
