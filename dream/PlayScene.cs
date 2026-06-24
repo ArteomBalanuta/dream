@@ -55,6 +55,8 @@ public class PlayScene : IDisposable
             _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
         }
 
+        _render.ViewModels.Draw(_player.Camera, null);
+
         HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState);
         if (hudResult.RequestedResolution.HasValue)
         {

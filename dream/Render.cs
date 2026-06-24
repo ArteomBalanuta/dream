@@ -78,6 +78,7 @@ public class Render
     private readonly WorldRenderer _worldRenderer;
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
+    private readonly ViewModelRenderer _viewModelRenderer;
 
     private void InitializeShaders()
     {
@@ -306,6 +307,7 @@ public class Render
         _worldRenderer = new WorldRenderer(this);
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
+        _viewModelRenderer = new ViewModelRenderer(this);
         GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -336,6 +338,8 @@ public class Render
     public DebugRenderer Debug => _debugRenderer;
 
     public HudRenderer Hud => _hudRenderer;
+
+    public ViewModelRenderer ViewModels => _viewModelRenderer;
 
     public Shader GetShader(string name)
     {
