@@ -18,9 +18,11 @@ Inside the `Game` constructor:
 - `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, player body, and registered map bodies, while helper systems now handle body creation and transform syncing.
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
 - `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
-- `Render` still owns OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, and `HudRenderer`.
+- `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
+- `PlayerViewModelController` owns first-person runtime presentation state and translates gameplay input into per-slot animation requests.
+- `ViewModelCatalog` resolves stable cosmetic ids into runtime `ViewModelDefinition` data and provides the default hands plus held-item loadout.
 - `Shader` is a low-level helper used by `Render` and `AnimatedModel`.
-- `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-based cube rendering.
+- `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-backed rendering, including named clip playback with loop and one-shot semantics.
 
 ## Update Loop
 
@@ -29,10 +31,12 @@ Inside the `Game` constructor:
 `PlayScene.Update()` performs the current simulation work in this order:
 
 1. Toggle runtime state when global scene input requests it
-2. Step the Bullet physics simulation with the current frame delta
-3. Update the player using the current keyboard and mouse state
-4. Try to place a cube in front of the player
-5. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
+2. Translate primary-use input into `PlayerViewModelController` animation requests
+3. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
+4. Step the Bullet physics simulation with the current frame delta
+5. Update the player using the current keyboard and mouse state
+6. Try to place a cube in front of the player
+7. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
 
 `Player.Update()` now coordinates smaller subsystems:
 
@@ -51,12 +55,15 @@ Inside `PlayScene.Render()`:
 - the framebuffer is cleared
 - `WorldRenderer` draws active cubes
 - `DebugRenderer` draws optional collision overlays
+- `ViewModelRenderer` clears only depth and draws the first-person hands and held-item pass
 - `HudRenderer` submits HUD/settings UI and returns runtime requests
 - runtime floor rebuild behavior is applied when requested
 
 `PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
 
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
+
+The first-person pass is intentionally threaded through `PlayScene` rather than hidden inside `Render`. `PlayScene` owns when the pass runs and what frame state it receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
 `Render.DrawCube()` chooses between two rendering paths:
 
@@ -96,8 +103,16 @@ The player and dynamic map cubes are linked through Bullet rigid bodies. During 
 - A shader dictionary keyed by logical names such as `default` and `cube`
 - HUD VAO/VBO resources
 - ImGui context, texture, and buffer resources
+- A dedicated `ViewModelRenderer` collaborator for camera-relative first-person presentation
 
 Projection is rebuilt from the live window size and configured field of view. The HUD crosshair is also rebuilt from live viewport data.
+
+`ViewModelRenderer` owns the first-person pass behavior:
+
+- resolve active hands and held-item models from the current `ViewModelFrameState`
+- apply a viewmodel-local transform and dedicated first-person projection
+- clear only the depth buffer before drawing so world color stays intact while world depth does not clip the first-person pass
+- render after world and collision-debug passes, but before HUD and ImGui
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 

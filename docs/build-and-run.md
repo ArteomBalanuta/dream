@@ -44,6 +44,7 @@ On startup, the game currently:
 - builds the HUD crosshair from the live viewport instead of from fixed HUD pixel coordinates
 - scales the HUD crosshair with window size while keeping it centered on the active viewport
 - starts with a `25 x 25` floor that can be resized at runtime from the settings menu
+- loads the default first-person hands and held-item blockout viewmodels from `dream/animations/viewmodels/`
 
 ### Default controls
 
@@ -55,6 +56,31 @@ On startup, the game currently:
 - `Esc`: open or close the settings menu
 
 When the settings menu is open, the cursor is released and gameplay input is paused.
+
+## Runtime Verification For Viewmodels
+
+Use:
+
+```powershell
+dotnet run --project dream\dream.csproj
+```
+
+Current first-milestone verification flow:
+
+1. Start the app and keep the settings menu closed so gameplay input is active.
+2. Confirm the blockout hands and held item are visible in front of the camera.
+3. Move and look around to confirm the world stays behind the first-person pass.
+4. Left click to trigger the `Use` animation on the hands and held item.
+5. Confirm the models settle back into their looping `Idle` presentation after the one-shot finishes.
+6. Confirm the HUD crosshair and ImGui still render on top of the first-person pass.
+
+Success for this milestone means:
+
+- both first-person slots render every frame
+- the pass uses live viewport aspect without obvious stretching after resize
+- left click visibly triggers the one-shot use motion
+- the world and debug passes remain behind the hands and held item
+- the HUD remains the top-most layer
 
 ## Runtime Floor Resize
 
@@ -79,6 +105,7 @@ dotnet test dream.Tests\dream.Tests.csproj
 This validates the shared asset-path and shared resource-cache behavior currently covered by the test project.
 It also covers the shared `GameSettings` defaults and resolution update behavior.
 It now also covers floor-size staging, apply behavior, and floor-size bounds.
+It also covers the viewmodel catalog, runtime controller, and named clip playback helpers added for the first-person foundation.
 For the HUD crosshair follow-up, the focused verification command used so far is `dotnet test dream.Tests\dream.Tests.csproj --filter HudLayoutTests --nologo`, which passed with `6` tests.
 
 ## Known Warnings
@@ -131,6 +158,7 @@ If the application starts failing on missing shader or model files again:
 1. Run `dotnet build dream\dream.csproj`
 2. Check the output directories under `dream/bin/Debug/net10.0/`
 3. Confirm `shaders/`, `animations/`, and `fonts/` are present
+4. If the first-person pass is missing assets, confirm `animations/viewmodels/DebugHands.gltf` and `animations/viewmodels/DebugHeldItem.gltf` were copied into the output tree
 
 ### Tests for shared runtime helpers
 
@@ -155,3 +183,5 @@ The HUD crosshair now follows the live viewport as well, so future HUD placement
 ## Pending Runtime Verification
 
 Live visual verification of the viewport-driven crosshair at multiple window sizes is still pending and should be handled separately if a change needs end-to-end runtime confirmation.
+
+The first-person milestone was manually checked with `dotnet run --project dream\dream.csproj`; screenshots were kept locally under `artifacts/` for review and were not committed to the repository.
