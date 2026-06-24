@@ -8,8 +8,8 @@ public static class ViewModelAssets
         AssetPaths.Animation("viewmodels/DebugHands.gltf"),
         "Idle",
         "Use",
-        new Vector3(0f, -0.35f, -0.55f),
-        new Vector3(8f, 180f, 0f),
+        new Vector3(0f, -0.18f, -0.42f),
+        new Vector3(12f, 180f, -4f),
         0.55f);
 
     public static readonly ViewModelDefinition DebugHeldItemDefinition = new(
@@ -18,8 +18,8 @@ public static class ViewModelAssets
         AssetPaths.Animation("viewmodels/DebugHeldItem.gltf"),
         "Idle",
         "Use",
-        new Vector3(0.28f, -0.28f, -0.48f),
-        new Vector3(0f, 20f, 0f),
+        new Vector3(0.16f, -0.12f, -0.36f),
+        new Vector3(-2f, 16f, -6f),
         0.35f);
 
     public static readonly IReadOnlyList<ViewModelDefinition> BuiltInDefinitions =

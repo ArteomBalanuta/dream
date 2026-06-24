@@ -38,8 +38,8 @@ public class ViewModelRenderer
         // Clearing only depth preserves color while preventing world geometry from clipping the first-person pass.
         GL.Clear(ClearBufferMask.DepthBufferBit);
 
-        DrawSlot(frameState.Value.Hands, 60f);
-        DrawSlot(frameState.Value.HeldItem, 60f);
+        DrawSlot(frameState.Value.Hands);
+        DrawSlot(frameState.Value.HeldItem);
     }
 
     private bool UpdateSlot(ViewModelSlotState slotState, float deltaTime)
@@ -47,22 +47,23 @@ public class ViewModelRenderer
         return ResolveModel(slotState).Update(deltaTime);
     }
 
-    private void DrawSlot(ViewModelSlotState slotState, float fovDegrees)
+    private void DrawSlot(ViewModelSlotState slotState)
     {
         AnimatedModel model = ResolveModel(slotState);
         Vector2i viewportSize = _render.ViewportSize;
+        ViewModelResolvedPose pose = slotState.ResolvedPose;
         Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(
-            MathHelper.DegreesToRadians(fovDegrees),
+            MathHelper.DegreesToRadians(pose.FieldOfViewDegrees),
             (float)viewportSize.X / viewportSize.Y,
             0.01f,
             10f);
 
         Matrix4 modelMatrix =
-            Matrix4.CreateScale(slotState.Definition.Scale) *
-            Matrix4.CreateRotationX(MathHelper.DegreesToRadians(slotState.Definition.RotationOffsetDegrees.X)) *
-            Matrix4.CreateRotationY(MathHelper.DegreesToRadians(slotState.Definition.RotationOffsetDegrees.Y)) *
-            Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(slotState.Definition.RotationOffsetDegrees.Z)) *
-            Matrix4.CreateTranslation(slotState.Definition.PositionOffset);
+            Matrix4.CreateScale(pose.Scale) *
+            Matrix4.CreateRotationX(MathHelper.DegreesToRadians(pose.RotationOffsetDegrees.X)) *
+            Matrix4.CreateRotationY(MathHelper.DegreesToRadians(pose.RotationOffsetDegrees.Y)) *
+            Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(pose.RotationOffsetDegrees.Z)) *
+            Matrix4.CreateTranslation(pose.PositionOffset);
 
         ApplyAnimation(model, slotState);
 

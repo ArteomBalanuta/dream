@@ -549,6 +549,8 @@ public class Render
                 mouseSensitivity = sensitivity;
             }
 
+            DrawViewModelControls(settings);
+
             bool showCollision = settings.ShowCollisionGeometry;
             if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
             {
@@ -593,6 +595,85 @@ public class Render
             stagedFloorSize,
             requestedFloorSize,
             showCollisionGeometry);
+    }
+
+    private static void DrawViewModelControls(GameSettings settings)
+    {
+        if (!ImGui.CollapsingHeader("Viewmodel", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        ViewModelRigSettings rig = settings.ViewModelRig;
+
+        float viewModelFov = rig.FieldOfViewDegrees;
+        if (ImGui.SliderFloat("Viewmodel FOV", ref viewModelFov, 35f, 100f))
+        {
+            rig.FieldOfViewDegrees = viewModelFov;
+        }
+
+        DrawVector3Sliders("Shared Offset", rig.PositionOffset, -1.5f, 1.5f, value => rig.PositionOffset = value);
+        DrawVector3Sliders("Shared Rotation", rig.RotationOffsetDegrees, -45f, 45f, value => rig.RotationOffsetDegrees = value);
+
+        ImGui.SeparatorText("Body Anchor");
+
+        float spread = rig.BodyAnchor.HorizontalSpread;
+        if (ImGui.SliderFloat("Body Anchor Spread", ref spread, 0f, 1.25f))
+        {
+            rig.BodyAnchor.HorizontalSpread = spread;
+        }
+
+        float drop = rig.BodyAnchor.VerticalDrop;
+        if (ImGui.SliderFloat("Body Anchor Drop", ref drop, 0f, 1f))
+        {
+            rig.BodyAnchor.VerticalDrop = drop;
+        }
+
+        float forwardPull = rig.BodyAnchor.ForwardPull;
+        if (ImGui.SliderFloat("Body Anchor Forward Pull", ref forwardPull, 0f, 1f))
+        {
+            rig.BodyAnchor.ForwardPull = forwardPull;
+        }
+
+        DrawSlotTuningControls("Hands", rig.Hands);
+        DrawSlotTuningControls("Held Item", rig.HeldItem);
+
+        if (ImGui.Button("Reset Viewmodel Tuning"))
+        {
+            settings.ResetViewModelRig();
+        }
+    }
+
+    private static void DrawSlotTuningControls(string label, ViewModelSlotTuning tuning)
+    {
+        ImGui.PushID(label);
+        if (ImGui.TreeNode(label))
+        {
+            DrawVector3Sliders("Offset", tuning.PositionOffset, -1.5f, 1.5f, value => tuning.PositionOffset = value);
+            DrawVector3Sliders("Rotation", tuning.RotationOffsetDegrees, -45f, 45f, value => tuning.RotationOffsetDegrees = value);
+            ImGui.TreePop();
+        }
+
+        ImGui.PopID();
+    }
+
+    private static void DrawVector3Sliders(string label, Vector3 currentValue, float min, float max, Action<Vector3> apply)
+    {
+        float x = currentValue.X;
+        float y = currentValue.Y;
+        float z = currentValue.Z;
+        bool changed = false;
+
+        ImGui.PushID(label);
+        changed |= ImGui.SliderFloat("X", ref x, min, max);
+        changed |= ImGui.SliderFloat("Y", ref y, min, max);
+        changed |= ImGui.SliderFloat("Z", ref z, min, max);
+        ImGui.PopID();
+
+        if (changed)
+        {
+            apply(new Vector3(x, y, z));
+        }
     }
 
     private static void ApplyHudInteractionChanges(GameSettings settings, HudInteractionChanges changes)

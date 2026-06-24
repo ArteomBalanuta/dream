@@ -73,3 +73,10 @@ Observed verification state:
 
 - Replace the blockout assets in `dream/animations/viewmodels/` with real art once the animation and proportions are approved.
 - Add player-facing skin-selection UI later on top of the existing `ViewModelCatalog` and `ViewModelLoadout` foundation instead of hardcoding more swaps into scene code.
+
+## Viewmodel Tuning Rig
+
+- Added shared viewmodel FOV and transform settings in `GameSettings.ViewModelRig`.
+- Added `ViewModelPoseResolver` so final first-person poses are built outside `Render.cs`.
+- Added body-anchor illusion controls that bias the hands and held item downward and outward so they feel more torso-connected.
+- Added per-slot `hands` and `held item` tuning controls in the runtime settings menu.

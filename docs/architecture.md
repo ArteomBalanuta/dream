@@ -20,6 +20,7 @@ Inside the `Game` constructor:
 - `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
 - `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
 - `PlayerViewModelController` owns first-person runtime presentation state and translates gameplay input into per-slot animation requests.
+- `ViewModelPoseResolver` composes the final first-person slot pose from asset defaults, shared rig settings, body-anchor illusion offsets, and per-slot tuning data.
 - `ViewModelCatalog` resolves stable cosmetic ids into runtime `ViewModelDefinition` data and provides the default hands plus held-item loadout.
 - `Shader` is a low-level helper used by `Render` and `AnimatedModel`.
 - `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-backed rendering, including named clip playback with loop and one-shot semantics.
@@ -74,7 +75,7 @@ The HUD path currently includes:
 
 - A crosshair built from simple line geometry
 - An ImGui `HUD` window for runtime status
-- An ImGui `Settings` window that can request camera, resolution, floor-size, and collision-debug changes
+- An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, and viewmodel rig changes
 
 ## Physics Model
 
@@ -115,6 +116,8 @@ Projection is rebuilt from the live window size and configured field of view. Th
 - apply a viewmodel-local transform and dedicated first-person projection
 - clear only the depth buffer before drawing so world color stays intact while world depth does not clip the first-person pass
 - render after world and collision-debug passes, but before HUD and ImGui
+
+`GameSettings` now also owns persisted `ViewModelRigSettings`, which are edited through the runtime menu and consumed by `PlayerViewModelController` plus `ViewModelPoseResolver`. That split keeps `Render` responsible for control presentation while the pose math remains in focused first-person collaborators.
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 

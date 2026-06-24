@@ -1,3 +1,4 @@
 public readonly record struct ViewModelSlotState(
     ViewModelDefinition Definition,
-    ViewModelAnimationRequest AnimationRequest);
+    ViewModelAnimationRequest AnimationRequest,
+    ViewModelResolvedPose ResolvedPose);

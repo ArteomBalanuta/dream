@@ -24,7 +24,7 @@ public class PlayScene : IDisposable
         _settings = settings;
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
-        _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault());
+        _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
@@ -34,6 +34,7 @@ public class PlayScene : IDisposable
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
+        _viewModelController.RefreshPose();
         HandleGlobalInput(keyboardState);
         bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
         bool primaryUseTriggered = _player.ConsumePrimaryUsePressed(mouseState, allowGameplayInput);

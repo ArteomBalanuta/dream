@@ -76,6 +76,18 @@ The first-person pass is owned by `ViewModelRenderer`, not by inline logic in `R
 
 `PlayerViewModelController` owns the runtime presentation state that feeds this pass, while `ViewModelCatalog` and `ViewModelAssets` define the built-in ids and default loadout.
 
+### Viewmodel Tuning
+
+The first-person rig now resolves viewmodel poses through `ViewModelPoseResolver`, layering:
+
+1. asset defaults
+2. shared rig tuning
+3. body-anchor illusion offsets
+4. per-slot corrections
+5. animation state
+
+`ViewModelRenderer` consumes the resolved pose directly, including a viewmodel-specific FOV. This keeps the projection and transform tuning runtime-adjustable without moving pose composition into `Render.cs`.
+
 ## HUD Rendering
 
 The HUD currently includes:
@@ -95,7 +107,7 @@ The crosshair layout is viewport-driven: its center and line geometry are rebuil
 - Starts a new ImGui frame
 - Renders a window at the top-left corner
 - Displays the current resolution and settings-menu hint
-- Optionally renders a settings panel with FOV, mouse sensitivity, and resolution controls
+- Optionally renders a settings panel with world FOV, mouse sensitivity, viewmodel rig controls, and resolution controls
 - Renders the ImGui draw data manually
 - Re-enables depth testing
 
