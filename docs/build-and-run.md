@@ -71,12 +71,13 @@ Current first-milestone verification flow:
 2. Confirm the blockout hands and held item are visible in front of the camera.
 3. Move and look around to confirm the world stays behind the first-person pass.
 4. Left click to trigger the `Use` animation on the hands and held item.
-5. Confirm the models settle back into their looping `Idle` presentation after the one-shot finishes.
+5. Confirm the update-driven clip playback advances and the models settle back into their looping `Idle` presentation after the one-shot finishes.
 6. Confirm the HUD crosshair and ImGui still render on top of the first-person pass.
 
 Success for this milestone means:
 
 - both first-person slots render every frame
+- the `PlayScene.Update()` viewmodel step advances clips and returns one-shots to idle without getting stuck
 - the pass uses live viewport aspect without obvious stretching after resize
 - left click visibly triggers the one-shot use motion
 - the world and debug passes remain behind the hands and held item

@@ -2,7 +2,7 @@
 
 ## Rendering Overview
 
-The rendering subsystem is centered in `Render.cs`. It initializes shared OpenGL state, loads shader programs, and creates the cube and HUD buffers used by the lower-level draw paths. Frame orchestration now happens in `PlayScene.Render()`, which drives focused renderer collaborators instead of pushing first-person behavior directly into `Render.cs`.
+The rendering subsystem is centered in `Render.cs`. It initializes shared OpenGL state, loads shader programs, and creates the cube and HUD buffers used by the lower-level draw paths. Frame orchestration now happens in `PlayScene`, which drives focused renderer collaborators during both update and render instead of pushing first-person behavior directly into `Render.cs`.
 
 At construction time, `Render`:
 
@@ -50,7 +50,7 @@ It then chooses one of two paths:
 
 ### Model-backed cube rendering
 
-If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. This is the path used for the textured floor cubes created by `Map.AddCube()`.
+If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. In the current code shape, this shared model-backed path is used broadly by solid cubes that reference the cached `GrassCube` model, including but not limited to the textured floor cubes.
 
 The current floor model is now reused through a shared model asset entry instead of being loaded separately for every floor cube.
 The world render loop now iterates the active `Map.SolidCubes` collection rather than scanning every cell in the backing world array each frame.
@@ -68,6 +68,7 @@ Both of these use the shared cube VAO and the `default` shader.
 
 The first-person pass is owned by `ViewModelRenderer`, not by inline logic in `Render.cs`. `PlayScene` provides the current `ViewModelFrameState`, and the renderer:
 
+- participates in `PlayScene.Update()` by resolving slot models, advancing clip playback, and reporting completed one-shots
 - resolves the hands and held-item models from `ViewModelDefinition.ModelPath`
 - applies per-slot local position, rotation, and scale offsets
 - uses a dedicated first-person projection built from the live viewport aspect

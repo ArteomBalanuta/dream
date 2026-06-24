@@ -63,7 +63,7 @@ Inside `PlayScene.Render()`:
 
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
 
-The first-person pass is intentionally threaded through `PlayScene` rather than hidden inside `Render`. `PlayScene` owns when the pass runs and what frame state it receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
+The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
 `Render.DrawCube()` chooses between two rendering paths:
 
@@ -109,6 +109,8 @@ Projection is rebuilt from the live window size and configured field of view. Th
 
 `ViewModelRenderer` owns the first-person pass behavior:
 
+- resolve slot models from the current frame state during `PlayScene.Update()`
+- advance clip playback and report one-shot completion back to `PlayerViewModelController`
 - resolve active hands and held-item models from the current `ViewModelFrameState`
 - apply a viewmodel-local transform and dedicated first-person projection
 - clear only the depth buffer before drawing so world color stays intact while world depth does not clip the first-person pass
