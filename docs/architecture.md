@@ -6,44 +6,53 @@ The application entry point is `Program.Main()`. It creates a `Game` object in a
 
 Inside the `Game` constructor:
 
-- `PhysicsIntegrator` is created first
-- `Map` is created next and receives the physics integrator plus the initial floor size from `GameSettings`
-- `Player` is created with the map, physics integrator, player rigid body, and starting position
-- `Render` is created last
+- `GameSettings` is created first
+- `PlayScene` is created next and receives the settings object
 - The mouse cursor is grabbed by setting `CursorState = CursorState.Grabbed`
 
 ## Main Object Relationships
 
-- `Game` is the coordinator for windowing, updates, rendering, and lifetime management.
-- `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, player body, all map bodies, and the dynamic-only map-body subset used for transform syncing.
-- `Map` owns the world cell storage, active solid cube tracking, floor generation, and cube registration with the physics system.
-- `Player` holds the camera and player rigid body, using physics impulses for movement.
-- `Render` owns OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources.
+- `Game` is the OpenTK window shell and lifecycle owner.
+- `PlayScene` is the active gameplay scene and coordinates per-frame gameplay update/render flow.
+- `GameSettings` now owns both raw tuning values and a small runtime state model (`RuntimeState`) plus targeted change events for HUD-driven configuration updates.
+- `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, player body, and registered map bodies, while helper systems now handle body creation and transform syncing.
+- `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
+- `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
+- `Render` still owns OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, and `HudRenderer`.
 - `Shader` is a low-level helper used by `Render` and `AnimatedModel`.
 - `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-based cube rendering.
 
 ## Update Loop
 
-`Game.OnUpdateFrame()` performs the current simulation work in this order:
+`Game.OnUpdateFrame()` now delegates gameplay-frame work to `PlayScene.Update()`.
 
-1. Step the Bullet physics simulation with the current frame delta
-2. Update the player using the current keyboard and mouse state
-3. Try to place a cube in front of the player
-4. Iterate through dynamic map rigid bodies and copy Bullet transform origins back into `Cube.Position`
+`PlayScene.Update()` performs the current simulation work in this order:
 
-`Player.Update()` currently handles:
+1. Toggle runtime state when global scene input requests it
+2. Step the Bullet physics simulation with the current frame delta
+3. Update the player using the current keyboard and mouse state
+4. Try to place a cube in front of the player
+5. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
 
-- Reading `W`, `A`, `S`, and `D` for horizontal movement
-- Reading `Space` for jumping
-- Reading `F` for frozen-state toggling
-- Applying impulses to the player rigid body
-- Clamping horizontal speed
-- Updating the camera orientation from mouse delta
-- Running collision logging at a timed interval
+`Player.Update()` now coordinates smaller subsystems:
+
+- `PlayerController` converts raw keyboard and mouse state into movement and interaction commands
+- `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body
+- `PlayerCameraRig` synchronizes camera position from the body and applies mouse-look
+- `PlayerInteraction` handles edge-triggered cube placement
+- `Player` itself retains collision reporting and public façade methods used by `PlayScene`
 
 ## Render Loop
 
-`Game.OnRenderFrame()` clears the framebuffer, iterates over `Map.SolidCubes`, and calls `Render.DrawCube()` for each one. After world drawing, it calls `Render.DrawHUD()` and then swaps buffers.
+`Game.OnRenderFrame()` delegates gameplay rendering to `PlayScene.Render()`, then swaps buffers and updates the shell-owned FPS title.
+
+Inside `PlayScene.Render()`:
+
+- the framebuffer is cleared
+- `WorldRenderer` draws active cubes
+- `DebugRenderer` draws optional collision overlays
+- `HudRenderer` submits HUD/settings UI and returns runtime requests
+- runtime floor rebuild behavior is applied when requested
 
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
 
@@ -56,17 +65,17 @@ The HUD path currently includes:
 
 - A crosshair built from simple line geometry
 - An ImGui `HUD` window for runtime status
-- An ImGui `Settings` window that can request camera, resolution, and floor-size changes
+- An ImGui `Settings` window that can request camera, resolution, floor-size, and collision-debug changes
 
 ## Physics Model
 
-`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. It also creates the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled.
+`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. It now uses `PhysicsFactory` to create the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled.
 
-`Map` now separates floor visuals from floor physics:
+`Map` now separates floor visuals from floor physics and data registration concerns:
 
 - the visible floor is still created as solid cubes in the map
-- the floor collision surface is registered once as a merged static floor collider
-- later non-floor cubes can still receive individual rigid bodies through `AddPhysicsBody()`
+- `WorldPhysicsBinder` registers the floor collision surface once as a merged static floor collider
+- later non-floor cubes still receive individual rigid bodies through the same binder
 
 When the floor size changes at runtime:
 
@@ -75,7 +84,7 @@ When the floor size changes at runtime:
 - `Map.CopyPlacedCubesTo()` migrates surviving non-floor cubes into the rebuilt map
 - `Player.SetWorldPosition()` resets the player transform and clears stale velocities after the rebuild
 
-The player and dynamic map cubes are linked through Bullet rigid bodies. During updates, Bullet is treated as the authoritative source of dynamic physical positions, and those world-space origins are copied back into the rendering-side `Cube` objects.
+The player and dynamic map cubes are linked through Bullet rigid bodies. During updates, Bullet is treated as the authoritative source of dynamic physical positions, and `PhysicsSyncSystem` copies those world-space origins back into the rendering-side `Cube` objects.
 
 ## Rendering Model
 
@@ -87,6 +96,13 @@ The player and dynamic map cubes are linked through Bullet rigid bodies. During 
 - ImGui context, texture, and buffer resources
 
 Projection is rebuilt from the live window size and configured field of view. The HUD crosshair is also rebuilt from live viewport data.
+
+For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
+
+- cube rigid bodies that correspond to actual cube pieces
+- the player rigid body
+
+After the Phase 1 scene extraction, the enable/disable decision is owned by `PlayScene`, while `Game` remains responsible only for shell lifecycle and cursor application.
 
 ## Current Performance Shape
 

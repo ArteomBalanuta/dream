@@ -5,7 +5,7 @@
 ## Tech Snapshot
 
 - Language: C#
-- Framework: .NET 8
+- Framework: .NET 10
 - Windowing and OpenGL: OpenTK 4.9
 - Physics: BulletSharp
 - UI overlay: ImGui.NET
@@ -14,9 +14,11 @@
 
 ## Prerequisites
 
-- .NET 8 SDK
+- .NET 10 SDK
 - Windows desktop environment with OpenGL support
 - The repo-owned runtime asset folders included under `dream/`
+
+The repository now includes `global.json`, so matching the pinned SDK version is recommended for the most predictable restore/build behavior.
 
 ## Build And Run
 
@@ -27,7 +29,7 @@ dotnet build dream\dream.csproj
 dotnet run --project dream\dream.csproj
 ```
 
-The project currently builds successfully with warnings.
+The project currently builds successfully with warnings. The remaining package warning comes from `BulletSharp`, which is intentionally still in use and restores as an older .NET Framework-oriented package.
 
 The HUD crosshair is now viewport-driven, so it is rebuilt from the live window size instead of from baked pixel coordinates.
 
@@ -48,11 +50,13 @@ The in-game settings panel currently supports:
 - mouse sensitivity adjustment
 - preset resolution switching
 - runtime floor-size resizing with an explicit apply step
+- collision-geometry debug toggling for cubes and player
 
 When the settings menu is open, gameplay movement and cube placement are paused so the UI can safely capture mouse input.
 
 ## Runtime Notes
 
+- `Game` now acts as the OpenTK window shell, while `PlayScene` owns active gameplay orchestration.
 - The main game window is created by `Game` and currently starts at `1440x1024`.
 - The title bar is updated with the current FPS count.
 - The application grabs the mouse cursor on startup.
@@ -61,6 +65,8 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - Changing floor size at runtime rebuilds the square floor as `N x N`, preserves in-bounds placed cubes, and clamps the player back into valid map space if needed.
 - The player camera now uses a configurable eye-height offset instead of a fixed close-up offset.
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
+- Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.
+- A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
 - Future HUD positioning work should derive placement from the live viewport rather than from hardcoded viewport pixel coordinates.
 - Runtime assets are resolved from the application output layout through a shared path helper. See [docs/configuration.md](docs/configuration.md) for the current asset-loading model.
 

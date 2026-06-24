@@ -4,7 +4,7 @@
 
 The project file `dream/dream.csproj` currently targets:
 
-- `net8.0`
+- `net10.0`
 
 Other enabled project settings include:
 
@@ -12,17 +12,36 @@ Other enabled project settings include:
 - `Nullable` enabled
 - `AllowUnsafeBlocks` enabled
 
+## SDK And Package Management
+
+The repository now pins the SDK with:
+
+- `global.json`: `10.0.201`
+
+The repository also now uses central package management through:
+
+- `Directory.Packages.props`
+
+That means package versions are defined once at the repository root and the project files reference packages without inline version numbers.
+
 ## Package References
 
 The current NuGet package references are:
 
 - `BulletSharp` `0.11.1`
 - `ImGui.NET` `1.91.6.1`
-- `OpenTK` `4.9.3`
-- `OpenTK.Windowing.Desktop` `4.9.3`
-- `SharpGLTF.Core` `1.0.3`
-- `SixLabors.ImageSharp` `3.1.6`
-- `System.Drawing.Common` `9.0.1`
+- `OpenTK` `4.9.4`
+- `OpenTK.Windowing.Desktop` `4.9.4`
+- `SharpGLTF.Core` `1.0.6`
+- `SixLabors.ImageSharp` `3.1.12`
+
+The test project now uses:
+
+- `Microsoft.NET.Test.Sdk` `18.7.0`
+- `xunit` `2.9.3`
+- `xunit.runner.visualstudio` `3.1.5`
+
+`System.Drawing.Common` has been removed because it is not used by the current codebase.
 
 ## Build Verification
 
@@ -39,9 +58,12 @@ Result:
 
 The current warnings include:
 
-- `BulletSharp 0.11.1` restored from older .NET Framework targets instead of `net8.0`
-- `SixLabors.ImageSharp 3.1.6` vulnerability warnings
+- `BulletSharp 0.11.1` restored from older .NET Framework targets instead of `net10.0`
 - Several nullable and obsolete API warnings in the source files
+
+The previous `SixLabors.ImageSharp 3.1.6` vulnerability warnings were removed by upgrading to `3.1.12`.
+
+`SixLabors.ImageSharp 4.0.0` was evaluated but not adopted because it now enforces a build-time Six Labors license file or key for direct package dependencies.
 
 ## Window Configuration
 
@@ -61,6 +83,7 @@ Runtime-adjustable window and camera settings are now grouped in `GameSettings.c
 - jump velocity
 - current floor size
 - pending floor size
+- collision geometry visibility
 - current window width and height
 - settings menu visibility
 
@@ -132,3 +155,11 @@ For floor-size changes, the current flow is:
 3. `Game` applies the staged size only when the explicit apply action is requested.
 4. `Game` rebuilds `Map` with the new square floor dimensions and rebinds the player to the rebuilt world.
 5. Existing non-floor cubes are migrated if they remain in bounds; the player position is preserved or clamped.
+
+For collision-debug changes, the current flow is:
+
+1. `Render` exposes a `Show Collision Geometry` checkbox.
+2. `GameSettings` stores the current runtime visibility state.
+3. `Game` conditionally renders cube and player collision wireframes from Bullet transforms.
+
+The cube visual transform now assumes centered unit-cube geometry, which matches both the built-in cube vertices and the current `GrassTextureCube.gltf` asset bounds.

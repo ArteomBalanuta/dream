@@ -1,7 +1,5 @@
-﻿// PhysicsIntegrator.cs
 using BulletSharp;
 using BulletSharp.Math;
-using BulletSharp.SoftBody;
 using System.Collections.Generic;
 
 public class PhysicsIntegrator : IDisposable
@@ -9,17 +7,17 @@ public class PhysicsIntegrator : IDisposable
     public DiscreteDynamicsWorld World { get; }
     public RigidBody PlayerBody { get; }
     public RigidBody FallingCubeBody { get; }
-    public List<RigidBody> MapCubeBodies { get; } = new List<RigidBody>();
-    public List<RigidBody> DynamicMapCubeBodies { get; } = new List<RigidBody>();
+    public List<RigidBody> MapCubeBodies { get; } = new();
+    public List<RigidBody> DynamicMapCubeBodies { get; } = new();
 
     private readonly DefaultCollisionConfiguration _collisionConfig;
     private readonly CollisionDispatcher _dispatcher;
     private readonly BroadphaseInterface _broadphase;
     private readonly SequentialImpulseConstraintSolver _solver;
+    private readonly PhysicsFactory _factory = new();
 
     public PhysicsIntegrator()
     {
-        // Physics world setup
         _collisionConfig = new DefaultCollisionConfiguration();
         _dispatcher = new CollisionDispatcher(_collisionConfig);
         _broadphase = new DbvtBroadphase();
@@ -30,75 +28,18 @@ public class PhysicsIntegrator : IDisposable
         World.SolverInfo.SolverMode = SolverModes.UseWarmStarting;
         World.DispatchInfo.UseContinuous = true;
 
-        // Create player body with corrected Y position
-        PlayerBody = CreatePlayerBody(new Vector3(5.5f, 1.5f, 5.5f)); // Adjusted Y to 1.5
+        PlayerBody = _factory.CreatePlayerBody(new Vector3(5.5f, 1.5f, 5.5f));
         World.AddRigidBody(PlayerBody);
-
-        // Falling cube
-       // FallingCubeBody = CreateFallingCube();
-
     }
 
-    /*
-    public void UpdatePlayerCollisionCamera(Player player) {
-        // Assuming 'cameraPosition' is a Vector3 containing the camera's position
-        var newTransform = VectorConversion.ToBullet(player.Camera.Position);
-
-        // Update motion state with the new camera position
-        var t = VectorConversion.ConvertVector3ToMatrix(newTransform);
-        player.PhysicsBody.MotionState.SetWorldTransform(ref t);
-    }
-    */
-
-    private RigidBody CreatePlayerBody(Vector3 position)
+    public void StepSimulation(float deltaTime)
     {
-        // Use box shape for sharper collisions
-        var shape = new BoxShape(0.5f, 0.5f, 0.5f);
-        float mass = 1.0f;
-
-        var startTransform = Matrix.Translation(position);
-        var motionState = new DefaultMotionState(startTransform);
-
-        shape.CalculateLocalInertia(mass, out var inertia);
-        var rbInfo = new RigidBodyConstructionInfo(mass, motionState, shape, inertia);
-
-        var body = new RigidBody(rbInfo)
-        {
-            Friction = 0.5f,
-            Restitution = 0.0f,
-            // Prevent rotation so that the box remains axis-aligned.
-            //AngularFactor = BulletSharp.Math.Vector3.Zero
-            //AngularFactor = new Vector3(1f,1f,1f)
-        };
-
-        // Enable CCD to prevent tunneling
-        body.CcdMotionThreshold = 0.1f;
-        body.CcdSweptSphereRadius = 0.2f;
-
-        return body;
+        World.StepSimulation(deltaTime, 10);
     }
-
-    private RigidBody CreateFallingCube()
-    {
-        var shape = new BoxShape(1.5f);
-        const float mass = 100.0f;
-        var startTransform = Matrix.Translation(4, 5, 4);
-
-        shape.CalculateLocalInertia(mass, out var inertia);
-        var rbInfo = new RigidBodyConstructionInfo(mass, new DefaultMotionState(startTransform), shape, inertia);
-
-        return new RigidBody(rbInfo)
-        {
-            Friction = 0.8f,
-            Restitution = 0.2f
-        };
-    }
-
-    public void StepSimulation(float deltaTime) => World.StepSimulation(deltaTime, 10);
 
     public void ResetMapBodies()
     {
-        foreach (var body in MapCubeBodies)
+        foreach (RigidBody body in MapCubeBodies)
         {
             if (body == null)
             {

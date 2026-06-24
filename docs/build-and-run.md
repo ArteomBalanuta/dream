@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- `.NET 8 SDK`
+- `.NET 10 SDK`
 - Windows desktop environment with OpenGL support
 
 Run the commands in this guide from the repository root:
@@ -85,8 +85,7 @@ For the HUD crosshair follow-up, the focused verification command used so far is
 
 The project currently builds with warnings, including:
 
-- `BulletSharp 0.11.1` compatibility warnings against `net8.0`
-- `SixLabors.ImageSharp 3.1.6` advisory warnings
+- `BulletSharp 0.11.1` compatibility warnings against `net10.0`
 
 Warnings are currently expected. Build failures are the condition that should block progress.
 
@@ -100,9 +99,9 @@ The runtime asset folders are:
 
 These directories are copied into the output under:
 
-- `dream/bin/Debug/net8.0/shaders/`
-- `dream/bin/Debug/net8.0/animations/`
-- `dream/bin/Debug/net8.0/fonts/`
+- `dream/bin/Debug/net10.0/shaders/`
+- `dream/bin/Debug/net10.0/animations/`
+- `dream/bin/Debug/net10.0/fonts/`
 
 If runtime asset loading fails, verify those output folders exist after build.
 
@@ -119,7 +118,7 @@ These are ignored by git and should not be treated as source files.
 
 ### `.NET` SDK missing
 
-If `dotnet` commands fail before build starts, verify that `.NET 8 SDK` is installed and available in `PATH`.
+If `dotnet` commands fail before build starts, verify that `.NET 10 SDK` is installed and available in `PATH`.
 
 ### Build warnings vs errors
 
@@ -130,7 +129,7 @@ Warnings are currently expected. If the build exits with non-zero status or show
 If the application starts failing on missing shader or model files again:
 
 1. Run `dotnet build dream\dream.csproj`
-2. Check the output directories under `dream/bin/Debug/net8.0/`
+2. Check the output directories under `dream/bin/Debug/net10.0/`
 3. Confirm `shaders/`, `animations/`, and `fonts/` are present
 
 ### Tests for shared runtime helpers

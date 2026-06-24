@@ -69,4 +69,46 @@ public class GameSettingsTests
 
         Assert.Equal(100, settings.PendingFloorSize);
     }
+
+    [Fact]
+    public void Constructor_Defaults_Collision_Debug_Geometry_To_Hidden()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        Assert.False(settings.ShowCollisionGeometry);
+    }
+
+    [Fact]
+    public void SetShowCollisionGeometry_Enables_Debug_Rendering()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.SetShowCollisionGeometry(true);
+
+        Assert.True(settings.ShowCollisionGeometry);
+    }
+
+    [Fact]
+    public void CurrentRuntimeState_Reflects_Settings_Menu_Mode()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.ToggleSettings();
+
+        Assert.Equal(RuntimeMode.SettingsMenu, settings.CurrentRuntimeState.Mode);
+        Assert.False(settings.CurrentRuntimeState.AllowGameplayInput);
+    }
+
+    [Fact]
+    public void SetShowCollisionGeometry_Raises_Event()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+        CollisionDebugVisibilityChangedEvent? observedEvent = null;
+        settings.CollisionDebugVisibilityChanged += e => observedEvent = e;
+
+        settings.SetShowCollisionGeometry(true);
+
+        Assert.NotNull(observedEvent);
+        Assert.True(observedEvent.Value.IsVisible);
+    }
 }

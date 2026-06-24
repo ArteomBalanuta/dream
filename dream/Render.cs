@@ -15,7 +15,8 @@ public class Render
         float? MouseSensitivity,
         Vector2i? RequestedResolution,
         int? StagedFloorSize,
-        int? RequestedFloorSize);
+        int? RequestedFloorSize,
+        bool? ShowCollisionGeometry);
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
@@ -74,6 +75,9 @@ public class Render
     private int _indexBuffer;
     private Vector2i _currentSize;
     private Vector2i _crosshairViewportSize;
+    private readonly WorldRenderer _worldRenderer;
+    private readonly DebugRenderer _debugRenderer;
+    private readonly HudRenderer _hudRenderer;
 
     private void InitializeShaders()
     {
@@ -299,6 +303,9 @@ public class Render
 
     public Render(GameSettings settings)
     {
+        _worldRenderer = new WorldRenderer(this);
+        _debugRenderer = new DebugRenderer(this);
+        _hudRenderer = new HudRenderer(this);
         GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -324,6 +331,12 @@ public class Render
         InitializeHUD();
     }
 
+    public WorldRenderer World => _worldRenderer;
+
+    public DebugRenderer Debug => _debugRenderer;
+
+    public HudRenderer Hud => _hudRenderer;
+
     public void LoadShader(string name, string vertexPath, string fragmentPath)
     {
         _shaders[name] = new Shader(vertexPath, fragmentPath);
@@ -348,11 +361,7 @@ public class Render
 
     public void DrawCube(Camera camera, Cube cube)
     {
-        /* this is working when applied textures but wireframes are off  */
-        Matrix4 modelMatrix =
-    Matrix4.CreateTranslation(cube.Position)
-  * Matrix4.CreateScale(cube.Side)
-  * Matrix4.CreateTranslation(new Vector3(-0.5f, -0.5f, -0.5f));
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side);
 
         // Use the cube's pre-calculated center position directly
         if (cube.Animation != null)
@@ -413,6 +422,17 @@ public class Render
         GL.DrawArrays(PrimitiveType.TriangleFan, 0, _cubeVertices.Length / 3);
         GL.BindVertexArray(0);
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+    }
+
+    public void DrawCollisionBody(BulletSharp.RigidBody body, Camera camera)
+    {
+        if (body.MotionState == null)
+        {
+            return;
+        }
+
+        body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+        DrawCollisionShape(CubeTransforms.CreateCollisionDebugModelMatrix(transform), camera);
     }
 
     private bool _wasFocused = true;
@@ -486,6 +506,7 @@ public class Render
         Vector2i? requestedResolution = null;
         int? stagedFloorSize = null;
         int? requestedFloorSize = null;
+        bool? showCollisionGeometry = null;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
@@ -515,6 +536,12 @@ public class Render
             if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
             {
                 mouseSensitivity = sensitivity;
+            }
+
+            bool showCollision = settings.ShowCollisionGeometry;
+            if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
+            {
+                showCollisionGeometry = showCollision;
             }
 
             int floorSize = settings.PendingFloorSize;
@@ -548,7 +575,13 @@ public class Render
             ImGui.End();
         }
 
-        return new HudInteractionChanges(fieldOfViewDegrees, mouseSensitivity, requestedResolution, stagedFloorSize, requestedFloorSize);
+        return new HudInteractionChanges(
+            fieldOfViewDegrees,
+            mouseSensitivity,
+            requestedResolution,
+            stagedFloorSize,
+            requestedFloorSize,
+            showCollisionGeometry);
     }
 
     private static void ApplyHudInteractionChanges(GameSettings settings, HudInteractionChanges changes)
@@ -566,6 +599,11 @@ public class Render
         if (changes.StagedFloorSize.HasValue)
         {
             settings.StageFloorSize(changes.StagedFloorSize.Value);
+        }
+
+        if (changes.ShowCollisionGeometry.HasValue)
+        {
+            settings.SetShowCollisionGeometry(changes.ShowCollisionGeometry.Value);
         }
     }
 
