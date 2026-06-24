@@ -15,6 +15,8 @@ public class GameSettings
 
     public float JumpVelocity { get; set; } = 5f;
 
+    public ViewModelRigSettings ViewModelRig { get; private set; } = ViewModelRigSettings.CreateDefault();
+
     public int FloorSize { get; private set; } = 25;
 
     public int PendingFloorSize { get; private set; } = 25;
@@ -68,5 +70,10 @@ public class GameSettings
     {
         ShowCollisionGeometry = showCollisionGeometry;
         CollisionDebugVisibilityChanged?.Invoke(new CollisionDebugVisibilityChangedEvent(ShowCollisionGeometry));
+    }
+
+    public void ResetViewModelRig()
+    {
+        ViewModelRig = ViewModelRigSettings.CreateDefault();
     }
 }

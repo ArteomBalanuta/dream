@@ -12,6 +12,7 @@ public class PlayScene : IDisposable
     private readonly PhysicsIntegrator _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly GameSettings _settings;
+    private readonly PlayerViewModelController _viewModelController;
     private bool _wasSettingsTogglePressed;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
@@ -23,6 +24,7 @@ public class PlayScene : IDisposable
         _settings = settings;
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
+        _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
@@ -32,12 +34,31 @@ public class PlayScene : IDisposable
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
+        _viewModelController.RefreshPose();
         HandleGlobalInput(keyboardState);
         bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
+        bool primaryUseTriggered = _player.ConsumePrimaryUsePressed(mouseState, allowGameplayInput);
+        if (primaryUseTriggered)
+        {
+            _viewModelController.TriggerPrimaryUse();
+        }
+
+        ViewModelUpdateResult viewModelUpdateResult =
+            _render.ViewModels.Update(_viewModelController.CurrentFrameState, delta);
+
+        if (viewModelUpdateResult.HandsFinished)
+        {
+            _viewModelController.NotifyAnimationFinished(ViewModelSlot.Hands);
+        }
+
+        if (viewModelUpdateResult.HeldItemFinished)
+        {
+            _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
+        }
 
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
-        _player.PlaceCube(_map, mouseState, allowGameplayInput);
+        _player.PlaceCube(_map);
         _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
     }
 
@@ -54,6 +75,8 @@ public class PlayScene : IDisposable
             _render.Debug.DrawCollisionBodies(_physics.MapCubeBodies, _player.Camera);
             _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
         }
+
+        _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
 
         HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState);
         if (hudResult.RequestedResolution.HasValue)

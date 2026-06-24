@@ -4,17 +4,24 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class PlayerInteraction
 {
-    private bool _wasPlaceCubePressed;
+    private bool _wasPrimaryUsePressed;
 
-    public void TryPlaceCube(Map map, PlayerInteractionCommand command, Camera camera, BulletSharp.RigidBody body)
+    public bool CapturePrimaryUse(PlayerInteractionCommand command)
     {
-        if (command.PlaceCubePressed && !_wasPlaceCubePressed)
+        bool triggered = command.PlaceCubePressed && !_wasPrimaryUsePressed;
+        _wasPrimaryUsePressed = command.PlaceCubePressed;
+        return triggered;
+    }
+
+    public void TryPlaceCube(Map map, bool primaryUseTriggered, Camera camera, BulletSharp.RigidBody body)
+    {
+        if (!primaryUseTriggered)
         {
-            body.MotionState.GetWorldTransform(out Matrix transform);
-            Vector3 position = transform.Origin.ToOpenTK() + camera.Front * 2.0f;
-            map.AddCube(position);
+            return;
         }
 
-        _wasPlaceCubePressed = command.PlaceCubePressed;
+        body.MotionState.GetWorldTransform(out Matrix transform);
+        Vector3 position = transform.Origin.ToOpenTK() + camera.Front * 2.0f;
+        map.AddCube(position);
     }
 }

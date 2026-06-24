@@ -51,8 +51,8 @@ public class AnimatedModel : IDisposable
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
     private readonly Dictionary<string, Animation> _animations = new();
     private readonly List<int> _textures = new();
-    private float _animationTime;
-    private bool _isAnimating;
+    private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
+    private string? _idleClipName;
 
     public AnimatedModel(string filePath)
     {
@@ -357,17 +357,29 @@ public class AnimatedModel : IDisposable
         }
     }
 
-    public void Update(float deltaTime)
+    public bool Update(float deltaTime)
     {
-        if (!_isAnimating) return;
-
-        _animationTime += deltaTime * AnimationSpeed;
-
-        foreach (var animation in _animations.Values)
+        if (!_playback.IsPlaying || string.IsNullOrWhiteSpace(_playback.ClipName))
         {
-            var time = _animationTime % animation.Duration;
-            UpdateNodes(animation, time);
+            return false;
         }
+
+        if (!_animations.TryGetValue(_playback.ClipName, out Animation animation))
+        {
+            _playback = AnimationPlaybackState.Stopped;
+            return false;
+        }
+
+        _playback = _playback.Advance(deltaTime * AnimationSpeed, animation.Duration, out bool finished);
+        UpdateNodes(animation, _playback.TimeSeconds);
+
+        if (finished && _playback.Mode == AnimationPlaybackMode.OneShot && !string.IsNullOrWhiteSpace(_idleClipName))
+        {
+            _playback = _playback.Play(_idleClipName, AnimationPlaybackMode.Loop);
+            return true;
+        }
+
+        return finished;
     }
 
     private void UpdateNodes(Animation animation, float time)
@@ -516,8 +528,33 @@ public class AnimatedModel : IDisposable
 
     #region Properties
     public float AnimationSpeed { get; set; } = 1.0f;
-    public void StartAnimation(string name = null) => _isAnimating = true;
-    public void StopAnimation() => _isAnimating = false;
+
+    public void PlayLoop(string clipName)
+    {
+        _idleClipName = clipName;
+        _playback = _playback.Play(clipName, AnimationPlaybackMode.Loop);
+    }
+
+    public void PlayOneShot(string clipName)
+    {
+        _playback = _playback.Play(clipName, AnimationPlaybackMode.OneShot);
+    }
+
+    public void StartAnimation(string? name = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        PlayLoop(name);
+    }
+
+    public void StopAnimation()
+    {
+        _playback = AnimationPlaybackState.Stopped;
+        _idleClipName = null;
+    }
 
     private static void Log(string message)
     {

@@ -14,6 +14,14 @@ public class GameSettingsTests
         Assert.Equal(70f, settings.FieldOfViewDegrees);
         Assert.Equal(25, settings.FloorSize);
         Assert.Equal(25, settings.PendingFloorSize);
+        Assert.Equal(60f, settings.ViewModelRig.FieldOfViewDegrees);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.PositionOffset);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.RotationOffsetDegrees);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.Hands.PositionOffset);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.HeldItem.PositionOffset);
+        Assert.Equal(0.45f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
+        Assert.Equal(0.28f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
+        Assert.Equal(0.18f, settings.ViewModelRig.BodyAnchor.ForwardPull);
     }
 
     [Fact]
@@ -110,5 +118,35 @@ public class GameSettingsTests
 
         Assert.NotNull(observedEvent);
         Assert.True(observedEvent.Value.IsVisible);
+    }
+
+    [Fact]
+    public void ResetViewModelRig_Restores_Defaults()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+        settings.ViewModelRig.FieldOfViewDegrees = 78f;
+        settings.ViewModelRig.PositionOffset = new Vector3(0.2f, -0.3f, 0.1f);
+        settings.ViewModelRig.Hands.RotationOffsetDegrees = new Vector3(2f, 14f, -9f);
+        settings.ViewModelRig.BodyAnchor.HorizontalSpread = 0.7f;
+
+        settings.ResetViewModelRig();
+
+        Assert.Equal(60f, settings.ViewModelRig.FieldOfViewDegrees);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.PositionOffset);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.RotationOffsetDegrees);
+        Assert.Equal(Vector3.Zero, settings.ViewModelRig.Hands.RotationOffsetDegrees);
+        Assert.Equal(0.45f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
+    }
+
+    [Fact]
+    public void ViewModelRig_Allows_Live_Shared_Adjustments()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.ViewModelRig.FieldOfViewDegrees = 72f;
+        settings.ViewModelRig.PositionOffset = new Vector3(0.05f, -0.10f, 0.02f);
+
+        Assert.Equal(72f, settings.ViewModelRig.FieldOfViewDegrees);
+        Assert.Equal(new Vector3(0.05f, -0.10f, 0.02f), settings.ViewModelRig.PositionOffset);
     }
 }

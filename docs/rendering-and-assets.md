@@ -2,7 +2,7 @@
 
 ## Rendering Overview
 
-The rendering subsystem is centered in `Render.cs`. It initializes OpenGL state, loads shader programs, and creates the cube and HUD buffers used by the lower-level draw paths. Frame orchestration and world iteration happen in `Game.OnRenderFrame()`, which calls into `Render` for the actual draw operations.
+The rendering subsystem is centered in `Render.cs`. It initializes shared OpenGL state, loads shader programs, and creates the cube and HUD buffers used by the lower-level draw paths. Frame orchestration now happens in `PlayScene`, which drives focused renderer collaborators during both update and render instead of pushing first-person behavior directly into `Render.cs`.
 
 At construction time, `Render`:
 
@@ -11,6 +11,16 @@ At construction time, `Render`:
 - Creates the cube VAO and VBO used for basic cube rendering
 - Initializes HUD geometry
 - Initializes ImGui and its supporting OpenGL resources
+- Exposes `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer` as scene-facing collaborators
+
+The current frame order is:
+
+1. world cubes
+2. collision/debug overlays
+3. first-person viewmodels
+4. HUD and ImGui
+
+That ordering keeps the hands and held item visually above the world while still letting the HUD render last.
 
 ## Shader Usage
 
@@ -40,7 +50,7 @@ It then chooses one of two paths:
 
 ### Model-backed cube rendering
 
-If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. This is the path used for the textured floor cubes created by `Map.AddCube()`.
+If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. In the current code shape, this shared model-backed path is used broadly by solid cubes that reference the cached `GrassCube` model, including but not limited to the textured floor cubes.
 
 The current floor model is now reused through a shared model asset entry instead of being loaded separately for every floor cube.
 The world render loop now iterates the active `Map.SolidCubes` collection rather than scanning every cell in the backing world array each frame.
@@ -53,6 +63,30 @@ If `Cube.Animation` is not set, the renderer:
 - Draws a white wireframe overlay
 
 Both of these use the shared cube VAO and the `default` shader.
+
+## First-Person Viewmodels
+
+The first-person pass is owned by `ViewModelRenderer`, not by inline logic in `Render.cs`. `PlayScene` provides the current `ViewModelFrameState`, and the renderer:
+
+- participates in `PlayScene.Update()` by resolving slot models, advancing clip playback, and reporting completed one-shots
+- resolves the hands and held-item models from `ViewModelDefinition.ModelPath`
+- applies per-slot local position, rotation, and scale offsets
+- uses a dedicated first-person projection built from the live viewport aspect
+- clears only the depth buffer before drawing so world geometry does not clip the camera-relative pass
+
+`PlayerViewModelController` owns the runtime presentation state that feeds this pass, while `ViewModelCatalog` and `ViewModelAssets` define the built-in ids and default loadout.
+
+### Viewmodel Tuning
+
+The first-person rig now resolves viewmodel poses through `ViewModelPoseResolver`, layering:
+
+1. asset defaults
+2. shared rig tuning
+3. body-anchor illusion offsets
+4. per-slot corrections
+5. animation state
+
+`ViewModelRenderer` consumes the resolved pose directly, including a viewmodel-specific FOV. This keeps the projection and transform tuning runtime-adjustable without moving pose composition into `Render.cs`.
 
 ## HUD Rendering
 
@@ -73,7 +107,7 @@ The crosshair layout is viewport-driven: its center and line geometry are rebuil
 - Starts a new ImGui frame
 - Renders a window at the top-left corner
 - Displays the current resolution and settings-menu hint
-- Optionally renders a settings panel with FOV, mouse sensitivity, and resolution controls
+- Optionally renders a settings panel with world FOV, mouse sensitivity, viewmodel rig controls, and resolution controls
 - Renders the ImGui draw data manually
 - Re-enables depth testing
 
@@ -87,7 +121,7 @@ The renderer no longer uses a fixed square aspect ratio. `Render` rebuilds its p
 
 On the player side, the camera now follows a configurable eye-height offset instead of an embedded diagonal offset, which avoids the previous close-up framing problem and gives the settings model a single place to own camera feel defaults.
 
-## glTF Model Loading
+## glTF Model Loading And Clips
 
 `AnimatedModel.cs` uses `SharpGLTF.Schema2.ModelRoot.Load()` to load a glTF asset from disk. During initialization, it:
 
@@ -103,6 +137,13 @@ When rendering, it:
 - Applies the caller-supplied model, view, and projection transforms
 - Iterates the default scene's visual children
 - Draws each mesh primitive with its material properties and textures
+
+For first-person presentation, `AnimatedModel` now also supports named clip playback with explicit loop and one-shot modes. The current viewmodel milestone expects exact clip names:
+
+- `Idle`: looping baseline presentation
+- `Use`: one-shot click or use animation
+
+Viewmodel assets should ship those exact clip names so the controller and renderer can stay data-driven instead of per-asset hardcoded.
 
 ## Texture Handling
 
@@ -122,6 +163,16 @@ The repository currently includes:
 
 - World and HUD shaders under `dream/shaders/`
 - A cube model and related textures under `dream/animations/`
+- First-person hands and held-item blockout assets under `dream/animations/viewmodels/`
 - A font file under `dream/fonts/`
 
 These asset directories are copied into the build output and resolved at runtime relative to the application base directory, as documented in [configuration.md](configuration.md).
+
+For this first milestone, the assets under `dream/animations/viewmodels/` are intentionally blockout placeholders rather than final art. They exist to prove:
+
+- the dedicated first-person pass
+- the split between world models and first-person viewmodels
+- independent hands and held-item slot rendering
+- the shared `Idle` and `Use` clip contract for future replacement art
+
+World models remain part of the main world pass and should keep world-space transforms and occlusion behavior. First-person viewmodels are camera-relative presentation assets and should only be authored for the dedicated viewmodel pass.
