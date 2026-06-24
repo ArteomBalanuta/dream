@@ -42,6 +42,16 @@ public class PlayScene : IDisposable
             _viewModelController.TriggerPrimaryUse();
         }
 
+        if (ModelAssets.Get(_viewModelController.CurrentFrameState.Hands.Definition.ModelPath).Update(delta))
+        {
+            _viewModelController.NotifyAnimationFinished(ViewModelSlot.Hands);
+        }
+
+        if (ModelAssets.Get(_viewModelController.CurrentFrameState.HeldItem.Definition.ModelPath).Update(delta))
+        {
+            _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
+        }
+
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         _player.PlaceCube(_map);

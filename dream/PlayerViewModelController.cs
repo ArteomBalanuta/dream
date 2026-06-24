@@ -17,6 +17,13 @@ public class PlayerViewModelController
         CurrentFrameState = BuildState(ViewModelAnimationRequest.Use, ViewModelAnimationRequest.Use);
     }
 
+    public ViewModelAnimationRequest GetRequest(ViewModelSlot slot)
+    {
+        return slot == ViewModelSlot.Hands
+            ? CurrentFrameState.Hands.AnimationRequest
+            : CurrentFrameState.HeldItem.AnimationRequest;
+    }
+
     public void NotifyAnimationFinished(ViewModelSlot slot)
     {
         if (slot == ViewModelSlot.Hands)
