@@ -366,6 +366,7 @@ public class AnimatedModel : IDisposable
 
         if (!_animations.TryGetValue(_playback.ClipName, out Animation animation))
         {
+            _playback = AnimationPlaybackState.Stopped;
             return false;
         }
 
@@ -552,6 +553,7 @@ public class AnimatedModel : IDisposable
     public void StopAnimation()
     {
         _playback = AnimationPlaybackState.Stopped;
+        _idleClipName = null;
     }
 
     private static void Log(string message)
