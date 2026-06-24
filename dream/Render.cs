@@ -1,10 +1,22 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using ImGuiNET;
 using System.Runtime.CompilerServices;
+public readonly record struct HudFrameResult(
+    Vector2i? RequestedResolution,
+    int? RequestedFloorSize);
+
 public class Render
 {
+    private readonly record struct HudInteractionChanges(
+        float? FieldOfViewDegrees,
+        float? MouseSensitivity,
+        Vector2i? RequestedResolution,
+        int? StagedFloorSize,
+        int? RequestedFloorSize);
+
     private int _vertexArrayObject;
     private int _vertexBufferObject;
     private Dictionary<string, Shader> _shaders = new();
@@ -49,12 +61,10 @@ public class Render
     -0.5f, -0.5f, -0.5f   // Top-left
     };
 
-    // HUD fields in your class:
     private int _hudVao;
     private int _hudVbo;
     private Shader _hudShader;
 
-    // Add these fields
     private IntPtr _imGuiContext;
     private int _fontTexture;
     private Shader _shaderObj;
@@ -62,6 +72,8 @@ public class Render
     private int _vertexArray;
     private int _vertexBuffer;
     private int _indexBuffer;
+    private Vector2i _currentSize;
+    private Vector2i _crosshairViewportSize;
 
     private void InitializeShaders()
     {
@@ -76,69 +88,66 @@ public class Render
 
     private void InitializeHUD()
     {
-        // Define vertices for the crosshair:
-        // Two line segments:
-        // Horizontal line from (390,300) to (410,300)
-        // Vertical line from (400,290) to (400,310)
-        float[] vertices = {
-        390f, 300f,  // horizontal left point
-        410f, 300f,  // horizontal right point
-
-        400f, 290f,  // vertical top point
-        400f, 310f   // vertical bottom point
-    };
-
-        // Generate and bind VAO and VBO
         _hudVao = GL.GenVertexArray();
         _hudVbo = GL.GenBuffer();
         GL.BindVertexArray(_hudVao);
         GL.BindBuffer(BufferTarget.ArrayBuffer, _hudVbo);
-        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer, 0, IntPtr.Zero, BufferUsageHint.DynamicDraw);
 
-        // Vertex attribute layout: 2 floats per vertex.
         GL.EnableVertexAttribArray(0);
         GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 2 * sizeof(float), 0);
 
-        // Unbind buffers
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
 
-        // Load the shader for HUD rendering.
-        // Ensure these shader files exist and use modern GLSL.
         _hudShader = new Shader(
             AssetPaths.Shader("hudVertex.glsl"),
             AssetPaths.Shader("hudFragment.glsl"));
 
+        UpdateCrosshairGeometry();
         InitializeImGui();
+    }
+
+    private void UpdateCrosshairGeometry()
+    {
+        if (_hudVbo == 0)
+        {
+            return;
+        }
+
+        _crosshairViewportSize = _currentSize;
+
+        if (_currentSize.X <= 0 || _currentSize.Y <= 0)
+        {
+            return;
+        }
+
+        float[] vertices = HudLayout.CreateCrosshair(_currentSize.X, _currentSize.Y).ToVertexArray();
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _hudVbo);
+        GL.BufferData(
+            BufferTarget.ArrayBuffer,
+            vertices.Length * sizeof(float),
+            vertices,
+            BufferUsageHint.DynamicDraw);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
     }
 
     private void InitializeImGui()
     {
-        // 1. Initialize ImGui context
         _imGuiContext = ImGui.CreateContext();
         ImGui.SetCurrentContext(_imGuiContext);
 
-        // 2. Set up basic font
         var io = ImGui.GetIO();
         io.Fonts.AddFontDefault();
-        io.DisplaySize = new System.Numerics.Vector2(800, 600); // Initial size
+        Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
+        io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
 
-
-        // Disable keyboard navigation completely
-        io.ConfigFlags |= ImGuiConfigFlags.NoKeyboard;
-        io.ConfigFlags |= ImGuiConfigFlags.NoMouse;
-
-        // Disable gamepad/keyboard navigation
-        //io.ConfigFlags |= ImGuiConfigFlags.NavEnableSetMousePos;
-
-        // Disable automatic window focusing
         io.ConfigWindowsMoveFromTitleBarOnly = true;
         io.ConfigWindowsResizeFromEdges = false;
 
-        // 3. Create font texture
         CreateFontTexture();
 
-        // 4. Create basic rendering resources
         CreateImGuiResources();
     }
 
@@ -162,14 +171,11 @@ public class Render
 
     private void CreateImGuiResources()
     {
-        // Create shader
-
         _shaderObj = new Shader(
             AssetPaths.Shader("hudVertexText.glsl"),
             AssetPaths.Shader("hudFragmentText.glsl"));
         _shader = _shaderObj.Handle;
 
-        // Create buffers
         _vertexArray = GL.GenVertexArray();
         _vertexBuffer = GL.GenBuffer();
         _indexBuffer = GL.GenBuffer();
@@ -184,7 +190,6 @@ public class Render
         GL.Disable(EnableCap.CullFace);
         GL.Disable(EnableCap.DepthTest);
 
-        // Setup orthographic projection
         var io = ImGui.GetIO();
         var mvp = Matrix4.CreateOrthographicOffCenter(
             0.0f,
@@ -203,21 +208,18 @@ public class Render
         {
             var cmdList = drawData.CmdLists[n];
 
-            // Upload vertex data
             GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBuffer);
             GL.BufferData(BufferTarget.ArrayBuffer,
                 cmdList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>(),
                 cmdList.VtxBuffer.Data,
                 BufferUsageHint.StreamDraw);
 
-            // Upload index data
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _indexBuffer);
             GL.BufferData(BufferTarget.ElementArrayBuffer,
                 cmdList.IdxBuffer.Size * sizeof(ushort),
                 cmdList.IdxBuffer.Data,
                 BufferUsageHint.StreamDraw);
 
-            // Set vertex attributes
             GL.EnableVertexAttribArray(0);
             GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false,
                 Unsafe.SizeOf<ImDrawVert>(), 0);
@@ -230,8 +232,6 @@ public class Render
             GL.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true,
                 Unsafe.SizeOf<ImDrawVert>(), 16);
 
-            // Draw commands
-            int vtxOffset = 0;
             for (int cmd_i = 0; cmd_i < cmdList.CmdBuffer.Size; cmd_i++)
             {
                 var pcmd = cmdList.CmdBuffer[cmd_i];
@@ -251,25 +251,53 @@ public class Render
             }
         }
 
-        // Cleanup
         GL.BindVertexArray(0);
         GL.UseProgram(0);
         GL.Disable(EnableCap.Blend);
     }
 
-    // Add to your DisposeHUD method
     public void DisposeHUD()
     {
         GL.DeleteTexture(_fontTexture);
-        GL.DeleteProgram(_shader);
+        _hudShader.Dispose();
+        _shaderObj.Dispose();
+        GL.DeleteBuffer(_hudVbo);
         GL.DeleteBuffer(_vertexBuffer);
         GL.DeleteBuffer(_indexBuffer);
+        GL.DeleteVertexArray(_hudVao);
         GL.DeleteVertexArray(_vertexArray);
         ImGui.DestroyContext(_imGuiContext);
     }
 
+    private static Vector2i GetSafeViewportSize(Vector2i size)
+    {
+        return new Vector2i(Math.Max(size.X, 1), Math.Max(size.Y, 1));
+    }
 
-    public Render()
+    private void UpdateProjection(int width, int height, float fieldOfViewDegrees)
+    {
+        _currentSize = new Vector2i(width, height);
+        Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
+        float aspectRatio = (float)safeViewportSize.X / safeViewportSize.Y;
+
+        _projection = Matrix4.CreatePerspectiveFieldOfView(
+            MathHelper.DegreesToRadians(fieldOfViewDegrees),
+            aspectRatio,
+            0.1f,
+            100.0f);
+
+        if (_currentSize != _crosshairViewportSize)
+        {
+            UpdateCrosshairGeometry();
+        }
+    }
+
+    public void UpdateProjectionForSettings(GameSettings settings)
+    {
+        UpdateProjection(settings.WindowWidth, settings.WindowHeight, settings.FieldOfViewDegrees);
+    }
+
+    public Render(GameSettings settings)
     {
         GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.Blend);
@@ -277,7 +305,7 @@ public class Render
 
         InitializeShaders();
 
-        _projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
+        UpdateProjectionForSettings(settings);
 
         // Set up VAO and VBO for the cube.
         _vertexArrayObject = GL.GenVertexArray();
@@ -387,28 +415,52 @@ public class Render
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }
 
-    // In your Render class
     private bool _wasFocused = true;
-    public void DrawHUD(FrameEventArgs args, bool windowFocused)
+    public HudFrameResult DrawHUD(FrameEventArgs args, bool windowFocused, GameSettings settings, MouseState mouseState)
     {
-        // Disable depth test so HUD renders on top
         GL.Disable(EnableCap.DepthTest);
+        DrawCrosshair(settings);
+        BeginHudFrame(args, windowFocused, settings, mouseState);
+        HudInteractionChanges changes = DrawHudInterface(settings);
+        ApplyHudInteractionChanges(settings, changes);
+        ImGui.Render();
+        RenderImGuiDrawData(ImGui.GetDrawData());
+        GL.Enable(EnableCap.DepthTest);
 
-        // Use HUD shader
+        return new HudFrameResult(changes.RequestedResolution, changes.RequestedFloorSize);
+    }
+
+    private void DrawCrosshair(GameSettings settings)
+    {
+        if (settings.SettingsVisible || _currentSize.X <= 0 || _currentSize.Y <= 0)
+        {
+            return;
+        }
+
         _hudShader.Use();
-        Matrix4 projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
+        Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
+        Matrix4 projection = Matrix4.CreateOrthographicOffCenter(0, safeViewportSize.X, safeViewportSize.Y, 0, -1, 1);
         _hudShader.SetMatrix4("projection", projection);
         _hudShader.SetVector3("color", new Vector3(1.0f, 0.0f, 0.0f));
 
-        // Draw crosshair
         GL.BindVertexArray(_hudVao);
-        GL.DrawArrays(PrimitiveType.Lines, 0, 2);
-        GL.DrawArrays(PrimitiveType.Lines, 2, 2);
+        GL.DrawArrays(PrimitiveType.Lines, 0, 8);
         GL.BindVertexArray(0);
+    }
 
-        // Setup ImGui frame
-        // Disable all ImGui interactions
+    private void BeginHudFrame(FrameEventArgs args, bool windowFocused, GameSettings settings, MouseState mouseState)
+    {
         var io = ImGui.GetIO();
+        Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
+
+        io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
+        io.DeltaTime = (float)args.Time;
+        io.MouseDrawCursor = settings.SettingsVisible;
+        io.MousePos = settings.SettingsVisible
+            ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)
+            : new System.Numerics.Vector2(-float.MaxValue, -float.MaxValue);
+        io.MouseDown[0] = settings.SettingsVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
+        io.MouseDown[1] = settings.SettingsVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
 
         // Reset input states when regaining focus
         if (windowFocused && !_wasFocused)
@@ -424,27 +476,97 @@ public class Render
         }
         _wasFocused = windowFocused;
 
-
         ImGui.NewFrame();
+    }
 
-        // Set up basic HUD window
+    private static HudInteractionChanges DrawHudInterface(GameSettings settings)
+    {
+        float? fieldOfViewDegrees = null;
+        float? mouseSensitivity = null;
+        Vector2i? requestedResolution = null;
+        int? stagedFloorSize = null;
+        int? requestedFloorSize = null;
+
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
             ImGuiWindowFlags.NoTitleBar |
-            ImGuiWindowFlags.NoResize |
+            ImGuiWindowFlags.AlwaysAutoResize |
             ImGuiWindowFlags.NoMove |
-            ImGuiWindowFlags.NoInputs |
+            (settings.SettingsVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
         ImGui.Text("Score: 100");
+        ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
+        ImGui.Text("Press Esc to toggle settings");
         ImGui.End();
-       
-        // Render directly without input handling
-        ImGui.Render();
-        RenderImGuiDrawData(ImGui.GetDrawData());
 
-        // Re-enable depth testing
-        GL.Enable(EnableCap.DepthTest);
+        if (settings.SettingsVisible)
+        {
+            ImGui.SetNextWindowPos(new System.Numerics.Vector2(20, 70), ImGuiCond.FirstUseEver);
+            ImGui.Begin("Settings", ImGuiWindowFlags.AlwaysAutoResize);
+
+            float fieldOfView = settings.FieldOfViewDegrees;
+            if (ImGui.SliderFloat("Field Of View", ref fieldOfView, 50f, 100f))
+            {
+                fieldOfViewDegrees = fieldOfView;
+            }
+
+            float sensitivity = settings.MouseSensitivity;
+            if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
+            {
+                mouseSensitivity = sensitivity;
+            }
+
+            int floorSize = settings.PendingFloorSize;
+            if (ImGui.SliderInt("Floor Size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
+            {
+                stagedFloorSize = floorSize;
+            }
+            if (ImGui.Button("Apply Floor Size"))
+            {
+                requestedFloorSize = floorSize;
+                stagedFloorSize = floorSize;
+            }
+
+            ImGui.Text("Resolution Presets");
+            if (ImGui.Button("1280 x 720"))
+            {
+                requestedResolution = new Vector2i(1280, 720);
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("1600 x 900"))
+            {
+                requestedResolution = new Vector2i(1600, 900);
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("1920 x 1080"))
+            {
+                requestedResolution = new Vector2i(1920, 1080);
+            }
+
+            ImGui.Text($"Current: {settings.WindowWidth} x {settings.WindowHeight}");
+            ImGui.End();
+        }
+
+        return new HudInteractionChanges(fieldOfViewDegrees, mouseSensitivity, requestedResolution, stagedFloorSize, requestedFloorSize);
+    }
+
+    private static void ApplyHudInteractionChanges(GameSettings settings, HudInteractionChanges changes)
+    {
+        if (changes.FieldOfViewDegrees.HasValue)
+        {
+            settings.FieldOfViewDegrees = changes.FieldOfViewDegrees.Value;
+        }
+
+        if (changes.MouseSensitivity.HasValue)
+        {
+            settings.MouseSensitivity = changes.MouseSensitivity.Value;
+        }
+
+        if (changes.StagedFloorSize.HasValue)
+        {
+            settings.StageFloorSize(changes.StagedFloorSize.Value);
+        }
     }
 
 }

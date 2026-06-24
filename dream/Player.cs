@@ -29,6 +29,11 @@ public class Player
     public Vector3 LastReportedPosition { get; private set; }
     public float CollisionReportCooldown = 0.5f;
     private float _collisionReportTimer;
+    private bool _wasJumpPressed;
+    private bool _wasFreezePressed;
+    private bool _wasPlaceCubePressed;
+    private const float PlayerHalfHeight = 0.5f;
+    private const float GroundEpsilon = 0.08f;
 
     public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position)
     {
@@ -39,25 +44,28 @@ public class Player
         Camera = new Camera(position);
 
         PhysicsBody.Activate();
+        PhysicsBody.ActivationState = ActivationState.DisableDeactivation;
 
 
         // Optionally disable deactivation to avoid sleeping issues:
         // PhysicsBody.SetActivationState(ActivationState.DISABLE_DEACTIVATION);
     }
 
-    public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState)
+    public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState, GameSettings settings, bool allowInput)
     {
         // Get current position
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         Vector3 currentPos = transform.Origin.ToOpenTK();
-        Camera.Position = currentPos + new Vector3(-0.5f, -0.5f, -0.5f);
+        Camera.Position = currentPos + new Vector3(0f, settings.EyeHeightOffset, 0f);
+        Camera.MouseSensitivity = settings.MouseSensitivity;
+        Speed = settings.MoveSpeed;
 
         // Movement handling
         Vector3 movementDirection = Vector3.Zero;
-        if (!isFrozen) // Only process input when not frozen
+        if (allowInput && !isFrozen) // Only process input when not frozen
         {
             Vector3 forward = new Vector3(Camera.Front.X, 0, Camera.Front.Z).Normalized();
-            Vector3 right = Camera.Right;
+            Vector3 right = new Vector3(Camera.Right.X, 0, Camera.Right.Z).Normalized();
 
             if (keyboardState.IsKeyDown(Keys.W)) movementDirection += forward;
             if (keyboardState.IsKeyDown(Keys.S)) movementDirection -= forward;
@@ -68,30 +76,11 @@ public class Player
                 movementDirection = movementDirection.Normalized();
         }
 
-        // Physics updates
-        Vector3 targetVelocity = movementDirection * Speed;
-        Vector3 currentVelocity = PhysicsBody.LinearVelocity.ToOpenTK();
-
-        // Apply impulse only when not frozen
-        if (!isFrozen)
-        {
-            Vector3 impulse = new Vector3(
-                targetVelocity.X - currentVelocity.X,
-                0,
-                targetVelocity.Z - currentVelocity.Z
-            ) * deltaTime * 10;
-
-            PhysicsBody.ApplyCentralImpulse(impulse.ToBullet());
-        }
-
-        // Jumping handling
-        if (!isFrozen && keyboardState.IsKeyDown(Keys.Space))
-        {
-            PhysicsBody.ApplyCentralImpulse(new BulletSharp.Math.Vector3(0, 0.5f, 0));
-        }
+        bool jumpPressed = allowInput && keyboardState.IsKeyDown(Keys.Space);
+        bool freezePressed = allowInput && keyboardState.IsKeyDown(Keys.F);
 
         // Freeze toggle
-        if (keyboardState.IsKeyDown(Keys.F))
+        if (freezePressed && !_wasFreezePressed)
         {
             isFrozen = !isFrozen;
             if (isFrozen)
@@ -118,28 +107,43 @@ public class Player
             }
             PhysicsBody.Activate(true);
         }
+        _wasFreezePressed = freezePressed;
 
-        // Velocity clamping
-        if (!isFrozen)
+        Vector3 velocity = PhysicsBody.LinearVelocity.ToOpenTK();
+
+        if (allowInput && !isFrozen)
         {
-            Vector3 velocity = PhysicsBody.LinearVelocity.ToOpenTK();
-            Vector2 horizontalVelocity = new Vector2(velocity.X, velocity.Z);
-            if (horizontalVelocity.Length > Speed)
+            if (movementDirection != Vector3.Zero)
             {
-                horizontalVelocity = horizontalVelocity.Normalized() * Speed;
+                PhysicsBody.Activate(true);
+            }
+
+            Vector3 targetVelocity = movementDirection * Speed;
+            PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(
+                targetVelocity.X,
+                velocity.Y,
+                targetVelocity.Z);
+
+            if (jumpPressed && !_wasJumpPressed && IsGrounded(currentPos))
+            {
+                PhysicsBody.Activate(true);
                 PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(
-                    horizontalVelocity.X,
-                    velocity.Y,
-                    horizontalVelocity.Y
-                );
+                    PhysicsBody.LinearVelocity.X,
+                    settings.JumpVelocity,
+                    PhysicsBody.LinearVelocity.Z);
             }
         }
+        else if (!allowInput)
+        {
+            PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(0, velocity.Y, 0);
+        }
+        _wasJumpPressed = jumpPressed;
 
         // Always prevent rotation
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
 
         // Camera updates
-        if (!isFrozen)
+        if (allowInput && !isFrozen)
         {
             Camera.Update(deltaTime, mouseState);
         }
@@ -153,6 +157,16 @@ public class Player
         }
 
         LastReportedPosition = currentPos;
+    }
+
+    private bool IsGrounded(Vector3 currentPos)
+    {
+        var callback = new PlayerContactCallback(PhysicsBody);
+        _physics.World.ContactTest(PhysicsBody, callback);
+        float playerBottom = currentPos.Y - PlayerHalfHeight;
+
+        return callback.Collisions.Any(collision =>
+            collision.ContactPoint.Y <= playerBottom + GroundEpsilon);
     }
 
     private void CheckAndLogCollisions()
@@ -205,7 +219,7 @@ public class Player
                     Vector3 pos = new Vector3(x, y, z);
                     if (map.IsInBounds(pos))
                     {
-                        Cube cube = map.Cubes[x, y, z];
+                        Cube? cube = map.Cubes[x, y, z];
                         if (cube != null)
                         {
                             Console.WriteLine($"Cube at [{x}, {y}, {z}]: Solid={cube.IsSolid}, Empty={cube.IsEmpty}");
@@ -237,15 +251,38 @@ public class Player
 
 
 
-    public void PlaceCube(Map map, MouseState mouseState)
+    public void PlaceCube(Map map, MouseState mouseState, bool allowInput)
     {
-        if (mouseState.IsButtonDown(MouseButton.Left))
+        bool placePressed = allowInput && mouseState.IsButtonDown(MouseButton.Left);
+
+        if (placePressed && !_wasPlaceCubePressed)
         {
             Vector3 direction = Camera.Front;
             PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
             Vector3 position = transform.Origin.ToOpenTK() + direction * 2.0f;
             map.AddCube(position);
         }
+
+        _wasPlaceCubePressed = placePressed;
+    }
+
+    public Vector3 GetWorldPosition()
+    {
+        PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
+        return transform.Origin.ToOpenTK();
+    }
+
+    public void SetWorldPosition(Vector3 position)
+    {
+        Matrix transform = Matrix.Translation(position.ToBullet());
+        PhysicsBody.WorldTransform = transform;
+        PhysicsBody.MotionState.SetWorldTransform(ref transform);
+        PhysicsBody.LinearVelocity = BulletSharp.Math.Vector3.Zero;
+        PhysicsBody.AngularVelocity = BulletSharp.Math.Vector3.Zero;
+        PhysicsBody.ClearForces();
+        PhysicsBody.Activate(true);
+        Camera.Position = position + new Vector3(0f, 0.35f, 0f);
+        LastReportedPosition = position;
     }
 
     private Vector3 WorldToGridPosition(Vector3 worldPos)

@@ -10,6 +10,7 @@ public class PhysicsIntegrator : IDisposable
     public RigidBody PlayerBody { get; }
     public RigidBody FallingCubeBody { get; }
     public List<RigidBody> MapCubeBodies { get; } = new List<RigidBody>();
+    public List<RigidBody> DynamicMapCubeBodies { get; } = new List<RigidBody>();
 
     private readonly DefaultCollisionConfiguration _collisionConfig;
     private readonly CollisionDispatcher _dispatcher;
@@ -95,11 +96,30 @@ public class PhysicsIntegrator : IDisposable
 
     public void StepSimulation(float deltaTime) => World.StepSimulation(deltaTime, 10);
 
+    public void ResetMapBodies()
+    {
+        foreach (var body in MapCubeBodies)
+        {
+            if (body == null)
+            {
+                continue;
+            }
+
+            World.RemoveRigidBody(body);
+            body.MotionState?.Dispose();
+            body.CollisionShape?.Dispose();
+            body.Dispose();
+        }
+
+        MapCubeBodies.Clear();
+        DynamicMapCubeBodies.Clear();
+    }
+
     public void Dispose()
     {
         PlayerBody?.Dispose();
         FallingCubeBody?.Dispose();
-        foreach (var body in MapCubeBodies) body?.Dispose();
+        ResetMapBodies();
         World?.Dispose();
         _solver?.Dispose();
         _broadphase?.Dispose();

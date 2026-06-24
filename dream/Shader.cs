@@ -7,6 +7,7 @@ public class Shader
 {
     public int Handle { get; private set; }
     private bool _disposed = false;
+    private readonly Dictionary<string, int> _uniformLocations = new();
 
     public Shader(string vertexPath, string fragmentPath)
     {
@@ -59,45 +60,57 @@ public class Shader
     public void Use() => GL.UseProgram(Handle);
 
     #region Uniform Setters
+    private int GetUniformLocation(string uniformName)
+    {
+        if (_uniformLocations.TryGetValue(uniformName, out int existing))
+        {
+            return existing;
+        }
+
+        int location = GL.GetUniformLocation(Handle, uniformName);
+        _uniformLocations[uniformName] = location;
+        return location;
+    }
+
     public void SetMatrix4(string uniformName, Matrix4 matrix)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.UniformMatrix4(location, false, ref matrix);
     }
 
     public void SetVector4(string uniformName, Vector4 vector)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform4(location, vector);
     }
 
     public void SetVector3(string uniformName, Vector3 vector)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform3(location, vector);
     }
 
     public void SetVector2(string uniformName, Vector2 vector)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform2(location, vector);
     }
 
     public void SetFloat(string uniformName, float value)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value);
     }
 
     public void SetInt(string uniformName, int value)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value);
     }
 
     public void SetBool(string uniformName, bool value)
     {
-        int location = GL.GetUniformLocation(Handle, uniformName);
+        int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value ? 1 : 0);
     }
     #endregion

@@ -7,90 +7,127 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Map
 {
-    public int SideSize { get; } = 25;
-    public Cube[,,] Cubes { get; }
-    private readonly PhysicsIntegrator _physics;
+    public int Width { get; }
+    public int Height { get; }
+    public int Depth { get; }
+    public Cube?[,,] Cubes { get; }
+    public IReadOnlyList<Cube> SolidCubes => _solidCubes;
+    private readonly PhysicsIntegrator? _physics;
+    private readonly List<Cube> _solidCubes = new();
+    private readonly bool _loadVisualAssets;
 
-    public Map(PhysicsIntegrator physics)
+    public Map(
+        PhysicsIntegrator? physics = null,
+        bool loadVisualAssets = true,
+        int width = 25,
+        int height = 8,
+        int depth = 25)
     {
         _physics = physics;
-        Cubes = new Cube[SideSize, SideSize, SideSize];
-        // Initialize all cubes first
-        InitializeAllCubes();
-
-        // Then create the floor and special cubes
+        _loadVisualAssets = loadVisualAssets;
+        Width = width;
+        Height = height;
+        Depth = depth;
+        Cubes = new Cube[Width, Height, Depth];
         Initialize();
-    }
-
-    private void InitializeAllCubes()
-    {
-        // Initialize ALL cubes to empty first, with centers at grid cells
-        for (int x = 0; x < SideSize; x++)
-            for (int y = 0; y < SideSize; y++)
-                for (int z = 0; z < SideSize; z++)
-                {
-                    Cubes[x, y, z] = new Cube
-                    {
-                        Position = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f), // Center position
-                        IsEmpty = true,
-                        IsSolid = false
-                    };
-                }
     }
 
     private void Initialize()
     {
-        // Create floor (y = 0)
-        for (int x = 0; x < SideSize; x++)
-            for (int z = 0; z < SideSize; z++)
+        for (int x = 0; x < Width; x++)
+            for (int z = 0; z < Depth; z++)
             {
-                AddCube(new Vector3(x, 0, z), true);
+                AddCube(new Vector3(x, 0, z), isStatic: true, withPhysics: false);
             }
 
-        // Add special cubes
-     //   AddCube(new Vector3(3, 3, 2), true);
-     //   AddCube(new Vector3(6, 6, 6), true);
-
-
-        for (int x = 0; x < SideSize; x++)
+        if (_physics != null)
         {
-            for (int z = 0; z < SideSize; z++)
+            AddFloorPhysicsBody();
+        }
+
+        for (int x = 0; x < Width; x++)
+        {
+            for (int z = 0; z < Depth; z++)
             {
                 var cube = Cubes[x, 0, z];
-                if (cube.Position != new Vector3(x + 0.5f, 0.5f, z + 0.5f))
+                if (cube == null || cube.Position != new Vector3(x + 0.5f, 0.5f, z + 0.5f))
                 {
-                    Debug.Fail($"Cube at [{x},0,{z}] misaligned! Position: {cube.Position}");
+                    Debug.Fail($"Cube at [{x},0,{z}] misaligned! Position: {cube?.Position}");
                 }
             }
         }
-
     }
 
 
-    public void AddCube(Vector3 position, bool isStatic = false)
+    public void AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
     {
-        // Snap to grid with epsilon to handle floating-point precision
         int x = (int)MathF.Floor(position.X + 1e-6f);
         int y = (int)MathF.Floor(position.Y + 1e-6f);
         int z = (int)MathF.Floor(position.Z + 1e-6f);
 
-
-        if (!IsInBounds(new Vector3(x, y, z)) || !Cubes[x, y, z].IsEmpty)
+        if (!IsInBounds(new Vector3(x, y, z)) || Cubes[x, y, z] != null)
             return;
 
-        // Cube is already initialized at center in InitializeAllCubes
-        var spaceCube = Cubes[x, y, z];
         var cube = new Cube
         {
-            Position = spaceCube.Position,
+            Position = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f),
             IsEmpty = false,
             IsSolid = true,
-            Animation = ModelAssets.GrassCube,
+            Animation = _loadVisualAssets ? ModelAssets.GrassCube : null,
             ShaderName = "cube"
         };
 
         Cubes[x, y, z] = cube;
-        AddPhysicsBody(cube, isStatic);
+        _solidCubes.Add(cube);
+
+        if (withPhysics && _physics != null)
+        {
+            AddPhysicsBody(cube, isStatic);
+        }
+    }
+
+    public void CopyPlacedCubesTo(Map target)
+    {
+        foreach (Cube cube in _solidCubes)
+        {
+            int x = (int)MathF.Floor(cube.Position.X);
+            int y = (int)MathF.Floor(cube.Position.Y);
+            int z = (int)MathF.Floor(cube.Position.Z);
+
+            if (y == 0)
+            {
+                continue;
+            }
+
+            Vector3 cell = new Vector3(x, y, z);
+            if (!target.IsInBounds(cell))
+            {
+                continue;
+            }
+
+            target.AddCube(cell, withPhysics: target._physics != null);
+        }
+    }
+
+    private void AddFloorPhysicsBody()
+    {
+        var shape = new BoxShape(Width / 2f, 0.5f, Depth / 2f);
+        shape.Margin = 0f;
+
+        var floorCenter = new BulletSharp.Math.Vector3(Width / 2f, 0.5f, Depth / 2f);
+        var startTransform = Matrix.Translation(floorCenter);
+        var motionState = new DefaultMotionState(startTransform);
+        var rbInfo = new RigidBodyConstructionInfo(0f, motionState, shape, BulletSharp.Math.Vector3.Zero);
+
+        var body = new RigidBody(rbInfo)
+        {
+            Friction = 0.8f,
+            Restitution = 0.2f,
+            AngularFactor = BulletSharp.Math.Vector3.Zero
+        };
+
+        _physics.World.AddRigidBody(body);
+        _physics.MapCubeBodies.Add(body);
     }
 
     private void AddPhysicsBody(Cube cube, bool isStatic)
@@ -169,11 +206,15 @@ Give that a try, and let me know if it resolves the disalignment during movement
 
         _physics.World.AddRigidBody(body);
         _physics.MapCubeBodies.Add(body);
+        if (!isStatic)
+        {
+            _physics.DynamicMapCubeBodies.Add(body);
+        }
 
     }
 
     public bool IsInBounds(Vector3 pos) =>
-        pos.X >= 0 && pos.X < SideSize &&
-        pos.Y >= 0 && pos.Y < SideSize &&
-        pos.Z >= 0 && pos.Z < SideSize;
+        pos.X >= 0 && pos.X < Width &&
+        pos.Y >= 0 && pos.Y < Height &&
+        pos.Z >= 0 && pos.Z < Depth;
 }

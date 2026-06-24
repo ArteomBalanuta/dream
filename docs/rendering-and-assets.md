@@ -2,7 +2,7 @@
 
 ## Rendering Overview
 
-The rendering subsystem is centered in `Render.cs`. It initializes OpenGL state, loads shader programs, creates cube and HUD buffers, and submits both world geometry and HUD geometry every frame.
+The rendering subsystem is centered in `Render.cs`. It initializes OpenGL state, loads shader programs, and creates the cube and HUD buffers used by the lower-level draw paths. Frame orchestration and world iteration happen in `Game.OnRenderFrame()`, which calls into `Render` for the actual draw operations.
 
 At construction time, `Render`:
 
@@ -26,6 +26,7 @@ Separate shader objects are also created for:
 
 Shader compilation and linking are handled by `Shader.cs`, which reads vertex and fragment sources from disk and creates an OpenGL program handle.
 Runtime shader file paths are provided through `AssetPaths.cs`.
+`Shader.cs` now caches uniform locations after first lookup so repeated render-path uniform updates do not keep calling `GL.GetUniformLocation`.
 
 ## Cube Rendering Paths
 
@@ -42,6 +43,7 @@ It then chooses one of two paths:
 If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. This is the path used for the textured floor cubes created by `Map.AddCube()`.
 
 The current floor model is now reused through a shared model asset entry instead of being loaded separately for every floor cube.
+The world render loop now iterates the active `Map.SolidCubes` collection rather than scanning every cell in the backing world array each frame.
 
 ### Simple cube rendering
 
@@ -54,23 +56,36 @@ Both of these use the shared cube VAO and the `default` shader.
 
 ## HUD Rendering
 
-The HUD currently includes two pieces:
+The HUD currently includes:
 
-- A red crosshair drawn with line primitives
-- A non-interactive ImGui window labeled `HUD`
+- A red crosshair drawn with line primitives when gameplay is active
+- A lightweight ImGui `HUD` window with status text
+- An interactive ImGui `Settings` window toggled with `Esc`
 
-`Render.DrawHUD()`:
+The crosshair layout is viewport-driven: its center and line geometry are rebuilt from the active window size instead of from fixed startup-time HUD pixels.
+
+`Render.DrawHUD()` now:
 
 - Disables depth testing so the HUD appears on top
-- Uses an orthographic projection from `(0,0)` to `(800,600)`
-- Draws the crosshair lines
+- Uses an orthographic projection based on the current window size
+- Draws the crosshair lines only while the settings menu is hidden
+- Keeps the crosshair centered from live viewport metrics and scales it with window size
 - Starts a new ImGui frame
 - Renders a window at the top-left corner
-- Displays the text `Score: 100`
+- Displays the current resolution and settings-menu hint
+- Optionally renders a settings panel with FOV, mouse sensitivity, and resolution controls
 - Renders the ImGui draw data manually
 - Re-enables depth testing
 
 The code also tracks whether the game window has regained focus and resets parts of the ImGui input state when focus returns.
+
+Future HUD positioning work should follow the same pattern and compute placement from current viewport data rather than introducing hardcoded viewport pixel coordinates.
+
+## Projection And Camera Feel
+
+The renderer no longer uses a fixed square aspect ratio. `Render` rebuilds its perspective projection from the live window width, height, and configured field of view so the scene scale stays aligned with the actual viewport.
+
+On the player side, the camera now follows a configurable eye-height offset instead of an embedded diagonal offset, which avoids the previous close-up framing problem and gives the settings model a single place to own camera feel defaults.
 
 ## glTF Model Loading
 

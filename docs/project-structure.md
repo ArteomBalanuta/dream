@@ -16,16 +16,19 @@
 - `dream/Program.cs`: application entry point
 - `dream/Game.cs`: OpenTK game window, update loop, render loop, resize handling, and FPS tracking
 - `dream/Player.cs`: input-driven movement, jump logic, camera coordination, collision logging, and cube placement
-- `dream/Map.cs`: 3D cube grid initialization, floor generation, and cube creation
+- `dream/Map.cs`: world bounds, sparse cell storage, active solid cube tracking, floor generation, and cube creation
 - `dream/Cube.cs`: cube data model used by the world
-- `dream/PhysicsIntegrator.cs`: Bullet world setup, player body creation, simulation stepping, and disposal
+- `dream/PhysicsIntegrator.cs`: Bullet world setup, player body creation, simulation stepping, dynamic map-body tracking, and disposal
 - `dream/Camera.cs`: view direction and mouse-look behavior
 
 ## Rendering And Utility Files
 
 - `dream/Render.cs`: OpenGL state setup, cube rendering, HUD drawing, and ImGui submission
-- `dream/Shader.cs`: shader source loading, OpenGL shader compilation, and uniform setters
+- `dream/Shader.cs`: shader source loading, OpenGL shader compilation, uniform setters, and uniform-location caching
 - `dream/AnimatedModel.cs`: glTF mesh/material/texture loading and model rendering
+- `dream/ModelAssets.cs`: shared model asset accessors
+- `dream/ResourceCache.cs`: reusable in-memory cache for shared runtime resources
+- `dream/HudLayout.cs`: viewport-driven HUD crosshair layout math
 - `dream/VectorConversion.cs`: conversions between OpenTK and BulletSharp vector types
 - `dream/MatrixExtensions.cs`: conversion from `System.Numerics.Matrix4x4` to `OpenTK.Matrix4`
 - `dream/GLUtils.cs`: OpenGL error helper

@@ -52,6 +52,23 @@ The current `Game` constructor creates a window with:
 
 The project also grabs the cursor on startup.
 
+Runtime-adjustable window and camera settings are now grouped in `GameSettings.cs`, which currently owns:
+
+- field of view
+- mouse sensitivity
+- eye-height offset
+- move speed
+- jump velocity
+- current floor size
+- pending floor size
+- current window width and height
+- settings menu visibility
+
+`GameSettings` also defines the bounded runtime floor-size range:
+
+- minimum floor size: `5`
+- maximum floor size: `100`
+
 ## Runtime Asset Path Assumptions
 
 Runtime assets are now treated as project-owned content and resolved relative to the application runtime directory.
@@ -96,3 +113,22 @@ The project currently expects:
 - Mouse input from OpenTK `MouseState`
 - A per-frame physics step driven from `OnUpdateFrame`
 - Per-frame HUD drawing driven from `OnRenderFrame`
+
+## Runtime Settings Flow
+
+`Game.cs` now treats `Esc` as a global settings toggle. When settings are visible:
+
+- the window cursor switches to `Normal`
+- gameplay movement input is paused
+- cube placement is paused
+- ImGui receives live mouse input for the settings panel
+
+When settings are hidden, the cursor is re-grabbed and normal gameplay input resumes.
+
+For floor-size changes, the current flow is:
+
+1. `Render` exposes a `Floor Size` slider and `Apply Floor Size` button.
+2. `GameSettings` stages the selected value and clamps it into the supported `5..100` range.
+3. `Game` applies the staged size only when the explicit apply action is requested.
+4. `Game` rebuilds `Map` with the new square floor dimensions and rebinds the player to the rebuilt world.
+5. Existing non-floor cubes are migrated if they remain in bounds; the player position is preserved or clamped.
