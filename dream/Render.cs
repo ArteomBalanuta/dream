@@ -63,6 +63,17 @@ public class Render
     private int _vertexBuffer;
     private int _indexBuffer;
 
+    private void InitializeShaders()
+    {
+        LoadShader("default",
+            AssetPaths.Shader("vertexShader.glsl"),
+            AssetPaths.Shader("fragmentShader.glsl"));
+
+        LoadShader("cube",
+            AssetPaths.Shader("cubeVertex.glsl"),
+            AssetPaths.Shader("cubeFragment.glsl"));
+    }
+
     private void InitializeHUD()
     {
         // Define vertices for the crosshair:
@@ -94,7 +105,9 @@ public class Render
 
         // Load the shader for HUD rendering.
         // Ensure these shader files exist and use modern GLSL.
-        _hudShader = new Shader("D:\\workspace\\dream-project\\dream\\shaders\\hudVertex.glsl", "D:\\workspace\\dream-project\\dream\\shaders\\hudFragment.glsl");
+        _hudShader = new Shader(
+            AssetPaths.Shader("hudVertex.glsl"),
+            AssetPaths.Shader("hudFragment.glsl"));
 
         InitializeImGui();
     }
@@ -151,7 +164,9 @@ public class Render
     {
         // Create shader
 
-        _shaderObj = new Shader("D:\\workspace\\dream-project\\dream\\shaders\\hudVertexText.glsl", "D:\\workspace\\dream-project\\dream\\shaders\\hudFragmentText.glsl");
+        _shaderObj = new Shader(
+            AssetPaths.Shader("hudVertexText.glsl"),
+            AssetPaths.Shader("hudFragmentText.glsl"));
         _shader = _shaderObj.Handle;
 
         // Create buffers
@@ -260,14 +275,7 @@ public class Render
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
-        // Create and store shaders.
-        LoadShader("default",
-            "D:\\workspace\\dream-project\\dream\\shaders\\vertexShader.glsl",
-            "D:\\workspace\\dream-project\\dream\\shaders\\fragmentShader.glsl");
-
-        LoadShader("cube",
-            "D:\\workspace\\dream-project\\dream\\shaders\\cubeVertex.glsl",
-            "D:\\workspace\\dream-project\\dream\\shaders\\cubeFragment.glsl");
+        InitializeShaders();
 
         _projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, 1.0f, 0.1f, 100.0f);
 

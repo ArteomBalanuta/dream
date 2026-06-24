@@ -85,7 +85,7 @@ public class Map
             Position = spaceCube.Position,
             IsEmpty = false,
             IsSolid = true,
-            Animation = new AnimatedModel("D:\\workspace\\dream-project\\dream\\animations\\GrassTextureCube.gltf"),
+            Animation = ModelAssets.GrassCube,
             ShaderName = "cube"
         };
 
@@ -170,8 +170,6 @@ Give that a try, and let me know if it resolves the disalignment during movement
         _physics.World.AddRigidBody(body);
         _physics.MapCubeBodies.Add(body);
 
-        // In Map.AddPhysicsBody (add debug logging)
-        Console.WriteLine($"Adding cube at {cube.Position.X},{cube.Position.Y},{cube.Position.Z} with center {position}");
     }
 
     public bool IsInBounds(Vector3 pos) =>

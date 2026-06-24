@@ -14,10 +14,6 @@
     <None Remove="animations\BlueCubeGenerator\**" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Remove="C:\Users\arteo\.nuget\packages\sharpfont\4.0.1\build\..\config\SharpFont.dll.config" />
-  </ItemGroup>
-
 	<ItemGroup>
 		<PackageReference Include="BulletSharp" Version="0.11.1" />
 		<PackageReference Include="ImGui.NET" Version="1.91.6.1" />
@@ -29,7 +25,9 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <Folder Include="fonts\" />
+    <None Update="shaders\**\*;animations\**\*;fonts\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -18,6 +18,8 @@ using Vector4 = OpenTK.Mathematics.Vector4;
 
 public class AnimatedModel : IDisposable
 {
+    private static readonly bool EnableDiagnostics =
+        string.Equals(Environment.GetEnvironmentVariable("DREAM_MODEL_DIAGNOSTICS"), "1", StringComparison.Ordinal);
 
     #region Structures
     private struct MeshBuffers
@@ -127,17 +129,17 @@ public class AnimatedModel : IDisposable
             materialData.HasOcclusionTexture = materialData.OcclusionTexture != -1;
 
             // Log material properties
-            Console.WriteLine($"Material '{material.Name}':");
-            Console.WriteLine($"  BaseColorFactor: {materialData.BaseColorFactor}");
-            Console.WriteLine($"  EmissiveFactor: {materialData.EmissiveFactor}");
-            Console.WriteLine($"  MetallicFactor: {materialData.MetallicFactor}");
-            Console.WriteLine($"  RoughnessFactor: {materialData.RoughnessFactor}");
-            Console.WriteLine($"  AlphaMode: {materialData.AlphaMode}, AlphaCutoff: {materialData.AlphaCutoff}");
-            Console.WriteLine($"  Has BaseColorTexture: {materialData.HasBaseColorTexture}");
-            Console.WriteLine($"  Has NormalTexture: {materialData.HasNormalTexture}");
-            Console.WriteLine($"  Has MetallicRoughnessTexture: {materialData.HasMetallicRoughnessTexture}");
-            Console.WriteLine($"  Has EmissiveTexture: {materialData.HasEmissiveTexture}");
-            Console.WriteLine($"  Has OcclusionTexture: {materialData.HasOcclusionTexture}");
+            Log($"Material '{material.Name}':");
+            Log($"  BaseColorFactor: {materialData.BaseColorFactor}");
+            Log($"  EmissiveFactor: {materialData.EmissiveFactor}");
+            Log($"  MetallicFactor: {materialData.MetallicFactor}");
+            Log($"  RoughnessFactor: {materialData.RoughnessFactor}");
+            Log($"  AlphaMode: {materialData.AlphaMode}, AlphaCutoff: {materialData.AlphaCutoff}");
+            Log($"  Has BaseColorTexture: {materialData.HasBaseColorTexture}");
+            Log($"  Has NormalTexture: {materialData.HasNormalTexture}");
+            Log($"  Has MetallicRoughnessTexture: {materialData.HasMetallicRoughnessTexture}");
+            Log($"  Has EmissiveTexture: {materialData.HasEmissiveTexture}");
+            Log($"  Has OcclusionTexture: {materialData.HasOcclusionTexture}");
 
 
             _materials.Add(material, materialData);
@@ -238,10 +240,10 @@ public class AnimatedModel : IDisposable
 
     private void LoadMeshes()
     {
-        Console.WriteLine("Loading Meshes...");
+        Log("Loading Meshes...");
         foreach (var mesh in _model.LogicalMeshes)
         {
-            Console.WriteLine($"Mesh '{mesh.Name}' with {mesh.Primitives.Count} primitives:");
+            Log($"Mesh '{mesh.Name}' with {mesh.Primitives.Count} primitives:");
             var primitives = new List<MeshBuffers>();
 
             foreach (var primitive in mesh.Primitives)
@@ -250,7 +252,7 @@ public class AnimatedModel : IDisposable
                 var indices = primitive.GetIndices().Select(i => (uint)i).ToArray();
                 var buffers = CreateBuffers(vertices, indices, primitive);
 
-                Console.WriteLine($"  Primitive with {indices.Length} indices, material '{primitive.Material?.Name ?? "None"}'");
+                Log($"  Primitive with {indices.Length} indices, material '{primitive.Material?.Name ?? "None"}'");
 
                 primitives.Add(buffers);
             }
@@ -288,7 +290,7 @@ public class AnimatedModel : IDisposable
         // Log the normals for the first few vertices.
         for (int i = 0; i < Math.Min(5, vertices.Length); i++)
         {
-            Console.WriteLine($"Vertex {i} normal: {vertices[i].Normal}");
+            Log($"Vertex {i} normal: {vertices[i].Normal}");
         }
 
         return vertices;
@@ -347,10 +349,10 @@ public class AnimatedModel : IDisposable
     #region Animation
     private void LoadAnimations()
     {
-        Console.WriteLine("Loading Animations...");
+        Log("Loading Animations...");
         foreach (var animation in _model.LogicalAnimations)
         {
-            Console.WriteLine($"Animation '{animation.Name}' with duration {animation.Duration} seconds");
+            Log($"Animation '{animation.Name}' with duration {animation.Duration} seconds");
             _animations.Add(animation.Name, animation);
         }
     }
@@ -503,6 +505,14 @@ public class AnimatedModel : IDisposable
     public float AnimationSpeed { get; set; } = 1.0f;
     public void StartAnimation(string name = null) => _isAnimating = true;
     public void StopAnimation() => _isAnimating = false;
+
+    private static void Log(string message)
+    {
+        if (EnableDiagnostics)
+        {
+            Console.WriteLine(message);
+        }
+    }
 
     private class MaterialData
     {
