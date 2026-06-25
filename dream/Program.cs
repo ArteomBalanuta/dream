@@ -2,7 +2,9 @@
 {
     public static void Main(string[] args)
     {
-        using (var game = new Game())
+        StartupOptions options = StartupOptions.Parse(args);
+
+        using (var game = new Game(options))
         {
             game.Run();
         }

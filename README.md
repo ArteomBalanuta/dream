@@ -29,6 +29,12 @@ dotnet build dream\dream.csproj
 dotnet run --project dream\dream.csproj
 ```
 
+To start without Bullet physics, use:
+
+```powershell
+dotnet run --project dream\dream.csproj -- --disable-physics
+```
+
 The project currently builds successfully with warnings. The remaining package warning comes from `BulletSharp`, which is intentionally still in use and restores as an older .NET Framework-oriented package.
 
 The HUD crosshair is now viewport-driven, so it is rebuilt from the live window size instead of from baked pixel coordinates.
@@ -71,6 +77,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
 - Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.
 - A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
+- When launched with `--disable-physics`, the app skips Bullet initialization and runs in a visual-only mode without collisions, gravity, or collision debug bodies.
 - Future HUD positioning work should derive placement from the live viewport rather than from hardcoded viewport pixel coordinates.
 - Runtime assets are resolved from the application output layout through a shared path helper. See [docs/configuration.md](docs/configuration.md) for the current asset-loading model.
 

@@ -7,14 +7,16 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class Player
 {
-    private readonly PhysicsIntegrator _physics;
+    private readonly PhysicsIntegrator? _physics;
     private readonly PlayerController _controller = new();
-    private readonly PlayerMotor _motor;
+    private readonly PlayerMotor? _motor;
+    private readonly DirectPlayerMotion _directMotion = new();
     private readonly PlayerCameraRig _cameraRig;
     private readonly PlayerInteraction _interaction = new();
+    private Vector3 _worldPosition;
 
     public Map map;
-    public RigidBody PhysicsBody { get; }
+    public RigidBody? PhysicsBody { get; }
     public float Speed { get; set; } = 3.0f;
     public Camera Camera => _cameraRig.Camera;
 
@@ -23,39 +25,58 @@ public class Player
     private float _collisionReportTimer;
     private bool _primaryUseTriggered;
 
-    public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position)
+    public Player(Map map, PhysicsIntegrator? physics, RigidBody? physicsBody, Vector3 position)
     {
         this.map = map;
         _physics = physics;
-        _motor = new PlayerMotor(_physics);
         _cameraRig = new PlayerCameraRig(position);
+        _worldPosition = position;
         PhysicsBody = physicsBody;
-        PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
-        PhysicsBody.Activate();
-        PhysicsBody.ActivationState = ActivationState.DisableDeactivation;
+        if (PhysicsBody != null && _physics != null)
+        {
+            _motor = new PlayerMotor(_physics);
+            PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
+            PhysicsBody.Activate();
+            PhysicsBody.ActivationState = ActivationState.DisableDeactivation;
+        }
     }
 
     public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState, GameSettings settings, bool allowInput)
     {
-        Vector3 currentPosition = _cameraRig.SyncFromBody(PhysicsBody, settings);
         Speed = settings.MoveSpeed;
 
-        MovementCommand movement = _controller.CaptureMovement(Camera, keyboardState, allowInput);
-        _motor.Update(PhysicsBody, currentPosition, movement, settings, allowInput);
-        _cameraRig.UpdateLook(deltaTime, mouseState, allowInput, _motor.IsFrozen);
-
-        _collisionReportTimer += deltaTime;
-        if (_collisionReportTimer >= CollisionReportCooldown)
+        if (PhysicsBody != null && _motor != null)
         {
-            CheckAndLogCollisions();
-            _collisionReportTimer = 0f;
+            Vector3 currentPosition = _cameraRig.SyncFromBody(PhysicsBody, settings);
+            MovementCommand movement = _controller.CaptureMovement(Camera, keyboardState, allowInput);
+            _motor.Update(PhysicsBody, currentPosition, movement, settings, allowInput);
+            _cameraRig.UpdateLook(deltaTime, mouseState, allowInput, _motor.IsFrozen);
+
+            _collisionReportTimer += deltaTime;
+            if (_collisionReportTimer >= CollisionReportCooldown)
+            {
+                CheckAndLogCollisions();
+                _collisionReportTimer = 0f;
+            }
+
+            LastReportedPosition = currentPosition;
+            return;
         }
 
-        LastReportedPosition = currentPosition;
+        Vector3 directPosition = _cameraRig.SyncFromPosition(_worldPosition, settings);
+        MovementCommand directMovement = _controller.CaptureMovement(Camera, keyboardState, allowInput);
+        _worldPosition = _directMotion.Update(directPosition, directMovement, settings, deltaTime, allowInput);
+        _cameraRig.SyncFromPosition(_worldPosition, settings);
+        _cameraRig.UpdateLook(deltaTime, mouseState, allowInput, _directMotion.IsFrozen);
+        LastReportedPosition = _worldPosition;
     }
 
     private void CheckAndLogCollisions()
     {
+        if (_physics == null || PhysicsBody == null)
+        {
+            return;
+        }
         var collisions = new List<CollisionInfo>();
         var callback = new PlayerContactCallback(PhysicsBody);
         _physics.World.ContactTest(PhysicsBody, callback);
@@ -91,7 +112,13 @@ public class Player
 
     public void PlaceCube(Map map)
     {
-        _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
+        if (PhysicsBody != null)
+        {
+            _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
+            return;
+        }
+
+        _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, _worldPosition);
     }
 
     public bool ConsumePrimaryUsePressed(MouseState mouseState, bool allowInput)
@@ -103,13 +130,27 @@ public class Player
 
     public Vector3 GetWorldPosition()
     {
+        if (PhysicsBody == null)
+        {
+            return _worldPosition;
+        }
+
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         return transform.Origin.ToOpenTK();
     }
 
     public void SetWorldPosition(Vector3 position)
     {
-        _cameraRig.Teleport(PhysicsBody, position, 0.35f);
+        _worldPosition = position;
+        if (PhysicsBody != null)
+        {
+            _cameraRig.Teleport(PhysicsBody, position, 0.35f);
+        }
+        else
+        {
+            _cameraRig.Teleport(position, 0.35f);
+        }
+
         LastReportedPosition = position;
     }
 

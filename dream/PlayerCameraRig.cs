@@ -17,9 +17,14 @@ public class PlayerCameraRig
     {
         body.MotionState.GetWorldTransform(out Matrix transform);
         Vector3 currentPosition = transform.Origin.ToOpenTK();
-        Camera.Position = currentPosition + new Vector3(0f, settings.EyeHeightOffset, 0f);
+        return SyncFromPosition(currentPosition, settings);
+    }
+
+    public Vector3 SyncFromPosition(Vector3 position, GameSettings settings)
+    {
+        Camera.Position = position + new Vector3(0f, settings.EyeHeightOffset, 0f);
         Camera.MouseSensitivity = settings.MouseSensitivity;
-        return currentPosition;
+        return position;
     }
 
     public void UpdateLook(float deltaTime, MouseState mouseState, bool allowGameplayInput, bool isFrozen)
@@ -39,6 +44,11 @@ public class PlayerCameraRig
         body.AngularVelocity = BulletSharp.Math.Vector3.Zero;
         body.ClearForces();
         body.Activate(true);
+        Teleport(position, eyeHeightOffset);
+    }
+
+    public void Teleport(Vector3 position, float eyeHeightOffset)
+    {
         Camera.Position = position + new Vector3(0f, eyeHeightOffset, 0f);
     }
 }

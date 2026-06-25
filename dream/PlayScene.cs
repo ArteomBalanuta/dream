@@ -9,7 +9,7 @@ public class PlayScene : IDisposable
     private readonly Render _render;
     private readonly Player _player;
     private Map _map;
-    private readonly PhysicsIntegrator _physics;
+    private readonly PhysicsIntegrator? _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly GameSettings _settings;
     private readonly PlayerViewModelController _viewModelController;
@@ -19,15 +19,15 @@ public class PlayScene : IDisposable
 
     public Vector3 LastReportedPlayerPosition => _player.LastReportedPosition;
 
-    public PlayScene(GameSettings settings)
+    public PlayScene(GameSettings settings, StartupOptions startupOptions)
     {
         _settings = settings;
-        _physics = new PhysicsIntegrator();
+        _physics = startupOptions.PhysicsEnabled ? new PhysicsIntegrator() : null;
         _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
+        _player = new Player(_map, _physics, _physics?.PlayerBody, playerStartPosition);
         _render = new Render(_settings);
     }
 
@@ -56,10 +56,13 @@ public class PlayScene : IDisposable
             _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
         }
 
-        _physics.StepSimulation(delta);
+        _physics?.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         _player.PlaceCube(_map);
-        _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
+        if (_physics != null)
+        {
+            _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
+        }
     }
 
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
@@ -70,7 +73,7 @@ public class PlayScene : IDisposable
             _player.Camera,
             _map.GetRenderCandidateCubes(_player.Camera.Position, WorldVisibility.MaxRenderDistance));
 
-        if (_settings.ShowCollisionGeometry)
+        if (_settings.ShowCollisionGeometry && _physics != null)
         {
             _render.Debug.DrawCollisionBodies(_physics.MapCubeBodies, _player.Camera);
             _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
@@ -104,7 +107,7 @@ public class PlayScene : IDisposable
 
     public void Dispose()
     {
-        _physics.Dispose();
+        _physics?.Dispose();
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)
@@ -123,7 +126,7 @@ public class PlayScene : IDisposable
         Vector3 currentPlayerPosition = _player.GetWorldPosition();
         Map previousMap = _map;
 
-        _physics.ResetMapBodies();
+        _physics?.ResetMapBodies();
 
         var rebuiltMap = new Map(_physics, width: floorSize, depth: floorSize);
         previousMap.CopyPlacedCubesTo(rebuiltMap);

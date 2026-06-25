@@ -24,4 +24,15 @@ public class PlayerInteraction
         Vector3 position = transform.Origin.ToOpenTK() + camera.Front * 2.0f;
         map.AddCube(position);
     }
+
+    public void TryPlaceCube(Map map, bool primaryUseTriggered, Camera camera, Vector3 worldPosition)
+    {
+        if (!primaryUseTriggered)
+        {
+            return;
+        }
+
+        Vector3 position = worldPosition + camera.Front * 2.0f;
+        map.AddCube(position, withPhysics: false);
+    }
 }

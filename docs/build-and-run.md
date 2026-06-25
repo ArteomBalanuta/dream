@@ -32,6 +32,12 @@ Use:
 dotnet run --project dream\dream.csproj
 ```
 
+To run without Bullet physics, use:
+
+```powershell
+dotnet run --project dream\dream.csproj -- --disable-physics
+```
+
 The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, and font files are loaded from the runtime output layout rather than from machine-specific absolute paths.
 
 ## Default Runtime Behavior
@@ -56,6 +62,27 @@ On startup, the game currently:
 - `Esc`: open or close the settings menu
 
 When the settings menu is open, the cursor is released and gameplay input is paused.
+
+## No-Physics Startup Mode
+
+The manual `--disable-physics` flag skips `BulletSharp` initialization entirely.
+
+This mode is intended for environments where the Bullet native library is unavailable, such as this macOS setup.
+
+Current no-physics behavior:
+
+- first-person rendering still works
+- mouse-look still works
+- movement still works
+- cube placement still works
+- runtime floor resize still works
+
+Current no-physics limitations:
+
+- no collisions
+- no gravity
+- no Bullet contact reporting
+- no collision debug rendering
 
 ## Runtime Verification For Viewmodels
 

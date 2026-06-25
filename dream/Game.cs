@@ -13,14 +13,14 @@ public class Game : GameWindow
     private int _frameCount;
     public int FPS { get; private set; }
 
-    public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
+    public Game(StartupOptions startupOptions) : base(GameWindowSettings.Default, new NativeWindowSettings
     {
         ClientSize = new Vector2i(1440, 1024),
         Title = "Physics Integrated Game"
     })
     {
         _settings = new GameSettings(new Vector2i(1440, 1024));
-        _playScene = new PlayScene(_settings);
+        _playScene = new PlayScene(_settings, startupOptions);
         CursorState = _playScene.DesiredCursorState;
     }
 

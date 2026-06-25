@@ -97,4 +97,16 @@ public class PlayerInteractionTests
         Assert.False(interaction.CapturePrimaryUse(new PlayerInteractionCommand(false)));
         Assert.True(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
     }
+
+    [Fact]
+    public void TryPlaceCube_Uses_DirectWorldPosition_When_Physics_Is_Disabled()
+    {
+        var interaction = new PlayerInteraction();
+        var map = new Map(loadVisualAssets: false);
+        var camera = new Camera(new Vector3(5f, 1.85f, 5f));
+
+        interaction.TryPlaceCube(map, primaryUseTriggered: true, camera, new Vector3(5f, 1.5f, 5f));
+
+        Assert.NotNull(map.Cubes[5, 1, 3]);
+    }
 }
