@@ -5,8 +5,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using ImGuiNET;
 using System.Runtime.CompilerServices;
 public readonly record struct HudFrameResult(
-    Vector2i? RequestedResolution,
-    int? RequestedFloorSize);
+    HudInteractionRequest Request);
 
 public class Render
 {
@@ -458,7 +457,7 @@ public class Render
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
 
-        return new HudFrameResult(request.RequestedResolution, request.RequestedFloorSize);
+        return new HudFrameResult(request);
     }
 
     private void DrawFloatingCombatText(Camera camera, CombatFeedbackSystem combatFeedback)

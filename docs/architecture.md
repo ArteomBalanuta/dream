@@ -64,7 +64,7 @@ Inside `PlayScene.Render()`:
 
 `PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
 
-The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
+The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the gameplay and runtime consequences of those requests.
 
 The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for screen-space projection and drawing.
 

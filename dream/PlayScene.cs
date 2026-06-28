@@ -90,20 +90,8 @@ public class PlayScene : IDisposable
 
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState, _player.Camera, _combatFeedback);
-        if (hudResult.RequestedResolution.HasValue)
-        {
-            applyClientSize(hudResult.RequestedResolution.Value);
-            _settings.ApplyResolution(hudResult.RequestedResolution.Value);
-        }
-
+        ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
-
-        if (hudResult.RequestedFloorSize.HasValue && hudResult.RequestedFloorSize.Value != _settings.FloorSize)
-        {
-            _settings.StageFloorSize(hudResult.RequestedFloorSize.Value);
-            _settings.ApplyPendingFloorSize();
-            RebuildMapForFloorSize(_settings.FloorSize);
-        }
     }
 
     public void Resize(Vector2i size)
@@ -128,6 +116,42 @@ public class PlayScene : IDisposable
         }
 
         _wasSettingsTogglePressed = settingsTogglePressed;
+    }
+
+    private void ApplyHudRequest(HudInteractionRequest request, Action<Vector2i> applyClientSize)
+    {
+        if (request.FieldOfViewDegrees.HasValue)
+        {
+            _settings.FieldOfViewDegrees = request.FieldOfViewDegrees.Value;
+        }
+
+        if (request.MouseSensitivity.HasValue)
+        {
+            _settings.MouseSensitivity = request.MouseSensitivity.Value;
+        }
+
+        if (request.StagedFloorSize.HasValue)
+        {
+            _settings.StageFloorSize(request.StagedFloorSize.Value);
+        }
+
+        if (request.ShowCollisionGeometry.HasValue)
+        {
+            _settings.SetShowCollisionGeometry(request.ShowCollisionGeometry.Value);
+        }
+
+        if (request.RequestedResolution.HasValue)
+        {
+            applyClientSize(request.RequestedResolution.Value);
+            _settings.ApplyResolution(request.RequestedResolution.Value);
+        }
+
+        if (request.RequestedFloorSize.HasValue && request.RequestedFloorSize.Value != _settings.FloorSize)
+        {
+            _settings.StageFloorSize(request.RequestedFloorSize.Value);
+            _settings.ApplyPendingFloorSize();
+            RebuildMapForFloorSize(_settings.FloorSize);
+        }
     }
 
     private void RebuildMapForFloorSize(int floorSize)

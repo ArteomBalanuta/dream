@@ -34,4 +34,20 @@ public class HudInteractionRequestTests
         Assert.Equal(20, request.RequestedFloorSize);
         Assert.True(request.ShowCollisionGeometry);
     }
+
+    [Fact]
+    public void Hud_Frame_Result_Preserves_The_Full_Request()
+    {
+        HudInteractionRequest request = new(
+            FieldOfViewDegrees: 80f,
+            MouseSensitivity: 4.5f,
+            RequestedResolution: new Vector2i(1600, 900),
+            StagedFloorSize: 20,
+            RequestedFloorSize: 20,
+            ShowCollisionGeometry: true);
+
+        HudFrameResult result = new(request);
+
+        Assert.Equal(request, result.Request);
+    }
 }
