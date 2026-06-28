@@ -45,6 +45,27 @@ public class CombatFeedbackSystemTests
         Assert.Empty(states);
     }
 
+    [Fact]
+    public void Disposed_System_No_Longer_Reacts_To_Damage_Events()
+    {
+        SceneEventHub hub = new();
+        FloatingCombatTextSystem floatingText = new();
+        CombatFeedbackSystem system = new(hub, floatingText);
+        CombatActorHandle actor = new(
+            Id: 1,
+            Kind: CreatureKind.Player,
+            Damageable: new HealthState(100),
+            AnchorProvider: new FixedAnchorProvider(Vector3.Zero));
+
+        system.Dispose();
+        hub.Publish(new DamageAppliedEvent(actor, 9, FloatingCombatTextKind.Regular));
+
+        List<FloatingCombatTextRenderState> states = new();
+        floatingText.CollectRenderStates(states);
+
+        Assert.Empty(states);
+    }
+
     private sealed class FixedAnchorProvider : ICombatAnchorProvider
     {
         private readonly Vector3 _anchor;
