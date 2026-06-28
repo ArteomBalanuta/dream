@@ -14,6 +14,7 @@ Inside the `Game` constructor:
 
 - `Game` is the OpenTK window shell and lifecycle owner.
 - `PlayScene` is the active gameplay scene and coordinates per-frame gameplay update/render flow.
+- `PlayScene` is also the intended owner of scene-scoped event publication and subscription lifetime through a local event hub rather than a global engine bus.
 - `GameSettings` now owns both raw tuning values and a small runtime state model (`RuntimeState`) plus targeted change events for HUD-driven configuration updates.
 - `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, player body, and registered map bodies, while helper systems now handle body creation and transform syncing.
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.

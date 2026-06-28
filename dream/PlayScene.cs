@@ -11,6 +11,7 @@ public class PlayScene : IDisposable
     private Map _map;
     private readonly PhysicsIntegrator _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
+    private readonly SceneEventHub _events = new();
     private readonly GameSettings _settings;
     private readonly PlayerViewModelController _viewModelController;
     private bool _wasSettingsTogglePressed;
@@ -18,6 +19,8 @@ public class PlayScene : IDisposable
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
     public Vector3 LastReportedPlayerPosition => _player.LastReportedPosition;
+
+    internal SceneEventHub Events => _events;
 
     public PlayScene(GameSettings settings)
     {
