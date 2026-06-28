@@ -2,18 +2,18 @@
 
 Purpose: record the introduction of the first scene-scoped event hub.
 Status: completed
-Scope: typed publish/subscribe foundation and scene ownership seam
+Scope: scene ownership seam and architecture documentation follow-up
 
 ## Summary
 
-Added a small typed `SceneEventHub` and threaded it into `PlayScene` as scene-local infrastructure for later decoupling work.
+Threaded the existing `SceneEventHub` into `PlayScene` as a local ownership seam and documented that seam in the architecture notes for later decoupling work.
 
 ## Completed Work
 
-- added typed publish/subscribe support
-- added explicit subscription disposal behavior
-- added focused tests for dispatch order and unsubscribe behavior
-- established `PlayScene` as the local owner of event lifetime
+- added a scene-owned `SceneEventHub` field and internal accessor in `PlayScene`
+- kept current gameplay orchestration unchanged while establishing the seam
+- documented `PlayScene` as the intended future boundary for scene-local event ownership instead of introducing a global bus
+- recorded the phase slice in the ledger work log
 
 ## Verification
 
