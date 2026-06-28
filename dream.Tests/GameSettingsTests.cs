@@ -12,6 +12,7 @@ public class GameSettingsTests
         Assert.Equal(1024, settings.WindowHeight);
         Assert.False(settings.SettingsVisible);
         Assert.Equal(70f, settings.FieldOfViewDegrees);
+        Assert.Equal(150f, settings.NoclipSpeed);
         Assert.Equal(25, settings.FloorSize);
         Assert.Equal(25, settings.PendingFloorSize);
         Assert.Equal(60f, settings.ViewModelRig.FieldOfViewDegrees);

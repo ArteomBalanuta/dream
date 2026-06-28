@@ -4,36 +4,43 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class PlayerController
 {
-    public MovementCommand CaptureMovement(Camera camera, KeyboardState keyboardState, bool allowGameplayInput)
+    public MovementCommand CaptureMovement(
+        Camera camera,
+        KeyboardState keyboardState,
+        bool allowGameplayInput,
+        bool noclipEnabled)
     {
         if (!allowGameplayInput)
         {
-            return new MovementCommand(Vector3.Zero, false, false);
+            return new MovementCommand(Vector3.Zero, 0f, false, false, false);
         }
 
-        Vector3 movementDirection = Vector3.Zero;
-        Vector3 forward = new Vector3(camera.Front.X, 0f, camera.Front.Z).Normalized();
-        Vector3 right = new Vector3(camera.Right.X, 0f, camera.Right.Z).Normalized();
-
-        if (keyboardState.IsKeyDown(Keys.W)) movementDirection += forward;
-        if (keyboardState.IsKeyDown(Keys.S)) movementDirection -= forward;
-        if (keyboardState.IsKeyDown(Keys.A)) movementDirection -= right;
-        if (keyboardState.IsKeyDown(Keys.D)) movementDirection += right;
-
-        if (movementDirection != Vector3.Zero)
-        {
-            movementDirection = movementDirection.Normalized();
-        }
+        (Vector3 movementDirection, float verticalDirection) = PlayerMovementResolver.Resolve(
+            camera,
+            noclipEnabled,
+            moveForward: keyboardState.IsKeyDown(Keys.W),
+            moveBackward: keyboardState.IsKeyDown(Keys.S),
+            moveLeft: keyboardState.IsKeyDown(Keys.A),
+            moveRight: keyboardState.IsKeyDown(Keys.D),
+            moveUp: keyboardState.IsKeyDown(Keys.Space),
+            moveDown: keyboardState.IsKeyDown(Keys.LeftControl));
 
         return new MovementCommand(
             movementDirection,
+            verticalDirection,
             keyboardState.IsKeyDown(Keys.Space),
-            keyboardState.IsKeyDown(Keys.F));
+            keyboardState.IsKeyDown(Keys.F),
+            keyboardState.IsKeyDown(Keys.V));
     }
 
-    public PlayerInteractionCommand CaptureInteraction(MouseState mouseState, bool allowGameplayInput)
+    public PlayerInteractionCommand CaptureInteraction(
+        KeyboardState keyboardState,
+        MouseState mouseState,
+        bool allowGameplayInput)
     {
         return new PlayerInteractionCommand(
-            allowGameplayInput && mouseState.IsButtonDown(MouseButton.Left));
+            PrimaryUsePressed: allowGameplayInput && mouseState.IsButtonDown(MouseButton.Left),
+            SelectBuildingModePressed: allowGameplayInput && keyboardState.IsKeyDown(Keys.D1),
+            SelectCombatModePressed: allowGameplayInput && keyboardState.IsKeyDown(Keys.D2));
     }
 }

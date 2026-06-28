@@ -18,6 +18,23 @@ public class WorldSpatialIndex
         cubes.Add(cube);
     }
 
+    public bool Remove(Cube cube)
+    {
+        (int x, int z) = GetSectorKey(cube.Position);
+        if (!_sectors.TryGetValue((x, z), out List<Cube>? cubes))
+        {
+            return false;
+        }
+
+        bool removed = cubes.Remove(cube);
+        if (removed && cubes.Count == 0)
+        {
+            _sectors.Remove((x, z));
+        }
+
+        return removed;
+    }
+
     public IEnumerable<Cube> GetNearby(Vector3 position, float radius)
     {
         int sectorRadius = (int)MathF.Ceiling(radius / SectorSize);

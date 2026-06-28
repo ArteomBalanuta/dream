@@ -88,13 +88,22 @@ public class PlayerViewModelControllerTests
 public class PlayerInteractionTests
 {
     [Fact]
-    public void CapturePrimaryUse_ReturnsRisingEdgeOnly()
+    public void ShouldTriggerPrimaryUse_Fires_Immediately_Then_Repeats_On_Interval()
     {
         PlayerInteraction interaction = new();
 
-        Assert.True(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
-        Assert.False(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
-        Assert.False(interaction.CapturePrimaryUse(new PlayerInteractionCommand(false)));
-        Assert.True(interaction.CapturePrimaryUse(new PlayerInteractionCommand(true)));
+        Assert.True(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(true, false, false), 0.5f, 0f));
+        Assert.False(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(true, false, false), 0.5f, 0.25f));
+        Assert.True(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(true, false, false), 0.5f, 0.25f));
+    }
+
+    [Fact]
+    public void ShouldTriggerPrimaryUse_Resets_When_Button_Is_Released()
+    {
+        PlayerInteraction interaction = new();
+
+        Assert.True(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(true, false, false), 0.5f, 0f));
+        Assert.False(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(false, false, false), 0.5f, 0.1f));
+        Assert.True(interaction.ShouldTriggerPrimaryUse(new PlayerInteractionCommand(true, false, false), 0.5f, 0f));
     }
 }

@@ -10,10 +10,14 @@ public class HudInteractionRequestTests
 
         Assert.Null(request.FieldOfViewDegrees);
         Assert.Null(request.MouseSensitivity);
+        Assert.Null(request.NoclipSpeed);
         Assert.Null(request.RequestedResolution);
         Assert.Null(request.StagedFloorSize);
         Assert.Null(request.RequestedFloorSize);
         Assert.Null(request.ShowCollisionGeometry);
+        Assert.Null(request.Strength);
+        Assert.Null(request.AttackSpeed);
+        Assert.Null(request.Vitality);
     }
 
     [Fact]
@@ -22,17 +26,25 @@ public class HudInteractionRequestTests
         HudInteractionRequest request = new(
             FieldOfViewDegrees: 80f,
             MouseSensitivity: 4.5f,
+            NoclipSpeed: 18f,
             RequestedResolution: new Vector2i(1600, 900),
             StagedFloorSize: 20,
             RequestedFloorSize: 20,
-            ShowCollisionGeometry: true);
+            ShowCollisionGeometry: true,
+            Strength: 12,
+            AttackSpeed: 3.5f,
+            Vitality: 14);
 
         Assert.Equal(80f, request.FieldOfViewDegrees);
         Assert.Equal(4.5f, request.MouseSensitivity);
+        Assert.Equal(18f, request.NoclipSpeed);
         Assert.Equal(new Vector2i(1600, 900), request.RequestedResolution);
         Assert.Equal(20, request.StagedFloorSize);
         Assert.Equal(20, request.RequestedFloorSize);
         Assert.True(request.ShowCollisionGeometry);
+        Assert.Equal(12, request.Strength);
+        Assert.Equal(3.5f, request.AttackSpeed);
+        Assert.Equal(14, request.Vitality);
     }
 
     [Fact]
@@ -41,10 +53,14 @@ public class HudInteractionRequestTests
         HudInteractionRequest request = new(
             FieldOfViewDegrees: 80f,
             MouseSensitivity: 4.5f,
+            NoclipSpeed: 18f,
             RequestedResolution: new Vector2i(1600, 900),
             StagedFloorSize: 20,
             RequestedFloorSize: 20,
-            ShowCollisionGeometry: true);
+            ShowCollisionGeometry: true,
+            Strength: 12,
+            AttackSpeed: 3.5f,
+            Vitality: 14);
 
         HudFrameResult result = new(request);
 

@@ -34,6 +34,18 @@ public class FloatingCombatTextMotionTests
         Assert.True(FloatingCombatTextMotion.EvaluateAlpha(0.80f) < 1f);
         Assert.Equal(0f, FloatingCombatTextMotion.EvaluateAlpha(1.0f), 3);
     }
+
+    [Fact]
+    public void EvaluateDepthOffset_Bursts_Forward_Then_Settles_Back()
+    {
+        float start = FloatingCombatTextMotion.EvaluateDepthOffset(0f);
+        float middle = FloatingCombatTextMotion.EvaluateDepthOffset(0.05f);
+        float end = FloatingCombatTextMotion.EvaluateDepthOffset(FloatingCombatTextMotion.BurstDuration);
+
+        Assert.Equal(0f, start, 3);
+        Assert.True(middle > 0f);
+        Assert.Equal(0f, end, 3);
+    }
 }
 
 public class FloatingCombatTextSystemTests

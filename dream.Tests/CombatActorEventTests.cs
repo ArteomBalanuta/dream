@@ -17,4 +17,15 @@ public class CombatActorEventTests
         ActorDiedEvent deathEvent = Assert.Single(observed);
         Assert.Equal(combatant.Actor.Id, deathEvent.Actor.Id);
     }
+
+    [Fact]
+    public void Demo_Combat_Target_Anchors_In_Front_Of_Camera()
+    {
+        Camera camera = new(new Vector3(5f, 2f, 7f));
+
+        CombatActorHandle actor = CombatDemoTargetFactory.CreateImpactActor(camera, distance: 2f, verticalOffset: 0.15f);
+
+        Assert.Equal(CreatureKind.Object, actor.Kind);
+        Assert.Equal(new Vector3(5f, 2.15f, 5f), actor.GetWorldAnchor());
+    }
 }

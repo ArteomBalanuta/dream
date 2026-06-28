@@ -56,7 +56,7 @@ public class Map
         }
     }
 
-    public void AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
+    public Cube? AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
     {
         int x = (int)MathF.Floor(position.X + 1e-6f);
         int y = (int)MathF.Floor(position.Y + 1e-6f);
@@ -64,7 +64,7 @@ public class Map
 
         if (!IsInBounds(new Vector3(x, y, z)) || Cubes[x, y, z] != null)
         {
-            return;
+            return null;
         }
 
         Cube cube = _generator.CreateSolidCube(new Vector3(x, y, z));
@@ -79,6 +79,8 @@ public class Map
         {
             _physicsBinder.AddCubeBody(cube, isStatic);
         }
+
+        return cube;
     }
 
     public void CopyPlacedCubesTo(Map target)
@@ -109,6 +111,70 @@ public class Map
         return _grid.IsInBounds(position);
     }
 
+    public bool RemoveCube(Cube cube)
+    {
+        Vector3 cell = ToCellPosition(cube.Position);
+        int x = (int)cell.X;
+        int y = (int)cell.Y;
+        int z = (int)cell.Z;
+
+        if (!IsInBounds(cell) || y == 0 || Cubes[x, y, z] != cube)
+        {
+            return false;
+        }
+
+        Cubes[x, y, z] = null;
+        _solidCubes.Remove(cube);
+        _placedCubeSpatialIndex.Remove(cube);
+        _physicsBinder?.RemoveCubeBody(cube);
+        return true;
+    }
+
+    public Cube? TryGetCubeAtCell(int x, int y, int z)
+    {
+        if (!_grid.IsInBounds(new Vector3(x, y, z)))
+        {
+            return null;
+        }
+
+        return Cubes[x, y, z];
+    }
+
+    public Cube? TryGetFirstSolidCubeAlongRay(
+        Vector3 origin,
+        Vector3 direction,
+        float maxDistance,
+        bool includeFloor = false)
+    {
+        if (direction == Vector3.Zero || maxDistance <= 0f)
+        {
+            return null;
+        }
+
+        Vector3 normalizedDirection = direction.Normalized();
+        const float stepSize = 0.10f;
+
+        for (float distance = 0.25f; distance <= maxDistance; distance += stepSize)
+        {
+            Vector3 sample = origin + (normalizedDirection * distance);
+            Vector3 cell = ToCellPosition(sample);
+            Cube? cube = TryGetCubeAtCell((int)cell.X, (int)cell.Y, (int)cell.Z);
+            if (cube == null)
+            {
+                continue;
+            }
+
+            if (!includeFloor && cell.Y == 0)
+            {
+                continue;
+            }
+
+            return cube;
+        }
+
+        return null;
+    }
+
     public IEnumerable<Cube> GetNearbySolidCubes(Vector3 position, float radius)
     {
         return GetRenderCandidateCubes(position, radius);
@@ -130,6 +196,14 @@ public class Map
     private IEnumerable<Cube> GetNearbyPlacedCubes(Vector3 position, float radius)
     {
         return _placedCubeSpatialIndex.GetNearby(position, radius);
+    }
+
+    private static Vector3 ToCellPosition(Vector3 position)
+    {
+        return new Vector3(
+            (int)MathF.Floor(position.X + 1e-6f),
+            (int)MathF.Floor(position.Y + 1e-6f),
+            (int)MathF.Floor(position.Z + 1e-6f));
     }
 
     private IEnumerable<Cube> GetNearbyFloorCubes(Vector3 position, float radius)

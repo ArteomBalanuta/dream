@@ -5,6 +5,11 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     private readonly Func<Vector3> _positionProvider;
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
+    private float _attackCooldownRemaining;
+
+    public PlayerCombatStats Stats { get; }
+
+    public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
     public HealthState Health { get; }
 
@@ -14,13 +19,15 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Func<Vector3> positionProvider,
         SceneEventHub? eventHub = null,
         int actorId = 1,
-        int maxHealth = 100,
-        float anchorHeightOffset = 1.2f)
+        float anchorHeightOffset = 1.2f,
+        PlayerCombatStats? stats = null)
     {
         _positionProvider = positionProvider;
         _eventHub = eventHub;
         _anchorHeightOffset = anchorHeightOffset;
-        Health = new HealthState(maxHealth);
+        Stats = stats ?? new PlayerCombatStats();
+        DerivedStats = Stats.Derive();
+        Health = new HealthState(DerivedStats.MaxHealth);
         Actor = new CombatActorHandle(actorId, CreatureKind.Player, Health, this);
     }
 
@@ -33,6 +40,49 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         }
 
         return receipt;
+    }
+
+    public void AdvanceCombat(float deltaTime)
+    {
+        _attackCooldownRemaining = Math.Max(0f, _attackCooldownRemaining - Math.Max(0f, deltaTime));
+    }
+
+    public void ApplyStats(PlayerCombatStats updatedStats)
+    {
+        Stats.Strength = updatedStats.Strength;
+        Stats.AttackSpeed = updatedStats.AttackSpeed;
+        Stats.Vitality = updatedStats.Vitality;
+
+        DerivedStats = Stats.Derive();
+        Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);
+    }
+
+    public bool TryStartAttack()
+    {
+        if (_attackCooldownRemaining > 0f)
+        {
+            return false;
+        }
+
+        _attackCooldownRemaining = DerivedStats.AttackIntervalSeconds;
+        return true;
+    }
+
+    public PlayerAttackResolution ResolveAttack(Func<int> damageRoll, Func<double> critRoll)
+    {
+        if (critRoll() <= DerivedStats.CriticalChance)
+        {
+            return new PlayerAttackResolution(
+                DerivedStats.CriticalDamage,
+                true,
+                FloatingCombatTextKind.Critical);
+        }
+
+        int damage = Math.Clamp(damageRoll(), DerivedStats.MinDamage, DerivedStats.MaxDamage);
+        return new PlayerAttackResolution(
+            damage,
+            false,
+            FloatingCombatTextKind.Regular);
     }
 
     public Vector3 GetCombatAnchorWorldPosition()

@@ -43,8 +43,8 @@ public class Player
         Vector3 currentPosition = _cameraRig.SyncFromBody(PhysicsBody, settings);
         Speed = settings.MoveSpeed;
 
-        MovementCommand movement = _controller.CaptureMovement(Camera, keyboardState, allowInput);
-        _motor.Update(PhysicsBody, currentPosition, movement, settings, allowInput);
+        MovementCommand movement = _controller.CaptureMovement(Camera, keyboardState, allowInput, _motor.IsNoclipEnabled);
+        _motor.Update(PhysicsBody, currentPosition, movement, settings, allowInput, deltaTime);
         _cameraRig.UpdateLook(deltaTime, mouseState, allowInput, _motor.IsFrozen);
 
         _collisionReportTimer += deltaTime;
@@ -97,10 +97,22 @@ public class Player
         _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
     }
 
-    public bool ConsumePrimaryUsePressed(MouseState mouseState, bool allowInput)
+    public Cube? TryPlaceCube(Map map)
     {
-        PlayerInteractionCommand interaction = _controller.CaptureInteraction(mouseState, allowInput);
-        _primaryUseTriggered = _interaction.CapturePrimaryUse(interaction);
+        return _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
+    }
+
+    public PlayerInteractionCommand CaptureInteractionCommand(
+        KeyboardState keyboardState,
+        MouseState mouseState,
+        bool allowInput)
+    {
+        return _controller.CaptureInteraction(keyboardState, mouseState, allowInput);
+    }
+
+    public bool ConsumePrimaryUsePressed(PlayerInteractionCommand interaction, float repeatIntervalSeconds, float deltaTime)
+    {
+        _primaryUseTriggered = _interaction.ShouldTriggerPrimaryUse(interaction, repeatIntervalSeconds, deltaTime);
         return _primaryUseTriggered;
     }
 
@@ -109,6 +121,8 @@ public class Player
         PhysicsBody.MotionState.GetWorldTransform(out Matrix transform);
         return transform.Origin.ToOpenTK();
     }
+
+    public bool IsNoclipEnabled => _motor.IsNoclipEnabled;
 
     public void SetWorldPosition(Vector3 position)
     {

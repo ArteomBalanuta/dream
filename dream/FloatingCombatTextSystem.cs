@@ -81,6 +81,7 @@ public sealed class FloatingCombatTextSystem
                 entry.WorldAnchor,
                 entry.HorizontalOffset,
                 FloatingCombatTextMotion.EvaluateVerticalOffset(entry.AgeSeconds),
+                FloatingCombatTextMotion.EvaluateDepthOffset(entry.AgeSeconds),
                 FloatingCombatTextMotion.EvaluateScale(entry.AgeSeconds, style.ScaleMultiplier),
                 alpha,
                 style,

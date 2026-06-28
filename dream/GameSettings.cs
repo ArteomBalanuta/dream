@@ -6,6 +6,8 @@ public class GameSettings
 
     public const int MinFloorSize = 5;
     public const int MaxFloorSize = 100;
+    public const float MinNoclipSpeed = 6f;
+    public const float MaxNoclipSpeed = 300f;
 
     public float FieldOfViewDegrees { get; set; } = 70f;
 
@@ -14,6 +16,8 @@ public class GameSettings
     public float EyeHeightOffset { get; set; } = 0.35f;
 
     public float MoveSpeed { get; set; } = 6f;
+
+    public float NoclipSpeed { get; set; } = 150f;
 
     public float JumpVelocity { get; set; } = 5f;
 

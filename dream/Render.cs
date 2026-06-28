@@ -446,13 +446,14 @@ public class Render
         GameSettings settings,
         MouseState mouseState,
         Camera camera,
-        CombatFeedbackSystem combatFeedback)
+        CombatFeedbackSystem combatFeedback,
+        HudStatusSnapshot status)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
         DrawFloatingCombatText(camera, combatFeedback);
-        HudInteractionRequest request = DrawHudInterface(settings);
+        HudInteractionRequest request = DrawHudInterface(settings, status);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
@@ -477,7 +478,8 @@ public class Render
             Vector3 worldPosition =
                 state.WorldAnchor +
                 (camera.Right * state.HorizontalOffset) +
-                (Vector3.UnitY * state.VerticalOffset);
+                (camera.Up * state.VerticalOffset) -
+                (camera.Front * state.DepthOffset);
 
             if (!TryProjectWorldToScreen(camera, worldPosition, out System.Numerics.Vector2 screenPosition))
             {
@@ -488,7 +490,9 @@ public class Render
             uint color = ToImGuiColor(state.Style.Color with { W = state.Alpha });
             float size = baseFontSize * state.Scale;
 
-            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + 1.5f, screenPosition.Y + 1.5f), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X - 1.5f, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + 1.5f, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y - 1.5f), shadow, state.Text);
             drawList.AddText(font, size, screenPosition, color, state.Text);
         }
     }
@@ -576,14 +580,18 @@ public class Render
         ImGui.NewFrame();
     }
 
-    private static HudInteractionRequest DrawHudInterface(GameSettings settings)
+    private static HudInteractionRequest DrawHudInterface(GameSettings settings, HudStatusSnapshot status)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
+        float? noclipSpeed = null;
         Vector2i? requestedResolution = null;
         int? stagedFloorSize = null;
         int? requestedFloorSize = null;
         bool? showCollisionGeometry = null;
+        int? strength = null;
+        float? attackSpeed = null;
+        int? vitality = null;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
@@ -593,7 +601,9 @@ public class Render
             (settings.SettingsVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
-        ImGui.Text("Score: 100");
+        ImGui.Text(status.HealthLabel);
+        ImGui.Text(status.ModeLabel);
+        ImGui.Text(status.DamageLabel);
         ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
         ImGui.Text("Press Esc to toggle settings");
         ImGui.End();
@@ -613,6 +623,30 @@ public class Render
             if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
             {
                 mouseSensitivity = sensitivity;
+            }
+
+            float currentNoclipSpeed = settings.NoclipSpeed;
+            if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+            {
+                noclipSpeed = currentNoclipSpeed;
+            }
+
+            int currentStrength = status.Strength;
+            if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
+            {
+                strength = currentStrength;
+            }
+
+            float currentAttackSpeed = status.AttackSpeed;
+            if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
+            {
+                attackSpeed = currentAttackSpeed;
+            }
+
+            int currentVitality = status.Vitality;
+            if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
+            {
+                vitality = currentVitality;
             }
 
             DrawViewModelControls(settings);
@@ -657,10 +691,14 @@ public class Render
         return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
+            noclipSpeed,
             requestedResolution,
             stagedFloorSize,
             requestedFloorSize,
-            showCollisionGeometry);
+            showCollisionGeometry,
+            strength,
+            attackSpeed,
+            vitality);
     }
 
     private static void DrawViewModelControls(GameSettings settings)

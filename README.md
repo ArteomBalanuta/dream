@@ -38,7 +38,10 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `W`, `A`, `S`, `D`: move the player
 - Mouse movement: look around
 - `Space`: jump
-- Left mouse button: place a cube in front of the player
+- `1`: select building mode
+- `2`: select combat mode
+- Left mouse button: perform the active mode's primary action
+- `V`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
 - `Esc`: toggle the settings menu and release or re-grab the cursor
 
@@ -48,6 +51,8 @@ The in-game settings panel currently supports:
 
 - field-of-view adjustment
 - mouse sensitivity adjustment
+- noclip/fly-speed adjustment
+- runtime `Strength`, `Attack Speed`, and `Vitality` tuning
 - preset resolution switching
 - runtime floor-size resizing with an explicit apply step
 - collision-geometry debug toggling for cubes and player
@@ -69,6 +74,9 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The base floor now uses a dedicated local candidate query, while the spatial index is reserved for placed cubes, reducing generic candidate overhead on larger maps.
 - The player camera now uses a configurable eye-height offset instead of a fixed close-up offset.
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
+- The existing top-left gameplay HUD now shows player HP, active interaction mode, and current derived damage range.
+- Combat stats are now player-owned runtime values instead of a scene-local random damage roll.
+- Combat mode can now damage destructible placed cubes, while the base floor remains protected in this first pass.
 - Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.
 - A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
 - Future HUD positioning work should derive placement from the live viewport rather than from hardcoded viewport pixel coordinates.

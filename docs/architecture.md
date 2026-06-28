@@ -34,17 +34,18 @@ Inside the `Game` constructor:
 `PlayScene.Update()` performs the current simulation work in this order:
 
 1. Toggle runtime state when global scene input requests it
-2. Translate primary-use input into `PlayerViewModelController` animation requests
-3. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
-4. Step the Bullet physics simulation with the current frame delta
-5. Update the player using the current keyboard and mouse state
-6. Try to place a cube in front of the player
-7. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
+2. Capture gameplay interaction input, including direct interaction-mode selection
+3. Translate primary-use input into either build placement or combat interaction based on the active `PlayerInteractionMode`
+4. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
+5. Step the Bullet physics simulation with the current frame delta
+6. Update the player using the current keyboard and mouse state
+7. Apply build placement only when the active mode is `Building`
+8. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
 
 `Player.Update()` now coordinates smaller subsystems:
 
 - `PlayerController` converts raw keyboard and mouse state into movement and interaction commands
-- `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body
+- `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body and now also owns noclip toggle state plus camera-relative fly movement bypass
 - `PlayerCameraRig` synchronizes camera position from the body and applies mouse-look
 - `PlayerInteraction` handles edge-triggered cube placement
 - `Player` itself retains collision reporting and public façade methods used by `PlayScene`
@@ -66,9 +67,11 @@ Inside `PlayScene.Render()`:
 
 The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the gameplay and runtime consequences of those requests.
 
-The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for screen-space projection and drawing.
+The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for camera-local billboard-style projection and drawing.
 
-Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the combat layer can publish both `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
+Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `PlayScene` still resolves combat hits against world cubes in the current slice, but the registered runtime record now models a generic world-object lifecycle so future props or interactables can reuse the same health, anchor, and removal seam.
+
+Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the scene now publishes world-mutation facts such as `CubePlacedEvent` and `CubeDestroyedEvent` alongside combat facts such as `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
@@ -80,8 +83,8 @@ The first-person subsystem is intentionally threaded through both `PlayScene.Upd
 The HUD path currently includes:
 
 - A crosshair built from simple line geometry
-- An ImGui `HUD` window for runtime status
-- An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, and viewmodel rig changes
+- An ImGui `HUD` window for runtime status, including player HP, active interaction mode, and current derived damage range
+- An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, viewmodel rig, and live player combat-stat changes
 - A floating-combat-text overlay projected from world anchors into screen coordinates
 
 ## Physics Model
@@ -133,6 +136,7 @@ The emerging combat layer is intentionally capability-based:
 - `HealthState` is the first shared combat-state component and can back players, enemies, or destructible objects
 - `CombatActorHandle` packages identity, kind, damageability, and anchor access into a lightweight runtime handle
 - `PlayerCombatant` is the first concrete adapter and keeps player combat participation out of the heavier movement and physics code
+- `PlayerCombatant` now also owns a small player-only stat model that derives outgoing damage range, crit damage, attack cadence, and vitality-driven max HP, while `PlayScene` keeps hit resolution and combat-event publication scene-owned
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 
