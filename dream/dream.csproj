@@ -24,7 +24,7 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <None Update="shaders\**\*;animations\**\*;fonts\**\*">
+    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

@@ -10,6 +10,8 @@ public readonly record struct HudFrameResult(
 
 public class Render
 {
+    private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
+
     private readonly record struct HudInteractionChanges(
         float? FieldOfViewDegrees,
         float? MouseSensitivity,
@@ -447,11 +449,18 @@ public class Render
     }
 
     private bool _wasFocused = true;
-    public HudFrameResult DrawHUD(FrameEventArgs args, bool windowFocused, GameSettings settings, MouseState mouseState)
+    public HudFrameResult DrawHUD(
+        FrameEventArgs args,
+        bool windowFocused,
+        GameSettings settings,
+        MouseState mouseState,
+        Camera camera,
+        FloatingCombatTextSystem floatingCombatText)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
+        DrawFloatingCombatText(camera, floatingCombatText);
         HudInteractionChanges changes = DrawHudInterface(settings);
         ApplyHudInteractionChanges(settings, changes);
         ImGui.Render();
@@ -459,6 +468,73 @@ public class Render
         GL.Enable(EnableCap.DepthTest);
 
         return new HudFrameResult(changes.RequestedResolution, changes.RequestedFloorSize);
+    }
+
+    private void DrawFloatingCombatText(Camera camera, FloatingCombatTextSystem floatingCombatText)
+    {
+        floatingCombatText.CollectRenderStates(_floatingCombatTextStates);
+        if (_floatingCombatTextStates.Count == 0)
+        {
+            return;
+        }
+
+        ImDrawListPtr drawList = ImGui.GetBackgroundDrawList();
+        ImFontPtr font = ImGui.GetFont();
+        float baseFontSize = ImGui.GetFontSize();
+
+        foreach (FloatingCombatTextRenderState state in _floatingCombatTextStates)
+        {
+            Vector3 worldPosition =
+                state.WorldAnchor +
+                (camera.Right * state.HorizontalOffset) +
+                (Vector3.UnitY * state.VerticalOffset);
+
+            if (!TryProjectWorldToScreen(camera, worldPosition, out System.Numerics.Vector2 screenPosition))
+            {
+                continue;
+            }
+
+            uint shadow = ToImGuiColor(new Vector4(0f, 0f, 0f, state.Alpha));
+            uint color = ToImGuiColor(state.Style.Color with { W = state.Alpha });
+            float size = baseFontSize * state.Scale;
+
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + 1.5f, screenPosition.Y + 1.5f), shadow, state.Text);
+            drawList.AddText(font, size, screenPosition, color, state.Text);
+        }
+    }
+
+    private bool TryProjectWorldToScreen(Camera camera, Vector3 worldPosition, out System.Numerics.Vector2 screenPosition)
+    {
+        Matrix4 viewProjection = camera.GetViewMatrix() * _projection;
+        Vector4 clipPosition = Vector4.TransformRow(new Vector4(worldPosition.X, worldPosition.Y, worldPosition.Z, 1f), viewProjection);
+
+        if (clipPosition.W <= 0f)
+        {
+            screenPosition = default;
+            return false;
+        }
+
+        Vector3 ndc = clipPosition.Xyz / clipPosition.W;
+        if (ndc.Z < -1f || ndc.Z > 1f)
+        {
+            screenPosition = default;
+            return false;
+        }
+
+        Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
+        float x = ((ndc.X + 1f) * 0.5f) * safeViewportSize.X;
+        float y = ((1f - ndc.Y) * 0.5f) * safeViewportSize.Y;
+        screenPosition = new System.Numerics.Vector2(x, y);
+        return true;
+    }
+
+    private static uint ToImGuiColor(Vector4 color)
+    {
+        byte r = (byte)Math.Clamp((int)(color.X * 255f), 0, 255);
+        byte g = (byte)Math.Clamp((int)(color.Y * 255f), 0, 255);
+        byte b = (byte)Math.Clamp((int)(color.Z * 255f), 0, 255);
+        byte a = (byte)Math.Clamp((int)(color.W * 255f), 0, 255);
+        return (uint)((a << 24) | (b << 16) | (g << 8) | r);
     }
 
     private void DrawCrosshair(GameSettings settings)

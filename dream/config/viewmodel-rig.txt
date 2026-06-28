@@ -1,0 +1,10 @@
+# Viewmodel rig startup defaults
+body_anchor_spread=0.000
+body_anchor_drop=0.306
+body_anchor_forward_pull=0.180
+held_item_position_x=-0.046
+held_item_position_y=0.204
+held_item_position_z=-0.156
+held_item_rotation_x=0.938
+held_item_rotation_y=1.406
+held_item_rotation_z=-1.406

@@ -19,7 +19,9 @@ public class Game : GameWindow
         Title = "Physics Integrated Game"
     })
     {
-        _settings = new GameSettings(new Vector2i(1440, 1024));
+        ViewModelRigSettings viewModelRig = ViewModelRigTextConfig.LoadOrCreate(
+            AssetPaths.Config("viewmodel-rig.txt"));
+        _settings = new GameSettings(new Vector2i(1440, 1024), viewModelRig);
         _playScene = new PlayScene(_settings);
         CursorState = _playScene.DesiredCursorState;
     }

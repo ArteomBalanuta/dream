@@ -2,6 +2,8 @@ using OpenTK.Mathematics;
 
 public class GameSettings
 {
+    private readonly ViewModelRigSettings _defaultViewModelRig;
+
     public const int MinFloorSize = 5;
     public const int MaxFloorSize = 100;
 
@@ -15,7 +17,7 @@ public class GameSettings
 
     public float JumpVelocity { get; set; } = 5f;
 
-    public ViewModelRigSettings ViewModelRig { get; private set; } = ViewModelRigSettings.CreateDefault();
+    public ViewModelRigSettings ViewModelRig { get; private set; }
 
     public int FloorSize { get; private set; } = 25;
 
@@ -36,8 +38,10 @@ public class GameSettings
     public event Action<FloorSizeAppliedEvent>? FloorSizeApplied;
     public event Action<RuntimeStateChangedEvent>? RuntimeStateChanged;
 
-    public GameSettings(Vector2i initialSize)
+    public GameSettings(Vector2i initialSize, ViewModelRigSettings? viewModelRig = null)
     {
+        _defaultViewModelRig = (viewModelRig ?? ViewModelRigSettings.CreateDefault()).Clone();
+        ViewModelRig = _defaultViewModelRig.Clone();
         ApplyResolution(initialSize);
     }
 
@@ -74,6 +78,6 @@ public class GameSettings
 
     public void ResetViewModelRig()
     {
-        ViewModelRig = ViewModelRigSettings.CreateDefault();
+        ViewModelRig = _defaultViewModelRig.Clone();
     }
 }

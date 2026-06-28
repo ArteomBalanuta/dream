@@ -101,6 +101,7 @@ Runtime assets are now treated as project-owned content and resolved relative to
 - `shaders/`
 - `animations/`
 - `fonts/`
+- `config/`
 
 ### Resolution model
 
@@ -110,6 +111,7 @@ Current consumers include:
 
 - `Render.cs` for shader file paths
 - `Map.cs` for the `GrassTextureCube.gltf` model path
+- `Game.cs` for `config/viewmodel-rig.txt`
 
 ### Output-copy behavior
 
@@ -118,8 +120,26 @@ Current consumers include:
 - `shaders\**\*`
 - `animations\**\*`
 - `fonts\**\*`
+- `config\**\*`
 
 into the build output so the runtime asset layout matches the resolution model.
+
+## Viewmodel Rig Text Config
+
+The project now treats the startup viewmodel rig defaults as a dedicated text-backed runtime config:
+
+- source path: `dream/config/viewmodel-rig.txt`
+- runtime path: `config/viewmodel-rig.txt`
+
+The file is loaded once during startup through `ViewModelRigTextConfig` before `PlayScene` is created.
+
+Current behavior:
+
+- if the file is missing, the game recreates it from built-in defaults
+- recognized keys override only their matching fields
+- invalid numeric values fall back per-field instead of breaking startup
+- unknown keys are ignored
+- runtime menu edits do not yet auto-save back into the file
 
 ## Project Content Layout
 

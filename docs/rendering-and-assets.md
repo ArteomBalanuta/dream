@@ -95,6 +95,7 @@ The HUD currently includes:
 - A red crosshair drawn with line primitives when gameplay is active
 - A lightweight ImGui `HUD` window with status text
 - An interactive ImGui `Settings` window toggled with `Esc`
+- A pooled floating-combat-text overlay rendered in screen space from projected world anchors
 
 The crosshair layout is viewport-driven: its center and line geometry are rebuilt from the active window size instead of from fixed startup-time HUD pixels.
 
@@ -103,6 +104,7 @@ The crosshair layout is viewport-driven: its center and line geometry are rebuil
 - Disables depth testing so the HUD appears on top
 - Uses an orthographic projection based on the current window size
 - Draws the crosshair lines only while the settings menu is hidden
+- Draws floating combat text through the HUD overlay using camera-projected world anchors
 - Keeps the crosshair centered from live viewport metrics and scales it with window size
 - Starts a new ImGui frame
 - Renders a window at the top-left corner
@@ -114,6 +116,19 @@ The crosshair layout is viewport-driven: its center and line geometry are rebuil
 The code also tracks whether the game window has regained focus and resets parts of the ImGui input state when focus returns.
 
 Future HUD positioning work should follow the same pattern and compute placement from current viewport data rather than introducing hardcoded viewport pixel coordinates.
+
+## Floating Combat Text
+
+The current first pass of floating combat text is HUD-owned rather than world-canvas owned.
+
+Key properties:
+
+- transient entries are pooled through `FloatingCombatTextSystem`
+- the motion model follows the burst / ease-out float / fade lifecycle from `DMG_IMPL.md`
+- entries are projected from world anchors into screen-space inside `Render.DrawHUD()`
+- per-target active text is capped to avoid unreadable overlap
+
+For the current vertical slice, left click triggers a controlled regular-damage demo spawn in front of the camera so the visual timing can be validated before the broader creature support layer is wired in.
 
 ## Projection And Camera Feel
 

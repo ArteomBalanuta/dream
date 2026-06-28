@@ -18,9 +18,10 @@ public class GameSettingsTests
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.PositionOffset);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.RotationOffsetDegrees);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.Hands.PositionOffset);
-        Assert.Equal(Vector3.Zero, settings.ViewModelRig.HeldItem.PositionOffset);
-        Assert.Equal(0.45f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
-        Assert.Equal(0.28f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
+        Assert.Equal(new Vector3(-0.046f, 0.204f, -0.156f), settings.ViewModelRig.HeldItem.PositionOffset);
+        Assert.Equal(new Vector3(0.938f, 1.406f, -1.406f), settings.ViewModelRig.HeldItem.RotationOffsetDegrees);
+        Assert.Equal(0.00f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
+        Assert.Equal(0.306f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
         Assert.Equal(0.18f, settings.ViewModelRig.BodyAnchor.ForwardPull);
     }
 
@@ -135,7 +136,9 @@ public class GameSettingsTests
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.PositionOffset);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.RotationOffsetDegrees);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.Hands.RotationOffsetDegrees);
-        Assert.Equal(0.45f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
+        Assert.Equal(0.00f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
+        Assert.Equal(new Vector3(-0.046f, 0.204f, -0.156f), settings.ViewModelRig.HeldItem.PositionOffset);
+        Assert.Equal(new Vector3(0.938f, 1.406f, -1.406f), settings.ViewModelRig.HeldItem.RotationOffsetDegrees);
     }
 
     [Fact]
@@ -148,5 +151,30 @@ public class GameSettingsTests
 
         Assert.Equal(72f, settings.ViewModelRig.FieldOfViewDegrees);
         Assert.Equal(new Vector3(0.05f, -0.10f, 0.02f), settings.ViewModelRig.PositionOffset);
+    }
+
+    [Fact]
+    public void Constructor_Uses_Injected_ViewModelRig()
+    {
+        ViewModelRigSettings rig = ViewModelRigSettings.CreateDefault();
+        rig.BodyAnchor.VerticalDrop = 0.500f;
+
+        GameSettings settings = new(new Vector2i(1440, 1024), rig);
+
+        Assert.Equal(0.500f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
+    }
+
+    [Fact]
+    public void ResetViewModelRig_Restores_Injected_Baseline()
+    {
+        ViewModelRigSettings rig = ViewModelRigSettings.CreateDefault();
+        rig.BodyAnchor.VerticalDrop = 0.500f;
+
+        GameSettings settings = new(new Vector2i(1440, 1024), rig);
+        settings.ViewModelRig.BodyAnchor.VerticalDrop = 0.100f;
+
+        settings.ResetViewModelRig();
+
+        Assert.Equal(0.500f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
     }
 }

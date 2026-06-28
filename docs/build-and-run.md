@@ -124,12 +124,14 @@ The runtime asset folders are:
 - `dream/shaders/`
 - `dream/animations/`
 - `dream/fonts/`
+- `dream/config/`
 
 These directories are copied into the output under:
 
 - `dream/bin/Debug/net10.0/shaders/`
 - `dream/bin/Debug/net10.0/animations/`
 - `dream/bin/Debug/net10.0/fonts/`
+- `dream/bin/Debug/net10.0/config/`
 
 If runtime asset loading fails, verify those output folders exist after build.
 
@@ -160,6 +162,16 @@ If the application starts failing on missing shader or model files again:
 2. Check the output directories under `dream/bin/Debug/net10.0/`
 3. Confirm `shaders/`, `animations/`, and `fonts/` are present
 4. If the first-person pass is missing assets, confirm `animations/viewmodels/DebugHands.gltf` and `animations/viewmodels/DebugHeldItem.gltf` were copied into the output tree
+
+### Viewmodel rig config missing or reset
+
+If `config/viewmodel-rig.txt` is missing from the runtime output:
+
+1. Start the game normally
+2. The startup bootstrap will recreate the file from built-in defaults
+3. Close the app and inspect `dream/bin/Debug/net10.0/config/viewmodel-rig.txt`
+
+Current behavior is startup-load only. Editing values in the in-game menu does not yet save them back into the text file automatically.
 
 ### Tests for shared runtime helpers
 

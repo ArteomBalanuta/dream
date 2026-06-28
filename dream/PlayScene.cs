@@ -6,6 +6,7 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class PlayScene : IDisposable
 {
+    private const int FloatingCombatTextDemoTargetId = 1;
     private readonly Render _render;
     private readonly Player _player;
     private Map _map;
@@ -41,6 +42,11 @@ public class PlayScene : IDisposable
         if (primaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
+            _render.Hud.SpawnDamage(
+                FloatingCombatTextDemoTargetId,
+                _player.Camera.Position + (_player.Camera.Front * 2.5f) + new Vector3(0f, 0.3f, 0f),
+                Random.Shared.Next(120, 481),
+                FloatingCombatTextKind.Regular);
         }
 
         ViewModelUpdateResult viewModelUpdateResult =
@@ -59,6 +65,7 @@ public class PlayScene : IDisposable
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         _player.PlaceCube(_map);
+        _render.Hud.Update(delta);
         _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
     }
 
@@ -78,7 +85,7 @@ public class PlayScene : IDisposable
 
         _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
 
-        HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState);
+        HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState, _player.Camera);
         if (hudResult.RequestedResolution.HasValue)
         {
             applyClientSize(hudResult.RequestedResolution.Value);

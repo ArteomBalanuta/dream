@@ -41,7 +41,7 @@ public class ViewModelPoseResolverTests
     }
 
     [Fact]
-    public void ResolveHeldItem_Uses_RightSide_BodyAnchor_Bias()
+    public void ResolveHeldItem_Uses_Default_Local_And_BodyAnchor_Adjustments()
     {
         ViewModelDefinition definition = new(
             "held.debug",
@@ -55,20 +55,19 @@ public class ViewModelPoseResolverTests
 
         ViewModelResolvedPose resolved = ViewModelPoseResolver.Resolve(definition, ViewModelRigSettings.CreateDefault());
 
-        Assert.True(resolved.PositionOffset.X > 0.28f);
-        Assert.True(resolved.PositionOffset.Y < -0.28f);
-        Assert.True(resolved.PositionOffset.Z < -0.48f);
+        AssertVectorEqual(new Vector3(0.234f, -0.382f, -0.816f), resolved.PositionOffset);
     }
 
     [Fact]
-    public void DefaultRig_Lowers_And_Widens_Hands_From_Asset_Center()
+    public void DefaultRig_Lowers_Hands_Without_Changing_Horizontal_Center()
     {
         ViewModelResolvedPose resolved = ViewModelPoseResolver.Resolve(
             ViewModelAssets.DebugHandsDefinition,
             ViewModelRigSettings.CreateDefault());
 
-        Assert.True(resolved.PositionOffset.X < ViewModelAssets.DebugHandsDefinition.PositionOffset.X);
+        Assert.Equal(ViewModelAssets.DebugHandsDefinition.PositionOffset.X, resolved.PositionOffset.X);
         Assert.True(resolved.PositionOffset.Y < ViewModelAssets.DebugHandsDefinition.PositionOffset.Y);
+        Assert.True(resolved.PositionOffset.Z < ViewModelAssets.DebugHandsDefinition.PositionOffset.Z);
         Assert.Equal(60f, resolved.FieldOfViewDegrees);
     }
 
