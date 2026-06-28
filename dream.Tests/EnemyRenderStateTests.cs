@@ -29,8 +29,30 @@ public class EnemyRenderStateTests
 
         float expectedScale = WolfAssetDefinition.Normalization.ResolveUniformScale();
 
-        Assert.Equal(expectedScale, state.ModelMatrix.M11, 3);
-        Assert.Equal(expectedScale, state.ModelMatrix.M22, 3);
-        Assert.Equal(expectedScale, state.ModelMatrix.M33, 3);
+        Assert.Equal(expectedScale, new Vector3(state.ModelMatrix.M11, state.ModelMatrix.M12, state.ModelMatrix.M13).Length, 3);
+        Assert.Equal(expectedScale, new Vector3(state.ModelMatrix.M21, state.ModelMatrix.M22, state.ModelMatrix.M23).Length, 3);
+        Assert.Equal(expectedScale, new Vector3(state.ModelMatrix.M31, state.ModelMatrix.M32, state.ModelMatrix.M33).Length, 3);
+    }
+
+    [Theory]
+    [InlineData(0f, 0f, -1f)]
+    [InlineData(1f, 0f, 0f)]
+    [InlineData(0f, 0f, 1f)]
+    public void CreateWolf_Rotates_Authored_Forward_Toward_Movement(float x, float y, float z)
+    {
+        Vector3 desiredForward = new(x, y, z);
+        EnemyRenderState state = EnemyRenderState.CreateWolf(
+            Vector3.Zero,
+            desiredForward,
+            EnemyBehaviorState.Chasing,
+            scale: 1f);
+
+        Vector3 actualForward = Vector4.TransformRow(
+            new Vector4(WolfAssetDefinition.AuthoredForwardAxis, 0f),
+            state.ModelMatrix).Xyz.Normalized();
+
+        Assert.Equal(desiredForward.X, actualForward.X, 3);
+        Assert.Equal(desiredForward.Y, actualForward.Y, 3);
+        Assert.Equal(desiredForward.Z, actualForward.Z, 3);
     }
 }

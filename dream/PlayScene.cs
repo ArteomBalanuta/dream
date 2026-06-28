@@ -329,7 +329,8 @@ public class PlayScene : IDisposable
             spawnPosition,
             aggroRange: 10f,
             attackRange: 1.35f,
-            moveSpeed: 2.8f);
+            moveSpeed: 2.8f,
+            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance);
         _enemies.Add(wolf);
     }
 }

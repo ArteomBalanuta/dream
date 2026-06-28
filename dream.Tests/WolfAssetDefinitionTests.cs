@@ -19,4 +19,10 @@ public class WolfAssetDefinitionTests
         Assert.Equal(1.20f, WolfAssetDefinition.Normalization.TargetWorldHeight, 3);
         Assert.Equal(1.20f / 3.191f, WolfAssetDefinition.Normalization.ResolveUniformScale(), 3);
     }
+
+    [Fact]
+    public void VisualPresentation_Declares_Minimum_Render_Distance()
+    {
+        Assert.Equal(2.75f, WolfAssetDefinition.MinimumVisualDistanceFromCamera, 3);
+    }
 }

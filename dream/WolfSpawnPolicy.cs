@@ -2,13 +2,14 @@ using OpenTK.Mathematics;
 
 public static class WolfSpawnPolicy
 {
-    private static readonly Vector3 DefaultSpawn = new(5.5f, 0f, 2.5f);
+    public const float FloorSurfaceY = 1f;
+    private static readonly Vector3 DefaultSpawn = new(5.5f, FloorSurfaceY, 2.5f);
 
     public static Vector3 ResolveInitialSpawn(int width, int depth)
     {
         return new Vector3(
             ClampAxis(DefaultSpawn.X, width),
-            0f,
+            FloorSurfaceY,
             ClampAxis(DefaultSpawn.Z, depth));
     }
 

@@ -463,7 +463,7 @@ public class AnimatedModel : IDisposable
             Console.WriteLine($"  Node World Matrix: {nodeWorldMatrix}");
             Console.WriteLine($"  Combined Model Matrix: {combinedMatrix}");
             */
-            RenderNode(primitives, combinedMatrix, shader);
+            RenderNode(primitives, combinedMatrix, shader, nodeWorldMatrix);
         }
     }
 
@@ -473,12 +473,16 @@ public class AnimatedModel : IDisposable
     }
 
 
-    private void RenderNode(List<MeshBuffers> primitives, Matrix4 modelMatrix, Shader shader)
+    private void RenderNode(
+        List<MeshBuffers> primitives,
+        Matrix4 modelMatrix,
+        Shader shader,
+        Matrix4 meshWorldMatrix)
     {
         foreach (var primitive in primitives)
         {
             shader.SetMatrix4("model", modelMatrix);
-            ApplySkinning(shader, primitive);
+            ApplySkinning(shader, primitive, meshWorldMatrix);
 
             if (_materials.TryGetValue(primitive.Material, out var material))
             {
@@ -491,7 +495,7 @@ public class AnimatedModel : IDisposable
         }
     }
 
-    private void ApplySkinning(Shader shader, MeshBuffers primitive)
+    private void ApplySkinning(Shader shader, MeshBuffers primitive, Matrix4 meshWorldMatrix)
     {
         if (!primitive.UsesSkinning || _skinning == null)
         {
@@ -504,6 +508,7 @@ public class AnimatedModel : IDisposable
         {
             SkinJoint joint = _skinning.Joints[i];
             Matrix4 jointMatrix = AnimatedModelTransformComposer.ComposeSkinJointMatrix(
+                meshWorldMatrix,
                 joint.Node.WorldMatrix.ToOpenTK(),
                 joint.InverseBindMatrix);
             shader.SetMatrix4($"jointMatrices[{i}]", jointMatrix);

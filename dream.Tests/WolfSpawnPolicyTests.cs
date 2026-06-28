@@ -8,7 +8,7 @@ public class WolfSpawnPolicyTests
     {
         Vector3 spawn = WolfSpawnPolicy.ResolveInitialSpawn(width: 25, depth: 25);
 
-        Assert.Equal(new Vector3(5.5f, 0f, 2.5f), spawn);
+        Assert.Equal(new Vector3(5.5f, 1f, 2.5f), spawn);
     }
 
     [Fact]
@@ -16,6 +16,6 @@ public class WolfSpawnPolicyTests
     {
         Vector3 spawn = WolfSpawnPolicy.ResolveInitialSpawn(width: 5, depth: 5);
 
-        Assert.Equal(new Vector3(3.5f, 0f, 2.5f), spawn);
+        Assert.Equal(new Vector3(3.5f, 1f, 2.5f), spawn);
     }
 }

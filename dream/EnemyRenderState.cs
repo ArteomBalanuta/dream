@@ -13,7 +13,7 @@ public readonly record struct EnemyRenderState(
         float? scale = null)
     {
         Vector3 facing = forward.LengthSquared > 0.0001f ? forward.Normalized() : -Vector3.UnitZ;
-        float yawRadians = MathF.Atan2(facing.X, -facing.Z);
+        float yawRadians = MathF.Atan2(facing.X, facing.Z);
         float resolvedScale = scale ?? WolfAssetDefinition.VisualScale;
         Matrix4 modelMatrix =
             Matrix4.CreateScale(resolvedScale) *

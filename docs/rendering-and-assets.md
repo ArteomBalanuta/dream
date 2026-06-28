@@ -190,7 +190,7 @@ The first wolf enemy now uses explicit asset metadata through `WolfAssetDefiniti
 The current milestone now supports the most important missing creature-asset behavior:
 
 - detection of logical skins during model initialization
-- joint-palette upload from SharpGLTF joint world matrices and inverse bind matrices
+- joint-palette upload from SharpGLTF joint world matrices, inverse bind matrices, and the rendered mesh node's world transform
 - weighted position and normal blending in `cubeVertex.glsl`
 
 This support is intentionally bounded:
@@ -240,5 +240,8 @@ For the first creature slice, `WolfAssetDefinition` declares:
 
 - the asset's authored height
 - the target in-game world height
+- the asset's authored forward axis
 
 The final uniform render scale is derived from those values at runtime through `WorldAssetNormalization.ResolveUniformScale()`. This keeps imported-asset sizing decisions in metadata, where future creatures or props can reuse the same seam without hiding authored-size assumptions inside scene or renderer code.
+
+The current wolf asset is authored facing local `+Z`, so its render yaw maps that axis into the enemy's gameplay movement direction. Future creature assets should declare the same kind of presentation metadata rather than assuming every imported model faces the engine's historical `-Z` direction.

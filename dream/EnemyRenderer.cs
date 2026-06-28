@@ -19,8 +19,12 @@ public sealed class EnemyRenderer
                 continue;
             }
 
-            EnemyRenderState renderState = EnemyRenderState.CreateWolf(
+            Vector3 renderPosition = EnemyVisualPlacement.ResolveRenderPosition(
                 actor.Position,
+                camera.Position,
+                WolfAssetDefinition.MinimumVisualDistanceFromCamera);
+            EnemyRenderState renderState = EnemyRenderState.CreateWolf(
+                renderPosition,
                 actor.Forward,
                 actor.BehaviorState);
 

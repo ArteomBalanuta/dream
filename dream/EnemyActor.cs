@@ -7,7 +7,8 @@ public sealed class EnemyActor
         Vector3 startPosition,
         float aggroRange,
         float attackRange,
-        float moveSpeed)
+        float moveSpeed,
+        float preferredStandOffDistance = 0f)
     {
         Combatant = combatant;
         Position = startPosition;
@@ -15,6 +16,7 @@ public sealed class EnemyActor
         AggroRange = Math.Max(attackRange, aggroRange);
         AttackRange = Math.Max(0.1f, attackRange);
         MoveSpeed = Math.Max(0f, moveSpeed);
+        PreferredStandOffDistance = Math.Max(AttackRange, preferredStandOffDistance);
         combatant.SetPositionProvider(() => Position);
     }
 
@@ -29,6 +31,8 @@ public sealed class EnemyActor
     public float AttackRange { get; }
 
     public float MoveSpeed { get; }
+
+    public float PreferredStandOffDistance { get; }
 
     public EnemyBehaviorState BehaviorState { get; private set; }
 
@@ -64,7 +68,7 @@ public sealed class EnemyActor
         if (distanceToPlayer <= AggroRange)
         {
             BehaviorState = EnemyBehaviorState.Chasing;
-            float allowedStep = Math.Max(0f, distanceToPlayer - AttackRange);
+            float allowedStep = Math.Max(0f, distanceToPlayer - PreferredStandOffDistance);
             float step = Math.Min(MoveSpeed * Math.Max(0f, deltaTime), allowedStep);
             if (step > 0f && direction != Vector3.Zero)
             {

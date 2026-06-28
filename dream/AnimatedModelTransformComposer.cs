@@ -7,8 +7,13 @@ public static class AnimatedModelTransformComposer
         return nodeWorldMatrix * instanceModelMatrix;
     }
 
-    public static Matrix4 ComposeSkinJointMatrix(Matrix4 jointWorldMatrix, Matrix4 inverseBindMatrix)
+    public static Matrix4 ComposeSkinJointMatrix(
+        Matrix4 meshWorldMatrix,
+        Matrix4 jointWorldMatrix,
+        Matrix4 inverseBindMatrix)
     {
-        return jointWorldMatrix * inverseBindMatrix;
+        Matrix4 inverseMeshWorldMatrix = meshWorldMatrix;
+        inverseMeshWorldMatrix.Invert();
+        return inverseBindMatrix * jointWorldMatrix * inverseMeshWorldMatrix;
     }
 }
