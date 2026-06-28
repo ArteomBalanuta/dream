@@ -31,7 +31,7 @@ public class PlayScene : IDisposable
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
+        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition, _events);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
     }
