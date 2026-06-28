@@ -19,4 +19,13 @@ public static class CombatUseResolver
 
         return registry.TryGet(hitCube);
     }
+
+    public static EnemyActor? TryResolveEnemyHit(
+        EnemyRegistry enemies,
+        Vector3 origin,
+        Vector3 direction,
+        float maxHitDistance = DefaultHitRange)
+    {
+        return enemies.TryResolveHit(origin, direction, maxHitDistance);
+    }
 }

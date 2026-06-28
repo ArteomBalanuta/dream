@@ -11,6 +11,9 @@ public static class ModelAssets
     public static AnimatedModel GrassCube =>
         Get(AssetPaths.Animation("GrassTextureCube.gltf"));
 
+    public static AnimatedModel Wolf =>
+        Get(WolfAssetDefinition.ModelPath);
+
     public static AnimatedModel Get(string path) =>
         Cache.GetOrAdd(path, modelPath => new AnimatedModel(modelPath));
 }

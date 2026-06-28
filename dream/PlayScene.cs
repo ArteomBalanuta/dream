@@ -16,6 +16,7 @@ public class PlayScene : IDisposable
     private readonly GameSettings _settings;
     private readonly PlayerViewModelController _viewModelController;
     private readonly WorldObjectRegistry _worldObjects = new();
+    private readonly EnemyRegistry _enemies = new();
     private PlayerInteractionMode _interactionMode = PlayerInteractionMode.Building;
     private bool _wasSettingsTogglePressed;
 
@@ -36,6 +37,7 @@ public class PlayScene : IDisposable
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition, _events);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
+        SpawnInitialWolf();
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -75,6 +77,12 @@ public class PlayScene : IDisposable
 
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
+        if (allowGameplayInput)
+        {
+            _enemies.UpdateAll(delta, _player.GetWorldPosition(), _player.Combatant, _events);
+            _enemies.PruneInactive();
+        }
+
         if (_interactionMode == PlayerInteractionMode.Building)
         {
             Cube? placedCube = _player.TryPlaceCube(_map);
@@ -95,6 +103,11 @@ public class PlayScene : IDisposable
         _render.World.DrawWorld(
             _player.Camera,
             _map.GetRenderCandidateCubes(_player.Camera.Position, WorldVisibility.MaxRenderDistance));
+        _render.Enemies.Draw(
+            _player.Camera,
+            _enemies.ActiveActors,
+            (float)args.Time,
+            _settings.ShowCollisionGeometry);
 
         if (_settings.ShowCollisionGeometry)
         {
@@ -159,6 +172,35 @@ public class PlayScene : IDisposable
 
     private void HandleCombatPrimaryUse()
     {
+        EnemyActor? enemy = CombatUseResolver.TryResolveEnemyHit(
+            _enemies,
+            _player.Camera.Position,
+            _player.Camera.Front,
+            CombatUseResolver.DefaultHitRange);
+        if (enemy != null)
+        {
+            PlayerAttackResolution attack = _player.Combatant.ResolveAttack(
+                () => Random.Shared.Next(
+                    _player.Combatant.DerivedStats.MinDamage,
+                    _player.Combatant.DerivedStats.MaxDamage + 1),
+                () => Random.Shared.NextDouble());
+            DamageReceipt receipt = enemy.Combatant.ApplyDamage(attack.Damage);
+            if (receipt.AppliedAmount > 0)
+            {
+                _events.Publish(new DamageAppliedEvent(
+                    enemy.Combatant.Actor,
+                    receipt.AppliedAmount,
+                    attack.FloatingTextKind));
+            }
+
+            if (receipt.WasFatal)
+            {
+                _enemies.PruneInactive();
+            }
+
+            return;
+        }
+
         WorldObjectRecord? record = CombatUseResolver.TryResolveDestructibleCubeHit(
             _map,
             _worldObjects,
@@ -260,6 +302,7 @@ public class PlayScene : IDisposable
 
         _map = rebuiltMap;
         _player.map = rebuiltMap;
+        _enemies.ClampToMapBounds(rebuiltMap);
 
         Vector3 clampedPosition = new Vector3(
             Math.Clamp(currentPlayerPosition.X, 0.5f, rebuiltMap.Width - 0.5f),
@@ -267,5 +310,26 @@ public class PlayScene : IDisposable
             Math.Clamp(currentPlayerPosition.Z, 0.5f, rebuiltMap.Depth - 0.5f));
 
         _player.SetWorldPosition(clampedPosition);
+    }
+
+    private void SpawnInitialWolf()
+    {
+        Vector3 spawnPosition = WolfSpawnPolicy.ResolveInitialSpawn(_map.Width, _map.Depth);
+
+        EnemyCombatant combatant = new(
+            () => spawnPosition,
+            _events,
+            actorId: 2000,
+            maxHealth: 90,
+            attackDamage: 12,
+            attackIntervalSeconds: 1.05f,
+            anchorHeightOffset: WolfAssetDefinition.CombatAnchorHeight);
+        EnemyActor wolf = new(
+            combatant,
+            spawnPosition,
+            aggroRange: 10f,
+            attackRange: 1.35f,
+            moveSpeed: 2.8f);
+        _enemies.Add(wolf);
     }
 }

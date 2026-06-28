@@ -69,6 +69,7 @@ public class Render
     private Vector2i _currentSize;
     private Vector2i _crosshairViewportSize;
     private readonly WorldRenderer _worldRenderer;
+    private readonly EnemyRenderer _enemyRenderer;
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
     private readonly ViewModelRenderer _viewModelRenderer;
@@ -82,6 +83,10 @@ public class Render
         LoadShader("cube",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("cubeFragment.glsl"));
+
+        LoadShader("enemy",
+            AssetPaths.Shader("cubeVertex.glsl"),
+            AssetPaths.Shader("enemyFragment.glsl"));
     }
 
     private void InitializeHUD()
@@ -298,6 +303,7 @@ public class Render
     public Render(GameSettings settings)
     {
         _worldRenderer = new WorldRenderer(this);
+        _enemyRenderer = new EnemyRenderer(this);
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
         _viewModelRenderer = new ViewModelRenderer(this);
@@ -328,6 +334,8 @@ public class Render
 
     public WorldRenderer World => _worldRenderer;
 
+    public EnemyRenderer Enemies => _enemyRenderer;
+
     public DebugRenderer Debug => _debugRenderer;
 
     public HudRenderer Hud => _hudRenderer;
@@ -335,6 +343,8 @@ public class Render
     public ViewModelRenderer ViewModels => _viewModelRenderer;
 
     public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
+
+    public Matrix4 ProjectionMatrix => _projection;
 
     public Shader GetShader(string name)
     {
