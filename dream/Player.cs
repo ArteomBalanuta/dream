@@ -25,13 +25,13 @@ public class Player
     private float _collisionReportTimer;
     private bool _primaryUseTriggered;
 
-    public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position)
+    public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position, SceneEventHub? eventHub = null)
     {
         this.map = map;
         _physics = physics;
         _motor = new PlayerMotor(_physics);
         _cameraRig = new PlayerCameraRig(position);
-        _combatant = new PlayerCombatant(GetWorldPosition);
+        _combatant = new PlayerCombatant(GetWorldPosition, eventHub);
         PhysicsBody = physicsBody;
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
         PhysicsBody.Activate();
