@@ -65,7 +65,7 @@ Inside `PlayScene.Render()`:
 
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
 
-The floating-combat-text first pass is intentionally integrated through the existing HUD flow rather than through a new world-space UI stack. `PlayScene.Update()` triggers the current demo spawn on primary use, `HudRenderer` advances pooled entry state, and `Render.DrawHUD()` performs the actual screen-space projection and text draw submission.
+The floating-combat-text first pass is intentionally integrated through the existing HUD flow rather than through a new world-space UI stack. `PlayScene.Update()` now routes the current demo spawn through the player's `CombatActorHandle`, `HudRenderer` advances pooled entry state, and `Render.DrawHUD()` performs the actual screen-space projection and text draw submission.
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
@@ -122,6 +122,14 @@ Projection is rebuilt from the live window size and configured field of view. Th
 - render after world and collision-debug passes, but before HUD and ImGui
 
 `GameSettings` now also owns persisted `ViewModelRigSettings`, which are edited through the runtime menu and consumed by `PlayerViewModelController` plus `ViewModelPoseResolver`. That split keeps `Render` responsible for control presentation while the pose math remains in focused first-person collaborators.
+
+The emerging combat layer is intentionally capability-based:
+
+- `IDamageable` defines shared damage intake behavior
+- `ICombatAnchorProvider` defines the reusable world anchor used by combat feedback
+- `HealthState` is the first shared combat-state component and can back players, enemies, or destructible objects
+- `CombatActorHandle` packages identity, kind, damageability, and anchor access into a lightweight runtime handle
+- `PlayerCombatant` is the first concrete adapter and keeps player combat participation out of the heavier movement and physics code
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 

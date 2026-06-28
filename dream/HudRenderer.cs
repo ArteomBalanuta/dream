@@ -31,4 +31,9 @@ public class HudRenderer
     {
         _floatingCombatText.Spawn(targetId, worldAnchor, amount, kind);
     }
+
+    public void SpawnDamage(CombatActorHandle actor, int amount, FloatingCombatTextKind kind)
+    {
+        _floatingCombatText.Spawn(actor.Id, actor.GetWorldAnchor(), amount, kind);
+    }
 }

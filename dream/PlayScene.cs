@@ -6,7 +6,6 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 
 public class PlayScene : IDisposable
 {
-    private const int FloatingCombatTextDemoTargetId = 1;
     private readonly Render _render;
     private readonly Player _player;
     private Map _map;
@@ -42,11 +41,7 @@ public class PlayScene : IDisposable
         if (primaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
-            _render.Hud.SpawnDamage(
-                FloatingCombatTextDemoTargetId,
-                _player.Camera.Position + (_player.Camera.Front * 2.5f) + new Vector3(0f, 0.3f, 0f),
-                Random.Shared.Next(120, 481),
-                FloatingCombatTextKind.Regular);
+            _render.Hud.SpawnDamage(_player.Combatant.Actor, Random.Shared.Next(120, 481), FloatingCombatTextKind.Regular);
         }
 
         ViewModelUpdateResult viewModelUpdateResult =

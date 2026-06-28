@@ -12,11 +12,13 @@ public class Player
     private readonly PlayerMotor _motor;
     private readonly PlayerCameraRig _cameraRig;
     private readonly PlayerInteraction _interaction = new();
+    private readonly PlayerCombatant _combatant;
 
     public Map map;
     public RigidBody PhysicsBody { get; }
     public float Speed { get; set; } = 3.0f;
     public Camera Camera => _cameraRig.Camera;
+    public PlayerCombatant Combatant => _combatant;
 
     public Vector3 LastReportedPosition { get; private set; }
     public float CollisionReportCooldown = 0.5f;
@@ -29,6 +31,7 @@ public class Player
         _physics = physics;
         _motor = new PlayerMotor(_physics);
         _cameraRig = new PlayerCameraRig(position);
+        _combatant = new PlayerCombatant(GetWorldPosition);
         PhysicsBody = physicsBody;
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
         PhysicsBody.Activate();

@@ -1,7 +1,7 @@
 # Creature Support Foundation Plan
 
 Date: 2026-06-28
-Status: Planning
+Status: Implemented
 Owner: Codex
 
 ## Goal
