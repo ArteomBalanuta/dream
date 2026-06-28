@@ -12,6 +12,11 @@ public class HudRenderer
         _render = render;
     }
 
+    public CombatFeedbackSystem CreateCombatFeedbackSystem(SceneEventHub events)
+    {
+        return new CombatFeedbackSystem(events, _floatingCombatText);
+    }
+
     public HudFrameResult DrawFrame(FrameEventArgs args, bool windowFocused, GameSettings settings, MouseState mouseState, Camera camera)
     {
         return _render.DrawHUD(args, windowFocused, settings, mouseState, camera, _floatingCombatText);
@@ -22,18 +27,5 @@ public class HudRenderer
         _render.UpdateProjectionForSettings(settings);
     }
 
-    public void Update(float deltaTime)
-    {
-        _floatingCombatText.Update(deltaTime);
-    }
-
-    public void SpawnDamage(int targetId, Vector3 worldAnchor, int amount, FloatingCombatTextKind kind)
-    {
-        _floatingCombatText.Spawn(targetId, worldAnchor, amount, kind);
-    }
-
-    public void SpawnDamage(CombatActorHandle actor, int amount, FloatingCombatTextKind kind)
-    {
-        _floatingCombatText.Spawn(actor.Id, actor.GetWorldAnchor(), amount, kind);
-    }
+    public void Update(float deltaTime) => _floatingCombatText.Update(deltaTime);
 }

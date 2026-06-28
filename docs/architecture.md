@@ -20,7 +20,7 @@ Inside the `Game` constructor:
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
 - `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
 - `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
-- `HudRenderer` now also owns the transient floating-combat-text runtime used for screen-space combat number presentation.
+- `HudRenderer` now owns the transient floating-combat-text runtime that scene-local combat feedback systems can render through without exposing direct gameplay spawn entry points.
 - `PlayerViewModelController` owns first-person runtime presentation state and translates gameplay input into per-slot animation requests.
 - `ViewModelPoseResolver` composes the final first-person slot pose from asset defaults, shared rig settings, body-anchor illusion offsets, and per-slot tuning data.
 - `ViewModelCatalog` resolves stable cosmetic ids into runtime `ViewModelDefinition` data and provides the default hands plus held-item loadout.
@@ -66,7 +66,7 @@ Inside `PlayScene.Render()`:
 
 The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
 
-The floating-combat-text first pass is intentionally integrated through the existing HUD flow rather than through a new world-space UI stack. `PlayScene.Update()` now routes the current demo spawn through the player's `CombatActorHandle`, `HudRenderer` advances pooled entry state, and `Render.DrawHUD()` performs the actual screen-space projection and text draw submission.
+The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only advances and draws the resulting presentation data through the existing screen-space overlay path.
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 

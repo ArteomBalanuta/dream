@@ -12,6 +12,7 @@ public class PlayScene : IDisposable
     private readonly PhysicsIntegrator _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly SceneEventHub _events = new();
+    private readonly CombatFeedbackSystem _combatFeedback;
     private readonly GameSettings _settings;
     private readonly PlayerViewModelController _viewModelController;
     private bool _wasSettingsTogglePressed;
@@ -32,6 +33,7 @@ public class PlayScene : IDisposable
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
         _render = new Render(_settings);
+        _combatFeedback = _render.Hud.CreateCombatFeedbackSystem(_events);
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -44,7 +46,10 @@ public class PlayScene : IDisposable
         if (primaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
-            _render.Hud.SpawnDamage(_player.Combatant.Actor, Random.Shared.Next(120, 481), FloatingCombatTextKind.Regular);
+            _events.Publish(new DamageAppliedEvent(
+                _player.Combatant.Actor,
+                Random.Shared.Next(120, 481),
+                FloatingCombatTextKind.Regular));
         }
 
         ViewModelUpdateResult viewModelUpdateResult =
@@ -63,7 +68,7 @@ public class PlayScene : IDisposable
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         _player.PlaceCube(_map);
-        _render.Hud.Update(delta);
+        _combatFeedback.Update(delta);
         _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
     }
 
@@ -109,6 +114,7 @@ public class PlayScene : IDisposable
 
     public void Dispose()
     {
+        _combatFeedback.Dispose();
         _physics.Dispose();
     }
 
