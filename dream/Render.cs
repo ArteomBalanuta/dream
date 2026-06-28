@@ -12,14 +12,6 @@ public class Render
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
 
-    private readonly record struct HudInteractionChanges(
-        float? FieldOfViewDegrees,
-        float? MouseSensitivity,
-        Vector2i? RequestedResolution,
-        int? StagedFloorSize,
-        int? RequestedFloorSize,
-        bool? ShowCollisionGeometry);
-
     private int _vertexArrayObject;
     private int _vertexBufferObject;
     private Dictionary<string, Shader> _shaders = new();
@@ -461,13 +453,12 @@ public class Render
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
         DrawFloatingCombatText(camera, combatFeedback);
-        HudInteractionChanges changes = DrawHudInterface(settings);
-        ApplyHudInteractionChanges(settings, changes);
+        HudInteractionRequest request = DrawHudInterface(settings);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
 
-        return new HudFrameResult(changes.RequestedResolution, changes.RequestedFloorSize);
+        return new HudFrameResult(request.RequestedResolution, request.RequestedFloorSize);
     }
 
     private void DrawFloatingCombatText(Camera camera, CombatFeedbackSystem combatFeedback)
@@ -586,7 +577,7 @@ public class Render
         ImGui.NewFrame();
     }
 
-    private static HudInteractionChanges DrawHudInterface(GameSettings settings)
+    private static HudInteractionRequest DrawHudInterface(GameSettings settings)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
@@ -664,7 +655,7 @@ public class Render
             ImGui.End();
         }
 
-        return new HudInteractionChanges(
+        return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
             requestedResolution,
@@ -749,29 +740,6 @@ public class Render
         if (changed)
         {
             apply(new Vector3(x, y, z));
-        }
-    }
-
-    private static void ApplyHudInteractionChanges(GameSettings settings, HudInteractionChanges changes)
-    {
-        if (changes.FieldOfViewDegrees.HasValue)
-        {
-            settings.FieldOfViewDegrees = changes.FieldOfViewDegrees.Value;
-        }
-
-        if (changes.MouseSensitivity.HasValue)
-        {
-            settings.MouseSensitivity = changes.MouseSensitivity.Value;
-        }
-
-        if (changes.StagedFloorSize.HasValue)
-        {
-            settings.StageFloorSize(changes.StagedFloorSize.Value);
-        }
-
-        if (changes.ShowCollisionGeometry.HasValue)
-        {
-            settings.SetShowCollisionGeometry(changes.ShowCollisionGeometry.Value);
         }
     }
 
