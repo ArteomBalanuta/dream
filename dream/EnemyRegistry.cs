@@ -6,6 +6,8 @@ public sealed class EnemyRegistry
 
     public IReadOnlyList<EnemyActor> ActiveActors => _actors;
 
+    public bool HasActiveActors => _actors.Any(actor => actor.IsActive);
+
     public void Add(EnemyActor actor)
     {
         _actors.Add(actor);

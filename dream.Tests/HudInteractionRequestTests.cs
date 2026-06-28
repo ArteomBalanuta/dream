@@ -18,6 +18,7 @@ public class HudInteractionRequestTests
         Assert.Null(request.Strength);
         Assert.Null(request.AttackSpeed);
         Assert.Null(request.Vitality);
+        Assert.Null(request.FloatingCombatText);
     }
 
     [Fact]
@@ -33,7 +34,8 @@ public class HudInteractionRequestTests
             ShowCollisionGeometry: true,
             Strength: 12,
             AttackSpeed: 3.5f,
-            Vitality: 14);
+            Vitality: 14,
+            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f));
 
         Assert.Equal(80f, request.FieldOfViewDegrees);
         Assert.Equal(4.5f, request.MouseSensitivity);
@@ -45,6 +47,7 @@ public class HudInteractionRequestTests
         Assert.Equal(12, request.Strength);
         Assert.Equal(3.5f, request.AttackSpeed);
         Assert.Equal(14, request.Vitality);
+        Assert.Equal(new FloatingCombatTextTuning(2f, 1.5f, 3f), request.FloatingCombatText);
     }
 
     [Fact]
@@ -60,7 +63,8 @@ public class HudInteractionRequestTests
             ShowCollisionGeometry: true,
             Strength: 12,
             AttackSpeed: 3.5f,
-            Vitality: 14);
+            Vitality: 14,
+            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f));
 
         HudFrameResult result = new(request);
 

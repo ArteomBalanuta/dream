@@ -21,6 +21,8 @@ public class GameSettings
 
     public float JumpVelocity { get; set; } = 5f;
 
+    public FloatingCombatTextTuning FloatingCombatText { get; private set; } = FloatingCombatTextTuning.Default;
+
     public ViewModelRigSettings ViewModelRig { get; private set; }
 
     public int FloorSize { get; private set; } = 25;
@@ -78,6 +80,11 @@ public class GameSettings
     {
         ShowCollisionGeometry = showCollisionGeometry;
         CollisionDebugVisibilityChanged?.Invoke(new CollisionDebugVisibilityChangedEvent(ShowCollisionGeometry));
+    }
+
+    public void ApplyFloatingCombatTextTuning(FloatingCombatTextTuning tuning)
+    {
+        FloatingCombatText = tuning.Clamp();
     }
 
     public void ResetViewModelRig()

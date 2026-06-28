@@ -462,7 +462,7 @@ public class Render
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
-        DrawFloatingCombatText(camera, combatFeedback);
+        DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
         HudInteractionRequest request = DrawHudInterface(settings, status);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
@@ -471,9 +471,12 @@ public class Render
         return new HudFrameResult(request);
     }
 
-    private void DrawFloatingCombatText(Camera camera, CombatFeedbackSystem combatFeedback)
+    private void DrawFloatingCombatText(
+        Camera camera,
+        CombatFeedbackSystem combatFeedback,
+        FloatingCombatTextTuning tuning)
     {
-        combatFeedback.CollectRenderStates(_floatingCombatTextStates);
+        combatFeedback.CollectRenderStates(_floatingCombatTextStates, tuning);
         if (_floatingCombatTextStates.Count == 0)
         {
             return;
@@ -499,10 +502,12 @@ public class Render
             uint shadow = ToImGuiColor(new Vector4(0f, 0f, 0f, state.Alpha));
             uint color = ToImGuiColor(state.Style.Color with { W = state.Alpha });
             float size = baseFontSize * state.Scale;
+            float outline = state.Style.OutlineThickness;
 
-            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X - 1.5f, screenPosition.Y), shadow, state.Text);
-            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + 1.5f, screenPosition.Y), shadow, state.Text);
-            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y - 1.5f), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X - outline, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + outline, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y - outline), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y + outline), shadow, state.Text);
             drawList.AddText(font, size, screenPosition, color, state.Text);
         }
     }
@@ -602,6 +607,7 @@ public class Render
         int? strength = null;
         float? attackSpeed = null;
         int? vitality = null;
+        FloatingCombatTextTuning? floatingCombatText = null;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
@@ -659,6 +665,38 @@ public class Render
                 vitality = currentVitality;
             }
 
+            FloatingCombatTextTuning textTuning = settings.FloatingCombatText;
+            float damageTextSize = textTuning.SizeMultiplier;
+            float damageTextSpeed = textTuning.MotionSpeedMultiplier;
+            float criticalDepth = textTuning.CriticalDepthMultiplier;
+            if (ImGui.CollapsingHeader("Floating Damage Text", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool changed = false;
+                changed |= ImGui.SliderFloat(
+                    "Damage Text Size",
+                    ref damageTextSize,
+                    FloatingCombatTextTuning.MinSizeMultiplier,
+                    FloatingCombatTextTuning.MaxSizeMultiplier);
+                changed |= ImGui.SliderFloat(
+                    "Damage Text Speed",
+                    ref damageTextSpeed,
+                    FloatingCombatTextTuning.MinMotionSpeedMultiplier,
+                    FloatingCombatTextTuning.MaxMotionSpeedMultiplier);
+                changed |= ImGui.SliderFloat(
+                    "Crit Depth",
+                    ref criticalDepth,
+                    FloatingCombatTextTuning.MinCriticalDepthMultiplier,
+                    FloatingCombatTextTuning.MaxCriticalDepthMultiplier);
+
+                if (changed)
+                {
+                    floatingCombatText = new FloatingCombatTextTuning(
+                        damageTextSize,
+                        damageTextSpeed,
+                        criticalDepth);
+                }
+            }
+
             DrawViewModelControls(settings);
 
             bool showCollision = settings.ShowCollisionGeometry;
@@ -708,7 +746,8 @@ public class Render
             showCollisionGeometry,
             strength,
             attackSpeed,
-            vitality);
+            vitality,
+            floatingCombatText);
     }
 
     private static void DrawViewModelControls(GameSettings settings)

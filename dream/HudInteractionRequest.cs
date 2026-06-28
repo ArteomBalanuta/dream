@@ -10,9 +10,11 @@ public readonly record struct HudInteractionRequest(
     bool? ShowCollisionGeometry,
     int? Strength,
     float? AttackSpeed,
-    int? Vitality)
+    int? Vitality,
+    FloatingCombatTextTuning? FloatingCombatText)
 {
     public static HudInteractionRequest None => new(
+        null,
         null,
         null,
         null,

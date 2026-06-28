@@ -31,6 +31,17 @@ public class EnemyRegistryTests
     }
 
     [Fact]
+    public void HasActiveActors_Returns_False_When_All_Enemies_Are_Dead()
+    {
+        EnemyRegistry registry = new();
+        EnemyActor actor = CreateEnemy(new Vector3(0f, 0f, -2f), actorId: 2104);
+        registry.Add(actor);
+        actor.Combatant.ApplyDamage(999);
+
+        Assert.False(registry.HasActiveActors);
+    }
+
+    [Fact]
     public void UpdateAll_Blocks_Chase_Movement_Through_Placed_Cubes_When_Map_Is_Provided()
     {
         Map map = new(width: 5, height: 4, depth: 4, loadVisualAssets: false);

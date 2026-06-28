@@ -81,6 +81,7 @@ public class PlayScene : IDisposable
         {
             _enemies.UpdateAll(delta, _player.GetWorldPosition(), _player.Combatant, _events, _map);
             _enemies.PruneInactive();
+            EnsureWolfExists();
             ResolvePlayerEnemySeparation();
         }
 
@@ -275,6 +276,11 @@ public class PlayScene : IDisposable
             _player.Combatant.ApplyStats(updatedStats);
         }
 
+        if (request.FloatingCombatText.HasValue)
+        {
+            _settings.ApplyFloatingCombatTextTuning(request.FloatingCombatText.Value);
+        }
+
         if (request.RequestedResolution.HasValue)
         {
             applyClientSize(request.RequestedResolution.Value);
@@ -335,6 +341,16 @@ public class PlayScene : IDisposable
             collisionRadius: WolfAssetDefinition.CollisionRadius,
             collisionHeight: WolfAssetDefinition.CollisionHeight);
         _enemies.Add(wolf);
+    }
+
+    private void EnsureWolfExists()
+    {
+        if (_enemies.HasActiveActors)
+        {
+            return;
+        }
+
+        SpawnInitialWolf();
     }
 
     private void ResolvePlayerEnemySeparation()

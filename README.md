@@ -53,6 +53,7 @@ The in-game settings panel currently supports:
 - mouse sensitivity adjustment
 - noclip/fly-speed adjustment
 - runtime `Strength`, `Attack Speed`, and `Vitality` tuning
+- runtime floating damage text size, speed, and crit-depth tuning
 - preset resolution switching
 - runtime floor-size resizing with an explicit apply step
 - collision-geometry debug toggling for cubes and player
@@ -66,6 +67,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The title bar is updated with the current FPS count.
 - The application grabs the mouse cursor on startup.
 - The scene now spawns one first-pass wolf enemy that chases the player, attacks in melee range, and can be killed in combat mode.
+- If no active wolf enemies remain during gameplay, the scene respawns the default wolf.
 - World-model transform composition now respects glTF node-local transforms correctly, so authored mesh-node scale does not shove actor instances off-map.
 - The shared animated-model pipeline now includes a first-pass glTF skinning path for skinned creature assets such as the wolf.
 - The world now uses separate width, height, and depth bounds instead of one cubic side length.
