@@ -13,7 +13,6 @@ public class PlayScene : IDisposable
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly SceneEventHub _events = new();
     private readonly CombatFeedbackSystem _combatFeedback;
-    private readonly EventTraceSystem _eventTrace;
     private readonly GameSettings _settings;
     private readonly PlayerViewModelController _viewModelController;
     private bool _wasSettingsTogglePressed;
@@ -32,10 +31,9 @@ public class PlayScene : IDisposable
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition, _events);
+        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
-        _eventTrace = new EventTraceSystem(_events);
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -105,7 +103,6 @@ public class PlayScene : IDisposable
 
     public void Dispose()
     {
-        _eventTrace.Dispose();
         _combatFeedback.Dispose();
         _physics.Dispose();
     }

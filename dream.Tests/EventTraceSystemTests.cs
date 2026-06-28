@@ -21,11 +21,25 @@ public class EventTraceSystemTests
     {
         SceneEventHub hub = new();
         EventTraceSystem trace = new(hub);
-        PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, eventHub: hub);
+        PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero);
 
-        combatant.ApplyDamage(100);
+        hub.Publish(new ActorDiedEvent(combatant.Actor));
 
         Assert.Contains(nameof(ActorDiedEvent), trace.Entries);
+    }
+
+    [Fact]
+    public void Trace_System_Keeps_A_Bounded_Recent_History()
+    {
+        SceneEventHub hub = new();
+        EventTraceSystem trace = new(hub, maxEntries: 2);
+        CombatActorHandle actor = new(1, CreatureKind.Player, new HealthState(100), new FixedTraceAnchorProvider());
+
+        hub.Publish(new DamageAppliedEvent(actor, 10, FloatingCombatTextKind.Regular));
+        hub.Publish(new ActorDiedEvent(actor));
+        hub.Publish(new DamageAppliedEvent(actor, 15, FloatingCombatTextKind.Regular));
+
+        Assert.Equal([nameof(ActorDiedEvent), nameof(DamageAppliedEvent)], trace.Entries);
     }
 
     private sealed class FixedTraceAnchorProvider : ICombatAnchorProvider
