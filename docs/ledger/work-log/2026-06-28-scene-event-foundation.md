@@ -1,6 +1,6 @@
-# Scene Event Foundation
+# PlayScene Event Ownership Seam
 
-Purpose: record the introduction of the first scene-scoped event hub.
+Purpose: record the PlayScene-owned scene event hub seam slice.
 Status: completed
 Scope: scene ownership seam and architecture documentation follow-up
 
