@@ -455,12 +455,12 @@ public class Render
         GameSettings settings,
         MouseState mouseState,
         Camera camera,
-        FloatingCombatTextSystem floatingCombatText)
+        CombatFeedbackSystem combatFeedback)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
-        DrawFloatingCombatText(camera, floatingCombatText);
+        DrawFloatingCombatText(camera, combatFeedback);
         HudInteractionChanges changes = DrawHudInterface(settings);
         ApplyHudInteractionChanges(settings, changes);
         ImGui.Render();
@@ -470,9 +470,9 @@ public class Render
         return new HudFrameResult(changes.RequestedResolution, changes.RequestedFloorSize);
     }
 
-    private void DrawFloatingCombatText(Camera camera, FloatingCombatTextSystem floatingCombatText)
+    private void DrawFloatingCombatText(Camera camera, CombatFeedbackSystem combatFeedback)
     {
-        floatingCombatText.CollectRenderStates(_floatingCombatTextStates);
+        combatFeedback.CollectRenderStates(_floatingCombatTextStates);
         if (_floatingCombatTextStates.Count == 0)
         {
             return;

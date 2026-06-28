@@ -33,7 +33,7 @@ public class PlayScene : IDisposable
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
         _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition);
         _render = new Render(_settings);
-        _combatFeedback = _render.Hud.CreateCombatFeedbackSystem(_events);
+        _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -88,7 +88,8 @@ public class PlayScene : IDisposable
 
         _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
 
-        HudFrameResult hudResult = _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState, _player.Camera);
+        HudFrameResult hudResult =
+            _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState, _player.Camera, _combatFeedback);
         if (hudResult.RequestedResolution.HasValue)
         {
             applyClientSize(hudResult.RequestedResolution.Value);

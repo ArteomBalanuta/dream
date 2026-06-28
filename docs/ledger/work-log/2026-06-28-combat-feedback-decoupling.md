@@ -6,13 +6,14 @@ Scope: floating combat text moved behind `DamageAppliedEvent`
 
 ## Summary
 
-Removed the direct `PlayScene` to `HudRenderer` floating-damage dependency by routing combat feedback through a local scene event subscription.
+Removed the direct `PlayScene` to `HudRenderer` floating-damage dependency by routing combat feedback through a local scene event subscription owned and wired by `PlayScene`.
 
 ## Completed Work
 
 - added production wiring so `PlayScene` now constructs and updates `CombatFeedbackSystem`
+- corrected the seam so `PlayScene` constructs `CombatFeedbackSystem` directly instead of asking `HudRenderer` to create it
 - replaced direct HUD damage spawning with `DamageAppliedEvent` publication from gameplay orchestration
-- kept `HudRenderer` on presentation responsibility by removing public gameplay-triggered damage spawn entry points
+- kept `HudRenderer` and `Render` on presentation responsibility by passing `CombatFeedbackSystem` in as render input
 - updated architecture notes to describe the event-driven combat feedback flow
 
 ## Verification
