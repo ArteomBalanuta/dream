@@ -8,7 +8,9 @@ public sealed class EnemyActor
         float aggroRange,
         float attackRange,
         float moveSpeed,
-        float preferredStandOffDistance = 0f)
+        float preferredStandOffDistance = 0f,
+        float collisionRadius = 0.45f,
+        float collisionHeight = 1.2f)
     {
         Combatant = combatant;
         Position = startPosition;
@@ -17,6 +19,8 @@ public sealed class EnemyActor
         AttackRange = Math.Max(0.1f, attackRange);
         MoveSpeed = Math.Max(0f, moveSpeed);
         PreferredStandOffDistance = Math.Max(AttackRange, preferredStandOffDistance);
+        CollisionRadius = Math.Max(0.1f, collisionRadius);
+        CollisionHeight = Math.Max(0.1f, collisionHeight);
         combatant.SetPositionProvider(() => Position);
     }
 
@@ -34,13 +38,20 @@ public sealed class EnemyActor
 
     public float PreferredStandOffDistance { get; }
 
+    public float CollisionRadius { get; }
+
+    public float CollisionHeight { get; }
+
     public EnemyBehaviorState BehaviorState { get; private set; }
 
     public EnemyVisualState VisualState { get; } = new();
 
     public bool IsActive => Combatant.Health.IsAlive;
 
-    public void Update(float deltaTime, Vector3 playerPosition)
+    public void Update(
+        float deltaTime,
+        Vector3 playerPosition,
+        Func<Vector3, Vector3, Vector3>? resolveMovement = null)
     {
         Combatant.AdvanceCombat(deltaTime);
 
@@ -72,7 +83,8 @@ public sealed class EnemyActor
             float step = Math.Min(MoveSpeed * Math.Max(0f, deltaTime), allowedStep);
             if (step > 0f && direction != Vector3.Zero)
             {
-                Position += direction * step;
+                Vector3 desiredDelta = direction * step;
+                Position += resolveMovement?.Invoke(Position, desiredDelta) ?? desiredDelta;
             }
 
             return;

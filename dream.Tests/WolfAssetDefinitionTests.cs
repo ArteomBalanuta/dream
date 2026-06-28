@@ -21,8 +21,10 @@ public class WolfAssetDefinitionTests
     }
 
     [Fact]
-    public void VisualPresentation_Declares_Minimum_Render_Distance()
+    public void VisualPresentation_Declares_Collision_Footprint()
     {
-        Assert.Equal(2.75f, WolfAssetDefinition.MinimumVisualDistanceFromCamera, 3);
+        Assert.Equal(0.45f, WolfAssetDefinition.CollisionRadius, 3);
+        Assert.Equal(1.20f, WolfAssetDefinition.CollisionHeight, 3);
+        Assert.Equal(0.95f, WolfAssetDefinition.PlayerSeparationDistance, 3);
     }
 }

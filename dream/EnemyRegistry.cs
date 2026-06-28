@@ -11,11 +11,26 @@ public sealed class EnemyRegistry
         _actors.Add(actor);
     }
 
-    public void UpdateAll(float deltaTime, Vector3 playerPosition, PlayerCombatant playerCombatant, SceneEventHub events)
+    public void UpdateAll(
+        float deltaTime,
+        Vector3 playerPosition,
+        PlayerCombatant playerCombatant,
+        SceneEventHub events,
+        Map? map = null)
     {
         foreach (EnemyActor actor in _actors)
         {
-            actor.Update(deltaTime, playerPosition);
+            actor.Update(
+                deltaTime,
+                playerPosition,
+                map == null
+                    ? null
+                    : (from, desiredDelta) => EnemyMovementCollision.ResolveStep(
+                        map,
+                        from,
+                        desiredDelta,
+                        actor.CollisionRadius,
+                        actor.CollisionHeight));
             actor.TryAttack(playerCombatant, events);
         }
     }

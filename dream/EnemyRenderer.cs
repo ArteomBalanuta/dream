@@ -3,7 +3,6 @@ using OpenTK.Mathematics;
 public sealed class EnemyRenderer
 {
     private readonly Render _render;
-    private const float DebugMarkerSide = 0.9f;
 
     public EnemyRenderer(Render render)
     {
@@ -19,12 +18,8 @@ public sealed class EnemyRenderer
                 continue;
             }
 
-            Vector3 renderPosition = EnemyVisualPlacement.ResolveRenderPosition(
-                actor.Position,
-                camera.Position,
-                WolfAssetDefinition.MinimumVisualDistanceFromCamera);
             EnemyRenderState renderState = EnemyRenderState.CreateWolf(
-                renderPosition,
+                actor.Position,
                 actor.Forward,
                 actor.BehaviorState);
 
@@ -40,8 +35,8 @@ public sealed class EnemyRenderer
             if (showCollisionGeometry)
             {
                 Matrix4 debugMatrix =
-                    Matrix4.CreateScale(DebugMarkerSide, 1.6f, DebugMarkerSide) *
-                    Matrix4.CreateTranslation(actor.Position + new Vector3(0f, 0.8f, 0f));
+                    Matrix4.CreateScale(actor.CollisionRadius * 2f, actor.CollisionHeight, actor.CollisionRadius * 2f) *
+                    Matrix4.CreateTranslation(actor.Position + new Vector3(0f, actor.CollisionHeight * 0.5f, 0f));
                 _render.DrawCollisionShape(debugMatrix, camera);
             }
         }

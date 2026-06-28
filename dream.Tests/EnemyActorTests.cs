@@ -66,6 +66,20 @@ public class EnemyActorTests
         Assert.Equal(EnemyBehaviorState.Chasing, actor.BehaviorState);
     }
 
+    [Fact]
+    public void Update_Uses_Movement_Resolver_When_Chasing()
+    {
+        EnemyActor actor = CreateActor(moveSpeed: 4f);
+
+        actor.Update(
+            0.5f,
+            new Vector3(4f, 0f, 0f),
+            (_, desiredDelta) => desiredDelta * 0.25f);
+
+        Assert.Equal(new Vector3(0.5f, 0f, 0f), actor.Position);
+        Assert.Equal(Vector3.UnitX, actor.Forward);
+    }
+
     private static EnemyActor CreateActor(float moveSpeed = 3f, float preferredStandOffDistance = 1.25f)
     {
         EnemyCombatant combatant = new(() => Vector3.Zero, maxHealth: 30, attackDamage: 6, attackIntervalSeconds: 1f);

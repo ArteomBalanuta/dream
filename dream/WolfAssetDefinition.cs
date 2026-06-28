@@ -11,7 +11,9 @@ public static class WolfAssetDefinition
     public const string AttackClip = "AnimalArmature|Attack";
     public const float CombatAnchorHeight = 0.75f;
     public const float PreferredStandOffDistance = 2.00f;
-    public const float MinimumVisualDistanceFromCamera = 2.75f;
+    public const float CollisionRadius = 0.45f;
+    public const float CollisionHeight = 1.20f;
+    public const float PlayerSeparationDistance = 0.95f;
 
     public static Vector3 AuthoredForwardAxis => Vector3.UnitZ;
 

@@ -79,8 +79,9 @@ public class PlayScene : IDisposable
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         if (allowGameplayInput)
         {
-            _enemies.UpdateAll(delta, _player.GetWorldPosition(), _player.Combatant, _events);
+            _enemies.UpdateAll(delta, _player.GetWorldPosition(), _player.Combatant, _events, _map);
             _enemies.PruneInactive();
+            ResolvePlayerEnemySeparation();
         }
 
         if (_interactionMode == PlayerInteractionMode.Building)
@@ -330,7 +331,38 @@ public class PlayScene : IDisposable
             aggroRange: 10f,
             attackRange: 1.35f,
             moveSpeed: 2.8f,
-            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance);
+            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
+            collisionRadius: WolfAssetDefinition.CollisionRadius,
+            collisionHeight: WolfAssetDefinition.CollisionHeight);
         _enemies.Add(wolf);
+    }
+
+    private void ResolvePlayerEnemySeparation()
+    {
+        if (_player.IsNoclipEnabled)
+        {
+            return;
+        }
+
+        Vector3 playerPosition = _player.GetWorldPosition();
+        Vector3 resolvedPosition = playerPosition;
+        foreach (EnemyActor actor in _enemies.ActiveActors)
+        {
+            if (!actor.IsActive)
+            {
+                continue;
+            }
+
+            resolvedPosition = EnemyPlayerCollisionResolver.ResolvePlayerPosition(
+                resolvedPosition,
+                actor.Position,
+                WolfAssetDefinition.PlayerSeparationDistance,
+                -actor.Forward);
+        }
+
+        if ((resolvedPosition - playerPosition).LengthSquared > 0.000001f)
+        {
+            _player.SetWorldPosition(resolvedPosition);
+        }
     }
 }
