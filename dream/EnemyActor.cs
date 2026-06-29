@@ -10,7 +10,8 @@ public sealed class EnemyActor
         float moveSpeed,
         float preferredStandOffDistance = 0f,
         float collisionRadius = 0.45f,
-        float collisionHeight = 1.2f)
+        float collisionHeight = 1.2f,
+        string displayName = "Wolf")
     {
         Combatant = combatant;
         Position = startPosition;
@@ -21,6 +22,7 @@ public sealed class EnemyActor
         PreferredStandOffDistance = Math.Max(AttackRange, preferredStandOffDistance);
         CollisionRadius = Math.Max(0.1f, collisionRadius);
         CollisionHeight = Math.Max(0.1f, collisionHeight);
+        DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Enemy" : displayName.Trim();
         combatant.SetPositionProvider(() => Position);
     }
 
@@ -42,6 +44,8 @@ public sealed class EnemyActor
 
     public float CollisionHeight { get; }
 
+    public string DisplayName { get; }
+
     public EnemyBehaviorState BehaviorState { get; private set; }
 
     public EnemyVisualState VisualState { get; } = new();
@@ -50,7 +54,7 @@ public sealed class EnemyActor
 
     public void Update(
         float deltaTime,
-        Vector3 playerPosition,
+        Vector3? playerPosition,
         Func<Vector3, Vector3, Vector3>? resolveMovement = null)
     {
         Combatant.AdvanceCombat(deltaTime);
@@ -61,7 +65,13 @@ public sealed class EnemyActor
             return;
         }
 
-        Vector3 toPlayer = playerPosition - Position;
+        if (!playerPosition.HasValue)
+        {
+            BehaviorState = EnemyBehaviorState.Idle;
+            return;
+        }
+
+        Vector3 toPlayer = playerPosition.Value - Position;
         toPlayer.Y = 0f;
         float distanceToPlayer = toPlayer.Length;
         Vector3 direction = distanceToPlayer > 0.0001f ? toPlayer / distanceToPlayer : Vector3.Zero;
@@ -93,9 +103,11 @@ public sealed class EnemyActor
         BehaviorState = EnemyBehaviorState.Idle;
     }
 
-    public bool TryAttack(PlayerCombatant playerCombatant, SceneEventHub events)
+    public bool TryAttack(PlayerCombatant? playerCombatant, SceneEventHub events)
     {
-        if (BehaviorState != EnemyBehaviorState.Attacking || !Combatant.TryStartAttack())
+        if (playerCombatant == null
+            || BehaviorState != EnemyBehaviorState.Attacking
+            || !Combatant.TryStartAttack())
         {
             return false;
         }
@@ -115,5 +127,15 @@ public sealed class EnemyActor
     public void SetPosition(Vector3 position)
     {
         Position = position;
+    }
+
+    public void SetFacing(Vector3 facing)
+    {
+        if (facing.LengthSquared <= 0.000001f)
+        {
+            return;
+        }
+
+        Forward = facing.Normalized();
     }
 }

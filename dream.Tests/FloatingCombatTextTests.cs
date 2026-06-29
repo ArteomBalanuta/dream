@@ -46,6 +46,14 @@ public class FloatingCombatTextMotionTests
         Assert.True(middle > 0f);
         Assert.Equal(0f, end, 3);
     }
+
+    [Fact]
+    public void ResolveLifetimeSeconds_Extends_Real_Time_For_Slower_Motion()
+    {
+        float resolved = FloatingCombatTextMotion.ResolveLifetimeSeconds(0.5f);
+
+        Assert.Equal(2f, resolved, 3);
+    }
 }
 
 public class FloatingCombatTextSystemTests
@@ -67,15 +75,19 @@ public class FloatingCombatTextSystemTests
     }
 
     [Fact]
-    public void Update_Expires_Entries_After_Lifetime()
+    public void Update_Expires_Entries_After_Resolved_Lifetime()
     {
         FloatingCombatTextSystem system = new();
         system.Spawn(1, Vector3.Zero, 123, FloatingCombatTextKind.Regular);
+        FloatingCombatTextTuning tuning = new(
+            SizeMultiplier: FloatingCombatTextTuning.Default.SizeMultiplier,
+            MotionSpeedMultiplier: 0.5f,
+            CriticalDepthMultiplier: FloatingCombatTextTuning.Default.CriticalDepthMultiplier);
 
-        system.Update(FloatingCombatTextMotion.Lifetime + 0.01f);
+        system.Update(FloatingCombatTextMotion.ResolveLifetimeSeconds(tuning.MotionSpeedMultiplier) + 0.01f, tuning);
 
         List<FloatingCombatTextRenderState> states = new();
-        system.CollectRenderStates(states);
+        system.CollectRenderStates(states, tuning);
 
         Assert.Empty(states);
     }

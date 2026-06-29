@@ -19,7 +19,7 @@ public static class Program
         return mode switch
         {
             ProcessMode.Desktop => RunDesktop(),
-            ProcessMode.Server => RunUnimplementedServerMode(),
+            ProcessMode.Server => RunServerMode(),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown process mode.")
         };
     }
@@ -43,7 +43,7 @@ public static class Program
         mode = default;
         errorMessage =
             $"Unsupported startup argument(s): {string.Join(", ", args)}. " +
-            "Supported modes: no arguments for desktop, or --server for the reserved server path.";
+            "Supported modes: no arguments for desktop, or --server for the dedicated server bootstrap path.";
         return false;
     }
 
@@ -54,11 +54,8 @@ public static class Program
         return 0;
     }
 
-    private static int RunUnimplementedServerMode()
+    private static int RunServerMode()
     {
-        Console.Error.WriteLine(
-            "The --server startup path is not implemented yet. " +
-            "This phase only reserves the startup seam, so no headless host or transport bootstrap runs yet.");
-        return 1;
+        return ServerBootstrap.RunServerMode();
     }
 }

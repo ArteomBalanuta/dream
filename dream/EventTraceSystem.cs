@@ -4,6 +4,7 @@ public sealed class EventTraceSystem : IDisposable
     private readonly IDisposable _actorDiedSubscription;
     private readonly IDisposable _cubePlacedSubscription;
     private readonly IDisposable _cubeDestroyedSubscription;
+    private readonly IDisposable _actionRejectedSubscription;
     private readonly int _maxEntries;
 
     public List<string> Entries { get; } = [];
@@ -15,6 +16,7 @@ public sealed class EventTraceSystem : IDisposable
         _actorDiedSubscription = hub.Subscribe<ActorDiedEvent>(_ => AddEntry(nameof(ActorDiedEvent)));
         _cubePlacedSubscription = hub.Subscribe<CubePlacedEvent>(_ => AddEntry(nameof(CubePlacedEvent)));
         _cubeDestroyedSubscription = hub.Subscribe<CubeDestroyedEvent>(_ => AddEntry(nameof(CubeDestroyedEvent)));
+        _actionRejectedSubscription = hub.Subscribe<AuthoritativeActionRejectedEvent>(_ => AddEntry(nameof(AuthoritativeActionRejectedEvent)));
     }
 
     public void Dispose()
@@ -23,6 +25,7 @@ public sealed class EventTraceSystem : IDisposable
         _actorDiedSubscription.Dispose();
         _cubePlacedSubscription.Dispose();
         _cubeDestroyedSubscription.Dispose();
+        _actionRejectedSubscription.Dispose();
     }
 
     private void AddEntry(string name)

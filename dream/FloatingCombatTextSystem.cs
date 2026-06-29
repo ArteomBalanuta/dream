@@ -43,6 +43,12 @@ public sealed class FloatingCombatTextSystem
 
     public void Update(float deltaTime)
     {
+        Update(deltaTime, FloatingCombatTextTuning.Default);
+    }
+
+    public void Update(float deltaTime, FloatingCombatTextTuning tuning)
+    {
+        float lifetimeSeconds = FloatingCombatTextMotion.ResolveLifetimeSeconds(tuning.Clamp().MotionSpeedMultiplier);
         foreach (Entry entry in _entries)
         {
             if (!entry.Active)
@@ -51,7 +57,7 @@ public sealed class FloatingCombatTextSystem
             }
 
             entry.AgeSeconds += deltaTime;
-            if (entry.AgeSeconds >= FloatingCombatTextMotion.Lifetime)
+            if (entry.AgeSeconds >= lifetimeSeconds)
             {
                 entry.Active = false;
             }

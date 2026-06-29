@@ -11,9 +11,9 @@ public readonly record struct FloatingCombatTextTuning(
     public const float MaxCriticalDepthMultiplier = 6.00f;
 
     public static FloatingCombatTextTuning Default => new(
-        SizeMultiplier: 1.65f,
-        MotionSpeedMultiplier: 1.20f,
-        CriticalDepthMultiplier: 2.50f);
+        SizeMultiplier: 2.35f,
+        MotionSpeedMultiplier: 0.60f,
+        CriticalDepthMultiplier: 5.00f);
 
     public FloatingCombatTextTuning Clamp()
     {

@@ -17,7 +17,7 @@ public class GameSettings
 
     public float MoveSpeed { get; set; } = 6f;
 
-    public float NoclipSpeed { get; set; } = 150f;
+    public float NoclipSpeed { get; set; } = 18f;
 
     public float JumpVelocity { get; set; } = 5f;
 
@@ -44,10 +44,19 @@ public class GameSettings
     public event Action<FloorSizeAppliedEvent>? FloorSizeApplied;
     public event Action<RuntimeStateChangedEvent>? RuntimeStateChanged;
 
-    public GameSettings(Vector2i initialSize, ViewModelRigSettings? viewModelRig = null)
+    public GameSettings(Vector2i initialSize, ViewModelRigSettings? viewModelRig = null, DesktopClientConfig? clientConfig = null)
     {
         _defaultViewModelRig = (viewModelRig ?? ViewModelRigSettings.CreateDefault()).Clone();
         ViewModelRig = _defaultViewModelRig.Clone();
+        if (clientConfig != null)
+        {
+            clientConfig.Sanitize();
+            FieldOfViewDegrees = clientConfig.FieldOfViewDegrees;
+            MouseSensitivity = clientConfig.MouseSensitivity;
+            NoclipSpeed = clientConfig.NoclipSpeed;
+            FloatingCombatText = clientConfig.FloatingCombatText;
+        }
+
         ApplyResolution(initialSize);
     }
 

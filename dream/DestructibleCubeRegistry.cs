@@ -70,6 +70,12 @@ public sealed class WorldObjectRegistry
         return removed;
     }
 
+    public bool TryGetByActorId(int actorId, out WorldObjectRecord record)
+    {
+        record = _records.Values.FirstOrDefault(candidate => candidate.Actor.Id == actorId)!;
+        return record != null;
+    }
+
     public WorldObjectCubeSnapshot CreateCubeSnapshot()
     {
         List<WorldObjectCubeSnapshotEntry> entries = new(_records.Count);

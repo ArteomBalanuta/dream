@@ -1,0 +1,14 @@
+using OpenTK.Mathematics;
+
+public readonly record struct ActorSnapshot(
+    int ActorId,
+    CreatureKind Kind,
+    string? SessionId,
+    Vector3 Position,
+    Vector3 Facing,
+    int CurrentHealth,
+    int MaxHealth,
+    bool IsAlive,
+    PlayerInteractionMode? InteractionMode = null,
+    PlayerCombatStatsSnapshot? CombatStats = null,
+    string? DisplayName = null);

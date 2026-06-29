@@ -4,6 +4,8 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 public class Camera
 {
+    private const float MouseSensitivityNormalization = 1f / 60f;
+
     public Vector3 Position { get; set; }
     public Vector3 Front { get; private set; } = -Vector3.UnitZ;
     public Vector3 Up { get; private set; } = Vector3.UnitY;
@@ -23,18 +25,46 @@ public class Camera
         UpdateVectors();
     }
 
-    public void Update(float deltaTime, MouseState mouseState)
+    public void Update(float deltaTime, Vector2 lookDelta)
     {
-        float adjustedSensitivity = MouseSensitivity * deltaTime;
+        _ = deltaTime;
+        ApplyLookDelta(lookDelta);
+    }
 
-        _yaw += mouseState.Delta.X * adjustedSensitivity;
-        _pitch -= mouseState.Delta.Y * adjustedSensitivity;
+    public void ApplyLookDelta(Vector2 lookDelta)
+    {
+        float adjustedSensitivity = MouseSensitivity * MouseSensitivityNormalization;
+        _yaw += lookDelta.X * adjustedSensitivity;
+        _pitch -= lookDelta.Y * adjustedSensitivity;
 
         // Clamp pitch to avoid flipping
         _pitch = OpenTK.Mathematics.MathHelper.Clamp(_pitch, -OpenTK.Mathematics.MathHelper.PiOver2, OpenTK.Mathematics.MathHelper.PiOver2);
 
         // Update camera vectors
         UpdateVectors();
+    }
+
+    public void SetFacing(Vector3 facing)
+    {
+        if (facing.LengthSquared <= 0.000001f)
+        {
+            return;
+        }
+
+        Vector3 normalizedFacing = facing.Normalized();
+        _pitch = MathF.Asin(Math.Clamp(normalizedFacing.Y, -1f, 1f));
+        _yaw = MathF.Atan2(normalizedFacing.Z, normalizedFacing.X);
+        UpdateVectors();
+    }
+
+    public Camera Clone()
+    {
+        Camera clone = new(Position)
+        {
+            MouseSensitivity = MouseSensitivity
+        };
+        clone.SetFacing(Front);
+        return clone;
     }
 
 

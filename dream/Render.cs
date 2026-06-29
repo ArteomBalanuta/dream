@@ -70,6 +70,7 @@ public class Render
     private Vector2i _crosshairViewportSize;
     private readonly WorldRenderer _worldRenderer;
     private readonly EnemyRenderer _enemyRenderer;
+    private readonly RemotePlayerRenderer _remotePlayerRenderer;
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
     private readonly ViewModelRenderer _viewModelRenderer;
@@ -304,6 +305,7 @@ public class Render
     {
         _worldRenderer = new WorldRenderer(this);
         _enemyRenderer = new EnemyRenderer(this);
+        _remotePlayerRenderer = new RemotePlayerRenderer(this);
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
         _viewModelRenderer = new ViewModelRenderer(this);
@@ -341,6 +343,8 @@ public class Render
     public HudRenderer Hud => _hudRenderer;
 
     public ViewModelRenderer ViewModels => _viewModelRenderer;
+
+    public RemotePlayerRenderer RemotePlayers => _remotePlayerRenderer;
 
     public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
 
@@ -438,6 +442,18 @@ public class Render
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }
 
+    public void DrawSolidCube(Camera camera, Matrix4 modelMatrix, Vector3 color)
+    {
+        Shader shader = _shaders.TryGetValue("default", out var found) ? found : _shaders["default"];
+        shader.Use();
+        shader.SetVector3("color", color);
+        SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
+
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.DrawArrays(PrimitiveType.TriangleFan, 0, _cubeVertices.Length / 3);
+        GL.BindVertexArray(0);
+    }
+
     public void DrawCollisionBody(BulletSharp.RigidBody body, Camera camera)
     {
         if (body.MotionState == null)
@@ -456,14 +472,20 @@ public class Render
         GameSettings settings,
         MouseState mouseState,
         Camera camera,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        IReadOnlyList<EnemyActor> activeEnemies,
+        IReadOnlyList<PlayerRosterEntry> playerRoster,
         CombatFeedbackSystem combatFeedback,
-        HudStatusSnapshot status)
+        string? rejectionMessage,
+        HudStatusSnapshot status,
+        string? connectionLabel = null)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
         DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
-        HudInteractionRequest request = DrawHudInterface(settings, status);
+        DrawWorldActorLabels(camera, remotePlayers, activeEnemies);
+        HudInteractionRequest request = DrawHudInterface(settings, status, rejectionMessage, connectionLabel, playerRoster);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
@@ -510,6 +532,63 @@ public class Render
             drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y + outline), shadow, state.Text);
             drawList.AddText(font, size, screenPosition, color, state.Text);
         }
+    }
+
+    private void DrawWorldActorLabels(
+        Camera camera,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        IReadOnlyList<EnemyActor> activeEnemies)
+    {
+        IReadOnlyList<WorldActorLabelState> labels =
+            [.. ActorWorldLabelBuilder.CreateRemotePlayerLabels(remotePlayers), .. ActorWorldLabelBuilder.CreateEnemyLabels(activeEnemies)];
+        if (labels.Count == 0)
+        {
+            return;
+        }
+
+        ImDrawListPtr drawList = ImGui.GetBackgroundDrawList();
+        ImFontPtr font = ImGui.GetFont();
+        float baseFontSize = ImGui.GetFontSize();
+        uint nameColor = ToImGuiColor(new Vector4(1f, 0.95f, 0.8f, 1f));
+        uint healthColor = ToImGuiColor(new Vector4(1f, 0.45f, 0.35f, 1f));
+        uint shadowColor = ToImGuiColor(new Vector4(0f, 0f, 0f, 0.9f));
+
+        foreach (WorldActorLabelState label in labels)
+        {
+            if (!TryProjectWorldToScreen(camera, label.WorldAnchor, out System.Numerics.Vector2 screenPosition))
+            {
+                continue;
+            }
+
+            DrawOutlinedText(drawList, font, baseFontSize, screenPosition, shadowColor, nameColor, label.DisplayName);
+            DrawOutlinedText(
+                drawList,
+                font,
+                baseFontSize * 0.92f,
+                new System.Numerics.Vector2(screenPosition.X, screenPosition.Y + (baseFontSize * 1.05f)),
+                shadowColor,
+                healthColor,
+                label.HealthLabel);
+        }
+    }
+
+    private static void DrawOutlinedText(
+        ImDrawListPtr drawList,
+        ImFontPtr font,
+        float fontSize,
+        System.Numerics.Vector2 position,
+        uint shadowColor,
+        uint fillColor,
+        string text)
+    {
+        System.Numerics.Vector2 size = ImGui.CalcTextSize(text);
+        System.Numerics.Vector2 centered = new(position.X - (size.X * 0.5f), position.Y);
+        const float outline = 1f;
+        drawList.AddText(font, fontSize, new System.Numerics.Vector2(centered.X - outline, centered.Y), shadowColor, text);
+        drawList.AddText(font, fontSize, new System.Numerics.Vector2(centered.X + outline, centered.Y), shadowColor, text);
+        drawList.AddText(font, fontSize, new System.Numerics.Vector2(centered.X, centered.Y - outline), shadowColor, text);
+        drawList.AddText(font, fontSize, new System.Numerics.Vector2(centered.X, centered.Y + outline), shadowColor, text);
+        drawList.AddText(font, fontSize, centered, fillColor, text);
     }
 
     private bool TryProjectWorldToScreen(Camera camera, Vector3 worldPosition, out System.Numerics.Vector2 screenPosition)
@@ -595,7 +674,12 @@ public class Render
         ImGui.NewFrame();
     }
 
-    private static HudInteractionRequest DrawHudInterface(GameSettings settings, HudStatusSnapshot status)
+    private static HudInteractionRequest DrawHudInterface(
+        GameSettings settings,
+        HudStatusSnapshot status,
+        string? rejectionMessage,
+        string? connectionLabel,
+        IReadOnlyList<PlayerRosterEntry> playerRoster)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
@@ -620,6 +704,18 @@ public class Render
         ImGui.Text(status.HealthLabel);
         ImGui.Text(status.ModeLabel);
         ImGui.Text(status.DamageLabel);
+        if (!string.IsNullOrWhiteSpace(connectionLabel))
+        {
+            ImGui.Text($"Server: {connectionLabel}");
+        }
+        if (playerRoster.Count > 0)
+        {
+            ImGui.Text($"Players: {playerRoster.Count}");
+        }
+        if (!string.IsNullOrWhiteSpace(rejectionMessage))
+        {
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f), rejectionMessage);
+        }
         ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
         ImGui.Text("Press Esc to toggle settings");
         ImGui.End();
@@ -628,6 +724,19 @@ public class Render
         {
             ImGui.SetNextWindowPos(new System.Numerics.Vector2(20, 70), ImGuiCond.FirstUseEver);
             ImGui.Begin("Settings", ImGuiWindowFlags.AlwaysAutoResize);
+
+            if (!string.IsNullOrWhiteSpace(connectionLabel))
+            {
+                ImGui.Text($"Connected Server: {connectionLabel}");
+            }
+
+            if (playerRoster.Count > 0 && ImGui.CollapsingHeader("Connected Players", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                foreach (PlayerRosterEntry player in playerRoster)
+                {
+                    ImGui.Text($"{player.DisplayName} [{player.SessionId}]");
+                }
+            }
 
             float fieldOfView = settings.FieldOfViewDegrees;
             if (ImGui.SliderFloat("Field Of View", ref fieldOfView, 50f, 100f))

@@ -5,33 +5,51 @@
 The application entry point is `Program.Main(string[] args)`. It now performs an explicit process-mode selection and argument validation step before startup work begins:
 
 - no mode flag selects the current desktop path
-- `--server` is recognized, but it exits honestly as not implemented in this phase
+- `--server` is recognized and now boots the first long-running `ServerBootstrap` dedicated-server path
 - any other startup argument is rejected instead of silently falling through to desktop
 
-Today, the desktop branch still creates a `Game` object and calls `Run()`, which hands control to OpenTK's `GameWindow` lifecycle. This keeps the default local client startup unchanged while giving later phases one obvious seam for host branching.
+Today, the desktop branch still creates a `Game` object and calls `Run()`, which hands control to OpenTK's `GameWindow` lifecycle. The server branch now routes through `ServerBootstrap.RunServerMode()`, which constructs the authoritative host, starts the TCP accept loop, and keeps the process alive until cancellation.
 
 The next planned follow-on work for this startup seam is captured in:
 
 - Phase 1: `docs/ledger/plans/2026-06-29-phase1-world-session-runtime-extraction.md` extracts `WorldSessionRuntime` so the authoritative runtime stops living directly under the desktop scene
 - Phase 4: `docs/ledger/plans/2026-06-29-phase4-protocol-contract-and-routing.md` defines the protocol seam, message routing, and host/client wiring boundaries that a later server path should plug into
-- Phase 4: `docs/ledger/plans/2026-06-29-phase4-dedicated-server-host-and-transport-poc.md` adds `ServerBootstrap`, `DedicatedServerHost`, and the first headless transport-backed server path once that host work begins
 
 Inside the `Game` constructor:
 
 - `GameSettings` is created first
-- `PlayScene` is created next and receives the settings object
-- The mouse cursor is grabbed by setting `CursorState = CursorState.Grabbed`
+- one integrated loopback authoritative server is started for desktop mode
+- a startup connection scene is created next and becomes the primary desktop entry path
+- `PlayScene` is created only after a successful client connection
 
 ## Main Object Relationships
 
 - `Game` is the OpenTK window shell and lifecycle owner.
-- `PlayScene` is the active gameplay scene and current desktop orchestration root for per-frame update/render flow.
-- `PlayScene` still temporarily constructs and owns authoritative world state access points such as `Player`, `Map`, `PhysicsIntegrator`, and `PhysicsSyncSystem`; the planned `WorldSessionRuntime` extraction is expected to take over that ownership while `PlayScene` stays client-facing.
+- `Game` now also owns top-level scene switching between the startup connection scene and gameplay.
+- `StartupConnectionScene` is the primary multiplayer boot scene. It owns the host/port/player-name form state, uses `StartupMenuRenderer` for UI, and hands successful `RemoteClientSession` creation back to `Game`.
+- `NetworkSessionCoordinator` owns startup connection-state transitions and keeps connect-task lifecycle out of both `Game` and `PlayScene`.
+- `IntegratedLocalServerHandle` owns the desktop-local authoritative server lifecycle and exposes the loopback port used by the startup scene defaults.
+- `PlayScene` is the active gameplay scene and current desktop composition root for per-frame update/render flow.
+- `PlayScene` now composes `WorldSessionRuntime` for the client path, but keeps client-local ownership of render, HUD, scene events, viewmodel presentation, settings-driven input gating, and other desktop-only reactions.
+- `PlayScene` now also owns `ClientProtocolSession` so future replicated-state intake stays behind a focused client protocol seam instead of turning the scene into a message router.
+- `ClientScenePresenter` now owns remote-player presentation state and interpolation buffers on the client side, which keeps remote player world-space rendering separate from local camera, HUD, and first-person systems.
+- `RemotePlayerRenderer` now owns world-space remote-player drawing and stays a sibling of `EnemyRenderer` rather than stretching `WorldRenderer` into an all-actor renderer prematurely.
+- `WorldSessionRuntime` is the first extracted authoritative runtime seam. It owns simulation-facing state and order for the current desktop session: `Map`, `PhysicsIntegrator`, `Player`, `PhysicsSyncSystem`, `WorldObjectRegistry`, `EnemyRegistry`, `PlayerSessionRegistry`, accepted interaction mode, combat/build resolution, wolf lifecycle upkeep, and floor rebuild/player re-clamp behavior.
+- `RemoteSessionPlayerState` now provides a lightweight authoritative actor seam for additional joined remote sessions that do not yet own the full Bullet-backed `Player` path.
+- `ServerTickRunner` and `SimulationClock` now provide the first explicit 64 Hz authoritative scheduling seam around that runtime for local transition use.
+- `DedicatedServerHost` is now the first headless composition root for protocol-side server work. It owns protocol routing plus a first command-inbox and fixed-tick advancement seam for runtime-backed hosts, but it intentionally does not claim a complete remote-session stack yet.
+- `DedicatedServerHost` now drains a batched set of joined-session command frames per authoritative tick instead of only one primary-session command.
+- `DedicatedServerService` now owns the long-running server loop: transport startup, client acceptance, connection lifetime tasks, 64 Hz tick advancement, and joined-session snapshot broadcast.
+- `ServerConnection` now owns framed protocol intake and reply encoding for one transport connection, which keeps socket read/write details out of `DedicatedServerHost`.
+- `RemoteClientSession` now owns the first desktop-client transport edge: connect, hello/join bootstrap, command submission, and background inbound receive on behalf of the desktop scene.
+- `AuthoritativeActionFeedbackSystem` now owns short-lived client-local rejection-message state for surfaced authoritative action failures, while `MultiplayerDiagnostics` owns a bounded scene-local action-flow trace for snapshot/action intake facts.
+- `ServerBootstrap` owns the server-mode startup branch, while `IServerTransport`, `IClientTransport`, `TcpServerTransport`, `TcpClientTransport`, and `TcpClientConnector` reserve the first concrete TCP transport edge behind `ITransportConnection`.
+- `ProtocolRouter`, `IProtocolCodec`, and `IMessageFramer` now separate message dispatch, JSON serialization, and stream framing so transport code does not collapse into one large host class.
 - `PlayScene` now owns the local `SceneEventHub` seam that future scene-scoped event publication and subscription lifetime management should flow through, rather than introducing a global engine bus.
 - `GameSettings` now owns both raw tuning values and a small runtime state model (`RuntimeState`) plus targeted change events for HUD-driven configuration updates.
 - `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, the currently registered player body slot, and registered map bodies, while helper systems now handle body creation, registration, and transform syncing.
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
-- `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and request-style placement capture to `PlayerInteraction`.
+- `Player` remains the gameplay facade, but internally delegates movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and request-style placement capture to `PlayerInteraction`, while desktop input translation now stays outside the authoritative update path.
 - `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
 - `EnemyRegistry` now owns the active enemy collection and scene-local hit resolution for non-player combat actors.
 - `EnemyActor` owns world-space chase behavior and melee state transitions, while `EnemyCombatant` owns health, attack cadence, combat identity, and damage intake for the same actor.
@@ -45,35 +63,96 @@ Inside the `Game` constructor:
 
 ## Update Loop
 
-`Game.OnUpdateFrame()` now delegates gameplay-frame work to `PlayScene.Update()`.
+`Game.OnUpdateFrame()` now delegates either startup-scene or gameplay-scene work depending on whether the desktop client has connected yet.
 
-`PlayScene.Update()` performs the current simulation work in this order:
+When gameplay is active, `PlayScene.Update()` splits client capture from authoritative runtime advancement:
 
 1. Toggle runtime state when global scene input requests it
-2. Capture gameplay interaction input, including direct interaction-mode selection
-3. Translate primary-use input into either build placement or combat interaction based on the active `PlayerInteractionMode`
-4. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
-5. Step the Bullet physics simulation with the current frame delta
-6. Update the player using the current keyboard and mouse state
-7. Apply build placement only when the active mode is `Building`
-8. Update active enemies, including chase-state transitions and melee damage against the player when gameplay input is live
-9. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
+2. Capture desktop gameplay input and translate it into a `PlayerCommandFrame` for the local `PlayerSessionId`
+3. Pass that command frame into `WorldSessionRuntime.Update(...)`
+4. Let `ServerTickRunner` advance fixed 64 Hz authoritative ticks while `WorldSessionRuntime` validates session identity and monotonic command sequence, accepts the active mode, resolves combat primary use before movement, steps Bullet, updates the player, updates or respawns wolves, applies build placement, and syncs Bullet-owned cube transforms back into world state
+5. Trigger first-person presentation reactions from the runtime result, then advance the local viewmodel pass and notify the controller when one-shot clips finish
+6. Tick scene-local combat feedback state for HUD rendering
 
-Those last four steps are the current authoritative runtime seam. The planned `WorldSessionRuntime` should eventually own physics stepping, player/mutation update order, and Bullet-to-world synchronization, while `PlayScene` remains responsible for local input capture, viewmodel presentation, and other client-only reactions.
+That extracted runtime order is the first authoritative session boundary for later host splitting. `PlayScene` still captures local desktop input and still owns client-only presentation consequences, but it no longer owns the simulation sequence directly.
 
-Phase 0 intentionally leaves some one-player assumptions in place: the desktop path still has one locally composed `Player`, one registered player body, and one scene-owned update order. `WorldSessionRuntime`, transport, a session registry, and any remote-player path do not exist yet.
+The current Phase 2 seam still intentionally leaves some one-player assumptions in place: the desktop path still has one locally composed `Player`, one registered player body, and no transport or remote-player path yet. What changed is that the local player now flows through an explicit `PlayerSessionRegistry`, `PlayerSessionId`, and `PlayerCommandFrame` path instead of an implicit one-player input shortcut.
 
-`Player.Update()` now coordinates smaller subsystems:
+Phase 3 adds the first authoritative tick and replication-export foundation on top of that session seam. The current desktop host still drives the runtime in-process, but it now does so through `ServerTickRunner` at a fixed 64 Hz simulation cadence instead of directly coupling authoritative advancement to render-frame delta.
 
-- `PlayerController` converts raw keyboard and mouse state into movement and interaction commands
+Phase 4 adds the first explicit protocol contract layer on top of that: versioned transport envelopes, typed client/server message families, focused routing handlers, and explicit action/result payload contracts for one-shot primary-use style gameplay interactions.
+
+The next host-side foundation now lets the headless server keep moving even when no fresh command arrives on a given network frame. `PlayerCommandHandler` records the latest inbound `PlayerCommandFrame` into a focused inbox, `DedicatedServerHost.AdvanceTime(...)` drains that inbox into the 64 Hz tick runner, and `WorldSessionRuntime` now continues simulation from its last accepted command frame instead of stalling authoritative updates outright when the network edge is quiet for one tick.
+
+That host-side foundation now also has its first live transport loop:
+
+1. `TcpServerTransport` accepts a socket connection
+2. `DedicatedServerService` wraps it in `ServerConnection` and starts a per-connection receive loop
+3. `ServerConnection` deframes and decodes client protocol messages, routes them through `DedicatedServerHost`, and frames outbound replies
+4. `DedicatedServerService` advances the authoritative host independently on the fixed tick loop and broadcasts `ServerSnapshotMessage` frames only to connections that have completed join
+
+The current protocol behavior is intentionally conservative: a raw TCP connection may handshake with `client.hello`, but snapshot broadcast waits until the connection has joined a session.
+
+The host-side tick seam is now slightly broader too: `LatestPlayerCommandInbox` keeps the latest pending command per joined session, `DedicatedServerHost` drains those commands as a batch for each fixed tick, and `RuntimeAuthoritativeSessionHost` can now apply the primary controlled session plus additional lightweight remote-session actors from the same authoritative tick window.
+
+On the client side, the first transport attachment is equally narrow:
+
+1. `Game` resolves optional remote-client settings from environment
+2. `RemoteClientSession` connects to the server, sends `client.hello`, then sends `client.join-request`
+3. the session keeps a background receive loop running so socket reads stay off the render thread
+4. `PlayScene.Update()` drains queued server messages into `ClientProtocolSession` and mirrors local command frames onto the transport when the remote session is connected
+
+That means the desktop client is now connected to the live transport edge without turning `PlayScene` into a socket pump.
+
+The next client-authority step now also applies a first slice of authoritative local state back into the runtime:
+
+- `ClientCorrectionApplier` mirrors the authoritative local-player actor snapshot onto the client runtime player position, facing, and health
+- `ClientCorrectionApplier` now also mirrors the authoritative interaction mode from `ServerSnapshotEnvelope` onto the client runtime so HUD and future use-routing logic can converge on server-owned mode state
+- `RemoteWorldMutationApplier` reconciles full world snapshots plus incremental cube mutation deltas into the client runtime map
+- `RemoteEnemyStateApplier` replaces client-local enemy runtime state from authoritative enemy actor snapshots
+
+Remote mode also now changes what the local runtime is allowed to do:
+
+- local command frames are still captured and mirrored onto the transport
+- local interaction-mode selection may still advance immediately for HUD/viewmodel continuity
+- local movement and look simulation are suppressed while connected
+- local primary-use authority is suppressed while connected
+- local enemy simulation is suppressed while connected
+
+That keeps the client usable while reducing the biggest "local runtime fights the server" problems. Later work must still reconcile rollback, combat feedback ownership, and the remaining local-only presentation/runtime assumptions more aggressively.
+
+The runtime still has an intentional split in player authority depth:
+
+- the local desktop path or first remote-controlled session still owns the full Bullet-backed `Player` actor path
+- additional joined remote sessions currently use lightweight kinematic `RemoteSessionPlayerState` actors for movement/look snapshot replication plus their own requested interaction mode state
+- authoritative one-shot action handling now first resolves a per-session action context so build placement and first-pass combat can validate against the acting session's own replicated mode state
+- joined remote-session combat now also normalizes aim from authoritative actor state instead of trusting arbitrary client-provided combat rays directly
+- remote client action results now also flow through a focused `ClientAuthoritativeActionApplier` seam so accepted authoritative world mutation/combat outcomes can trigger immediate local correction and combat feedback before the next snapshot arrives
+- that same applier now handles rejected authoritative action results too: correction deltas can immediately reposition/reface the local replicated player, rejection facts surface as explicit scene events, and the scene now consumes them through a short-lived HUD feedback seam plus bounded multiplayer diagnostics recording
+- deeper combat/world-interaction ownership is still not fully multi-actor yet because the primary controlled player path remains the only full Bullet-backed player body/camera stack
+
+The first Phase 5 groundwork now sits above that protocol seam: `ClientScenePresenter` buffers authoritative remote-player samples and produces interpolated remote presentation state without changing local authoritative simulation ownership.
+
+`Player.Update()` now coordinates smaller subsystems from distilled simulation input rather than raw desktop device state:
+
+- `PlayScene` converts raw desktop keyboard and mouse state into a session-bound `PlayerCommandFrame`
+- `WorldSessionRuntime` validates that frame and translates its transport-safe move/look/mode/use intent into runtime-facing player input
 - `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body and now also owns noclip toggle state plus camera-relative fly movement bypass
-- `PlayerCameraRig` synchronizes camera position from the body and applies mouse-look
+- `PlayerCameraRig` synchronizes camera position from the body and applies look deltas
 - `PlayerInteraction` handles edge-triggered build-use capture and returns plain placement requests
-- `Player` itself retains collision reporting and public façade methods used by `PlayScene`
+- `Player` itself retains collision reporting and public facade methods used by `WorldSessionRuntime`
 
 ## Render Loop
 
-`Game.OnRenderFrame()` delegates gameplay rendering to `PlayScene.Render()`, then swaps buffers and updates the shell-owned FPS title.
+`Game.OnRenderFrame()` now delegates either startup-menu rendering or gameplay rendering, then swaps buffers and updates the shell-owned FPS title.
+
+While the startup scene is active:
+
+- the framebuffer is cleared to a neutral background
+- `StartupMenuRenderer` renders the primary multiplayer connect UI
+- the player can use the integrated local server defaults or enter a remote host/port manually
+
+After a successful connection, the desktop shell transitions into `PlayScene.Render()`:
 
 Inside `PlayScene.Render()`:
 
@@ -87,15 +166,36 @@ Inside `PlayScene.Render()`:
 
 `PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
 
-The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the gameplay and runtime consequences of those requests.
+The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the client-side settings consequences of those requests and forwards authoritative floor-rebuild work into `WorldSessionRuntime`.
+
+`WorldSessionRuntime` now also exports a `WorldSessionPresentationState` snapshot for the desktop client path. `PlayScene.Render()` consumes that snapshot for world draw candidates, active enemies, collision-debug bodies, player collision body access, and HUD status, which keeps the scene in a presenter role instead of reaching through several runtime-owned objects independently.
+
+Alongside presentation snapshots, `WorldSessionRuntime` now also exports a transport-neutral `ServerSnapshotEnvelope` for future server/client use. That envelope carries the current authoritative tick, accepted per-session command sequence metadata, current authoritative interaction mode, authoritative actor snapshots, optional full world snapshot data for join/resync use, and explicit world/combat delta collections.
+
+Player actor snapshots are now slightly richer than the first transport cut as well: `ActorSnapshot` can now carry an optional per-actor interaction mode so multi-session player actors do not need to rely forever on one runtime-global mode fact.
+
+The new protocol seam keeps those runtime DTOs transport-neutral. `TransportJsonCodec` owns JSON serialization policy, `LengthPrefixedMessageFramer` owns stream-safe payload boundaries, and `ProtocolRouter` plus role-specific handlers translate between typed protocol messages and focused client/server contexts.
+
+The current client path now consumes remote-player snapshots in two stages:
+
+- `PlayScene.ApplyReplicatedMessage(...)` feeds `ServerSnapshotMessage` data into `ClientScenePresenter`
+- `PlayScene.Render(...)` asks the presenter for interpolated remote-player presentation state at a slightly delayed render target and forwards those results into `RemotePlayerRenderer`
+
+That keeps remote players firmly in the world-space pass and leaves local camera, HUD, and viewmodel logic unchanged.
+
+The next authoritative-interaction slice now routes one-shot gameplay actions more explicitly as well:
+
+- `PlayerActionHandler` always answers `player.action` messages with a `ServerActionMessage`
+- `WorldSessionRuntime.ProcessAuthoritativeAction(...)` is now the single authority seam for build/combat action acceptance
+- invalid assumptions such as missing joins, session mismatches, missing runtime attachment, or wrong authoritative mode now produce explicit rejected action results instead of failing silently
 
 The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for camera-local billboard-style projection and drawing.
 
-Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `PlayScene` now resolves combat hits against enemies first and then world cubes, while the registered runtime record still models a generic world-object lifecycle that future props or interactables can reuse.
+Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `WorldSessionRuntime` now resolves combat hits against enemies first and then world cubes, while the registered runtime record still models a generic world-object lifecycle that future props or interactables can reuse.
 
 Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the scene now publishes world-mutation facts such as `CubePlacedEvent` and `CubeDestroyedEvent` alongside combat facts such as `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
 
-That keeps `PlayScene.Render()` presentation-oriented even though the scene still performs one authoritative consequence today: floor-size rebuild requests currently flow back into scene-owned map rebuild logic. That rebuild path is another future `WorldSessionRuntime` ownership point rather than a place to add more multiplayer-aware logic to `PlayScene`.
+That keeps `PlayScene.Render()` presentation-oriented. Floor-size rebuild requests still originate from client UI, but the authoritative map rebuild, object restoration, enemy clamping, and player re-clamp now execute inside `WorldSessionRuntime` instead of directly in the scene.
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
@@ -105,17 +205,17 @@ The first-person subsystem is intentionally threaded through both `PlayScene.Upd
 - Otherwise, the cube is drawn as a transparent cube plus a wireframe overlay
 
 The HUD path currently includes:
-
 - A crosshair built from simple line geometry
 - An ImGui `HUD` window for runtime status, including player HP, active interaction mode, and current derived damage range
+- A short-lived rejection message path for surfaced authoritative action failures
 - An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, viewmodel rig, and live player combat-stat changes
 - A floating-combat-text overlay projected from world anchors into screen coordinates
 
 ## Physics Model
 
-`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. `PlayScene` now uses `PhysicsFactory` to create the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled, then registers that body explicitly with the integrator.
+`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. `WorldSessionRuntime` now acts as the authoritative world-stack composition root for the current desktop session: it uses `PhysicsFactory` to create the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled, registers that body with the integrator, and keeps ownership of that simulation stack behind the runtime seam.
 
-That shift removes the older implicit "construct the local player body inside `PhysicsIntegrator`" assumption. The integrator still owns the registered-body slot and its cleanup rules, but the desktop scene currently remains the composition root that decides which player body gets registered.
+That shift removes the older implicit "construct the local player body inside `PhysicsIntegrator`" assumption. The integrator still owns the registered-body slot and its cleanup rules, but `PlayScene` no longer constructs or owns the player body directly.
 
 `Map` now separates floor visuals from floor physics and data registration concerns:
 
@@ -123,11 +223,13 @@ That shift removes the older implicit "construct the local player body inside `P
 - `WorldPhysicsBinder` registers the floor collision surface once as a merged static floor collider
 - later non-floor cubes still receive individual rigid bodies through the same binder
 
-When the floor size changes at runtime:
+When the floor size changes at runtime, `PlayScene` applies the HUD setting change and `WorldSessionRuntime` performs the authoritative rebuild:
 
 - `PhysicsIntegrator.ResetMapBodies()` removes the old map rigid bodies
-- `PlayScene` currently creates a rebuilt `Map` with the requested square width/depth
+- `WorldSessionRuntime` creates a rebuilt `Map` with the requested square width/depth
 - `Map.CopyPlacedCubesTo()` migrates surviving non-floor cubes into the rebuilt map
+- `WorldObjectRegistry` restores destructible cube records against the rebuilt map
+- `EnemyRegistry.ClampToMapBounds(...)` revalidates active enemy positions against the rebuilt bounds
 - `Player.SetWorldPosition()` resets the player transform and clears stale velocities after the rebuild
 
 The player and dynamic map cubes are linked through Bullet rigid bodies. During updates, Bullet is treated as the authoritative source of dynamic physical positions, and `PhysicsSyncSystem` copies those world-space origins back into the rendering-side `Cube` objects.
@@ -163,7 +265,7 @@ The emerging combat layer is intentionally capability-based:
 - `CombatActorHandle` packages identity, kind, damageability, and anchor access into a lightweight runtime handle
 - `PlayerCombatant` is the first concrete adapter and keeps player combat participation out of the heavier movement and physics code
 - `EnemyCombatant` mirrors that adapter approach for the first wolf enemy so player and enemy damage flow through the same event and floating-text seams
-- `PlayerCombatant` now also owns a small player-only stat model that derives outgoing damage range, crit damage, attack cadence, and vitality-driven max HP, while `PlayScene` keeps hit resolution and combat-event publication scene-owned
+- `PlayerCombatant` now also owns a small player-only stat model that derives outgoing damage range, crit damage, attack cadence, and vitality-driven max HP, while `WorldSessionRuntime` keeps hit resolution and combat-event publication on the authoritative path
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 

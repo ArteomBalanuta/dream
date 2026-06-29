@@ -66,6 +66,23 @@ public class EventTraceSystemTests
         Assert.Equal([nameof(ActorDiedEvent), nameof(DamageAppliedEvent)], trace.Entries);
     }
 
+    [Fact]
+    public void Trace_System_Records_Authoritative_Action_Rejected_Event_Names()
+    {
+        SceneEventHub hub = new();
+        EventTraceSystem trace = new(hub);
+
+        hub.Publish(new AuthoritativeActionRejectedEvent(new AuthoritativeActionResult(
+            "session-a",
+            9,
+            14,
+            Accepted: false,
+            Payload: null,
+            Rejection: new RejectedUseDelta("Rejected"))));
+
+        Assert.Contains(nameof(AuthoritativeActionRejectedEvent), trace.Entries);
+    }
+
     private sealed class FixedTraceAnchorProvider : ICombatAnchorProvider
     {
         public OpenTK.Mathematics.Vector3 GetCombatAnchorWorldPosition() => OpenTK.Mathematics.Vector3.Zero;

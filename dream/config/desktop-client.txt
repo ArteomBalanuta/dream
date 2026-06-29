@@ -1,0 +1,13 @@
+# Desktop client startup + settings defaults
+host=127.0.0.1
+port=5057
+player_name=dream-client
+field_of_view=70
+mouse_sensitivity=2.5
+noclip_speed=18
+strength=10
+attack_speed=2
+vitality=10
+damage_text_size=2.35
+damage_text_speed=0.6
+damage_text_crit_depth=5

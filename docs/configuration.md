@@ -112,6 +112,7 @@ Current consumers include:
 - `Render.cs` for shader file paths
 - `Map.cs` for the `GrassTextureCube.gltf` model path
 - `Game.cs` for `config/viewmodel-rig.txt`
+- `Game.cs` for `config/desktop-client.txt`
 
 ### Output-copy behavior
 
@@ -140,6 +141,24 @@ Current behavior:
 - invalid numeric values fall back per-field instead of breaking startup
 - unknown keys are ignored
 - runtime menu edits do not yet auto-save back into the file
+
+## Desktop Client Text Config
+
+The desktop client now also treats the multiplayer startup form plus the main client-local settings menu defaults as a dedicated text-backed runtime config:
+
+- source path: `dream/config/desktop-client.txt`
+- runtime path: `config/desktop-client.txt`
+
+The file is loaded once during `Game` startup through `DesktopClientTextConfig` before the startup connection scene or gameplay scene is created.
+
+Current behavior:
+
+- if the file is missing, the game recreates it from built-in defaults
+- startup `Host`, `Port`, and `Player Name` fields are seeded from the file when environment overrides are absent
+- `Field Of View`, `Mouse Sensitivity`, `Fly Speed`, player `Strength`, `Attack Speed`, `Vitality`, and floating damage text tuning are seeded from the file
+- edits to those startup/menu values now persist back into the file automatically
+- invalid numeric values are clamped per field instead of breaking startup
+- unknown keys are ignored
 
 ## Project Content Layout
 

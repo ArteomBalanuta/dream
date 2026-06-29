@@ -36,4 +36,10 @@ public sealed class HealthState : IDamageable
         MaxHealth = clampedMaxHealth;
         CurrentHealth = Math.Clamp((int)MathF.Round(clampedMaxHealth * ratio), 0, clampedMaxHealth);
     }
+
+    public void SetAuthoritativeState(int currentHealth, int maxHealth)
+    {
+        MaxHealth = Math.Max(1, maxHealth);
+        CurrentHealth = Math.Clamp(currentHealth, 0, MaxHealth);
+    }
 }

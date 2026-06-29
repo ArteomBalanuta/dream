@@ -8,9 +8,9 @@ public class FloatingCombatTextTuningTests
     {
         FloatingCombatTextTuning tuning = FloatingCombatTextTuning.Default;
 
-        Assert.True(tuning.SizeMultiplier > 1f);
-        Assert.True(tuning.CriticalDepthMultiplier > 1f);
-        Assert.True(tuning.MotionSpeedMultiplier >= 1f);
+        Assert.True(tuning.SizeMultiplier >= 2.25f);
+        Assert.True(tuning.CriticalDepthMultiplier >= 4f);
+        Assert.True(tuning.MotionSpeedMultiplier < 1f);
     }
 
     [Fact]
@@ -46,6 +46,27 @@ public class FloatingCombatTextTuningTests
             FloatingCombatTextMotion.EvaluateDepthOffset(0.075f, FloatingCombatTextMotion.MaxDepthOffset * 3f),
             state.DepthOffset,
             3);
+    }
+
+    [Fact]
+    public void Slower_Motion_Speed_Keeps_Text_Alive_Longer_In_Real_Time()
+    {
+        FloatingCombatTextSystem system = new();
+        system.Spawn(1, Vector3.Zero, 100, FloatingCombatTextKind.Regular);
+
+        system.Update(1.10f, new FloatingCombatTextTuning(
+            SizeMultiplier: 2.5f,
+            MotionSpeedMultiplier: 0.5f,
+            CriticalDepthMultiplier: 4f));
+
+        List<FloatingCombatTextRenderState> states = new();
+        system.CollectRenderStates(states, new FloatingCombatTextTuning(
+            SizeMultiplier: 2.5f,
+            MotionSpeedMultiplier: 0.5f,
+            CriticalDepthMultiplier: 4f));
+
+        Assert.Single(states);
+        Assert.True(states[0].Alpha > 0f);
     }
 
     [Fact]

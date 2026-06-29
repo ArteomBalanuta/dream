@@ -69,6 +69,49 @@ public class EnemyRegistryTests
         Assert.Equal(0.5f, actor.Position.Z, 3);
     }
 
+    [Fact]
+    public void UpdateAll_Targets_The_Nearest_Authoritative_Player_Target()
+    {
+        EnemyRegistry registry = new();
+        EnemyActor actor = new(
+            new EnemyCombatant(() => new Vector3(5.5f, 1f, 2.5f), actorId: 2200),
+            new Vector3(5.5f, 1f, 2.5f),
+            aggroRange: 10f,
+            attackRange: 1.35f,
+            moveSpeed: 2.8f);
+        registry.Add(actor);
+
+        PlayerCombatant farCombatant = new(() => new Vector3(0.5f, 1.5f, 0.5f));
+        PlayerCombatant nearCombatant = new(() => new Vector3(2.5f, 1.5f, 2.5f));
+
+        registry.UpdateAll(
+            deltaTime: 0.25f,
+            playerTargets:
+            [
+                new AuthoritativePlayerTarget(
+                    new PlayerSessionId("far"),
+                    actorId: 1,
+                    () => new Vector3(0.5f, 1.5f, 0.5f),
+                    () => -Vector3.UnitZ,
+                    farCombatant,
+                    PlayerInteractionMode.Building,
+                    _ => { }),
+                new AuthoritativePlayerTarget(
+                    new PlayerSessionId("near"),
+                    actorId: 2,
+                    () => new Vector3(2.5f, 1.5f, 2.5f),
+                    () => -Vector3.UnitZ,
+                    nearCombatant,
+                    PlayerInteractionMode.Building,
+                    _ => { })
+            ],
+            events: new SceneEventHub(),
+            map: null);
+
+        Assert.Equal(EnemyBehaviorState.Chasing, actor.BehaviorState);
+        Assert.True(actor.Position.X < 5.5f);
+    }
+
     private static EnemyActor CreateEnemy(Vector3 position, int actorId)
     {
         EnemyCombatant combatant = new(() => position, actorId: actorId, maxHealth: 30, attackDamage: 6, attackIntervalSeconds: 1f);

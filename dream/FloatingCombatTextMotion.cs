@@ -9,6 +9,12 @@ public static class FloatingCombatTextMotion
     public const float InitialScale = 0.2f;
     public const float PeakScaleMultiplier = 1.1f;
 
+    public static float ResolveLifetimeSeconds(float motionSpeedMultiplier)
+    {
+        float resolvedMotionSpeed = Math.Clamp(motionSpeedMultiplier, 0.01f, 100f);
+        return Lifetime / resolvedMotionSpeed;
+    }
+
     public static float EvaluateScale(float ageSeconds, float nativeScale)
     {
         if (ageSeconds <= 0f)

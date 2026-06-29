@@ -11,7 +11,12 @@ public sealed class CombatFeedbackSystem : IDisposable
 
     public void Update(float deltaTime)
     {
-        _floatingText.Update(deltaTime);
+        Update(deltaTime, FloatingCombatTextTuning.Default);
+    }
+
+    public void Update(float deltaTime, FloatingCombatTextTuning tuning)
+    {
+        _floatingText.Update(deltaTime, tuning);
     }
 
     public void CollectRenderStates(List<FloatingCombatTextRenderState> destination)

@@ -13,6 +13,11 @@ public sealed class EnemyRegistry
         _actors.Add(actor);
     }
 
+    public void Clear()
+    {
+        _actors.Clear();
+    }
+
     public void UpdateAll(
         float deltaTime,
         Vector3 playerPosition,
@@ -20,11 +25,34 @@ public sealed class EnemyRegistry
         SceneEventHub events,
         Map? map = null)
     {
+        UpdateAll(
+            deltaTime,
+            [
+                new AuthoritativePlayerTarget(
+                    PlayerSessionId.LocalDefault,
+                    playerCombatant.Actor.Id,
+                    () => playerPosition,
+                    () => -Vector3.UnitZ,
+                    playerCombatant,
+                    PlayerInteractionMode.Building,
+                    _ => { })
+            ],
+            events,
+            map);
+    }
+
+    public void UpdateAll(
+        float deltaTime,
+        IReadOnlyList<IAuthoritativePlayerTarget> playerTargets,
+        SceneEventHub events,
+        Map? map = null)
+    {
         foreach (EnemyActor actor in _actors)
         {
+            IAuthoritativePlayerTarget? target = ResolveNearestTarget(actor, playerTargets);
             actor.Update(
                 deltaTime,
-                playerPosition,
+                target?.Position,
                 map == null
                     ? null
                     : (from, desiredDelta) => EnemyMovementCollision.ResolveStep(
@@ -33,7 +61,7 @@ public sealed class EnemyRegistry
                         desiredDelta,
                         actor.CollisionRadius,
                         actor.CollisionHeight));
-            actor.TryAttack(playerCombatant, events);
+            actor.TryAttack(target?.Combatant, events);
         }
     }
 
@@ -93,5 +121,45 @@ public sealed class EnemyRegistry
                 Math.Clamp(position.Z, 0.5f, map.Depth - 0.5f));
             actor.SetPosition(clamped);
         }
+    }
+
+    public bool TryGetActorById(int actorId, out CombatActorHandle actor)
+    {
+        EnemyActor? match = _actors.FirstOrDefault(candidate => candidate.Combatant.Actor.Id == actorId);
+        if (match == null)
+        {
+            actor = default;
+            return false;
+        }
+
+        actor = match.Combatant.Actor;
+        return true;
+    }
+
+    private static IAuthoritativePlayerTarget? ResolveNearestTarget(
+        EnemyActor actor,
+        IReadOnlyList<IAuthoritativePlayerTarget> playerTargets)
+    {
+        IAuthoritativePlayerTarget? bestTarget = null;
+        float bestDistanceSquared = float.MaxValue;
+
+        foreach (IAuthoritativePlayerTarget target in playerTargets)
+        {
+            if (!target.IsSpawned || !target.IsAlive)
+            {
+                continue;
+            }
+
+            float distanceSquared = (target.Position - actor.Position).LengthSquared;
+            if (distanceSquared >= bestDistanceSquared)
+            {
+                continue;
+            }
+
+            bestTarget = target;
+            bestDistanceSquared = distanceSquared;
+        }
+
+        return bestTarget;
     }
 }

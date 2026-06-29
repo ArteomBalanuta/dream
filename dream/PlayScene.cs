@@ -9,71 +9,115 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 // a dedicated runtime, while client presentation concerns remain scene-owned.
 public class PlayScene : IDisposable
 {
+    private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
+    private const double RemotePlayerInterpolationDelaySeconds = 1d / 10d;
+
     // Client-local presentation state that should remain scene-owned after the runtime split.
     private readonly Render _render;
     private readonly GameSettings _settings;
+    private readonly DesktopClientConfig? _desktopClientConfig;
+    private readonly Action? _persistDesktopClientConfig;
     private readonly PlayerViewModelController _viewModelController;
     private readonly SceneEventHub _events = new();
     private readonly CombatFeedbackSystem _combatFeedback;
+    private readonly AuthoritativeActionFeedbackSystem _actionFeedback;
+    private readonly MultiplayerDiagnostics _diagnostics;
+    private readonly ClientProtocolSession _clientProtocol;
+    private readonly ClientScenePresenter _scenePresenter;
+    private readonly RemoteClientSession? _remoteClient;
+    private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
+    private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
 
-    // These fields are the current authoritative access points that a future runtime will own:
-    // player lifetime, world lifetime, physics stepping, and Bullet-to-world state sync.
-    private readonly Player _player;
-    private Map _map;
-    private readonly PhysicsIntegrator _physics;
-    private readonly PhysicsSyncSystem _physicsSync = new();
-    private readonly WorldObjectRegistry _worldObjects = new();
-    private readonly EnemyRegistry _enemies = new();
-    private PlayerInteractionMode _interactionMode = PlayerInteractionMode.Building;
+    // Authoritative world/player/physics ownership now flows through WorldSessionRuntime.
+    // PlayScene remains the desktop composition root plus client presentation owner.
+    private readonly WorldSessionRuntime _runtime;
+    private readonly ServerTickRunner _tickRunner = new();
+    private readonly bool _enableLoopbackRemotePlayers;
+    private ulong _nextLocalCommandSequence = 1;
+    private ulong _nextLocalActionSequence = 1;
+    private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
+    private double _clientPresentationTimeSeconds;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
-    public Vector3 LastReportedPlayerPosition => _player.LastReportedPosition;
+    public Vector3 LastReportedPlayerPosition => _runtime.Player.LastReportedPosition;
+
+    public string? ConnectedServerEndpoint => _remoteClient?.Options.EndpointLabel;
 
     internal SceneEventHub Events => _events;
 
-    public PlayScene(GameSettings settings)
+    public PlayScene(
+        GameSettings settings,
+        DesktopClientConfig? clientConfig = null,
+        Action? persistDesktopClientConfig = null,
+        bool enableLoopbackRemotePlayers = false,
+        RemoteClientSession? remoteClient = null)
     {
         _settings = settings;
-        // Desktop startup still constructs the authoritative world stack locally.
-        // Phase 0 keeps that behavior intact and only marks the extraction seam.
-        _physics = new PhysicsIntegrator();
-        _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
+        _desktopClientConfig = clientConfig;
+        _persistDesktopClientConfig = persistDesktopClientConfig;
+        _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
+        _remoteClient = remoteClient;
+        // The desktop scene now delegates authoritative world-stack creation to WorldSessionRuntime
+        // while remaining the client composition root for presentation systems.
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
+        _clientProtocol = ClientProtocolSession.CreateDefault();
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        PhysicsFactory physicsFactory = new();
-        var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
-        _physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
-        _player = new Player(_map, _physics, playerBody, playerStartPosition, _events);
+        _runtime = new WorldSessionRuntime(_settings.FloorSize, playerStartPosition, _events);
+        if (_desktopClientConfig != null)
+        {
+            _runtime.Player.Combatant.ApplyStats(_desktopClientConfig.ToPlayerCombatStats());
+        }
+
+        _scenePresenter = new ClientScenePresenter(_remoteClient?.SessionId ?? _runtime.LocalPlayerSessionId.Value);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
-        SpawnInitialWolf();
+        _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
+        _diagnostics = new MultiplayerDiagnostics();
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
+        _clientPresentationTimeSeconds += args.Time;
+        DrainRemoteTransportMessages();
 
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
-        _player.Combatant.AdvanceCombat(delta);
         HandleGlobalInput(keyboardState);
         bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
-        PlayerInteractionCommand interaction = _player.CaptureInteractionCommand(keyboardState, mouseState, allowGameplayInput);
-        ApplyInteractionModeSelection(interaction);
-        bool primaryUseTriggered = _player.ConsumePrimaryUsePressed(
-            interaction,
-            _player.Combatant.DerivedStats.AttackIntervalSeconds,
-            delta);
+        PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
+            _runtime.LocalPlayerSessionId,
+            _nextLocalCommandSequence++,
+            keyboardState,
+            mouseState,
+            allowGameplayInput);
+        PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
+        _localSimulationCommandInbox.Enqueue(commandFrame);
+        ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
+        SendRemoteCommandFrameIfConnected(commandFrame);
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.FromSettings(_settings);
+        bool primaryUseTriggered = false;
+        _tickRunner.Advance(args.Time, (tick, fixedDeltaSeconds) =>
+        {
+            PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(commandFrame);
+            WorldSessionUpdateResult result = _runtime.AdvanceAuthoritativeTick(
+                tick,
+                fixedDeltaSeconds,
+                simulationCommandFrame,
+                tuning,
+                allowGameplaySimulation: _remoteClient == null && allowGameplayInput);
+            if (result.PrimaryUseTriggered)
+            {
+                primaryUseTriggered = true;
+            }
+        });
+
         if (primaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
-            if (_interactionMode == PlayerInteractionMode.Combat)
-            {
-                HandleCombatPrimaryUse();
-            }
         }
 
         ViewModelUpdateResult viewModelUpdateResult =
@@ -89,36 +133,9 @@ public class PlayScene : IDisposable
             _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
         }
 
-        // This block is the current authoritative simulation seam:
-        // physics step, player state update, local world mutation, feedback tick, and transform sync.
-        // The future runtime should own this order while PlayScene remains the client orchestrator.
-        _physics.StepSimulation(delta);
-        _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
-        if (allowGameplayInput)
-        {
-            _enemies.UpdateAll(delta, _player.GetWorldPosition(), _player.Combatant, _events, _map);
-            _enemies.PruneInactive();
-            EnsureWolfExists();
-            ResolvePlayerEnemySeparation();
-        }
-
-        if (_interactionMode == PlayerInteractionMode.Building)
-        {
-            Cube? placedCube = null;
-            if (_player.TryCreateBuildUseRequest(primaryUseTriggered, out BuildUseRequest buildUseRequest))
-            {
-                placedCube = _map.TryAddCube(buildUseRequest.PlacementTarget);
-            }
-
-            if (placedCube != null && placedCube.Position.Y > 0f)
-            {
-                _worldObjects.RegisterCube(placedCube, _map);
-                _events.Publish(new CubePlacedEvent(placedCube));
-            }
-        }
-
-        _combatFeedback.Update(delta);
-        _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
+        UpdateLoopbackRemotePlayerDebugState();
+        _combatFeedback.Update(delta, _settings.FloatingCombatText);
+        _actionFeedback.Update(delta);
     }
 
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
@@ -126,37 +143,44 @@ public class PlayScene : IDisposable
         // Render primarily consumes scene/runtime state for desktop presentation, even though
         // this path still applies scene-owned runtime requests such as floor rebuilds today.
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
+            WorldVisibility.MaxRenderDistance,
+            (float)_tickRunner.RemainingSeconds);
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
+            Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
 
-        _render.World.DrawWorld(
-            _player.Camera,
-            _map.GetRenderCandidateCubes(_player.Camera.Position, WorldVisibility.MaxRenderDistance));
+        _render.World.DrawWorld(presentation);
         _render.Enemies.Draw(
-            _player.Camera,
-            _enemies.ActiveActors,
+            presentation.Camera,
+            presentation.ActiveEnemies,
             (float)args.Time,
             _settings.ShowCollisionGeometry);
+        _render.RemotePlayers.Draw(
+            presentation.Camera,
+            remotePlayerStates);
 
         if (_settings.ShowCollisionGeometry)
         {
-            _render.Debug.DrawCollisionBodies(_physics.MapCubeBodies, _player.Camera);
-            _render.DrawCollisionBody(_player.PhysicsBody, _player.Camera);
+            _render.Debug.DrawCollisionBodies(presentation.MapCollisionBodies, presentation.Camera);
+            if (presentation.PlayerCollisionBody != null)
+            {
+                _render.DrawCollisionBody(presentation.PlayerCollisionBody, presentation.Camera);
+            }
         }
 
         _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
-        PlayerCombatDerivedStats derivedStats = _player.Combatant.DerivedStats;
-        PlayerCombatStats playerStats = _player.Combatant.Stats;
-        HudStatusSnapshot hudStatus = new(
-            _player.Combatant.Health.CurrentHealth,
-            _player.Combatant.Health.MaxHealth,
-            _interactionMode,
-            derivedStats.MinDamage,
-            derivedStats.MaxDamage,
-            playerStats.Strength,
-            playerStats.AttackSpeed,
-            playerStats.Vitality);
-
         HudFrameResult hudResult =
-            _render.Hud.DrawFrame(args, windowFocused, _settings, mouseState, _player.Camera, _combatFeedback, hudStatus);
+            _render.Hud.DrawFrame(
+                args,
+                windowFocused,
+                _settings,
+                mouseState,
+                presentation,
+                remotePlayerStates,
+                _scenePresenter.BuildPlayerRoster(),
+                _combatFeedback,
+                _actionFeedback.CurrentRejectionMessage,
+                ConnectedServerEndpoint);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
     }
@@ -171,7 +195,110 @@ public class PlayScene : IDisposable
     public void Dispose()
     {
         _combatFeedback.Dispose();
-        _physics.Dispose();
+        _actionFeedback.Dispose();
+        _runtime.Dispose();
+        if (_remoteClient != null)
+        {
+            _remoteClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public void ApplyReplicatedMessage(IServerToClientMessage message)
+    {
+        _clientProtocol.ApplyServerMessage(message);
+        if (message is JoinAcceptedMessage joinAcceptedMessage && _remoteClient != null)
+        {
+            ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
+            ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+        }
+        else if (message is ServerSnapshotMessage snapshotMessage)
+        {
+            if (_remoteClient != null)
+            {
+                RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
+                ClientCorrectionApplier.ApplySnapshotToRuntime(
+                    _runtime,
+                    snapshotMessage.Snapshot,
+                    _remoteClient.SessionId);
+                RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+                ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
+                _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
+            }
+
+            _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot, _clientPresentationTimeSeconds);
+        }
+        else if (message is ServerActionMessage actionMessage && _remoteClient != null)
+        {
+            ClientAuthoritativeActionApplier.ApplyActionResult(_runtime, _events, actionMessage.Result, _diagnostics);
+        }
+    }
+
+    private void UpdateLoopbackRemotePlayerDebugState()
+    {
+        if (!_enableLoopbackRemotePlayers)
+        {
+            return;
+        }
+
+        Vector3 localPosition = _runtime.Player.GetWorldPosition();
+        float orbit = (float)_clientPresentationTimeSeconds;
+        Vector3 remoteOnePosition = localPosition + new Vector3(MathF.Cos(orbit) * 3f, 0f, -5f + MathF.Sin(orbit) * 2f);
+        Vector3 remoteTwoPosition = localPosition + new Vector3(-4f, 0f, -6f + MathF.Cos(orbit * 0.5f) * 1.5f);
+
+        ServerSnapshotEnvelope snapshot = new(
+            _runtime.CurrentServerTick,
+            new Dictionary<string, ulong>(),
+            [
+                new ActorSnapshot(
+                    _runtime.Player.Combatant.Actor.Id,
+                    CreatureKind.Player,
+                    _runtime.LocalPlayerSessionId.Value,
+                    localPosition,
+                    _runtime.Player.Camera.Front,
+                    _runtime.Player.Combatant.Health.CurrentHealth,
+                    _runtime.Player.Combatant.Health.MaxHealth,
+                    _runtime.Player.Combatant.Health.IsAlive,
+                    null,
+                    null,
+                    "local-player"),
+                new ActorSnapshot(
+                    9001,
+                    CreatureKind.Player,
+                    "loopback-remote-1",
+                    remoteOnePosition,
+                    (-Vector3.UnitZ).Normalized(),
+                    100,
+                    100,
+                    true,
+                    null,
+                    null,
+                    "Loopback One"),
+                new ActorSnapshot(
+                    9002,
+                    CreatureKind.Player,
+                    "loopback-remote-2",
+                    remoteTwoPosition,
+                    (-Vector3.UnitZ).Normalized(),
+                    100,
+                    100,
+                    true,
+                    null,
+                    null,
+                    "Loopback Two")
+            ],
+            _runtime.InteractionMode,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+
+        ApplyReplicatedMessage(new ServerSnapshotMessage(snapshot));
+    }
+
+    public static bool ResolveLoopbackRemotePlayersEnabled()
+    {
+        string? value = Environment.GetEnvironmentVariable(LoopbackRemotePlayersEnvironmentVariable);
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)
@@ -185,99 +312,98 @@ public class PlayScene : IDisposable
         _wasSettingsTogglePressed = settingsTogglePressed;
     }
 
-    private void ApplyInteractionModeSelection(PlayerInteractionCommand command)
+    private void DrainRemoteTransportMessages()
     {
-        if (command.SelectBuildingModePressed)
+        if (_remoteClient == null)
         {
-            _interactionMode = PlayerInteractionMode.Building;
-        }
-        else if (command.SelectCombatModePressed)
-        {
-            _interactionMode = PlayerInteractionMode.Combat;
-        }
-    }
-
-    private void HandleCombatPrimaryUse()
-    {
-        EnemyActor? enemy = CombatUseResolver.TryResolveEnemyHit(
-            _enemies,
-            _player.Camera.Position,
-            _player.Camera.Front,
-            CombatUseResolver.DefaultHitRange);
-        if (enemy != null)
-        {
-            PlayerAttackResolution attack = _player.Combatant.ResolveAttack(
-                () => Random.Shared.Next(
-                    _player.Combatant.DerivedStats.MinDamage,
-                    _player.Combatant.DerivedStats.MaxDamage + 1),
-                () => Random.Shared.NextDouble());
-            DamageReceipt receipt = enemy.Combatant.ApplyDamage(attack.Damage);
-            if (receipt.AppliedAmount > 0)
-            {
-                _events.Publish(new DamageAppliedEvent(
-                    enemy.Combatant.Actor,
-                    receipt.AppliedAmount,
-                    attack.FloatingTextKind));
-            }
-
-            if (receipt.WasFatal)
-            {
-                _enemies.PruneInactive();
-            }
-
             return;
         }
 
-        WorldObjectRecord? record = CombatUseResolver.TryResolveDestructibleCubeHit(
-            _map,
-            _worldObjects,
-            _player.Camera.Position,
-            _player.Camera.Front,
-            CombatUseResolver.DefaultHitRange);
-        if (record != null)
+        while (_remoteClient.TryDequeueInbound(out IServerToClientMessage? message) && message != null)
         {
-            PlayerAttackResolution attack = _player.Combatant.ResolveAttack(
-                () => Random.Shared.Next(
-                    _player.Combatant.DerivedStats.MinDamage,
-                    _player.Combatant.DerivedStats.MaxDamage + 1),
-                () => Random.Shared.NextDouble());
-            DamageReceipt receipt = record.ApplyDamage(attack.Damage);
-            if (receipt.AppliedAmount > 0)
-            {
-                _events.Publish(new DamageAppliedEvent(
-                    record.Actor,
-                    receipt.AppliedAmount,
-                    attack.FloatingTextKind));
-            }
-
-            if (receipt.WasFatal)
-            {
-                _events.Publish(new ActorDiedEvent(record.Actor));
-                object sourceObject = record.SourceObject;
-                bool removed = _worldObjects.TryRemove(record);
-                if (removed && sourceObject is Cube destroyedCube)
-                {
-                    _events.Publish(new CubeDestroyedEvent(destroyedCube));
-                }
-            }
+            ApplyReplicatedMessage(message);
         }
+    }
+
+    private void SendRemoteCommandFrameIfConnected(PlayerCommandFrame localCommandFrame)
+    {
+        if (_remoteClient == null || !_remoteClient.IsConnected)
+        {
+            return;
+        }
+
+        PlayerCommandFrame remoteCommandFrame = new(
+            new PlayerSessionId(_remoteClient.SessionId),
+            localCommandFrame.Sequence,
+            localCommandFrame.RequestedMode,
+            localCommandFrame.MoveIntent,
+            localCommandFrame.LookIntent,
+            localCommandFrame.PrimaryUsePressed);
+        _remoteClient.SendCommandFrameAsync(remoteCommandFrame).AsTask().GetAwaiter().GetResult();
+    }
+
+    private void ApplyImmediateLocalLook(PlayerCommandFrame commandFrame, bool allowGameplayInput)
+    {
+        if (!allowGameplayInput)
+        {
+            return;
+        }
+
+        _runtime.Player.ApplyImmediateLook(
+            new Vector2(commandFrame.LookIntent.YawDelta, commandFrame.LookIntent.PitchDelta),
+            _settings.MouseSensitivity,
+            allowLook: true);
+    }
+
+    private PlayerCommandFrame ResolveLocalSimulationCommandFrame(PlayerCommandFrame currentFrame)
+    {
+        IReadOnlyList<PlayerCommandFrame> pendingFrames =
+            _localSimulationCommandInbox.Drain([currentFrame.SessionId]);
+        PlayerCommandFrame simulationSource = pendingFrames.Count > 0
+            ? pendingFrames[^1]
+            : _lastLocalSimulationCommandFrame ?? ClearOneShotMoveInputs(currentFrame);
+
+        _lastLocalSimulationCommandFrame = ClearOneShotMoveInputs(simulationSource);
+        return ClientSimulationCommandPolicy.PrepareForLocalSimulation(
+            simulationSource,
+            useRemoteAuthority: _remoteClient != null);
+    }
+
+    private static PlayerCommandFrame ClearOneShotMoveInputs(PlayerCommandFrame frame)
+    {
+        PlayerMoveIntent move = frame.MoveIntent;
+        return frame with
+        {
+            MoveIntent = new PlayerMoveIntent(
+                move.ForwardAxis,
+                move.StrafeAxis,
+                move.VerticalAxis,
+                JumpPressed: false,
+                FreezePressed: false,
+                ToggleNoclipPressed: false)
+        };
     }
 
     private void ApplyHudRequest(HudInteractionRequest request, Action<Vector2i> applyClientSize)
     {
+        bool persistDesktopConfig = false;
+
         if (request.FieldOfViewDegrees.HasValue)
         {
             _settings.FieldOfViewDegrees = request.FieldOfViewDegrees.Value;
+            persistDesktopConfig = true;
         }
 
         if (request.MouseSensitivity.HasValue)
         {
             _settings.MouseSensitivity = request.MouseSensitivity.Value;
+            persistDesktopConfig = true;
         }
 
         if (request.NoclipSpeed.HasValue)
         {
             _settings.NoclipSpeed = request.NoclipSpeed.Value;
+            persistDesktopConfig = true;
         }
 
         if (request.StagedFloorSize.HasValue)
@@ -294,16 +420,27 @@ public class PlayScene : IDisposable
         {
             PlayerCombatStats updatedStats = new()
             {
-                Strength = request.Strength ?? _player.Combatant.Stats.Strength,
-                AttackSpeed = request.AttackSpeed ?? _player.Combatant.Stats.AttackSpeed,
-                Vitality = request.Vitality ?? _player.Combatant.Stats.Vitality
+                Strength = request.Strength ?? _runtime.Player.Combatant.Stats.Strength,
+                AttackSpeed = request.AttackSpeed ?? _runtime.Player.Combatant.Stats.AttackSpeed,
+                Vitality = request.Vitality ?? _runtime.Player.Combatant.Stats.Vitality
             };
-            _player.Combatant.ApplyStats(updatedStats);
+            _runtime.Player.Combatant.ApplyStats(updatedStats);
+
+            if (_remoteClient != null)
+            {
+                _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
+                    new PlayerSessionId(_remoteClient.SessionId),
+                    _nextLocalActionSequence++,
+                    new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
+            }
+
+            persistDesktopConfig = true;
         }
 
         if (request.FloatingCombatText.HasValue)
         {
             _settings.ApplyFloatingCombatTextTuning(request.FloatingCombatText.Value);
+            persistDesktopConfig = true;
         }
 
         if (request.RequestedResolution.HasValue)
@@ -316,97 +453,23 @@ public class PlayScene : IDisposable
         {
             _settings.StageFloorSize(request.RequestedFloorSize.Value);
             _settings.ApplyPendingFloorSize();
-            RebuildMapForFloorSize(_settings.FloorSize);
+            _runtime.RebuildMapForFloorSize(_settings.FloorSize);
+        }
+
+        if (persistDesktopConfig)
+        {
+            PersistDesktopClientConfig();
         }
     }
 
-    private void RebuildMapForFloorSize(int floorSize)
+    private void PersistDesktopClientConfig()
     {
-        // Floor rebuild is a current scene-owned authoritative world mutation path.
-        // The future runtime should own map rebuilds plus player re-clamping, even if the request
-        // still originates from client UI.
-        Vector3 currentPlayerPosition = _player.GetWorldPosition();
-        Map previousMap = _map;
-        WorldObjectCubeSnapshot worldObjectSnapshot = _worldObjects.CreateCubeSnapshot();
-
-        _physics.ResetMapBodies();
-
-        var rebuiltMap = new Map(_physics, width: floorSize, depth: floorSize);
-        previousMap.CopyPlacedCubesTo(rebuiltMap);
-        _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
-
-        _map = rebuiltMap;
-        _player.BindMap(rebuiltMap);
-        _enemies.ClampToMapBounds(rebuiltMap);
-
-        Vector3 clampedPosition = new Vector3(
-            Math.Clamp(currentPlayerPosition.X, 0.5f, rebuiltMap.Width - 0.5f),
-            Math.Clamp(currentPlayerPosition.Y, 1.5f, rebuiltMap.Height - 0.5f),
-            Math.Clamp(currentPlayerPosition.Z, 0.5f, rebuiltMap.Depth - 0.5f));
-
-        _player.SetWorldPosition(clampedPosition);
-    }
-
-    private void SpawnInitialWolf()
-    {
-        Vector3 spawnPosition = WolfSpawnPolicy.ResolveInitialSpawn(_map.Width, _map.Depth);
-
-        EnemyCombatant combatant = new(
-            () => spawnPosition,
-            _events,
-            actorId: 2000,
-            maxHealth: 90,
-            attackDamage: 12,
-            attackIntervalSeconds: 1.05f,
-            anchorHeightOffset: WolfAssetDefinition.CombatAnchorHeight);
-        EnemyActor wolf = new(
-            combatant,
-            spawnPosition,
-            aggroRange: 10f,
-            attackRange: 1.35f,
-            moveSpeed: 2.8f,
-            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfAssetDefinition.CollisionRadius,
-            collisionHeight: WolfAssetDefinition.CollisionHeight);
-        _enemies.Add(wolf);
-    }
-
-    private void EnsureWolfExists()
-    {
-        if (_enemies.HasActiveActors)
+        if (_desktopClientConfig == null || _persistDesktopClientConfig == null)
         {
             return;
         }
 
-        SpawnInitialWolf();
-    }
-
-    private void ResolvePlayerEnemySeparation()
-    {
-        if (_player.IsNoclipEnabled)
-        {
-            return;
-        }
-
-        Vector3 playerPosition = _player.GetWorldPosition();
-        Vector3 resolvedPosition = playerPosition;
-        foreach (EnemyActor actor in _enemies.ActiveActors)
-        {
-            if (!actor.IsActive)
-            {
-                continue;
-            }
-
-            resolvedPosition = EnemyPlayerCollisionResolver.ResolvePlayerPosition(
-                resolvedPosition,
-                actor.Position,
-                WolfAssetDefinition.PlayerSeparationDistance,
-                -actor.Forward);
-        }
-
-        if ((resolvedPosition - playerPosition).LengthSquared > 0.000001f)
-        {
-            _player.SetWorldPosition(resolvedPosition);
-        }
+        _desktopClientConfig.CaptureRuntime(_settings, _runtime.Player.Combatant.Stats);
+        _persistDesktopClientConfig();
     }
 }

@@ -1,0 +1,184 @@
+using System.Collections.Concurrent;
+
+public sealed class RemoteClientSession : IAsyncDisposable
+{
+    private readonly ITransportConnection _connection;
+    private readonly IProtocolCodec _codec;
+    private readonly IMessageFramer _framer;
+    private readonly byte[] _receiveChunk = new byte[16 * 1024];
+    private readonly List<byte> _receiveBuffer = [];
+    private readonly ConcurrentQueue<IServerToClientMessage> _inboundMessages = new();
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private Task? _receiveLoopTask;
+    private ulong _nextOutboundSequence = 1;
+
+    public RemoteClientSession(
+        ITransportConnection connection,
+        IProtocolCodec codec,
+        IMessageFramer framer,
+        RemoteClientOptions options)
+    {
+        _connection = connection;
+        _codec = codec;
+        _framer = framer;
+        Options = options;
+    }
+
+    public RemoteClientOptions Options { get; }
+
+    public string SessionId => Options.SessionId;
+
+    public bool IsConnected { get; private set; } = true;
+
+    public static async ValueTask<RemoteClientSession> ConnectAsync(
+        RemoteClientOptions options,
+        IClientTransport? transport = null,
+        IProtocolCodec? codec = null,
+        IMessageFramer? framer = null,
+        CancellationToken cancellationToken = default)
+    {
+        transport ??= new TcpClientConnector();
+        codec ??= new TransportJsonCodec();
+        framer ??= new LengthPrefixedMessageFramer();
+
+        ITransportConnection connection = await transport.ConnectAsync(
+            options.Host,
+            options.Port,
+            cancellationToken);
+        RemoteClientSession session = new(connection, codec, framer, options);
+        await session.SendHelloAsync(cancellationToken);
+        await session.SendJoinRequestAsync(cancellationToken);
+        session.StartBackgroundReceive();
+        return session;
+    }
+
+    public async ValueTask SendHelloAsync(CancellationToken cancellationToken = default)
+    {
+        await SendMessageAsync(new ClientHelloMessage(Options.ClientName), cancellationToken);
+    }
+
+    public async ValueTask SendJoinRequestAsync(CancellationToken cancellationToken = default)
+    {
+        await SendMessageAsync(
+            new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName),
+            cancellationToken);
+    }
+
+    public async ValueTask SendCommandFrameAsync(PlayerCommandFrame commandFrame, CancellationToken cancellationToken = default)
+    {
+        await SendMessageAsync(new PlayerCommandMessage(commandFrame), cancellationToken);
+    }
+
+    public async ValueTask SendPlayerActionAsync(PlayerActionMessage actionMessage, CancellationToken cancellationToken = default)
+    {
+        await SendMessageAsync(actionMessage, cancellationToken);
+    }
+
+    public bool TryDequeueInbound(out IServerToClientMessage? message)
+    {
+        return _inboundMessages.TryDequeue(out message);
+    }
+
+    public async ValueTask<bool> ProcessInboundOnceAsync(CancellationToken cancellationToken = default)
+    {
+        int bytesRead = await _connection.ReceiveAsync(_receiveChunk, cancellationToken);
+        if (bytesRead <= 0)
+        {
+            IsConnected = false;
+            return false;
+        }
+
+        _receiveBuffer.AddRange(_receiveChunk.AsSpan(0, bytesRead).ToArray());
+        while (_framer.TryDeframe(_receiveBuffer.ToArray(), out byte[]? payload, out int bytesConsumed))
+        {
+            _receiveBuffer.RemoveRange(0, bytesConsumed);
+            if (payload == null)
+            {
+                continue;
+            }
+
+            DecodedProtocolMessage decoded = _codec.Decode(payload);
+            IServerToClientMessage serverMessage = decoded.Message as IServerToClientMessage
+                ?? throw new InvalidOperationException(
+                    $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
+            _inboundMessages.Enqueue(serverMessage);
+        }
+
+        return true;
+    }
+
+    public void StartBackgroundReceive()
+    {
+        _receiveLoopTask ??= Task.Run(() => ReceiveLoopAsync(_shutdown.Token));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _shutdown.Cancel();
+        if (_receiveLoopTask != null)
+        {
+            try
+            {
+                await _receiveLoopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _shutdown.Dispose();
+        _sendLock.Dispose();
+        await _connection.DisposeAsync();
+    }
+
+    private async ValueTask SendMessageAsync(IClientToServerMessage message, CancellationToken cancellationToken)
+    {
+        byte[] payload = EncodeClientMessage(message);
+        byte[] framed = _framer.Frame(payload);
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _connection.SendAsync(framed, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private byte[] EncodeClientMessage(IClientToServerMessage message)
+    {
+        TransportEnvelope envelope = new(
+            TransportEnvelope.CurrentProtocolVersion,
+            message.MessageKind,
+            _nextOutboundSequence++);
+
+        return message switch
+        {
+            ClientHelloMessage hello => _codec.Encode(envelope, hello),
+            ClientJoinRequestMessage joinRequest => _codec.Encode(envelope, joinRequest),
+            PlayerCommandMessage command => _codec.Encode(envelope, command),
+            PlayerActionMessage action => _codec.Encode(envelope, action),
+            _ => throw new InvalidOperationException(
+                $"Unsupported client message type '{message.GetType().Name}' for remote client encoding.")
+        };
+    }
+
+    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await ProcessInboundOnceAsync(cancellationToken))
+            {
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            IsConnected = false;
+        }
+    }
+}

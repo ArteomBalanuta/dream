@@ -5,7 +5,7 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Vector3 = OpenTK.Mathematics.Vector3;
 
-public class Player
+public class Player : IReplicatedPlayerTarget
 {
     private readonly PhysicsIntegrator _physics;
     private Map _map;
@@ -47,14 +47,21 @@ public class Player
         PhysicsBody.ActivationState = ActivationState.DisableDeactivation;
     }
 
-    public void Update(float deltaTime, KeyboardState keyboardState, MouseState mouseState, GameSettings settings, bool allowInput)
+    public void Update(float deltaTime, PlayerSimulationInput input, PlayerSimulationTuning tuning)
     {
-        Vector3 currentPosition = _cameraRig.SyncFromBody(PhysicsBody, settings);
-        Speed = settings.MoveSpeed;
+        Vector3 currentPosition = _cameraRig.SyncFromBody(
+            PhysicsBody,
+            tuning.EyeHeightOffset,
+            tuning.MouseSensitivity);
+        Speed = tuning.MoveSpeed;
 
-        MovementCommand movement = _controller.CaptureMovement(Camera, keyboardState, allowInput, _motor.IsNoclipEnabled);
-        _motor.Update(PhysicsBody, currentPosition, movement, settings, allowInput, deltaTime);
-        _cameraRig.UpdateLook(deltaTime, mouseState, allowInput, _motor.IsFrozen);
+        _motor.Update(
+            PhysicsBody,
+            currentPosition,
+            input.Movement,
+            tuning,
+            deltaTime);
+        _cameraRig.UpdateLook(deltaTime, input.LookDelta, input.AllowLook && !_motor.IsFrozen);
 
         _collisionReportTimer += deltaTime;
         if (_collisionReportTimer >= CollisionReportCooldown)
@@ -64,6 +71,27 @@ public class Player
         }
 
         LastReportedPosition = currentPosition;
+    }
+
+    public void ApplyImmediateLook(Vector2 lookDelta, float mouseSensitivity, bool allowLook)
+    {
+        _cameraRig.ApplyImmediateLook(mouseSensitivity, lookDelta, allowLook && !_motor.IsFrozen);
+    }
+
+    public Camera CreatePresentationCamera(float leadSeconds)
+    {
+        Vector3 currentPosition = GetWorldPosition();
+        Vector3 eyeOffset = Camera.Position - currentPosition;
+        Vector3 predictedPosition = currentPosition;
+        if (leadSeconds > 0f)
+        {
+            Vector3 linearVelocity = PhysicsBody.LinearVelocity.ToOpenTK();
+            predictedPosition += new Vector3(linearVelocity.X, 0f, linearVelocity.Z) * leadSeconds;
+        }
+
+        Camera presentationCamera = Camera.Clone();
+        presentationCamera.Position = predictedPosition + eyeOffset;
+        return presentationCamera;
     }
 
     private void CheckAndLogCollisions()
@@ -146,6 +174,16 @@ public class Player
     {
         _cameraRig.Teleport(PhysicsBody, position, 0.35f);
         LastReportedPosition = position;
+    }
+
+    public void SetFacing(Vector3 facing)
+    {
+        Camera.SetFacing(facing);
+    }
+
+    public void SetHealth(int currentHealth, int maxHealth)
+    {
+        _combatant.Health.SetAuthoritativeState(currentHealth, maxHealth);
     }
 
     private static Vector3 WorldToGridPosition(Vector3 worldPosition)

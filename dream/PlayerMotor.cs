@@ -6,6 +6,7 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 public class PlayerMotor
 {
     private readonly PhysicsIntegrator _physics;
+    private static readonly BulletSharp.Math.Vector3 StandardGravity = new(0f, -9.81f, 0f);
     private float _originalMass;
     private BulletSharp.Math.Vector3 _originalInertia;
     private bool _massModified;
@@ -15,6 +16,8 @@ public class PlayerMotor
 
     private const float PlayerHalfHeight = 0.5f;
     private const float GroundEpsilon = 0.08f;
+    private const float WorldFloorTopY = 1f;
+    private const float MinimumWorldFloorCenterY = WorldFloorTopY + PlayerHalfHeight;
 
     public PlayerMotor(PhysicsIntegrator physics)
     {
@@ -31,8 +34,7 @@ public class PlayerMotor
         RigidBody body,
         Vector3 currentPosition,
         MovementCommand command,
-        GameSettings settings,
-        bool allowGameplayInput,
+        PlayerSimulationTuning tuning,
         float deltaTime)
     {
         HandleFreezeToggle(body, command.FreezePressed);
@@ -48,35 +50,28 @@ public class PlayerMotor
 
         if (IsNoclipEnabled)
         {
-            UpdateNoclip(body, currentPosition, command, settings, allowGameplayInput, deltaTime);
+            UpdateNoclip(body, currentPosition, command, tuning.NoclipSpeed, deltaTime);
             _wasJumpPressed = command.JumpPressed;
             body.AngularFactor = BulletSharp.Math.Vector3.Zero;
             return;
         }
 
-        if (allowGameplayInput)
+        if (command.WorldDirection != Vector3.Zero)
         {
-            if (command.WorldDirection != Vector3.Zero)
-            {
-                body.Activate(true);
-            }
-
-            Vector3 targetVelocity = command.WorldDirection * settings.MoveSpeed;
-            body.LinearVelocity = new BulletSharp.Math.Vector3(targetVelocity.X, velocity.Y, targetVelocity.Z);
-
-            if (command.JumpPressed && !_wasJumpPressed && IsGrounded(body, currentPosition))
-            {
-                body.Activate(true);
-                body.LinearVelocity = new BulletSharp.Math.Vector3(
-                    body.LinearVelocity.X,
-                    settings.JumpVelocity,
-                    body.LinearVelocity.Z);
-            }
+            body.Activate(true);
         }
-        else
+
+        Vector3 groundedDirection = ResolveGroundedDirection(command.WorldDirection);
+        Vector3 targetVelocity = groundedDirection * tuning.MoveSpeed;
+        body.LinearVelocity = new BulletSharp.Math.Vector3(targetVelocity.X, velocity.Y, targetVelocity.Z);
+
+        if (command.JumpPressed && !_wasJumpPressed && IsGrounded(body, currentPosition))
         {
-            Vector3 clampedVelocity = ClampHorizontalVelocityForInputGate(velocity, allowGameplayInput);
-            body.LinearVelocity = new BulletSharp.Math.Vector3(clampedVelocity.X, clampedVelocity.Y, clampedVelocity.Z);
+            body.Activate(true);
+            body.LinearVelocity = new BulletSharp.Math.Vector3(
+                body.LinearVelocity.X,
+                tuning.JumpVelocity,
+                body.LinearVelocity.Z);
         }
 
         _wasJumpPressed = command.JumpPressed;
@@ -87,24 +82,16 @@ public class PlayerMotor
         RigidBody body,
         Vector3 currentPosition,
         MovementCommand command,
-        GameSettings settings,
-        bool allowGameplayInput,
+        float noclipSpeed,
         float deltaTime)
     {
-        if (!allowGameplayInput)
-        {
-            body.LinearVelocity = BulletSharp.Math.Vector3.Zero;
-            body.AngularVelocity = BulletSharp.Math.Vector3.Zero;
-            return;
-        }
-
         Vector3 movement = command.WorldDirection + (Vector3.UnitY * command.VerticalDirection);
         if (movement != Vector3.Zero)
         {
             movement = movement.Normalized();
         }
 
-        Vector3 targetPosition = currentPosition + (movement * GetNoclipSpeed(settings) * deltaTime);
+        Vector3 targetPosition = currentPosition + (movement * noclipSpeed * deltaTime);
         Matrix transform = Matrix.Translation(targetPosition.ToBullet());
         body.WorldTransform = transform;
         body.MotionState.SetWorldTransform(ref transform);
@@ -140,7 +127,7 @@ public class PlayerMotor
 
                 if (!IsNoclipEnabled)
                 {
-                    body.Gravity = new BulletSharp.Math.Vector3(0f, -9.81f, 0f);
+                    body.Gravity = StandardGravity;
                 }
             }
 
@@ -167,9 +154,10 @@ public class PlayerMotor
             else
             {
                 body.CollisionFlags &= ~CollisionFlags.NoContactResponse;
+                RestoreMinimumFloorClearance(body);
                 if (!IsFrozen)
                 {
-                    body.Gravity = new BulletSharp.Math.Vector3(0f, -9.81f, 0f);
+                    body.Gravity = StandardGravity;
                 }
             }
 
@@ -179,18 +167,36 @@ public class PlayerMotor
         _wasNoclipTogglePressed = noclipPressed;
     }
 
+    private static void RestoreMinimumFloorClearance(RigidBody body)
+    {
+        body.MotionState.GetWorldTransform(out Matrix transform);
+        if (transform.Origin.Y >= MinimumWorldFloorCenterY)
+        {
+            return;
+        }
+
+        transform.Origin = new BulletSharp.Math.Vector3(
+            transform.Origin.X,
+            MinimumWorldFloorCenterY,
+            transform.Origin.Z);
+        body.WorldTransform = transform;
+        body.InterpolationWorldTransform = transform;
+        body.MotionState.SetWorldTransform(ref transform);
+    }
+
+    private static Vector3 ResolveGroundedDirection(Vector3 worldDirection)
+    {
+        Vector3 flattened = new(worldDirection.X, 0f, worldDirection.Z);
+        return flattened == Vector3.Zero
+            ? Vector3.Zero
+            : flattened.Normalized();
+    }
+
     public static bool ResolveFrozenState(bool isFrozen, bool freezePressed, bool wasFreezePressed)
     {
         return freezePressed && !wasFreezePressed
             ? !isFrozen
             : isFrozen;
-    }
-
-    public static Vector3 ClampHorizontalVelocityForInputGate(Vector3 velocity, bool allowGameplayInput)
-    {
-        return allowGameplayInput
-            ? velocity
-            : new Vector3(0f, velocity.Y, 0f);
     }
 
     private bool IsGrounded(RigidBody body, Vector3 currentPosition)

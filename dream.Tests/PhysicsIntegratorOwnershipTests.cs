@@ -19,7 +19,8 @@ public class PhysicsIntegratorOwnershipTests
         physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
 
         Assert.Same(playerBody, physics.PlayerBody);
-        Assert.Single(addedBodies, playerBody);
+        Assert.Single(addedBodies);
+        Assert.Same(playerBody, addedBodies[0]);
     }
 
     [Fact]
@@ -39,8 +40,9 @@ public class PhysicsIntegratorOwnershipTests
 
         physics.Dispose();
 
-        Assert.Equal(playerBody, removedBodies[^1]);
-        Assert.Single(disposedBodies, playerBody);
+        Assert.Same(playerBody, removedBodies[^1]);
+        Assert.Single(disposedBodies);
+        Assert.Same(playerBody, disposedBodies[0]);
     }
 
     [Fact]
@@ -59,7 +61,8 @@ public class PhysicsIntegratorOwnershipTests
 
         Assert.Same(playerBody, detachedBody);
         Assert.Null(physics.PlayerBody);
-        Assert.Single(removedBodies, playerBody);
+        Assert.Single(removedBodies);
+        Assert.Same(playerBody, removedBodies[0]);
         Assert.Empty(disposedBodies);
     }
 
@@ -107,6 +110,8 @@ public class PhysicsIntegratorOwnershipTests
 
     private static RigidBody CreateBodyToken()
     {
-        return (RigidBody)RuntimeHelpers.GetUninitializedObject(typeof(RigidBody));
+        RigidBody body = (RigidBody)RuntimeHelpers.GetUninitializedObject(typeof(RigidBody));
+        GC.SuppressFinalize(body);
+        return body;
     }
 }

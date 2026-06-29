@@ -121,6 +121,20 @@ The envelope exists to support routing, versioning, and framing concerns. It sho
 - `ServerDisconnectMessage`
 - optional `ServerPingReplyMessage`
 
+## Snapshot Transition Note
+
+The current snapshot contract still carries both:
+
+- top-level `ServerSnapshotEnvelope.InteractionMode`
+- per-actor `ActorSnapshot.InteractionMode`
+
+During the current transition:
+
+- per-actor interaction mode is the authoritative replicated fact for joined player actors
+- the top-level snapshot mode remains a compatibility field for the currently controlled local actor path
+
+Future cleanup should remove the global field once the client no longer depends on a one-controlled-actor shortcut.
+
 ## Action Pattern
 
 Use one explicit action pattern instead of many loose booleans:

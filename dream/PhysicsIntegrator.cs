@@ -65,6 +65,11 @@ public class PhysicsIntegrator : IDisposable
         World.StepSimulation(deltaTime, 10);
     }
 
+    public void StepSimulationFixed(float fixedDeltaTime)
+    {
+        World.StepSimulation(fixedDeltaTime, 0);
+    }
+
     public void RegisterPlayerBody(RigidBody playerBody, PhysicsBodyOwnership ownership)
     {
         ArgumentNullException.ThrowIfNull(playerBody);

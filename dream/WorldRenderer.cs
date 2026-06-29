@@ -34,4 +34,12 @@ public class WorldRenderer
             }
         }
     }
+
+    public void DrawWorld(WorldSessionPresentationState state)
+    {
+        DrawWorld(state.Camera, state.VisibleWorldCubes);
+    }
+
+    // Remote players intentionally stay out of the world-geometry renderer so
+    // replicated actor ownership does not drift back into the cube/world path.
 }
