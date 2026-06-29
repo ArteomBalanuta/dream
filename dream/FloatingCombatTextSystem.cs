@@ -60,7 +60,13 @@ public sealed class FloatingCombatTextSystem
 
     public void CollectRenderStates(List<FloatingCombatTextRenderState> destination)
     {
+        CollectRenderStates(destination, FloatingCombatTextTuning.Default);
+    }
+
+    public void CollectRenderStates(List<FloatingCombatTextRenderState> destination, FloatingCombatTextTuning tuning)
+    {
         destination.Clear();
+        FloatingCombatTextTuning resolvedTuning = tuning.Clamp();
 
         foreach (Entry entry in _entries)
         {
@@ -70,18 +76,26 @@ public sealed class FloatingCombatTextSystem
             }
 
             FloatingCombatTextStyle style = FloatingCombatTextStyles.Resolve(entry.Kind);
-            float alpha = FloatingCombatTextMotion.EvaluateAlpha(entry.AgeSeconds);
+            float motionAgeSeconds = entry.AgeSeconds * resolvedTuning.MotionSpeedMultiplier;
+            float alpha = FloatingCombatTextMotion.EvaluateAlpha(motionAgeSeconds);
             if (alpha <= 0f)
             {
                 continue;
+            }
+
+            float maxDepthOffset = FloatingCombatTextMotion.MaxDepthOffset;
+            if (entry.Kind == FloatingCombatTextKind.Critical)
+            {
+                maxDepthOffset *= resolvedTuning.CriticalDepthMultiplier;
             }
 
             destination.Add(new FloatingCombatTextRenderState(
                 entry.Text,
                 entry.WorldAnchor,
                 entry.HorizontalOffset,
-                FloatingCombatTextMotion.EvaluateVerticalOffset(entry.AgeSeconds),
-                FloatingCombatTextMotion.EvaluateScale(entry.AgeSeconds, style.ScaleMultiplier),
+                FloatingCombatTextMotion.EvaluateVerticalOffset(motionAgeSeconds),
+                FloatingCombatTextMotion.EvaluateDepthOffset(motionAgeSeconds, maxDepthOffset),
+                FloatingCombatTextMotion.EvaluateScale(motionAgeSeconds, style.ScaleMultiplier * resolvedTuning.SizeMultiplier),
                 alpha,
                 style,
                 style.LayerPriority));

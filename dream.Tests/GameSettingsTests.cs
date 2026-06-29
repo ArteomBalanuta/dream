@@ -12,6 +12,8 @@ public class GameSettingsTests
         Assert.Equal(1024, settings.WindowHeight);
         Assert.False(settings.SettingsVisible);
         Assert.Equal(70f, settings.FieldOfViewDegrees);
+        Assert.Equal(150f, settings.NoclipSpeed);
+        Assert.Equal(FloatingCombatTextTuning.Default, settings.FloatingCombatText);
         Assert.Equal(25, settings.FloorSize);
         Assert.Equal(25, settings.PendingFloorSize);
         Assert.Equal(60f, settings.ViewModelRig.FieldOfViewDegrees);
@@ -139,6 +141,21 @@ public class GameSettingsTests
         Assert.Equal(0.00f, settings.ViewModelRig.BodyAnchor.HorizontalSpread);
         Assert.Equal(new Vector3(-0.046f, 0.204f, -0.156f), settings.ViewModelRig.HeldItem.PositionOffset);
         Assert.Equal(new Vector3(0.938f, 1.406f, -1.406f), settings.ViewModelRig.HeldItem.RotationOffsetDegrees);
+    }
+
+    [Fact]
+    public void ApplyFloatingCombatTextTuning_Clamps_Runtime_Values()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.ApplyFloatingCombatTextTuning(new FloatingCombatTextTuning(
+            SizeMultiplier: 99f,
+            MotionSpeedMultiplier: -10f,
+            CriticalDepthMultiplier: 99f));
+
+        Assert.Equal(FloatingCombatTextTuning.MaxSizeMultiplier, settings.FloatingCombatText.SizeMultiplier);
+        Assert.Equal(FloatingCombatTextTuning.MinMotionSpeedMultiplier, settings.FloatingCombatText.MotionSpeedMultiplier);
+        Assert.Equal(FloatingCombatTextTuning.MaxCriticalDepthMultiplier, settings.FloatingCombatText.CriticalDepthMultiplier);
     }
 
     [Fact]

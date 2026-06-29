@@ -9,7 +9,6 @@ using SharpGLTF.Schema2;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using System.Runtime.InteropServices;
 using Image = SixLabors.ImageSharp.Image;
 using PrimitiveType = OpenTK.Graphics.OpenGL4.PrimitiveType;
 using Vector2 = OpenTK.Mathematics.Vector2;
@@ -20,6 +19,7 @@ public class AnimatedModel : IDisposable
 {
     private static readonly bool EnableDiagnostics =
         string.Equals(Environment.GetEnvironmentVariable("DREAM_MODEL_DIAGNOSTICS"), "1", StringComparison.Ordinal);
+    private const int MaxSupportedJoints = 64;
 
     #region Structures
     private struct MeshBuffers
@@ -30,6 +30,7 @@ public class AnimatedModel : IDisposable
         public int IndexCount;
         public Material Material;
         public PrimitiveType PrimitiveType;
+        public bool UsesSkinning;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -53,6 +54,7 @@ public class AnimatedModel : IDisposable
     private readonly List<int> _textures = new();
     private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
     private string? _idleClipName;
+    private SkinningData? _skinning;
 
     public AnimatedModel(string filePath)
     {
@@ -64,8 +66,33 @@ public class AnimatedModel : IDisposable
     private void Initialize()
     {
         LoadMaterials();
+        LoadSkinning();
         LoadMeshes();
         LoadAnimations();
+    }
+
+    private void LoadSkinning()
+    {
+        if (_model.LogicalSkins.Count == 0)
+        {
+            return;
+        }
+
+        Skin skin = _model.LogicalSkins[0];
+        if (skin.JointsCount > MaxSupportedJoints)
+        {
+            Log($"Skipping skinning for '{skin.Name ?? "<unnamed>"}' because it uses {skin.JointsCount} joints and the current limit is {MaxSupportedJoints}.");
+            return;
+        }
+
+        SkinJoint[] joints = new SkinJoint[skin.JointsCount];
+        for (int i = 0; i < skin.JointsCount; i++)
+        {
+            (Node Joint, System.Numerics.Matrix4x4 InverseBindMatrix) = skin.GetJoint(i);
+            joints[i] = new SkinJoint(Joint, InverseBindMatrix.ToOpenTK());
+        }
+
+        _skinning = new SkinningData(joints);
     }
     private void LoadMaterials()
     {
@@ -341,7 +368,10 @@ public class AnimatedModel : IDisposable
             EBO = ebo,
             IndexCount = indices.Length,
             Material = primitive.Material,
-            PrimitiveType = GetPrimitiveType(primitive.DrawPrimitiveType)
+            PrimitiveType = GetPrimitiveType(primitive.DrawPrimitiveType),
+            UsesSkinning =
+                primitive.GetVertexAccessor("JOINTS_0") != null &&
+                primitive.GetVertexAccessor("WEIGHTS_0") != null
         };
     }
     #endregion
@@ -400,32 +430,40 @@ public class AnimatedModel : IDisposable
         EndRender();
     }
 
-    public void BeginRender(Shader shader, Matrix4 view, Matrix4 projection)
+    public void BeginRender(Shader shader, Matrix4 view, Matrix4 projection, bool enableCulling = true)
     {
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.CullFace);
-        GL.CullFace(CullFaceMode.Back);
+        if (enableCulling)
+        {
+            GL.Enable(EnableCap.CullFace);
+            GL.CullFace(CullFaceMode.Back);
+        }
+        else
+        {
+            GL.Disable(EnableCap.CullFace);
+        }
 
         shader.Use();
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", projection);
+        shader.SetBool("useSkinning", false);
     }
 
     public void RenderPrepared(Shader shader, Matrix4 modelMatrix)
     {
-        foreach (var node in _model.DefaultScene.VisualChildren)
+        foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
         {
-            if (!_meshPrimitives.TryGetValue(node.Mesh, out var primitives))
+            if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
                 continue;
 
             var nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
-            var combinedMatrix = modelMatrix * nodeWorldMatrix;
+            var combinedMatrix = AnimatedModelTransformComposer.ComposeInstanceNodeMatrix(modelMatrix, nodeWorldMatrix);
             /*
             Console.WriteLine($"Rendering node '{node.Name}'");
             Console.WriteLine($"  Node World Matrix: {nodeWorldMatrix}");
             Console.WriteLine($"  Combined Model Matrix: {combinedMatrix}");
             */
-            RenderNode(primitives, combinedMatrix, shader);
+            RenderNode(primitives, combinedMatrix, shader, nodeWorldMatrix);
         }
     }
 
@@ -435,11 +473,16 @@ public class AnimatedModel : IDisposable
     }
 
 
-    private void RenderNode(List<MeshBuffers> primitives, Matrix4 modelMatrix, Shader shader)
+    private void RenderNode(
+        List<MeshBuffers> primitives,
+        Matrix4 modelMatrix,
+        Shader shader,
+        Matrix4 meshWorldMatrix)
     {
         foreach (var primitive in primitives)
         {
             shader.SetMatrix4("model", modelMatrix);
+            ApplySkinning(shader, primitive, meshWorldMatrix);
 
             if (_materials.TryGetValue(primitive.Material, out var material))
             {
@@ -449,6 +492,26 @@ public class AnimatedModel : IDisposable
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
                 DrawElementsType.UnsignedInt, 0);
+        }
+    }
+
+    private void ApplySkinning(Shader shader, MeshBuffers primitive, Matrix4 meshWorldMatrix)
+    {
+        if (!primitive.UsesSkinning || _skinning == null)
+        {
+            shader.SetBool("useSkinning", false);
+            return;
+        }
+
+        shader.SetBool("useSkinning", true);
+        for (int i = 0; i < _skinning.Joints.Length; i++)
+        {
+            SkinJoint joint = _skinning.Joints[i];
+            Matrix4 jointMatrix = AnimatedModelTransformComposer.ComposeSkinJointMatrix(
+                meshWorldMatrix,
+                joint.Node.WorldMatrix.ToOpenTK(),
+                joint.InverseBindMatrix);
+            shader.SetMatrix4($"jointMatrices[{i}]", jointMatrix);
         }
     }
 
@@ -584,6 +647,18 @@ public class AnimatedModel : IDisposable
         public bool HasMetallicRoughnessTexture;
         public bool HasEmissiveTexture;
         public bool HasOcclusionTexture;
+    }
+
+    private readonly record struct SkinJoint(Node Node, Matrix4 InverseBindMatrix);
+
+    private sealed class SkinningData
+    {
+        public SkinningData(SkinJoint[] joints)
+        {
+            Joints = joints;
+        }
+
+        public SkinJoint[] Joints { get; }
     }
     #endregion
 }

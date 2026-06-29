@@ -38,7 +38,10 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `W`, `A`, `S`, `D`: move the player
 - Mouse movement: look around
 - `Space`: jump
-- Left mouse button: place a cube in front of the player
+- `1`: select building mode
+- `2`: select combat mode
+- Left mouse button: perform the active mode's primary action
+- `V`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
 - `Esc`: toggle the settings menu and release or re-grab the cursor
 
@@ -48,6 +51,9 @@ The in-game settings panel currently supports:
 
 - field-of-view adjustment
 - mouse sensitivity adjustment
+- noclip/fly-speed adjustment
+- runtime `Strength`, `Attack Speed`, and `Vitality` tuning
+- runtime floating damage text size, speed, and crit-depth tuning
 - preset resolution switching
 - runtime floor-size resizing with an explicit apply step
 - collision-geometry debug toggling for cubes and player
@@ -60,6 +66,10 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The main game window is created by `Game` and currently starts at `1440x1024`.
 - The title bar is updated with the current FPS count.
 - The application grabs the mouse cursor on startup.
+- The scene now spawns one first-pass wolf enemy that chases the player, attacks in melee range, and can be killed in combat mode.
+- If no active wolf enemies remain during gameplay, the scene respawns the default wolf.
+- World-model transform composition now respects glTF node-local transforms correctly, so authored mesh-node scale does not shove actor instances off-map.
+- The shared animated-model pipeline now includes a first-pass glTF skinning path for skinned creature assets such as the wolf.
 - The world now uses separate width, height, and depth bounds instead of one cubic side length.
 - The floor is represented visually by solid cubes but physically by one merged static floor collider.
 - Changing floor size at runtime rebuilds the square floor as `N x N`, preserves in-bounds placed cubes, and clamps the player back into valid map space if needed.
@@ -69,10 +79,17 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The base floor now uses a dedicated local candidate query, while the spatial index is reserved for placed cubes, reducing generic candidate overhead on larger maps.
 - The player camera now uses a configurable eye-height offset instead of a fixed close-up offset.
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
+- The existing top-left gameplay HUD now shows player HP, active interaction mode, and current derived damage range.
+- Combat stats are now player-owned runtime values instead of a scene-local random damage roll.
+- Combat mode can now damage destructible placed cubes, while the base floor remains protected in this first pass.
+- Combat mode now targets enemies before destructible cubes when the crosshair ray resolves a valid wolf hit.
 - Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.
 - A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
 - Future HUD positioning work should derive placement from the live viewport rather than from hardcoded viewport pixel coordinates.
 - Runtime assets are resolved from the application output layout through a shared path helper. See [docs/configuration.md](docs/configuration.md) for the current asset-loading model.
+- The first enemy asset is a repo-owned animated wolf-compatible `.glb` under `dream/animations/enemies/wolf.glb`.
+- Current skinned-model support is intentionally first-pass: one logical skin per asset is supported cleanly, which is enough for the current wolf milestone.
+- Imported world assets can now declare authored-height and target-world-height normalization metadata so render scale is derived from explicit sizing intent instead of from opaque one-off constants.
 
 ## Project Layout
 

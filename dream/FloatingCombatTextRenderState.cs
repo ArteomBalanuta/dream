@@ -5,6 +5,7 @@ public readonly record struct FloatingCombatTextRenderState(
     Vector3 WorldAnchor,
     float HorizontalOffset,
     float VerticalOffset,
+    float DepthOffset,
     float Scale,
     float Alpha,
     FloatingCombatTextStyle Style,

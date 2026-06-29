@@ -16,9 +16,10 @@ public class HudRenderer
         GameSettings settings,
         MouseState mouseState,
         Camera camera,
-        CombatFeedbackSystem combatFeedback)
+        CombatFeedbackSystem combatFeedback,
+        HudStatusSnapshot status)
     {
-        return _render.DrawHUD(args, windowFocused, settings, mouseState, camera, combatFeedback);
+        return _render.DrawHUD(args, windowFocused, settings, mouseState, camera, combatFeedback, status);
     }
 
     public void UpdateProjectionForSettings(GameSettings settings)

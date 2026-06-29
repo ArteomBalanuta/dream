@@ -19,6 +19,11 @@ public sealed class CombatFeedbackSystem : IDisposable
         _floatingText.CollectRenderStates(destination);
     }
 
+    public void CollectRenderStates(List<FloatingCombatTextRenderState> destination, FloatingCombatTextTuning tuning)
+    {
+        _floatingText.CollectRenderStates(destination, tuning);
+    }
+
     public void Dispose()
     {
         _damageSubscription.Dispose();

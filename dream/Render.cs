@@ -5,20 +5,11 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using ImGuiNET;
 using System.Runtime.CompilerServices;
 public readonly record struct HudFrameResult(
-    Vector2i? RequestedResolution,
-    int? RequestedFloorSize);
+    HudInteractionRequest Request);
 
 public class Render
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
-
-    private readonly record struct HudInteractionChanges(
-        float? FieldOfViewDegrees,
-        float? MouseSensitivity,
-        Vector2i? RequestedResolution,
-        int? StagedFloorSize,
-        int? RequestedFloorSize,
-        bool? ShowCollisionGeometry);
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
@@ -78,6 +69,7 @@ public class Render
     private Vector2i _currentSize;
     private Vector2i _crosshairViewportSize;
     private readonly WorldRenderer _worldRenderer;
+    private readonly EnemyRenderer _enemyRenderer;
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
     private readonly ViewModelRenderer _viewModelRenderer;
@@ -91,6 +83,10 @@ public class Render
         LoadShader("cube",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("cubeFragment.glsl"));
+
+        LoadShader("enemy",
+            AssetPaths.Shader("cubeVertex.glsl"),
+            AssetPaths.Shader("enemyFragment.glsl"));
     }
 
     private void InitializeHUD()
@@ -307,6 +303,7 @@ public class Render
     public Render(GameSettings settings)
     {
         _worldRenderer = new WorldRenderer(this);
+        _enemyRenderer = new EnemyRenderer(this);
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
         _viewModelRenderer = new ViewModelRenderer(this);
@@ -337,6 +334,8 @@ public class Render
 
     public WorldRenderer World => _worldRenderer;
 
+    public EnemyRenderer Enemies => _enemyRenderer;
+
     public DebugRenderer Debug => _debugRenderer;
 
     public HudRenderer Hud => _hudRenderer;
@@ -344,6 +343,8 @@ public class Render
     public ViewModelRenderer ViewModels => _viewModelRenderer;
 
     public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
+
+    public Matrix4 ProjectionMatrix => _projection;
 
     public Shader GetShader(string name)
     {
@@ -455,24 +456,27 @@ public class Render
         GameSettings settings,
         MouseState mouseState,
         Camera camera,
-        CombatFeedbackSystem combatFeedback)
+        CombatFeedbackSystem combatFeedback,
+        HudStatusSnapshot status)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
-        DrawFloatingCombatText(camera, combatFeedback);
-        HudInteractionChanges changes = DrawHudInterface(settings);
-        ApplyHudInteractionChanges(settings, changes);
+        DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
+        HudInteractionRequest request = DrawHudInterface(settings, status);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
 
-        return new HudFrameResult(changes.RequestedResolution, changes.RequestedFloorSize);
+        return new HudFrameResult(request);
     }
 
-    private void DrawFloatingCombatText(Camera camera, CombatFeedbackSystem combatFeedback)
+    private void DrawFloatingCombatText(
+        Camera camera,
+        CombatFeedbackSystem combatFeedback,
+        FloatingCombatTextTuning tuning)
     {
-        combatFeedback.CollectRenderStates(_floatingCombatTextStates);
+        combatFeedback.CollectRenderStates(_floatingCombatTextStates, tuning);
         if (_floatingCombatTextStates.Count == 0)
         {
             return;
@@ -487,7 +491,8 @@ public class Render
             Vector3 worldPosition =
                 state.WorldAnchor +
                 (camera.Right * state.HorizontalOffset) +
-                (Vector3.UnitY * state.VerticalOffset);
+                (camera.Up * state.VerticalOffset) -
+                (camera.Front * state.DepthOffset);
 
             if (!TryProjectWorldToScreen(camera, worldPosition, out System.Numerics.Vector2 screenPosition))
             {
@@ -497,8 +502,12 @@ public class Render
             uint shadow = ToImGuiColor(new Vector4(0f, 0f, 0f, state.Alpha));
             uint color = ToImGuiColor(state.Style.Color with { W = state.Alpha });
             float size = baseFontSize * state.Scale;
+            float outline = state.Style.OutlineThickness;
 
-            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + 1.5f, screenPosition.Y + 1.5f), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X - outline, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X + outline, screenPosition.Y), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y - outline), shadow, state.Text);
+            drawList.AddText(font, size, new System.Numerics.Vector2(screenPosition.X, screenPosition.Y + outline), shadow, state.Text);
             drawList.AddText(font, size, screenPosition, color, state.Text);
         }
     }
@@ -586,14 +595,19 @@ public class Render
         ImGui.NewFrame();
     }
 
-    private static HudInteractionChanges DrawHudInterface(GameSettings settings)
+    private static HudInteractionRequest DrawHudInterface(GameSettings settings, HudStatusSnapshot status)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
+        float? noclipSpeed = null;
         Vector2i? requestedResolution = null;
         int? stagedFloorSize = null;
         int? requestedFloorSize = null;
         bool? showCollisionGeometry = null;
+        int? strength = null;
+        float? attackSpeed = null;
+        int? vitality = null;
+        FloatingCombatTextTuning? floatingCombatText = null;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
@@ -603,7 +617,9 @@ public class Render
             (settings.SettingsVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
-        ImGui.Text("Score: 100");
+        ImGui.Text(status.HealthLabel);
+        ImGui.Text(status.ModeLabel);
+        ImGui.Text(status.DamageLabel);
         ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
         ImGui.Text("Press Esc to toggle settings");
         ImGui.End();
@@ -623,6 +639,62 @@ public class Render
             if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
             {
                 mouseSensitivity = sensitivity;
+            }
+
+            float currentNoclipSpeed = settings.NoclipSpeed;
+            if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+            {
+                noclipSpeed = currentNoclipSpeed;
+            }
+
+            int currentStrength = status.Strength;
+            if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
+            {
+                strength = currentStrength;
+            }
+
+            float currentAttackSpeed = status.AttackSpeed;
+            if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
+            {
+                attackSpeed = currentAttackSpeed;
+            }
+
+            int currentVitality = status.Vitality;
+            if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
+            {
+                vitality = currentVitality;
+            }
+
+            FloatingCombatTextTuning textTuning = settings.FloatingCombatText;
+            float damageTextSize = textTuning.SizeMultiplier;
+            float damageTextSpeed = textTuning.MotionSpeedMultiplier;
+            float criticalDepth = textTuning.CriticalDepthMultiplier;
+            if (ImGui.CollapsingHeader("Floating Damage Text", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool changed = false;
+                changed |= ImGui.SliderFloat(
+                    "Damage Text Size",
+                    ref damageTextSize,
+                    FloatingCombatTextTuning.MinSizeMultiplier,
+                    FloatingCombatTextTuning.MaxSizeMultiplier);
+                changed |= ImGui.SliderFloat(
+                    "Damage Text Speed",
+                    ref damageTextSpeed,
+                    FloatingCombatTextTuning.MinMotionSpeedMultiplier,
+                    FloatingCombatTextTuning.MaxMotionSpeedMultiplier);
+                changed |= ImGui.SliderFloat(
+                    "Crit Depth",
+                    ref criticalDepth,
+                    FloatingCombatTextTuning.MinCriticalDepthMultiplier,
+                    FloatingCombatTextTuning.MaxCriticalDepthMultiplier);
+
+                if (changed)
+                {
+                    floatingCombatText = new FloatingCombatTextTuning(
+                        damageTextSize,
+                        damageTextSpeed,
+                        criticalDepth);
+                }
             }
 
             DrawViewModelControls(settings);
@@ -664,13 +736,18 @@ public class Render
             ImGui.End();
         }
 
-        return new HudInteractionChanges(
+        return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
+            noclipSpeed,
             requestedResolution,
             stagedFloorSize,
             requestedFloorSize,
-            showCollisionGeometry);
+            showCollisionGeometry,
+            strength,
+            attackSpeed,
+            vitality,
+            floatingCombatText);
     }
 
     private static void DrawViewModelControls(GameSettings settings)
@@ -749,29 +826,6 @@ public class Render
         if (changed)
         {
             apply(new Vector3(x, y, z));
-        }
-    }
-
-    private static void ApplyHudInteractionChanges(GameSettings settings, HudInteractionChanges changes)
-    {
-        if (changes.FieldOfViewDegrees.HasValue)
-        {
-            settings.FieldOfViewDegrees = changes.FieldOfViewDegrees.Value;
-        }
-
-        if (changes.MouseSensitivity.HasValue)
-        {
-            settings.MouseSensitivity = changes.MouseSensitivity.Value;
-        }
-
-        if (changes.StagedFloorSize.HasValue)
-        {
-            settings.StageFloorSize(changes.StagedFloorSize.Value);
-        }
-
-        if (changes.ShowCollisionGeometry.HasValue)
-        {
-            settings.SetShowCollisionGeometry(changes.ShowCollisionGeometry.Value);
         }
     }
 

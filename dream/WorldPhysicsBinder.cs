@@ -6,6 +6,7 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 public class WorldPhysicsBinder
 {
     private readonly PhysicsIntegrator _physics;
+    private readonly Dictionary<Cube, RigidBody> _cubeBodies = new();
 
     public WorldPhysicsBinder(PhysicsIntegrator physics)
     {
@@ -65,5 +66,24 @@ public class WorldPhysicsBinder
         {
             _physics.DynamicMapCubeBodies.Add(body);
         }
+
+        _cubeBodies[cube] = body;
+    }
+
+    public bool RemoveCubeBody(Cube cube)
+    {
+        if (!_cubeBodies.TryGetValue(cube, out RigidBody? body))
+        {
+            return false;
+        }
+
+        _physics.World.RemoveRigidBody(body);
+        _physics.MapCubeBodies.Remove(body);
+        _physics.DynamicMapCubeBodies.Remove(body);
+        _cubeBodies.Remove(cube);
+        body.MotionState?.Dispose();
+        body.CollisionShape?.Dispose();
+        body.Dispose();
+        return true;
     }
 }

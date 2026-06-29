@@ -20,12 +20,15 @@ Inside the `Game` constructor:
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
 - `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
 - `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
+- `EnemyRegistry` now owns the active enemy collection and scene-local hit resolution for non-player combat actors.
+- `EnemyActor` owns world-space chase behavior and melee state transitions, while `EnemyCombatant` owns health, attack cadence, combat identity, and damage intake for the same actor.
+- `EnemyRenderer` now owns the first world-space non-cube animated-actor draw path and keeps wolf presentation logic out of `PlayScene`.
 - `PlayScene` now owns scene-local combat feedback wiring, while `HudRenderer` and `Render` consume `CombatFeedbackSystem` state as render input rather than constructing combat feedback runtime themselves.
 - `PlayerViewModelController` owns first-person runtime presentation state and translates gameplay input into per-slot animation requests.
 - `ViewModelPoseResolver` composes the final first-person slot pose from asset defaults, shared rig settings, body-anchor illusion offsets, and per-slot tuning data.
 - `ViewModelCatalog` resolves stable cosmetic ids into runtime `ViewModelDefinition` data and provides the default hands plus held-item loadout.
 - `Shader` is a low-level helper used by `Render` and `AnimatedModel`.
-- `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-backed rendering, including named clip playback with loop and one-shot semantics.
+- `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-backed rendering, including named clip playback with loop and one-shot semantics plus a bounded first-pass skinning path for skinned assets.
 
 ## Update Loop
 
@@ -34,17 +37,19 @@ Inside the `Game` constructor:
 `PlayScene.Update()` performs the current simulation work in this order:
 
 1. Toggle runtime state when global scene input requests it
-2. Translate primary-use input into `PlayerViewModelController` animation requests
-3. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
-4. Step the Bullet physics simulation with the current frame delta
-5. Update the player using the current keyboard and mouse state
-6. Try to place a cube in front of the player
-7. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
+2. Capture gameplay interaction input, including direct interaction-mode selection
+3. Translate primary-use input into either build placement or combat interaction based on the active `PlayerInteractionMode`
+4. Advance the first-person viewmodel models and notify the controller when one-shot clips finish
+5. Step the Bullet physics simulation with the current frame delta
+6. Update the player using the current keyboard and mouse state
+7. Apply build placement only when the active mode is `Building`
+8. Update active enemies, including chase-state transitions and melee damage against the player when gameplay input is live
+9. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
 
 `Player.Update()` now coordinates smaller subsystems:
 
 - `PlayerController` converts raw keyboard and mouse state into movement and interaction commands
-- `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body
+- `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body and now also owns noclip toggle state plus camera-relative fly movement bypass
 - `PlayerCameraRig` synchronizes camera position from the body and applies mouse-look
 - `PlayerInteraction` handles edge-triggered cube placement
 - `Player` itself retains collision reporting and public façade methods used by `PlayScene`
@@ -57,6 +62,7 @@ Inside `PlayScene.Render()`:
 
 - the framebuffer is cleared
 - `WorldRenderer` draws active cubes
+- `EnemyRenderer` draws active world-space wolf actors through the animated-model path
 - `DebugRenderer` draws optional collision overlays
 - `ViewModelRenderer` clears only depth and draws the first-person hands and held-item pass
 - `HudRenderer` submits HUD/settings UI and returns runtime requests
@@ -64,9 +70,13 @@ Inside `PlayScene.Render()`:
 
 `PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
 
-The HUD result now also carries explicit runtime requests, including resolution changes and floor-size rebuild requests, back to `Game`.
+The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the gameplay and runtime consequences of those requests.
 
-The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for screen-space projection and drawing.
+The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for camera-local billboard-style projection and drawing.
+
+Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `PlayScene` now resolves combat hits against enemies first and then world cubes, while the registered runtime record still models a generic world-object lifecycle that future props or interactables can reuse.
+
+Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the scene now publishes world-mutation facts such as `CubePlacedEvent` and `CubeDestroyedEvent` alongside combat facts such as `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
@@ -78,8 +88,8 @@ The first-person subsystem is intentionally threaded through both `PlayScene.Upd
 The HUD path currently includes:
 
 - A crosshair built from simple line geometry
-- An ImGui `HUD` window for runtime status
-- An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, and viewmodel rig changes
+- An ImGui `HUD` window for runtime status, including player HP, active interaction mode, and current derived damage range
+- An ImGui `Settings` window that can request camera, resolution, floor-size, collision-debug, viewmodel rig, and live player combat-stat changes
 - A floating-combat-text overlay projected from world anchors into screen coordinates
 
 ## Physics Model
@@ -131,6 +141,8 @@ The emerging combat layer is intentionally capability-based:
 - `HealthState` is the first shared combat-state component and can back players, enemies, or destructible objects
 - `CombatActorHandle` packages identity, kind, damageability, and anchor access into a lightweight runtime handle
 - `PlayerCombatant` is the first concrete adapter and keeps player combat participation out of the heavier movement and physics code
+- `EnemyCombatant` mirrors that adapter approach for the first wolf enemy so player and enemy damage flow through the same event and floating-text seams
+- `PlayerCombatant` now also owns a small player-only stat model that derives outgoing damage range, crit damage, attack cadence, and vitality-driven max HP, while `PlayScene` keeps hit resolution and combat-event publication scene-owned
 
 For collision debugging, `Render` now uses Bullet-driven transforms for red wireframe overlays instead of reusing the normal visual cube transform path. `Game` enables those overlays conditionally for:
 
@@ -157,3 +169,5 @@ Two parts of the codebase are responsible for runtime asset loading:
 - `AnimatedModel` loads a glTF file, loads textures from embedded image content, creates OpenGL textures, and creates mesh buffers for each primitive
 
 The current implementation resolves shader and model assets through shared runtime path helpers rather than through machine-specific absolute Windows paths.
+
+For skinned world assets, the current renderer now also uploads a first-pass joint palette from SharpGLTF joint world matrices plus inverse bind matrices. That support is intentionally bounded to the current project need: one logical skin per asset is supported cleanly, which covers the wolf milestone without overbuilding a broader animation stack yet.

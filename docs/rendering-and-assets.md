@@ -16,11 +16,12 @@ At construction time, `Render`:
 The current frame order is:
 
 1. world cubes
-2. collision/debug overlays
-3. first-person viewmodels
-4. HUD and ImGui
+2. world-space animated enemies
+3. collision/debug overlays
+4. first-person viewmodels
+5. HUD and ImGui
 
-That ordering keeps the hands and held item visually above the world while still letting the HUD render last.
+That ordering keeps enemy actors in the same depth-tested world layer as cubes, keeps the hands and held item visually above the world, and still lets the HUD render last.
 
 ## Shader Usage
 
@@ -63,6 +64,22 @@ If `Cube.Animation` is not set, the renderer:
 - Draws a white wireframe overlay
 
 Both of these use the shared cube VAO and the `default` shader.
+
+## Enemy Rendering Path
+
+The first non-cube world actor uses `EnemyRenderer` rather than trying to squeeze through `Cube.Animation`.
+
+For each active enemy actor, the renderer currently:
+
+- builds an `EnemyRenderState` from world position, facing, and current behavior
+- resolves the cached wolf `AnimatedModel`
+- applies the correct named clip through `EnemyVisualState`
+- advances clip playback
+- renders the model in world space with the main camera view and world projection
+
+The animated-model path now composes the scene instance transform with the glTF node world transform in the correct order for this renderer. That matters for authored assets such as the wolf, whose mesh node carries its own non-identity local scale.
+
+This is intentionally the first dedicated world-actor render seam so future creatures do not have to masquerade as cubes just to appear in the scene.
 
 ## First-Person Viewmodels
 
@@ -150,7 +167,9 @@ When rendering, it:
 
 - Enables depth testing and back-face culling
 - Applies the caller-supplied model, view, and projection transforms
-- Iterates the default scene's visual children
+- Iterates renderable descendants of the default scene rather than only top-level mesh nodes
+- Composes the instance model matrix with each glTF node world matrix through a dedicated helper so authored node-local scale/translation remains stable in world space
+- Applies a first-pass skinning palette when a primitive exposes `JOINTS_0` and `WEIGHTS_0`
 - Draws each mesh primitive with its material properties and textures
 
 For first-person presentation, `AnimatedModel` now also supports named clip playback with explicit loop and one-shot modes. The current viewmodel milestone expects exact clip names:
@@ -159,6 +178,26 @@ For first-person presentation, `AnimatedModel` now also supports named clip play
 - `Use`: one-shot click or use animation
 
 Viewmodel assets should ship those exact clip names so the controller and renderer can stay data-driven instead of per-asset hardcoded.
+
+The first wolf enemy now uses explicit asset metadata through `WolfAssetDefinition` and `WolfAnimationResolver` rather than assuming the viewmodel clip contract. The imported asset currently maps:
+
+- `AnimalArmature|Idle`
+- `AnimalArmature|Walk`
+- `AnimalArmature|Attack`
+
+## First-Pass Skinning Support
+
+The current milestone now supports the most important missing creature-asset behavior:
+
+- detection of logical skins during model initialization
+- joint-palette upload from SharpGLTF joint world matrices, inverse bind matrices, and the rendered mesh node's world transform
+- weighted position and normal blending in `cubeVertex.glsl`
+
+This support is intentionally bounded:
+
+- one logical skin per asset is supported cleanly today
+- it is sufficient for the current wolf asset
+- broader multi-skin or richer animation-system work can be layered later if future assets require it
 
 ## Texture Handling
 
@@ -178,6 +217,7 @@ The repository currently includes:
 
 - World and HUD shaders under `dream/shaders/`
 - A cube model and related textures under `dream/animations/`
+- An animated wolf asset under `dream/animations/enemies/wolf.glb`
 - First-person hands and held-item blockout assets under `dream/animations/viewmodels/`
 - A font file under `dream/fonts/`
 
@@ -191,3 +231,20 @@ For this first milestone, the assets under `dream/animations/viewmodels/` are in
 - the shared `Idle` and `Use` clip contract for future replacement art
 
 World models remain part of the main world pass and should keep world-space transforms and occlusion behavior. First-person viewmodels are camera-relative presentation assets and should only be authored for the dedicated viewmodel pass.
+
+## World Asset Normalization
+
+Imported world assets do not always arrive in gameplay-ready scale. The current project now handles that through explicit normalization metadata instead of through arbitrary render-only scale tweaking.
+
+For the first creature slice, `WolfAssetDefinition` declares:
+
+- the asset's authored height
+- the target in-game world height
+- the asset's authored forward axis
+- the first-pass collision footprint used by enemy movement/debug rendering
+
+The final uniform render scale is derived from those values at runtime through `WorldAssetNormalization.ResolveUniformScale()`. This keeps imported-asset sizing decisions in metadata, where future creatures or props can reuse the same seam without hiding authored-size assumptions inside scene or renderer code.
+
+The current wolf asset is authored facing local `+Z`, so its render yaw maps that axis into the enemy's gameplay movement direction. Future creature assets should declare the same kind of presentation metadata rather than assuming every imported model faces the engine's historical `-Z` direction.
+
+Wolf rendering now uses the actor's real world position directly. Close-range player/enemy separation and world-object blocking are handled in gameplay movement state, not by shifting only the rendered model away from the camera.
