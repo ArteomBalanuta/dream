@@ -8,26 +8,35 @@ using Vector3 = OpenTK.Mathematics.Vector3;
 public class Player
 {
     private readonly PhysicsIntegrator _physics;
+    private Map _map;
     private readonly PlayerController _controller = new();
     private readonly PlayerMotor _motor;
     private readonly PlayerCameraRig _cameraRig;
     private readonly PlayerInteraction _interaction = new();
     private readonly PlayerCombatant _combatant;
+    private bool _primaryUseTriggered;
 
-    public Map map;
     public RigidBody PhysicsBody { get; }
     public float Speed { get; set; } = 3.0f;
     public Camera Camera => _cameraRig.Camera;
     public PlayerCombatant Combatant => _combatant;
+    public Map CurrentMap => _map;
 
     public Vector3 LastReportedPosition { get; private set; }
     public float CollisionReportCooldown = 0.5f;
     private float _collisionReportTimer;
-    private bool _primaryUseTriggered;
 
     public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position, SceneEventHub? eventHub = null)
     {
-        this.map = map;
+        ArgumentNullException.ThrowIfNull(physics);
+        ArgumentNullException.ThrowIfNull(physicsBody);
+
+        if (!ReferenceEquals(physics.PlayerBody, physicsBody))
+        {
+            throw new InvalidOperationException("Player requires the integrator registered player body.");
+        }
+
+        _map = map;
         _physics = physics;
         _motor = new PlayerMotor(_physics);
         _cameraRig = new PlayerCameraRig(position);
@@ -92,16 +101,6 @@ public class Player
         Console.WriteLine("========================");
     }
 
-    public void PlaceCube(Map map)
-    {
-        _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
-    }
-
-    public Cube? TryPlaceCube(Map map)
-    {
-        return _interaction.TryPlaceCube(map, _primaryUseTriggered, Camera, PhysicsBody);
-    }
-
     public PlayerInteractionCommand CaptureInteractionCommand(
         KeyboardState keyboardState,
         MouseState mouseState,
@@ -114,6 +113,25 @@ public class Player
     {
         _primaryUseTriggered = _interaction.ShouldTriggerPrimaryUse(interaction, repeatIntervalSeconds, deltaTime);
         return _primaryUseTriggered;
+    }
+
+    public bool TryCreateBuildUseRequest(bool primaryUseTriggered, out BuildUseRequest request)
+    {
+        if (!primaryUseTriggered)
+        {
+            request = default;
+            return false;
+        }
+
+        return PlayerInteraction.TryCreateBuildUseRequest(
+            GetWorldPosition(),
+            Camera.Front,
+            out request);
+    }
+
+    public void BindMap(Map map)
+    {
+        _map = map;
     }
 
     public Vector3 GetWorldPosition()

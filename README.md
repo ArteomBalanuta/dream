@@ -31,6 +31,8 @@ dotnet run --project dream\dream.csproj
 
 The project currently builds successfully with warnings. The remaining package warning comes from `BulletSharp`, which is intentionally still in use and restores as an older .NET Framework-oriented package.
 
+Startup now performs explicit mode selection. Running with no extra arguments starts the desktop client path, while `dotnet run --project dream\dream.csproj -- --server` currently exits honestly because the headless host path is only a reserved seam in this phase.
+
 The HUD crosshair is now viewport-driven, so it is rebuilt from the live window size instead of from baked pixel coordinates.
 
 ## Current Controls
@@ -63,9 +65,11 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 ## Runtime Notes
 
 - `Game` now acts as the OpenTK window shell, while `PlayScene` owns active gameplay orchestration.
+- `Program` now validates startup arguments explicitly, defaults to the desktop path, and reserves `--server` as a future host seam instead of silently falling through.
 - The main game window is created by `Game` and currently starts at `1440x1024`.
 - The title bar is updated with the current FPS count.
 - The application grabs the mouse cursor on startup.
+- `PlayScene` is still the current desktop orchestration root and still locally composes the active `Map`, `Player`, and `PhysicsIntegrator`, including registration of the current single player body.
 - The scene now spawns one first-pass wolf enemy that chases the player, attacks in melee range, and can be killed in combat mode.
 - If no active wolf enemies remain during gameplay, the scene respawns the default wolf.
 - World-model transform composition now respects glTF node-local transforms correctly, so authored mesh-node scale does not shove actor instances off-map.
@@ -78,6 +82,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - Visible cubes that share the same animated model and shader are now batched through a shared setup path, reducing repeated per-cube model-render overhead.
 - The base floor now uses a dedicated local candidate query, while the spatial index is reserved for placed cubes, reducing generic candidate overhead on larger maps.
 - The player camera now uses a configurable eye-height offset instead of a fixed close-up offset.
+- Local cube placement now flows through a request seam: `PlayerInteraction` captures a `BuildUseRequest` from plain data, `Player` returns the request upward, and `PlayScene` applies accepted placement through `Map.AddCube(...)`.
 - The HUD crosshair scales with window size and remains centered from the active viewport metrics.
 - The existing top-left gameplay HUD now shows player HP, active interaction mode, and current derived damage range.
 - Combat stats are now player-owned runtime values instead of a scene-local random damage roll.
@@ -85,6 +90,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - Combat mode now targets enemies before destructible cubes when the crosshair ray resolves a valid wolf hit.
 - Cube visuals now follow the centered unit-cube collision model instead of applying an extra visual offset.
 - A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
+- Focused low-harness regression tests now cover `PlayerController`, `PlayerInteraction`, `PlayerMotor`, and `PhysicsIntegrator` ownership behavior.
 - Future HUD positioning work should derive placement from the live viewport rather than from hardcoded viewport pixel coordinates.
 - Runtime assets are resolved from the application output layout through a shared path helper. See [docs/configuration.md](docs/configuration.md) for the current asset-loading model.
 - The first enemy asset is a repo-owned animated wolf-compatible `.glb` under `dream/animations/enemies/wolf.glb`.
@@ -94,6 +100,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 ## Project Layout
 
 - `dream/`: main project source, shaders, fonts, and assets
+- `dream.Tests/`: focused xUnit coverage for low-harness gameplay and runtime seams
 - `docs/`: project documentation
 - `docs/ledger/`: analysis, planning, decisions, and work records for ongoing development
 

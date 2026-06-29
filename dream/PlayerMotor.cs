@@ -75,7 +75,8 @@ public class PlayerMotor
         }
         else
         {
-            body.LinearVelocity = new BulletSharp.Math.Vector3(0f, velocity.Y, 0f);
+            Vector3 clampedVelocity = ClampHorizontalVelocityForInputGate(velocity, allowGameplayInput);
+            body.LinearVelocity = new BulletSharp.Math.Vector3(clampedVelocity.X, clampedVelocity.Y, clampedVelocity.Z);
         }
 
         _wasJumpPressed = command.JumpPressed;
@@ -115,9 +116,10 @@ public class PlayerMotor
 
     private void HandleFreezeToggle(RigidBody body, bool freezePressed)
     {
-        if (freezePressed && !_wasFreezePressed)
+        bool nextFrozen = ResolveFrozenState(IsFrozen, freezePressed, _wasFreezePressed);
+        if (nextFrozen != IsFrozen)
         {
-            IsFrozen = !IsFrozen;
+            IsFrozen = nextFrozen;
             if (IsFrozen)
             {
                 _originalMass = body.InvMass;
@@ -175,6 +177,20 @@ public class PlayerMotor
         }
 
         _wasNoclipTogglePressed = noclipPressed;
+    }
+
+    public static bool ResolveFrozenState(bool isFrozen, bool freezePressed, bool wasFreezePressed)
+    {
+        return freezePressed && !wasFreezePressed
+            ? !isFrozen
+            : isFrozen;
+    }
+
+    public static Vector3 ClampHorizontalVelocityForInputGate(Vector3 velocity, bool allowGameplayInput)
+    {
+        return allowGameplayInput
+            ? velocity
+            : new Vector3(0f, velocity.Y, 0f);
     }
 
     private bool IsGrounded(RigidBody body, Vector3 currentPosition)

@@ -56,7 +56,12 @@ public class Map
         }
     }
 
-    public Cube? AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
+    public bool AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
+    {
+        return TryAddCube(position, isStatic, withPhysics) != null;
+    }
+
+    public Cube? TryAddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
     {
         int x = (int)MathF.Floor(position.X + 1e-6f);
         int y = (int)MathF.Floor(position.Y + 1e-6f);

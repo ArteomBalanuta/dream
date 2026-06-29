@@ -4,17 +4,24 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Vector3 = OpenTK.Mathematics.Vector3;
 
+// PlayScene is currently the desktop gameplay orchestration root.
+// Authoritative world/player/physics ownership is expected to move out of this scene into
+// a dedicated runtime, while client presentation concerns remain scene-owned.
 public class PlayScene : IDisposable
 {
+    // Client-local presentation state that should remain scene-owned after the runtime split.
     private readonly Render _render;
+    private readonly GameSettings _settings;
+    private readonly PlayerViewModelController _viewModelController;
+    private readonly SceneEventHub _events = new();
+    private readonly CombatFeedbackSystem _combatFeedback;
+
+    // These fields are the current authoritative access points that a future runtime will own:
+    // player lifetime, world lifetime, physics stepping, and Bullet-to-world state sync.
     private readonly Player _player;
     private Map _map;
     private readonly PhysicsIntegrator _physics;
     private readonly PhysicsSyncSystem _physicsSync = new();
-    private readonly SceneEventHub _events = new();
-    private readonly CombatFeedbackSystem _combatFeedback;
-    private readonly GameSettings _settings;
-    private readonly PlayerViewModelController _viewModelController;
     private readonly WorldObjectRegistry _worldObjects = new();
     private readonly EnemyRegistry _enemies = new();
     private PlayerInteractionMode _interactionMode = PlayerInteractionMode.Building;
@@ -29,12 +36,17 @@ public class PlayScene : IDisposable
     public PlayScene(GameSettings settings)
     {
         _settings = settings;
+        // Desktop startup still constructs the authoritative world stack locally.
+        // Phase 0 keeps that behavior intact and only marks the extraction seam.
         _physics = new PhysicsIntegrator();
         _map = new Map(_physics, width: _settings.FloorSize, depth: _settings.FloorSize);
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        _player = new Player(_map, _physics, _physics.PlayerBody, playerStartPosition, _events);
+        PhysicsFactory physicsFactory = new();
+        var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
+        _physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
+        _player = new Player(_map, _physics, playerBody, playerStartPosition, _events);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         SpawnInitialWolf();
@@ -43,6 +55,8 @@ public class PlayScene : IDisposable
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
+
+        // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
         _player.Combatant.AdvanceCombat(delta);
         HandleGlobalInput(keyboardState);
@@ -75,6 +89,9 @@ public class PlayScene : IDisposable
             _viewModelController.NotifyAnimationFinished(ViewModelSlot.HeldItem);
         }
 
+        // This block is the current authoritative simulation seam:
+        // physics step, player state update, local world mutation, feedback tick, and transform sync.
+        // The future runtime should own this order while PlayScene remains the client orchestrator.
         _physics.StepSimulation(delta);
         _player.Update(delta, keyboardState, mouseState, _settings, allowGameplayInput);
         if (allowGameplayInput)
@@ -87,19 +104,27 @@ public class PlayScene : IDisposable
 
         if (_interactionMode == PlayerInteractionMode.Building)
         {
-            Cube? placedCube = _player.TryPlaceCube(_map);
+            Cube? placedCube = null;
+            if (_player.TryCreateBuildUseRequest(primaryUseTriggered, out BuildUseRequest buildUseRequest))
+            {
+                placedCube = _map.TryAddCube(buildUseRequest.PlacementTarget);
+            }
+
             if (placedCube != null && placedCube.Position.Y > 0f)
             {
                 _worldObjects.RegisterCube(placedCube, _map);
                 _events.Publish(new CubePlacedEvent(placedCube));
             }
         }
+
         _combatFeedback.Update(delta);
         _physicsSync.SyncDynamicMapBodies(_physics.DynamicMapCubeBodies);
     }
 
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
+        // Render primarily consumes scene/runtime state for desktop presentation, even though
+        // this path still applies scene-owned runtime requests such as floor rebuilds today.
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
         _render.World.DrawWorld(
@@ -114,7 +139,7 @@ public class PlayScene : IDisposable
         if (_settings.ShowCollisionGeometry)
         {
             _render.Debug.DrawCollisionBodies(_physics.MapCubeBodies, _player.Camera);
-            _render.DrawCollisionBody(_physics.PlayerBody, _player.Camera);
+            _render.DrawCollisionBody(_player.PhysicsBody, _player.Camera);
         }
 
         _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
@@ -297,6 +322,9 @@ public class PlayScene : IDisposable
 
     private void RebuildMapForFloorSize(int floorSize)
     {
+        // Floor rebuild is a current scene-owned authoritative world mutation path.
+        // The future runtime should own map rebuilds plus player re-clamping, even if the request
+        // still originates from client UI.
         Vector3 currentPlayerPosition = _player.GetWorldPosition();
         Map previousMap = _map;
         WorldObjectCubeSnapshot worldObjectSnapshot = _worldObjects.CreateCubeSnapshot();
@@ -308,7 +336,7 @@ public class PlayScene : IDisposable
         _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
 
         _map = rebuiltMap;
-        _player.map = rebuiltMap;
+        _player.BindMap(rebuiltMap);
         _enemies.ClampToMapBounds(rebuiltMap);
 
         Vector3 clampedPosition = new Vector3(

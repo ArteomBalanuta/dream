@@ -3,6 +3,7 @@ using BulletSharp.Math;
 
 public class PhysicsFactory
 {
+    // Factory only creates the body; registration and ownership stay with the caller.
     public RigidBody CreatePlayerBody(Vector3 position)
     {
         var shape = new BoxShape(0.5f, 0.5f, 0.5f);

@@ -1,4 +1,3 @@
-using BulletSharp.Math;
 using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
 
@@ -6,6 +5,7 @@ public class PlayerInteraction
 {
     private bool _wasPrimaryUsePressed;
     private float _primaryUseRepeatRemaining;
+    private const float CubePlacementDistance = 2.0f;
 
     public bool ShouldTriggerPrimaryUse(PlayerInteractionCommand command, float repeatIntervalSeconds, float deltaTime)
     {
@@ -34,15 +34,40 @@ public class PlayerInteraction
         return true;
     }
 
-    public Cube? TryPlaceCube(Map map, bool primaryUseTriggered, Camera camera, BulletSharp.RigidBody body)
+    public bool TryCaptureBuildUseRequest(
+        PlayerInteractionCommand command,
+        Vector3 interactionOrigin,
+        Vector3 interactionDirection,
+        out BuildUseRequest request)
     {
-        if (!primaryUseTriggered)
+        bool triggered = command.PrimaryUsePressed && !_wasPrimaryUsePressed;
+        _wasPrimaryUsePressed = command.PrimaryUsePressed;
+
+        if (!triggered)
         {
-            return null;
+            request = default;
+            return false;
         }
 
-        body.MotionState.GetWorldTransform(out Matrix transform);
-        Vector3 position = transform.Origin.ToOpenTK() + camera.Front * 2.0f;
-        return map.AddCube(position);
+        return TryCreateBuildUseRequest(
+            interactionOrigin,
+            interactionDirection,
+            out request);
+    }
+
+    public static bool TryCreateBuildUseRequest(
+        Vector3 interactionOrigin,
+        Vector3 interactionDirection,
+        out BuildUseRequest request)
+    {
+        if (interactionDirection == Vector3.Zero)
+        {
+            request = default;
+            return false;
+        }
+
+        request = new BuildUseRequest(
+            interactionOrigin + interactionDirection * CubePlacementDistance);
+        return true;
     }
 }

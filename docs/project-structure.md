@@ -3,6 +3,7 @@
 ## Top Level
 
 - `dream/`: the main C# project directory
+- `dream.Tests/`: xUnit test project for low-harness gameplay and runtime seam coverage
 - `docs/`: documentation files for the project
 - `Directory.Packages.props`: centrally managed NuGet package versions
 - `global.json`: pinned .NET SDK version for consistent local builds
@@ -12,27 +13,28 @@
 
 - `dream/dream.sln`: Visual Studio solution file
 - `dream/dream.csproj`: .NET project file with package references and build settings
+- `dream.Tests/dream.Tests.csproj`: test project for focused regression coverage around gameplay and runtime seams
 
 ## Core Source Files
 
-- `dream/Program.cs`: application entry point
+- `dream/Program.cs`: application entry point, explicit startup mode selector, desktop default path, and reserved `--server` seam
 - `dream/Game.cs`: OpenTK game window shell, lifecycle delegation, resize callback, and FPS tracking
-- `dream/PlayScene.cs`: active gameplay scene that owns player, map, physics, rendering, and scene-specific runtime behavior
+- `dream/PlayScene.cs`: active gameplay scene and current desktop orchestration root; it still owns player/map/physics access during preflight, composes the current local player body registration, and remains the planned extraction boundary for a future `WorldSessionRuntime` that will take over authoritative simulation ownership while the scene stays client-facing
 - `dream/GameSettings.cs`: runtime configuration, current runtime mode, and settings-change events
 - `dream/RuntimeState.cs`: compact gameplay-vs-settings runtime state model
 - `dream/GameEvents.cs`: targeted configuration/runtime event payloads
-- `dream/Player.cs`: gameplay façade for movement, camera-facing state, collision logging, and placement
+- `dream/Player.cs`: gameplay façade for movement, camera-facing state, collision logging, and upward-facing build-use request capture
 - `dream/PlayerController.cs`: raw input-to-command translation
 - `dream/PlayerMotor.cs`: rigid-body movement, jump, and freeze behavior
 - `dream/PlayerCameraRig.cs`: body-to-camera synchronization and mouse-look updates
-- `dream/PlayerInteraction.cs`: edge-triggered gameplay interactions such as cube placement
+- `dream/PlayerInteraction.cs`: edge-triggered gameplay interaction capture that turns plain data into `BuildUseRequest`
 - `dream/PlayerCommands.cs`: small command records used by the player helpers
-- `dream/Map.cs`: world façade that composes grid storage, generation, and physics registration
+- `dream/Map.cs`: world façade that composes grid storage, generation, physics registration, and accepted-placement reporting through `AddCube(...)`
 - `dream/WorldGrid.cs`: sparse cube cell storage and bounds checks
 - `dream/WorldGenerator.cs`: solid-cube creation and visual asset binding
 - `dream/WorldPhysicsBinder.cs`: Bullet rigid-body registration for floor and cube world pieces
 - `dream/Cube.cs`: cube data model used by the world
-- `dream/PhysicsIntegrator.cs`: Bullet world setup, simulation stepping, body collection ownership, and disposal
+- `dream/PhysicsIntegrator.cs`: Bullet world setup, simulation stepping, explicit player-body registration ownership, body collection ownership, and disposal
 - `dream/PhysicsFactory.cs`: factory for gameplay rigid bodies
 - `dream/PhysicsSyncSystem.cs`: Bullet-to-world transform synchronization for dynamic cubes
 - `dream/Camera.cs`: view direction and mouse-look behavior

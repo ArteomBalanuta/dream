@@ -2,7 +2,19 @@
 
 ## Startup Flow
 
-The application entry point is `Program.Main()`. It creates a `Game` object in a `using` block and calls `Run()`, which hands control to OpenTK's `GameWindow` lifecycle.
+The application entry point is `Program.Main(string[] args)`. It now performs an explicit process-mode selection and argument validation step before startup work begins:
+
+- no mode flag selects the current desktop path
+- `--server` is recognized, but it exits honestly as not implemented in this phase
+- any other startup argument is rejected instead of silently falling through to desktop
+
+Today, the desktop branch still creates a `Game` object and calls `Run()`, which hands control to OpenTK's `GameWindow` lifecycle. This keeps the default local client startup unchanged while giving later phases one obvious seam for host branching.
+
+The next planned follow-on work for this startup seam is captured in:
+
+- Phase 1: `docs/ledger/plans/2026-06-29-phase1-world-session-runtime-extraction.md` extracts `WorldSessionRuntime` so the authoritative runtime stops living directly under the desktop scene
+- Phase 4: `docs/ledger/plans/2026-06-29-phase4-protocol-contract-and-routing.md` defines the protocol seam, message routing, and host/client wiring boundaries that a later server path should plug into
+- Phase 4: `docs/ledger/plans/2026-06-29-phase4-dedicated-server-host-and-transport-poc.md` adds `ServerBootstrap`, `DedicatedServerHost`, and the first headless transport-backed server path once that host work begins
 
 Inside the `Game` constructor:
 
@@ -13,12 +25,13 @@ Inside the `Game` constructor:
 ## Main Object Relationships
 
 - `Game` is the OpenTK window shell and lifecycle owner.
-- `PlayScene` is the active gameplay scene and coordinates per-frame gameplay update/render flow.
+- `PlayScene` is the active gameplay scene and current desktop orchestration root for per-frame update/render flow.
+- `PlayScene` still temporarily constructs and owns authoritative world state access points such as `Player`, `Map`, `PhysicsIntegrator`, and `PhysicsSyncSystem`; the planned `WorldSessionRuntime` extraction is expected to take over that ownership while `PlayScene` stays client-facing.
 - `PlayScene` now owns the local `SceneEventHub` seam that future scene-scoped event publication and subscription lifetime management should flow through, rather than introducing a global engine bus.
 - `GameSettings` now owns both raw tuning values and a small runtime state model (`RuntimeState`) plus targeted change events for HUD-driven configuration updates.
-- `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, player body, and registered map bodies, while helper systems now handle body creation and transform syncing.
+- `PhysicsIntegrator` owns the Bullet collision configuration, dispatcher, broadphase, solver, world, the currently registered player body slot, and registered map bodies, while helper systems now handle body creation, registration, and transform syncing.
 - `Map` remains the world façade, but internally delegates sparse-cell storage to `WorldGrid`, cube authoring to `WorldGenerator`, and Bullet registration to `WorldPhysicsBinder`.
-- `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and placement actions to `PlayerInteraction`.
+- `Player` remains the gameplay façade, but internally delegates input capture to `PlayerController`, movement/body control to `PlayerMotor`, camera synchronization to `PlayerCameraRig`, and request-style placement capture to `PlayerInteraction`.
 - `Render` still owns shared low-level OpenGL state, shader programs, cube geometry buffers, HUD buffers, and ImGui resources, while scene-facing rendering is now exposed through `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer`.
 - `EnemyRegistry` now owns the active enemy collection and scene-local hit resolution for non-player combat actors.
 - `EnemyActor` owns world-space chase behavior and melee state transitions, while `EnemyCombatant` owns health, attack cadence, combat identity, and damage intake for the same actor.
@@ -46,12 +59,16 @@ Inside the `Game` constructor:
 8. Update active enemies, including chase-state transitions and melee damage against the player when gameplay input is live
 9. Use `PhysicsSyncSystem` to copy Bullet transform origins back into dynamic `Cube.Position` values
 
+Those last four steps are the current authoritative runtime seam. The planned `WorldSessionRuntime` should eventually own physics stepping, player/mutation update order, and Bullet-to-world synchronization, while `PlayScene` remains responsible for local input capture, viewmodel presentation, and other client-only reactions.
+
+Phase 0 intentionally leaves some one-player assumptions in place: the desktop path still has one locally composed `Player`, one registered player body, and one scene-owned update order. `WorldSessionRuntime`, transport, a session registry, and any remote-player path do not exist yet.
+
 `Player.Update()` now coordinates smaller subsystems:
 
 - `PlayerController` converts raw keyboard and mouse state into movement and interaction commands
 - `PlayerMotor` owns freeze/jump/move application against the Bullet rigid body and now also owns noclip toggle state plus camera-relative fly movement bypass
 - `PlayerCameraRig` synchronizes camera position from the body and applies mouse-look
-- `PlayerInteraction` handles edge-triggered cube placement
+- `PlayerInteraction` handles edge-triggered build-use capture and returns plain placement requests
 - `Player` itself retains collision reporting and public façade methods used by `PlayScene`
 
 ## Render Loop
@@ -78,6 +95,8 @@ Placed cubes now opt into combat capability through a broader `WorldObjectRegist
 
 Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the scene now publishes world-mutation facts such as `CubePlacedEvent` and `CubeDestroyedEvent` alongside combat facts such as `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
 
+That keeps `PlayScene.Render()` presentation-oriented even though the scene still performs one authoritative consequence today: floor-size rebuild requests currently flow back into scene-owned map rebuild logic. That rebuild path is another future `WorldSessionRuntime` ownership point rather than a place to add more multiplayer-aware logic to `PlayScene`.
+
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
 `Render.DrawCube()` chooses between two rendering paths:
@@ -94,7 +113,9 @@ The HUD path currently includes:
 
 ## Physics Model
 
-`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. It now uses `PhysicsFactory` to create the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled.
+`PhysicsIntegrator` builds a `DiscreteDynamicsWorld` with gravity pointing down the Y axis. `PlayScene` now uses `PhysicsFactory` to create the player rigid body as a `0.5 x 0.5 x 0.5` box shape with CCD settings enabled, then registers that body explicitly with the integrator.
+
+That shift removes the older implicit "construct the local player body inside `PhysicsIntegrator`" assumption. The integrator still owns the registered-body slot and its cleanup rules, but the desktop scene currently remains the composition root that decides which player body gets registered.
 
 `Map` now separates floor visuals from floor physics and data registration concerns:
 
@@ -105,7 +126,7 @@ The HUD path currently includes:
 When the floor size changes at runtime:
 
 - `PhysicsIntegrator.ResetMapBodies()` removes the old map rigid bodies
-- `Game` creates a rebuilt `Map` with the requested square width/depth
+- `PlayScene` currently creates a rebuilt `Map` with the requested square width/depth
 - `Map.CopyPlacedCubesTo()` migrates surviving non-floor cubes into the rebuilt map
 - `Player.SetWorldPosition()` resets the player transform and clears stale velocities after the rebuild
 
