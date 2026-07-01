@@ -168,6 +168,63 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
+    public void StartupSculpture_VisualFillScale_DoesNotInflateCollisionBodies()
+    {
+        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(18.5f, 2f, 16.5f), 8f);
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+        GeometryRenderBlockDescriptor visualBlock = Assert.Single(
+            renderExport.Blocks
+                .Where(block => block.VisualFillScale > 1f)
+                .Take(1));
+
+        GeometryCollisionBodyDescriptor collisionBody = Assert.Single(
+            collisionExport.Bodies,
+            body =>
+                body.Kind == GeometryCollisionBodyKind.Subcell &&
+                body.CellKey == visualBlock.CellKey &&
+                ContainsPoint(body, visualBlock.Center));
+
+        Assert.True(visualBlock.VisualSideLength > visualBlock.SideLength);
+        AssertGridAlignedExtent(collisionBody.HalfExtents.X * 2f, visualBlock.SideLength);
+        AssertGridAlignedExtent(collisionBody.HalfExtents.Y * 2f, visualBlock.SideLength);
+        AssertGridAlignedExtent(collisionBody.HalfExtents.Z * 2f, visualBlock.SideLength);
+    }
+
+    [Fact]
+    public void StartupSculpture_Merges_StaticSubcellCollisionBodies()
+    {
+        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+        int sculptedRenderBlocks = renderExport.Blocks.Count(block => block.CellKey.Y > 0);
+        int sculptedCollisionBodies = collisionExport.Bodies.Count(body =>
+            body.Kind == GeometryCollisionBodyKind.Subcell &&
+            body.CellKey.HasValue &&
+            body.CellKey.Value.Y > 0);
+
+        Assert.True(sculptedRenderBlocks > 20_000);
+        Assert.True(sculptedCollisionBodies < sculptedRenderBlocks);
+        Assert.True(sculptedCollisionBodies < 12_000);
+    }
+
+    private static bool ContainsPoint(GeometryCollisionBodyDescriptor body, Vector3 point)
+    {
+        Vector3 delta = point - body.Center;
+        return MathF.Abs(delta.X) <= body.HalfExtents.X + 0.0001f &&
+            MathF.Abs(delta.Y) <= body.HalfExtents.Y + 0.0001f &&
+            MathF.Abs(delta.Z) <= body.HalfExtents.Z + 0.0001f;
+    }
+
+    private static void AssertGridAlignedExtent(float extent, float sideLength)
+    {
+        float units = extent / sideLength;
+        Assert.Equal(MathF.Round(units), units, precision: 3);
+    }
+
+    [Fact]
     public void FractureCubeIntoPieces_IsDeterministicPerCell()
     {
         Map first = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);

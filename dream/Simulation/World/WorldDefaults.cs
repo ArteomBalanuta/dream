@@ -2,5 +2,5 @@ namespace Dream.Simulation.World;
 
 public static class WorldDefaults
 {
-    public const int StartupFloorSize = 40;
+    public const int StartupFloorSize = 56;
 }

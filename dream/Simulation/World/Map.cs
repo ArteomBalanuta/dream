@@ -9,6 +9,10 @@ namespace Dream.Simulation.World;
 
 public class Map
 {
+    private const int StartupSculptureSubdivisionResolution = WorldMicroGrid.MicroCellsPerWorldCell;
+    private const int StartupSculptureRenderStride = 2;
+    private const float StartupSculptureVisualFillScale = 2.04f;
+
     private readonly IGeometryMutationService _geometryMutations = new GeometryMutationService();
     private readonly WorldGrid _grid;
     private readonly WorldGenerator _generator;
@@ -226,6 +230,12 @@ public class Map
         if (!_geometryCells.TryGetValue(cell, out GeometryCellRecord? existingCell) || cell.Y == 0)
         {
             return false;
+        }
+
+        if (existingCell.SubdivisionState != null && existingCell.FracturePieces == null)
+        {
+            RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
+            return true;
         }
 
         _geometryCells[cell] = _generator.CreateGeometryCell(
@@ -514,7 +524,8 @@ public class Map
                 record,
                 entry.Center,
                 entry.SideLength,
-                entry.SubcellKey))
+                entry.SubcellKey,
+                ResolveSubcellVisualFillScale(record)))
             .ToArray();
     }
 
@@ -558,21 +569,180 @@ public class Map
             ];
         }
 
-        return EnumerateSolidSubcells(record)
-            .Select(entry => new GeometryCollisionBodyDescriptor(
-                GeometryCollisionBodyKind.Subcell,
-                entry.Center,
-                new Vector3(entry.SideLength * 0.5f),
-                isStatic,
-                CellKey: record.Key,
-                SubcellKey: entry.SubcellKey))
-            .ToArray();
+        return BuildMergedSubcellCollisionBodies(record, isStatic);
     }
 
     private static bool ShouldUseCoarseCompatibilityRender(GeometryCellRecord record)
     {
         return record.SubdivisionState == null &&
             record.Definition.ShapeKind == GeometryShapeKind.SolidCube;
+    }
+
+    private static float ResolveSubcellVisualFillScale(GeometryCellRecord record)
+    {
+        return record.SubdivisionState != null &&
+            record.FracturePieces == null &&
+            record.Definition.SubdivisionResolution == StartupSculptureSubdivisionResolution
+                ? StartupSculptureVisualFillScale
+                : 1f;
+    }
+
+    private static IReadOnlyList<GeometryCollisionBodyDescriptor> BuildMergedSubcellCollisionBodies(
+        GeometryCellRecord record,
+        bool isStatic)
+    {
+        int resolution = record.Definition.SubdivisionResolution;
+        bool[,,] visited = new bool[resolution, resolution, resolution];
+        List<GeometryCollisionBodyDescriptor> bodies = [];
+
+        for (int y = 0; y < resolution; y++)
+        {
+            for (int z = 0; z < resolution; z++)
+            {
+                for (int x = 0; x < resolution; x++)
+                {
+                    GeometrySubcellKey start = new(x, y, z);
+                    if (visited[x, y, z] || !record.IsChildSolid(start))
+                    {
+                        continue;
+                    }
+
+                    (int MaxX, int MaxY, int MaxZ) bounds = ResolveMergedSubcellBounds(record, visited, start);
+                    MarkVisited(visited, start, bounds);
+                    bodies.Add(CreateMergedCollisionBody(record, isStatic, start, bounds));
+                }
+            }
+        }
+
+        return bodies;
+    }
+
+    private static (int MaxX, int MaxY, int MaxZ) ResolveMergedSubcellBounds(
+        GeometryCellRecord record,
+        bool[,,] visited,
+        GeometrySubcellKey start)
+    {
+        int resolution = record.Definition.SubdivisionResolution;
+        int maxX = start.X;
+        while (maxX + 1 < resolution && IsMergeCandidate(record, visited, maxX + 1, start.Y, start.Z))
+        {
+            maxX++;
+        }
+
+        int maxZ = start.Z;
+        while (maxZ + 1 < resolution && CanMergePlaneX(record, visited, start.X, maxX, start.Y, maxZ + 1))
+        {
+            maxZ++;
+        }
+
+        int maxY = start.Y;
+        while (maxY + 1 < resolution && CanMergeLayerXZ(record, visited, start.X, maxX, maxY + 1, start.Z, maxZ))
+        {
+            maxY++;
+        }
+
+        return (maxX, maxY, maxZ);
+    }
+
+    private static bool CanMergePlaneX(
+        GeometryCellRecord record,
+        bool[,,] visited,
+        int minX,
+        int maxX,
+        int y,
+        int z)
+    {
+        for (int x = minX; x <= maxX; x++)
+        {
+            if (!IsMergeCandidate(record, visited, x, y, z))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool CanMergeLayerXZ(
+        GeometryCellRecord record,
+        bool[,,] visited,
+        int minX,
+        int maxX,
+        int y,
+        int minZ,
+        int maxZ)
+    {
+        for (int z = minZ; z <= maxZ; z++)
+        {
+            for (int x = minX; x <= maxX; x++)
+            {
+                if (!IsMergeCandidate(record, visited, x, y, z))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsMergeCandidate(
+        GeometryCellRecord record,
+        bool[,,] visited,
+        int x,
+        int y,
+        int z)
+    {
+        return !visited[x, y, z] && record.IsChildSolid(new GeometrySubcellKey(x, y, z));
+    }
+
+    private static void MarkVisited(
+        bool[,,] visited,
+        GeometrySubcellKey start,
+        (int MaxX, int MaxY, int MaxZ) bounds)
+    {
+        for (int y = start.Y; y <= bounds.MaxY; y++)
+        {
+            for (int z = start.Z; z <= bounds.MaxZ; z++)
+            {
+                for (int x = start.X; x <= bounds.MaxX; x++)
+                {
+                    visited[x, y, z] = true;
+                }
+            }
+        }
+    }
+
+    private static GeometryCollisionBodyDescriptor CreateMergedCollisionBody(
+        GeometryCellRecord record,
+        bool isStatic,
+        GeometrySubcellKey start,
+        (int MaxX, int MaxY, int MaxZ) bounds)
+    {
+        float sideLength = 1f / record.Definition.SubdivisionResolution;
+        Vector3 cellOrigin = new(record.Key.X, record.Key.Y, record.Key.Z);
+        Vector3 min = cellOrigin + new Vector3(
+            start.X * sideLength,
+            start.Y * sideLength,
+            start.Z * sideLength);
+        Vector3 max = cellOrigin + new Vector3(
+            (bounds.MaxX + 1) * sideLength,
+            (bounds.MaxY + 1) * sideLength,
+            (bounds.MaxZ + 1) * sideLength);
+        Vector3 size = max - min;
+        GeometrySubcellKey? subcellKey = start.X == bounds.MaxX &&
+            start.Y == bounds.MaxY &&
+            start.Z == bounds.MaxZ
+                ? start
+                : null;
+
+        return new GeometryCollisionBodyDescriptor(
+            GeometryCollisionBodyKind.Subcell,
+            Center: min + (size * 0.5f),
+            HalfExtents: size * 0.5f,
+            isStatic,
+            CellKey: record.Key,
+            SubcellKey: subcellKey);
     }
 
     private IEnumerable<(GeometrySubcellKey SubcellKey, Vector3 Center, float SideLength)> EnumerateSolidSubcells(GeometryCellRecord record)
@@ -588,7 +758,7 @@ public class Map
                 for (int z = 0; z < resolution; z++)
                 {
                     GeometrySubcellKey subcellKey = new(x, y, z);
-                    if (!record.IsChildSolid(subcellKey))
+                    if (!record.IsChildSolid(subcellKey) || !ShouldRenderSubcell(record, subcellKey))
                     {
                         continue;
                     }
@@ -601,5 +771,19 @@ public class Map
                 }
             }
         }
+    }
+
+    private static bool ShouldRenderSubcell(GeometryCellRecord record, GeometrySubcellKey subcellKey)
+    {
+        if (record.SubdivisionState == null ||
+            record.FracturePieces != null ||
+            record.Definition.SubdivisionResolution != StartupSculptureSubdivisionResolution)
+        {
+            return true;
+        }
+
+        return (subcellKey.X % StartupSculptureRenderStride) == 0 &&
+            (subcellKey.Y % StartupSculptureRenderStride) == 0 &&
+            (subcellKey.Z % StartupSculptureRenderStride) == 0;
     }
 }

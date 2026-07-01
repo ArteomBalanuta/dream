@@ -9,11 +9,37 @@ public readonly record struct WorldRenderBatch(
     string ShaderName,
     IReadOnlyList<Cube> Cubes);
 
+public readonly record struct WorldGeometryRenderBatch(
+    AnimatedModel? Animation,
+    string ShaderName,
+    IReadOnlyList<GeometryRenderBlockDescriptor> Blocks);
+
 public static class WorldRenderBatchPlanner
 {
     public static List<WorldRenderBatch> CreateBatches(GeometryRenderExport export)
     {
         return CreateBatches(export.CompatibilityCubes);
+    }
+
+    public static List<WorldGeometryRenderBatch> CreateGeometryBlockBatches(IEnumerable<GeometryRenderBlockDescriptor> blocks)
+    {
+        var grouped = new Dictionary<(AnimatedModel? Animation, string ShaderName), List<GeometryRenderBlockDescriptor>>();
+
+        foreach (GeometryRenderBlockDescriptor block in blocks)
+        {
+            var key = (block.Animation, block.ShaderName);
+            if (!grouped.TryGetValue(key, out List<GeometryRenderBlockDescriptor>? batch))
+            {
+                batch = new List<GeometryRenderBlockDescriptor>();
+                grouped[key] = batch;
+            }
+
+            batch.Add(block);
+        }
+
+        return grouped
+            .Select(pair => new WorldGeometryRenderBatch(pair.Key.Animation, pair.Key.ShaderName, pair.Value))
+            .ToList();
     }
 
     public static List<WorldRenderBatch> CreateBatches(IEnumerable<Cube> cubes)

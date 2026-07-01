@@ -52,6 +52,7 @@ public class WorldRenderer
     {
         DrawWorld(camera, export.CompatibilityCubes);
 
+        List<GeometryRenderBlockDescriptor> visibleBlocks = [];
         foreach (GeometryRenderBlockDescriptor block in export.Blocks)
         {
             if (!WorldVisibility.IsGeometryBlockVisible(camera.Position, camera.Front, block))
@@ -59,7 +60,21 @@ public class WorldRenderer
                 continue;
             }
 
-            _render.DrawGeometryBlock(camera, block);
+            visibleBlocks.Add(block);
+        }
+
+        foreach (WorldGeometryRenderBatch batch in WorldRenderBatchPlanner.CreateGeometryBlockBatches(visibleBlocks))
+        {
+            if (batch.Animation != null)
+            {
+                _render.DrawGeometryBlockBatch(camera, batch.Animation, batch.ShaderName, batch.Blocks);
+                continue;
+            }
+
+            foreach (GeometryRenderBlockDescriptor block in batch.Blocks)
+            {
+                _render.DrawGeometryBlock(camera, block);
+            }
         }
     }
 

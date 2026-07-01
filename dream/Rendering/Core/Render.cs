@@ -421,7 +421,7 @@ public class Render
     public void DrawGeometryBlock(Camera camera, GeometryRenderBlockDescriptor block)
     {
         float assetScale = ResolveCubeAssetScale(block.Animation);
-        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.SideLength, assetScale);
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.VisualSideLength, assetScale);
 
         if (block.Animation != null)
         {
@@ -435,6 +435,35 @@ public class Render
             DrawCubeTransparent(camera, modelMatrix);
             DrawCubeWireframe(camera, modelMatrix);
         }
+    }
+
+    public void DrawGeometryBlockBatch(
+        Camera camera,
+        AnimatedModel animation,
+        string shaderName,
+        IReadOnlyList<GeometryRenderBlockDescriptor> blocks)
+    {
+        if (blocks.Count == 0)
+        {
+            return;
+        }
+
+        Shader shader = GetShader(shaderName);
+        Matrix4 view = camera.GetViewMatrix();
+        Matrix4[] modelMatrices = new Matrix4[blocks.Count];
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            GeometryRenderBlockDescriptor block = blocks[i];
+            float assetScale = ResolveCubeAssetScale(block.Animation);
+            modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(
+                block.Center,
+                block.VisualSideLength,
+                assetScale);
+        }
+
+        animation.BeginRender(shader, view, _projection);
+        animation.RenderPreparedInstanced(shader, modelMatrices);
+        animation.EndRender();
     }
 
 
@@ -1033,15 +1062,16 @@ public class Render
 
         Shader shader = GetShader(shaderName);
         Matrix4 view = camera.GetViewMatrix();
-        animation.BeginRender(shader, view, _projection);
-
-        foreach (Cube cube in cubes)
+        Matrix4[] modelMatrices = new Matrix4[cubes.Count];
+        for (int i = 0; i < cubes.Count; i++)
         {
+            Cube cube = cubes[i];
             float assetScale = ResolveCubeAssetScale(cube.Animation);
-            Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
-            animation.RenderPrepared(shader, modelMatrix);
+            modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
         }
 
+        animation.BeginRender(shader, view, _projection);
+        animation.RenderPreparedInstanced(shader, modelMatrices);
         animation.EndRender();
     }
 

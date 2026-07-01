@@ -207,6 +207,30 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeSubcellStartupShapes()
+    {
+        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
+        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
+
+        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
+
+        GeometryCellRecord pyramidCell = Assert.IsType<GeometryCellRecord>(
+            clientRuntime.Map.TryGetGeometryCellAtCell(18, 1, 16));
+        GeometryRenderExport renderExport = clientRuntime.Map.CaptureGeometryRenderExport(
+            new Vector3(18.5f, 1.5f, 16.5f),
+            radius: 4f);
+
+        Assert.NotNull(pyramidCell.SubdivisionState);
+        Assert.DoesNotContain(
+            renderExport.CompatibilityCubes,
+            cube => cube.Position == new Vector3(18.5f, 1.5f, 16.5f));
+        Assert.Contains(
+            renderExport.Blocks,
+            block => block.CellKey == new GeometryCellKey(18, 1, 16) && block.SideLength < 1f);
+    }
+
+    [Fact]
     public void ClientCorrectionApplier_ApplySnapshotMetadata_UpdatesAuthoritativeInteractionMode()
     {
         FakeReplicatedSessionStateTarget target = new();

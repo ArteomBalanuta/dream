@@ -22,8 +22,8 @@ public class GameSettingsTests
         Assert.Equal(18f, settings.NoclipSpeed);
         Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
         Assert.Equal(FloatingCombatTextTuning.Default, settings.FloatingCombatText);
-        Assert.Equal(40, settings.FloorSize);
-        Assert.Equal(40, settings.PendingFloorSize);
+        Assert.Equal(56, settings.FloorSize);
+        Assert.Equal(56, settings.PendingFloorSize);
         Assert.Equal(60f, settings.ViewModelRig.FieldOfViewDegrees);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.PositionOffset);
         Assert.Equal(Vector3.Zero, settings.ViewModelRig.RotationOffsetDegrees);
@@ -53,7 +53,7 @@ public class GameSettingsTests
 
         settings.StageFloorSize(10);
 
-        Assert.Equal(40, settings.FloorSize);
+        Assert.Equal(56, settings.FloorSize);
         Assert.Equal(10, settings.PendingFloorSize);
     }
 

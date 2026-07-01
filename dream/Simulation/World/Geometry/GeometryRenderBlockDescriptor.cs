@@ -10,4 +10,8 @@ public readonly record struct GeometryRenderBlockDescriptor(
     GeometryMaterialId MaterialId,
     AnimatedModel? Animation,
     string ShaderName,
-    GeometrySubcellKey? SubcellKey = null);
+    GeometrySubcellKey? SubcellKey = null,
+    float VisualFillScale = 1f)
+{
+    public float VisualSideLength => SideLength * VisualFillScale;
+}

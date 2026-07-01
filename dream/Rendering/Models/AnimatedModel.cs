@@ -8,6 +8,7 @@ namespace Dream.Rendering.Models;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -58,6 +59,7 @@ public class AnimatedModel : IDisposable
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
     private readonly Dictionary<string, Animation> _animations = new();
     private readonly List<int> _textures = new();
+    private int _instanceModelBuffer;
     private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
     private string? _idleClipName;
     private SkinningData? _skinning;
@@ -453,6 +455,7 @@ public class AnimatedModel : IDisposable
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", projection);
         shader.SetBool("useSkinning", false);
+        shader.SetBool("useInstancing", false);
     }
 
     public void RenderPrepared(
@@ -483,6 +486,37 @@ public class AnimatedModel : IDisposable
         }
     }
 
+    public void RenderPreparedInstanced(
+        Shader shader,
+        IReadOnlyList<Matrix4> modelMatrices)
+    {
+        if (modelMatrices.Count == 0)
+        {
+            return;
+        }
+
+        Matrix4[] instanceMatrices = new Matrix4[modelMatrices.Count];
+        foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
+        {
+            if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
+            {
+                continue;
+            }
+
+            Matrix4 nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
+            for (int i = 0; i < modelMatrices.Count; i++)
+            {
+                instanceMatrices[i] = AnimatedModelTransformComposer.ComposeInstanceNodeMatrix(
+                    modelMatrices[i],
+                    nodeWorldMatrix);
+            }
+
+            RenderNodeInstanced(primitives, instanceMatrices, shader, nodeWorldMatrix);
+        }
+
+        shader.SetBool("useInstancing", false);
+    }
+
     public void EndRender()
     {
         GL.BindVertexArray(0);
@@ -508,6 +542,63 @@ public class AnimatedModel : IDisposable
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
                 DrawElementsType.UnsignedInt, 0);
+        }
+    }
+
+    private void RenderNodeInstanced(
+        List<MeshBuffers> primitives,
+        IReadOnlyList<Matrix4> modelMatrices,
+        Shader shader,
+        Matrix4 meshWorldMatrix)
+    {
+        foreach (MeshBuffers primitive in primitives)
+        {
+            shader.SetBool("useInstancing", true);
+            shader.SetMatrix4("model", Matrix4.Identity);
+            ApplySkinning(shader, primitive, meshWorldMatrix);
+
+            if (_materials.TryGetValue(primitive.Material, out MaterialData? material))
+            {
+                SetMaterialProperties(shader, material);
+            }
+
+            GL.BindVertexArray(primitive.VAO);
+            UploadInstanceModelMatrices(modelMatrices);
+            GL.DrawElementsInstanced(
+                primitive.PrimitiveType,
+                primitive.IndexCount,
+                DrawElementsType.UnsignedInt,
+                IntPtr.Zero,
+                modelMatrices.Count);
+        }
+    }
+
+    private void UploadInstanceModelMatrices(IReadOnlyList<Matrix4> modelMatrices)
+    {
+        _instanceModelBuffer = _instanceModelBuffer == 0
+            ? GL.GenBuffer()
+            : _instanceModelBuffer;
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _instanceModelBuffer);
+        GL.BufferData(
+            BufferTarget.ArrayBuffer,
+            modelMatrices.Count * Unsafe.SizeOf<Matrix4>(),
+            modelMatrices.ToArray(),
+            BufferUsageHint.DynamicDraw);
+
+        int stride = Unsafe.SizeOf<Matrix4>();
+        for (int column = 0; column < 4; column++)
+        {
+            int attributeLocation = 6 + column;
+            GL.EnableVertexAttribArray(attributeLocation);
+            GL.VertexAttribPointer(
+                attributeLocation,
+                4,
+                VertexAttribPointerType.Float,
+                normalized: false,
+                stride,
+                column * 4 * sizeof(float));
+            GL.VertexAttribDivisor(attributeLocation, 1);
         }
     }
 
@@ -596,6 +687,12 @@ public class AnimatedModel : IDisposable
     public void Dispose()
     {
         foreach (var texture in _textures) GL.DeleteTexture(texture);
+        if (_instanceModelBuffer != 0)
+        {
+            GL.DeleteBuffer(_instanceModelBuffer);
+            _instanceModelBuffer = 0;
+        }
+
         foreach (var mesh in _meshPrimitives.Values.SelectMany(p => p))
         {
             GL.DeleteVertexArray(mesh.VAO);
