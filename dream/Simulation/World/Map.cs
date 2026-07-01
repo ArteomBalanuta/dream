@@ -246,6 +246,46 @@ public class Map
         return true;
     }
 
+    public bool RestoreGeneratedStartupCell(GeometryCellKey cell)
+    {
+        return RestoreGeneratedStartupCells([cell]) == 1;
+    }
+
+    public int RestoreGeneratedStartupCells(IEnumerable<GeometryCellKey> cells)
+    {
+        HashSet<GeometryCellKey> requestedCells = cells
+            .Where(cell => cell.Y > 0 && IsInBounds(new Vector3(cell.X, cell.Y, cell.Z)))
+            .ToHashSet();
+        if (requestedCells.Count == 0)
+        {
+            return 0;
+        }
+
+        int restoredCount = 0;
+        foreach (GeometryCellRecord generatedCell in _generator.CreateStartupGeometry(Width, Height, Depth, _generateStartupTerrain))
+        {
+            if (!requestedCells.Contains(generatedCell.Key))
+            {
+                continue;
+            }
+
+            if (_geometryCells.ContainsKey(generatedCell.Key))
+            {
+                _geometryCells[generatedCell.Key] = generatedCell;
+                RebuildGeometryCellArtifacts(generatedCell.Key, syncPhysics: _physicsBinder != null);
+                restoredCount++;
+                continue;
+            }
+
+            if (TryAddGeometryCell(generatedCell, isStatic: true, withPhysics: _physicsBinder != null) != null)
+            {
+                restoredCount++;
+            }
+        }
+
+        return restoredCount;
+    }
+
     public GeometryChunkSnapshot CaptureGeometryChunkSnapshot()
     {
         return new GeometryChunkSnapshot(_geometryCells.Values.ToArray());

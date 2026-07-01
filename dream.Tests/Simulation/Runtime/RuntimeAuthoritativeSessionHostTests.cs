@@ -27,6 +27,18 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void JoinSession_ExportsAuthoredSubcellStartupCellsSeparatelyFromFracturedCells()
+    {
+        using RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault();
+
+        JoinAcceptedMessage accepted = host.JoinSession("session-a", "Player A");
+
+        WorldSnapshot world = Assert.IsType<WorldSnapshot>(accepted.InitialWorld);
+        Assert.Contains(world.AuthoredSubcellCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(18f, 1f, 16f));
+        Assert.DoesNotContain(world.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(18f, 1f, 16f));
+    }
+
+    [Fact]
     public void JoinSession_InitialWorld_IncludesNearbyStartupTerrainLandmark()
     {
         using RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault();

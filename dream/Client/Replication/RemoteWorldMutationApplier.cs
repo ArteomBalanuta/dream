@@ -24,8 +24,12 @@ public static class RemoteWorldMutationApplier
         HashSet<(int X, int Y, int Z)> desiredFracturedCells = (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
             .Select(ToCellKey)
             .ToHashSet();
+        HashSet<(int X, int Y, int Z)> desiredAuthoredSubcellCells = (snapshot.AuthoredSubcellCells ?? Array.Empty<Vector3>())
+            .Select(ToCellKey)
+            .ToHashSet();
         HashSet<(int X, int Y, int Z)> desiredAllCells = desiredCells
             .Concat(desiredFracturedCells)
+            .Concat(desiredAuthoredSubcellCells)
             .ToHashSet();
 
         List<Cube> cubesToRemove = map.SolidCubes
@@ -56,6 +60,9 @@ public static class RemoteWorldMutationApplier
 
             map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
         }
+
+        map.RestoreGeneratedStartupCells(
+            desiredAuthoredSubcellCells.Select(cell => new GeometryCellKey(cell.X, cell.Y, cell.Z)));
     }
 
     public static void ApplyWorldMutations(Map map, IReadOnlyList<WorldMutationDelta> mutations)

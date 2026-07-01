@@ -222,12 +222,15 @@ public class ClientAuthoritativeStateApplierTests
             radius: 4f);
 
         Assert.NotNull(pyramidCell.SubdivisionState);
+        Assert.Null(pyramidCell.FracturePieces);
         Assert.DoesNotContain(
             renderExport.CompatibilityCubes,
             cube => cube.Position == new Vector3(18.5f, 1.5f, 16.5f));
         Assert.Contains(
             renderExport.Blocks,
-            block => block.CellKey == new GeometryCellKey(18, 1, 16) && block.SideLength < 1f);
+            block => block.CellKey == new GeometryCellKey(18, 1, 16) &&
+                block.SubcellKey.HasValue &&
+                block.SideLength <= WorldMicroGrid.MicroCellSize + 0.0001f);
     }
 
     [Fact]

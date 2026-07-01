@@ -397,6 +397,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     {
         List<Vector3> placedCubeCells = [];
         List<Vector3> fracturedCubeCells = [];
+        List<Vector3> authoredSubcellCells = [];
 
         foreach (GeometryCellRecord cell in Map.GeometryCells.Values)
         {
@@ -410,6 +411,10 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             {
                 placedCubeCells.Add(cellPosition);
             }
+            else if (cell.FracturePieces == null)
+            {
+                authoredSubcellCells.Add(cellPosition);
+            }
             else
             {
                 fracturedCubeCells.Add(cellPosition);
@@ -421,7 +426,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Map.Height,
             Map.Depth,
             placedCubeCells,
-            fracturedCubeCells);
+            fracturedCubeCells,
+            authoredSubcellCells);
     }
 
     public AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message)
