@@ -1,0 +1,3 @@
+players should have names
+stats like str, agility, vitality, energy, movement speed, attack speed
+

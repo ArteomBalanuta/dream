@@ -181,6 +181,32 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeStartupTerrain()
+    {
+        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
+        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
+
+        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
+
+        GeometryCellRecord bridgeCell = Assert.IsType<GeometryCellRecord>(
+            clientRuntime.Map.TryGetGeometryCellAtCell(7, 1, 5));
+        GeometryCellRecord islandSupportCell = Assert.IsType<GeometryCellRecord>(
+            clientRuntime.Map.TryGetGeometryCellAtCell(12, 1, 8));
+        GeometryRenderExport renderExport = clientRuntime.Map.CaptureGeometryRenderExport(
+            new Vector3(8f, 1f, 6f),
+            radius: 8f);
+
+        Assert.Equal(WorldDefaults.StartupFloorSize, clientRuntime.Map.Width);
+        Assert.Equal(WorldDefaults.StartupFloorSize, clientRuntime.Map.Depth);
+        Assert.Equal(GeometryMaterialId.Dirt, bridgeCell.Definition.MaterialId);
+        Assert.Equal(GeometryMaterialId.Stone, islandSupportCell.Definition.MaterialId);
+        Assert.Contains(
+            renderExport.CompatibilityCubes,
+            cube => cube.Position == new Vector3(7.5f, 1.5f, 5.5f));
+    }
+
+    [Fact]
     public void ClientCorrectionApplier_ApplySnapshotMetadata_UpdatesAuthoritativeInteractionMode()
     {
         FakeReplicatedSessionStateTarget target = new();

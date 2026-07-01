@@ -12,6 +12,7 @@ public class Map
     private readonly IGeometryMutationService _geometryMutations = new GeometryMutationService();
     private readonly WorldGrid _grid;
     private readonly WorldGenerator _generator;
+    private readonly bool _generateStartupTerrain;
     private readonly WorldPhysicsBinder? _physicsBinder;
     private readonly PhysicsIntegrator? _physics;
     private readonly List<Cube> _solidCubes = new();
@@ -22,6 +23,7 @@ public class Map
     private readonly HashSet<GeometryCellKey> _pendingRenderDirtyCells = [];
     private readonly HashSet<GeometryCellKey> _pendingCollisionDirtyCells = [];
     private readonly WorldSpatialIndex _placedCubeSpatialIndex = new();
+    private readonly Dictionary<Cube, GeometryCellKey> _cubeCells = new();
 
     public int Width => _grid.Width;
     public int Height => _grid.Height;
@@ -33,6 +35,7 @@ public class Map
     public Map(
         PhysicsIntegrator? physics = null,
         bool loadVisualAssets = true,
+        bool generateStartupTerrain = false,
         int width = 25,
         int height = 8,
         int depth = 25)
@@ -40,29 +43,22 @@ public class Map
         _physics = physics;
         _grid = new WorldGrid(width, height, depth);
         _generator = new WorldGenerator(loadVisualAssets);
+        _generateStartupTerrain = generateStartupTerrain;
         _physicsBinder = _physics != null ? new WorldPhysicsBinder(_physics) : null;
         Initialize();
     }
 
     private void Initialize()
     {
-        for (int x = 0; x < Width; x++)
+        foreach (GeometryCellRecord record in _generator.CreateStartupGeometry(Width, Height, Depth, _generateStartupTerrain))
         {
-            for (int z = 0; z < Depth; z++)
-            {
-                AddCube(new Vector3(x, 0, z), isStatic: true, withPhysics: false);
-            }
+            TryAddGeometryCell(record, isStatic: true, withPhysics: false);
         }
 
         if (_physicsBinder != null)
         {
             foreach (GeometryCollisionBodyDescriptor body in CaptureGeometryCollisionExport().Bodies)
             {
-                if (body.Kind != GeometryCollisionBodyKind.Floor)
-                {
-                    continue;
-                }
-
                 _physicsBinder.AddCollisionBody(body);
             }
         }
@@ -131,17 +127,14 @@ public class Map
 
     public bool RemoveCube(Cube cube)
     {
-        Vector3 cell = ToCellPosition(cube.Position);
-        int x = (int)cell.X;
-        int y = (int)cell.Y;
-        int z = (int)cell.Z;
-
-        if (!IsInBounds(cell) || y == 0 || Cubes[x, y, z] != cube)
+        if (!TryGetCellForCube(cube, out GeometryCellKey key) || key.Y == 0)
         {
             return false;
         }
 
-        GeometryCellKey key = new GeometryCellKey(x, y, z);
+        int x = key.X;
+        int y = key.Y;
+        int z = key.Z;
         _geometryCells.Remove(key);
         _renderBlocksByCell.Remove(key);
         _collisionBodiesByCell.Remove(key);
@@ -150,9 +143,24 @@ public class Map
         _pendingCollisionDirtyCells.Add(key);
         Cubes[x, y, z] = null;
         _solidCubes.Remove(cube);
+        _cubeCells.Remove(cube);
         _placedCubeSpatialIndex.Remove(cube);
         _physicsBinder?.RemoveCellCollisionBodies(key);
         return true;
+    }
+
+    public bool TryGetCellForCube(Cube cube, out GeometryCellKey key)
+    {
+        return _cubeCells.TryGetValue(cube, out key);
+    }
+
+    public void UpdateCubePosition(Cube cube, Vector3 position)
+    {
+        cube.Position = position;
+        if (_cubeCells.TryGetValue(cube, out GeometryCellKey key) && key.Y > 0)
+        {
+            _placedCubeSpatialIndex.UpdatePosition(cube, position);
+        }
     }
 
     public GeometryCellRecord? TryGetGeometryCellAtCell(int x, int y, int z)
@@ -194,8 +202,6 @@ public class Map
             return false;
         }
 
-        IReadOnlySet<GeometrySubcellKey> rubblePieces = CubeFracturePattern.CreateFirstPassRubble(
-            record.Definition.SubdivisionResolution);
         GeometrySubdivisionState subdivision = record.EnsureSubdivisionState();
         int resolution = record.Definition.SubdivisionResolution;
         for (int x = 0; x < resolution; x++)
@@ -205,23 +211,27 @@ public class Map
                 for (int z = 0; z < resolution; z++)
                 {
                     GeometrySubcellKey subcell = new(x, y, z);
-                    subdivision.SetChildSolid(subcell, rubblePieces.Contains(subcell));
+                    subdivision.SetChildSolid(subcell, isSolid: false);
                 }
             }
         }
 
+        record.SetFracturePieces(CubeFracturePattern.CreateFirstPassRubble(cell));
         RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         return true;
     }
 
     public bool RestoreSolidCubeCell(GeometryCellKey cell)
     {
-        if (!_geometryCells.ContainsKey(cell) || cell.Y == 0)
+        if (!_geometryCells.TryGetValue(cell, out GeometryCellRecord? existingCell) || cell.Y == 0)
         {
             return false;
         }
 
-        _geometryCells[cell] = _generator.CreateGeometryCell(new Vector3(cell.X, cell.Y, cell.Z), isFloor: false);
+        _geometryCells[cell] = _generator.CreateGeometryCell(
+            new Vector3(cell.X, cell.Y, cell.Z),
+            isFloor: false,
+            existingCell.Definition.MaterialId);
         RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         return true;
     }
@@ -247,12 +257,8 @@ public class Map
                 continue;
             }
 
-            GeometryCellKey key = new GeometryCellKey(
-                (int)MathF.Floor(cube.Position.X + 1e-6f),
-                (int)MathF.Floor(cube.Position.Y + 1e-6f),
-                (int)MathF.Floor(cube.Position.Z + 1e-6f));
-
-            if (!_geometryCells.TryGetValue(key, out GeometryCellRecord? cell))
+            if (!TryGetCellForCube(cube, out GeometryCellKey key) ||
+                !_geometryCells.TryGetValue(key, out GeometryCellRecord? cell))
             {
                 continue;
             }
@@ -421,6 +427,7 @@ public class Map
         int z = geometryCell.Key.Z;
         Cubes[x, y, z] = cube;
         _geometryCells[geometryCell.Key] = geometryCell;
+        _cubeCells[cube] = geometryCell.Key;
         _solidCubes.Add(cube);
         if (y > 0)
         {
@@ -486,6 +493,16 @@ public class Map
 
     private IReadOnlyList<GeometryRenderBlockDescriptor> BuildRenderBlocks(GeometryCellRecord record)
     {
+        if (record.FracturePieces is { Count: > 0 })
+        {
+            return record.FracturePieces
+                .Select(piece => _generator.CreateRenderBlockDescriptor(
+                    record,
+                    piece.Center,
+                    piece.SideLength))
+                .ToArray();
+        }
+
         if (ShouldUseCoarseCompatibilityRender(record))
         {
             Vector3 center = new(record.Key.X + 0.5f, record.Key.Y + 0.5f, record.Key.Z + 0.5f);
@@ -509,6 +526,18 @@ public class Map
         }
 
         bool isStatic = _staticPhysicsCells.Contains(record.Key);
+        if (record.FracturePieces is { Count: > 0 })
+        {
+            return record.FracturePieces
+                .Select(piece => new GeometryCollisionBodyDescriptor(
+                    GeometryCollisionBodyKind.Subcell,
+                    piece.Center,
+                    new Vector3(piece.SideLength * 0.5f),
+                    IsStatic: true,
+                    CellKey: record.Key))
+                .ToArray();
+        }
+
         if (ShouldUseCoarseCompatibilityRender(record))
         {
             Cube? cube = Cubes[record.Key.X, record.Key.Y, record.Key.Z];

@@ -8,6 +8,7 @@ using Dream.Rendering.Models;
 using Dream.Rendering.ViewModels;
 using Dream.Rendering.World;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -399,7 +400,8 @@ public class Render
 
     public void DrawCube(Camera camera, Cube cube)
     {
-        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side);
+        float assetScale = ResolveCubeAssetScale(cube.Animation);
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
 
         // Use the cube's pre-calculated center position directly
         if (cube.Animation != null)
@@ -418,7 +420,8 @@ public class Render
 
     public void DrawGeometryBlock(Camera camera, GeometryRenderBlockDescriptor block)
     {
-        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.SideLength);
+        float assetScale = ResolveCubeAssetScale(block.Animation);
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.SideLength, assetScale);
 
         if (block.Animation != null)
         {
@@ -525,6 +528,16 @@ public class Render
         }
 
         body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+        if (body.CollisionShape is BulletSharp.BoxShape boxShape)
+        {
+            DrawCollisionShape(
+                CubeTransforms.CreateCollisionDebugModelMatrix(
+                    transform,
+                    boxShape.HalfExtentsWithMargin.ToOpenTK()),
+                camera);
+            return;
+        }
+
         DrawCollisionShape(CubeTransforms.CreateCollisionDebugModelMatrix(transform), camera);
     }
 
@@ -1024,11 +1037,37 @@ public class Render
 
         foreach (Cube cube in cubes)
         {
-            Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side);
+            float assetScale = ResolveCubeAssetScale(cube.Animation);
+            Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
             animation.RenderPrepared(shader, modelMatrix);
         }
 
         animation.EndRender();
+    }
+
+    private static float ResolveCubeAssetScale(AnimatedModel? animation)
+    {
+        if (animation == null)
+        {
+            return 1f;
+        }
+
+        if (ReferenceEquals(animation, ModelAssets.GrassCube))
+        {
+            return GrassCubeAssetDefinition.VisualScale;
+        }
+
+        if (ReferenceEquals(animation, ModelAssets.DirtCube))
+        {
+            return DirtCubeAssetDefinition.VisualScale;
+        }
+
+        if (ReferenceEquals(animation, ModelAssets.StoneCube))
+        {
+            return StoneCubeAssetDefinition.VisualScale;
+        }
+
+        return 1f;
     }
 
 }

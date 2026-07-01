@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.World;
 
@@ -31,5 +32,21 @@ public class MapRenderCandidateTests
         int matchingFloorTiles = candidates.Count(cube => cube.Position == new Vector3(2.5f, 0.5f, 2.5f));
 
         Assert.Equal(1, matchingFloorTiles);
+    }
+
+    [Fact]
+    public void CaptureGeometryRenderExport_Uses_Authoritative_Cell_For_Moved_Placed_Cube()
+    {
+        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
+        Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
+        map.UpdateCubePosition(cube, new Vector3(4.1f, 1.5f, 3.5f));
+
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(4.1f, 1.5f, 3.5f), 8f);
+
+        GeometryRenderCell renderCell = Assert.Single(export.Cells, cell => ReferenceEquals(cell.CompatibilityCube, cube));
+        Assert.Equal(new GeometryCellKey(3, 1, 3), renderCell.Key);
+        Assert.Same(cube, renderCell.CompatibilityCube);
+        Assert.Contains(cube, export.CompatibilityCubes);
     }
 }

@@ -56,7 +56,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         _loadVisualAssets = loadVisualAssets;
         _events = events;
         Physics = new PhysicsIntegrator();
-        Map = new Map(Physics, loadVisualAssets: _loadVisualAssets, width: floorSize, depth: floorSize);
+        Map = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
 
         PhysicsFactory physicsFactory = new();
         var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
@@ -193,7 +193,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             ResolvePlayerEnemySeparation(playerTargets);
         }
 
-        _physicsSync.SyncDynamicMapBodies(Physics.DynamicMapCubeBodies);
+        _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
         return new WorldSessionUpdateResult(primaryUseTriggered, actionResult);
     }
 
@@ -304,7 +304,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         Physics.ResetMapBodies();
 
-        var rebuiltMap = new Map(Physics, loadVisualAssets: _loadVisualAssets, width: floorSize, depth: floorSize);
+        var rebuiltMap = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
         previousMap.CopyPlacedCubesTo(rebuiltMap);
         _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
 
@@ -616,18 +616,20 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         object sourceObject = record.SourceObject;
         if (sourceObject is Cube destroyedCube)
         {
-            GeometryCellKey cell = new(
-                (int)MathF.Floor(destroyedCube.Position.X + 1e-6f),
-                (int)MathF.Floor(destroyedCube.Position.Y + 1e-6f),
-                (int)MathF.Floor(destroyedCube.Position.Z + 1e-6f));
-            if (Map.FractureCubeIntoPieces(cell))
+            if (Map.TryGetCellForCube(destroyedCube, out GeometryCellKey cell) &&
+                Map.FractureCubeIntoPieces(cell))
             {
                 _worldObjects.Unregister(sourceObject);
-                _events.Publish(new CubeFracturedEvent(destroyedCube));
+                _events.Publish(new CubeFracturedEvent(destroyedCube, new Vector3(cell.X, cell.Y, cell.Z)));
             }
             else if (_worldObjects.TryRemove(record))
             {
-                _events.Publish(new CubeDestroyedEvent(destroyedCube));
+                _events.Publish(new CubeDestroyedEvent(
+                    destroyedCube,
+                    new Vector3(
+                        MathF.Floor(destroyedCube.Position.X + 1e-6f),
+                        MathF.Floor(destroyedCube.Position.Y + 1e-6f),
+                        MathF.Floor(destroyedCube.Position.Z + 1e-6f))));
             }
         }
         else
@@ -773,7 +775,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         }
 
         _worldObjects.RegisterCube(placedCube, Map);
-        _events.Publish(new CubePlacedEvent(placedCube));
+        Vector3 placedCell = ToCellPosition(placedCube.Position);
+        _events.Publish(new CubePlacedEvent(placedCube, placedCell));
 
         return new AuthoritativeActionResult(
             message.SessionId.Value,
@@ -782,7 +785,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Accepted: true,
             Payload: new WorldMutationResult(
                 WorldMutationKind.CubePlaced,
-                ToCellPosition(placedCube.Position),
+                placedCell,
                 Applied: true));
     }
 
@@ -818,21 +821,21 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         {
             _pendingWorldMutations.Add(new WorldMutationDelta(
                 WorldMutationKind.CubePlaced,
-                ToCellPosition(evt.Cube.Position)));
+                evt.CellPosition));
         }));
 
         _subscriptions.Add(_events.Subscribe<CubeDestroyedEvent>(evt =>
         {
             _pendingWorldMutations.Add(new WorldMutationDelta(
                 WorldMutationKind.CubeDestroyed,
-                ToCellPosition(evt.Cube.Position)));
+                evt.CellPosition));
         }));
 
         _subscriptions.Add(_events.Subscribe<CubeFracturedEvent>(evt =>
         {
             _pendingWorldMutations.Add(new WorldMutationDelta(
                 WorldMutationKind.CubeFractured,
-                ToCellPosition(evt.Cube.Position)));
+                evt.CellPosition));
         }));
 
         _subscriptions.Add(_events.Subscribe<DamageAppliedEvent>(evt =>

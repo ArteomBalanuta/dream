@@ -1,38 +1,53 @@
+using OpenTK.Mathematics;
+
 namespace Dream.Simulation.World.Geometry;
 
 public static class CubeFracturePattern
 {
-    public static IReadOnlySet<GeometrySubcellKey> CreateFirstPassRubble(int resolution)
+    public static IReadOnlyList<GeometryFracturePiece> CreateFirstPassRubble(GeometryCellKey cell)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolution);
+        Random random = new(CreateSeed(cell));
+        Vector3 cellCenter = new(cell.X + 0.5f, cell.Y + 0.5f, cell.Z + 0.5f);
 
-        int pieceSize = Math.Max(1, resolution / 3);
-        int maxStart = Math.Max(0, resolution - pieceSize);
-
-        HashSet<GeometrySubcellKey> pieces = [];
-        AddPiece(pieces, 0, 0, 0, pieceSize);
-        AddPiece(pieces, maxStart, 0, 0, pieceSize);
-        AddPiece(pieces, 0, 0, maxStart, pieceSize);
-        AddPiece(pieces, maxStart, 0, maxStart, pieceSize);
-        return pieces;
+        return
+        [
+            CreatePiece(cellCenter, random, quadrantX: -1f, quadrantZ: -1f),
+            CreatePiece(cellCenter, random, quadrantX: 1f, quadrantZ: -1f),
+            CreatePiece(cellCenter, random, quadrantX: -1f, quadrantZ: 1f),
+            CreatePiece(cellCenter, random, quadrantX: 1f, quadrantZ: 1f)
+        ];
     }
 
-    private static void AddPiece(
-        HashSet<GeometrySubcellKey> pieces,
-        int startX,
-        int startY,
-        int startZ,
-        int pieceSize)
+    private static GeometryFracturePiece CreatePiece(Vector3 cellCenter, Random random, float quadrantX, float quadrantZ)
     {
-        for (int x = startX; x < startX + pieceSize; x++)
+        float sideLength = Lerp(0.22f, 0.34f, random.NextSingle());
+        float horizontalRadius = Lerp(0.08f, 0.18f, random.NextSingle());
+        float verticalLift = Lerp(0.00f, 0.06f, random.NextSingle());
+        float jitterX = Lerp(-0.03f, 0.03f, random.NextSingle());
+        float jitterZ = Lerp(-0.03f, 0.03f, random.NextSingle());
+
+        Vector3 center = new(
+            cellCenter.X + (quadrantX * horizontalRadius) + jitterX,
+            (cellCenter.Y - 0.5f) + (sideLength * 0.5f) + verticalLift,
+            cellCenter.Z + (quadrantZ * horizontalRadius) + jitterZ);
+
+        return new GeometryFracturePiece(center, sideLength);
+    }
+
+    private static int CreateSeed(GeometryCellKey cell)
+    {
+        unchecked
         {
-            for (int y = startY; y < startY + pieceSize; y++)
-            {
-                for (int z = startZ; z < startZ + pieceSize; z++)
-                {
-                    pieces.Add(new GeometrySubcellKey(x, y, z));
-                }
-            }
+            int hash = 17;
+            hash = (hash * 31) + cell.X;
+            hash = (hash * 31) + cell.Y;
+            hash = (hash * 31) + cell.Z;
+            return hash;
         }
+    }
+
+    private static float Lerp(float min, float max, float alpha)
+    {
+        return min + ((max - min) * alpha);
     }
 }

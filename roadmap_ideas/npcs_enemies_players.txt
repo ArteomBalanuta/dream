@@ -1,0 +1,5 @@
+enemies, players, npcs, items should follow a well design abstractions on the server side! 
+so we can extend items enemies npc etc.
+
+each of them should support stats so we need a server side stats design so each got HP, str, etc. (stats like str, agility, vitality, energy, movement speed, attack speed)
+each of enemies types should have their own model and animations

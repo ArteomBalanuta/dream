@@ -35,6 +35,21 @@ public class MapRemovalTests
     }
 
     [Fact]
+    public void RemoveCube_Removes_Placed_Cube_Even_After_Position_Drift()
+    {
+        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
+        Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
+        cube.Position = new Vector3(4.1f, 1.5f, 3.5f);
+
+        bool removed = map.RemoveCube(cube);
+
+        Assert.True(removed);
+        Assert.Null(map.Cubes[3, 1, 3]);
+        Assert.DoesNotContain(cube, map.SolidCubes);
+    }
+
+    [Fact]
     public void TryGetFirstSolidCubeAlongRay_Ignores_Floor_And_Finds_Placed_Cube()
     {
         Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);

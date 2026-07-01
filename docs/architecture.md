@@ -93,6 +93,8 @@ Current roles:
 
 `Map` still exports compatibility `Cube` instances for rendering, spatial queries, and current non-floor collider realization, but the canonical storage direction has started moving away from direct cube-only ownership.
 
+`WorldGenerator` now also owns deterministic startup-world authorship instead of only single-cell cube defaults. The initial map is seeded as a larger terrain layout with mixed `Grass`, `Dirt`, and `Stone` material zones plus a few low raised landmark mounds, while later player-built cubes still use the simple direct authored-cell path.
+
 `Game.OnUpdateFrame()` now delegates either startup-scene or gameplay-scene work depending on whether the desktop client has connected yet.
 
 When gameplay is active, `PlayScene.Update()` splits client capture from authoritative runtime advancement:

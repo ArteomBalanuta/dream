@@ -15,7 +15,13 @@ public static class ModelAssets
         Get(AssetPaths.Animation("viewmodels/DebugHeldItem.gltf"));
 
     public static AnimatedModel GrassCube =>
-        Get(AssetPaths.Animation("GrassTextureCube.gltf"));
+        Get(GrassCubeAssetDefinition.ModelPath);
+
+    public static AnimatedModel DirtCube =>
+        Get(DirtCubeAssetDefinition.ModelPath);
+
+    public static AnimatedModel StoneCube =>
+        Get(StoneCubeAssetDefinition.ModelPath);
 
     public static AnimatedModel Wolf =>
         Get(WolfAssetDefinition.ModelPath);

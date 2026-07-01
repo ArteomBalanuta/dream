@@ -9,7 +9,7 @@ namespace Dream.Simulation.Physics;
 
 public class PhysicsSyncSystem
 {
-    public void SyncDynamicMapBodies(IEnumerable<RigidBody> dynamicBodies)
+    public void SyncDynamicMapBodies(Map map, IEnumerable<RigidBody> dynamicBodies)
     {
         foreach (RigidBody body in dynamicBodies)
         {
@@ -19,7 +19,7 @@ public class PhysicsSyncSystem
             }
 
             body.MotionState.GetWorldTransform(out Matrix transform);
-            cube.Position = transform.Origin.ToOpenTK();
+            map.UpdateCubePosition(cube, transform.Origin.ToOpenTK());
         }
     }
 }

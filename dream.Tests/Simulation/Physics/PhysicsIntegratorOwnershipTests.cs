@@ -122,6 +122,20 @@ public class PhysicsIntegratorOwnershipTests
             body => body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, TkVector3>);
     }
 
+    [Fact]
+    public void Fractured_Cell_Physics_Bodies_AreStaticSoRenderAndCollisionCannotDrift()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+
+        map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
+
+        Assert.DoesNotContain(
+            physics.DynamicMapCubeBodies,
+            body => body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, TkVector3>);
+    }
+
     private static PhysicsIntegrator CreateHarness(
         Action<RigidBody> addRigidBodyToWorld,
         Action<RigidBody> removeRigidBodyFromWorld,

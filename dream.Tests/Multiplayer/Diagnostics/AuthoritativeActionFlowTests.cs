@@ -406,6 +406,42 @@ public class AuthoritativeActionFlowTests
         Assert.DoesNotContain(snapshot.PlacedCubeCells, cell => cell == new Vector3(6f, 1f, 5f));
     }
 
+    [Fact]
+    public void ProcessAuthoritativeAction_FatalMovedCubeHit_FracturesOriginalAuthoritativeCell()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            27,
+            new BuildUseIntent(new Vector3(6f, 1f, 5f))));
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            28,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(50, 5f, 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.Cubes[6, 1, 5]);
+        runtime.Map.UpdateCubePosition(cube, new Vector3(7.2f, 1.5f, 5.5f));
+
+        Vector3 lookDirection = (cube.Position - runtime.Player.Camera.Position).Normalized();
+        runtime.Player.SetFacing(lookDirection);
+
+        AuthoritativeActionResult result = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            29,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+        ServerSnapshotEnvelope envelope = runtime.ExportServerSnapshotEnvelope();
+        WorldSnapshot snapshot = runtime.ExportWorldSnapshot();
+
+        Assert.True(result.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.True(resolution.TargetDied);
+        Assert.Contains(envelope.WorldMutations, mutation =>
+            mutation.Kind == WorldMutationKind.CubeFractured &&
+            mutation.CellPosition == new Vector3(6f, 1f, 5f));
+        Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(6f, 1f, 5f));
+    }
+
     private static WorldSessionRuntime CreateRuntime()
     {
         return new WorldSessionRuntime(

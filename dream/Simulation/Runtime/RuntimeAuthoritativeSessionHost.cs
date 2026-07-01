@@ -105,7 +105,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     {
         SceneEventHub events = new();
         WorldSessionRuntime runtime = new(
-            floorSize: 10,
+            floorSize: WorldDefaults.StartupFloorSize,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             events,
             loadVisualAssets: false);

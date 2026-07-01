@@ -41,4 +41,17 @@ public class MapSpatialQueryTests
         Assert.Contains(nearby, cube => cube.Position == new Vector3(8.5f, 0.5f, 8.5f));
         Assert.Contains(nearby, cube => cube.Position == new Vector3(24.5f, 0.5f, 24.5f));
     }
+
+    [Fact]
+    public void GetNearbySolidCubes_Finds_Moved_Placed_Cube_After_Sector_Crossing()
+    {
+        var map = new Map(physics: null, loadVisualAssets: false, width: 100, depth: 100);
+        map.AddCube(new Vector3(15f, 1f, 15f), withPhysics: false);
+        Cube cube = Assert.IsType<Cube>(map.Cubes[15, 1, 15]);
+        map.UpdateCubePosition(cube, new Vector3(40.5f, 1.5f, 40.5f));
+
+        List<Cube> nearby = map.GetNearbySolidCubes(new Vector3(40.5f, 1.5f, 40.5f), 5f).ToList();
+
+        Assert.Contains(cube, nearby);
+    }
 }

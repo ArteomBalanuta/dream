@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
+using Dream.Simulation.World;
 
 namespace Dream.Application;
 
@@ -33,9 +34,9 @@ public class GameSettings
 
     public ViewModelRigSettings ViewModelRig { get; private set; }
 
-    public int FloorSize { get; private set; } = 25;
+    public int FloorSize { get; private set; } = WorldDefaults.StartupFloorSize;
 
-    public int PendingFloorSize { get; private set; } = 25;
+    public int PendingFloorSize { get; private set; } = WorldDefaults.StartupFloorSize;
 
     public bool ShowCollisionGeometry { get; private set; }
 

@@ -3,16 +3,44 @@ using Xunit;
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Application;
 using Dream.Server;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.Runtime;
 
 
 public class RuntimeAuthoritativeSessionHostTests
 {
+    [Fact]
+    public void CreateDefault_UsesConfiguredStartupWorldSize()
+    {
+        GameSettings settings = new(new Vector2i(1440, 1024));
+
+        using RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault();
+
+        Assert.Equal(settings.FloorSize, host.Runtime.Map.Width);
+        Assert.Equal(settings.FloorSize, host.Runtime.Map.Depth);
+    }
+
+    [Fact]
+    public void JoinSession_InitialWorld_IncludesNearbyStartupTerrainLandmark()
+    {
+        using RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault();
+
+        JoinAcceptedMessage accepted = host.JoinSession("session-a", "Player A");
+
+        Assert.NotNull(accepted.InitialWorld);
+        WorldSnapshot world = accepted.InitialWorld.Value;
+        Assert.Contains(new Vector3(7f, 1f, 5f), world.PlacedCubeCells);
+        Assert.Contains(new Vector3(12f, 1f, 8f), world.PlacedCubeCells);
+        Assert.Equal(GeometryMaterialId.Dirt, host.Runtime.Map.TryGetGeometryCellAtCell(7, 1, 5)?.Definition.MaterialId);
+        Assert.Equal(GeometryMaterialId.Stone, host.Runtime.Map.TryGetGeometryCellAtCell(12, 1, 8)?.Definition.MaterialId);
+    }
+
     [Fact]
     public void JoinSession_StoresRequestedDisplayName_OnConnectedPlayer()
     {

@@ -8,6 +8,7 @@ public class WorldSpatialIndex
 {
     private const int SectorSize = 16;
     private readonly Dictionary<(int X, int Z), List<Cube>> _sectors = new();
+    private readonly Dictionary<Cube, (int X, int Z)> _cubeSectors = new();
 
     public void Add(Cube cube)
     {
@@ -19,23 +20,66 @@ public class WorldSpatialIndex
         }
 
         cubes.Add(cube);
+        _cubeSectors[cube] = (x, z);
     }
 
     public bool Remove(Cube cube)
     {
-        (int x, int z) = GetSectorKey(cube.Position);
-        if (!_sectors.TryGetValue((x, z), out List<Cube>? cubes))
+        if (!_cubeSectors.TryGetValue(cube, out (int X, int Z) sector))
         {
+            return false;
+        }
+
+        if (!_sectors.TryGetValue(sector, out List<Cube>? cubes))
+        {
+            _cubeSectors.Remove(cube);
             return false;
         }
 
         bool removed = cubes.Remove(cube);
         if (removed && cubes.Count == 0)
         {
-            _sectors.Remove((x, z));
+            _sectors.Remove(sector);
+        }
+
+        if (removed)
+        {
+            _cubeSectors.Remove(cube);
         }
 
         return removed;
+    }
+
+    public void UpdatePosition(Cube cube, Vector3 position)
+    {
+        (int X, int Z) newSector = GetSectorKey(position);
+        if (_cubeSectors.TryGetValue(cube, out (int X, int Z) previousSector) && previousSector != newSector)
+        {
+            if (_sectors.TryGetValue(previousSector, out List<Cube>? previousCubes))
+            {
+                previousCubes.Remove(cube);
+                if (previousCubes.Count == 0)
+                {
+                    _sectors.Remove(previousSector);
+                }
+            }
+        }
+
+        if (!_cubeSectors.TryGetValue(cube, out previousSector) || previousSector != newSector)
+        {
+            if (!_sectors.TryGetValue(newSector, out List<Cube>? currentCubes))
+            {
+                currentCubes = new List<Cube>();
+                _sectors[newSector] = currentCubes;
+            }
+
+            if (!currentCubes.Contains(cube))
+            {
+                currentCubes.Add(cube);
+            }
+        }
+
+        _cubeSectors[cube] = newSector;
     }
 
     public IEnumerable<Cube> GetNearby(Vector3 position, float radius)

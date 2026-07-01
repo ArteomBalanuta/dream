@@ -279,6 +279,14 @@ The current renderer still consumes compatibility `Cube` exports from `Map`, now
 The current physics path is now one step further along too: `Map.CaptureGeometryCollisionExport()` still describes one merged floor collider plus coarse intact-cell bodies, but subdivided cells now emit geometry-native child-box bodies and `WorldPhysicsBinder` replaces only the touched cell's collider set. The render path mirrors that shape: subdivided cells now emit geometry-native render blocks while intact solid cells may still use the coarse compatibility-cube path.
 The first live fracture preset now uses that same export path. When a destructible placed cube dies in combat, the authoritative map replaces the coarse cell with a deterministic four-piece rubble pattern grounded in the cell corners. Remote snapshots and incremental world mutations now preserve that fractured state instead of collapsing it back into a full cube for connected clients or late joiners.
 
+The startup world now uses three textured cube variants for intact geometry cells:
+
+- `GrassTextureCube.gltf` for meadow cells
+- `DirtTextureCube.gltf`, which reuses the cube mesh layout with `library/polyhaven/park_dirt/park_dirt.diffuse.jpg`
+- `StoneTextureCube.gltf`, which reuses the cube mesh layout with `library/polyhaven/ground_grey/ground_grey.diffuse.jpg`
+
+`WorldGenerator` selects between those materials deterministically for the initial world layout, and the renderer resolves the matching cube asset through `GeometryMaterialId` without changing the current cube-compatible world draw path.
+
 ## World Asset Normalization
 
 Imported world assets do not always arrive in gameplay-ready scale. The current project now handles that through explicit normalization metadata instead of through arbitrary render-only scale tweaking.

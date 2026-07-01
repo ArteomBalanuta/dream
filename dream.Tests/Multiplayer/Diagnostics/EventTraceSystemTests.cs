@@ -45,7 +45,7 @@ public class EventTraceSystemTests
         EventTraceSystem trace = new(hub);
         Cube cube = new(isEmpty: false, isSolid: true) { Position = new OpenTK.Mathematics.Vector3(2.5f, 1.5f, 3.5f) };
 
-        hub.Publish(new CubePlacedEvent(cube));
+        hub.Publish(new CubePlacedEvent(cube, new OpenTK.Mathematics.Vector3(2f, 1f, 3f)));
 
         Assert.Contains(nameof(CubePlacedEvent), trace.Entries);
     }
@@ -57,7 +57,7 @@ public class EventTraceSystemTests
         EventTraceSystem trace = new(hub);
         Cube cube = new(isEmpty: false, isSolid: true) { Position = new OpenTK.Mathematics.Vector3(4.5f, 1.5f, 6.5f) };
 
-        hub.Publish(new CubeDestroyedEvent(cube));
+        hub.Publish(new CubeDestroyedEvent(cube, new OpenTK.Mathematics.Vector3(4f, 1f, 6f)));
 
         Assert.Contains(nameof(CubeDestroyedEvent), trace.Entries);
     }
