@@ -22,6 +22,20 @@ Inside the `Game` constructor:
 - a startup connection scene is created next and becomes the primary desktop entry path
 - `PlayScene` is created only after a successful client connection
 
+## Namespace And Source Boundaries
+
+Production code uses the `Dream` root namespace with folder-matched file-scoped namespaces. The current migration keeps one executable project first, while making ownership readable from source paths:
+
+- `Dream.Application.*` owns process startup, window shell, settings, and app-level runtime state.
+- `Dream.Client.*` owns desktop startup, input, presentation, replication intake, gameplay scene composition, and remote client networking.
+- `Dream.Server.*` owns headless server bootstrap and the dedicated host/service loop.
+- `Dream.Multiplayer.*` owns shared protocol, transport, session, and diagnostics seams.
+- `Dream.Simulation.*` owns authoritative world, player, enemy, combat, physics, and runtime state.
+- `Dream.Rendering.*` owns OpenGL, model loading, world/actor/HUD/viewmodel rendering, and visual asset definitions.
+- `Dream.Assets.*`, `Dream.Configuration.*`, and `Dream.Utilities.*` hold narrow cross-cutting helpers.
+
+Dependency-direction tests keep server sources from referencing client/rendering namespaces and keep protocol sources free from presentation/rendering dependencies. A future multi-project split should happen only after these folder and namespace boundaries stay stable.
+
 ## Main Object Relationships
 
 - `Game` is the OpenTK window shell and lifecycle owner.

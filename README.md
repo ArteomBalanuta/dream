@@ -70,6 +70,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 
 ## Runtime Notes
 
+- Source code now uses the `Dream` root namespace and folder-matched namespaces for application, client, server, multiplayer, simulation, rendering, assets, configuration, and utilities. The project remains one executable `.csproj` while these boundaries settle.
 - `Game` now acts as the OpenTK window shell, while `PlayScene` owns the desktop client path and composes the extracted authoritative runtime.
 - `Game` now starts on a dedicated startup connection scene, auto-starts an integrated loopback server in desktop mode, and only constructs `PlayScene` after a successful multiplayer connection.
 - `Program` now validates startup arguments explicitly, defaults to the desktop path, and routes `--server` into `ServerBootstrap` instead of silently falling through.
