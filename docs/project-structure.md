@@ -73,6 +73,8 @@
 - `dream/RemoteEnemyStateApplier.cs`: authoritative enemy snapshot application seam for remote client mode
 - `dream/ClientScenePresenter.cs`, `dream/RemotePlayerPresentationState.cs`: client-owned remote-player presentation seam and interpolated render-state contract
 - `dream/RemotePlayerSnapshotSample.cs`, `dream/RemotePlayerInterpolationBuffer.cs`, `dream/InterpolatedActorPose.cs`: remote-player interpolation primitives for client-side rendering
+- `dream/CameraViewMode.cs`, `dream/ThirdPersonCameraRig.cs`: client-local first-person / third-person camera presentation mode and follow-camera math
+- `dream/LocalPlayerPresentationState.cs`, `dream/LocalPlayerRenderer.cs`: world-space local player model rendering used when third-person view is enabled
 - `dream/RemotePlayerRenderer.cs`: dedicated world-space renderer for remote players, kept separate from cube geometry and first-person presentation paths
 - `dream/DedicatedServerHost.cs`: headless protocol/server composition root for multiplayer host work
 - `dream/DedicatedServerService.cs`: long-running dedicated-server process loop that accepts clients, advances ticks, and broadcasts snapshots
@@ -146,6 +148,7 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 - `Grass_bottom.jpg`
 - `grass_block_side_texture.png`
 - `me.png`
+- `players/`: Kenney blocky player model, texture dependency, and copied CC0 license for remote-player rendering
 
 ### `dream/fonts/`
 

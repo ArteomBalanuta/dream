@@ -19,6 +19,8 @@ public class GameSettings
 
     public float NoclipSpeed { get; set; } = 18f;
 
+    public CameraViewMode CameraViewMode { get; private set; } = CameraViewMode.FirstPerson;
+
     public float JumpVelocity { get; set; } = 5f;
 
     public FloatingCombatTextTuning FloatingCombatText { get; private set; } = FloatingCombatTextTuning.Default;
@@ -54,6 +56,7 @@ public class GameSettings
             FieldOfViewDegrees = clientConfig.FieldOfViewDegrees;
             MouseSensitivity = clientConfig.MouseSensitivity;
             NoclipSpeed = clientConfig.NoclipSpeed;
+            CameraViewMode = clientConfig.CameraViewMode;
             FloatingCombatText = clientConfig.FloatingCombatText;
         }
 
@@ -89,6 +92,18 @@ public class GameSettings
     {
         ShowCollisionGeometry = showCollisionGeometry;
         CollisionDebugVisibilityChanged?.Invoke(new CollisionDebugVisibilityChangedEvent(ShowCollisionGeometry));
+    }
+
+    public void SetCameraViewMode(CameraViewMode cameraViewMode)
+    {
+        CameraViewMode = cameraViewMode;
+    }
+
+    public void ToggleCameraViewMode()
+    {
+        CameraViewMode = CameraViewMode == CameraViewMode.FirstPerson
+            ? CameraViewMode.ThirdPerson
+            : CameraViewMode.FirstPerson;
     }
 
     public void ApplyFloatingCombatTextTuning(FloatingCombatTextTuning tuning)

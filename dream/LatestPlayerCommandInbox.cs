@@ -42,7 +42,8 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
             ToggleNoclipPressed: existing.MoveIntent.ToggleNoclipPressed || incoming.MoveIntent.ToggleNoclipPressed);
         PlayerLookIntent lookIntent = new(
             existing.LookIntent.YawDelta + incoming.LookIntent.YawDelta,
-            existing.LookIntent.PitchDelta + incoming.LookIntent.PitchDelta);
+            existing.LookIntent.PitchDelta + incoming.LookIntent.PitchDelta,
+            incoming.LookIntent.Facing ?? existing.LookIntent.Facing);
 
         return new PlayerCommandFrame(
             incoming.SessionId,

@@ -23,6 +23,9 @@ Current expected result:
 
 - build succeeds
 - warnings are still present
+- Windows builds emit `dream\bin\Debug\net10.0\dream.exe` as the runnable desktop executable
+
+The SDK build summary may still mention `dream.dll`; that DLL is the managed assembly behind the executable app host.
 
 ## Run
 
@@ -51,6 +54,7 @@ On startup, the game currently:
 - `W`, `A`, `S`, `D`: move
 - Mouse movement: look around
 - `Space`: jump
+- `C`: toggle first-person / third-person camera
 - Left mouse button: place a cube
 - `F`: toggle frozen movement
 - `Esc`: open or close the settings menu
@@ -189,7 +193,7 @@ If the app starts but movement or camera feel off:
 2. Adjust `Field of View` or `Mouse Sensitivity`
 3. If needed, change the resolution preset and re-test movement feel
 
-The current player camera uses a configurable eye-height offset and a viewport-aware projection matrix. At runtime, the in-app controls exposed through the settings menu are `Field of View`, `Mouse Sensitivity`, and the resolution presets.
+The current player camera uses a configurable eye-height offset and a viewport-aware projection matrix. At runtime, the in-app controls exposed through the settings menu are `Field of View`, `Mouse Sensitivity`, `Third Person View`, and the resolution presets.
 The same menu now also exposes `Floor Size` with an explicit apply action, rebuilding the map without discarding cubes that still fit.
 The HUD crosshair now follows the live viewport as well, so future HUD placement changes should be driven from viewport-derived layout values rather than hardcoded viewport pixel coordinates.
 

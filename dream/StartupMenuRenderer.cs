@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 
 public sealed class StartupMenuRenderer : IDisposable
 {
+    private readonly ImGuiTextInputQueue _textInputQueue = new();
     private IntPtr _imGuiContext;
     private int _fontTexture;
     private Shader _shaderObj;
@@ -28,10 +29,16 @@ public sealed class StartupMenuRenderer : IDisposable
         _currentSize = size;
     }
 
+    public void QueueTextInput(uint unicode)
+    {
+        _textInputQueue.Enqueue(unicode);
+    }
+
     public ConnectionUiRequest DrawFrame(
         FrameEventArgs args,
         bool windowFocused,
         MouseState mouseState,
+        KeyboardState keyboardState,
         string host,
         string portText,
         string playerName,
@@ -39,7 +46,7 @@ public sealed class StartupMenuRenderer : IDisposable
         string connectionStatus,
         bool isBusy)
     {
-        BeginFrame(args, windowFocused, mouseState);
+        BeginFrame(args, windowFocused, mouseState, keyboardState);
 
         string hostBuffer = host;
         string portBuffer = portText;
@@ -149,8 +156,13 @@ public sealed class StartupMenuRenderer : IDisposable
         _indexBuffer = GL.GenBuffer();
     }
 
-    private void BeginFrame(FrameEventArgs args, bool windowFocused, MouseState mouseState)
+    private void BeginFrame(
+        FrameEventArgs args,
+        bool windowFocused,
+        MouseState mouseState,
+        KeyboardState keyboardState)
     {
+        ImGui.SetCurrentContext(_imGuiContext);
         var io = ImGui.GetIO();
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
@@ -159,6 +171,11 @@ public sealed class StartupMenuRenderer : IDisposable
         io.MousePos = new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y);
         io.MouseDown[0] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
         io.MouseDown[1] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
+        ApplyKeyboardState(io, keyboardState);
+        foreach (uint unicode in _textInputQueue.Drain())
+        {
+            io.AddInputCharacter(unicode);
+        }
 
         if (windowFocused && !_wasFocused)
         {
@@ -167,6 +184,31 @@ public sealed class StartupMenuRenderer : IDisposable
 
         _wasFocused = windowFocused;
         ImGui.NewFrame();
+    }
+
+    private static void ApplyKeyboardState(ImGuiIOPtr io, KeyboardState keyboardState)
+    {
+        io.KeyCtrl = keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl);
+        io.KeyShift = keyboardState.IsKeyDown(Keys.LeftShift) || keyboardState.IsKeyDown(Keys.RightShift);
+        io.KeyAlt = keyboardState.IsKeyDown(Keys.LeftAlt) || keyboardState.IsKeyDown(Keys.RightAlt);
+        io.KeySuper = keyboardState.IsKeyDown(Keys.LeftSuper) || keyboardState.IsKeyDown(Keys.RightSuper);
+
+        AddKey(io, ImGuiKey.Backspace, keyboardState.IsKeyDown(Keys.Backspace));
+        AddKey(io, ImGuiKey.Delete, keyboardState.IsKeyDown(Keys.Delete));
+        AddKey(io, ImGuiKey.LeftArrow, keyboardState.IsKeyDown(Keys.Left));
+        AddKey(io, ImGuiKey.RightArrow, keyboardState.IsKeyDown(Keys.Right));
+        AddKey(io, ImGuiKey.UpArrow, keyboardState.IsKeyDown(Keys.Up));
+        AddKey(io, ImGuiKey.DownArrow, keyboardState.IsKeyDown(Keys.Down));
+        AddKey(io, ImGuiKey.Home, keyboardState.IsKeyDown(Keys.Home));
+        AddKey(io, ImGuiKey.End, keyboardState.IsKeyDown(Keys.End));
+        AddKey(io, ImGuiKey.Enter, keyboardState.IsKeyDown(Keys.Enter));
+        AddKey(io, ImGuiKey.Tab, keyboardState.IsKeyDown(Keys.Tab));
+        AddKey(io, ImGuiKey.Escape, keyboardState.IsKeyDown(Keys.Escape));
+    }
+
+    private static void AddKey(ImGuiIOPtr io, ImGuiKey key, bool isDown)
+    {
+        io.AddKeyEvent(key, isDown);
     }
 
     private void RenderImGuiDrawData(ImDrawDataPtr drawData)

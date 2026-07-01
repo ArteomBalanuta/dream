@@ -1,6 +1,6 @@
 public sealed class ClientScenePresenter
 {
-    private readonly string? _localSessionId;
+    private string? _localSessionId;
     private readonly Dictionary<int, RemotePlayerEntry> _remotePlayers = [];
     private readonly Dictionary<string, PlayerRosterEntry> _playerRoster = new(StringComparer.Ordinal);
 
@@ -37,6 +37,9 @@ public sealed class ClientScenePresenter
             entry.CurrentHealth = actor.CurrentHealth;
             entry.MaxHealth = actor.MaxHealth;
             entry.IsAlive = actor.IsAlive;
+            entry.IsMoving = entry.LastSnapshotPosition.HasValue &&
+                (actor.Position - entry.LastSnapshotPosition.Value).LengthSquared > 0.0001f;
+            entry.LastSnapshotPosition = actor.Position;
             entry.Buffer.AddSample(new RemotePlayerSnapshotSample(
                 actor.ActorId,
                 actor.SessionId,
@@ -70,6 +73,11 @@ public sealed class ClientScenePresenter
 
     public void ApplyJoinAccepted(JoinAcceptedMessage joinAccepted)
     {
+        if (!string.IsNullOrWhiteSpace(joinAccepted.SessionId))
+        {
+            _localSessionId = joinAccepted.SessionId;
+        }
+
         foreach (PlayerRosterEntry entry in joinAccepted.EffectiveRoster)
         {
             string displayName = string.IsNullOrWhiteSpace(entry.DisplayName)
@@ -105,7 +113,8 @@ public sealed class ClientScenePresenter
                 pose,
                 entry.CurrentHealth,
                 entry.MaxHealth,
-                entry.IsAlive));
+                entry.IsAlive,
+                entry.IsMoving));
         }
 
         return states;
@@ -136,5 +145,9 @@ public sealed class ClientScenePresenter
         public int MaxHealth { get; set; }
 
         public bool IsAlive { get; set; }
+
+        public bool IsMoving { get; set; }
+
+        public OpenTK.Mathematics.Vector3? LastSnapshotPosition { get; set; }
     }
 }

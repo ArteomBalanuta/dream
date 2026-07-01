@@ -4,7 +4,7 @@ using Xunit;
 public class RemotePlayerRendererTests
 {
     [Fact]
-    public void CreateModelMatrix_CentersRemotePlayerCubeAtInterpolatedPose()
+    public void CreateRemoteRenderState_GroundsPlayerModelAtInterpolatedPose()
     {
         RemotePlayerPresentationState remotePlayer = new(
             7,
@@ -15,10 +15,10 @@ public class RemotePlayerRendererTests
             100,
             true);
 
-        Matrix4 model = RemotePlayerRenderer.CreateModelMatrix(remotePlayer);
+        Matrix4 model = PlayerRenderState.CreateRemote(remotePlayer).ModelMatrix;
 
         Assert.Equal(4f, model.M41, 4);
-        Assert.Equal(2f, model.M42, 4);
+        Assert.Equal(1.5f, model.M42, 4);
         Assert.Equal(8f, model.M43, 4);
     }
 

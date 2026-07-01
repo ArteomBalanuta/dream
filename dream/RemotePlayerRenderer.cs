@@ -2,21 +2,30 @@ using OpenTK.Mathematics;
 
 public sealed class RemotePlayerRenderer
 {
-    private static readonly Vector3 RemotePlayerColor = new(0.2f, 0.85f, 0.35f);
-    private const float RemotePlayerCubeSide = 0.9f;
-
     private readonly Render _render;
+    private readonly Dictionary<int, AnimatedModel> _playerModels = [];
+    private readonly PlayerAnimationClipTracker _clipTracker = new();
 
     public RemotePlayerRenderer(Render render)
     {
         _render = render;
     }
 
-    public void Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    public void Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
     {
+        PruneModelEntries(remotePlayers);
+
         foreach (RemotePlayerPresentationState remotePlayer in SelectVisiblePlayers(camera, remotePlayers))
         {
-            _render.DrawSolidCube(camera, CreateModelMatrix(remotePlayer), RemotePlayerColor);
+            PlayerRenderState renderState = PlayerRenderState.CreateRemote(remotePlayer);
+            AnimatedModel model = GetOrCreateModel(remotePlayer.ActorId);
+            _clipTracker.TryApplyClip(remotePlayer.ActorId, renderState.ClipName, model.PlayLoop);
+            model.Update(deltaTime);
+
+            Shader shader = _render.GetShader(renderState.ShaderName);
+            model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
+            model.RenderPrepared(shader, renderState.ModelMatrix, renderState.NodeOverrides);
+            model.EndRender();
         }
     }
 
@@ -48,9 +57,34 @@ public sealed class RemotePlayerRenderer
         return visible;
     }
 
-    public static Matrix4 CreateModelMatrix(RemotePlayerPresentationState remotePlayer)
+    private AnimatedModel GetOrCreateModel(int actorId)
     {
-        return Matrix4.CreateScale(RemotePlayerCubeSide) *
-            Matrix4.CreateTranslation(remotePlayer.Pose.Position);
+        if (_playerModels.TryGetValue(actorId, out AnimatedModel? model))
+        {
+            return model;
+        }
+
+        AnimatedModel created = ModelAssets.CreatePlayerInstance();
+        _playerModels[actorId] = created;
+        return created;
+    }
+
+    private void PruneModelEntries(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    {
+        HashSet<int> activeActorIds = remotePlayers
+            .Select(player => player.ActorId)
+            .ToHashSet();
+        _clipTracker.RemoveExcept(activeActorIds);
+
+        foreach (int actorId in _playerModels.Keys.ToArray())
+        {
+            if (activeActorIds.Contains(actorId))
+            {
+                continue;
+            }
+
+            _playerModels[actorId].Dispose();
+            _playerModels.Remove(actorId);
+        }
     }
 }

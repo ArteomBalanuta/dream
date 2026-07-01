@@ -449,7 +449,10 @@ public class AnimatedModel : IDisposable
         shader.SetBool("useSkinning", false);
     }
 
-    public void RenderPrepared(Shader shader, Matrix4 modelMatrix)
+    public void RenderPrepared(
+        Shader shader,
+        Matrix4 modelMatrix,
+        IReadOnlyDictionary<string, Matrix4>? nodeOverrides = null)
     {
         foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
         {
@@ -457,6 +460,13 @@ public class AnimatedModel : IDisposable
                 continue;
 
             var nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
+            if (!string.IsNullOrWhiteSpace(node.Name) &&
+                nodeOverrides != null &&
+                nodeOverrides.TryGetValue(node.Name, out Matrix4 nodeOverride))
+            {
+                nodeWorldMatrix = nodeOverride * nodeWorldMatrix;
+            }
+
             var combinedMatrix = AnimatedModelTransformComposer.ComposeInstanceNodeMatrix(modelMatrix, nodeWorldMatrix);
             /*
             Console.WriteLine($"Rendering node '{node.Name}'");

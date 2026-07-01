@@ -29,6 +29,8 @@ dotnet build dream\dream.csproj
 dotnet run --project dream\dream.csproj
 ```
 
+On Windows, `dotnet build` emits the runnable desktop executable at `dream\bin\Debug\net10.0\dream.exe`. The SDK build summary may still mention `dream.dll` because that is the managed assembly behind the executable app host.
+
 The project currently builds successfully with warnings. The remaining package warning comes from `BulletSharp`, which is intentionally still in use and restores as an older .NET Framework-oriented package.
 
 Startup now performs explicit mode selection. Running with no extra arguments starts the desktop client path, while `dotnet run --project dream\dream.csproj -- --server` now starts the first long-running TCP dedicated-server loop and keeps listening until interrupted.
@@ -42,6 +44,7 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `W`, `A`, `S`, `D`: move the player
 - Mouse movement: look around
 - `Space`: jump
+- `C`: toggle first-person / third-person camera
 - `1`: select building mode
 - `2`: select combat mode
 - Left mouse button: perform the active mode's primary action
@@ -55,6 +58,7 @@ The in-game settings panel currently supports:
 
 - field-of-view adjustment
 - mouse sensitivity adjustment
+- first-person / third-person camera toggle
 - noclip/fly-speed adjustment
 - runtime `Strength`, `Attack Speed`, and `Vitality` tuning
 - runtime floating damage text size, speed, and crit-depth tuning

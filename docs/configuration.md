@@ -8,6 +8,8 @@ The project file `dream/dream.csproj` currently targets:
 
 Other enabled project settings include:
 
+- `OutputType` set to `Exe`
+- `UseAppHost` enabled so Windows builds emit `dream.exe`
 - `ImplicitUsings` enabled
 - `Nullable` enabled
 - `AllowUnsafeBlocks` enabled
@@ -78,6 +80,7 @@ Runtime-adjustable window and camera settings are now grouped in `GameSettings.c
 
 - field of view
 - mouse sensitivity
+- camera view mode
 - eye-height offset
 - move speed
 - jump velocity
@@ -155,10 +158,12 @@ Current behavior:
 
 - if the file is missing, the game recreates it from built-in defaults
 - startup `Host`, `Port`, and `Player Name` fields are seeded from the file when environment overrides are absent
-- `Field Of View`, `Mouse Sensitivity`, `Fly Speed`, player `Strength`, `Attack Speed`, `Vitality`, and floating damage text tuning are seeded from the file
+- `Field Of View`, `Mouse Sensitivity`, `Camera View`, `Fly Speed`, player `Strength`, `Attack Speed`, `Vitality`, and floating damage text tuning are seeded from the file
 - edits to those startup/menu values now persist back into the file automatically
 - invalid numeric values are clamped per field instead of breaking startup
 - unknown keys are ignored
+
+The `camera_view` key currently accepts `first_person` or `third_person`.
 
 ## Project Content Layout
 

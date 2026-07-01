@@ -64,9 +64,16 @@ public sealed class RemoteSessionPlayerState
 
         _camera.Position = Position + new Vector3(0f, tuning.EyeHeightOffset, 0f);
         _camera.MouseSensitivity = tuning.MouseSensitivity;
-        _camera.Update(deltaTime, new Vector2(
-            commandFrame.LookIntent.YawDelta,
-            commandFrame.LookIntent.PitchDelta));
+        if (commandFrame.LookIntent.Facing.HasValue)
+        {
+            _camera.SetFacing(commandFrame.LookIntent.Facing.Value);
+        }
+        else
+        {
+            _camera.Update(deltaTime, new Vector2(
+                commandFrame.LookIntent.YawDelta,
+                commandFrame.LookIntent.PitchDelta));
+        }
 
         Vector3 movementDirection = PlayerController.CreateMovementCommand(
             _camera.Front,

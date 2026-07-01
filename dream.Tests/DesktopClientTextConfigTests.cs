@@ -19,6 +19,7 @@ public class DesktopClientTextConfigTests
         Assert.Equal(70f, settings.FieldOfViewDegrees);
         Assert.Equal(2.5f, settings.MouseSensitivity);
         Assert.Equal(18f, settings.NoclipSpeed);
+        Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
         Assert.Equal(10, settings.Strength);
         Assert.Equal(2f, settings.AttackSpeed);
         Assert.Equal(10, settings.Vitality);
@@ -37,6 +38,7 @@ public class DesktopClientTextConfigTests
             "player_name= ranger ",
             "field_of_view=82",
             "mouse_sensitivity=3.25",
+            "camera_view=third_person",
             "noclip_speed=44",
             "strength=99",
             "attack_speed=0.1",
@@ -53,6 +55,7 @@ public class DesktopClientTextConfigTests
         Assert.Equal("ranger", settings.PlayerName);
         Assert.Equal(82f, settings.FieldOfViewDegrees);
         Assert.Equal(3.25f, settings.MouseSensitivity);
+        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
         Assert.Equal(44f, settings.NoclipSpeed);
         Assert.Equal(PlayerCombatStats.MaxStrength, settings.Strength);
         Assert.Equal(PlayerCombatStats.MinAttackSpeed, settings.AttackSpeed);
@@ -69,6 +72,7 @@ public class DesktopClientTextConfigTests
         {
             FieldOfViewDegrees = 88f,
             MouseSensitivity = 4.25f,
+            CameraViewMode = CameraViewMode.ThirdPerson,
             NoclipSpeed = 33f,
             FloatingCombatText = new FloatingCombatTextTuning(2.4f, 0.65f, 4.75f)
         };
@@ -76,6 +80,7 @@ public class DesktopClientTextConfigTests
 
         Assert.Equal(88f, settings.FieldOfViewDegrees);
         Assert.Equal(4.25f, settings.MouseSensitivity);
+        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
         Assert.Equal(33f, settings.NoclipSpeed);
         Assert.Equal(new FloatingCombatTextTuning(2.4f, 0.65f, 4.75f), settings.FloatingCombatText);
     }

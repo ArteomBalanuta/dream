@@ -98,7 +98,7 @@ public class Game : GameWindow
         base.OnRenderFrame(args);
         if (_playScene == null)
         {
-            _startupScene!.Render(args, IsFocused, MouseState);
+            _startupScene!.Render(args, IsFocused, MouseState, KeyboardState);
         }
         else
         {
@@ -116,6 +116,12 @@ public class Game : GameWindow
         Vector2i size = new(e.Width, e.Height);
         _startupScene?.Resize(size);
         _playScene?.Resize(size);
+    }
+
+    protected override void OnTextInput(TextInputEventArgs e)
+    {
+        base.OnTextInput(e);
+        _startupScene?.QueueTextInput((uint)e.Unicode);
     }
 
     protected override void OnUnload()

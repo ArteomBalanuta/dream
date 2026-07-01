@@ -34,6 +34,31 @@ public class ProtocolFoundationTests
     }
 
     [Fact]
+    public void TransportJsonCodec_RoundTrips_PlayerCommandMessage_WithClientFacing()
+    {
+        TransportJsonCodec codec = new();
+        PlayerCommandMessage message = new(
+            new PlayerCommandFrame(
+                new PlayerSessionId("session-a"),
+                43,
+                PlayerModeSwitchIntent.None,
+                new PlayerMoveIntent(1f, 0f),
+                new PlayerLookIntent(0f, 0f, Facing: Vector3.UnitX),
+                PrimaryUsePressed: false));
+        TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 100);
+
+        byte[] payload = codec.Encode(envelope, message);
+        DecodedProtocolMessage decoded = codec.Decode(payload);
+
+        PlayerCommandMessage roundTripped = Assert.IsType<PlayerCommandMessage>(decoded.Message);
+        Assert.Equal(0f, roundTripped.CommandFrame.LookIntent.YawDelta);
+        Assert.Equal(0f, roundTripped.CommandFrame.LookIntent.PitchDelta);
+        Assert.NotNull(roundTripped.CommandFrame.LookIntent.Facing);
+        Assert.Equal(1f, roundTripped.CommandFrame.LookIntent.Facing.Value.X, 3);
+        Assert.Equal(0f, roundTripped.CommandFrame.LookIntent.Facing.Value.Z, 3);
+    }
+
+    [Fact]
     public void TransportJsonCodec_RoundTrips_PlayerActionMessage_WithTypedPayload()
     {
         TransportJsonCodec codec = new();

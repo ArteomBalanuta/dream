@@ -3,6 +3,7 @@ using OpenTK.Mathematics;
 public readonly record struct HudInteractionRequest(
     float? FieldOfViewDegrees,
     float? MouseSensitivity,
+    CameraViewMode? CameraViewMode,
     float? NoclipSpeed,
     Vector2i? RequestedResolution,
     int? StagedFloorSize,
@@ -14,6 +15,7 @@ public readonly record struct HudInteractionRequest(
     FloatingCombatTextTuning? FloatingCombatText)
 {
     public static HudInteractionRequest None => new(
+        null,
         null,
         null,
         null,

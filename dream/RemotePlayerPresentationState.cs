@@ -5,4 +5,5 @@ public readonly record struct RemotePlayerPresentationState(
     InterpolatedActorPose Pose,
     int CurrentHealth,
     int MaxHealth,
-    bool IsAlive);
+    bool IsAlive,
+    bool IsMoving = false);

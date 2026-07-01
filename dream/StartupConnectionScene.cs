@@ -42,7 +42,11 @@ public sealed class StartupConnectionScene : IDisposable
         TryApplyLocalDefaults();
     }
 
-    public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState)
+    public void Render(
+        FrameEventArgs args,
+        bool windowFocused,
+        MouseState mouseState,
+        KeyboardState keyboardState)
     {
         string previousHost = _host;
         string previousPort = _portText;
@@ -55,6 +59,7 @@ public sealed class StartupConnectionScene : IDisposable
             args,
             windowFocused,
             mouseState,
+            keyboardState,
             _host,
             _portText,
             _playerName,
@@ -91,6 +96,11 @@ public sealed class StartupConnectionScene : IDisposable
     public bool TryTakeConnectedSession(out RemoteClientSession? session)
     {
         return _coordinator.TryTakeConnectedSession(out session);
+    }
+
+    public void QueueTextInput(uint unicode)
+    {
+        _renderer.QueueTextInput(unicode);
     }
 
     public void Dispose()

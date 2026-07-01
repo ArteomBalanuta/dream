@@ -17,9 +17,11 @@ The current frame order is:
 
 1. world cubes
 2. world-space animated enemies
-3. collision/debug overlays
-4. first-person viewmodels
-5. HUD and ImGui
+3. local player model when third-person view is enabled
+4. world-space remote player models
+5. collision/debug overlays
+6. first-person viewmodels when first-person view is enabled
+7. HUD and ImGui
 
 That ordering keeps enemy actors in the same depth-tested world layer as cubes, keeps the hands and held item visually above the world, and still lets the HUD render last.
 
@@ -80,6 +82,27 @@ For each active enemy actor, the renderer currently:
 The animated-model path now composes the scene instance transform with the glTF node world transform in the correct order for this renderer. That matters for authored assets such as the wolf, whose mesh node carries its own non-identity local scale.
 
 This is intentionally the first dedicated world-actor render seam so future creatures do not have to masquerade as cubes just to appear in the scene.
+
+## Remote Player Rendering Path
+
+Remote player actors render through `RemotePlayerRenderer` rather than the cube/world renderer. The renderer consumes `RemotePlayerPresentationState`, builds a `PlayerRenderState`, and draws the Kenney blocky character model through the shared animated-model path.
+
+The first imported player asset is `dream/animations/players/kenney-blocky-character-a.glb`, sourced from Kenney Blocky Characters 2.0 under CC0. The GLB references `players/Textures/texture-a.png`, and the copied license is stored beside the asset as `players/LICENSE-Kenney-Blocky-Characters.txt`.
+
+The current player model contract uses:
+
+- `idle` for stationary remote actors
+- `walk` for actors whose authoritative snapshot position changed
+- `head` as the named node reserved for head/look overrides
+- a body-center-to-foot visual offset so the blocky model is grounded on the player collision body's bottom plane rather than floating at body-center height
+
+For this first pass, replicated facing rotates the body/root model matrix. A head-node override seam is already present in `AnimatedModel.RenderPrepared(...)`, but because the protocol currently carries one look direction rather than separate body and head aim, the default head override remains identity to avoid double-rotating the head. Future aim/pitch replication can apply its local transform through that same node override map.
+
+## Local Third-Person Rendering Path
+
+The local client can now switch between first-person and third-person presentation through `GameSettings.CameraViewMode`. The settings menu exposes a `Third Person View` checkbox, and gameplay input also supports `C` as a quick toggle.
+
+Third person is client presentation only. Movement, combat, collision, and replicated facing continue to use the same local player camera/facing state, while `ThirdPersonCameraRig` derives a follow camera behind and above the player for rendering. When third person is active, `LocalPlayerRenderer` draws the same Kenney blocky player model in world space and the first-person viewmodel pass is skipped. When first person is active, the original first-person viewmodel pass remains the visible local-player presentation.
 
 ## First-Person Viewmodels
 
@@ -218,6 +241,7 @@ The repository currently includes:
 - World and HUD shaders under `dream/shaders/`
 - A cube model and related textures under `dream/animations/`
 - An animated wolf asset under `dream/animations/enemies/wolf.glb`
+- A Kenney blocky player model under `dream/animations/players/`
 - First-person hands and held-item blockout assets under `dream/animations/viewmodels/`
 - A font file under `dream/fonts/`
 

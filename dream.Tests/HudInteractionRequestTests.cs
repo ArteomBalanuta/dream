@@ -10,6 +10,7 @@ public class HudInteractionRequestTests
 
         Assert.Null(request.FieldOfViewDegrees);
         Assert.Null(request.MouseSensitivity);
+        Assert.Null(request.CameraViewMode);
         Assert.Null(request.NoclipSpeed);
         Assert.Null(request.RequestedResolution);
         Assert.Null(request.StagedFloorSize);
@@ -27,6 +28,7 @@ public class HudInteractionRequestTests
         HudInteractionRequest request = new(
             FieldOfViewDegrees: 80f,
             MouseSensitivity: 4.5f,
+            CameraViewMode: CameraViewMode.ThirdPerson,
             NoclipSpeed: 18f,
             RequestedResolution: new Vector2i(1600, 900),
             StagedFloorSize: 20,
@@ -39,6 +41,7 @@ public class HudInteractionRequestTests
 
         Assert.Equal(80f, request.FieldOfViewDegrees);
         Assert.Equal(4.5f, request.MouseSensitivity);
+        Assert.Equal(CameraViewMode.ThirdPerson, request.CameraViewMode);
         Assert.Equal(18f, request.NoclipSpeed);
         Assert.Equal(new Vector2i(1600, 900), request.RequestedResolution);
         Assert.Equal(20, request.StagedFloorSize);
@@ -56,6 +59,7 @@ public class HudInteractionRequestTests
         HudInteractionRequest request = new(
             FieldOfViewDegrees: 80f,
             MouseSensitivity: 4.5f,
+            CameraViewMode: CameraViewMode.ThirdPerson,
             NoclipSpeed: 18f,
             RequestedResolution: new Vector2i(1600, 900),
             StagedFloorSize: 20,

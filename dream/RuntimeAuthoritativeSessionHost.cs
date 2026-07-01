@@ -83,8 +83,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
     private PlayerSessionId ResolveTickControlledSessionId()
     {
-        ConnectedPlayer? remotePlayer = Runtime.Sessions.Players.FirstOrDefault(player => !player.IsLocal);
-        return remotePlayer?.SessionId ?? Runtime.LocalPlayerSessionId;
+        return Runtime.PrimaryRemoteSessionId ?? Runtime.LocalPlayerSessionId;
     }
 
     private IReadOnlyList<PlayerRosterEntry> BuildJoinedPlayerRoster()

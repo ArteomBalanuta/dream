@@ -13,6 +13,7 @@ public class GameSettingsTests
         Assert.False(settings.SettingsVisible);
         Assert.Equal(70f, settings.FieldOfViewDegrees);
         Assert.Equal(18f, settings.NoclipSpeed);
+        Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
         Assert.Equal(FloatingCombatTextTuning.Default, settings.FloatingCombatText);
         Assert.Equal(25, settings.FloorSize);
         Assert.Equal(25, settings.PendingFloorSize);
@@ -198,6 +199,33 @@ public class GameSettingsTests
         Assert.Equal(3.5f, settings.MouseSensitivity);
         Assert.Equal(28f, settings.NoclipSpeed);
         Assert.Equal(new FloatingCombatTextTuning(2.3f, 0.7f, 4.5f), settings.FloatingCombatText);
+    }
+
+    [Fact]
+    public void ToggleCameraViewMode_Switches_Between_First_And_Third_Person()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.ToggleCameraViewMode();
+
+        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
+
+        settings.ToggleCameraViewMode();
+
+        Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
+    }
+
+    [Fact]
+    public void Constructor_Uses_Injected_Camera_View_Mode()
+    {
+        DesktopClientConfig config = new()
+        {
+            CameraViewMode = CameraViewMode.ThirdPerson
+        };
+
+        GameSettings settings = new(new Vector2i(1440, 1024), ViewModelRigSettings.CreateDefault(), config);
+
+        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
     }
 
     [Fact]

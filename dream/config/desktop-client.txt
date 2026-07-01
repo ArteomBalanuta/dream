@@ -4,6 +4,7 @@ port=5057
 player_name=dream-client
 field_of_view=70
 mouse_sensitivity=2.5
+camera_view=first_person
 noclip_speed=18
 strength=10
 attack_speed=2

@@ -76,6 +76,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public PlayerSessionId LocalPlayerSessionId { get; }
 
+    public PlayerSessionId? PrimaryRemoteSessionId { get; private set; }
+
     public PlayerSessionRegistry Sessions => _sessions;
 
     public ulong CurrentServerTick { get; private set; }
@@ -85,16 +87,23 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
             existing.UpdateDisplayName(displayName);
+            if (!existing.IsLocal && PrimaryRemoteSessionId == null && existing.ActorId == Player.Combatant.Actor.Id)
+            {
+                PrimaryRemoteSessionId = existing.SessionId;
+            }
+
             return existing;
         }
 
         if (!HasPrimaryRemoteSession())
         {
-            return _sessions.Register(
+            ConnectedPlayer primary = _sessions.Register(
                 sessionId,
                 Player.Combatant.Actor.Id,
                 isLocal: false,
                 displayName: displayName);
+            PrimaryRemoteSessionId = primary.SessionId;
+            return primary;
         }
 
         int actorId = AllocateRemoteActorId();
@@ -131,6 +140,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
         ApplyInteractionModeSelection(interaction);
+        ApplyCommandFacing(commandFrame);
         PlayerSimulationInput playerInput = CreatePlayerSimulationInput(commandFrame);
         AuthoritativeActionResult? actionResult = null;
 
@@ -208,9 +218,14 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public WorldSessionPresentationState CapturePresentationState(
         float maxRenderDistance,
-        float presentationLeadSeconds = 0f)
+        float presentationLeadSeconds = 0f,
+        CameraViewMode cameraViewMode = CameraViewMode.FirstPerson)
     {
-        Camera presentationCamera = Player.CreatePresentationCamera(presentationLeadSeconds);
+        Camera firstPersonCamera = Player.CreatePresentationCamera(presentationLeadSeconds);
+        Camera presentationCamera = ThirdPersonCameraRig.Resolve(
+            firstPersonCamera,
+            Player.GetWorldPosition(),
+            cameraViewMode);
         return WorldSessionPresentationState.Create(
             presentationCamera,
             Map.GetRenderCandidateCubes(presentationCamera.Position, maxRenderDistance),
@@ -627,6 +642,14 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             AllowLook: true);
     }
 
+    private void ApplyCommandFacing(PlayerCommandFrame commandFrame)
+    {
+        if (commandFrame.LookIntent.Facing.HasValue)
+        {
+            Player.SetFacing(commandFrame.LookIntent.Facing.Value);
+        }
+    }
+
     private PlayerActionMessage? TryCreatePrimaryUseActionMessage(PlayerCommandFrame commandFrame)
     {
         return _interactionMode switch
@@ -750,15 +773,24 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     private PlayerSessionId ResolvePrimaryControlledSessionId()
     {
-        ConnectedPlayer? remotePlayer = _sessions.Players.FirstOrDefault(player => !player.IsLocal);
-        return remotePlayer?.SessionId ?? LocalPlayerSessionId;
+        if (PrimaryRemoteSessionId.HasValue &&
+            _sessions.TryGet(PrimaryRemoteSessionId.Value, out ConnectedPlayer? primary) &&
+            primary != null &&
+            !primary.IsLocal)
+        {
+            return primary.SessionId;
+        }
+
+        return LocalPlayerSessionId;
     }
 
     private bool HasPrimaryRemoteSession()
     {
-        return _sessions.Players.Any(player =>
-            !player.IsLocal &&
-            player.ActorId == Player.Combatant.Actor.Id);
+        return PrimaryRemoteSessionId.HasValue &&
+            _sessions.TryGet(PrimaryRemoteSessionId.Value, out ConnectedPlayer? primary) &&
+            primary != null &&
+            !primary.IsLocal &&
+            primary.ActorId == Player.Combatant.Actor.Id;
     }
 
     private bool IsPrimaryControlledSession(PlayerSessionId sessionId)

@@ -61,6 +61,7 @@ public static class DesktopClientTextConfig
             $"player_name={config.PlayerName}",
             $"field_of_view={Format(config.FieldOfViewDegrees)}",
             $"mouse_sensitivity={Format(config.MouseSensitivity)}",
+            $"camera_view={SerializeCameraViewMode(config.CameraViewMode)}",
             $"noclip_speed={Format(config.NoclipSpeed)}",
             $"strength={config.Strength}",
             $"attack_speed={Format(config.AttackSpeed)}",
@@ -92,6 +93,12 @@ public static class DesktopClientTextConfig
                 config.Port = port;
             }
 
+            return;
+        }
+
+        if (key == "camera_view")
+        {
+            config.CameraViewMode = ParseCameraViewMode(value);
             return;
         }
 
@@ -143,5 +150,19 @@ public static class DesktopClientTextConfig
                 config.FloatingCombatText = config.FloatingCombatText with { CriticalDepthMultiplier = parsed };
                 break;
         }
+    }
+
+    private static CameraViewMode ParseCameraViewMode(string value)
+    {
+        return value.Trim().Replace("-", "_", StringComparison.OrdinalIgnoreCase).ToLowerInvariant() switch
+        {
+            "third_person" or "thirdperson" or "3rd_person" or "3rd" => CameraViewMode.ThirdPerson,
+            _ => CameraViewMode.FirstPerson
+        };
+    }
+
+    private static string SerializeCameraViewMode(CameraViewMode mode)
+    {
+        return mode == CameraViewMode.ThirdPerson ? "third_person" : "first_person";
     }
 }

@@ -12,6 +12,8 @@ public sealed class DesktopClientConfig
 
     public float NoclipSpeed { get; set; } = 18f;
 
+    public CameraViewMode CameraViewMode { get; set; } = CameraViewMode.FirstPerson;
+
     public int Strength { get; set; } = 10;
 
     public float AttackSpeed { get; set; } = 2f;
@@ -54,6 +56,7 @@ public sealed class DesktopClientConfig
         FieldOfViewDegrees = settings.FieldOfViewDegrees;
         MouseSensitivity = settings.MouseSensitivity;
         NoclipSpeed = settings.NoclipSpeed;
+        CameraViewMode = settings.CameraViewMode;
         FloatingCombatText = settings.FloatingCombatText;
         Strength = stats.Strength;
         AttackSpeed = stats.AttackSpeed;
@@ -69,6 +72,11 @@ public sealed class DesktopClientConfig
         FieldOfViewDegrees = Math.Clamp(FieldOfViewDegrees, 50f, 100f);
         MouseSensitivity = Math.Clamp(MouseSensitivity, 0.5f, 8f);
         NoclipSpeed = Math.Clamp(NoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed);
+        if (!Enum.IsDefined(CameraViewMode))
+        {
+            CameraViewMode = CameraViewMode.FirstPerson;
+        }
+
         Strength = Math.Clamp(Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
         AttackSpeed = Math.Clamp(AttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed);
         Vitality = Math.Clamp(Vitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality);

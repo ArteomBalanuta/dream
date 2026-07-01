@@ -70,6 +70,7 @@ public class Render
     private Vector2i _crosshairViewportSize;
     private readonly WorldRenderer _worldRenderer;
     private readonly EnemyRenderer _enemyRenderer;
+    private readonly LocalPlayerRenderer _localPlayerRenderer;
     private readonly RemotePlayerRenderer _remotePlayerRenderer;
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
@@ -305,6 +306,7 @@ public class Render
     {
         _worldRenderer = new WorldRenderer(this);
         _enemyRenderer = new EnemyRenderer(this);
+        _localPlayerRenderer = new LocalPlayerRenderer(this);
         _remotePlayerRenderer = new RemotePlayerRenderer(this);
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
@@ -343,6 +345,8 @@ public class Render
     public HudRenderer Hud => _hudRenderer;
 
     public ViewModelRenderer ViewModels => _viewModelRenderer;
+
+    public LocalPlayerRenderer LocalPlayers => _localPlayerRenderer;
 
     public RemotePlayerRenderer RemotePlayers => _remotePlayerRenderer;
 
@@ -683,6 +687,7 @@ public class Render
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
+        CameraViewMode? cameraViewMode = null;
         float? noclipSpeed = null;
         Vector2i? requestedResolution = null;
         int? stagedFloorSize = null;
@@ -748,6 +753,14 @@ public class Render
             if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
             {
                 mouseSensitivity = sensitivity;
+            }
+
+            bool thirdPersonEnabled = settings.CameraViewMode == CameraViewMode.ThirdPerson;
+            if (ImGui.Checkbox("Third Person View", ref thirdPersonEnabled))
+            {
+                cameraViewMode = thirdPersonEnabled
+                    ? CameraViewMode.ThirdPerson
+                    : CameraViewMode.FirstPerson;
             }
 
             float currentNoclipSpeed = settings.NoclipSpeed;
@@ -848,6 +861,7 @@ public class Render
         return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
+            cameraViewMode,
             noclipSpeed,
             requestedResolution,
             stagedFloorSize,

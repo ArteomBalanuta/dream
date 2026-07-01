@@ -25,6 +25,7 @@ public class PlayScene : IDisposable
     private readonly ClientProtocolSession _clientProtocol;
     private readonly ClientScenePresenter _scenePresenter;
     private readonly RemoteClientSession? _remoteClient;
+    private readonly GameplayInputResumeFilter _gameplayInputResumeFilter = new();
     private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
     private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
 
@@ -37,6 +38,8 @@ public class PlayScene : IDisposable
     private ulong _nextLocalActionSequence = 1;
     private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
+    private bool _wasCameraViewTogglePressed;
+    private bool _localPlayerWasMoving;
     private double _clientPresentationTimeSeconds;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
@@ -94,7 +97,9 @@ public class PlayScene : IDisposable
             keyboardState,
             mouseState,
             allowGameplayInput);
+        rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
+        _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _localSimulationCommandInbox.Enqueue(commandFrame);
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
         SendRemoteCommandFrameIfConnected(commandFrame);
@@ -145,7 +150,8 @@ public class PlayScene : IDisposable
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
             WorldVisibility.MaxRenderDistance,
-            (float)_tickRunner.RemainingSeconds);
+            (float)_tickRunner.RemainingSeconds,
+            _settings.CameraViewMode);
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
 
@@ -155,9 +161,21 @@ public class PlayScene : IDisposable
             presentation.ActiveEnemies,
             (float)args.Time,
             _settings.ShowCollisionGeometry);
+        if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
+        {
+            _render.LocalPlayers.Draw(
+                new LocalPlayerPresentationState(
+                    _runtime.Player.GetWorldPosition(),
+                    _runtime.Player.Camera.Front,
+                    _localPlayerWasMoving),
+                presentation.Camera,
+                (float)args.Time);
+        }
+
         _render.RemotePlayers.Draw(
             presentation.Camera,
-            remotePlayerStates);
+            remotePlayerStates,
+            (float)args.Time);
 
         if (_settings.ShowCollisionGeometry)
         {
@@ -168,7 +186,11 @@ public class PlayScene : IDisposable
             }
         }
 
-        _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+        if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
+        {
+            _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+        }
+
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -310,6 +332,17 @@ public class PlayScene : IDisposable
         }
 
         _wasSettingsTogglePressed = settingsTogglePressed;
+
+        bool cameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
+        if (cameraViewTogglePressed &&
+            !_wasCameraViewTogglePressed &&
+            _settings.CurrentRuntimeState.AllowGameplayInput)
+        {
+            _settings.ToggleCameraViewMode();
+            PersistDesktopClientConfig();
+        }
+
+        _wasCameraViewTogglePressed = cameraViewTogglePressed;
     }
 
     private void DrainRemoteTransportMessages()
@@ -332,13 +365,10 @@ public class PlayScene : IDisposable
             return;
         }
 
-        PlayerCommandFrame remoteCommandFrame = new(
+        PlayerCommandFrame remoteCommandFrame = RemotePlayerCommandRelay.CreateRelayCommand(
+            localCommandFrame,
             new PlayerSessionId(_remoteClient.SessionId),
-            localCommandFrame.Sequence,
-            localCommandFrame.RequestedMode,
-            localCommandFrame.MoveIntent,
-            localCommandFrame.LookIntent,
-            localCommandFrame.PrimaryUsePressed);
+            _runtime.Player.Camera.Front);
         _remoteClient.SendCommandFrameAsync(remoteCommandFrame).AsTask().GetAwaiter().GetResult();
     }
 
@@ -403,6 +433,12 @@ public class PlayScene : IDisposable
         if (request.NoclipSpeed.HasValue)
         {
             _settings.NoclipSpeed = request.NoclipSpeed.Value;
+            persistDesktopConfig = true;
+        }
+
+        if (request.CameraViewMode.HasValue)
+        {
+            _settings.SetCameraViewMode(request.CameraViewMode.Value);
             persistDesktopConfig = true;
         }
 
@@ -471,5 +507,12 @@ public class PlayScene : IDisposable
 
         _desktopClientConfig.CaptureRuntime(_settings, _runtime.Player.Combatant.Stats);
         _persistDesktopClientConfig();
+    }
+
+    private static bool IsMoving(PlayerMoveIntent moveIntent)
+    {
+        return MathF.Abs(moveIntent.ForwardAxis) > 0.001f ||
+            MathF.Abs(moveIntent.StrafeAxis) > 0.001f ||
+            MathF.Abs(moveIntent.VerticalAxis) > 0.001f;
     }
 }

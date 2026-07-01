@@ -50,6 +50,41 @@ public class ClientScenePresenterTests
     }
 
     [Fact]
+    public void ApplyJoinAccepted_UsesAcceptedSessionAsLocalPlayerFilter()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "temporary-client-id");
+
+        presenter.ApplyJoinAccepted(new JoinAcceptedMessage(
+            "session-b",
+            102,
+            0,
+            InitialWorld: null,
+            Roster:
+            [
+                new PlayerRosterEntry("session-a", 101, "Host Player"),
+                new PlayerRosterEntry("session-b", 102, "Second Player")
+            ]));
+        ServerSnapshotEnvelope snapshot = new(
+            1,
+            new Dictionary<string, ulong>(),
+            [
+                new ActorSnapshot(101, CreatureKind.Player, "session-a", new Vector3(5f, 1.5f, 5f), -Vector3.UnitZ, 100, 100, true, null, null, "Host Player"),
+                new ActorSnapshot(102, CreatureKind.Player, "session-b", new Vector3(7f, 1.5f, 7f), -Vector3.UnitZ, 100, 100, true, null, null, "Second Player")
+            ],
+            PlayerInteractionMode.Building,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+
+        presenter.ApplySnapshot(snapshot, receivedAtSeconds: 1.0);
+        presenter.ApplySnapshot(snapshot, receivedAtSeconds: 2.0);
+
+        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(renderTimeSeconds: 1.5));
+        Assert.Equal("session-a", remote.SessionId);
+        Assert.Equal("Host Player", remote.DisplayName);
+    }
+
+    [Fact]
     public void BuildRemotePlayerStates_ExcludesLocalPlayerAndProjectsRemotePlayers()
     {
         ClientScenePresenter presenter = new(localSessionId: "local-player");
@@ -89,6 +124,8 @@ public class ClientScenePresenterTests
         Assert.Equal(3f, remote.Pose.Position.X, 4);
         Assert.Equal(90, remote.CurrentHealth);
         Assert.True(remote.IsAlive);
+        Assert.True(remote.IsMoving);
+        Assert.Equal(PlayerModelAssetDefinition.WalkClip, PlayerRenderState.CreateRemote(remote).ClipName);
     }
 
     [Fact]
