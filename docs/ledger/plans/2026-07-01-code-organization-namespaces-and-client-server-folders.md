@@ -1,5 +1,8 @@
 # Code Organization Namespaces And Client Server Folders Implementation Plan
 
+Status: completed
+Note: this document is retained as implementation history. The live folder and namespace map is documented in `docs/project-structure.md` and `docs/architecture.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the flat `dream/` source layout with folder and namespace boundaries that make the client, server, protocol, simulation, rendering, and shared domain seams obvious.
@@ -11,6 +14,8 @@
 ---
 
 ## Current State
+
+This section records the pre-migration state that motivated the work.
 
 The production project currently has `237` C# source files directly under `dream/`. The only nested production folders are asset/build folders such as `animations/`, `fonts/`, `shaders/`, `bin/`, and `obj/`.
 

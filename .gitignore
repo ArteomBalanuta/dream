@@ -403,3 +403,4 @@ FodyWeavers.xsd
 imgui.ini
 dream-run*.log
 .superpowers/
+.bug-hunter/

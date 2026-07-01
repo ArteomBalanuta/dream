@@ -4,6 +4,8 @@ Purpose: define the safest structure-improvement direction for the growing multi
 Status: complete
 Scope: folders, namespaces, seam boundaries, incremental migration order, and test-hardening implications
 
+Note: the final structure chose `Dream.Client`, `Dream.Server`, and `Dream.Multiplayer` as top-level bounded contexts instead of the provisional `Dream.Multiplayer.Client` / `Dream.Multiplayer.Server` / `Dream.Multiplayer.Runtime` split described below. Treat this file as an exploratory snapshot, not the canonical layout.
+
 ## Recommendation
 
 Use an incremental C# folder-and-namespace split around the multiplayer subsystem rather than a full onion/MVP rewrite across the whole repo in one pass.
