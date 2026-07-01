@@ -10,8 +10,7 @@ namespace Dream.Simulation.World;
 public class Map
 {
     private const int StartupSculptureSubdivisionResolution = WorldMicroGrid.MicroCellsPerWorldCell;
-    private const int StartupSculptureRenderStride = 2;
-    private const float StartupSculptureVisualFillScale = 2.04f;
+    private const float StartupSculptureVisualFillScale = 1.01f;
 
     private readonly IGeometryMutationService _geometryMutations = new GeometryMutationService();
     private readonly WorldGrid _grid;
@@ -26,6 +25,10 @@ public class Map
     private readonly HashSet<GeometryCellKey> _staticPhysicsCells = [];
     private readonly HashSet<GeometryCellKey> _pendingRenderDirtyCells = [];
     private readonly HashSet<GeometryCellKey> _pendingCollisionDirtyCells = [];
+    private IReadOnlyList<GeometryRenderBlockDescriptor> _mergedStaticSubcellRenderBlocks = [];
+    private HashSet<GeometryCellKey> _mergedStaticSubcellRenderCells = [];
+    private bool _mergedStaticSubcellRenderReady;
+    private bool _initializing;
     private readonly WorldSpatialIndex _placedCubeSpatialIndex = new();
     private readonly Dictionary<Cube, GeometryCellKey> _cubeCells = new();
 
@@ -54,10 +57,15 @@ public class Map
 
     private void Initialize()
     {
+        _initializing = true;
         foreach (GeometryCellRecord record in _generator.CreateStartupGeometry(Width, Height, Depth, _generateStartupTerrain))
         {
             TryAddGeometryCell(record, isStatic: true, withPhysics: false);
         }
+
+        _initializing = false;
+        RebuildMergedStaticSubcellRenderBlocks();
+        _mergedStaticSubcellRenderReady = true;
 
         if (_physicsBinder != null)
         {
@@ -325,11 +333,16 @@ public class Map
                 continue;
             }
 
+            if (_mergedStaticSubcellRenderCells.Contains(key))
+            {
+                continue;
+            }
+
             if (_renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? cellBlocks))
             {
                 foreach (GeometryRenderBlockDescriptor block in cellBlocks)
                 {
-                    if ((block.Center - position).LengthSquared > (radius * radius))
+                    if (!IsGeometryBlockWithinRadius(block, position, radius))
                     {
                         continue;
                     }
@@ -337,6 +350,16 @@ public class Map
                     blocks.Add(block);
                 }
             }
+        }
+
+        foreach (GeometryRenderBlockDescriptor block in _mergedStaticSubcellRenderBlocks)
+        {
+            if (!IsGeometryBlockWithinRadius(block, position, radius))
+            {
+                continue;
+            }
+
+            blocks.Add(block);
         }
 
         GeometryCellKey[] dirtyCells = _pendingRenderDirtyCells.ToArray();
@@ -347,6 +370,36 @@ public class Map
             Cells: cells,
             Blocks: blocks,
             CompatibilityCubes: compatibilityCubes);
+    }
+
+    private static bool IsGeometryBlockWithinRadius(
+        GeometryRenderBlockDescriptor block,
+        Vector3 position,
+        float radius)
+    {
+        Vector3 halfSize = block.Size * 0.5f;
+        Vector3 min = block.Center - halfSize;
+        Vector3 max = block.Center + halfSize;
+        float distanceSquared = SquaredDistanceToAabb(position, min, max);
+        return distanceSquared <= radius * radius;
+    }
+
+    private static float SquaredDistanceToAabb(Vector3 point, Vector3 min, Vector3 max)
+    {
+        float dx = DistanceToRange(point.X, min.X, max.X);
+        float dy = DistanceToRange(point.Y, min.Y, max.Y);
+        float dz = DistanceToRange(point.Z, min.Z, max.Z);
+        return (dx * dx) + (dy * dy) + (dz * dz);
+    }
+
+    private static float DistanceToRange(float value, float min, float max)
+    {
+        if (value < min)
+        {
+            return min - value;
+        }
+
+        return value > max ? value - max : 0f;
     }
 
     public GeometryCollisionExport CaptureGeometryCollisionExport()
@@ -513,6 +566,7 @@ public class Map
 
     private void RebuildGeometryCellArtifacts(GeometryCellKey key, bool syncPhysics)
     {
+        bool wasMergedStaticSubcellRenderCell = _mergedStaticSubcellRenderCells.Contains(key);
         if (!_geometryCells.TryGetValue(key, out GeometryCellRecord? geometryCell))
         {
             _renderBlocksByCell.Remove(key);
@@ -524,6 +578,7 @@ public class Map
                 _physicsBinder?.RemoveCellCollisionBodies(key);
             }
 
+            RebuildMergedStaticSubcellRenderBlocksIfNeeded(wasMergedStaticSubcellRenderCell, needsMergedStaticSubcellRender: false);
             return;
         }
 
@@ -539,6 +594,10 @@ public class Map
         {
             _physicsBinder?.SyncCellCollisionBodies(key, collisionBodies);
         }
+
+        RebuildMergedStaticSubcellRenderBlocksIfNeeded(
+            wasMergedStaticSubcellRenderCell,
+            ShouldUseMergedSubcellRender(geometryCell));
     }
 
     private IReadOnlyList<GeometryRenderBlockDescriptor> BuildRenderBlocks(GeometryCellRecord record)
@@ -557,6 +616,11 @@ public class Map
         {
             Vector3 center = new(record.Key.X + 0.5f, record.Key.Y + 0.5f, record.Key.Z + 0.5f);
             return [_generator.CreateRenderBlockDescriptor(record, center, 1f)];
+        }
+
+        if (ShouldUseMergedSubcellRender(record))
+        {
+            return BuildMergedSubcellRenderBlocks(record);
         }
 
         return EnumerateSolidSubcells(record)
@@ -625,6 +689,245 @@ public class Map
             record.Definition.SubdivisionResolution == StartupSculptureSubdivisionResolution
                 ? StartupSculptureVisualFillScale
                 : 1f;
+    }
+
+    private static bool ShouldUseMergedSubcellRender(GeometryCellRecord record)
+    {
+        return record.SubdivisionState != null &&
+            record.FracturePieces == null &&
+            record.Definition.SubdivisionResolution == StartupSculptureSubdivisionResolution;
+    }
+
+    private void RebuildMergedStaticSubcellRenderBlocksIfNeeded(
+        bool wasMergedStaticSubcellRenderCell,
+        bool needsMergedStaticSubcellRender)
+    {
+        if (_initializing || !_mergedStaticSubcellRenderReady)
+        {
+            return;
+        }
+
+        if (wasMergedStaticSubcellRenderCell || needsMergedStaticSubcellRender)
+        {
+            RebuildMergedStaticSubcellRenderBlocks();
+        }
+    }
+
+    private void RebuildMergedStaticSubcellRenderBlocks()
+    {
+        GeometryCellRecord[] records = _geometryCells.Values
+            .Where(ShouldUseMergedSubcellRender)
+            .ToArray();
+
+        _mergedStaticSubcellRenderCells = records
+            .Select(record => record.Key)
+            .ToHashSet();
+
+        List<GeometryRenderBlockDescriptor> blocks = [];
+        foreach (IGrouping<GeometryMaterialId, GeometryCellRecord> materialGroup in records.GroupBy(record => record.Definition.MaterialId))
+        {
+            HashSet<WorldMicroCellKey> solidMicrocells = [];
+            foreach (GeometryCellRecord record in materialGroup)
+            {
+                AddSolidMicrocells(record, solidMicrocells);
+            }
+
+            blocks.AddRange(BuildMergedGlobalMicrocellRenderBlocks(solidMicrocells));
+        }
+
+        _mergedStaticSubcellRenderBlocks = blocks;
+    }
+
+    private static void AddSolidMicrocells(
+        GeometryCellRecord record,
+        HashSet<WorldMicroCellKey> solidMicrocells)
+    {
+        int resolution = record.Definition.SubdivisionResolution;
+        for (int y = 0; y < resolution; y++)
+        {
+            for (int z = 0; z < resolution; z++)
+            {
+                for (int x = 0; x < resolution; x++)
+                {
+                    GeometrySubcellKey subcellKey = new(x, y, z);
+                    if (record.IsChildSolid(subcellKey))
+                    {
+                        solidMicrocells.Add(WorldMicroGrid.ToMicroCellKey(record.Key, subcellKey));
+                    }
+                }
+            }
+        }
+    }
+
+    private IReadOnlyList<GeometryRenderBlockDescriptor> BuildMergedGlobalMicrocellRenderBlocks(
+        HashSet<WorldMicroCellKey> solidMicrocells)
+    {
+        HashSet<WorldMicroCellKey> visited = [];
+        List<GeometryRenderBlockDescriptor> blocks = [];
+        foreach (WorldMicroCellKey start in solidMicrocells
+            .OrderBy(cell => cell.Y)
+            .ThenBy(cell => cell.Z)
+            .ThenBy(cell => cell.X))
+        {
+            if (visited.Contains(start))
+            {
+                continue;
+            }
+
+            WorldMicroCellKey max = ResolveMergedGlobalMicrocellBounds(solidMicrocells, visited, start);
+            MarkVisitedGlobalMicrocells(visited, start, max);
+            blocks.Add(CreateMergedGlobalRenderBlock(start, max));
+        }
+
+        return blocks;
+    }
+
+    private static WorldMicroCellKey ResolveMergedGlobalMicrocellBounds(
+        HashSet<WorldMicroCellKey> solidMicrocells,
+        HashSet<WorldMicroCellKey> visited,
+        WorldMicroCellKey start)
+    {
+        int maxX = start.X;
+        while (IsGlobalMergeCandidate(solidMicrocells, visited, new WorldMicroCellKey(maxX + 1, start.Y, start.Z)))
+        {
+            maxX++;
+        }
+
+        int maxZ = start.Z;
+        while (CanMergeGlobalPlaneX(solidMicrocells, visited, start.X, maxX, start.Y, maxZ + 1))
+        {
+            maxZ++;
+        }
+
+        int maxY = start.Y;
+        while (CanMergeGlobalLayerXZ(solidMicrocells, visited, start.X, maxX, maxY + 1, start.Z, maxZ))
+        {
+            maxY++;
+        }
+
+        return new WorldMicroCellKey(maxX, maxY, maxZ);
+    }
+
+    private static bool CanMergeGlobalPlaneX(
+        HashSet<WorldMicroCellKey> solidMicrocells,
+        HashSet<WorldMicroCellKey> visited,
+        int minX,
+        int maxX,
+        int y,
+        int z)
+    {
+        for (int x = minX; x <= maxX; x++)
+        {
+            if (!IsGlobalMergeCandidate(solidMicrocells, visited, new WorldMicroCellKey(x, y, z)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool CanMergeGlobalLayerXZ(
+        HashSet<WorldMicroCellKey> solidMicrocells,
+        HashSet<WorldMicroCellKey> visited,
+        int minX,
+        int maxX,
+        int y,
+        int minZ,
+        int maxZ)
+    {
+        for (int z = minZ; z <= maxZ; z++)
+        {
+            for (int x = minX; x <= maxX; x++)
+            {
+                if (!IsGlobalMergeCandidate(solidMicrocells, visited, new WorldMicroCellKey(x, y, z)))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsGlobalMergeCandidate(
+        HashSet<WorldMicroCellKey> solidMicrocells,
+        HashSet<WorldMicroCellKey> visited,
+        WorldMicroCellKey key)
+    {
+        return solidMicrocells.Contains(key) && !visited.Contains(key);
+    }
+
+    private static void MarkVisitedGlobalMicrocells(
+        HashSet<WorldMicroCellKey> visited,
+        WorldMicroCellKey start,
+        WorldMicroCellKey max)
+    {
+        for (int y = start.Y; y <= max.Y; y++)
+        {
+            for (int z = start.Z; z <= max.Z; z++)
+            {
+                for (int x = start.X; x <= max.X; x++)
+                {
+                    visited.Add(new WorldMicroCellKey(x, y, z));
+                }
+            }
+        }
+    }
+
+    private GeometryRenderBlockDescriptor CreateMergedGlobalRenderBlock(
+        WorldMicroCellKey start,
+        WorldMicroCellKey max)
+    {
+        Vector3 min = new(
+            start.X * WorldMicroGrid.MicroCellSize,
+            start.Y * WorldMicroGrid.MicroCellSize,
+            start.Z * WorldMicroGrid.MicroCellSize);
+        Vector3 maxBounds = new(
+            (max.X + 1) * WorldMicroGrid.MicroCellSize,
+            (max.Y + 1) * WorldMicroGrid.MicroCellSize,
+            (max.Z + 1) * WorldMicroGrid.MicroCellSize);
+        Vector3 size = maxBounds - min;
+        GeometryCellKey parent = WorldMicroGrid.ToParentCellKey(start);
+        GeometrySubcellKey? subcellKey = start == max
+            ? WorldMicroGrid.ToLocalSubcellKey(start)
+            : null;
+
+        return _generator.CreateRenderBlockDescriptor(
+            _geometryCells[parent],
+            min + (size * 0.5f),
+            WorldMicroGrid.MicroCellSize,
+            subcellKey,
+            StartupSculptureVisualFillScale,
+            size);
+    }
+
+    private IReadOnlyList<GeometryRenderBlockDescriptor> BuildMergedSubcellRenderBlocks(GeometryCellRecord record)
+    {
+        int resolution = record.Definition.SubdivisionResolution;
+        bool[,,] visited = new bool[resolution, resolution, resolution];
+        List<GeometryRenderBlockDescriptor> blocks = [];
+
+        for (int y = 0; y < resolution; y++)
+        {
+            for (int z = 0; z < resolution; z++)
+            {
+                for (int x = 0; x < resolution; x++)
+                {
+                    GeometrySubcellKey start = new(x, y, z);
+                    if (visited[x, y, z] || !record.IsChildSolid(start))
+                    {
+                        continue;
+                    }
+
+                    (int MaxX, int MaxY, int MaxZ) bounds = ResolveMergedSubcellBounds(record, visited, start);
+                    MarkVisited(visited, start, bounds);
+                    blocks.Add(CreateMergedRenderBlock(record, start, bounds));
+                }
+            }
+        }
+
+        return blocks;
     }
 
     private static IReadOnlyList<GeometryCollisionBodyDescriptor> BuildMergedSubcellCollisionBodies(
@@ -785,6 +1088,37 @@ public class Map
             SubcellKey: subcellKey);
     }
 
+    private GeometryRenderBlockDescriptor CreateMergedRenderBlock(
+        GeometryCellRecord record,
+        GeometrySubcellKey start,
+        (int MaxX, int MaxY, int MaxZ) bounds)
+    {
+        float sideLength = 1f / record.Definition.SubdivisionResolution;
+        Vector3 cellOrigin = new(record.Key.X, record.Key.Y, record.Key.Z);
+        Vector3 min = cellOrigin + new Vector3(
+            start.X * sideLength,
+            start.Y * sideLength,
+            start.Z * sideLength);
+        Vector3 max = cellOrigin + new Vector3(
+            (bounds.MaxX + 1) * sideLength,
+            (bounds.MaxY + 1) * sideLength,
+            (bounds.MaxZ + 1) * sideLength);
+        Vector3 size = max - min;
+        GeometrySubcellKey? subcellKey = start.X == bounds.MaxX &&
+            start.Y == bounds.MaxY &&
+            start.Z == bounds.MaxZ
+                ? start
+                : null;
+
+        return _generator.CreateRenderBlockDescriptor(
+            record,
+            min + (size * 0.5f),
+            sideLength,
+            subcellKey,
+            ResolveSubcellVisualFillScale(record),
+            size);
+    }
+
     private IEnumerable<(GeometrySubcellKey SubcellKey, Vector3 Center, float SideLength)> EnumerateSolidSubcells(GeometryCellRecord record)
     {
         int resolution = record.Definition.SubdivisionResolution;
@@ -798,7 +1132,7 @@ public class Map
                 for (int z = 0; z < resolution; z++)
                 {
                     GeometrySubcellKey subcellKey = new(x, y, z);
-                    if (!record.IsChildSolid(subcellKey) || !ShouldRenderSubcell(record, subcellKey))
+                    if (!record.IsChildSolid(subcellKey))
                     {
                         continue;
                     }
@@ -811,19 +1145,5 @@ public class Map
                 }
             }
         }
-    }
-
-    private static bool ShouldRenderSubcell(GeometryCellRecord record, GeometrySubcellKey subcellKey)
-    {
-        if (record.SubdivisionState == null ||
-            record.FracturePieces != null ||
-            record.Definition.SubdivisionResolution != StartupSculptureSubdivisionResolution)
-        {
-            return true;
-        }
-
-        return (subcellKey.X % StartupSculptureRenderStride) == 0 &&
-            (subcellKey.Y % StartupSculptureRenderStride) == 0 &&
-            (subcellKey.Z % StartupSculptureRenderStride) == 0;
     }
 }

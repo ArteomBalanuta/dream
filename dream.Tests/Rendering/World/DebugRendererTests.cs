@@ -3,6 +3,7 @@ using BulletSharp;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.World;
+using Dream.Simulation.Players;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Rendering.World;
@@ -19,5 +20,44 @@ public class DebugRendererTests
         bool shouldDraw = DebugRenderer.ShouldDrawCollisionBody(body);
 
         Assert.True(shouldDraw);
+    }
+
+    [Fact]
+    public void SelectCollisionBodiesForDebug_Culls_Distant_Bodies()
+    {
+        Camera camera = new(Vector3.Zero);
+        RigidBody visibleBody = CreateGeometryBody(new Vector3(0f, 0f, -4f));
+        RigidBody distantBody = CreateGeometryBody(new Vector3(0f, 0f, -100f));
+
+        IReadOnlyList<RigidBody> selected = DebugRenderer.SelectCollisionBodiesForDebug(
+            [visibleBody, distantBody],
+            camera);
+
+        RigidBody selectedBody = Assert.Single(selected);
+        Assert.Same(visibleBody, selectedBody);
+    }
+
+    [Fact]
+    public void SelectCollisionBodiesForDebug_Applies_Nearest_Body_Budget()
+    {
+        Camera camera = new(Vector3.Zero);
+        RigidBody nearest = CreateGeometryBody(new Vector3(0f, 0f, -3f));
+        RigidBody middle = CreateGeometryBody(new Vector3(0f, 0f, -5f));
+        RigidBody farthest = CreateGeometryBody(new Vector3(0f, 0f, -7f));
+
+        IReadOnlyList<RigidBody> selected = DebugRenderer.SelectCollisionBodiesForDebug(
+            [farthest, nearest, middle],
+            camera,
+            maxBodies: 2);
+
+        Assert.Equal([nearest, middle], selected);
+    }
+
+    private static RigidBody CreateGeometryBody(Vector3 position)
+    {
+        RigidBody body = (RigidBody)RuntimeHelpers.GetUninitializedObject(typeof(RigidBody));
+        GC.SuppressFinalize(body);
+        body.UserObject = ((GeometryCellKey?)new GeometryCellKey(3, 1, 3), (GeometrySubcellKey?)null, position);
+        return body;
     }
 }

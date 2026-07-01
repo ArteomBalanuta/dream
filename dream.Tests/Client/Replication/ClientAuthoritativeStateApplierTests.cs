@@ -228,8 +228,7 @@ public class ClientAuthoritativeStateApplierTests
             cube => cube.Position == new Vector3(18.5f, 1.5f, 16.5f));
         Assert.Contains(
             renderExport.Blocks,
-            block => block.CellKey == new GeometryCellKey(18, 1, 16) &&
-                block.SubcellKey.HasValue &&
+            block => IntersectsCell(block, new GeometryCellKey(18, 1, 16)) &&
                 block.SideLength <= WorldMicroGrid.MicroCellSize + 0.0001f);
     }
 
@@ -499,6 +498,18 @@ public class ClientAuthoritativeStateApplierTests
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             new SceneEventHub(),
             loadVisualAssets: false);
+    }
+
+    private static bool IntersectsCell(GeometryRenderBlockDescriptor block, GeometryCellKey cell)
+    {
+        Vector3 blockMin = block.Center - (block.Size * 0.5f);
+        Vector3 blockMax = block.Center + (block.Size * 0.5f);
+        Vector3 cellMin = new(cell.X, cell.Y, cell.Z);
+        Vector3 cellMax = cellMin + Vector3.One;
+
+        return blockMin.X < cellMax.X && blockMax.X > cellMin.X &&
+            blockMin.Y < cellMax.Y && blockMax.Y > cellMin.Y &&
+            blockMin.Z < cellMax.Z && blockMax.Z > cellMin.Z;
     }
 
     private sealed class FakeReplicatedPlayerTarget : IReplicatedPlayerTarget

@@ -100,4 +100,23 @@ public class WorldVisibilityTests
 
         Assert.True(visible);
     }
+
+    [Fact]
+    public void IsGeometryBlockVisible_Uses_Merged_Block_Size_For_Bounds()
+    {
+        Vector3 cameraPosition = Vector3.Zero;
+        Vector3 cameraFront = Vector3.UnitZ;
+        GeometryRenderBlockDescriptor block = new(
+            new GeometryCellKey(0, 0, 0),
+            new Vector3(2.75f, 0f, -1.2f),
+            WorldMicroGrid.MicroCellSize,
+            GeometryMaterialId.Stone,
+            null,
+            "default",
+            SizeOverride: new Vector3(3f, WorldMicroGrid.MicroCellSize, 3f));
+
+        bool visible = WorldVisibility.IsGeometryBlockVisible(cameraPosition, cameraFront, block);
+
+        Assert.True(visible);
+    }
 }

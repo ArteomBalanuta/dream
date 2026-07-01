@@ -18,6 +18,11 @@ public static class CubeTransforms
         return Matrix4.CreateScale(side * assetScale) * Matrix4.CreateTranslation(center);
     }
 
+    public static Matrix4 CreateCenteredVisualModelMatrix(Vector3 center, Vector3 size, float assetScale)
+    {
+        return Matrix4.CreateScale(size * assetScale) * Matrix4.CreateTranslation(center);
+    }
+
     public static Matrix4 CreateCollisionDebugModelMatrix(Matrix bulletWorldTransform)
     {
         return bulletWorldTransform.ToOpenTK();

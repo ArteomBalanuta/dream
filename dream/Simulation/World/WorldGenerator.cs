@@ -97,7 +97,8 @@ public class WorldGenerator
         Vector3 center,
         float sideLength,
         GeometrySubcellKey? subcellKey = null,
-        float visualFillScale = 1f)
+        float visualFillScale = 1f,
+        Vector3 sizeOverride = default)
     {
         return new GeometryRenderBlockDescriptor(
             geometryCell.Key,
@@ -107,7 +108,8 @@ public class WorldGenerator
             ResolveAnimation(geometryCell.Definition.MaterialId),
             "cube",
             subcellKey,
-            visualFillScale);
+            visualFillScale,
+            sizeOverride);
     }
 
     public Cube CreateSolidCube(Vector3 cellPosition)

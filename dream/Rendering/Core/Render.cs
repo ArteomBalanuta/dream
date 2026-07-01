@@ -421,7 +421,7 @@ public class Render
     public void DrawGeometryBlock(Camera camera, GeometryRenderBlockDescriptor block)
     {
         float assetScale = ResolveCubeAssetScale(block.Animation);
-        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.VisualSideLength, assetScale);
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.VisualSize, assetScale);
 
         if (block.Animation != null)
         {
@@ -457,7 +457,7 @@ public class Render
             float assetScale = ResolveCubeAssetScale(block.Animation);
             modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(
                 block.Center,
-                block.VisualSideLength,
+                block.VisualSize,
                 assetScale);
         }
 

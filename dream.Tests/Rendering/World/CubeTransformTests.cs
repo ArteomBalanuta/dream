@@ -33,6 +33,22 @@ public class CubeTransformTests
     }
 
     [Fact]
+    public void CreateCenteredVisualModelMatrix_WithNonUniformSize_Preserves_Cuboid_Extents()
+    {
+        TkVector3 center = new TkVector3(3.5f, 1.5f, 7.5f);
+
+        Matrix4 model = CubeTransforms.CreateCenteredVisualModelMatrix(
+            center,
+            new TkVector3(0.25f, 0.5f, 0.75f),
+            1.6f);
+
+        Assert.Equal(center, model.ExtractTranslation());
+        Assert.Equal(0.4f, model.M11, 3);
+        Assert.Equal(0.8f, model.M22, 3);
+        Assert.Equal(1.2f, model.M33, 3);
+    }
+
+    [Fact]
     public void CreateCollisionDebugModelMatrix_UsesCollisionHalfExtentsForDebugScale()
     {
         Matrix bulletTransform = Matrix.Translation(3.5f, 1.5f, 7.5f);

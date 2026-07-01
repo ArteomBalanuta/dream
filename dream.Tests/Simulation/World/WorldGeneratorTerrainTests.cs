@@ -86,8 +86,8 @@ public class WorldGeneratorTerrainTests
         Assert.NotNull(pyramidPeak.SubdivisionState);
         Assert.NotNull(roundedBoulder.SubdivisionState);
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(18.5f, 1.5f, 16.5f));
-        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(18, 1, 16) && block.SideLength < 1f);
-        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(32, 2, 14) && block.SideLength < 1f);
+        Assert.Contains(export.Blocks, block => block.SideLength < 1f && IntersectsCell(block, new GeometryCellKey(18, 1, 16)));
+        Assert.Contains(export.Blocks, block => block.SideLength < 1f && IntersectsCell(block, new GeometryCellKey(32, 2, 14)));
     }
 
     [Fact]
@@ -130,10 +130,9 @@ public class WorldGeneratorTerrainTests
             .ThenBy(block => block.Center.Z)
             .ToArray();
 
-        Assert.Contains(boundaryBlocks, block => block.CellKey.X == 18 && block.SubcellKey?.X >= 14);
-        Assert.Contains(boundaryBlocks, block => block.CellKey.X == 19 && block.SubcellKey?.X <= 1);
-        Assert.DoesNotContain(boundaryBlocks, block => MathF.Abs((block.Center.X * WorldMicroGrid.MicroCellsPerWorldCell) - 0.5f) > 0.001f &&
-            MathF.Abs(MathF.Round((block.Center.X * WorldMicroGrid.MicroCellsPerWorldCell) - 0.5f) - ((block.Center.X * WorldMicroGrid.MicroCellsPerWorldCell) - 0.5f)) > 0.001f);
+        Assert.Contains(boundaryBlocks, block => block.CellKey.X == 18 && block.Center.X + (block.Size.X * 0.5f) > 18.9f);
+        Assert.Contains(boundaryBlocks, block => block.CellKey.X == 19 && block.Center.X - (block.Size.X * 0.5f) < 19.1f);
+        Assert.All(boundaryBlocks, AssertMicroGridAlignedBounds);
     }
 
     [Fact]
@@ -144,7 +143,78 @@ public class WorldGeneratorTerrainTests
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
         int sculptedRenderBlocks = renderExport.Blocks.Count(block => block.CellKey.Y > 0);
 
-        Assert.InRange(sculptedRenderBlocks, 20_000, 80_000);
+        Assert.InRange(sculptedRenderBlocks, 4_000, 12_000);
+    }
+
+    [Fact]
+    public void StartupWorld_Merges_Rendered_GlobalMicroGrid_Sculpture_Cuboids()
+    {
+        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
+        GeometryRenderBlockDescriptor[] mergedSculptureBlocks = renderExport.Blocks
+            .Where(block => block.CellKey.Y > 0 &&
+                (block.Size.X > block.SideLength + 0.0001f ||
+                    block.Size.Y > block.SideLength + 0.0001f ||
+                    block.Size.Z > block.SideLength + 0.0001f))
+            .ToArray();
+
+        Assert.NotEmpty(mergedSculptureBlocks);
+    }
+
+    [Fact]
+    public void StartupWorld_Merges_Rendered_GlobalMicroGrid_Sculptures_Across_Cell_Boundaries()
+    {
+        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
+
+        Assert.Contains(renderExport.Blocks, block =>
+            block.CellKey.Y > 0 &&
+            (block.Size.X > 1.0001f || block.Size.Y > 1.0001f || block.Size.Z > 1.0001f));
+    }
+
+    [Fact]
+    public void StartupWorld_Captures_GlobalMergedSculpture_Block_When_Bounds_Overlap_Radius()
+    {
+        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(14.25f, 1.05f, 12.25f), radius: 0.5f);
+
+        Assert.Contains(renderExport.Blocks, block =>
+            block.Size.X > 1.0001f &&
+            IntersectsCell(block, new GeometryCellKey(14, 1, 12)));
+    }
+
+    private static void AssertMicroGridAlignedBounds(GeometryRenderBlockDescriptor block)
+    {
+        Vector3 min = block.Center - (block.Size * 0.5f);
+        Vector3 max = block.Center + (block.Size * 0.5f);
+
+        AssertMicroGridAligned(min.X);
+        AssertMicroGridAligned(min.Y);
+        AssertMicroGridAligned(min.Z);
+        AssertMicroGridAligned(max.X);
+        AssertMicroGridAligned(max.Y);
+        AssertMicroGridAligned(max.Z);
+    }
+
+    private static void AssertMicroGridAligned(float coordinate)
+    {
+        float microCoordinate = coordinate * WorldMicroGrid.MicroCellsPerWorldCell;
+        Assert.Equal(MathF.Round(microCoordinate), microCoordinate, precision: 3);
+    }
+
+    private static bool IntersectsCell(GeometryRenderBlockDescriptor block, GeometryCellKey cell)
+    {
+        Vector3 blockMin = block.Center - (block.Size * 0.5f);
+        Vector3 blockMax = block.Center + (block.Size * 0.5f);
+        Vector3 cellMin = new(cell.X, cell.Y, cell.Z);
+        Vector3 cellMax = cellMin + Vector3.One;
+
+        return blockMin.X < cellMax.X && blockMax.X > cellMin.X &&
+            blockMin.Y < cellMax.Y && blockMax.Y > cellMin.Y &&
+            blockMin.Z < cellMax.Z && blockMax.Z > cellMin.Z;
     }
 
 }

@@ -28,7 +28,7 @@ public static class WorldVisibility
             cameraPosition,
             cameraFront,
             block.Center,
-            CalculateBoundingRadius(block.SideLength));
+            CalculateBoundingRadius(block.Size));
     }
 
     public static bool IsPositionVisible(Vector3 cameraPosition, Vector3 cameraFront, Vector3 position)
@@ -72,5 +72,10 @@ public static class WorldVisibility
     private static float CalculateBoundingRadius(float sideLength)
     {
         return sideLength * 0.8660254f;
+    }
+
+    private static float CalculateBoundingRadius(Vector3 size)
+    {
+        return size.Length * 0.5f;
     }
 }

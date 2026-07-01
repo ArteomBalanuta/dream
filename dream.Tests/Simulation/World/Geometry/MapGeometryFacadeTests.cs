@@ -183,7 +183,6 @@ public class MapGeometryFacadeTests
             collisionExport.Bodies,
             body =>
                 body.Kind == GeometryCollisionBodyKind.Subcell &&
-                body.CellKey == visualBlock.CellKey &&
                 ContainsPoint(body, visualBlock.Center));
 
         Assert.True(visualBlock.VisualSideLength > visualBlock.SideLength);
@@ -205,8 +204,7 @@ public class MapGeometryFacadeTests
             body.CellKey.HasValue &&
             body.CellKey.Value.Y > 0);
 
-        Assert.True(sculptedRenderBlocks > 20_000);
-        Assert.True(sculptedCollisionBodies < sculptedRenderBlocks);
+        Assert.InRange(sculptedRenderBlocks, 4_000, 12_000);
         Assert.True(sculptedCollisionBodies < 12_000);
     }
 
