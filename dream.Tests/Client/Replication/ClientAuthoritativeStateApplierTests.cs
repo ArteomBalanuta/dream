@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
@@ -230,6 +231,22 @@ public class ClientAuthoritativeStateApplierTests
             renderExport.Blocks,
             block => IntersectsCell(block, new GeometryCellKey(18, 1, 16)) &&
                 block.SideLength <= WorldMicroGrid.MicroCellSize + 0.0001f);
+    }
+
+    [Fact]
+    public void ClientJoinAcceptedApplier_ApplyToRuntime_BatchesAuthoritativeSubcellRestore()
+    {
+        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
+        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
+        stopwatch.Stop();
+
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(15),
+            $"Expected join world application to avoid per-cell global rebuilds, but it took {stopwatch.Elapsed}.");
     }
 
     [Fact]

@@ -15,7 +15,7 @@ public class WorldRenderer
         _render = render;
     }
 
-    public void DrawWorld(Camera camera, IEnumerable<Cube> cubes)
+    public WorldRenderStats DrawWorld(Camera camera, IEnumerable<Cube> cubes)
     {
         List<Cube> visibleCubes = new();
         foreach (Cube cube in cubes)
@@ -28,7 +28,8 @@ public class WorldRenderer
             visibleCubes.Add(cube);
         }
 
-        foreach (WorldRenderBatch batch in WorldRenderBatchPlanner.CreateBatches(visibleCubes))
+        List<WorldRenderBatch> batches = WorldRenderBatchPlanner.CreateBatches(visibleCubes).ToList();
+        foreach (WorldRenderBatch batch in batches)
         {
             if (batch.Animation != null)
             {
@@ -41,16 +42,22 @@ public class WorldRenderer
                 _render.DrawCube(camera, cube);
             }
         }
+
+        return new WorldRenderStats(
+            visibleCubes.Count,
+            VisibleGeometryBlocks: 0,
+            batches.Count,
+            GeometryBatchCount: 0);
     }
 
-    public void DrawWorld(WorldSessionPresentationState state)
+    public WorldRenderStats DrawWorld(WorldSessionPresentationState state)
     {
-        DrawWorld(state.Camera, state.VisibleWorld);
+        return DrawWorld(state.Camera, state.VisibleWorld);
     }
 
-    public void DrawWorld(Camera camera, GeometryRenderExport export)
+    public WorldRenderStats DrawWorld(Camera camera, GeometryRenderExport export)
     {
-        DrawWorld(camera, export.CompatibilityCubes);
+        WorldRenderStats cubeStats = DrawWorld(camera, export.CompatibilityCubes);
 
         List<GeometryRenderBlockDescriptor> visibleBlocks = [];
         foreach (GeometryRenderBlockDescriptor block in export.Blocks)
@@ -63,7 +70,10 @@ public class WorldRenderer
             visibleBlocks.Add(block);
         }
 
-        foreach (WorldGeometryRenderBatch batch in WorldRenderBatchPlanner.CreateGeometryBlockBatches(visibleBlocks))
+        List<WorldGeometryRenderBatch> geometryBatches = WorldRenderBatchPlanner
+            .CreateGeometryBlockBatches(visibleBlocks)
+            .ToList();
+        foreach (WorldGeometryRenderBatch batch in geometryBatches)
         {
             if (batch.Animation != null)
             {
@@ -76,6 +86,12 @@ public class WorldRenderer
                 _render.DrawGeometryBlock(camera, block);
             }
         }
+
+        return new WorldRenderStats(
+            cubeStats.VisibleCompatibilityCubes,
+            visibleBlocks.Count,
+            cubeStats.CompatibilityBatchCount,
+            geometryBatches.Count);
     }
 
     // Remote players intentionally stay out of the world-geometry renderer so

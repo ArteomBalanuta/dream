@@ -98,6 +98,14 @@ public class GameSettingsTests
     }
 
     [Fact]
+    public void Constructor_Defaults_Performance_Counters_To_Hidden()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        Assert.False(settings.ShowPerformanceCounters);
+    }
+
+    [Fact]
     public void SetShowCollisionGeometry_Enables_Debug_Rendering()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));
@@ -105,6 +113,16 @@ public class GameSettingsTests
         settings.SetShowCollisionGeometry(true);
 
         Assert.True(settings.ShowCollisionGeometry);
+    }
+
+    [Fact]
+    public void SetShowPerformanceCounters_Enables_Performance_Hud()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.SetShowPerformanceCounters(true);
+
+        Assert.True(settings.ShowPerformanceCounters);
     }
 
     [Fact]

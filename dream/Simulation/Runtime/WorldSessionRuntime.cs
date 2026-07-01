@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using System.Diagnostics;
 using Dream.Application;
 using Dream.Client.Input;
 using Dream.Client.Presentation;
@@ -6,6 +7,7 @@ using Dream.Client.Replication;
 using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
@@ -45,6 +47,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private readonly List<DamageEventDelta> _pendingDamageEvents = [];
     private PlayerInteractionMode _interactionMode = PlayerInteractionMode.Building;
     private PlayerCommandFrame _lastAppliedCommandFrame;
+    private double _lastPhysicsStepMilliseconds;
     private int _nextRemoteActorId = 2;
 
     public WorldSessionRuntime(
@@ -176,7 +179,10 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             }
         }
 
+        Stopwatch physicsStopwatch = Stopwatch.StartNew();
         Physics.StepSimulation(delta);
+        physicsStopwatch.Stop();
+        _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
         Player.Update(
             delta,
             playerInput,
@@ -258,16 +264,31 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             firstPersonCamera,
             Player.GetWorldPosition(),
             cameraViewMode);
+
+        Stopwatch renderExportStopwatch = Stopwatch.StartNew();
+        GeometryRenderExport visibleWorld = Map.CaptureGeometryRenderExport(presentationCamera.Position, maxRenderDistance);
+        renderExportStopwatch.Stop();
+
         return WorldSessionPresentationState.Create(
             presentationCamera,
-            Map.CaptureGeometryRenderExport(presentationCamera.Position, maxRenderDistance),
+            visibleWorld,
             _enemies.ActiveActors,
             Physics.MapCubeBodies,
             Player.PhysicsBody,
             Player.Combatant.Health,
             _interactionMode,
             Player.Combatant.DerivedStats,
-            Player.Combatant.Stats);
+            Player.Combatant.Stats,
+            new FramePerformanceSnapshot(
+                renderExportStopwatch.Elapsed.TotalMilliseconds,
+                _lastPhysicsStepMilliseconds,
+                visibleWorld.CompatibilityCubes.Count,
+                visibleWorld.Blocks.Count,
+                0,
+                0,
+                0,
+                0,
+                Physics.MapCubeBodies.Count));
     }
 
     public bool TryResolveCombatActor(int actorId, out CombatActorHandle actor)

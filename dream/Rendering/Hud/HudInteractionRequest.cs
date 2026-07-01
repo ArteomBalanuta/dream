@@ -13,12 +13,14 @@ public readonly record struct HudInteractionRequest(
     int? StagedFloorSize,
     int? RequestedFloorSize,
     bool? ShowCollisionGeometry,
+    bool? ShowPerformanceCounters,
     int? Strength,
     float? AttackSpeed,
     int? Vitality,
     FloatingCombatTextTuning? FloatingCombatText)
 {
     public static HudInteractionRequest None => new(
+        null,
         null,
         null,
         null,

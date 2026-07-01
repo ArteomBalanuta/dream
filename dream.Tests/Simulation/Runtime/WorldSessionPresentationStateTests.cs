@@ -6,6 +6,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using Dream.Rendering.Hud;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -38,7 +39,17 @@ public class WorldSessionPresentationStateTests
             health,
             PlayerInteractionMode.Combat,
             derivedStats,
-            playerStats);
+            playerStats,
+            new FramePerformanceSnapshot(
+                RenderExportMilliseconds: 1.5,
+                PhysicsStepMilliseconds: 0.5,
+                ExportedCompatibilityCubes: 10,
+                ExportedGeometryBlocks: 20,
+                VisibleCompatibilityCubes: 0,
+                VisibleGeometryBlocks: 0,
+                CompatibilityBatchCount: 0,
+                GeometryBatchCount: 0,
+                CollisionBodyCount: 30));
 
         Assert.Equal(97, state.HudStatus.CurrentHealth);
         Assert.Equal(110, state.HudStatus.MaxHealth);
@@ -48,5 +59,7 @@ public class WorldSessionPresentationStateTests
         Assert.Equal(14, state.HudStatus.Strength);
         Assert.Equal(2.5f, state.HudStatus.AttackSpeed);
         Assert.Equal(12, state.HudStatus.Vitality);
+        Assert.Equal(1.5, state.Performance.RenderExportMilliseconds);
+        Assert.Equal(30, state.Performance.CollisionBodyCount);
     }
 }

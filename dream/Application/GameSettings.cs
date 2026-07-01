@@ -40,6 +40,8 @@ public class GameSettings
 
     public bool ShowCollisionGeometry { get; private set; }
 
+    public bool ShowPerformanceCounters { get; private set; }
+
     public bool SettingsVisible { get; private set; }
 
     public RuntimeState CurrentRuntimeState { get; private set; } = new(RuntimeMode.Gameplay);
@@ -99,6 +101,11 @@ public class GameSettings
     {
         ShowCollisionGeometry = showCollisionGeometry;
         CollisionDebugVisibilityChanged?.Invoke(new CollisionDebugVisibilityChangedEvent(ShowCollisionGeometry));
+    }
+
+    public void SetShowPerformanceCounters(bool showPerformanceCounters)
+    {
+        ShowPerformanceCounters = showPerformanceCounters;
     }
 
     public void SetCameraViewMode(CameraViewMode cameraViewMode)

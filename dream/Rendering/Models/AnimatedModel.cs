@@ -59,6 +59,8 @@ public class AnimatedModel : IDisposable
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
     private readonly Dictionary<string, Animation> _animations = new();
     private readonly List<int> _textures = new();
+    private readonly ReusableMatrixBuffer _instanceSourceMatrices = new();
+    private readonly ReusableMatrixBuffer _instanceNodeMatrices = new();
     private int _instanceModelBuffer;
     private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
     private string? _idleClipName;
@@ -495,7 +497,26 @@ public class AnimatedModel : IDisposable
             return;
         }
 
-        Matrix4[] instanceMatrices = new Matrix4[modelMatrices.Count];
+        Matrix4[] copiedMatrices = _instanceSourceMatrices.Rent(modelMatrices.Count);
+        for (int i = 0; i < modelMatrices.Count; i++)
+        {
+            copiedMatrices[i] = modelMatrices[i];
+        }
+
+        RenderPreparedInstanced(shader, copiedMatrices, modelMatrices.Count);
+    }
+
+    public void RenderPreparedInstanced(
+        Shader shader,
+        Matrix4[] modelMatrices,
+        int count)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        Matrix4[] instanceMatrices = _instanceNodeMatrices.Rent(count);
         foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
         {
             if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
@@ -504,14 +525,14 @@ public class AnimatedModel : IDisposable
             }
 
             Matrix4 nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
-            for (int i = 0; i < modelMatrices.Count; i++)
+            for (int i = 0; i < count; i++)
             {
                 instanceMatrices[i] = AnimatedModelTransformComposer.ComposeInstanceNodeMatrix(
                     modelMatrices[i],
                     nodeWorldMatrix);
             }
 
-            RenderNodeInstanced(primitives, instanceMatrices, shader, nodeWorldMatrix);
+            RenderNodeInstanced(primitives, instanceMatrices, count, shader, nodeWorldMatrix);
         }
 
         shader.SetBool("useInstancing", false);
@@ -547,7 +568,8 @@ public class AnimatedModel : IDisposable
 
     private void RenderNodeInstanced(
         List<MeshBuffers> primitives,
-        IReadOnlyList<Matrix4> modelMatrices,
+        Matrix4[] modelMatrices,
+        int count,
         Shader shader,
         Matrix4 meshWorldMatrix)
     {
@@ -563,17 +585,17 @@ public class AnimatedModel : IDisposable
             }
 
             GL.BindVertexArray(primitive.VAO);
-            UploadInstanceModelMatrices(modelMatrices);
+            UploadInstanceModelMatrices(modelMatrices, count);
             GL.DrawElementsInstanced(
                 primitive.PrimitiveType,
                 primitive.IndexCount,
                 DrawElementsType.UnsignedInt,
                 IntPtr.Zero,
-                modelMatrices.Count);
+                count);
         }
     }
 
-    private void UploadInstanceModelMatrices(IReadOnlyList<Matrix4> modelMatrices)
+    private void UploadInstanceModelMatrices(Matrix4[] modelMatrices, int count)
     {
         _instanceModelBuffer = _instanceModelBuffer == 0
             ? GL.GenBuffer()
@@ -582,8 +604,8 @@ public class AnimatedModel : IDisposable
         GL.BindBuffer(BufferTarget.ArrayBuffer, _instanceModelBuffer);
         GL.BufferData(
             BufferTarget.ArrayBuffer,
-            modelMatrices.Count * Unsafe.SizeOf<Matrix4>(),
-            modelMatrices.ToArray(),
+            count * Unsafe.SizeOf<Matrix4>(),
+            modelMatrices,
             BufferUsageHint.DynamicDraw);
 
         int stride = Unsafe.SizeOf<Matrix4>();

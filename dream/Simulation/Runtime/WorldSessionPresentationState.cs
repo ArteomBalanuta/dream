@@ -15,7 +15,8 @@ public sealed record WorldSessionPresentationState(
     IReadOnlyList<EnemyActor> ActiveEnemies,
     IReadOnlyList<RigidBody> MapCollisionBodies,
     RigidBody? PlayerCollisionBody,
-    HudStatusSnapshot HudStatus)
+    HudStatusSnapshot HudStatus,
+    FramePerformanceSnapshot Performance)
 {
     public static WorldSessionPresentationState Create(
         Camera camera,
@@ -26,7 +27,8 @@ public sealed record WorldSessionPresentationState(
         HealthState health,
         PlayerInteractionMode interactionMode,
         PlayerCombatDerivedStats derivedStats,
-        PlayerCombatStats playerStats)
+        PlayerCombatStats playerStats,
+        FramePerformanceSnapshot performance = default)
     {
         return new WorldSessionPresentationState(
             camera,
@@ -42,6 +44,7 @@ public sealed record WorldSessionPresentationState(
                 derivedStats.MaxDamage,
                 playerStats.Strength,
                 playerStats.AttackSpeed,
-                playerStats.Vitality));
+                playerStats.Vitality),
+            performance);
     }
 }

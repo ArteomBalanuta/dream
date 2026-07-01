@@ -13,6 +13,7 @@ public class WorldPhysicsBinder
     private readonly PhysicsIntegrator _physics;
     private readonly Dictionary<Cube, RigidBody> _cubeBodies = new();
     private readonly Dictionary<GeometryCellKey, List<RigidBody>> _geometryCellBodies = new();
+    private readonly List<RigidBody> _mergedStaticCollisionBodies = new();
     private RigidBody? _floorBody;
 
     public WorldPhysicsBinder(PhysicsIntegrator physics)
@@ -74,6 +75,23 @@ public class WorldPhysicsBinder
         }
     }
 
+    public void SyncMergedStaticCollisionBodies(IReadOnlyList<GeometryCollisionBodyDescriptor> descriptors)
+    {
+        RemoveBodies(_mergedStaticCollisionBodies);
+        _mergedStaticCollisionBodies.Clear();
+
+        foreach (GeometryCollisionBodyDescriptor descriptor in descriptors)
+        {
+            if (descriptor.Kind == GeometryCollisionBodyKind.Floor)
+            {
+                AddFloorBody(descriptor);
+                continue;
+            }
+
+            _mergedStaticCollisionBodies.Add(AddGeometryBody(descriptor));
+        }
+    }
+
     public void RemoveCellCollisionBodies(GeometryCellKey cellKey)
     {
         if (!_geometryCellBodies.TryGetValue(cellKey, out List<RigidBody>? bodies))
@@ -81,6 +99,13 @@ public class WorldPhysicsBinder
             return;
         }
 
+        RemoveBodies(bodies);
+
+        _geometryCellBodies.Remove(cellKey);
+    }
+
+    private void RemoveBodies(IEnumerable<RigidBody> bodies)
+    {
         foreach (RigidBody body in bodies)
         {
             _physics.World.RemoveRigidBody(body);
@@ -90,8 +115,6 @@ public class WorldPhysicsBinder
             body.CollisionShape?.Dispose();
             body.Dispose();
         }
-
-        _geometryCellBodies.Remove(cellKey);
     }
 
     private void AddFloorBody(GeometryCollisionBodyDescriptor descriptor)

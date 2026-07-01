@@ -15,6 +15,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
+using Dream.Rendering.World;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -174,7 +175,12 @@ public class PlayScene : IDisposable
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
 
-        _render.World.DrawWorld(presentation);
+        WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        FramePerformanceSnapshot performance = presentation.Performance.WithRenderStats(
+            worldRenderStats.VisibleCompatibilityCubes,
+            worldRenderStats.VisibleGeometryBlocks,
+            worldRenderStats.CompatibilityBatchCount,
+            worldRenderStats.GeometryBatchCount);
         _render.Enemies.Draw(
             presentation.Camera,
             presentation.ActiveEnemies,
@@ -221,7 +227,8 @@ public class PlayScene : IDisposable
                 _scenePresenter.BuildPlayerRoster(),
                 _combatFeedback,
                 _actionFeedback.CurrentRejectionMessage,
-                ConnectedServerEndpoint);
+                ConnectedServerEndpoint,
+                performance);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
     }
@@ -469,6 +476,11 @@ public class PlayScene : IDisposable
         if (request.ShowCollisionGeometry.HasValue)
         {
             _settings.SetShowCollisionGeometry(request.ShowCollisionGeometry.Value);
+        }
+
+        if (request.ShowPerformanceCounters.HasValue)
+        {
+            _settings.SetShowPerformanceCounters(request.ShowPerformanceCounters.Value);
         }
 
         if (request.Strength.HasValue || request.AttackSpeed.HasValue || request.Vitality.HasValue)

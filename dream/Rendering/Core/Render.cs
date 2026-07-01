@@ -27,6 +27,8 @@ public readonly record struct HudFrameResult(
 public class Render
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
+    private readonly ReusableMatrixBuffer _geometryBlockMatrices = new();
+    private readonly ReusableMatrixBuffer _animatedCubeMatrices = new();
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
@@ -450,7 +452,7 @@ public class Render
 
         Shader shader = GetShader(shaderName);
         Matrix4 view = camera.GetViewMatrix();
-        Matrix4[] modelMatrices = new Matrix4[blocks.Count];
+        Matrix4[] modelMatrices = _geometryBlockMatrices.Rent(blocks.Count);
         for (int i = 0; i < blocks.Count; i++)
         {
             GeometryRenderBlockDescriptor block = blocks[i];
@@ -462,7 +464,7 @@ public class Render
         }
 
         animation.BeginRender(shader, view, _projection);
-        animation.RenderPreparedInstanced(shader, modelMatrices);
+        animation.RenderPreparedInstanced(shader, modelMatrices, blocks.Count);
         animation.EndRender();
     }
 
@@ -583,14 +585,21 @@ public class Render
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
         HudStatusSnapshot status,
-        string? connectionLabel = null)
+        string? connectionLabel = null,
+        FramePerformanceSnapshot performance = default)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
         DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
         DrawWorldActorLabels(camera, remotePlayers, activeEnemies);
-        HudInteractionRequest request = DrawHudInterface(settings, status, rejectionMessage, connectionLabel, playerRoster);
+        HudInteractionRequest request = DrawHudInterface(
+            settings,
+            status,
+            rejectionMessage,
+            connectionLabel,
+            playerRoster,
+            performance);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
@@ -784,7 +793,8 @@ public class Render
         HudStatusSnapshot status,
         string? rejectionMessage,
         string? connectionLabel,
-        IReadOnlyList<PlayerRosterEntry> playerRoster)
+        IReadOnlyList<PlayerRosterEntry> playerRoster,
+        FramePerformanceSnapshot performance)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
@@ -794,6 +804,7 @@ public class Render
         int? stagedFloorSize = null;
         int? requestedFloorSize = null;
         bool? showCollisionGeometry = null;
+        bool? showPerformanceCounters = null;
         int? strength = null;
         float? attackSpeed = null;
         int? vitality = null;
@@ -823,6 +834,13 @@ public class Render
             ImGui.TextColored(new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f), rejectionMessage);
         }
         ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
+        if (settings.ShowPerformanceCounters && performance.HasCounters)
+        {
+            foreach (string line in performance.ToHudLines())
+            {
+                ImGui.Text(line);
+            }
+        }
         ImGui.Text("Press Esc to toggle settings");
         ImGui.End();
 
@@ -928,6 +946,12 @@ public class Render
                 showCollisionGeometry = showCollision;
             }
 
+            bool showPerformance = settings.ShowPerformanceCounters;
+            if (ImGui.Checkbox("Show Performance Counters", ref showPerformance))
+            {
+                showPerformanceCounters = showPerformance;
+            }
+
             int floorSize = settings.PendingFloorSize;
             if (ImGui.SliderInt("Floor Size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
             {
@@ -968,6 +992,7 @@ public class Render
             stagedFloorSize,
             requestedFloorSize,
             showCollisionGeometry,
+            showPerformanceCounters,
             strength,
             attackSpeed,
             vitality,
@@ -1062,7 +1087,7 @@ public class Render
 
         Shader shader = GetShader(shaderName);
         Matrix4 view = camera.GetViewMatrix();
-        Matrix4[] modelMatrices = new Matrix4[cubes.Count];
+        Matrix4[] modelMatrices = _animatedCubeMatrices.Rent(cubes.Count);
         for (int i = 0; i < cubes.Count; i++)
         {
             Cube cube = cubes[i];
@@ -1071,7 +1096,7 @@ public class Render
         }
 
         animation.BeginRender(shader, view, _projection);
-        animation.RenderPreparedInstanced(shader, modelMatrices);
+        animation.RenderPreparedInstanced(shader, modelMatrices, cubes.Count);
         animation.EndRender();
     }
 

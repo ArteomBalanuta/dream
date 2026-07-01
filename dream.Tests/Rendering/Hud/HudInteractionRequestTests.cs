@@ -22,6 +22,7 @@ public class HudInteractionRequestTests
         Assert.Null(request.StagedFloorSize);
         Assert.Null(request.RequestedFloorSize);
         Assert.Null(request.ShowCollisionGeometry);
+        Assert.Null(request.ShowPerformanceCounters);
         Assert.Null(request.Strength);
         Assert.Null(request.AttackSpeed);
         Assert.Null(request.Vitality);
@@ -40,6 +41,7 @@ public class HudInteractionRequestTests
             StagedFloorSize: 20,
             RequestedFloorSize: 20,
             ShowCollisionGeometry: true,
+            ShowPerformanceCounters: true,
             Strength: 12,
             AttackSpeed: 3.5f,
             Vitality: 14,
@@ -53,6 +55,7 @@ public class HudInteractionRequestTests
         Assert.Equal(20, request.StagedFloorSize);
         Assert.Equal(20, request.RequestedFloorSize);
         Assert.True(request.ShowCollisionGeometry);
+        Assert.True(request.ShowPerformanceCounters);
         Assert.Equal(12, request.Strength);
         Assert.Equal(3.5f, request.AttackSpeed);
         Assert.Equal(14, request.Vitality);
@@ -71,6 +74,7 @@ public class HudInteractionRequestTests
             StagedFloorSize: 20,
             RequestedFloorSize: 20,
             ShowCollisionGeometry: true,
+            ShowPerformanceCounters: true,
             Strength: 12,
             AttackSpeed: 3.5f,
             Vitality: 14,

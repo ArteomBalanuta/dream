@@ -32,7 +32,8 @@ public class HudRenderer
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
         HudStatusSnapshot status,
-        string? connectionLabel = null)
+        string? connectionLabel = null,
+        FramePerformanceSnapshot performance = default)
     {
         return _render.DrawHUD(
             args,
@@ -46,7 +47,8 @@ public class HudRenderer
             combatFeedback,
             rejectionMessage,
             status,
-            connectionLabel);
+            connectionLabel,
+            performance);
     }
 
     public HudFrameResult DrawFrame(
@@ -59,7 +61,8 @@ public class HudRenderer
         IReadOnlyList<PlayerRosterEntry> playerRoster,
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
-        string? connectionLabel = null)
+        string? connectionLabel = null,
+        FramePerformanceSnapshot performance = default)
     {
         return DrawFrame(
             args,
@@ -73,7 +76,8 @@ public class HudRenderer
             combatFeedback,
             rejectionMessage,
             state.HudStatus,
-            connectionLabel);
+            connectionLabel,
+            performance);
     }
 
     public void UpdateProjectionForSettings(GameSettings settings)

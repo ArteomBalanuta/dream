@@ -208,6 +208,40 @@ public class MapGeometryFacadeTests
         Assert.True(sculptedCollisionBodies < 12_000);
     }
 
+    [Fact]
+    public void StartupSculpture_Merges_StaticSubcellCollisionBodies_Across_Cell_Boundaries()
+    {
+        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+        int sculptedRenderBlocks = renderExport.Blocks.Count(block => block.CellKey.Y > 0);
+        int sculptedCollisionBodies = collisionExport.Bodies.Count(body =>
+            body.Kind == GeometryCollisionBodyKind.Subcell &&
+            body.CellKey.HasValue &&
+            body.CellKey.Value.Y > 0);
+
+        Assert.True(
+            sculptedCollisionBodies <= sculptedRenderBlocks,
+            $"Expected static collision merge to be at least as compact as render merge, but collision={sculptedCollisionBodies}, render={sculptedRenderBlocks}.");
+    }
+
+    [Fact]
+    public void StartupSculpture_Uses_Coarse_StaticCollision_For_ResponsiveBootstrap()
+    {
+        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+        int sculptedCollisionBodies = collisionExport.Bodies.Count(body =>
+            body.Kind == GeometryCollisionBodyKind.Subcell &&
+            body.CellKey.HasValue &&
+            body.CellKey.Value.Y > 0);
+
+        Assert.True(
+            sculptedCollisionBodies < 1_000,
+            $"Expected static startup sculpture collision to stay bootstrap-cheap, but exported {sculptedCollisionBodies} subcell bodies.");
+    }
+
     private static bool ContainsPoint(GeometryCollisionBodyDescriptor body, Vector3 point)
     {
         Vector3 delta = point - body.Center;

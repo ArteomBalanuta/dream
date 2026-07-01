@@ -61,7 +61,11 @@ Those cubes are now also explicitly a compatibility export during the geometry r
 
 Startup terrain no longer relies only on coarse full cubes. `WorldGenerator` can seed authored subdivision into selected geometry cells, and `Map.CaptureGeometryRenderExport(...)` emits those cells as geometry-native render blocks. The first authored shapes are a stone mini-cube pyramid, a rounded dirt boulder, and low filler rubble clusters in the expanded startup world. These authored sculpture cells are generated from the global `WorldMicroGrid`: one world cube maps to `16 x 16 x 16` absolute microcells, and those coordinates are projected back into the current cell/subcell storage bridge. Render export now keeps those authored microcells canonical but caches a global greedy merge for static startup sculptures, so contiguous runs become cuboid render descriptors that can cross parent-cell boundaries. Collision and debug wire boxes still come from canonical micro-grid occupancy rather than from render-only visual fill.
 
+Static startup sculpture collision is intentionally coarser than render geometry for responsive bootstrap: render keeps high-detail global micro-grid descriptors, while static collision uses one AABB per occupied parent cell. The physics binder keeps that merged static collision group separate from dynamic/fractured per-cell bodies, so startup collision is cheaper while runtime edits still use the existing cell-level synchronization path.
+
 The renderer must batch this geometry before reaching OpenGL. Compatibility cubes and geometry-native render blocks are grouped by model and shader, then model-backed groups are drawn through instanced `AnimatedModel` rendering. This prevents authored subcell landmarks from becoming tens of thousands of individual model render calls per frame.
+
+The instanced cube/block paths reuse matrix buffers for the per-instance model transforms, and `AnimatedModel` uploads the active matrix range directly to the instance buffer. This avoids the previous per-batch matrix-array allocation and the extra `ToArray()` copy during `GL.BufferData(...)`.
 
 ### Simple cube rendering
 
@@ -141,6 +145,7 @@ The HUD currently includes:
 - A lightweight ImGui `HUD` window with status text
 - An interactive ImGui `Settings` window toggled with `Esc`
 - A pooled floating-combat-text overlay rendered in screen space from projected world anchors
+- Optional frame performance counters for render export, physics, visible/exported world descriptors, render batches, and collision-body count
 
 The crosshair layout is viewport-driven: its center and line geometry are rebuilt from the active window size instead of from fixed startup-time HUD pixels.
 
@@ -154,6 +159,7 @@ The crosshair layout is viewport-driven: its center and line geometry are rebuil
 - Starts a new ImGui frame
 - Renders a window at the top-left corner
 - Displays the current resolution and settings-menu hint
+- Displays performance counters when `Show Performance Counters` is enabled in the settings panel
 - Optionally renders a settings panel with world FOV, mouse sensitivity, viewmodel rig controls, and resolution controls
 - Renders the ImGui draw data manually
 - Re-enables depth testing
