@@ -47,6 +47,11 @@ public sealed class ServerConnection : IAsyncDisposable
         return SendMessageAsync(snapshotMessage, cancellationToken);
     }
 
+    public ValueTask SendActionAsync(ServerActionMessage actionMessage, CancellationToken cancellationToken = default)
+    {
+        return SendMessageAsync(actionMessage, cancellationToken);
+    }
+
     public ValueTask DisposeAsync()
     {
         _sendLock.Dispose();

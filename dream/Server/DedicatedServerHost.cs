@@ -19,10 +19,12 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
     private readonly IPlayerCommandInbox _commandInbox = new LatestPlayerCommandInbox();
+    private readonly IPlayerActionQueue _actionQueue = new PlayerActionQueue();
     private readonly ServerTickRunner _tickRunner = new();
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly object _authoritySync = new();
 
     public DedicatedServerHost(
@@ -98,15 +100,33 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         {
             return _tickRunner.Advance(elapsedSeconds, (tick, fixedDeltaSeconds) =>
             {
-                IReadOnlyList<PlayerCommandFrame> pendingCommands = DrainJoinedCommands();
-                tickDrivenAuthority.AdvanceTick(
+                PlayerSessionId[] joinedSessionIds = ResolveJoinedSessionIds();
+                IReadOnlyList<PlayerCommandFrame> pendingCommands = _commandInbox.Drain(joinedSessionIds);
+                IReadOnlyList<QueuedPlayerAction> pendingActions = _actionQueue.Drain(joinedSessionIds);
+                IReadOnlyList<AuthoritativeActionResult> actionResults = tickDrivenAuthority.AdvanceTick(
                     tick,
                     fixedDeltaSeconds,
                     pendingCommands,
+                    pendingActions,
                     DefaultServerTuning,
                     allowGameplaySimulation: true);
+                foreach (AuthoritativeActionResult actionResult in actionResults)
+                {
+                    _pendingActionResults.Enqueue(actionResult);
+                }
             });
         }
+    }
+
+    public IReadOnlyList<AuthoritativeActionResult> DrainPendingActionResults()
+    {
+        List<AuthoritativeActionResult> drained = [];
+        while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
+        {
+            drained.Add(actionResult);
+        }
+
+        return drained;
     }
 
     public ServerSnapshotMessage CreateSnapshotMessage(bool includeWorldSnapshot = false)
@@ -186,17 +206,17 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 id,
                 state.Authority,
                 state.CommandInbox,
+                state.ActionQueue,
                 state.SessionClaims),
-            (Authority: _authority, CommandInbox: _commandInbox, SessionClaims: (IServerSessionClaimRegistry)this));
+            (Authority: _authority, CommandInbox: _commandInbox, ActionQueue: _actionQueue, SessionClaims: (IServerSessionClaimRegistry)this));
     }
 
-    private IReadOnlyList<PlayerCommandFrame> DrainJoinedCommands()
+    private PlayerSessionId[] ResolveJoinedSessionIds()
     {
-        PlayerSessionId[] joinedSessionIds = _connections.Values
+        return _connections.Values
             .Select(context => context.LastJoinRequest)
             .Where(join => join != null)
             .Select(join => new PlayerSessionId(join!.RequestedSessionId))
             .ToArray();
-        return _commandInbox.Drain(joinedSessionIds);
     }
 }

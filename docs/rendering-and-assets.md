@@ -239,10 +239,13 @@ Texture handles are stored for disposal later.
 The repository currently includes:
 
 - World and HUD shaders under `dream/shaders/`
-- A cube model and related textures under `dream/animations/`
 - An animated wolf asset under `dream/animations/enemies/wolf.glb`
 - A Kenney blocky player model under `dream/animations/players/`
 - First-person hands and held-item blockout assets under `dream/animations/viewmodels/`
+- A curated source library under `dream/animations/library/` with:
+  - Quaternius animal and character packs in `library/quaternius/`
+  - Kenney `nature-kit` and `animated-characters-retro` packs in `library/kenney/`
+  - Poly Haven terrain textures in `library/polyhaven/`
 - A font file under `dream/fonts/`
 
 These asset directories are copied into the build output and resolved at runtime relative to the application base directory, as documented in [configuration.md](configuration.md).
@@ -259,6 +262,10 @@ World models remain part of the main world pass and should keep world-space tran
 ## World Asset Normalization
 
 Imported world assets do not always arrive in gameplay-ready scale. The current project now handles that through explicit normalization metadata instead of through arbitrary render-only scale tweaking.
+
+Dream world units are cube-relative: `1.0` world unit equals one cube side. Imported glTF world actors should declare authored dimensions and target cube-relative dimensions in their asset definition. The durable policy is recorded in [the world-units and asset-scale decision](ledger/decisions/2026-07-01-world-units-and-asset-scale.md), with follow-up implementation work tracked in [the model-size normalization plan](ledger/plans/2026-07-01-model-size-normalization-and-asset-units.md).
+
+The standing player target is `2.0` cubes tall and no more than `1.0` cube wide/deep in neutral stance. Renderer code should consume asset definitions for scale and grounding rather than introducing local visual constants.
 
 For the first creature slice, `WolfAssetDefinition` declares:
 

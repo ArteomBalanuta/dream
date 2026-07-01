@@ -52,6 +52,28 @@ public class AuthoritativeActionFlowTests
     }
 
     [Fact]
+    public void PlayerActionHandler_WhenJoinedAndQueueAttached_EnqueuesActionInsteadOfReplyingImmediately()
+    {
+        RecordingPlayerActionQueue actionQueue = new();
+        ServerRoutingContext context = new("connection-1", new FakeAuthoritativeSession(), actionQueue: actionQueue)
+        {
+            LastJoinRequest = new ClientJoinRequestMessage("session-a", "player-a")
+        };
+        PlayerActionHandler handler = new();
+        PlayerActionMessage message = new(
+            new PlayerSessionId("session-a"),
+            7,
+            new CombatUseIntent(new Vector3(0f, 1f, 0f), -Vector3.UnitZ));
+
+        handler.Handle(context, message);
+
+        Assert.Empty(context.OutboundMessages);
+        QueuedPlayerAction queuedAction = Assert.Single(actionQueue.EnqueuedActions);
+        Assert.Equal("session-a", queuedAction.SessionId.Value);
+        Assert.Equal((ulong)7, queuedAction.Message.ActionSequence);
+    }
+
+    [Fact]
     public void ClientProtocolSession_ApplyServerActionMessage_CapturesRejectedActionResult()
     {
         ClientProtocolSession session = ClientProtocolSession.CreateDefault();
@@ -68,6 +90,56 @@ public class AuthoritativeActionFlowTests
         Assert.NotNull(session.Context.LastActionResult);
         Assert.False(session.Context.LastActionResult?.Accepted);
         Assert.Equal((ulong)9, session.Context.LastActionResult?.ActionSequence);
+    }
+
+    private sealed class RecordingPlayerActionQueue : IPlayerActionQueue
+    {
+        public List<QueuedPlayerAction> EnqueuedActions { get; } = [];
+
+        public QueuedPlayerAction Enqueue(PlayerActionMessage message)
+        {
+            QueuedPlayerAction queuedAction = new(
+                (ulong)(EnqueuedActions.Count + 1),
+                message.SessionId,
+                message);
+            EnqueuedActions.Add(queuedAction);
+            return queuedAction;
+        }
+
+        public IReadOnlyList<QueuedPlayerAction> Drain(IEnumerable<PlayerSessionId> joinedSessionIds)
+        {
+            return [];
+        }
+    }
+
+    private sealed class FakeAuthoritativeSession : IAuthoritativeSessionHost
+    {
+        public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName)
+        {
+            return new JoinAcceptedMessage(requestedSessionId, 101, 12, InitialWorld: null);
+        }
+
+        public AuthoritativeActionResult ProcessAction(PlayerActionMessage message)
+        {
+            return new AuthoritativeActionResult(
+                message.SessionId.Value,
+                message.ActionSequence,
+                12,
+                Accepted: true,
+                Payload: null);
+        }
+
+        public ServerSnapshotEnvelope ExportSnapshot(bool includeWorldSnapshot = false)
+        {
+            return new ServerSnapshotEnvelope(
+                12,
+                new Dictionary<string, ulong>(),
+                Array.Empty<ActorSnapshot>(),
+                PlayerInteractionMode.Building,
+                null,
+                Array.Empty<WorldMutationDelta>(),
+                Array.Empty<DamageEventDelta>());
+        }
     }
 
     [Fact]

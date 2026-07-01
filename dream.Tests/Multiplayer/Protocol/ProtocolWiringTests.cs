@@ -129,10 +129,11 @@ public class ProtocolWiringTests
     }
 
     [Fact]
-    public void PlayerActionHandler_WhenAuthorityIsAttachedAndSessionJoined_ReturnsAcceptedServerActionMessage()
+    public void PlayerActionHandler_WhenAuthorityIsAttachedAndSessionJoined_EnqueuesActionForTickProcessing()
     {
         FakeAuthoritativeSession authority = new();
-        ServerRoutingContext context = new("connection-1", authority)
+        RecordingPlayerActionQueue actionQueue = new();
+        ServerRoutingContext context = new("connection-1", authority, actionQueue: actionQueue)
         {
             LastJoinRequest = new ClientJoinRequestMessage("session-a", "player-a")
         };
@@ -143,9 +144,10 @@ public class ProtocolWiringTests
             9,
             new BuildUseIntent(new OpenTK.Mathematics.Vector3(4f, 1f, 4f))));
 
-        ServerActionMessage reply = Assert.IsType<ServerActionMessage>(Assert.Single(context.OutboundMessages));
-        Assert.True(reply.Result.Accepted);
-        Assert.NotNull(reply.Result.Payload);
+        Assert.Empty(context.OutboundMessages);
+        QueuedPlayerAction queuedAction = Assert.Single(actionQueue.EnqueuedActions);
+        Assert.Equal("session-a", queuedAction.SessionId.Value);
+        Assert.Equal((ulong)9, queuedAction.Message.ActionSequence);
     }
 
     private static PlayerCommandFrame CreateCommandFrame(string sessionId, ulong sequence)
@@ -182,6 +184,26 @@ public class ProtocolWiringTests
         }
 
         public IReadOnlyList<PlayerCommandFrame> Drain(IEnumerable<PlayerSessionId> sessionIds)
+        {
+            return [];
+        }
+    }
+
+    private sealed class RecordingPlayerActionQueue : IPlayerActionQueue
+    {
+        public List<QueuedPlayerAction> EnqueuedActions { get; } = [];
+
+        public QueuedPlayerAction Enqueue(PlayerActionMessage message)
+        {
+            QueuedPlayerAction queuedAction = new(
+                (ulong)(EnqueuedActions.Count + 1),
+                message.SessionId,
+                message);
+            EnqueuedActions.Add(queuedAction);
+            return queuedAction;
+        }
+
+        public IReadOnlyList<QueuedPlayerAction> Drain(IEnumerable<PlayerSessionId> joinedSessionIds)
         {
             return [];
         }

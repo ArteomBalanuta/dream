@@ -80,6 +80,24 @@ public sealed class DedicatedServerService : IAsyncDisposable
             await connection.SendSnapshotAsync(snapshot, cancellationToken);
         }
 
+        IReadOnlyList<AuthoritativeActionResult> pendingActionResults = _host.DrainPendingActionResults();
+        if (pendingActionResults.Count > 0)
+        {
+            foreach (AuthoritativeActionResult actionResult in pendingActionResults)
+            {
+                ServerConnection[] targetConnections = joinedConnections
+                    .Where(connection =>
+                        _host.TryGetConnectionContext(connection.ConnectionId, out ServerRoutingContext? context)
+                        && context?.LastJoinRequest?.RequestedSessionId == actionResult.SessionId)
+                    .ToArray();
+
+                foreach (ServerConnection connection in targetConnections)
+                {
+                    await connection.SendActionAsync(new ServerActionMessage(actionResult), cancellationToken);
+                }
+            }
+        }
+
         return executedTicks;
     }
 

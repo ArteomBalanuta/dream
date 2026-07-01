@@ -41,8 +41,16 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             return;
         }
 
-        context.OutboundMessages.Add(new ServerActionMessage(
-            context.Authority.ProcessAction(actionMessage)));
+        if (context.ActionQueue == null)
+        {
+            context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                actionMessage,
+                serverTick: 0,
+                "Authoritative action queue is not attached to the server host yet.")));
+            return;
+        }
+
+        context.ActionQueue.Enqueue(actionMessage);
     }
 
     private static AuthoritativeActionResult CreateRejectedResult(

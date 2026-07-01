@@ -211,6 +211,20 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             allowGameplaySimulation);
     }
 
+    public IReadOnlyList<AuthoritativeActionResult> ProcessQueuedAuthoritativeActions(
+        ulong serverTick,
+        IReadOnlyList<QueuedPlayerAction> queuedActions)
+    {
+        CurrentServerTick = serverTick;
+
+        return queuedActions
+            .OrderBy(action => action.ReceiveOrder)
+            .ThenBy(action => action.SessionId.Value, StringComparer.Ordinal)
+            .ThenBy(action => action.Message.ActionSequence)
+            .Select(action => ProcessAuthoritativeAction(action.Message))
+            .ToArray();
+    }
+
     public WorldSessionUpdateResult AdvanceAuthoritativeTick(
         ulong serverTick,
         float deltaTime,

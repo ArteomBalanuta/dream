@@ -1,7 +1,9 @@
 using Xunit;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -31,6 +33,37 @@ public class DedicatedServerServiceTests
         Assert.Equal(1, executedTicks);
         ServerSnapshotMessage snapshot = Assert.IsType<ServerSnapshotMessage>(outbound.Message);
         Assert.Equal((ulong)1, snapshot.Snapshot.ServerTick);
+    }
+
+    [Fact]
+    public async Task AdvanceOnceAsync_BroadcastsQueuedActionResultsAfterTick()
+    {
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        FakeTickDrivenAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using FakeServerTransport transport = new();
+        await using DedicatedServerService service = new(host, transport, codec, framer);
+        FakeTransportConnection connection = new();
+        ServerConnection serverConnection = new(connection, host, codec, framer);
+        service.AttachConnection(serverConnection);
+        host.HandleClientMessage(connection.ConnectionId, new ClientJoinRequestMessage("session-a", "player-a"));
+        host.HandleClientMessage(
+            connection.ConnectionId,
+            new PlayerActionMessage(
+                new PlayerSessionId("session-a"),
+                9,
+                new CombatUseIntent(OpenTK.Mathematics.Vector3.Zero, -OpenTK.Mathematics.Vector3.UnitZ)));
+
+        int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        Assert.Equal(1, executedTicks);
+        Assert.Equal(2, connection.OutboundFrames.Count);
+        ServerSnapshotMessage snapshot = Assert.IsType<ServerSnapshotMessage>(connection.DecodeOutboundAt(0, codec, framer).Message);
+        ServerActionMessage action = Assert.IsType<ServerActionMessage>(connection.DecodeOutboundAt(1, codec, framer).Message);
+        Assert.Equal((ulong)1, snapshot.Snapshot.ServerTick);
+        Assert.True(action.Result.Accepted);
+        Assert.Equal((ulong)9, action.Result.ActionSequence);
     }
 
     [Fact]
@@ -112,6 +145,16 @@ public class DedicatedServerServiceTests
             return codec.Decode(payload);
         }
 
+        public DecodedProtocolMessage DecodeOutboundAt(int index, TransportJsonCodec codec, LengthPrefixedMessageFramer framer)
+        {
+            byte[] framed = _outbound[index];
+            bool complete = framer.TryDeframe(framed, out byte[]? payload, out int consumed);
+            Assert.True(complete);
+            Assert.Equal(framed.Length, consumed);
+            Assert.NotNull(payload);
+            return codec.Decode(payload);
+        }
+
         public ValueTask DisposeAsync()
         {
             _outbound.Clear();
@@ -153,14 +196,26 @@ public class DedicatedServerServiceTests
                 Array.Empty<DamageEventDelta>());
         }
 
-        public void AdvanceTick(
+        public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
             ulong serverTick,
             float deltaTime,
             IReadOnlyList<PlayerCommandFrame> commandFrames,
+            IReadOnlyList<QueuedPlayerAction> queuedActions,
             PlayerSimulationTuning playerTuning,
             bool allowGameplaySimulation = true)
         {
             CurrentServerTick = serverTick;
+            return queuedActions
+                .Select(action => new AuthoritativeActionResult(
+                    action.SessionId.Value,
+                    action.Message.ActionSequence,
+                    serverTick,
+                    Accepted: true,
+                    Payload: new WorldMutationResult(
+                        WorldMutationKind.CubePlaced,
+                        new OpenTK.Mathematics.Vector3(4f, 1f, 4f),
+                        Applied: true)))
+                .ToArray();
         }
     }
 }

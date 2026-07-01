@@ -92,6 +92,32 @@ public class DedicatedServerHostTickTests
     }
 
     [Fact]
+    public void RuntimeAttachedHost_QueuesCombatActionsAndDrainsThemOnTick()
+    {
+        FakeTickDrivenAuthority authority = new();
+        using DedicatedServerHost host = CreateHost(authority);
+
+        host.HandleClientMessage("connection-1", new ClientJoinRequestMessage("session-a", "player-a"));
+        IReadOnlyList<IServerToClientMessage> replies = host.HandleClientMessage(
+            "connection-1",
+            new PlayerActionMessage(
+                new PlayerSessionId("session-a"),
+                9,
+                new CombatUseIntent(OpenTK.Mathematics.Vector3.Zero, -OpenTK.Mathematics.Vector3.UnitZ)));
+
+        Assert.Empty(replies);
+        Assert.Empty(authority.ProcessedActions);
+
+        host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
+
+        Assert.Single(authority.LastTickQueuedActions);
+        QueuedPlayerAction queuedAction = authority.LastTickQueuedActions[0];
+        Assert.Equal("session-a", queuedAction.SessionId.Value);
+        Assert.Equal((ulong)9, queuedAction.Message.ActionSequence);
+        Assert.Empty(authority.ProcessedActions);
+    }
+
+    [Fact]
     public async Task RuntimeAttachedHost_CanReceiveJoinsAndCommandsWhileTicking()
     {
         using DedicatedServerHost host = CreateHost(new FakeTickDrivenAuthority());
@@ -155,6 +181,8 @@ public class DedicatedServerHostTickTests
         private readonly Dictionary<string, ulong> _lastAcceptedCommandSequences = new(StringComparer.Ordinal);
 
         public List<PlayerCommandFrame> LastTickCommands { get; } = [];
+        public List<QueuedPlayerAction> LastTickQueuedActions { get; } = [];
+        public List<PlayerActionMessage> ProcessedActions { get; } = [];
 
         public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName)
         {
@@ -163,6 +191,7 @@ public class DedicatedServerHostTickTests
 
         public AuthoritativeActionResult ProcessAction(PlayerActionMessage message)
         {
+            ProcessedActions.Add(message);
             return new AuthoritativeActionResult(
                 message.SessionId.Value,
                 message.ActionSequence,
@@ -186,20 +215,25 @@ public class DedicatedServerHostTickTests
                 Array.Empty<DamageEventDelta>());
         }
 
-        public void AdvanceTick(
+        public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
             ulong serverTick,
             float deltaTime,
             IReadOnlyList<PlayerCommandFrame> commandFrames,
+            IReadOnlyList<QueuedPlayerAction> queuedActions,
             PlayerSimulationTuning playerTuning,
             bool allowGameplaySimulation = true)
         {
             CurrentServerTick = serverTick;
             LastTickCommands.Clear();
             LastTickCommands.AddRange(commandFrames);
+            LastTickQueuedActions.Clear();
+            LastTickQueuedActions.AddRange(queuedActions);
             foreach (PlayerCommandFrame commandFrame in commandFrames)
             {
                 _lastAcceptedCommandSequences[commandFrame.SessionId.Value] = commandFrame.Sequence;
             }
+
+            return Array.Empty<AuthoritativeActionResult>();
         }
 
         public ulong CurrentServerTick { get; private set; }

@@ -9,11 +9,13 @@ public sealed class ServerRoutingContext
         string connectionId,
         IAuthoritativeSessionHost? authority = null,
         IPlayerCommandInbox? commandInbox = null,
+        IPlayerActionQueue? actionQueue = null,
         IServerSessionClaimRegistry? sessionClaims = null)
     {
         ConnectionId = connectionId;
         Authority = authority;
         CommandInbox = commandInbox;
+        ActionQueue = actionQueue;
         SessionClaims = sessionClaims;
     }
 
@@ -22,6 +24,8 @@ public sealed class ServerRoutingContext
     public IAuthoritativeSessionHost? Authority { get; }
 
     public IPlayerCommandInbox? CommandInbox { get; }
+
+    public IPlayerActionQueue? ActionQueue { get; }
 
     public IServerSessionClaimRegistry? SessionClaims { get; }
 

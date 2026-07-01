@@ -51,10 +51,11 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         return Runtime.ExportServerSnapshotEnvelope(includeWorldSnapshot);
     }
 
-    public void AdvanceTick(
+    public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
         ulong serverTick,
         float deltaTime,
         IReadOnlyList<PlayerCommandFrame> commandFrames,
+        IReadOnlyList<QueuedPlayerAction> queuedActions,
         PlayerSimulationTuning playerTuning,
         bool allowGameplaySimulation = true)
     {
@@ -71,6 +72,28 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         {
             Runtime.AdvanceSecondaryRemoteSession(secondaryCommand, deltaTime, playerTuning);
         }
+
+        IReadOnlyList<AuthoritativeActionResult> actionResults = Runtime.ProcessQueuedAuthoritativeActions(
+            serverTick,
+            queuedActions);
+
+        return actionResults;
+    }
+
+    public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
+        ulong serverTick,
+        float deltaTime,
+        IReadOnlyList<PlayerCommandFrame> commandFrames,
+        PlayerSimulationTuning playerTuning,
+        bool allowGameplaySimulation = true)
+    {
+        return AdvanceTick(
+            serverTick,
+            deltaTime,
+            commandFrames,
+            Array.Empty<QueuedPlayerAction>(),
+            playerTuning,
+            allowGameplaySimulation);
     }
 
     public void Dispose()

@@ -165,14 +165,16 @@ public class ServerConnectionTests
                 Array.Empty<DamageEventDelta>());
         }
 
-        public void AdvanceTick(
+        public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
             ulong serverTick,
             float deltaTime,
             IReadOnlyList<PlayerCommandFrame> commandFrames,
+            IReadOnlyList<QueuedPlayerAction> queuedActions,
             PlayerSimulationTuning playerTuning,
             bool allowGameplaySimulation = true)
         {
             CurrentServerTick = serverTick;
+            return Array.Empty<AuthoritativeActionResult>();
         }
     }
 }
