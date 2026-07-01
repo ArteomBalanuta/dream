@@ -4,13 +4,14 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.Runtime;
 
 
 public sealed record WorldSessionPresentationState(
     Camera Camera,
-    IReadOnlyList<Cube> VisibleWorldCubes,
+    GeometryRenderExport VisibleWorld,
     IReadOnlyList<EnemyActor> ActiveEnemies,
     IReadOnlyList<RigidBody> MapCollisionBodies,
     RigidBody? PlayerCollisionBody,
@@ -18,7 +19,7 @@ public sealed record WorldSessionPresentationState(
 {
     public static WorldSessionPresentationState Create(
         Camera camera,
-        IEnumerable<Cube> visibleWorldCubes,
+        GeometryRenderExport visibleWorld,
         IEnumerable<EnemyActor> activeEnemies,
         IReadOnlyList<RigidBody> mapCollisionBodies,
         RigidBody? playerCollisionBody,
@@ -29,7 +30,7 @@ public sealed record WorldSessionPresentationState(
     {
         return new WorldSessionPresentationState(
             camera,
-            visibleWorldCubes.ToArray(),
+            visibleWorld,
             activeEnemies.Where(actor => actor.IsActive).ToArray(),
             mapCollisionBodies,
             playerCollisionBody,

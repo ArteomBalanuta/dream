@@ -6,6 +6,7 @@ using TkVector3 = OpenTK.Mathematics.Vector3;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.Physics;
 
@@ -88,6 +89,37 @@ public class PhysicsIntegratorOwnershipTests
             new Player(map, physics, otherBody, new TkVector3(5f, 1.5f, 5f)));
 
         Assert.Contains("registered player body", ex.Message);
+    }
+
+    [Fact]
+    public void Map_With_Physics_Registers_Floor_And_Placed_Cube_Bodies_From_GeometryCollisionExport()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+
+        Assert.Single(physics.MapCubeBodies);
+
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+
+        Assert.Equal(2, physics.MapCubeBodies.Count);
+        Assert.Single(physics.DynamicMapCubeBodies);
+        GeometryCollisionExport export = map.CaptureGeometryCollisionExport();
+        Assert.Contains(export.Bodies, body => body.Kind == GeometryCollisionBodyKind.Cell && body.CellKey == new GeometryCellKey(3, 1, 3));
+    }
+
+    [Fact]
+    public void Fractured_Cell_Physics_Bodies_Remain_Registered_For_Debug_Rendering()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+
+        bool fractured = map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
+
+        Assert.True(fractured);
+        Assert.Contains(
+            physics.MapCubeBodies,
+            body => body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, TkVector3>);
     }
 
     private static PhysicsIntegrator CreateHarness(

@@ -7,4 +7,5 @@ public readonly record struct WorldSnapshot(
     int Width,
     int Height,
     int Depth,
-    IReadOnlyList<Vector3> PlacedCubeCells);
+    IReadOnlyList<Vector3> PlacedCubeCells,
+    IReadOnlyList<Vector3>? FracturedCubeCells = null);

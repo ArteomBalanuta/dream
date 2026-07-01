@@ -7,11 +7,22 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 public class Camera
 {
     private const float MouseSensitivityNormalization = 1f / 60f;
+    private const float HorizontalForwardEpsilon = 0.0001f;
 
     public Vector3 Position { get; set; }
     public Vector3 Front { get; private set; } = -Vector3.UnitZ;
     public Vector3 Up { get; private set; } = Vector3.UnitY;
     public Vector3 Right { get; private set; }
+    public Vector3 HorizontalForward
+    {
+        get
+        {
+            Vector3 horizontal = new(MathF.Cos(_yaw), 0f, MathF.Sin(_yaw));
+            return horizontal.LengthSquared <= HorizontalForwardEpsilon
+                ? -Vector3.UnitZ
+                : horizontal.Normalized();
+        }
+    }
 
     private float _pitch; // Rotation around the X axis (up and down)
     private float _yaw = -OpenTK.Mathematics.MathHelper.PiOver2; // Rotation around the Y axis (left and right)

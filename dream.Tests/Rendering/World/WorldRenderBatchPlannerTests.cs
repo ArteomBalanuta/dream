@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Rendering.Models;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Rendering.World;
 
@@ -57,6 +58,24 @@ public class WorldRenderBatchPlannerTests
         };
 
         List<WorldRenderBatch> batches = WorldRenderBatchPlanner.CreateBatches(cubes);
+
+        Assert.Equal(2, batches.Count);
+    }
+
+    [Fact]
+    public void CreateBatches_From_GeometryRenderExport_Uses_Compatibility_Cubes()
+    {
+        var export = new GeometryRenderExport(
+            Array.Empty<GeometryCellKey>(),
+            Array.Empty<GeometryRenderCell>(),
+            Array.Empty<GeometryRenderBlockDescriptor>(),
+            new[]
+            {
+                new Cube { ShaderName = "default" },
+                new Cube { ShaderName = "cube" }
+            });
+
+        List<WorldRenderBatch> batches = WorldRenderBatchPlanner.CreateBatches(export);
 
         Assert.Equal(2, batches.Count);
     }

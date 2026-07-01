@@ -10,6 +10,7 @@ using Dream.Rendering.World;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.Core;
 
@@ -407,6 +408,24 @@ public class Render
                                 camera.GetViewMatrix(),
                                 _projection,
                                 modelMatrix);
+        }
+        else
+        {
+            DrawCubeTransparent(camera, modelMatrix);
+            DrawCubeWireframe(camera, modelMatrix);
+        }
+    }
+
+    public void DrawGeometryBlock(Camera camera, GeometryRenderBlockDescriptor block)
+    {
+        Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.SideLength);
+
+        if (block.Animation != null)
+        {
+            block.Animation.Render(_shaders[block.ShaderName],
+                camera.GetViewMatrix(),
+                _projection,
+                modelMatrix);
         }
         else
         {

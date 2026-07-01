@@ -77,6 +77,22 @@ Dependency-direction tests keep server sources from referencing client/rendering
 
 ## Update Loop
 
+## World Geometry Foundation
+
+The runtime now has a first geometry-storage subsystem under `Dream.Simulation.World.Geometry`.
+
+Current roles:
+
+- `GeometryCellRecord` is the authoritative cell-level storage unit
+- `GeometryCellDefinition` carries shape, material, subdivision-resolution, and floor metadata
+- `GeometrySubdivisionState` keeps sparse child overrides unallocated until a mutation touches the cell
+- `GeometryMutationService` returns dirty-cell facts for future render/collision rebuild work
+- `GeometryRenderExport` packages local render-facing geometry snapshots plus compatibility cubes for the current renderer
+- `GeometryCollisionExport` packages merged-floor and per-cell collision descriptors for the current physics binder
+- `Map` now caches per-cell render blocks and collision bodies and rebuilds only dirty geometry cells after subdivision mutations
+
+`Map` still exports compatibility `Cube` instances for rendering, spatial queries, and current non-floor collider realization, but the canonical storage direction has started moving away from direct cube-only ownership.
+
 `Game.OnUpdateFrame()` now delegates either startup-scene or gameplay-scene work depending on whether the desktop client has connected yet.
 
 When gameplay is active, `PlayScene.Update()` splits client capture from authoritative runtime advancement:
@@ -197,6 +213,11 @@ The current client path now consumes remote-player snapshots in two stages:
 
 That keeps remote players firmly in the world-space pass and leaves local camera, HUD, and viewmodel logic unchanged.
 
+The desktop render path now also receives world geometry through `WorldSessionPresentationState.VisibleWorld`. `WorldSessionRuntime` captures a local `GeometryRenderExport` from the map, and `WorldRenderer` consumes its compatibility cubes through that seam instead of reaching back into runtime-owned map storage directly.
+
+Subdivided cells now enrich that export further: intact solid cells can still ride through the coarse compatibility-cube path, while subdivided cells rebuild only their own geometry-native render blocks and report dirty-cell metadata without forcing a whole-world render artifact refresh.
+The first gameplay-facing use of that path is cube fracture: lethal combat hits against destructible placed cubes now convert the cell into a deterministic rubble pattern instead of removing the whole cell immediately, and multiplayer world snapshots/mutations now carry a dedicated fractured-cell state so late joiners and connected clients reconstruct the same pieces.
+
 The next authoritative-interaction slice now routes one-shot gameplay actions more explicitly as well:
 
 - `PlayerActionHandler` always answers `player.action` messages with a `ServerActionMessage`
@@ -205,7 +226,7 @@ The next authoritative-interaction slice now routes one-shot gameplay actions mo
 
 The floating-combat-text path is now event-driven inside the scene boundary. `PlayScene` constructs the scene-local `CombatFeedbackSystem`, `PlayScene.Update()` publishes `DamageAppliedEvent` facts through the scene-local hub, `CombatFeedbackSystem` subscribes and translates them into transient feedback state, and the HUD/render layer only consumes that feedback state for camera-local billboard-style projection and drawing.
 
-Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `WorldSessionRuntime` now resolves combat hits against enemies first and then world cubes, while the registered runtime record still models a generic world-object lifecycle that future props or interactables can reuse.
+Placed cubes now opt into combat capability through a broader `WorldObjectRegistry` rather than by storing permanent HP directly on `Cube`. `WorldSessionRuntime` now resolves combat hits against enemies first and then world cubes, while the registered runtime record still models a generic world-object lifecycle that future props or interactables can reuse. On fatal cube hits, the runtime now unregisters the destructible record and fractures the authoritative geometry cell into static rubble instead of always deleting the cell outright.
 
 Scene-local events are intended for cross-system facts and reactions. Ordered simulation work such as movement, physics stepping, transform sync, and render pass order should remain direct. In the current reactive slice, the scene now publishes world-mutation facts such as `CubePlacedEvent` and `CubeDestroyedEvent` alongside combat facts such as `DamageAppliedEvent` and `ActorDiedEvent`, while debug tracing remains an opt-in scene-local subscriber through the bounded `EventTraceSystem` rather than default always-on scene wiring.
 
@@ -234,8 +255,10 @@ That shift removes the older implicit "construct the local player body inside `P
 `Map` now separates floor visuals from floor physics and data registration concerns:
 
 - the visible floor is still created as solid cubes in the map
-- `WorldPhysicsBinder` registers the floor collision surface once as a merged static floor collider
-- later non-floor cubes still receive individual rigid bodies through the same binder
+- `Map.CaptureGeometryCollisionExport()` now describes the merged floor surface plus geometry-backed non-floor cell bodies
+- `WorldPhysicsBinder` consumes those geometry collision descriptors instead of assuming every body starts as a direct cube-only physics request
+- later non-floor cubes still receive individual rigid bodies through the same binder as a compatibility realization of geometry cells
+- subdivided geometry cells now replace only their own collider set through `WorldPhysicsBinder.SyncCellCollisionBodies(...)` instead of forcing a whole-map collider rebuild
 
 When the floor size changes at runtime, `PlayScene` applies the HUD setting change and `WorldSessionRuntime` performs the authoritative rebuild:
 

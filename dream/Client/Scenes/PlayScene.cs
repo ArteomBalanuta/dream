@@ -185,7 +185,7 @@ public class PlayScene : IDisposable
             _render.LocalPlayers.Draw(
                 new LocalPlayerPresentationState(
                     _runtime.Player.GetWorldPosition(),
-                    _runtime.Player.Camera.Front,
+                    _runtime.Player.Camera.HorizontalForward,
                     _localPlayerWasMoving),
                 presentation.Camera,
                 (float)args.Time);

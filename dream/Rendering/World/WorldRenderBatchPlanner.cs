@@ -1,5 +1,6 @@
 using Dream.Rendering.Models;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.World;
 
@@ -10,6 +11,11 @@ public readonly record struct WorldRenderBatch(
 
 public static class WorldRenderBatchPlanner
 {
+    public static List<WorldRenderBatch> CreateBatches(GeometryRenderExport export)
+    {
+        return CreateBatches(export.CompatibilityCubes);
+    }
+
     public static List<WorldRenderBatch> CreateBatches(IEnumerable<Cube> cubes)
     {
         var grouped = new Dictionary<(AnimatedModel? Animation, string ShaderName), List<Cube>>();

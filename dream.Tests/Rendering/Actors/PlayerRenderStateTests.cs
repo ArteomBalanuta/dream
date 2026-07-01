@@ -98,6 +98,32 @@ public class PlayerRenderStateTests
         Assert.Equal(1.0f, state.ModelMatrix.M42, 3);
     }
 
+    [Fact]
+    public void CreateLocal_Rotates_PlayerMeshBackTowardThirdPersonCamera_WhenFacingForward()
+    {
+        PlayerRenderState state = PlayerRenderState.CreateLocal(
+            Vector3.Zero,
+            -Vector3.UnitZ,
+            isMoving: false,
+            scale: 1f);
+
+        Vector3 actualMeshFront = TransformDirectionColumnMajor(
+            state.ModelMatrix,
+            Vector3.UnitZ).Normalized();
+
+        Assert.Equal(0f, actualMeshFront.X, 3);
+        Assert.Equal(0f, actualMeshFront.Y, 3);
+        Assert.Equal(-1f, actualMeshFront.Z, 3);
+    }
+
+    private static Vector3 TransformDirectionColumnMajor(Matrix4 matrix, Vector3 direction)
+    {
+        return new Vector3(
+            (matrix.M11 * direction.X) + (matrix.M21 * direction.Y) + (matrix.M31 * direction.Z),
+            (matrix.M12 * direction.X) + (matrix.M22 * direction.Y) + (matrix.M32 * direction.Z),
+            (matrix.M13 * direction.X) + (matrix.M23 * direction.Y) + (matrix.M33 * direction.Z));
+    }
+
     private static RemotePlayerPresentationState CreateRemotePlayer(
         Vector3 position,
         Vector3 facing,

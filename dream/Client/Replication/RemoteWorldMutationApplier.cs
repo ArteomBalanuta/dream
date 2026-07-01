@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Client.Replication;
 
@@ -20,10 +21,16 @@ public static class RemoteWorldMutationApplier
         HashSet<(int X, int Y, int Z)> desiredCells = snapshot.PlacedCubeCells
             .Select(ToCellKey)
             .ToHashSet();
+        HashSet<(int X, int Y, int Z)> desiredFracturedCells = (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
+            .Select(ToCellKey)
+            .ToHashSet();
+        HashSet<(int X, int Y, int Z)> desiredAllCells = desiredCells
+            .Concat(desiredFracturedCells)
+            .ToHashSet();
 
         List<Cube> cubesToRemove = map.SolidCubes
             .Where(cube => MathF.Floor(cube.Position.Y + 1e-6f) > 0f)
-            .Where(cube => !desiredCells.Contains(ToCellKey(cube.Position)))
+            .Where(cube => !desiredAllCells.Contains(ToCellKey(cube.Position)))
             .ToList();
         foreach (Cube cube in cubesToRemove)
         {
@@ -36,6 +43,18 @@ public static class RemoteWorldMutationApplier
             {
                 map.TryAddCube(new Vector3(x, y, z));
             }
+
+            map.RestoreSolidCubeCell(new GeometryCellKey(x, y, z));
+        }
+
+        foreach ((int x, int y, int z) in desiredFracturedCells)
+        {
+            if (map.TryGetCubeAtCell(x, y, z) == null)
+            {
+                map.TryAddCube(new Vector3(x, y, z));
+            }
+
+            map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
         }
     }
 
@@ -96,6 +115,15 @@ public static class RemoteWorldMutationApplier
                 {
                     map.RemoveCube(cube);
                 }
+                break;
+
+            case WorldMutationKind.CubeFractured:
+                if (map.TryGetCubeAtCell(x, y, z) == null)
+                {
+                    map.TryAddCube(new Vector3(x, y, z));
+                }
+
+                map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
                 break;
 
             default:

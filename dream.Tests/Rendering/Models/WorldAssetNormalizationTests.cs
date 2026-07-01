@@ -13,4 +13,18 @@ public class WorldAssetNormalizationTests
 
         Assert.Equal(1.20f / 3.191f, normalization.ResolveUniformScale(), 3);
     }
+
+    [Fact]
+    public void ResolveScaledDimensions_Preserves_UniformScale_From_TargetHeight()
+    {
+        WorldAssetNormalization normalization = new(
+            new WorldAssetDimensions(4f, 2f, 1f),
+            new WorldAssetDimensions(2f, 1f, 1f));
+
+        WorldAssetDimensions scaled = normalization.ResolveScaledDimensions();
+
+        Assert.Equal(2f, scaled.Height, 3);
+        Assert.Equal(1f, scaled.Width, 3);
+        Assert.Equal(0.5f, scaled.Depth, 3);
+    }
 }

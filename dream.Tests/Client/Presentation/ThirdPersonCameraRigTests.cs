@@ -55,4 +55,26 @@ public class ThirdPersonCameraRigTests
         Assert.InRange(resolved.Position.Y, 2f, 5f);
         Assert.True(resolved.Front.X > 0f);
     }
+
+    [Fact]
+    public void Resolve_PreservesPitchIntentInThirdPersonView()
+    {
+        Camera flatFirstPerson = new(new Vector3(5f, 1.85f, 5f));
+        flatFirstPerson.SetFacing(Vector3.UnitX);
+        Camera pitchedFirstPerson = new(new Vector3(5f, 1.85f, 5f));
+        pitchedFirstPerson.SetFacing(new Vector3(1f, 0.75f, 0f));
+
+        Camera flatResolved = ThirdPersonCameraRig.Resolve(
+            flatFirstPerson,
+            new Vector3(5f, 1.5f, 5f),
+            CameraViewMode.ThirdPerson);
+        Camera pitchedResolved = ThirdPersonCameraRig.Resolve(
+            pitchedFirstPerson,
+            new Vector3(5f, 1.5f, 5f),
+            CameraViewMode.ThirdPerson);
+
+        Assert.Equal(flatResolved.Position, pitchedResolved.Position);
+        Assert.True(pitchedResolved.Front.Y > flatResolved.Front.Y + 0.2f);
+        Assert.True(pitchedResolved.Front.X > 0.5f);
+    }
 }

@@ -371,6 +371,41 @@ public class AuthoritativeActionFlowTests
         Assert.Contains("cooldown", second.Rejection?.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ProcessAuthoritativeAction_FatalCubeHit_FracturesCubeAndQueuesFractureReplication()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            24,
+            new BuildUseIntent(new Vector3(6f, 1f, 5f))));
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            25,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(50, 5f, 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Vector3 cubeCenter = new Vector3(6.5f, 1.5f, 5.5f);
+        Vector3 lookDirection = (cubeCenter - runtime.Player.Camera.Position).Normalized();
+        runtime.Player.SetFacing(lookDirection);
+
+        AuthoritativeActionResult result = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            26,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+        ServerSnapshotEnvelope envelope = runtime.ExportServerSnapshotEnvelope();
+        WorldSnapshot snapshot = runtime.ExportWorldSnapshot();
+
+        Assert.True(result.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.True(resolution.TargetDied);
+        Assert.Contains(envelope.WorldMutations, mutation =>
+            mutation.Kind == WorldMutationKind.CubeFractured &&
+            mutation.CellPosition == new Vector3(6f, 1f, 5f));
+        Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(6f, 1f, 5f));
+        Assert.DoesNotContain(snapshot.PlacedCubeCells, cell => cell == new Vector3(6f, 1f, 5f));
+    }
+
     private static WorldSessionRuntime CreateRuntime()
     {
         return new WorldSessionRuntime(

@@ -10,13 +10,13 @@ A normal solid cube occupies a `1 x 1 x 1` world-unit cell. Gameplay positions a
 
 ## Canonical Actor Targets
 
-- Player visual target: `2.0` cubes tall.
+- Player visual target: `1.2` cubes tall.
 - Player neutral standing width target: `1.0` cube or less.
 - Player neutral standing depth target: `1.0` cube or less.
 - Player feet or contact base should sit on the floor plane, not at actor body center.
 - Enemy and prop targets must be stated per asset in cube units before render-scale changes land.
 
-The player target is intentionally Minecraft-like: the actor should read as two stacked cubes high and roughly one cube wide/deep in a neutral stance.
+The player target should stay compact beside the current wolf and read clearly inside the cube world: roughly `2x` the wolf target height and no more than one cube wide/deep in a neutral stance.
 
 ## glTF Import Rules
 

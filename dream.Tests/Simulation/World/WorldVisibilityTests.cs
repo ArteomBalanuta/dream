@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.World;
 
@@ -63,6 +64,39 @@ public class WorldVisibilityTests
         };
 
         bool visible = WorldVisibility.IsCubeVisible(cameraPosition, cameraFront, cube);
+
+        Assert.True(visible);
+    }
+
+    [Fact]
+    public void IsCubeVisible_Renders_Cube_Whose_Bounds_Overlap_Visible_Frustum()
+    {
+        Vector3 cameraPosition = Vector3.Zero;
+        Vector3 cameraFront = Vector3.UnitZ;
+        Cube cube = new Cube
+        {
+            Position = new Vector3(2.75f, 0f, -1.2f)
+        };
+
+        bool visible = WorldVisibility.IsCubeVisible(cameraPosition, cameraFront, cube);
+
+        Assert.True(visible);
+    }
+
+    [Fact]
+    public void IsGeometryBlockVisible_Uses_Block_Bounds_Not_Only_Center_Point()
+    {
+        Vector3 cameraPosition = Vector3.Zero;
+        Vector3 cameraFront = Vector3.UnitZ;
+        GeometryRenderBlockDescriptor block = new(
+            new GeometryCellKey(0, 0, 0),
+            new Vector3(2.75f, 0f, -1.2f),
+            1f,
+            GeometryMaterialId.Grass,
+            null,
+            "default");
+
+        bool visible = WorldVisibility.IsGeometryBlockVisible(cameraPosition, cameraFront, block);
 
         Assert.True(visible);
     }

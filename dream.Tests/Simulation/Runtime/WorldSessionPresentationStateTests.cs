@@ -5,6 +5,7 @@ using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -26,7 +27,11 @@ public class WorldSessionPresentationStateTests
 
         WorldSessionPresentationState state = WorldSessionPresentationState.Create(
             camera: new Camera(new Vector3(2f, 3f, 4f)),
-            visibleWorldCubes: Array.Empty<Cube>(),
+            visibleWorld: new GeometryRenderExport(
+                Array.Empty<GeometryCellKey>(),
+                Array.Empty<GeometryRenderCell>(),
+                Array.Empty<GeometryRenderBlockDescriptor>(),
+                Array.Empty<Cube>()),
             activeEnemies: Array.Empty<EnemyActor>(),
             mapCollisionBodies: Array.Empty<BulletSharp.RigidBody>(),
             playerCollisionBody: null,

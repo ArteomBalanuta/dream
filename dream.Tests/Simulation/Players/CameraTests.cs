@@ -33,4 +33,22 @@ public class CameraTests
 
         Assert.InRange(camera.Front.X, 0.01f, 0.1f);
     }
+
+    [Fact]
+    public void HorizontalForward_PreservesYaw_WhenPitchApproachesVertical()
+    {
+        Camera camera = new(Vector3.Zero)
+        {
+            MouseSensitivity = 1f
+        };
+
+        camera.ApplyLookDelta(new Vector2(94.24778f, 0f));
+        Vector3 horizontalBeforePitch = camera.HorizontalForward;
+
+        camera.ApplyLookDelta(new Vector2(0f, -5000f));
+
+        Assert.InRange(horizontalBeforePitch.X, 0.99f, 1f);
+        Assert.InRange(camera.HorizontalForward.X, 0.99f, 1f);
+        Assert.InRange(camera.HorizontalForward.Z, -0.05f, 0.05f);
+    }
 }

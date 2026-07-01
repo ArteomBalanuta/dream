@@ -57,6 +57,7 @@ If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. 
 
 The current floor model is now reused through a shared model asset entry instead of being loaded separately for every floor cube.
 The world render loop now iterates the active `Map.SolidCubes` collection rather than scanning every cell in the backing world array each frame.
+Those cubes are now also explicitly a compatibility export during the geometry refactor: `Map` keeps authoritative geometry-cell records beside the current cube render path so world storage can evolve before the renderer does.
 
 ### Simple cube rendering
 
@@ -259,13 +260,32 @@ For this first milestone, the assets under `dream/animations/viewmodels/` are in
 
 World models remain part of the main world pass and should keep world-space transforms and occlusion behavior. First-person viewmodels are camera-relative presentation assets and should only be authored for the dedicated viewmodel pass.
 
+## World Geometry Direction
+
+The project now has a first-pass geometry subsystem under `Dream.Simulation.World.Geometry`.
+
+Current behavior:
+
+- `GeometryCellRecord` stores authoritative cell-level geometry facts
+- `GeometryCellDefinition` describes shape kind, material, and subdivision resolution
+- `GeometrySubdivisionState` keeps sparse child overrides and allocates them only when a mutation touches the cell
+- `GeometryMutationService` returns dirty-cell facts for later render/collision rebuild work
+- `GeometryRenderExport` now packages nearby geometry cells plus compatibility cubes for the current world render path
+- `GeometryCollisionExport` now packages merged-floor and per-cell collision descriptors for the current world physics path
+- `Map` now caches per-cell render blocks and collision bodies and rebuilds only dirty geometry cells after a subdivision edit
+
+The current renderer still consumes compatibility `Cube` exports from `Map`, now via `Map.CaptureGeometryRenderExport(...)` and `WorldSessionPresentationState.VisibleWorld`, so this is a storage and mutation seam first, not yet a full chunk-mesh renderer. The first preset non-cube occupancy contract also exists now through wedge and slope sampling rules, which gives the world layer a way to describe non-cubic geometry before the world renderer learns to draw it natively.
+
+The current physics path is now one step further along too: `Map.CaptureGeometryCollisionExport()` still describes one merged floor collider plus coarse intact-cell bodies, but subdivided cells now emit geometry-native child-box bodies and `WorldPhysicsBinder` replaces only the touched cell's collider set. The render path mirrors that shape: subdivided cells now emit geometry-native render blocks while intact solid cells may still use the coarse compatibility-cube path.
+The first live fracture preset now uses that same export path. When a destructible placed cube dies in combat, the authoritative map replaces the coarse cell with a deterministic four-piece rubble pattern grounded in the cell corners. Remote snapshots and incremental world mutations now preserve that fractured state instead of collapsing it back into a full cube for connected clients or late joiners.
+
 ## World Asset Normalization
 
 Imported world assets do not always arrive in gameplay-ready scale. The current project now handles that through explicit normalization metadata instead of through arbitrary render-only scale tweaking.
 
 Dream world units are cube-relative: `1.0` world unit equals one cube side. Imported glTF world actors should declare authored dimensions and target cube-relative dimensions in their asset definition. The durable policy is recorded in [the world-units and asset-scale decision](ledger/decisions/2026-07-01-world-units-and-asset-scale.md), with follow-up implementation work tracked in [the model-size normalization plan](ledger/plans/2026-07-01-model-size-normalization-and-asset-units.md).
 
-The standing player target is `2.0` cubes tall and no more than `1.0` cube wide/deep in neutral stance. Renderer code should consume asset definitions for scale and grounding rather than introducing local visual constants.
+The standing player target is `1.2` cubes tall, which is currently `2x` the wolf target height, and no more than `1.0` cube wide/deep in neutral stance. Renderer code should consume asset definitions for scale and grounding rather than introducing local visual constants.
 
 For the first creature slice, `WolfAssetDefinition` declares:
 

@@ -12,6 +12,7 @@ using Dream.Simulation.Enemies;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.Runtime;
 
@@ -259,7 +260,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             cameraViewMode);
         return WorldSessionPresentationState.Create(
             presentationCamera,
-            Map.GetRenderCandidateCubes(presentationCamera.Position, maxRenderDistance),
+            Map.CaptureGeometryRenderExport(presentationCamera.Position, maxRenderDistance),
             _enemies.ActiveActors,
             Physics.MapCubeBodies,
             Player.PhysicsBody,
@@ -394,17 +395,33 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public WorldSnapshot ExportWorldSnapshot()
     {
+        List<Vector3> placedCubeCells = [];
+        List<Vector3> fracturedCubeCells = [];
+
+        foreach (GeometryCellRecord cell in Map.GeometryCells.Values)
+        {
+            if (cell.Key.Y == 0)
+            {
+                continue;
+            }
+
+            Vector3 cellPosition = new(cell.Key.X, cell.Key.Y, cell.Key.Z);
+            if (cell.SubdivisionState == null)
+            {
+                placedCubeCells.Add(cellPosition);
+            }
+            else
+            {
+                fracturedCubeCells.Add(cellPosition);
+            }
+        }
+
         return new WorldSnapshot(
             Map.Width,
             Map.Height,
             Map.Depth,
-            Map.SolidCubes
-                .Where(cube => MathF.Floor(cube.Position.Y + 1e-6f) > 0f)
-                .Select(cube => new Vector3(
-                    MathF.Floor(cube.Position.X + 1e-6f),
-                    MathF.Floor(cube.Position.Y + 1e-6f),
-                    MathF.Floor(cube.Position.Z + 1e-6f)))
-                .ToArray());
+            placedCubeCells,
+            fracturedCubeCells);
     }
 
     public AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message)
@@ -597,10 +614,25 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         _events.Publish(new ActorDiedEvent(record.Actor));
         object sourceObject = record.SourceObject;
-        bool removed = _worldObjects.TryRemove(record);
-        if (removed && sourceObject is Cube destroyedCube)
+        if (sourceObject is Cube destroyedCube)
         {
-            _events.Publish(new CubeDestroyedEvent(destroyedCube));
+            GeometryCellKey cell = new(
+                (int)MathF.Floor(destroyedCube.Position.X + 1e-6f),
+                (int)MathF.Floor(destroyedCube.Position.Y + 1e-6f),
+                (int)MathF.Floor(destroyedCube.Position.Z + 1e-6f));
+            if (Map.FractureCubeIntoPieces(cell))
+            {
+                _worldObjects.Unregister(sourceObject);
+                _events.Publish(new CubeFracturedEvent(destroyedCube));
+            }
+            else if (_worldObjects.TryRemove(record))
+            {
+                _events.Publish(new CubeDestroyedEvent(destroyedCube));
+            }
+        }
+        else
+        {
+            _worldObjects.TryRemove(record);
         }
 
         return new AuthoritativeActionResult(
@@ -793,6 +825,13 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         {
             _pendingWorldMutations.Add(new WorldMutationDelta(
                 WorldMutationKind.CubeDestroyed,
+                ToCellPosition(evt.Cube.Position)));
+        }));
+
+        _subscriptions.Add(_events.Subscribe<CubeFracturedEvent>(evt =>
+        {
+            _pendingWorldMutations.Add(new WorldMutationDelta(
+                WorldMutationKind.CubeFractured,
                 ToCellPosition(evt.Cube.Position)));
         }));
 

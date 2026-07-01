@@ -10,6 +10,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Client.Replication;
 
@@ -79,6 +80,52 @@ public class ClientAuthoritativeStateApplierTests
 
         Assert.Null(map.TryGetCubeAtCell(4, 1, 4));
         Assert.NotNull(map.TryGetCubeAtCell(6, 1, 6));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldSnapshot_ReconcilesFracturedCubeCells()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        map.TryAddCube(new Vector3(8f, 1f, 8f), withPhysics: false);
+
+        WorldSnapshot snapshot = new(
+            10,
+            8,
+            10,
+            [new Vector3(2f, 1f, 2f)],
+            [new Vector3(3f, 1f, 3f)]);
+
+        RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
+
+        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(3, 1, 3));
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
+
+        Assert.NotNull(map.TryGetCubeAtCell(2, 1, 2));
+        Assert.NotNull(fracturedCell.SubdivisionState);
+        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
+        Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
+        Assert.Null(map.TryGetCubeAtCell(8, 1, 8));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesCubeFractureMutation()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false);
+
+        WorldMutationDelta[] mutations =
+        [
+            new WorldMutationDelta(WorldMutationKind.CubeFractured, new Vector3(4f, 1f, 4f))
+        ];
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(map, mutations);
+
+        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(4, 1, 4));
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
+
+        Assert.NotNull(fracturedCell.SubdivisionState);
+        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(4, 1, 4));
+        Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(4.5f, 1.5f, 4.5f));
     }
 
     [Fact]

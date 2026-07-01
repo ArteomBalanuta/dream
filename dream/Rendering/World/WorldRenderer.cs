@@ -2,6 +2,7 @@ using Dream.Rendering.Core;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.World;
 
@@ -44,7 +45,22 @@ public class WorldRenderer
 
     public void DrawWorld(WorldSessionPresentationState state)
     {
-        DrawWorld(state.Camera, state.VisibleWorldCubes);
+        DrawWorld(state.Camera, state.VisibleWorld);
+    }
+
+    public void DrawWorld(Camera camera, GeometryRenderExport export)
+    {
+        DrawWorld(camera, export.CompatibilityCubes);
+
+        foreach (GeometryRenderBlockDescriptor block in export.Blocks)
+        {
+            if (!WorldVisibility.IsGeometryBlockVisible(camera.Position, camera.Front, block))
+            {
+                continue;
+            }
+
+            _render.DrawGeometryBlock(camera, block);
+        }
     }
 
     // Remote players intentionally stay out of the world-geometry renderer so
