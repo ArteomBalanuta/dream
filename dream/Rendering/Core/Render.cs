@@ -29,6 +29,7 @@ public class Render
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
     private readonly ReusableMatrixBuffer _geometryBlockMatrices = new();
     private readonly ReusableMatrixBuffer _animatedCubeMatrices = new();
+    private readonly StaticTerrainTextureCache _staticTerrainTextures = new();
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
@@ -282,6 +283,7 @@ public class Render
 
     public void DisposeHUD()
     {
+        _staticTerrainTextures.Dispose();
         GL.DeleteTexture(_fontTexture);
         _hudShader.Dispose();
         _shaderObj.Dispose();
@@ -437,6 +439,40 @@ public class Render
             DrawCubeTransparent(camera, modelMatrix);
             DrawCubeWireframe(camera, modelMatrix);
         }
+    }
+
+    public void DrawStaticMesh(
+        Camera camera,
+        StaticMeshBuffer buffer,
+        GeometryMaterialId materialId,
+        StaticTerrainMaterialRole materialRole)
+    {
+        Shader shader = GetShader("cube");
+        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId, materialRole);
+        int texture = _staticTerrainTextures.GetOrLoad(material);
+        shader.Use();
+        shader.SetMatrix4("model", Matrix4.Identity);
+        shader.SetMatrix4("view", camera.GetViewMatrix());
+        shader.SetMatrix4("projection", _projection);
+        shader.SetBool("useSkinning", false);
+        shader.SetBool("useInstancing", false);
+        shader.SetVector4("material.baseColorFactor", material.BaseColor);
+        shader.SetFloat("material.metallicFactor", 0f);
+        shader.SetFloat("material.roughnessFactor", 1f);
+        shader.SetBool("material.hasBaseColorTexture", texture != -1);
+        if (texture != -1)
+        {
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            shader.SetInt("material.baseColorTexture", 0);
+        }
+
+        GL.Enable(EnableCap.DepthTest);
+        // Static terrain meshes are already hidden-face culled. Draw remaining
+        // exterior faces double-sided so clipped/edge cameras do not reveal
+        // collision-only "transparent" blocks.
+        GL.Disable(EnableCap.CullFace);
+        buffer.Draw();
     }
 
     public void DrawGeometryBlockBatch(

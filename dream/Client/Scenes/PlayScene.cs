@@ -30,6 +30,7 @@ namespace Dream.Client.Scenes;
 public class PlayScene : IDisposable
 {
     private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
+    private const string RenderPerformanceLogEnvironmentVariable = "DREAM_RENDER_PERF_LOG";
     private const double RemotePlayerInterpolationDelaySeconds = 1d / 10d;
 
     // Client-local presentation state that should remain scene-owned after the runtime split.
@@ -48,6 +49,7 @@ public class PlayScene : IDisposable
     private readonly GameplayInputResumeFilter _gameplayInputResumeFilter = new();
     private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
     private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
+    private readonly bool _renderPerformanceLoggingEnabled;
 
     // Authoritative world/player/physics ownership now flows through WorldSessionRuntime.
     // PlayScene remains the desktop composition root plus client presentation owner.
@@ -61,6 +63,7 @@ public class PlayScene : IDisposable
     private bool _wasCameraViewTogglePressed;
     private bool _localPlayerWasMoving;
     private double _clientPresentationTimeSeconds;
+    private double _renderPerformanceLogSeconds;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
@@ -82,6 +85,7 @@ public class PlayScene : IDisposable
         _persistDesktopClientConfig = persistDesktopClientConfig;
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient;
+        _renderPerformanceLoggingEnabled = IsRenderPerformanceLoggingEnabled();
         // The desktop scene now delegates authoritative world-stack creation to WorldSessionRuntime
         // while remaining the client composition root for presentation systems.
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
@@ -180,7 +184,19 @@ public class PlayScene : IDisposable
             worldRenderStats.VisibleCompatibilityCubes,
             worldRenderStats.VisibleGeometryBlocks,
             worldRenderStats.CompatibilityBatchCount,
-            worldRenderStats.GeometryBatchCount);
+            worldRenderStats.GeometryBatchCount,
+            worldRenderStats.VisibleStaticChunks,
+            worldRenderStats.StaticChunkMeshCount,
+            worldRenderStats.StaticChunkExposedFaces,
+            worldRenderStats.StaticChunkTriangles,
+            worldRenderStats.StaticChunkSignatureMilliseconds,
+            worldRenderStats.StaticChunkExtractMilliseconds,
+            worldRenderStats.StaticChunkPlanMilliseconds,
+            worldRenderStats.StaticChunkSyncMilliseconds,
+            worldRenderStats.StaticChunkDrawMilliseconds,
+            worldRenderStats.StaticChunkRebuiltMeshes,
+            worldRenderStats.StaticChunkReusedMeshes);
+        LogRenderPerformanceIfEnabled(args, performance);
         _render.Enemies.Draw(
             presentation.Camera,
             presentation.ActiveEnemies,
@@ -347,6 +363,33 @@ public class PlayScene : IDisposable
         string? value = Environment.GetEnvironmentVariable(LoopbackRemotePlayersEnvironmentVariable);
         return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRenderPerformanceLoggingEnabled()
+    {
+        string? value = Environment.GetEnvironmentVariable(RenderPerformanceLogEnvironmentVariable);
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void LogRenderPerformanceIfEnabled(FrameEventArgs args, FramePerformanceSnapshot performance)
+    {
+        if (!_renderPerformanceLoggingEnabled || !performance.HasCounters)
+        {
+            return;
+        }
+
+        _renderPerformanceLogSeconds += args.Time;
+        if (_renderPerformanceLogSeconds < 1d)
+        {
+            return;
+        }
+
+        _renderPerformanceLogSeconds = 0d;
+        Console.WriteLine(
+            $"[render-perf] frame={args.Time * 1000d:0.00}ms pos={LastReportedPlayerPosition} " +
+            string.Join(" | ", performance.ToHudLines()));
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)

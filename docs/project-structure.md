@@ -89,3 +89,4 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 - `docs/project-structure.md`: repository and file guide
 - `docs/configuration.md`: framework, packages, build, and runtime assumptions
 - `docs/rendering-and-assets.md`: rendering path and asset usage details
+- `docs/performance-and-optimizations.md`: current optimization techniques, guardrails, and known performance gaps

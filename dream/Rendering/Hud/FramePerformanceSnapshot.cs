@@ -9,7 +9,18 @@ public readonly record struct FramePerformanceSnapshot(
     int VisibleGeometryBlocks,
     int CompatibilityBatchCount,
     int GeometryBatchCount,
-    int CollisionBodyCount)
+    int CollisionBodyCount,
+    int VisibleStaticChunks = 0,
+    int StaticChunkMeshCount = 0,
+    int StaticChunkExposedFaces = 0,
+    int StaticChunkTriangles = 0,
+    double StaticChunkSignatureMilliseconds = 0d,
+    double StaticChunkExtractMilliseconds = 0d,
+    double StaticChunkPlanMilliseconds = 0d,
+    double StaticChunkSyncMilliseconds = 0d,
+    double StaticChunkDrawMilliseconds = 0d,
+    int StaticChunkRebuiltMeshes = 0,
+    int StaticChunkReusedMeshes = 0)
 {
     public static FramePerformanceSnapshot Empty => default;
 
@@ -22,7 +33,18 @@ public readonly record struct FramePerformanceSnapshot(
         VisibleGeometryBlocks > 0 ||
         CompatibilityBatchCount > 0 ||
         GeometryBatchCount > 0 ||
-        CollisionBodyCount > 0;
+        CollisionBodyCount > 0 ||
+        VisibleStaticChunks > 0 ||
+        StaticChunkMeshCount > 0 ||
+        StaticChunkExposedFaces > 0 ||
+        StaticChunkTriangles > 0 ||
+        StaticChunkSignatureMilliseconds > 0d ||
+        StaticChunkExtractMilliseconds > 0d ||
+        StaticChunkPlanMilliseconds > 0d ||
+        StaticChunkSyncMilliseconds > 0d ||
+        StaticChunkDrawMilliseconds > 0d ||
+        StaticChunkRebuiltMeshes > 0 ||
+        StaticChunkReusedMeshes > 0;
 
     public IEnumerable<string> ToHudLines()
     {
@@ -30,6 +52,9 @@ public readonly record struct FramePerformanceSnapshot(
         yield return $"Physics: {PhysicsStepMilliseconds:0.00} ms";
         yield return $"Visible: cubes {VisibleCompatibilityCubes}/{ExportedCompatibilityCubes}, blocks {VisibleGeometryBlocks}/{ExportedGeometryBlocks}";
         yield return $"Batches: cubes {CompatibilityBatchCount}, blocks {GeometryBatchCount}";
+        yield return $"Static Chunks: visible {VisibleStaticChunks}, meshes {StaticChunkMeshCount}, faces {StaticChunkExposedFaces}, tris {StaticChunkTriangles}";
+        yield return $"Static Timing: signature {StaticChunkSignatureMilliseconds:0.00} ms, extract {StaticChunkExtractMilliseconds:0.00} ms, plan {StaticChunkPlanMilliseconds:0.00} ms, sync {StaticChunkSyncMilliseconds:0.00} ms, draw {StaticChunkDrawMilliseconds:0.00} ms";
+        yield return $"Static Cache: rebuilt {StaticChunkRebuiltMeshes}, reused {StaticChunkReusedMeshes}";
         yield return $"Collision Bodies: {CollisionBodyCount}";
     }
 
@@ -37,14 +62,36 @@ public readonly record struct FramePerformanceSnapshot(
         int visibleCompatibilityCubes,
         int visibleGeometryBlocks,
         int compatibilityBatchCount,
-        int geometryBatchCount)
+        int geometryBatchCount,
+        int visibleStaticChunks = 0,
+        int staticChunkMeshCount = 0,
+        int staticChunkExposedFaces = 0,
+        int staticChunkTriangles = 0,
+        double staticChunkSignatureMilliseconds = 0d,
+        double staticChunkExtractMilliseconds = 0d,
+        double staticChunkPlanMilliseconds = 0d,
+        double staticChunkSyncMilliseconds = 0d,
+        double staticChunkDrawMilliseconds = 0d,
+        int staticChunkRebuiltMeshes = 0,
+        int staticChunkReusedMeshes = 0)
     {
         return this with
         {
             VisibleCompatibilityCubes = visibleCompatibilityCubes,
             VisibleGeometryBlocks = visibleGeometryBlocks,
             CompatibilityBatchCount = compatibilityBatchCount,
-            GeometryBatchCount = geometryBatchCount
+            GeometryBatchCount = geometryBatchCount,
+            VisibleStaticChunks = visibleStaticChunks,
+            StaticChunkMeshCount = staticChunkMeshCount,
+            StaticChunkExposedFaces = staticChunkExposedFaces,
+            StaticChunkTriangles = staticChunkTriangles,
+            StaticChunkSignatureMilliseconds = staticChunkSignatureMilliseconds,
+            StaticChunkExtractMilliseconds = staticChunkExtractMilliseconds,
+            StaticChunkPlanMilliseconds = staticChunkPlanMilliseconds,
+            StaticChunkSyncMilliseconds = staticChunkSyncMilliseconds,
+            StaticChunkDrawMilliseconds = staticChunkDrawMilliseconds,
+            StaticChunkRebuiltMeshes = staticChunkRebuiltMeshes,
+            StaticChunkReusedMeshes = staticChunkReusedMeshes
         };
     }
 }

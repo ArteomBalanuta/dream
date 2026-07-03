@@ -67,6 +67,14 @@ The renderer must batch this geometry before reaching OpenGL. Compatibility cube
 
 The instanced cube/block paths reuse matrix buffers for the per-instance model transforms, and `AnimatedModel` uploads the active matrix range directly to the instance buffer. This avoids the previous per-batch matrix-array allocation and the extra `ToArray()` copy during `GL.BufferData(...)`.
 
+Static world export rendering now has a first hidden-face culling path. `WorldRenderer` routes `GeometryRenderExport` through `StaticWorldChunkRenderer`, which normalizes compatibility cubes and geometry render blocks into render-only voxel cells, groups them by chunk and material role, emits only exposed faces, uploads chunk meshes, and draws those meshes directly through OpenGL. This path is render-only: authoritative occupancy and collision still come from the simulation geometry and physics exports, not from the generated mesh. Chunk visibility is bounds-aware instead of center-point-only, so moving through or beside a large chunk does not make the whole chunk disappear just because its center falls behind the camera. The chunk renderer caches GL buffers by chunk/material/role signature, so camera movement at the visible-world boundary does not force a full static-world mesh rebuild. The remaining exterior chunk faces are drawn double-sided, because hidden-face culling already removes interior surfaces and first-person/edge cameras should not reveal collision-only transparent blocks.
+
+The static chunk renderer binds terrain textures by material role, not only by broad `GeometryMaterialId`. Grass chunk meshes are split into top, side, and bottom mesh batches so they can bind `grass_top.png`, `grass_block_side_texture.png`, and `Grass_bottom.jpg` respectively, matching the old multi-material glTF cube contract. Dirt, stone, sand, mud, snow, rock, and grass-path materials bind one Poly Haven diffuse texture each through the static terrain material catalog. Intact compatibility cubes must keep the material id from their matching `GeometryRenderCell`, because the authoritative map/server matrix owns the terrain material even when the renderer still receives a coarse `Cube` view.
+
+Generated chunk UVs are face-direction aware. Top and bottom faces tile across `X/Z`, while vertical faces tile horizontally across `X` or `Z` and vertically across `Y`, so long merged cuboids do not stretch or rotate terrain edge textures incorrectly.
+
+For the broader optimization inventory and guardrails around this path, see [Performance And Optimizations](performance-and-optimizations.md).
+
 ### Simple cube rendering
 
 If `Cube.Animation` is not set, the renderer:
@@ -284,18 +292,20 @@ Current behavior:
 - `GeometryCollisionExport` now packages merged-floor and per-cell collision descriptors for the current world physics path
 - `Map` now caches per-cell render blocks and collision bodies and rebuilds only dirty geometry cells after a subdivision edit
 
-The current renderer still consumes compatibility `Cube` exports from `Map`, now via `Map.CaptureGeometryRenderExport(...)` and `WorldSessionPresentationState.VisibleWorld`, so this is a storage and mutation seam first, not yet a full chunk-mesh renderer. The first preset non-cube occupancy contract also exists now through wedge and slope sampling rules, which gives the world layer a way to describe non-cubic geometry before the world renderer learns to draw it natively.
+The current desktop world renderer consumes `Map.CaptureGeometryRenderExport(...)` through `WorldSessionPresentationState.VisibleWorld` and now routes the static export through chunk meshes with hidden faces removed. The compatibility `Cube` and geometry-block descriptors still exist as the export contract and as fallback/dynamic building blocks, while the static presentation path can evolve independently from simulation storage. The first preset non-cube occupancy contract also exists now through wedge and slope sampling rules, which gives the world layer a way to describe non-cubic geometry before every shape has a custom renderer.
 
 The current physics path is now one step further along too: `Map.CaptureGeometryCollisionExport()` still describes one merged floor collider plus coarse intact-cell bodies, but subdivided cells now emit geometry-native collision cuboids and `WorldPhysicsBinder` replaces only the touched cell's collider set. Solid subcell runs are greedily merged before export, so the current startup sculptures keep collision derived from canonical micro-grid occupancy instead of one body per rendered mini-cube. The render path mirrors that shape at the API boundary: subdivided cells emit geometry-native render blocks, and static startup sculpture cells are cached as globally merged cuboid descriptors before `WorldRenderer` batches visible model-backed blocks. Render-only `VisualFillScale` values must not be fed back into collision descriptors.
+Static chunk mesh rendering now sits on top of that same export seam. The generated chunk meshes are presentation artifacts that can be rebuilt from `GeometryRenderExport`; they must not become canonical world state and must not drive collision or multiplayer snapshots.
 The first live fracture preset now uses that same export path. When a destructible placed cube dies in combat, the authoritative map replaces the coarse cell with a deterministic four-piece rubble pattern grounded in the cell corners. Remote snapshots and incremental world mutations now preserve that fractured state instead of collapsing it back into a full cube for connected clients or late joiners.
 
-The startup world now uses three textured cube variants for intact geometry cells:
+The startup world now uses multiple textured terrain variants for intact geometry cells:
 
 - `GrassTextureCube.gltf` for meadow cells
 - `DirtTextureCube.gltf`, which reuses the cube mesh layout with `library/polyhaven/park_dirt/park_dirt.diffuse.jpg`
 - `StoneTextureCube.gltf`, which reuses the cube mesh layout with `library/polyhaven/ground_grey/ground_grey.diffuse.jpg`
+- static chunk terrain textures for `sand_01`, `brown_mud`, `snow_04`, `rocks_ground_08`, and `grass_path_3`
 
-`WorldGenerator` selects between those materials deterministically for the initial world layout, and the renderer resolves the matching cube asset through `GeometryMaterialId` without changing the current cube-compatible world draw path.
+`WorldGenerator` selects between those materials deterministically for the initial world layout. The static chunk path resolves the matching texture through `GeometryMaterialId`; the older compatibility model path still has explicit glTF cube variants only for grass, dirt, and stone.
 
 ## World Asset Normalization
 

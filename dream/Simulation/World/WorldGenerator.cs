@@ -343,15 +343,29 @@ public class WorldGenerator
 
         if (rimDistance <= 2)
         {
-            return GeometryMaterialId.Stone;
+            return rimDistance == 0
+                ? GeometryMaterialId.Stone
+                : GeometryMaterialId.Rock;
         }
 
         if (spawnPath || centralPath)
         {
-            return GeometryMaterialId.Dirt;
+            return spawnPath
+                ? GeometryMaterialId.Dirt
+                : GeometryMaterialId.GrassPath;
         }
 
         int terrainHash = Hash(x / 3, z / 3);
+        if ((terrainHash % 29) == 0)
+        {
+            return GeometryMaterialId.Sand;
+        }
+
+        if ((terrainHash % 23) == 0)
+        {
+            return GeometryMaterialId.Mud;
+        }
+
         if ((terrainHash % 11) <= 1)
         {
             return GeometryMaterialId.Dirt;

@@ -25,6 +25,8 @@ public sealed class NetworkSessionCoordinator
 
     public bool IsBusy => State == ConnectionFlowState.Connecting;
 
+    public bool IsLocalServerReady => _localServer.IsReady;
+
     public string LocalServerStatus =>
         _localServer.ErrorMessage != null
             ? $"Local server failed: {_localServer.ErrorMessage}"
