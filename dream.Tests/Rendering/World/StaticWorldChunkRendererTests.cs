@@ -1,4 +1,5 @@
 using Dream.Rendering.World;
+using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 using Xunit;
@@ -160,6 +161,18 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
+    public void ExportSignatureChangesWhenCompatibilityCubeMaterialChanges()
+    {
+        GeometryRenderExport grassExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Grass);
+        GeometryRenderExport sandExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Sand);
+
+        int grassSignature = StaticWorldChunkRenderer.CalculateExportSignature(grassExport);
+        int sandSignature = StaticWorldChunkRenderer.CalculateExportSignature(sandExport);
+
+        Assert.NotEqual(grassSignature, sandSignature);
+    }
+
+    [Fact]
     public void IsChunkVisibleKeepsCameraInsideChunkVisibleEvenWhenLookingAwayFromCenter()
     {
         StaticWorldChunkMesh mesh = StaticWorldChunkMeshBuilder.Build(
@@ -193,5 +206,29 @@ public class StaticWorldChunkRendererTests
             mesh);
 
         Assert.True(visible);
+    }
+
+    private static GeometryRenderExport CreateSingleCompatibilityCubeExport(GeometryMaterialId materialId)
+    {
+        Cube cube = new(isEmpty: false, isSolid: true)
+        {
+            Position = new Vector3(0.5f, 0.5f, 0.5f),
+            Animation = null!,
+            ShaderName = "default"
+        };
+        GeometryCellRecord cell = new(
+            new GeometryCellKey(0, 0, 0),
+            new GeometryCellDefinition(
+                GeometryShapeKind.SolidCube,
+                materialId,
+                SubdivisionResolution: 1,
+                IsSolid: true,
+                IsFloor: true));
+
+        return new GeometryRenderExport(
+            DirtyCells: [],
+            Cells: [new GeometryRenderCell(cell.Key, cell, cube)],
+            Blocks: [],
+            CompatibilityCubes: [cube]);
     }
 }

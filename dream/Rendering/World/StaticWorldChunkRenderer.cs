@@ -281,14 +281,24 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         }
     }
 
-    private static int CalculateExportSignature(GeometryRenderExport export)
+    public static int CalculateExportSignature(GeometryRenderExport export)
     {
         HashCode hash = new();
+        Dictionary<Cube, GeometryMaterialId> compatibilityMaterials = new(export.Cells.Count);
+        foreach (GeometryRenderCell renderCell in export.Cells)
+        {
+            compatibilityMaterials[renderCell.CompatibilityCube] = renderCell.Cell.Definition.MaterialId;
+        }
+
         hash.Add(export.CompatibilityCubes.Count);
         foreach (Cube cube in export.CompatibilityCubes)
         {
             hash.Add(cube.Position);
             hash.Add(cube.Side);
+            if (compatibilityMaterials.TryGetValue(cube, out GeometryMaterialId materialId))
+            {
+                hash.Add(materialId);
+            }
         }
 
         hash.Add(export.Blocks.Count);

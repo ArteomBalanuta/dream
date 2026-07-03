@@ -42,6 +42,8 @@ Grass chunk meshes are split into top, side, and bottom material-role batches so
 
 Guardrail: static chunk meshes are presentation artifacts. They must not become authoritative world state, drive collision, or drive multiplayer snapshots. When static chunks normalize compatibility cubes, they must preserve material ids from the exported geometry cells instead of inventing renderer-local terrain materials.
 
+The static chunk export signature includes compatibility-cube material ids. Material-only changes must invalidate cached meshes just like coordinate or size changes, otherwise stale buffers can keep rendering an old terrain batch for a still-solid block.
+
 ### Hidden-Face Culling
 
 The static chunk mesh builder suppresses fully covered adjacent faces before upload. This reduces vertex/index count and fill cost for dense voxel regions.

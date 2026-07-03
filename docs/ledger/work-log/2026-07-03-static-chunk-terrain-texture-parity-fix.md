@@ -21,14 +21,17 @@ Follow-up visual review showed two more static chunk terrain regressions:
 - Merged cuboid side textures used one fixed UV square for every face, so long edges stretched and vertical faces could rotate the texture axis through `Y`.
 - Static chunk terrain was drawn with back-face culling even though hidden-face culling already removed interior surfaces, making some walkable support surfaces appear transparent from clipped first-person or underside edge views.
 - Compatibility cubes entered the static chunk extractor with their authoritative `GeometryRenderCell` metadata, but the extractor hardcoded every compatibility cube back to `Grass`, hiding server/map floor materials such as sand, mud, rock, and grass-path.
+- Static chunk export signatures tracked compatibility cube position and side but not geometry material. That allowed stale cached meshes to survive when a solid cell changed material without changing coordinates.
 
-The mesh builder now emits face-direction-aware, world-unit tiled UVs. Static terrain chunk rendering now draws the remaining exterior faces double-sided. Compatibility cube extraction now preserves the material id from the matching geometry cell, so coarse intact floor cells render the same material that the map/server matrix owns.
+The mesh builder now emits face-direction-aware, world-unit tiled UVs. Static terrain chunk rendering now draws the remaining exterior faces double-sided. Compatibility cube extraction now preserves the material id from the matching geometry cell, so coarse intact floor cells render the same material that the map/server matrix owns. Static export signatures now include compatibility cube material ids so material-only world changes invalidate stale chunk buffers.
 
 ## Root Cause
 
 The hidden-face/static chunk path became the primary terrain renderer before the terrain material catalog was expanded beyond the first grass/dirt/stone parity pass. Missing catalog mappings meant imported terrain material ids could not bind real texture paths in the static mesh renderer.
 
 A second parity issue existed one layer later: the map export included `GeometryRenderCell.Cell.Definition.MaterialId`, but `StaticWorldChunkExtractor` ignored that metadata for compatibility cubes and emitted `GeometryMaterialId.Grass` for every intact cube. This made generated sand/stone/mud floor cells appear as grass even when the authoritative geometry matrix contained the correct material ids.
+
+A related cache issue existed in `StaticWorldChunkRenderer.CalculateExportSignature`: material changes for compatibility cubes did not affect the export signature. If a cube kept the same position/size while its geometry material changed, the renderer could reuse old chunk buffers instead of rebuilding the material batch.
 
 ## Verification
 
@@ -39,3 +42,5 @@ A second parity issue existed one layer later: the map export included `Geometry
 - Green UV/static-render test: `dotnet test .\dream.Tests\dream.Tests.csproj --nologo --filter "StaticWorldChunkMeshBuilderTests|StaticWorldChunkRendererTests|StaticTerrainMaterialCatalogTests" /p:UseSharedCompilation=false`
 - Red extractor test first: `dotnet test .\dream.Tests\dream.Tests.csproj --nologo --filter "FullyQualifiedName~StaticWorldChunkMeshBuilderTests" /p:UseSharedCompilation=false` failed with expected `Sand`, actual `Grass` for `ExtractorPreservesCompatibilityCubeMaterialFromGeometryCell`.
 - Green export/extractor test: `dotnet test .\dream.Tests\dream.Tests.csproj --nologo --filter "FullyQualifiedName~WorldGeneratorTerrainTests|FullyQualifiedName~StaticWorldChunkMeshBuilderTests" /p:UseSharedCompilation=false`
+- Red cache-signature test first: `dotnet test .\dream.Tests\dream.Tests.csproj --nologo --filter "ExportSignatureChangesWhenCompatibilityCubeMaterialChanges" /p:UseSharedCompilation=false` failed because grass and sand exports produced the same signature.
+- Green focused static terrain test: `dotnet test .\dream.Tests\dream.Tests.csproj --nologo --filter "StaticWorldChunkRendererTests|StaticWorldChunkMeshBuilderTests|StaticTerrainMaterialCatalogTests|WorldGeneratorTerrainTests" /p:UseSharedCompilation=false`
