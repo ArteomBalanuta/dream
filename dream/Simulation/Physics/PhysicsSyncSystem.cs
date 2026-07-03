@@ -11,7 +11,9 @@ public class PhysicsSyncSystem
 {
     public void SyncDynamicMapBodies(Map map, IEnumerable<RigidBody> dynamicBodies)
     {
-        foreach (RigidBody body in dynamicBodies)
+        RigidBody[] bodies = dynamicBodies as RigidBody[] ?? dynamicBodies.ToArray();
+
+        foreach (RigidBody body in bodies)
         {
             if (body.UserObject is not (Cube cube, Vector3))
             {

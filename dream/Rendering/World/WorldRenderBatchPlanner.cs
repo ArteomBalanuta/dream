@@ -18,7 +18,7 @@ public static class WorldRenderBatchPlanner
 {
     public static List<WorldRenderBatch> CreateBatches(GeometryRenderExport export)
     {
-        return CreateBatches(export.CompatibilityCubes);
+        return CreateBatches(export.DynamicCompatibilityCubes);
     }
 
     public static List<WorldGeometryRenderBatch> CreateGeometryBlockBatches(IEnumerable<GeometryRenderBlockDescriptor> blocks)

@@ -184,10 +184,45 @@ public class Map
 
     public void UpdateCubePosition(Cube cube, Vector3 position)
     {
-        cube.Position = position;
-        if (_cubeCells.TryGetValue(cube, out GeometryCellKey key) && key.Y > 0)
+        if (!_cubeCells.TryGetValue(cube, out GeometryCellKey oldKey))
         {
-            _placedCubeSpatialIndex.UpdatePosition(cube, position);
+            cube.Position = position;
+            return;
+        }
+
+        GeometryCellKey newKey = new(
+            (int)MathF.Floor(position.X + 1e-6f),
+            (int)MathF.Floor(position.Y + 1e-6f),
+            (int)MathF.Floor(position.Z + 1e-6f));
+
+        cube.Position = position;
+
+        _placedCubeSpatialIndex.UpdatePosition(cube, position);
+
+        if (oldKey == newKey || !IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)))
+        {
+            return;
+        }
+
+        if (_geometryCells.TryGetValue(oldKey, out GeometryCellRecord? oldCell))
+        {
+            _geometryCells.Remove(oldKey);
+            _renderBlocksByCell.Remove(oldKey);
+            _collisionBodiesByCell.Remove(oldKey);
+            _staticPhysicsCells.Remove(oldKey);
+            Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
+            RebuildGeometryCellArtifacts(oldKey, syncPhysics: _physicsBinder != null);
+
+            GeometryCellRecord movedCell = new(
+                newKey,
+                oldCell.Definition,
+                oldCell.SubdivisionState,
+                oldCell.FracturePieces);
+
+            _geometryCells[newKey] = movedCell;
+            _cubeCells[cube] = newKey;
+            Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
+            RebuildGeometryCellArtifacts(newKey, syncPhysics: _physicsBinder != null);
         }
     }
 
@@ -335,6 +370,7 @@ public class Map
         List<GeometryRenderCell> cells = new();
         List<GeometryRenderBlockDescriptor> blocks = new();
         List<Cube> compatibilityCubes = new();
+        List<Cube> dynamicCompatibilityCubes = new();
         HashSet<GeometryCellKey> includedCells = [];
 
         // These cube views are still compatibility artifacts while the renderer
@@ -360,7 +396,15 @@ public class Map
             cells.Add(new GeometryRenderCell(key, cell, cube));
             if (ShouldUseCoarseCompatibilityRender(cell))
             {
-                compatibilityCubes.Add(cube);
+                if (IsStaticCompatibilityRender(key))
+                {
+                    compatibilityCubes.Add(cube);
+                }
+                else
+                {
+                    dynamicCompatibilityCubes.Add(cube);
+                }
+
                 continue;
             }
 
@@ -400,7 +444,8 @@ public class Map
             DirtyCells: dirtyCells,
             Cells: cells,
             Blocks: blocks,
-            CompatibilityCubes: compatibilityCubes);
+            CompatibilityCubes: compatibilityCubes,
+            dynamicCompatibilityCubes: dynamicCompatibilityCubes);
     }
 
     private static bool IsGeometryBlockWithinRadius(
@@ -728,6 +773,11 @@ public class Map
     {
         return record.SubdivisionState == null &&
             record.Definition.ShapeKind == GeometryShapeKind.SolidCube;
+    }
+
+    private bool IsStaticCompatibilityRender(GeometryCellKey key)
+    {
+        return _staticPhysicsCells.Contains(key) || key.Y == 0;
     }
 
     private static float ResolveSubcellVisualFillScale(GeometryCellRecord record)

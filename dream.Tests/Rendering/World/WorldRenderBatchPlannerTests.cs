@@ -63,12 +63,13 @@ public class WorldRenderBatchPlannerTests
     }
 
     [Fact]
-    public void CreateBatches_From_GeometryRenderExport_Uses_Compatibility_Cubes()
+    public void CreateBatches_From_GeometryRenderExport_Uses_Dynamic_Compatibility_Cubes()
     {
         var export = new GeometryRenderExport(
             Array.Empty<GeometryCellKey>(),
             Array.Empty<GeometryRenderCell>(),
             Array.Empty<GeometryRenderBlockDescriptor>(),
+            Array.Empty<Cube>(),
             new[]
             {
                 new Cube { ShaderName = "default" },

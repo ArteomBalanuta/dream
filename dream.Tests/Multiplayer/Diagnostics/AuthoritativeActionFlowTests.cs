@@ -407,7 +407,7 @@ public class AuthoritativeActionFlowTests
     }
 
     [Fact]
-    public void ProcessAuthoritativeAction_FatalMovedCubeHit_FracturesOriginalAuthoritativeCell()
+    public void ProcessAuthoritativeAction_FatalMovedCubeHit_FracturesCurrentAuthoritativeCell()
     {
         using WorldSessionRuntime runtime = CreateRuntime();
         runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
@@ -438,8 +438,8 @@ public class AuthoritativeActionFlowTests
         Assert.True(resolution.TargetDied);
         Assert.Contains(envelope.WorldMutations, mutation =>
             mutation.Kind == WorldMutationKind.CubeFractured &&
-            mutation.CellPosition == new Vector3(6f, 1f, 5f));
-        Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(6f, 1f, 5f));
+            mutation.CellPosition == new Vector3(7f, 1f, 5f));
+        Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(7f, 1f, 5f));
     }
 
     private static WorldSessionRuntime CreateRuntime()

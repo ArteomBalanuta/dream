@@ -59,11 +59,36 @@ public class WorldRenderer
     public WorldRenderStats DrawWorld(Camera camera, GeometryRenderExport export)
     {
         StaticWorldChunkRenderStats staticStats = _staticChunkRenderer.Draw(_render, camera, export);
+        List<Cube> visibleDynamicCubes = new();
+        foreach (Cube cube in export.DynamicCompatibilityCubes)
+        {
+            if (!WorldVisibility.IsCubeVisible(camera.Position, camera.Front, cube))
+            {
+                continue;
+            }
+
+            visibleDynamicCubes.Add(cube);
+        }
+
+        List<WorldRenderBatch> dynamicBatches = WorldRenderBatchPlanner.CreateBatches(visibleDynamicCubes);
+        foreach (WorldRenderBatch batch in dynamicBatches)
+        {
+            if (batch.Animation != null)
+            {
+                _render.DrawAnimatedCubeBatch(camera, batch.Animation, batch.ShaderName, batch.Cubes);
+                continue;
+            }
+
+            foreach (Cube cube in batch.Cubes)
+            {
+                _render.DrawCube(camera, cube);
+            }
+        }
 
         return new WorldRenderStats(
-            VisibleCompatibilityCubes: 0,
+            VisibleCompatibilityCubes: visibleDynamicCubes.Count,
             VisibleGeometryBlocks: 0,
-            CompatibilityBatchCount: 0,
+            CompatibilityBatchCount: dynamicBatches.Count,
             GeometryBatchCount: 0,
             VisibleStaticChunks: staticStats.VisibleChunks,
             StaticChunkMeshCount: staticStats.MeshCount,

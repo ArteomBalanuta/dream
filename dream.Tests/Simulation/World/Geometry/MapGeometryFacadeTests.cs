@@ -63,7 +63,7 @@ public class MapGeometryFacadeTests
 
         Assert.Contains(export.Cells, cell => cell.Key == new GeometryCellKey(3, 1, 3));
         Assert.DoesNotContain(export.Cells, cell => cell.Key == new GeometryCellKey(18, 1, 18));
-        Assert.Contains(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
+        Assert.Contains(export.DynamicCompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
     }
 
     [Fact]
@@ -92,6 +92,7 @@ public class MapGeometryFacadeTests
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(3f, 1.5f, 3f), 4f);
 
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
+        Assert.DoesNotContain(export.DynamicCompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
         Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
         Assert.DoesNotContain(export.Blocks, block => block.SubcellKey == new GeometrySubcellKey(0, 0, 0));
         Assert.Contains(new GeometryCellKey(3, 1, 3), export.DirtyCells);
@@ -131,6 +132,7 @@ public class MapGeometryFacadeTests
         Assert.True(fractured);
         Assert.NotNull(geometryCell.SubdivisionState);
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
+        Assert.DoesNotContain(export.DynamicCompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
         Assert.Equal(4, export.Blocks.Count(block => block.CellKey == new GeometryCellKey(3, 1, 3)));
         Assert.Equal(4, collision.Bodies.Count(body => body.CellKey == new GeometryCellKey(3, 1, 3)));
         Assert.All(export.Blocks, block =>

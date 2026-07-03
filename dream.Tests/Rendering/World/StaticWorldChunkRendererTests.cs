@@ -173,6 +173,29 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
+    public void ExportSignature_Ignores_Dynamic_Compatibility_Cubes()
+    {
+        GeometryRenderExport first = CreateExportWithDynamicCompatibilityCube(new Vector3(3.5f, 1.5f, 3.5f));
+        GeometryRenderExport second = CreateExportWithDynamicCompatibilityCube(new Vector3(9.5f, 1.5f, 9.5f));
+
+        int firstSignature = StaticWorldChunkRenderer.CalculateExportSignature(first);
+        int secondSignature = StaticWorldChunkRenderer.CalculateExportSignature(second);
+
+        Assert.Equal(firstSignature, secondSignature);
+    }
+
+    [Fact]
+    public void ExtractCells_Excludes_Dynamic_Compatibility_Cubes()
+    {
+        GeometryRenderExport export = CreateExportWithDynamicCompatibilityCube(new Vector3(3.5f, 1.5f, 3.5f));
+
+        IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
+
+        StaticVoxelRenderCell cell = Assert.Single(cells);
+        Assert.Equal(new Vector3(0.5f, 0.5f, 0.5f), cell.Center);
+    }
+
+    [Fact]
     public void IsChunkVisibleKeepsCameraInsideChunkVisibleEvenWhenLookingAwayFromCenter()
     {
         StaticWorldChunkMesh mesh = StaticWorldChunkMeshBuilder.Build(
@@ -230,5 +253,48 @@ public class StaticWorldChunkRendererTests
             Cells: [new GeometryRenderCell(cell.Key, cell, cube)],
             Blocks: [],
             CompatibilityCubes: [cube]);
+    }
+
+    private static GeometryRenderExport CreateExportWithDynamicCompatibilityCube(Vector3 dynamicPosition)
+    {
+        Cube staticCube = new(isEmpty: false, isSolid: true)
+        {
+            Position = new Vector3(0.5f, 0.5f, 0.5f),
+            Animation = null!,
+            ShaderName = "default"
+        };
+        Cube dynamicCube = new(isEmpty: false, isSolid: true)
+        {
+            Position = dynamicPosition,
+            Animation = null!,
+            ShaderName = "default"
+        };
+        GeometryCellRecord staticCell = new(
+            new GeometryCellKey(0, 0, 0),
+            new GeometryCellDefinition(
+                GeometryShapeKind.SolidCube,
+                GeometryMaterialId.Grass,
+                SubdivisionResolution: 1,
+                IsSolid: true,
+                IsFloor: true));
+        GeometryCellRecord dynamicCell = new(
+            new GeometryCellKey((int)dynamicPosition.X, (int)dynamicPosition.Y, (int)dynamicPosition.Z),
+            new GeometryCellDefinition(
+                GeometryShapeKind.SolidCube,
+                GeometryMaterialId.Stone,
+                SubdivisionResolution: 1,
+                IsSolid: true,
+                IsFloor: false));
+
+        return new GeometryRenderExport(
+            DirtyCells: [],
+            Cells:
+            [
+                new GeometryRenderCell(staticCell.Key, staticCell, staticCube),
+                new GeometryRenderCell(dynamicCell.Key, dynamicCell, dynamicCube)
+            ],
+            Blocks: [],
+            CompatibilityCubes: [staticCube],
+            dynamicCompatibilityCubes: [dynamicCube]);
     }
 }

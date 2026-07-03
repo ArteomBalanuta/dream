@@ -44,6 +44,12 @@ Guardrail: static chunk meshes are presentation artifacts. They must not become 
 
 The static chunk export signature includes compatibility-cube material ids. Material-only changes must invalidate cached meshes just like coordinate or size changes, otherwise stale buffers can keep rendering an old terrain batch for a still-solid block.
 
+### Static And Dynamic Cube Ownership Split
+
+`GeometryRenderExport` now separates static compatibility cubes from dynamic compatibility cubes. Static chunk rendering only consumes the static list, while live rigid-body cubes render through the direct world-batch path from their current transforms.
+
+Guardrail: do not feed body-driven gameplay cubes back into the static chunk cache. If a cube can move under physics, its presentation must follow the live transform path instead of the cached terrain path.
+
 ### Hidden-Face Culling
 
 The static chunk mesh builder suppresses fully covered adjacent faces before upload. This reduces vertex/index count and fill cost for dense voxel regions.
@@ -63,6 +69,8 @@ Guardrail: do not return to one global visible-export signature for static world
 Static chunk planning skips cached chunk/material/role keys when their chunk is not dirty. If the visible export changes because the camera or render radius crosses a boundary, the renderer should plan only missing or dirty chunk meshes instead of re-evaluating every cached chunk.
 
 Guardrail: dirty-region decisions should stay keyed by world-space chunks, not by camera position alone.
+
+Moving placed cubes that cross cell boundaries must dirty both the source and destination cells. Otherwise the static chunk cache can keep the old chunk mesh alive while also building the new one, which makes the rendered position drift away from the live cube position.
 
 ### Bounded Occluder Sets
 

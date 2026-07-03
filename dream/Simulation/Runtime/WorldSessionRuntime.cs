@@ -282,7 +282,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             new FramePerformanceSnapshot(
                 renderExportStopwatch.Elapsed.TotalMilliseconds,
                 _lastPhysicsStepMilliseconds,
-                visibleWorld.CompatibilityCubes.Count,
+                visibleWorld.CompatibilityCubes.Count + visibleWorld.DynamicCompatibilityCubes.Count,
                 visibleWorld.Blocks.Count,
                 0,
                 0,
