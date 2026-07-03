@@ -59,6 +59,11 @@ public sealed class RemoteSessionPlayerState
 
     public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionMode.Building;
 
+    public void SetInteractionMode(PlayerInteractionMode interactionMode)
+    {
+        InteractionMode = interactionMode;
+    }
+
     public void ApplyCommand(
         PlayerCommandFrame commandFrame,
         PlayerSimulationTuning tuning,
@@ -114,5 +119,15 @@ public sealed class RemoteSessionPlayerState
     {
         Position = position;
         _camera.Position = Position + new Vector3(0f, 0.35f, 0f);
+    }
+
+    public void SetFacing(Vector3 facing)
+    {
+        _camera.SetFacing(facing);
+    }
+
+    public void SetHealth(int currentHealth, int maxHealth)
+    {
+        Combatant.Health.SetAuthoritativeState(currentHealth, maxHealth);
     }
 }

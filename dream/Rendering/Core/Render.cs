@@ -7,6 +7,7 @@ using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
 using Dream.Rendering.ViewModels;
 using Dream.Rendering.World;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
@@ -621,6 +622,7 @@ public class Render
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
         HudStatusSnapshot status,
+        PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
         FramePerformanceSnapshot performance = default)
     {
@@ -635,7 +637,8 @@ public class Render
             rejectionMessage,
             connectionLabel,
             playerRoster,
-            performance);
+            performance,
+            inventory);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
@@ -777,7 +780,7 @@ public class Render
 
     private void DrawCrosshair(GameSettings settings)
     {
-        if (settings.SettingsVisible || _currentSize.X <= 0 || _currentSize.Y <= 0)
+        if ((settings.SettingsVisible || settings.InventoryVisible) || _currentSize.X <= 0 || _currentSize.Y <= 0)
         {
             return;
         }
@@ -800,12 +803,13 @@ public class Render
 
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
-        io.MouseDrawCursor = settings.SettingsVisible;
-        io.MousePos = settings.SettingsVisible
+        bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
+        io.MouseDrawCursor = overlayVisible;
+        io.MousePos = overlayVisible
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)
             : new System.Numerics.Vector2(-float.MaxValue, -float.MaxValue);
-        io.MouseDown[0] = settings.SettingsVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
-        io.MouseDown[1] = settings.SettingsVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
+        io.MouseDown[0] = overlayVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
+        io.MouseDown[1] = overlayVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
 
         // Reset input states when regaining focus
         if (windowFocused && !_wasFocused)
@@ -830,7 +834,8 @@ public class Render
         string? rejectionMessage,
         string? connectionLabel,
         IReadOnlyList<PlayerRosterEntry> playerRoster,
-        FramePerformanceSnapshot performance)
+        FramePerformanceSnapshot performance,
+        PlayerInventorySnapshot? inventory)
     {
         float? fieldOfViewDegrees = null;
         float? mouseSensitivity = null;
@@ -845,13 +850,15 @@ public class Render
         float? attackSpeed = null;
         int? vitality = null;
         FloatingCombatTextTuning? floatingCombatText = null;
+        int? equipInventorySlotIndex = null;
+        bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
         ImGui.Begin("HUD",
             ImGuiWindowFlags.NoTitleBar |
             ImGuiWindowFlags.AlwaysAutoResize |
             ImGuiWindowFlags.NoMove |
-            (settings.SettingsVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
+            (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
         ImGui.Text(status.HealthLabel);
@@ -877,7 +884,8 @@ public class Render
                 ImGui.Text(line);
             }
         }
-        ImGui.Text("Press Esc to toggle settings");
+        ImGui.Text("Press Esc for settings");
+        ImGui.Text("Press V for inventory");
         ImGui.End();
 
         if (settings.SettingsVisible)
@@ -1019,6 +1027,11 @@ public class Render
             ImGui.End();
         }
 
+        if (settings.InventoryVisible)
+        {
+            DrawInventoryOverlay(inventory, ref equipInventorySlotIndex);
+        }
+
         return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
@@ -1032,7 +1045,100 @@ public class Render
             strength,
             attackSpeed,
             vitality,
-            floatingCombatText);
+            floatingCombatText,
+            equipInventorySlotIndex);
+    }
+
+    private static void DrawInventoryOverlay(
+        PlayerInventorySnapshot? inventory,
+        ref int? equipInventorySlotIndex)
+    {
+        ImGui.SetNextWindowPos(new System.Numerics.Vector2(20f, 420f), ImGuiCond.FirstUseEver);
+        ImGui.Begin("Inventory", ImGuiWindowFlags.AlwaysAutoResize);
+
+        if (!inventory.HasValue)
+        {
+            ImGui.TextDisabled("Waiting for authoritative inventory...");
+            ImGui.End();
+            return;
+        }
+
+        PlayerInventorySnapshot snapshot = inventory.Value;
+        ImGui.Text($"Inventory: {snapshot.PlayerName}");
+        ImGui.SeparatorText("Equipped Tool");
+        DrawInventorySlotButton(snapshot.EquippedSlot, isEquippedPanel: true, ref equipInventorySlotIndex);
+
+        ImGui.SeparatorText("Backpack");
+        for (int row = 0; row < snapshot.Rows; row++)
+        {
+            for (int column = 0; column < snapshot.Columns; column++)
+            {
+                int slotIndex = (row * snapshot.Columns) + column;
+                InventorySlotSnapshot slot = snapshot.Slots.FirstOrDefault(candidate => candidate.SlotIndex == slotIndex);
+                DrawInventorySlotButton(slot, isEquippedPanel: false, ref equipInventorySlotIndex);
+                if (column < snapshot.Columns - 1)
+                {
+                    ImGui.SameLine();
+                }
+            }
+        }
+
+        ImGui.End();
+    }
+
+    private static void DrawInventorySlotButton(
+        InventorySlotSnapshot? slotValue,
+        bool isEquippedPanel,
+        ref int? equipInventorySlotIndex)
+    {
+        InventorySlotSnapshot slot = slotValue ?? new InventorySlotSnapshot(-1, Item: null);
+        InventoryItemSnapshot? item = slot.Item;
+        bool occupied = item.HasValue;
+        string label = occupied
+            ? item.Value.DisplayName
+            : isEquippedPanel
+                ? "Nothing Equipped"
+                : $"Empty##slot-{slot.SlotIndex}";
+
+        if (slot.IsEquipped)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.20f, 0.42f, 0.22f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.26f, 0.52f, 0.28f, 1f));
+        }
+
+        if (ImGui.Button($"{label}##inventory-{slot.SlotIndex}", isEquippedPanel
+            ? new System.Numerics.Vector2(220f, 48f)
+            : new System.Numerics.Vector2(120f, 60f)))
+        {
+            if (occupied && slot.SlotIndex >= 0 && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
+            {
+                equipInventorySlotIndex = slot.SlotIndex;
+            }
+        }
+
+        if (ImGui.IsItemHovered() && occupied)
+        {
+            ImGui.BeginTooltip();
+            ImGui.Text(item.Value.DisplayName);
+            ImGui.Separator();
+            ImGui.TextWrapped(item.Value.Description);
+            foreach (string detailLine in item.Value.DetailLines)
+            {
+                ImGui.Text(detailLine);
+            }
+
+            if (item.Value.StackCount > 1)
+            {
+                ImGui.Text($"Count: {item.Value.StackCount}");
+            }
+
+            ImGui.EndTooltip();
+        }
+
+        if (slot.IsEquipped)
+        {
+            ImGui.PopStyleColor(2);
+        }
     }
 
     private static void DrawViewModelControls(GameSettings settings)

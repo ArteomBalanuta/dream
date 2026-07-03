@@ -19,6 +19,7 @@
 	<ItemGroup>
 		<PackageReference Include="BulletSharp" />
 		<PackageReference Include="ImGui.NET" />
+		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="OpenTK" />
 		<PackageReference Include="OpenTK.Windowing.Desktop" />
 		<PackageReference Include="SharpGLTF.Core" />

@@ -19,7 +19,9 @@ public sealed class EnemyActor
         float preferredStandOffDistance = 0f,
         float collisionRadius = 0.45f,
         float collisionHeight = 1.2f,
-        string displayName = "Wolf")
+        string displayName = "Wolf",
+        string enemyKind = "Wolf",
+        int level = 1)
     {
         Combatant = combatant;
         Position = startPosition;
@@ -31,6 +33,8 @@ public sealed class EnemyActor
         CollisionRadius = Math.Max(0.1f, collisionRadius);
         CollisionHeight = Math.Max(0.1f, collisionHeight);
         DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Enemy" : displayName.Trim();
+        EnemyKind = string.IsNullOrWhiteSpace(enemyKind) ? "Enemy" : enemyKind.Trim();
+        Level = Math.Max(1, level);
         combatant.SetPositionProvider(() => Position);
     }
 
@@ -53,6 +57,10 @@ public sealed class EnemyActor
     public float CollisionHeight { get; }
 
     public string DisplayName { get; }
+
+    public string EnemyKind { get; }
+
+    public int Level { get; }
 
     public EnemyBehaviorState BehaviorState { get; private set; }
 

@@ -17,6 +17,7 @@ using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
 using Dream.Rendering.World;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -60,10 +61,12 @@ public class PlayScene : IDisposable
     private ulong _nextLocalActionSequence = 1;
     private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
+    private bool _wasInventoryTogglePressed;
     private bool _wasCameraViewTogglePressed;
     private bool _localPlayerWasMoving;
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
+    private PlayerInventorySnapshot? _inventory;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
@@ -103,6 +106,11 @@ public class PlayScene : IDisposable
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
         _diagnostics = new MultiplayerDiagnostics();
+
+        if (_remoteClient == null)
+        {
+            ApplyInventorySnapshot(_runtime.TryCaptureInventorySnapshot(_runtime.LocalPlayerSessionId));
+        }
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -243,6 +251,7 @@ public class PlayScene : IDisposable
                 _scenePresenter.BuildPlayerRoster(),
                 _combatFeedback,
                 _actionFeedback.CurrentRejectionMessage,
+                _inventory,
                 ConnectedServerEndpoint,
                 performance);
         ApplyHudRequest(hudResult.Request, applyClientSize);
@@ -274,6 +283,7 @@ public class PlayScene : IDisposable
         {
             ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+            ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
         {
@@ -294,6 +304,10 @@ public class PlayScene : IDisposable
         else if (message is ServerActionMessage actionMessage && _remoteClient != null)
         {
             ClientAuthoritativeActionApplier.ApplyActionResult(_runtime, _events, actionMessage.Result, _diagnostics);
+            if (actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
+            {
+                ApplyInventorySnapshot(inventoryChanged.Inventory);
+            }
         }
     }
 
@@ -401,6 +415,16 @@ public class PlayScene : IDisposable
         }
 
         _wasSettingsTogglePressed = settingsTogglePressed;
+
+        bool inventoryTogglePressed = keyboardState.IsKeyDown(Keys.V);
+        if (inventoryTogglePressed &&
+            !_wasInventoryTogglePressed &&
+            !_settings.SettingsVisible)
+        {
+            _settings.ToggleInventory();
+        }
+
+        _wasInventoryTogglePressed = inventoryTogglePressed;
 
         bool cameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
         if (cameraViewTogglePressed &&
@@ -553,6 +577,14 @@ public class PlayScene : IDisposable
             persistDesktopConfig = true;
         }
 
+        if (request.EquipInventorySlotIndex.HasValue && _remoteClient != null)
+        {
+            _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
+                new PlayerSessionId(_remoteClient.SessionId),
+                _nextLocalActionSequence++,
+                new InventoryEquipIntent(request.EquipInventorySlotIndex.Value))).AsTask().GetAwaiter().GetResult();
+        }
+
         if (request.RequestedResolution.HasValue)
         {
             applyClientSize(request.RequestedResolution.Value);
@@ -588,5 +620,12 @@ public class PlayScene : IDisposable
         return MathF.Abs(moveIntent.ForwardAxis) > 0.001f ||
             MathF.Abs(moveIntent.StrafeAxis) > 0.001f ||
             MathF.Abs(moveIntent.VerticalAxis) > 0.001f;
+    }
+
+    private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
+    {
+        _inventory = inventory;
+        string heldItemId = inventory?.EquippedSlot?.Item?.VisualId ?? ViewModelAssets.DefaultLoadout.HeldItemId;
+        _viewModelController.SetHeldItem(heldItemId);
     }
 }

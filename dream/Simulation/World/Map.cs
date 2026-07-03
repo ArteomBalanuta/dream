@@ -104,12 +104,20 @@ public class Map
         }
     }
 
-    public bool AddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
+    public bool AddCube(
+        Vector3 position,
+        bool isStatic = false,
+        bool withPhysics = true,
+        GeometryMaterialId? materialId = null)
     {
-        return TryAddCube(position, isStatic, withPhysics) != null;
+        return TryAddCube(position, isStatic, withPhysics, materialId) != null;
     }
 
-    public Cube? TryAddCube(Vector3 position, bool isStatic = false, bool withPhysics = true)
+    public Cube? TryAddCube(
+        Vector3 position,
+        bool isStatic = false,
+        bool withPhysics = true,
+        GeometryMaterialId? materialId = null)
     {
         int x = (int)MathF.Floor(position.X + 1e-6f);
         int y = (int)MathF.Floor(position.Y + 1e-6f);
@@ -120,7 +128,10 @@ public class Map
             return null;
         }
 
-        GeometryCellRecord geometryCell = _generator.CreateGeometryCell(new Vector3(x, y, z), isFloor: y == 0);
+        GeometryCellRecord geometryCell = _generator.CreateGeometryCell(
+            new Vector3(x, y, z),
+            isFloor: y == 0,
+            materialId ?? GeometryMaterialId.Grass);
         Cube cube = MaterializeGeometryCell(geometryCell, isStatic, withPhysics);
         return cube;
     }

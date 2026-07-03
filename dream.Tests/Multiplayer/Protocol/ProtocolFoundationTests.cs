@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -118,6 +119,41 @@ public class ProtocolFoundationTests
     }
 
     [Fact]
+    public void TransportJsonCodec_RoundTrips_InventoryEquipAction_And_InventoryChangedResult()
+    {
+        TransportJsonCodec codec = new();
+        PlayerActionMessage actionMessage = new(
+            new PlayerSessionId("session-a"),
+            81,
+            new InventoryEquipIntent(3));
+        ServerActionMessage resultMessage = new(
+            new AuthoritativeActionResult(
+                "session-a",
+                81,
+                30,
+                Accepted: true,
+                Payload: new InventoryChangedResult(new PlayerInventorySnapshot(
+                    "Player A",
+                    4,
+                    4,
+                    [new InventorySlotSnapshot(3, new InventoryItemSnapshot(101, "tool.builder-hammer", "Builder Hammer", "held.tool.builder", 1, "Builder", ["Role: Building"]), true)],
+                    new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, new InventoryItemSnapshot(101, "tool.builder-hammer", "Builder Hammer", "held.tool.builder", 1, "Builder", ["Role: Building"]), true)))));
+
+        DecodedProtocolMessage decodedAction = codec.Decode(
+            codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, actionMessage.MessageKind, 105), actionMessage));
+        DecodedProtocolMessage decodedResult = codec.Decode(
+            codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, resultMessage.MessageKind, 106), resultMessage));
+
+        PlayerActionMessage roundTrippedAction = Assert.IsType<PlayerActionMessage>(decodedAction.Message);
+        InventoryEquipIntent actionPayload = Assert.IsType<InventoryEquipIntent>(roundTrippedAction.Payload);
+        Assert.Equal(3, actionPayload.SlotIndex);
+        ServerActionMessage roundTrippedResult = Assert.IsType<ServerActionMessage>(decodedResult.Message);
+        InventoryChangedResult resultPayload = Assert.IsType<InventoryChangedResult>(roundTrippedResult.Result.Payload);
+        Assert.Equal("Player A", resultPayload.Inventory.PlayerName);
+        Assert.Equal("held.tool.builder", resultPayload.Inventory.EquippedSlot?.Item?.VisualId);
+    }
+
+    [Fact]
     public void TransportJsonCodec_RoundTrips_JoinAcceptedMessage_WithRoster()
     {
         TransportJsonCodec codec = new();
@@ -149,6 +185,31 @@ public class ProtocolFoundationTests
                 Assert.Equal("session-b", second.SessionId);
                 Assert.Equal("Player B", second.DisplayName);
             });
+    }
+
+    [Fact]
+    public void TransportJsonCodec_RoundTrips_JoinAcceptedMessage_WithInventory()
+    {
+        TransportJsonCodec codec = new();
+        JoinAcceptedMessage message = new(
+            "session-a",
+            101,
+            22,
+            InitialWorld: null,
+            Roster: null,
+            Inventory: new PlayerInventorySnapshot(
+                "Player A",
+                4,
+                4,
+                [new InventorySlotSnapshot(0, new InventoryItemSnapshot(101, "tool.builder-hammer", "Builder Hammer", "held.tool.builder", 1, "Builder", ["Role: Building"]))],
+                new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, new InventoryItemSnapshot(101, "tool.builder-hammer", "Builder Hammer", "held.tool.builder", 1, "Builder", ["Role: Building"]), true)));
+
+        DecodedProtocolMessage decoded = codec.Decode(
+            codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 107), message));
+
+        JoinAcceptedMessage roundTripped = Assert.IsType<JoinAcceptedMessage>(decoded.Message);
+        Assert.Equal("Player A", roundTripped.Inventory?.PlayerName);
+        Assert.Equal("Builder Hammer", roundTripped.Inventory?.EquippedSlot?.Item?.DisplayName);
     }
 
     [Fact]

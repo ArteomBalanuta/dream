@@ -137,6 +137,31 @@ public class GameSettingsTests
     }
 
     [Fact]
+    public void ToggleInventory_Uses_Inventory_Runtime_Mode_And_Blocks_Gameplay_Input()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        settings.ToggleInventory();
+
+        Assert.True(settings.InventoryVisible);
+        Assert.Equal(RuntimeMode.InventoryOverlay, settings.CurrentRuntimeState.Mode);
+        Assert.False(settings.CurrentRuntimeState.AllowGameplayInput);
+    }
+
+    [Fact]
+    public void ToggleSettings_Closes_Inventory_Overlay()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+        settings.ToggleInventory();
+
+        settings.ToggleSettings();
+
+        Assert.True(settings.SettingsVisible);
+        Assert.False(settings.InventoryVisible);
+        Assert.Equal(RuntimeMode.SettingsMenu, settings.CurrentRuntimeState.Mode);
+    }
+
+    [Fact]
     public void SetShowCollisionGeometry_Raises_Event()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));

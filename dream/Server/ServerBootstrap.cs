@@ -1,6 +1,8 @@
 using System.Net;
+using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
+using Dream.Server.Persistence;
 
 namespace Dream.Server;
 
@@ -16,7 +18,7 @@ public static class ServerBootstrap
 
     public static DedicatedServerHost CreateAuthoritativeHost()
     {
-        return DedicatedServerHost.CreateRuntimeAttached();
+        return DedicatedServerHost.CreateRuntimeAttached(CreatePersistenceBundle());
     }
 
     public static int RunServerMode()
@@ -58,5 +60,17 @@ public static class ServerBootstrap
         {
             Console.CancelKeyPress -= cancelHandler;
         }
+    }
+
+    private static ServerPersistenceBundle CreatePersistenceBundle()
+    {
+        SqliteSchemaBootstrapper schema = new(
+            AssetPaths.Config("player-profiles.db"),
+            AssetPaths.Config("player-profiles.init.sql"));
+        schema.EnsureSchema();
+        return new ServerPersistenceBundle(
+            schema,
+            new SqlitePlayerProfileRepository(schema),
+            new SqliteWorldPersistenceRepository(schema));
     }
 }

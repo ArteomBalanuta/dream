@@ -2,6 +2,8 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
+using Dream.Server.Persistence;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -10,9 +12,17 @@ namespace Dream.Simulation.Runtime;
 
 public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSessionHost, IDisposable
 {
+    private readonly IDisposable? _ownedDependency;
+
     public RuntimeAuthoritativeSessionHost(WorldSessionRuntime runtime)
+        : this(runtime, null)
+    {
+    }
+
+    public RuntimeAuthoritativeSessionHost(WorldSessionRuntime runtime, IDisposable? ownedDependency)
     {
         Runtime = runtime;
+        _ownedDependency = ownedDependency;
     }
 
     public WorldSessionRuntime Runtime { get; }
@@ -21,24 +31,42 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedSessionId);
         PlayerSessionId sessionId = new(requestedSessionId);
+        string normalizedDisplayName = string.IsNullOrWhiteSpace(displayName)
+            ? requestedSessionId
+            : displayName.Trim();
 
         if (Runtime.Sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
+            PlayerInventorySnapshot? existingInventory = Runtime.TryCaptureInventorySnapshot(existing.SessionId);
             return new JoinAcceptedMessage(
                 existing.SessionId.Value,
                 existing.ActorId,
                 Runtime.CurrentServerTick,
                 Runtime.ExportWorldSnapshot(),
-                BuildJoinedPlayerRoster());
+                BuildJoinedPlayerRoster(),
+                existingInventory);
         }
 
-        ConnectedPlayer player = Runtime.AttachRemoteSession(sessionId, displayName);
+        bool duplicateNameInUse = Runtime.Sessions.Players.Any(player =>
+            !player.IsLocal &&
+            player.SessionId != sessionId &&
+            string.Equals(player.DisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase));
+        if (duplicateNameInUse)
+        {
+            throw new InvalidOperationException(
+                $"Display name '{normalizedDisplayName}' is already claimed by another active player.");
+        }
+
+        ConnectedPlayer player = Runtime.AttachRemoteSession(sessionId, normalizedDisplayName);
+        Runtime.RestorePersistedPlayerState(sessionId, player.DisplayName);
+        PlayerInventorySnapshot? inventory = Runtime.TryCaptureInventorySnapshot(player.SessionId);
         return new JoinAcceptedMessage(
             player.SessionId.Value,
             player.ActorId,
             Runtime.CurrentServerTick,
             Runtime.ExportWorldSnapshot(),
-            BuildJoinedPlayerRoster());
+            BuildJoinedPlayerRoster(),
+            inventory);
     }
 
     public AuthoritativeActionResult ProcessAction(PlayerActionMessage message)
@@ -99,17 +127,20 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     public void Dispose()
     {
         Runtime.Dispose();
+        _ownedDependency?.Dispose();
     }
 
-    public static RuntimeAuthoritativeSessionHost CreateDefault()
+    public static RuntimeAuthoritativeSessionHost CreateDefault(ServerPersistenceBundle? persistence = null)
     {
         SceneEventHub events = new();
         WorldSessionRuntime runtime = new(
             floorSize: WorldDefaults.StartupFloorSize,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false);
-        return new RuntimeAuthoritativeSessionHost(runtime);
+            loadVisualAssets: false,
+            playerProfiles: persistence?.PlayerProfiles,
+            worldPersistence: persistence?.World);
+        return new RuntimeAuthoritativeSessionHost(runtime, persistence);
     }
 
     private PlayerSessionId ResolveTickControlledSessionId()

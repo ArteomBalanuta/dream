@@ -6,6 +6,7 @@ namespace Dream.Application;
 public enum RuntimeMode
 {
     Gameplay,
+    InventoryOverlay,
     SettingsMenu
 }
 

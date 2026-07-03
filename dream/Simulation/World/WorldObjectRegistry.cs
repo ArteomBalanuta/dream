@@ -17,7 +17,8 @@ public sealed class WorldObjectRegistry
         CreatureKind kind = CreatureKind.Object,
         int maxHealth = 100,
         int? currentHealth = null,
-        int? actorId = null)
+        int? actorId = null,
+        string? ownerPlayerName = null)
     {
         if (_records.TryGetValue(sourceObject, out WorldObjectRecord? existing))
         {
@@ -31,6 +32,7 @@ public sealed class WorldObjectRegistry
             sourceObject,
             anchorProvider,
             removeFromWorld,
+            ownerPlayerName,
             kind,
             resolvedActorId,
             maxHealth,
@@ -40,7 +42,13 @@ public sealed class WorldObjectRegistry
         return record;
     }
 
-    public WorldObjectRecord RegisterCube(Cube cube, Map map, int maxHealth = 100, int? currentHealth = null, int? actorId = null)
+    public WorldObjectRecord RegisterCube(
+        Cube cube,
+        Map map,
+        int maxHealth = 100,
+        int? currentHealth = null,
+        int? actorId = null,
+        string? ownerPlayerName = null)
     {
         return Register(
             cube,
@@ -49,7 +57,8 @@ public sealed class WorldObjectRegistry
             CreatureKind.Object,
             maxHealth,
             currentHealth,
-            actorId);
+            actorId,
+            ownerPlayerName);
     }
 
     public WorldObjectRecord? TryGet(object sourceObject)
@@ -98,7 +107,8 @@ public sealed class WorldObjectRegistry
                 record.Health.CurrentHealth,
                 record.Health.MaxHealth,
                 record.Actor.Id,
-                record.Actor.Kind));
+                record.Actor.Kind,
+                record.OwnerPlayerName));
         }
 
         return new WorldObjectCubeSnapshot(entries);
@@ -116,7 +126,7 @@ public sealed class WorldObjectRegistry
                 continue;
             }
 
-            RegisterCube(cube, map, entry.MaxHealth, entry.CurrentHealth, entry.ActorId);
+            RegisterCube(cube, map, entry.MaxHealth, entry.CurrentHealth, entry.ActorId, entry.OwnerPlayerName);
         }
     }
 
@@ -138,6 +148,7 @@ public sealed class WorldObjectRecord : IDamageable, ICombatAnchorProvider
         object sourceObject,
         Func<Vector3> anchorProvider,
         Func<bool> removeFromWorld,
+        string? ownerPlayerName,
         CreatureKind kind,
         int actorId,
         int maxHealth,
@@ -146,6 +157,7 @@ public sealed class WorldObjectRecord : IDamageable, ICombatAnchorProvider
         SourceObject = sourceObject;
         _anchorProvider = anchorProvider;
         _removeFromWorld = removeFromWorld;
+        OwnerPlayerName = ownerPlayerName;
         Health = new HealthState(maxHealth);
         if (currentHealth < maxHealth)
         {
@@ -156,6 +168,8 @@ public sealed class WorldObjectRecord : IDamageable, ICombatAnchorProvider
     }
 
     public object SourceObject { get; }
+
+    public string? OwnerPlayerName { get; }
 
     public HealthState Health { get; }
 
@@ -186,4 +200,5 @@ public readonly record struct WorldObjectCubeSnapshotEntry(
     int CurrentHealth,
     int MaxHealth,
     int ActorId,
-    CreatureKind Kind);
+    CreatureKind Kind,
+    string? OwnerPlayerName);

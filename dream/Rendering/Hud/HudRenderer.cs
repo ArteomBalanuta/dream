@@ -4,6 +4,7 @@ using Dream.Application;
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -32,6 +33,7 @@ public class HudRenderer
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
         HudStatusSnapshot status,
+        PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
         FramePerformanceSnapshot performance = default)
     {
@@ -47,6 +49,7 @@ public class HudRenderer
             combatFeedback,
             rejectionMessage,
             status,
+            inventory,
             connectionLabel,
             performance);
     }
@@ -61,6 +64,7 @@ public class HudRenderer
         IReadOnlyList<PlayerRosterEntry> playerRoster,
         CombatFeedbackSystem combatFeedback,
         string? rejectionMessage,
+        PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
         FramePerformanceSnapshot performance = default)
     {
@@ -76,6 +80,7 @@ public class HudRenderer
             combatFeedback,
             rejectionMessage,
             state.HudStatus,
+            inventory,
             connectionLabel,
             performance);
     }

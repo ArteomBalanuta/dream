@@ -9,8 +9,10 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
+using Dream.Server.Persistence;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -42,22 +44,31 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private readonly EnemyRegistry _enemies;
     private readonly PlayerSessionRegistry _sessions = new();
     private readonly Dictionary<PlayerSessionId, RemoteSessionPlayerState> _secondaryRemotePlayers = new();
+    private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly List<WorldMutationDelta> _pendingWorldMutations = [];
     private readonly List<DamageEventDelta> _pendingDamageEvents = [];
-    private PlayerInteractionMode _interactionMode = PlayerInteractionMode.Building;
+    private readonly Dictionary<long, PersistedItemInstance> _itemInstances = [];
+    private readonly Dictionary<string, Dictionary<int, long>> _inventorySlotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IPlayerProfileRepository? _playerProfiles;
+    private readonly IWorldPersistenceRepository? _worldPersistence;
     private PlayerCommandFrame _lastAppliedCommandFrame;
     private double _lastPhysicsStepMilliseconds;
     private int _nextRemoteActorId = 2;
+    private long _nextItemInstanceId = 1;
 
     public WorldSessionRuntime(
         int floorSize,
         Vector3 playerStartPosition,
         SceneEventHub events,
-        bool loadVisualAssets = true)
+        bool loadVisualAssets = true,
+        IPlayerProfileRepository? playerProfiles = null,
+        IWorldPersistenceRepository? worldPersistence = null)
     {
         _loadVisualAssets = loadVisualAssets;
         _events = events;
+        _playerProfiles = playerProfiles;
+        _worldPersistence = worldPersistence;
         Physics = new PhysicsIntegrator();
         Map = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
 
@@ -71,13 +82,13 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Player.Combatant.Actor.Id,
             isLocal: true,
             displayName: "local-player");
+        _sessionInteractionModes[LocalPlayerSessionId] = PlayerInteractionMode.Building;
         _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
 
         _worldObjects = new WorldObjectRegistry();
         _enemies = new EnemyRegistry();
         SubscribeReplicationExports();
-
-        SpawnInitialWolf();
+        RestorePersistedWorldState();
     }
 
     public Map Map { get; private set; }
@@ -88,11 +99,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public EnemyRegistry Enemies => _enemies;
 
-    public PlayerInteractionMode InteractionMode => _interactionMode;
+    public PlayerInteractionMode InteractionMode => GetSessionInteractionMode(ResolvePrimaryControlledSessionId());
 
     public void SetAuthoritativeInteractionMode(PlayerInteractionMode interactionMode)
     {
-        _interactionMode = interactionMode;
+        SetSessionInteractionMode(ResolvePrimaryControlledSessionId(), interactionMode);
     }
 
     public PlayerSessionId LocalPlayerSessionId { get; }
@@ -108,6 +119,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
             existing.UpdateDisplayName(displayName);
+            _sessionInteractionModes.TryAdd(existing.SessionId, PlayerInteractionMode.Building);
             if (!existing.IsLocal && PrimaryRemoteSessionId == null && existing.ActorId == Player.Combatant.Actor.Id)
             {
                 PrimaryRemoteSessionId = existing.SessionId;
@@ -123,6 +135,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 Player.Combatant.Actor.Id,
                 isLocal: false,
                 displayName: displayName);
+            _sessionInteractionModes[primary.SessionId] = PlayerInteractionMode.Building;
             PrimaryRemoteSessionId = primary.SessionId;
             return primary;
         }
@@ -130,11 +143,37 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         int actorId = AllocateRemoteActorId();
         Vector3 spawnPosition = ResolveSecondaryRemoteSpawnPosition(_secondaryRemotePlayers.Count);
         _secondaryRemotePlayers[sessionId] = new RemoteSessionPlayerState(actorId, sessionId, spawnPosition);
-        return _sessions.Register(
+        ConnectedPlayer remote = _sessions.Register(
             sessionId,
             actorId,
             isLocal: false,
             displayName: displayName);
+        _sessionInteractionModes[remote.SessionId] = PlayerInteractionMode.Building;
+        return remote;
+    }
+
+    public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
+    {
+        if (_playerProfiles == null)
+        {
+            return;
+        }
+
+        PersistedPlayerProfile profile = _playerProfiles.GetOrCreate(playerName);
+        PersistedPlayerWorldState? worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
+        ApplyPersistedPlayerState(sessionId, profile, worldState);
+        EnsurePlayerInventory(profile.PlayerName);
+    }
+
+    public PlayerInventorySnapshot? TryCaptureInventorySnapshot(PlayerSessionId sessionId)
+    {
+        if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player) || player == null)
+        {
+            return null;
+        }
+
+        EnsurePlayerInventory(player.DisplayName);
+        return BuildInventorySnapshot(player.DisplayName);
     }
 
     public WorldSessionUpdateResult Update(WorldSessionUpdateContext context)
@@ -160,7 +199,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     {
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
-        ApplyInteractionModeSelection(interaction);
+        ApplyInteractionModeSelection(commandFrame.SessionId, interaction);
         ApplyCommandFacing(commandFrame);
         PlayerSimulationInput playerInput = CreatePlayerSimulationInput(commandFrame);
         AuthoritativeActionResult? actionResult = null;
@@ -276,7 +315,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Physics.MapCubeBodies,
             Player.PhysicsBody,
             Player.Combatant.Health,
-            _interactionMode,
+            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             Player.Combatant.DerivedStats,
             Player.Combatant.Stats,
             new FramePerformanceSnapshot(
@@ -404,7 +443,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             CurrentServerTick,
             acceptedSequences,
             actors,
-            _interactionMode,
+            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             worldSnapshot,
             _pendingWorldMutations.ToArray(),
             _pendingDamageEvents.ToArray());
@@ -488,6 +527,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                     ResolveAuthoritativeCombatIntent(context, combatIntent),
                     context.InteractionMode,
                     context.Combatant),
+            InventoryEquipIntent equipIntent
+                => ProcessInventoryEquipAction(message, context.Player, equipIntent),
             PlayerStatsUpdateIntent statsIntent
                 => ProcessPlayerStatsUpdateAction(message, context.Combatant, statsIntent),
             CombatUseIntent
@@ -514,20 +555,25 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
+        if (commandFrame.RequestedMode.Mode.HasValue)
+        {
+            SetSessionInteractionMode(commandFrame.SessionId, commandFrame.RequestedMode.Mode.Value);
+        }
+
         actor.AdvanceCombat(deltaTime);
         actor.ApplyCommand(commandFrame, playerTuning, deltaTime);
         actor.ClampToMap(Map);
     }
 
-    private void ApplyInteractionModeSelection(PlayerInteractionCommand command)
+    private void ApplyInteractionModeSelection(PlayerSessionId sessionId, PlayerInteractionCommand command)
     {
         if (command.SelectBuildingModePressed)
         {
-            _interactionMode = PlayerInteractionMode.Building;
+            SetSessionInteractionMode(sessionId, PlayerInteractionMode.Building);
         }
         else if (command.SelectCombatModePressed)
         {
-            _interactionMode = PlayerInteractionMode.Combat;
+            SetSessionInteractionMode(sessionId, PlayerInteractionMode.Combat);
         }
     }
 
@@ -570,6 +616,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
             if (receipt.WasFatal)
             {
+                DeletePersistedEnemy(enemy.Combatant.Actor.Id);
                 _enemies.PruneInactive();
             }
 
@@ -646,11 +693,13 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             if (Map.TryGetCellForCube(destroyedCube, out GeometryCellKey cell) &&
                 Map.FractureCubeIntoPieces(cell))
             {
+                DeletePersistedPlacedCube(record.Actor.Id);
                 _worldObjects.Unregister(sourceObject);
                 _events.Publish(new CubeFracturedEvent(destroyedCube, new Vector3(cell.X, cell.Y, cell.Z)));
             }
             else if (_worldObjects.TryRemove(record))
             {
+                DeletePersistedPlacedCube(record.Actor.Id);
                 _events.Publish(new CubeDestroyedEvent(
                     destroyedCube,
                     new Vector3(
@@ -661,6 +710,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         }
         else
         {
+            DeletePersistedPlacedCube(record.Actor.Id);
             _worldObjects.TryRemove(record);
         }
 
@@ -676,6 +726,74 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 cubeReceipt.WasFatal,
                 record.Health.CurrentHealth,
                 record.Health.MaxHealth));
+    }
+
+    public void PersistCheckpoint()
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        foreach (ConnectedPlayer player in _sessions.Players.Where(player => !player.IsLocal))
+        {
+            if (!TryResolveAuthoritativePlayerTarget(player.SessionId, out _, out IAuthoritativePlayerTarget? target)
+                || target == null)
+            {
+                continue;
+            }
+
+            PersistPlayerProfile(player.SessionId, target.Combatant);
+            _worldPersistence.SavePlayerWorldState(new PersistedPlayerWorldState(
+                player.DisplayName,
+                target.Position,
+                target.Facing,
+                CurrentHealth: target.Combatant.Health.CurrentHealth,
+                CurrentEnergy: 0,
+                UpdatedUtc: DateTime.UtcNow));
+        }
+
+        foreach (EnemyActor enemy in _enemies.ActiveActors.Where(enemy => enemy.IsActive))
+        {
+            PersistEnemy(enemy);
+        }
+    }
+
+    public void ApplyPersistedPlayerState(
+        PlayerSessionId sessionId,
+        PersistedPlayerProfile profile,
+        PersistedPlayerWorldState? worldState)
+    {
+        SetSessionInteractionMode(sessionId, profile.InteractionMode);
+        if (!TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? playerTarget)
+            || playerTarget == null)
+        {
+            return;
+        }
+
+        playerTarget.Combatant.ApplyStats(new PlayerCombatStats
+        {
+            Strength = profile.Stats.Strength,
+            AttackSpeed = profile.Stats.AttackSpeed,
+            Vitality = profile.Stats.Vitality
+        });
+
+        Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
+        Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
+        int currentHealth = worldState?.CurrentHealth ?? profile.Stats.CurrentHealth;
+        int maxHealth = profile.Stats.MaxHealth;
+
+        playerTarget.SetWorldPosition(persistedPosition);
+        if (sessionId == ResolvePrimaryControlledSessionId())
+        {
+            Player.SetFacing(persistedFacing);
+            Player.SetHealth(currentHealth, maxHealth);
+        }
+        else if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
+        {
+            remote.SetFacing(persistedFacing);
+            remote.SetHealth(currentHealth, maxHealth);
+        }
     }
 
     private void SpawnInitialWolf()
@@ -699,8 +817,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
             collisionRadius: WolfAssetDefinition.CollisionRadius,
             collisionHeight: WolfAssetDefinition.CollisionHeight,
-            displayName: "Wolf");
+            displayName: "Wolf",
+            enemyKind: "Wolf",
+            level: 1);
         _enemies.Add(wolf);
+        PersistEnemy(wolf);
     }
 
     private void EnsureWolfExists()
@@ -763,7 +884,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     private PlayerActionMessage? TryCreatePrimaryUseActionMessage(PlayerCommandFrame commandFrame)
     {
-        return _interactionMode switch
+        return GetSessionInteractionMode(commandFrame.SessionId) switch
         {
             PlayerInteractionMode.Building => Player.TryCreateBuildUseRequest(true, out BuildUseRequest buildUseRequest)
                 ? new PlayerActionMessage(
@@ -795,13 +916,20 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return CreateRejectedActionResult(message, "Build placement rejected because the target is out of range.");
         }
 
-        Cube? placedCube = Map.TryAddCube(intent.PlacementTarget);
+        GeometryMaterialId placementMaterial = ResolveBuildPlacementMaterial(intent.PlacementTarget);
+        Cube? placedCube = Map.TryAddCube(intent.PlacementTarget, materialId: placementMaterial);
         if (placedCube == null || placedCube.Position.Y <= 0f)
         {
             return CreateRejectedActionResult(message, "Build placement rejected by authoritative validation.");
         }
 
-        _worldObjects.RegisterCube(placedCube, Map);
+        string ownerPlayerName = TryResolveDisplayName(message.SessionId);
+        WorldObjectRecord record = _worldObjects.RegisterCube(
+            placedCube,
+            Map,
+            actorId: null,
+            ownerPlayerName: ownerPlayerName);
+        PersistPlacedCube(record, placementMaterial);
         Vector3 placedCell = ToCellPosition(placedCube.Position);
         _events.Publish(new CubePlacedEvent(placedCube, placedCell));
 
@@ -822,6 +950,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         PlayerStatsUpdateIntent intent)
     {
         combatant.ApplyStats(intent.Stats.ToCombatStats());
+        PersistPlayerProfile(message.SessionId, combatant);
 
         return new AuthoritativeActionResult(
             message.SessionId.Value,
@@ -829,6 +958,35 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             CurrentServerTick,
             Accepted: true,
             Payload: new PlayerStatsUpdateResult(PlayerCombatStatsSnapshot.From(combatant.Stats)));
+    }
+
+    private AuthoritativeActionResult ProcessInventoryEquipAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryEquipIntent intent)
+    {
+        if (intent.SlotIndex < 0 || intent.SlotIndex >= InventoryConstants.BackpackSlotCount)
+        {
+            return CreateRejectedActionResult(message, "Inventory equip rejected because the slot index is out of range.");
+        }
+
+        EnsurePlayerInventory(player.DisplayName);
+        if (!_inventorySlotsByPlayer.TryGetValue(player.DisplayName, out Dictionary<int, long>? slots)
+            || !slots.TryGetValue(intent.SlotIndex, out long itemInstanceId)
+            || !_itemInstances.ContainsKey(itemInstanceId))
+        {
+            return CreateRejectedActionResult(message, "Inventory equip rejected because the slot is empty.");
+        }
+
+        slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
+        PersistInventorySlot(player.DisplayName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            CurrentServerTick,
+            Accepted: true,
+            Payload: new InventoryChangedResult(BuildInventorySnapshot(player.DisplayName)));
     }
 
     private AuthoritativeActionResult CreateRejectedActionResult(PlayerActionMessage message, string reason)
@@ -894,6 +1052,343 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             MathF.Floor(position.X + 1e-6f),
             MathF.Floor(position.Y + 1e-6f),
             MathF.Floor(position.Z + 1e-6f));
+    }
+
+    private PlayerInteractionMode GetSessionInteractionMode(PlayerSessionId sessionId)
+    {
+        if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
+        {
+            return remote.InteractionMode;
+        }
+
+        return _sessionInteractionModes.TryGetValue(sessionId, out PlayerInteractionMode interactionMode)
+            ? interactionMode
+            : PlayerInteractionMode.Building;
+    }
+
+    private void SetSessionInteractionMode(PlayerSessionId sessionId, PlayerInteractionMode interactionMode)
+    {
+        _sessionInteractionModes[sessionId] = interactionMode;
+        if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
+        {
+            remote.SetInteractionMode(interactionMode);
+        }
+
+        if (_playerProfiles == null
+            || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
+            || player == null
+            || player.IsLocal)
+        {
+            return;
+        }
+
+        PersistedPlayerProfile profile = _playerProfiles.GetOrCreate(player.DisplayName);
+        _playerProfiles.Save(profile with
+        {
+            DisplayName = player.DisplayName,
+            InteractionMode = interactionMode
+        });
+    }
+
+    private void RestorePersistedInventoryState()
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        foreach (PersistedItemInstance item in _worldPersistence.LoadItemInstances())
+        {
+            _itemInstances[item.ItemInstanceId] = item;
+            _nextItemInstanceId = Math.Max(_nextItemInstanceId, item.ItemInstanceId + 1);
+        }
+
+        foreach (PersistedInventorySlot slot in _worldPersistence.LoadInventorySlots())
+        {
+            GetOrCreateInventorySlots(slot.PlayerName)[slot.SlotIndex] = slot.ItemInstanceId;
+        }
+    }
+
+    private void EnsurePlayerInventory(string playerName)
+    {
+        Dictionary<int, long> slots = GetOrCreateInventorySlots(playerName);
+        bool hasBackpackContent = slots.Keys.Any(slotIndex => slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount);
+        if (hasBackpackContent)
+        {
+            if (!slots.ContainsKey(InventoryConstants.EquippedSlotIndex))
+            {
+                KeyValuePair<int, long> firstOccupiedSlot = slots
+                    .Where(entry => entry.Key >= 0 && entry.Key < InventoryConstants.BackpackSlotCount)
+                    .OrderBy(entry => entry.Key)
+                    .First();
+                slots[InventoryConstants.EquippedSlotIndex] = firstOccupiedSlot.Value;
+                PersistInventorySlot(playerName, InventoryConstants.EquippedSlotIndex, firstOccupiedSlot.Value);
+            }
+
+            return;
+        }
+
+        SeedStarterInventory(playerName, slots);
+    }
+
+    private void SeedStarterInventory(string playerName, Dictionary<int, long> slots)
+    {
+        int slotIndex = 0;
+        long? firstItemInstanceId = null;
+        foreach (string itemKind in ToolCatalog.StarterItemKinds)
+        {
+            ToolDefinition definition = ToolCatalog.Resolve(itemKind);
+            long itemInstanceId = _nextItemInstanceId++;
+            firstItemInstanceId ??= itemInstanceId;
+            PersistedItemInstance item = new(
+                itemInstanceId,
+                definition.ItemKind,
+                definition.DisplayName,
+                definition.VisualId,
+                playerName,
+                WorldPosition: null,
+                State: "Inventory",
+                StackCount: 1,
+                CreatedUtc: DateTime.UtcNow,
+                UpdatedUtc: DateTime.UtcNow);
+            _itemInstances[item.ItemInstanceId] = item;
+            slots[slotIndex] = itemInstanceId;
+            _worldPersistence?.SaveItemInstance(item);
+            PersistInventorySlot(playerName, slotIndex, itemInstanceId);
+            slotIndex++;
+        }
+
+        if (firstItemInstanceId.HasValue)
+        {
+            slots[InventoryConstants.EquippedSlotIndex] = firstItemInstanceId.Value;
+            PersistInventorySlot(playerName, InventoryConstants.EquippedSlotIndex, firstItemInstanceId.Value);
+        }
+    }
+
+    private PlayerInventorySnapshot BuildInventorySnapshot(string playerName)
+    {
+        Dictionary<int, long> slots = GetOrCreateInventorySlots(playerName);
+        List<InventorySlotSnapshot> backpack = [];
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            InventoryItemSnapshot? item = TryResolveInventoryItem(slots, slotIndex);
+            bool equipped = slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long equippedItemId)
+                && item.HasValue
+                && item.Value.ItemInstanceId == equippedItemId;
+            backpack.Add(new InventorySlotSnapshot(slotIndex, item, equipped));
+        }
+
+        InventoryItemSnapshot? equippedItem = TryResolveInventoryItem(slots, InventoryConstants.EquippedSlotIndex);
+        return new PlayerInventorySnapshot(
+            playerName,
+            InventoryConstants.GridColumns,
+            InventoryConstants.GridRows,
+            backpack,
+            new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, equippedItem, equippedItem.HasValue));
+    }
+
+    private InventoryItemSnapshot? TryResolveInventoryItem(Dictionary<int, long> slots, int slotIndex)
+    {
+        if (!slots.TryGetValue(slotIndex, out long itemInstanceId)
+            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        {
+            return null;
+        }
+
+        ToolDefinition definition = ToolCatalog.Resolve(item.ItemKind);
+        return new InventoryItemSnapshot(
+            item.ItemInstanceId,
+            item.ItemKind,
+            item.DisplayName,
+            item.VisualId,
+            item.StackCount,
+            definition.Description,
+            definition.DetailLines);
+    }
+
+    private Dictionary<int, long> GetOrCreateInventorySlots(string playerName)
+    {
+        if (!_inventorySlotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots))
+        {
+            slots = [];
+            _inventorySlotsByPlayer[playerName] = slots;
+        }
+
+        return slots;
+    }
+
+    private void PersistInventorySlot(string playerName, int slotIndex, long itemInstanceId)
+    {
+        _worldPersistence?.SaveInventorySlot(new PersistedInventorySlot(
+            playerName,
+            slotIndex,
+            itemInstanceId,
+            DateTime.UtcNow));
+    }
+
+    private void RestorePersistedWorldState()
+    {
+        if (_worldPersistence == null)
+        {
+            SpawnInitialWolf();
+            return;
+        }
+
+        RestorePersistedInventoryState();
+
+        foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
+        {
+            Cube? cube = Map.TryAddCube(
+                persistedCube.CellPosition,
+                materialId: persistedCube.MaterialId);
+            if (cube == null)
+            {
+                continue;
+            }
+
+            _worldObjects.RegisterCube(
+                cube,
+                Map,
+                maxHealth: persistedCube.MaxHealth,
+                currentHealth: persistedCube.CurrentHealth,
+                actorId: persistedCube.CubeId,
+                ownerPlayerName: persistedCube.OwnerPlayerName);
+        }
+
+        IReadOnlyList<PersistedEnemyInstance> enemies = _worldPersistence.LoadActiveEnemies();
+        if (enemies.Count == 0)
+        {
+            SpawnInitialWolf();
+            return;
+        }
+
+        _enemies.Clear();
+        foreach (PersistedEnemyInstance enemy in enemies)
+        {
+            _enemies.Add(CreatePersistedEnemy(enemy));
+        }
+    }
+
+    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy)
+    {
+        EnemyCombatant combatant = new(
+            () => enemy.Position,
+            _events,
+            actorId: enemy.EnemyId,
+            maxHealth: enemy.Stats.MaxHealth,
+            attackDamage: Math.Max(1, enemy.Stats.Strength + 2),
+            attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
+            anchorHeightOffset: WolfAssetDefinition.CombatAnchorHeight);
+        combatant.Health.SetAuthoritativeState(enemy.Stats.CurrentHealth, enemy.Stats.MaxHealth);
+
+        EnemyActor actor = new(
+            combatant,
+            enemy.Position,
+            aggroRange: 10f,
+            attackRange: 1.35f,
+            moveSpeed: Math.Max(0f, enemy.Stats.MovementSpeed),
+            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
+            collisionRadius: WolfAssetDefinition.CollisionRadius,
+            collisionHeight: WolfAssetDefinition.CollisionHeight,
+            displayName: enemy.DisplayName,
+            enemyKind: enemy.EnemyKind,
+            level: enemy.Stats.Level);
+        actor.SetFacing(enemy.Facing);
+        return actor;
+    }
+
+    private void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
+    {
+        if (_playerProfiles == null
+            || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
+            || player == null
+            || player.IsLocal)
+        {
+            return;
+        }
+
+        PersistedPlayerProfile existing = _playerProfiles.GetOrCreate(player.DisplayName);
+        _playerProfiles.Save(existing with
+        {
+            DisplayName = player.DisplayName,
+            InteractionMode = GetSessionInteractionMode(sessionId),
+            Stats = new PersistedCreatureStats(
+                CurrentHealth: combatant.Health.CurrentHealth,
+                MaxHealth: combatant.Health.MaxHealth,
+                Strength: combatant.Stats.Strength,
+                Agility: 10,
+                Vitality: combatant.Stats.Vitality,
+                Energy: 10,
+                MovementSpeed: 6f,
+                AttackSpeed: combatant.Stats.AttackSpeed,
+                Level: 1)
+        });
+    }
+
+    private void PersistPlacedCube(WorldObjectRecord record, GeometryMaterialId materialId)
+    {
+        if (_worldPersistence == null || record.SourceObject is not Cube cube)
+        {
+            return;
+        }
+
+        _worldPersistence.SavePlacedCube(new PersistedPlacedCube(
+            record.Actor.Id,
+            record.OwnerPlayerName ?? "unknown-player",
+            ToCellPosition(cube.Position),
+            GeometryShapeKind.SolidCube,
+            materialId,
+            record.Health.CurrentHealth,
+            record.Health.MaxHealth,
+            DateTime.UtcNow,
+            DateTime.UtcNow));
+    }
+
+    private void DeletePersistedPlacedCube(int cubeId)
+    {
+        _worldPersistence?.DeletePlacedCube(cubeId);
+    }
+
+    private void PersistEnemy(EnemyActor enemy)
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        _worldPersistence.SaveEnemyInstance(new PersistedEnemyInstance(
+            enemy.Combatant.Actor.Id,
+            enemy.EnemyKind,
+            enemy.DisplayName,
+            enemy.Position,
+            enemy.Forward,
+            new PersistedCreatureStats(
+                CurrentHealth: enemy.Combatant.Health.CurrentHealth,
+                MaxHealth: enemy.Combatant.Health.MaxHealth,
+                Strength: 10,
+                Agility: 10,
+                Vitality: 10,
+                Energy: 0,
+                MovementSpeed: enemy.MoveSpeed,
+                AttackSpeed: 1f / Math.Max(0.05f, enemy.Combatant.AttackIntervalSeconds),
+                Level: enemy.Level),
+            DateTime.UtcNow,
+            DateTime.UtcNow));
+    }
+
+    private void DeletePersistedEnemy(int enemyId)
+    {
+        _worldPersistence?.DeleteEnemyInstance(enemyId);
+    }
+
+    private GeometryMaterialId ResolveBuildPlacementMaterial(Vector3 placementTarget)
+    {
+        Vector3 belowCell = new(
+            MathF.Floor(placementTarget.X + 1e-6f),
+            MathF.Floor(placementTarget.Y - 1f + 1e-6f),
+            MathF.Floor(placementTarget.Z + 1e-6f));
+        GeometryCellRecord? supportCell = Map.TryGetGeometryCellAtCell((int)belowCell.X, (int)belowCell.Y, (int)belowCell.Z);
+        return supportCell?.Definition.MaterialId ?? GeometryMaterialId.Grass;
     }
 
     private PlayerSessionId ResolvePrimaryControlledSessionId()
@@ -1007,7 +1502,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Player.GetWorldPosition,
             () => Player.Camera.Front,
             Player.Combatant,
-            () => _interactionMode,
+            () => GetSessionInteractionMode(sessionId),
             Player.SetWorldPosition,
             () => Player.Camera.Position);
     }

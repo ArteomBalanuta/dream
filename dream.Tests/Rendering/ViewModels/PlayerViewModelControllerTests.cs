@@ -19,7 +19,19 @@ public class PlayerViewModelControllerTests
         ViewModelFrameState state = controller.CurrentFrameState;
 
         Assert.Equal("hands.debug", state.Hands.Definition.Id);
-        Assert.Equal("held.debug", state.HeldItem.Definition.Id);
+        Assert.Equal("held.tool.builder", state.HeldItem.Definition.Id);
+    }
+
+    [Fact]
+    public void SetHeldItem_Swaps_Held_Viewmodel_Definition()
+    {
+        ViewModelCatalog catalog = ViewModelCatalog.CreateDefault();
+        GameSettings settings = new(new Vector2i(1440, 1024));
+        PlayerViewModelController controller = new(catalog, settings);
+
+        controller.SetHeldItem("held.tool.blade");
+
+        Assert.Equal("held.tool.blade", controller.CurrentFrameState.HeldItem.Definition.Id);
     }
 
     [Fact]

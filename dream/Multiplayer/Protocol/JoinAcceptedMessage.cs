@@ -1,4 +1,5 @@
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
 
 namespace Dream.Multiplayer.Protocol;
@@ -8,7 +9,8 @@ public sealed record JoinAcceptedMessage(
     int ActorId,
     ulong CurrentServerTick,
     WorldSnapshot? InitialWorld,
-    IReadOnlyList<PlayerRosterEntry>? Roster = null) : IServerToClientMessage
+    IReadOnlyList<PlayerRosterEntry>? Roster = null,
+    PlayerInventorySnapshot? Inventory = null) : IServerToClientMessage
 {
     public string MessageKind => "server.join-accepted";
 

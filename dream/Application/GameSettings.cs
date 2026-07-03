@@ -44,6 +44,8 @@ public class GameSettings
 
     public bool SettingsVisible { get; private set; }
 
+    public bool InventoryVisible { get; private set; }
+
     public RuntimeState CurrentRuntimeState { get; private set; } = new(RuntimeMode.Gameplay);
 
     public int WindowWidth { get; private set; }
@@ -82,8 +84,23 @@ public class GameSettings
     public void ToggleSettings()
     {
         SettingsVisible = !SettingsVisible;
-        CurrentRuntimeState = new RuntimeState(SettingsVisible ? RuntimeMode.SettingsMenu : RuntimeMode.Gameplay);
-        RuntimeStateChanged?.Invoke(new RuntimeStateChangedEvent(CurrentRuntimeState));
+        if (SettingsVisible)
+        {
+            InventoryVisible = false;
+        }
+
+        ApplyRuntimeState();
+    }
+
+    public void ToggleInventory()
+    {
+        if (SettingsVisible)
+        {
+            return;
+        }
+
+        InventoryVisible = !InventoryVisible;
+        ApplyRuntimeState();
     }
 
     public void StageFloorSize(int floorSize)
@@ -128,5 +145,16 @@ public class GameSettings
     public void ResetViewModelRig()
     {
         ViewModelRig = _defaultViewModelRig.Clone();
+    }
+
+    private void ApplyRuntimeState()
+    {
+        CurrentRuntimeState = new RuntimeState(
+            SettingsVisible
+                ? RuntimeMode.SettingsMenu
+                : InventoryVisible
+                    ? RuntimeMode.InventoryOverlay
+                    : RuntimeMode.Gameplay);
+        RuntimeStateChanged?.Invoke(new RuntimeStateChangedEvent(CurrentRuntimeState));
     }
 }

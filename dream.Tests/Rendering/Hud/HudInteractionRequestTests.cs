@@ -27,6 +27,7 @@ public class HudInteractionRequestTests
         Assert.Null(request.AttackSpeed);
         Assert.Null(request.Vitality);
         Assert.Null(request.FloatingCombatText);
+        Assert.Null(request.EquipInventorySlotIndex);
     }
 
     [Fact]
@@ -45,7 +46,8 @@ public class HudInteractionRequestTests
             Strength: 12,
             AttackSpeed: 3.5f,
             Vitality: 14,
-            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f));
+            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f),
+            EquipInventorySlotIndex: 7);
 
         Assert.Equal(80f, request.FieldOfViewDegrees);
         Assert.Equal(4.5f, request.MouseSensitivity);
@@ -60,6 +62,7 @@ public class HudInteractionRequestTests
         Assert.Equal(3.5f, request.AttackSpeed);
         Assert.Equal(14, request.Vitality);
         Assert.Equal(new FloatingCombatTextTuning(2f, 1.5f, 3f), request.FloatingCombatText);
+        Assert.Equal(7, request.EquipInventorySlotIndex);
     }
 
     [Fact]
@@ -78,7 +81,8 @@ public class HudInteractionRequestTests
             Strength: 12,
             AttackSpeed: 3.5f,
             Vitality: 14,
-            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f));
+            FloatingCombatText: new FloatingCombatTextTuning(2f, 1.5f, 3f),
+            EquipInventorySlotIndex: 7);
 
         HudFrameResult result = new(request);
 

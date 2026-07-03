@@ -5,6 +5,8 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Application;
 using Dream.Server;
+using Dream.Server.Persistence;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -155,6 +157,140 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void JoinSession_RejectsDuplicateDisplayNameAcrossDifferentSessions()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+
+        host.JoinSession("session-a", "Player A");
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => host.JoinSession("session-b", "Player A"));
+
+        Assert.Contains("already claimed", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AdvanceTick_TracksInteractionModePerSessionInsteadOfGlobally()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSimulationTuning tuning = CreatePlayerTuning();
+        PlayerSessionId primarySession = new("session-a");
+        PlayerSessionId secondarySession = new("session-b");
+        host.JoinSession(primarySession.Value, "Player A");
+        host.JoinSession(secondarySession.Value, "Player B");
+
+        host.AdvanceTick(
+            serverTick: 1,
+            SimulationClock.FixedDeltaSeconds,
+            [
+                CreateModeSwitchCommand(primarySession, sequence: 1, PlayerInteractionMode.Building),
+                CreateModeSwitchCommand(secondarySession, sequence: 1, PlayerInteractionMode.Combat)
+            ],
+            tuning,
+            allowGameplaySimulation: false);
+
+        ServerSnapshotEnvelope snapshot = host.ExportSnapshot();
+        ActorSnapshot primaryActor = Assert.Single(snapshot.Actors, actor => actor.SessionId == primarySession.Value);
+        ActorSnapshot secondaryActor = Assert.Single(snapshot.Actors, actor => actor.SessionId == secondarySession.Value);
+
+        Assert.Equal(PlayerInteractionMode.Building, primaryActor.InteractionMode);
+        Assert.Equal(PlayerInteractionMode.Combat, secondaryActor.InteractionMode);
+    }
+
+    [Fact]
+    public void JoinSession_RestoresPersistedProfileAndWorldStateForReturningPlayer()
+    {
+        DateTime now = new(2026, 7, 4, 12, 0, 0, DateTimeKind.Utc);
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        playerProfiles.Save(new PersistedPlayerProfile(
+            PlayerName: "Player A",
+            DisplayName: "Player A",
+            InteractionMode: PlayerInteractionMode.Combat,
+            Stats: new PersistedCreatureStats(
+                CurrentHealth: 73,
+                MaxHealth: 100,
+                Strength: 17,
+                Agility: 10,
+                Vitality: 14,
+                Energy: 10,
+                MovementSpeed: 6f,
+                AttackSpeed: 3.5f,
+                Level: 1),
+            CreatedUtc: now,
+            UpdatedUtc: now));
+        worldPersistence.SavePlayerWorldState(new PersistedPlayerWorldState(
+            PlayerName: "Player A",
+            Position: new Vector3(11f, 1.5f, 7f),
+            Facing: Vector3.UnitX,
+            CurrentHealth: 73,
+            CurrentEnergy: 0,
+            UpdatedUtc: now));
+
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            20,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+
+        host.JoinSession("session-a", "Player A");
+
+        Assert.Equal(PlayerInteractionMode.Combat, runtime.InteractionMode);
+        Assert.Equal(17, runtime.Player.Combatant.Stats.Strength);
+        Assert.Equal(3.5f, runtime.Player.Combatant.Stats.AttackSpeed);
+        Assert.Equal(14, runtime.Player.Combatant.Stats.Vitality);
+        Assert.Equal(73, runtime.Player.Combatant.Health.CurrentHealth);
+        Assert.Equal(100, runtime.Player.Combatant.Health.MaxHealth);
+        Assert.Equal(11f, runtime.Player.GetWorldPosition().X, 3);
+        Assert.Equal(7f, runtime.Player.GetWorldPosition().Z, 3);
+        Assert.Equal(1f, runtime.Player.Camera.Front.X, 3);
+        Assert.Equal(0f, runtime.Player.Camera.Front.Z, 3);
+    }
+
+    [Fact]
+    public void JoinSession_Seeds_StarterInventory_For_FirstTimePlayer()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+
+        JoinAcceptedMessage accepted = host.JoinSession("session-a", "Player A");
+
+        Assert.NotNull(accepted.Inventory);
+        Assert.Equal(InventoryConstants.GridColumns, accepted.Inventory?.Columns);
+        Assert.Equal(InventoryConstants.GridRows, accepted.Inventory?.Rows);
+        Assert.NotNull(accepted.Inventory?.EquippedSlot?.Item);
+        Assert.Equal("Builder Hammer", accepted.Inventory?.EquippedSlot?.Item?.DisplayName);
+    }
+
+    [Fact]
+    public void ProcessAction_InventoryEquip_Changes_Authoritative_EquippedTool()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("session-a", "Player A");
+
+        AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            5,
+            new InventoryEquipIntent(1)));
+
+        InventoryChangedResult payload = Assert.IsType<InventoryChangedResult>(result.Payload);
+        Assert.Equal("Field Blade", payload.Inventory.EquippedSlot?.Item?.DisplayName);
+        InventorySlotSnapshot equippedBackpackSlot = Assert.Single(payload.Inventory.Slots, slot => slot.IsEquipped);
+        Assert.Equal(1, equippedBackpackSlot.SlotIndex);
+    }
+
+    [Fact]
     public void AdvanceTick_PrimaryRemoteCommandMovesForwardAlongClientFacing()
     {
         SceneEventHub events = new();
@@ -298,6 +434,20 @@ public class RuntimeAuthoritativeSessionHostTests
             PrimaryUsePressed: false);
     }
 
+    private static PlayerCommandFrame CreateModeSwitchCommand(
+        PlayerSessionId sessionId,
+        ulong sequence,
+        PlayerInteractionMode interactionMode)
+    {
+        return new PlayerCommandFrame(
+            sessionId,
+            sequence,
+            new PlayerModeSwitchIntent(interactionMode),
+            PlayerMoveIntent.None,
+            PlayerLookIntent.None,
+            PrimaryUsePressed: false);
+    }
+
     private static PlayerSimulationTuning CreatePlayerTuning()
     {
         return new PlayerSimulationTuning(
@@ -306,5 +456,93 @@ public class RuntimeAuthoritativeSessionHostTests
             MoveSpeed: 6f,
             NoclipSpeed: 150f,
             JumpVelocity: 5f);
+    }
+
+    private sealed class InMemoryPlayerProfileRepository : IPlayerProfileRepository
+    {
+        private readonly Dictionary<string, PersistedPlayerProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
+
+        public PersistedPlayerProfile GetOrCreate(string playerName)
+        {
+            if (_profiles.TryGetValue(playerName, out PersistedPlayerProfile profile))
+            {
+                return profile;
+            }
+
+            profile = new PersistedPlayerProfile(
+                playerName,
+                playerName,
+                PlayerInteractionMode.Building,
+                new PersistedCreatureStats(100, 100, 10, 10, 10, 10, 6f, 2f, 1),
+                DateTime.UtcNow,
+                DateTime.UtcNow);
+            _profiles[playerName] = profile;
+            return profile;
+        }
+
+        public PersistedPlayerProfile? TryGet(string playerName)
+        {
+            return _profiles.TryGetValue(playerName, out PersistedPlayerProfile profile) ? profile : null;
+        }
+
+        public void Save(PersistedPlayerProfile profile)
+        {
+            _profiles[profile.PlayerName] = profile;
+        }
+    }
+
+    private sealed class InMemoryWorldPersistenceRepository : IWorldPersistenceRepository
+    {
+        private readonly Dictionary<string, PersistedPlayerWorldState> _players = new(StringComparer.OrdinalIgnoreCase);
+
+        public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName)
+        {
+            return _players.TryGetValue(playerName, out PersistedPlayerWorldState state) ? state : null;
+        }
+
+        public void SavePlayerWorldState(PersistedPlayerWorldState state)
+        {
+            _players[state.PlayerName] = state;
+        }
+
+        public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => Array.Empty<PersistedPlacedCube>();
+
+        public void SavePlacedCube(PersistedPlacedCube cube)
+        {
+        }
+
+        public void DeletePlacedCube(int cubeId)
+        {
+        }
+
+        public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Array.Empty<PersistedEnemyInstance>();
+
+        public void SaveEnemyInstance(PersistedEnemyInstance enemy)
+        {
+        }
+
+        public void DeleteEnemyInstance(int enemyId)
+        {
+        }
+
+        public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
+
+        public void SaveItemInstance(PersistedItemInstance item)
+        {
+        }
+
+        public void DeleteItemInstance(long itemInstanceId)
+        {
+        }
+
+        public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Array.Empty<PersistedInventorySlot>();
+
+        public void SaveInventorySlot(PersistedInventorySlot slot)
+        {
+        }
+
+        public void DeleteInventorySlots(string playerName)
+        {
+        }
     }
 }

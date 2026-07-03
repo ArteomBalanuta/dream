@@ -26,6 +26,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly object _authoritySync = new();
+    private double _checkpointElapsedSeconds;
 
     public DedicatedServerHost(
         IAuthoritativeSessionHost? authority,
@@ -52,7 +53,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         return new DedicatedServerHost(authority: null, router);
     }
 
-    public static DedicatedServerHost CreateRuntimeAttached()
+    public static DedicatedServerHost CreateRuntimeAttached(Dream.Server.Persistence.ServerPersistenceBundle? persistence = null)
     {
         ProtocolRouter router = new(
             [
@@ -63,7 +64,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             ],
             Array.Empty<IClientMessageHandler>());
 
-        return new DedicatedServerHost(RuntimeAuthoritativeSessionHost.CreateDefault(), router);
+        return new DedicatedServerHost(RuntimeAuthoritativeSessionHost.CreateDefault(persistence), router);
     }
 
     public IReadOnlyList<IServerToClientMessage> HandleClientMessage(
@@ -113,6 +114,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 foreach (AuthoritativeActionResult actionResult in actionResults)
                 {
                     _pendingActionResults.Enqueue(actionResult);
+                }
+
+                if (Runtime != null)
+                {
+                    _checkpointElapsedSeconds += fixedDeltaSeconds;
+                    while (_checkpointElapsedSeconds >= 5d)
+                    {
+                        Runtime.PersistCheckpoint();
+                        _checkpointElapsedSeconds -= 5d;
+                    }
                 }
             });
         }
