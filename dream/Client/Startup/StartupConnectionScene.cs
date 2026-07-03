@@ -10,6 +10,7 @@ namespace Dream.Client.Startup;
 
 public sealed class StartupConnectionScene : IDisposable
 {
+    private const string AutoConnectEnvironmentVariable = "DREAM_AUTO_CONNECT";
     private readonly StartupMenuRenderer _renderer;
     private readonly NetworkSessionCoordinator _coordinator;
     private readonly Action<ClientConnectionOptions>? _persistConnectionOptions;
@@ -17,6 +18,7 @@ public sealed class StartupConnectionScene : IDisposable
     private string _portText = string.Empty;
     private string _playerName = "dream-client";
     private bool _appliedLocalDefaults;
+    private bool _autoConnectAttempted;
 
     public StartupConnectionScene(
         Vector2i initialSize,
@@ -45,6 +47,7 @@ public sealed class StartupConnectionScene : IDisposable
     public void Update()
     {
         TryApplyLocalDefaults();
+        TryAutoConnect();
     }
 
     public void Render(
@@ -125,6 +128,33 @@ public sealed class StartupConnectionScene : IDisposable
         _portText = localDefaults.PortText;
         _playerName = localDefaults.PlayerName;
         _appliedLocalDefaults = true;
+    }
+
+    private void TryAutoConnect()
+    {
+        if (_autoConnectAttempted ||
+            !_coordinator.IsLocalServerReady ||
+            !IsAutoConnectEnabled())
+        {
+            return;
+        }
+
+        ClientConnectionOptions localDefaults = _coordinator.UseLocalServerDefaults(
+            string.IsNullOrWhiteSpace(_playerName) ? "dream-client" : _playerName);
+        _host = localDefaults.Host;
+        _portText = localDefaults.PortText;
+        _playerName = localDefaults.PlayerName;
+        _autoConnectAttempted = true;
+        _coordinator.BeginConnect(localDefaults);
+        _persistConnectionOptions?.Invoke(localDefaults);
+    }
+
+    private static bool IsAutoConnectEnabled()
+    {
+        string? value = Environment.GetEnvironmentVariable(AutoConnectEnvironmentVariable);
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private void PersistConnectionOptionsIfChanged(string previousHost, string previousPort, string previousPlayerName)

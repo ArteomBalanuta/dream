@@ -151,3 +151,4 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - [Project structure](docs/project-structure.md)
 - [Configuration](docs/configuration.md)
 - [Rendering and assets](docs/rendering-and-assets.md)
+- [Performance and optimizations](docs/performance-and-optimizations.md)

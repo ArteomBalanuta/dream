@@ -23,6 +23,20 @@ public class NetworkSessionCoordinatorTests
     }
 
     [Fact]
+    public void IsLocalServerReady_Reflects_Local_Server_State()
+    {
+        NetworkSessionCoordinator readyCoordinator = new(
+            new FakeLocalServerHandle(isReady: true, boundPort: 6123),
+            new FakeRemoteSessionConnector());
+        NetworkSessionCoordinator waitingCoordinator = new(
+            new FakeLocalServerHandle(isReady: false, boundPort: 0),
+            new FakeRemoteSessionConnector());
+
+        Assert.True(readyCoordinator.IsLocalServerReady);
+        Assert.False(waitingCoordinator.IsLocalServerReady);
+    }
+
+    [Fact]
     public void ResolveInitialOptions_ReplacesConfiguredLoopbackPortWithCurrentLocalServerPort()
     {
         FakeLocalServerHandle localServer = new(isReady: true, boundPort: 6123);

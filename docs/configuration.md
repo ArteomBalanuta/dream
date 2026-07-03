@@ -165,6 +165,12 @@ Current behavior:
 
 The `camera_view` key currently accepts `first_person` or `third_person`.
 
+## Profiling Environment Flags
+
+For repeatable local profiling, set `DREAM_AUTO_CONNECT=1` before launching the desktop client. The startup scene waits for the integrated loopback server, applies its current local endpoint, and begins the same connection flow as the Connect button without requiring UI input.
+
+Set `DREAM_RENDER_PERF_LOG=1` to print one render-performance line per second while in gameplay. The log includes render-export time, physics time, static chunk signature/extract/plan/sync/draw timings, static chunk cache reuse, visible chunk/triangle counts, and collision-body count.
+
 ## Project Content Layout
 
 The project file includes:

@@ -9,6 +9,7 @@ namespace Dream.Rendering.World;
 public class WorldRenderer
 {
     private readonly Render _render;
+    private readonly StaticWorldChunkRenderer _staticChunkRenderer = new();
 
     public WorldRenderer(Render render)
     {
@@ -57,41 +58,24 @@ public class WorldRenderer
 
     public WorldRenderStats DrawWorld(Camera camera, GeometryRenderExport export)
     {
-        WorldRenderStats cubeStats = DrawWorld(camera, export.CompatibilityCubes);
-
-        List<GeometryRenderBlockDescriptor> visibleBlocks = [];
-        foreach (GeometryRenderBlockDescriptor block in export.Blocks)
-        {
-            if (!WorldVisibility.IsGeometryBlockVisible(camera.Position, camera.Front, block))
-            {
-                continue;
-            }
-
-            visibleBlocks.Add(block);
-        }
-
-        List<WorldGeometryRenderBatch> geometryBatches = WorldRenderBatchPlanner
-            .CreateGeometryBlockBatches(visibleBlocks)
-            .ToList();
-        foreach (WorldGeometryRenderBatch batch in geometryBatches)
-        {
-            if (batch.Animation != null)
-            {
-                _render.DrawGeometryBlockBatch(camera, batch.Animation, batch.ShaderName, batch.Blocks);
-                continue;
-            }
-
-            foreach (GeometryRenderBlockDescriptor block in batch.Blocks)
-            {
-                _render.DrawGeometryBlock(camera, block);
-            }
-        }
+        StaticWorldChunkRenderStats staticStats = _staticChunkRenderer.Draw(_render, camera, export);
 
         return new WorldRenderStats(
-            cubeStats.VisibleCompatibilityCubes,
-            visibleBlocks.Count,
-            cubeStats.CompatibilityBatchCount,
-            geometryBatches.Count);
+            VisibleCompatibilityCubes: 0,
+            VisibleGeometryBlocks: 0,
+            CompatibilityBatchCount: 0,
+            GeometryBatchCount: 0,
+            VisibleStaticChunks: staticStats.VisibleChunks,
+            StaticChunkMeshCount: staticStats.MeshCount,
+            StaticChunkExposedFaces: staticStats.ExposedFaces,
+            StaticChunkTriangles: staticStats.Triangles,
+            StaticChunkSignatureMilliseconds: staticStats.SignatureMilliseconds,
+            StaticChunkExtractMilliseconds: staticStats.ExtractMilliseconds,
+            StaticChunkPlanMilliseconds: staticStats.PlanMilliseconds,
+            StaticChunkSyncMilliseconds: staticStats.SyncMilliseconds,
+            StaticChunkDrawMilliseconds: staticStats.DrawMilliseconds,
+            StaticChunkRebuiltMeshes: staticStats.RebuiltMeshes,
+            StaticChunkReusedMeshes: staticStats.ReusedMeshes);
     }
 
     // Remote players intentionally stay out of the world-geometry renderer so
