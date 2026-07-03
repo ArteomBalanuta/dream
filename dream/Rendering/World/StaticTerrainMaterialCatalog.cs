@@ -28,22 +28,37 @@ public static class StaticTerrainMaterialCatalog
                 materialId,
                 StaticTerrainMaterialRole.Single,
                 new Vector4(1f, 1f, 1f, 1f),
-                Path.Combine(
-                    AssetPaths.AnimationsDirectory,
-                    "library",
-                    "polyhaven",
-                    "park_dirt",
-                    "park_dirt.diffuse.jpg")),
+                ResolvePolyHavenTexture("park_dirt", "park_dirt.diffuse.jpg")),
             GeometryMaterialId.Stone => new StaticTerrainMaterial(
                 materialId,
                 StaticTerrainMaterialRole.Single,
                 new Vector4(1f, 1f, 1f, 1f),
-                Path.Combine(
-                    AssetPaths.AnimationsDirectory,
-                    "library",
-                    "polyhaven",
-                    "ground_grey",
-                    "ground_grey.diffuse.jpg")),
+                ResolvePolyHavenTexture("ground_grey", "ground_grey.diffuse.jpg")),
+            GeometryMaterialId.Sand => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                new Vector4(1f, 1f, 1f, 1f),
+                ResolvePolyHavenTexture("sand_01", "sand_01.diffuse.jpg")),
+            GeometryMaterialId.Mud => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                new Vector4(1f, 1f, 1f, 1f),
+                ResolvePolyHavenTexture("brown_mud", "brown_mud.diffuse.jpg")),
+            GeometryMaterialId.Snow => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                new Vector4(1f, 1f, 1f, 1f),
+                ResolvePolyHavenTexture("snow_04", "snow_04.diffuse.jpg")),
+            GeometryMaterialId.Rock => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                new Vector4(1f, 1f, 1f, 1f),
+                ResolvePolyHavenTexture("rocks_ground_08", "rocks_ground_08.diffuse.jpg")),
+            GeometryMaterialId.GrassPath => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                new Vector4(1f, 1f, 1f, 1f),
+                ResolvePolyHavenTexture("grass_path_3", "grass_path_3.diffuse.jpg")),
             _ => new StaticTerrainMaterial(
                 materialId,
                 StaticTerrainMaterialRole.Single,
@@ -82,5 +97,15 @@ public static class StaticTerrainMaterialCatalog
             StaticTerrainMaterialRole.Bottom => AssetPaths.Animation("Grass_bottom.jpg"),
             _ => AssetPaths.Animation("grass_top.png")
         };
+    }
+
+    private static string ResolvePolyHavenTexture(string folder, string fileName)
+    {
+        return Path.Combine(
+            AssetPaths.AnimationsDirectory,
+            "library",
+            "polyhaven",
+            folder,
+            fileName);
     }
 }

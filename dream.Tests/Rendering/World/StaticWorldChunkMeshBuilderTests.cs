@@ -92,6 +92,31 @@ public class StaticWorldChunkMeshBuilderTests
     }
 
     [Fact]
+    public void BuildTilesSideFaceUvsHorizontallyAndVerticallyInWorldUnits()
+    {
+        StaticVoxelRenderCell[] cells =
+        [
+            new(new Vector3(1f, 1.5f, 2f), new Vector3(2f, 3f, 4f), GeometryMaterialId.Dirt)
+        ];
+
+        StaticWorldChunkMesh mesh = StaticWorldChunkMeshBuilder.Build(
+            new StaticWorldChunkKey(0, 0, 0),
+            GeometryMaterialId.Dirt,
+            cells);
+        StaticWorldVertex[] positiveXFace = mesh.Vertices
+            .Where(vertex => vertex.Normal == Vector3.UnitX)
+            .ToArray();
+
+        Assert.Equal(4, positiveXFace.Length);
+        Assert.Equal(0f, positiveXFace[0].TexCoord.Y);
+        Assert.Equal(3f, positiveXFace[1].TexCoord.Y);
+        Assert.Equal(3f, positiveXFace[2].TexCoord.Y);
+        Assert.Equal(0f, positiveXFace[3].TexCoord.Y);
+        Assert.Equal(0f, positiveXFace.Min(vertex => vertex.TexCoord.X));
+        Assert.Equal(4f, positiveXFace.Max(vertex => vertex.TexCoord.X));
+    }
+
+    [Fact]
     public void ExtractorIncludesCompatibilityCubesAndGeometryBlocks()
     {
         Cube cube = new(isEmpty: false, isSolid: true)
@@ -118,6 +143,35 @@ public class StaticWorldChunkMeshBuilderTests
         Assert.Equal(2, cells.Count);
         Assert.Contains(cells, cell => cell.MaterialId == GeometryMaterialId.Grass);
         Assert.Contains(cells, cell => cell.MaterialId == GeometryMaterialId.Stone);
+    }
+
+    [Fact]
+    public void ExtractorPreservesCompatibilityCubeMaterialFromGeometryCell()
+    {
+        Cube cube = new(isEmpty: false, isSolid: true)
+        {
+            Position = new Vector3(2.5f, 0.5f, 3.5f),
+            Animation = null!,
+            ShaderName = "default"
+        };
+        GeometryCellRecord sandCell = new(
+            new GeometryCellKey(2, 0, 3),
+            new GeometryCellDefinition(
+                GeometryShapeKind.SolidCube,
+                GeometryMaterialId.Sand,
+                SubdivisionResolution: 1,
+                IsSolid: true,
+                IsFloor: true));
+        GeometryRenderExport export = new(
+            DirtyCells: [],
+            Cells: [new GeometryRenderCell(sandCell.Key, sandCell, cube)],
+            Blocks: [],
+            CompatibilityCubes: [cube]);
+
+        IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
+
+        StaticVoxelRenderCell renderCell = Assert.Single(cells);
+        Assert.Equal(GeometryMaterialId.Sand, renderCell.MaterialId);
     }
 
     [Fact]

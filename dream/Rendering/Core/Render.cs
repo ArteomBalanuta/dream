@@ -468,10 +468,11 @@ public class Render
         }
 
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.CullFace);
-        GL.CullFace(CullFaceMode.Back);
-        buffer.Draw();
+        // Static terrain meshes are already hidden-face culled. Draw remaining
+        // exterior faces double-sided so clipped/edge cameras do not reveal
+        // collision-only "transparent" blocks.
         GL.Disable(EnableCap.CullFace);
+        buffer.Draw();
     }
 
     public void DrawGeometryBlockBatch(

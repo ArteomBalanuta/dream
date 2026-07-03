@@ -137,10 +137,11 @@ public static class StaticWorldChunkMeshBuilder
     {
         uint firstIndex = (uint)vertices.Count;
         Vector3[] positions = face.GetPositions(cell);
-        vertices.Add(new StaticWorldVertex(positions[0], face.Normal, new Vector2(0f, 0f)));
-        vertices.Add(new StaticWorldVertex(positions[1], face.Normal, new Vector2(1f, 0f)));
-        vertices.Add(new StaticWorldVertex(positions[2], face.Normal, new Vector2(1f, 1f)));
-        vertices.Add(new StaticWorldVertex(positions[3], face.Normal, new Vector2(0f, 1f)));
+        Vector2[] texCoords = face.GetTexCoords(cell);
+        vertices.Add(new StaticWorldVertex(positions[0], face.Normal, texCoords[0]));
+        vertices.Add(new StaticWorldVertex(positions[1], face.Normal, texCoords[1]));
+        vertices.Add(new StaticWorldVertex(positions[2], face.Normal, texCoords[2]));
+        vertices.Add(new StaticWorldVertex(positions[3], face.Normal, texCoords[3]));
 
         indices.Add(firstIndex);
         indices.Add(firstIndex + 1);
@@ -220,6 +221,57 @@ public static class StaticWorldChunkMeshBuilder
                     new(min.X, min.Y, min.Z),
                     new(min.X, max.Y, min.Z),
                     new(max.X, max.Y, min.Z)
+                ],
+                _ => throw new InvalidOperationException("Unknown face direction.")
+            };
+        }
+
+        public Vector2[] GetTexCoords(StaticVoxelRenderCell cell)
+        {
+            Vector3 size = cell.Size;
+            return Direction switch
+            {
+                FaceDirection.PositiveX =>
+                [
+                    new(0f, 0f),
+                    new(0f, size.Y),
+                    new(size.Z, size.Y),
+                    new(size.Z, 0f)
+                ],
+                FaceDirection.NegativeX =>
+                [
+                    new(0f, 0f),
+                    new(0f, size.Y),
+                    new(size.Z, size.Y),
+                    new(size.Z, 0f)
+                ],
+                FaceDirection.PositiveY =>
+                [
+                    new(0f, size.Z),
+                    new(size.X, size.Z),
+                    new(size.X, 0f),
+                    new(0f, 0f)
+                ],
+                FaceDirection.NegativeY =>
+                [
+                    new(0f, 0f),
+                    new(size.X, 0f),
+                    new(size.X, size.Z),
+                    new(0f, size.Z)
+                ],
+                FaceDirection.PositiveZ =>
+                [
+                    new(0f, 0f),
+                    new(size.X, 0f),
+                    new(size.X, size.Y),
+                    new(0f, size.Y)
+                ],
+                FaceDirection.NegativeZ =>
+                [
+                    new(0f, 0f),
+                    new(size.X, 0f),
+                    new(size.X, size.Y),
+                    new(0f, size.Y)
                 ],
                 _ => throw new InvalidOperationException("Unknown face direction.")
             };

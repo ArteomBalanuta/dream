@@ -12,6 +12,11 @@ public class StaticTerrainMaterialCatalogTests
     [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Bottom, "Grass_bottom.jpg")]
     [InlineData(GeometryMaterialId.Dirt, StaticTerrainMaterialRole.Single, "library/polyhaven/park_dirt/park_dirt.diffuse.jpg")]
     [InlineData(GeometryMaterialId.Stone, StaticTerrainMaterialRole.Single, "library/polyhaven/ground_grey/ground_grey.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.Sand, StaticTerrainMaterialRole.Single, "library/polyhaven/sand_01/sand_01.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.Mud, StaticTerrainMaterialRole.Single, "library/polyhaven/brown_mud/brown_mud.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.Snow, StaticTerrainMaterialRole.Single, "library/polyhaven/snow_04/snow_04.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.Rock, StaticTerrainMaterialRole.Single, "library/polyhaven/rocks_ground_08/rocks_ground_08.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.GrassPath, StaticTerrainMaterialRole.Single, "library/polyhaven/grass_path_3/grass_path_3.diffuse.jpg")]
     public void ResolveProvidesTexturePathForTerrainMaterials(
         GeometryMaterialId materialId,
         StaticTerrainMaterialRole role,
@@ -21,6 +26,7 @@ public class StaticTerrainMaterialCatalogTests
 
         Assert.True(material.HasTexture);
         Assert.EndsWith(expectedPathSuffix.Replace('/', Path.DirectorySeparatorChar), material.TexturePath);
+        Assert.True(File.Exists(material.TexturePath), $"Missing terrain texture at {material.TexturePath}");
     }
 
     [Fact]
@@ -36,6 +42,11 @@ public class StaticTerrainMaterialCatalogTests
     [Theory]
     [InlineData(GeometryMaterialId.Dirt)]
     [InlineData(GeometryMaterialId.Stone)]
+    [InlineData(GeometryMaterialId.Sand)]
+    [InlineData(GeometryMaterialId.Mud)]
+    [InlineData(GeometryMaterialId.Snow)]
+    [InlineData(GeometryMaterialId.Rock)]
+    [InlineData(GeometryMaterialId.GrassPath)]
     public void ResolveRolesKeepsNonGrassMaterialsSingleTexture(GeometryMaterialId materialId)
     {
         IReadOnlyList<StaticTerrainMaterialRole> roles = StaticTerrainMaterialCatalog.ResolveRoles(materialId);

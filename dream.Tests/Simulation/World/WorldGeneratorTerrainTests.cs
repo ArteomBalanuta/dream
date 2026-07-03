@@ -1,4 +1,5 @@
 using System.Linq;
+using Dream.Rendering.World;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
@@ -24,6 +25,43 @@ public class WorldGeneratorTerrainTests
         Assert.Contains(GeometryMaterialId.Grass, materials);
         Assert.Contains(GeometryMaterialId.Dirt, materials);
         Assert.Contains(GeometryMaterialId.Stone, materials);
+    }
+
+    [Fact]
+    public void StartupWorld_Uses_Imported_Terrain_Texture_Materials()
+    {
+        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+
+        GeometryMaterialId[] materials = map.GeometryCells.Values
+            .Where(cell => cell.Key.Y == 0)
+            .Select(cell => cell.Definition.MaterialId)
+            .Distinct()
+            .ToArray();
+
+        Assert.Contains(GeometryMaterialId.Sand, materials);
+        Assert.Contains(GeometryMaterialId.Mud, materials);
+        Assert.Contains(GeometryMaterialId.Rock, materials);
+        Assert.Contains(GeometryMaterialId.GrassPath, materials);
+    }
+
+    [Fact]
+    public void StartupWorld_RenderExtraction_Preserves_Imported_Floor_Materials()
+    {
+        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(
+            new Vector3(28f, 2f, 28f),
+            WorldVisibility.MaxRenderDistance);
+
+        GeometryMaterialId[] materials = StaticWorldChunkExtractor.ExtractCells(export)
+            .Where(cell => cell.Center.Y == 0.5f)
+            .Select(cell => cell.MaterialId)
+            .Distinct()
+            .ToArray();
+
+        Assert.Contains(GeometryMaterialId.Sand, materials);
+        Assert.Contains(GeometryMaterialId.Mud, materials);
+        Assert.Contains(GeometryMaterialId.Rock, materials);
+        Assert.Contains(GeometryMaterialId.GrassPath, materials);
     }
 
     [Fact]

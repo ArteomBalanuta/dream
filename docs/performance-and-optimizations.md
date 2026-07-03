@@ -38,15 +38,17 @@ Guardrail: keep uniform lookup behind the shader helper instead of calling OpenG
 
 `WorldRenderer` routes `GeometryRenderExport` through `StaticWorldChunkRenderer` for static world geometry. The renderer normalizes compatibility cubes and geometry render blocks into render-only voxel cells, groups them by chunk, material, and material role, emits only exposed faces, uploads indexed chunk meshes, and draws those meshes directly through OpenGL.
 
-Grass chunk meshes are split into top, side, and bottom material-role batches so they bind the same textures as the old glTF terrain cubes. Dirt and stone use one diffuse texture role each.
+Grass chunk meshes are split into top, side, and bottom material-role batches so they bind the same textures as the old glTF terrain cubes. Dirt, stone, sand, mud, snow, rock, and grass-path materials use one diffuse texture role each from the repo-owned terrain texture library.
 
-Guardrail: static chunk meshes are presentation artifacts. They must not become authoritative world state, drive collision, or drive multiplayer snapshots.
+Guardrail: static chunk meshes are presentation artifacts. They must not become authoritative world state, drive collision, or drive multiplayer snapshots. When static chunks normalize compatibility cubes, they must preserve material ids from the exported geometry cells instead of inventing renderer-local terrain materials.
 
 ### Hidden-Face Culling
 
 The static chunk mesh builder suppresses fully covered adjacent faces before upload. This reduces vertex/index count and fill cost for dense voxel regions.
 
 Guardrail: face culling should remain conservative. If partial coverage is uncertain, prefer keeping a face over hiding visible geometry.
+
+Static chunk terrain draws the remaining exterior faces double-sided. This prevents edge cameras, clipped first-person views, or underside views from seeing collision-only transparent blocks where the mesh had emitted only the opposite winding of an otherwise visible exterior face.
 
 ### Per-Chunk Mesh Cache
 
