@@ -78,6 +78,12 @@ Guardrail: dirty-region decisions should stay keyed by world-space chunks, not b
 
 Moving placed cubes that cross cell boundaries must dirty both the source and destination cells. Otherwise the static chunk cache can keep the old chunk mesh alive while also building the new one, which makes the rendered position drift away from the live cube position.
 
+### Worker Mesh Build With Render-Thread Upload
+
+Static chunk CPU mesh generation now runs on a background worker, while OpenGL buffer creation and replacement stay on the render thread. The renderer stages finished worker results and uploads only a bounded number of chunk meshes per frame, keeping stale buffers alive until the replacement batch completes.
+
+Guardrail: worker jobs must stay CPU-only. Do not call OpenGL from the background build path, and do not destroy still-visible buffers until their replacement uploads have been applied.
+
 ### Bounded Occluder Sets
 
 Static chunk build inputs use the current chunk plus neighboring chunks as occluders. This keeps hidden-face checks local instead of scanning the whole visible export for every face.
@@ -190,8 +196,8 @@ Guardrail: sizing fixes should go through asset metadata or shared unit conventi
 
 ## Current Known Gaps
 
-- Static chunk mesh generation still happens on the render thread when a new or changed chunk first appears.
-- If first-build latency becomes the dominant measured bottleneck again, the safest threading path is CPU-only mesh generation on workers followed by render-thread OpenGL upload.
+- Static chunk extract/signature/plan work still runs on the render thread when a new or changed visibility set first appears.
+- First-visibility world draw bursts can still spike before the staged upload cache fully warms, especially in multi-client startup runs.
 - Dynamic fractured rubble is not yet fully migrated into persistent dirty-region chunk rebuilds.
 - Hidden-face culling is conservative and does not yet perform partial-face subdivision for every mixed-size adjacency case.
 - Performance measurements still need more repeatable automated runtime scenarios beyond build/test smoke runs.

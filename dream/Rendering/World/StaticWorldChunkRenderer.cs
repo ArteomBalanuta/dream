@@ -9,12 +9,27 @@ namespace Dream.Rendering.World;
 
 public sealed class StaticWorldChunkRenderer : IDisposable
 {
+    private const int MaxMeshUploadsPerFrame = 8;
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMesh> _meshes = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, int> _signatures = new();
-    private int _lastExportSignature;
-    private bool _hasCachedExport;
+    private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
+    private StaticWorldChunkBuildRequest? _queuedBuildRequest;
+    private StaticWorldChunkUploadBatch? _activeUploadBatch;
+    private int _lastAppliedExportSignature;
+    private int _lastScheduledExportSignature;
+    private bool _hasAppliedExport;
     private bool _disposed;
+
+    public static IReadOnlyList<StaticWorldChunkBuildOutput> BuildOutputs(IReadOnlyList<StaticWorldChunkBuildInput> inputs)
+    {
+        return inputs
+            .Select(input => new StaticWorldChunkBuildOutput(
+                input.Key,
+                input.Signature,
+                input.BuildMesh()))
+            .ToArray();
+    }
 
     public static IReadOnlyList<StaticWorldChunkMesh> PlanMeshes(IReadOnlyList<StaticVoxelRenderCell> cells)
     {
@@ -88,13 +103,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     public StaticWorldChunkRenderStats Draw(Render render, Camera camera, GeometryRenderExport export)
     {
+        DrainCompletedBuild();
         Stopwatch stopwatch = Stopwatch.StartNew();
         int exportSignature = CalculateExportSignature(export);
         stopwatch.Stop();
         double signatureMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
         stopwatch.Restart();
-        bool exportUnchanged = _hasCachedExport && exportSignature == _lastExportSignature;
+        bool exportUnchanged = _hasAppliedExport && exportSignature == _lastAppliedExportSignature;
         IReadOnlyList<StaticVoxelRenderCell> cells = exportUnchanged
             ? []
             : StaticWorldChunkExtractor.ExtractCells(export);
@@ -114,11 +130,13 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         double planMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
         stopwatch.Restart();
-        StaticWorldChunkSyncStats syncStats = exportUnchanged
-            ? new StaticWorldChunkSyncStats(0, _meshes.Count)
-            : SynchronizeBuffers(inputs, dirtyChunks);
-        _lastExportSignature = exportSignature;
-        _hasCachedExport = true;
+        if (!exportUnchanged &&
+            exportSignature != _lastScheduledExportSignature)
+        {
+            ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks, inputs));
+        }
+
+        StaticWorldChunkSyncStats syncStats = ApplyPendingUploads();
         stopwatch.Stop();
         double syncMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
@@ -168,50 +186,11 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             return;
         }
 
+        _activeBuildTask = null;
+        _queuedBuildRequest = null;
+        _activeUploadBatch = null;
         ClearBuffers();
         _disposed = true;
-    }
-
-    private StaticWorldChunkSyncStats SynchronizeBuffers(
-        IReadOnlyList<StaticWorldChunkBuildInput> inputs,
-        IReadOnlySet<StaticWorldChunkKey> dirtyChunks)
-    {
-        int rebuiltMeshes = 0;
-        int reusedMeshes = 0;
-        foreach (StaticWorldChunkMeshKey staleKey in _signatures.Keys
-            .Where(key => dirtyChunks.Contains(key.ChunkKey))
-            .ToArray())
-        {
-            RemoveMesh(staleKey);
-        }
-
-        foreach (StaticWorldChunkBuildInput input in inputs)
-        {
-            if (_signatures.TryGetValue(input.Key, out int existingSignature) &&
-                existingSignature == input.Signature)
-            {
-                reusedMeshes++;
-                continue;
-            }
-
-            if (_buffers.Remove(input.Key, out StaticMeshBuffer? oldBuffer))
-            {
-                oldBuffer.Dispose();
-            }
-
-            StaticWorldChunkMesh mesh = input.BuildMesh();
-            _meshes[input.Key] = mesh;
-            _signatures[input.Key] = input.Signature;
-
-            if (mesh.ExposedFaceCount > 0)
-            {
-                _buffers[input.Key] = new StaticMeshBuffer(mesh);
-            }
-
-            rebuiltMeshes++;
-        }
-
-        return new StaticWorldChunkSyncStats(rebuiltMeshes, reusedMeshes);
     }
 
     private void ClearBuffers()
@@ -224,8 +203,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         _buffers.Clear();
         _meshes.Clear();
         _signatures.Clear();
-        _lastExportSignature = 0;
-        _hasCachedExport = false;
+        _lastAppliedExportSignature = 0;
+        _lastScheduledExportSignature = 0;
+        _hasAppliedExport = false;
     }
 
     private void RemoveMesh(StaticWorldChunkMeshKey key)
@@ -237,6 +217,108 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         _meshes.Remove(key);
         _signatures.Remove(key);
+    }
+
+    private void ScheduleBuild(StaticWorldChunkBuildRequest request)
+    {
+        _lastScheduledExportSignature = request.ExportSignature;
+        if (_activeBuildTask == null)
+        {
+            _activeBuildTask = StartBuildTask(request);
+            return;
+        }
+
+        _queuedBuildRequest = request;
+    }
+
+    private void DrainCompletedBuild()
+    {
+        if (_activeBuildTask == null || !_activeBuildTask.IsCompleted)
+        {
+            if (_activeBuildTask == null && _queuedBuildRequest != null)
+            {
+                StaticWorldChunkBuildRequest nextRequest = _queuedBuildRequest;
+                _queuedBuildRequest = null;
+                _activeBuildTask = StartBuildTask(nextRequest);
+            }
+
+            return;
+        }
+
+        StaticWorldChunkBuildBatch completed = _activeBuildTask.GetAwaiter().GetResult();
+        _activeBuildTask = null;
+
+        if (_queuedBuildRequest != null &&
+            _queuedBuildRequest.ExportSignature != completed.ExportSignature)
+        {
+            StaticWorldChunkBuildRequest nextRequest = _queuedBuildRequest;
+            _queuedBuildRequest = null;
+            _activeBuildTask = StartBuildTask(nextRequest);
+            return;
+        }
+
+        _activeUploadBatch = new StaticWorldChunkUploadBatch(completed);
+    }
+
+    private StaticWorldChunkSyncStats ApplyPendingUploads()
+    {
+        if (_activeUploadBatch == null)
+        {
+            return new StaticWorldChunkSyncStats(0, _meshes.Count);
+        }
+
+        int rebuiltMeshes = 0;
+        int reusedMeshes = 0;
+        int uploadsRemaining = MaxMeshUploadsPerFrame;
+        while (uploadsRemaining > 0 && _activeUploadBatch.TryTakeNext(out StaticWorldChunkBuildOutput? output))
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            ReplaceMesh(output);
+            rebuiltMeshes++;
+            uploadsRemaining--;
+        }
+
+        if (_activeUploadBatch.IsComplete)
+        {
+            foreach (StaticWorldChunkMeshKey staleKey in _signatures.Keys
+                .Where(key => _activeUploadBatch.DirtyChunks.Contains(key.ChunkKey) &&
+                    !_activeUploadBatch.ReplacedKeys.Contains(key))
+                .ToArray())
+            {
+                RemoveMesh(staleKey);
+            }
+
+            _lastAppliedExportSignature = _activeUploadBatch.ExportSignature;
+            _hasAppliedExport = true;
+            reusedMeshes = _meshes.Count - rebuiltMeshes;
+            _activeUploadBatch = null;
+        }
+
+        return new StaticWorldChunkSyncStats(rebuiltMeshes, Math.Max(0, reusedMeshes));
+    }
+
+    private void ReplaceMesh(StaticWorldChunkBuildOutput output)
+    {
+        if (_buffers.Remove(output.Key, out StaticMeshBuffer? oldBuffer))
+        {
+            oldBuffer.Dispose();
+        }
+
+        _meshes[output.Key] = output.Mesh;
+        _signatures[output.Key] = output.Signature;
+
+        if (output.Mesh.ExposedFaceCount > 0)
+        {
+            _buffers[output.Key] = new StaticMeshBuffer(output.Mesh);
+        }
+    }
+
+    private static Task<StaticWorldChunkBuildBatch> StartBuildTask(StaticWorldChunkBuildRequest request)
+    {
+        return Task.Run(() => new StaticWorldChunkBuildBatch(
+            request.ExportSignature,
+            request.DirtyChunks,
+            BuildOutputs(request.Inputs)));
     }
 
     private static StaticVoxelRenderCell[] CollectNeighborOccluders(
@@ -347,6 +429,39 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         }
 
         return 0f;
+    }
+}
+
+internal sealed class StaticWorldChunkUploadBatch
+{
+    private readonly Queue<StaticWorldChunkBuildOutput> _pendingOutputs;
+
+    public StaticWorldChunkUploadBatch(StaticWorldChunkBuildBatch batch)
+    {
+        ExportSignature = batch.ExportSignature;
+        DirtyChunks = batch.DirtyChunks;
+        _pendingOutputs = new Queue<StaticWorldChunkBuildOutput>(batch.Outputs);
+    }
+
+    public int ExportSignature { get; }
+
+    public IReadOnlySet<StaticWorldChunkKey> DirtyChunks { get; }
+
+    public HashSet<StaticWorldChunkMeshKey> ReplacedKeys { get; } = [];
+
+    public bool IsComplete => _pendingOutputs.Count == 0;
+
+    public bool TryTakeNext(out StaticWorldChunkBuildOutput? output)
+    {
+        if (_pendingOutputs.Count == 0)
+        {
+            output = null;
+            return false;
+        }
+
+        output = _pendingOutputs.Dequeue();
+        ReplacedKeys.Add(output.Key);
+        return true;
     }
 }
 

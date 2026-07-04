@@ -180,6 +180,28 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
+    public void BuildOutputs_Preserves_Input_Signatures_And_Mesh_Keys()
+    {
+        StaticVoxelRenderCell[] cells =
+        [
+            new(new Vector3(0.5f, 0.5f, 0.5f), Vector3.One, GeometryMaterialId.Grass)
+        ];
+
+        IReadOnlyList<StaticWorldChunkBuildInput> inputs = StaticWorldChunkRenderer.PlanBuildInputs(cells);
+        IReadOnlyList<StaticWorldChunkBuildOutput> outputs = StaticWorldChunkRenderer.BuildOutputs(inputs);
+
+        Assert.Equal(inputs.Count, outputs.Count);
+        foreach (StaticWorldChunkBuildInput input in inputs)
+        {
+            StaticWorldChunkBuildOutput output = Assert.Single(outputs.Where(candidate => candidate.Key == input.Key));
+            Assert.Equal(input.Signature, output.Signature);
+            Assert.Equal(input.Key.ChunkKey, output.Mesh.Key);
+            Assert.Equal(input.Key.MaterialId, output.Mesh.MaterialId);
+            Assert.Equal(input.Key.MaterialRole, output.Mesh.MaterialRole);
+        }
+    }
+
+    [Fact]
     public void ExportSignatureChangesWhenCompatibilityCubeMaterialChanges()
     {
         GeometryRenderExport grassExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Grass);
