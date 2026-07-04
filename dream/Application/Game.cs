@@ -91,12 +91,12 @@ public class Game : GameWindow
             if (_startupScene.TryTakeConnectedSession(out RemoteClientSession? remoteClient) && remoteClient != null)
             {
                 _playScene = new PlayScene(
-                _settings,
-                _desktopClientConfig,
-                PersistDesktopClientConfig,
-                PlayScene.ResolveLoopbackRemotePlayersEnabled(),
-                remoteClient,
-                _localServer);
+                    _settings,
+                    remoteClient,
+                    _desktopClientConfig,
+                    PersistDesktopClientConfig,
+                    PlayScene.ResolveLoopbackRemotePlayersEnabled(),
+                    _localServer);
                 _startupScene.Dispose();
                 _startupScene = null;
             }

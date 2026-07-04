@@ -51,7 +51,7 @@ public class PlayScene : IDisposable
     private readonly MultiplayerDiagnostics _diagnostics;
     private readonly ClientProtocolSession _clientProtocol;
     private readonly ClientScenePresenter _scenePresenter;
-    private readonly RemoteClientSession? _remoteClient;
+    private readonly RemoteClientSession _remoteClient;
     private readonly GameplayInputResumeFilter _gameplayInputResumeFilter = new();
     private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
     private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
@@ -80,16 +80,16 @@ public class PlayScene : IDisposable
 
     public Vector3 LastReportedPlayerPosition => _runtime.Player.LastReportedPosition;
 
-    public string? ConnectedServerEndpoint => _remoteClient?.Options.EndpointLabel;
+    public string ConnectedServerEndpoint => _remoteClient.Options.EndpointLabel;
 
     internal SceneEventHub Events => _events;
 
     public PlayScene(
         GameSettings settings,
+        RemoteClientSession remoteClient,
         DesktopClientConfig? clientConfig = null,
         Action? persistDesktopClientConfig = null,
         bool enableLoopbackRemotePlayers = false,
-        RemoteClientSession? remoteClient = null,
         ILocalServerHandle? localServer = null)
     {
         _settings = settings;
@@ -97,7 +97,7 @@ public class PlayScene : IDisposable
         _persistDesktopClientConfig = persistDesktopClientConfig;
         _localServer = localServer;
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
-        _remoteClient = remoteClient;
+        _remoteClient = remoteClient ?? throw new ArgumentNullException(nameof(remoteClient));
         _renderPerformanceLoggingEnabled = IsRenderPerformanceLoggingEnabled();
         // The desktop scene now delegates authoritative world-stack creation to WorldSessionRuntime
         // while remaining the client composition root for presentation systems.
@@ -111,7 +111,7 @@ public class PlayScene : IDisposable
             _runtime.Player.Combatant.ApplyStats(_desktopClientConfig.ToPlayerCombatStats());
         }
 
-        _scenePresenter = new ClientScenePresenter(_remoteClient?.SessionId ?? _runtime.LocalPlayerSessionId.Value);
+        _scenePresenter = new ClientScenePresenter(_remoteClient.SessionId);
         _render = new Render(_settings);
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
@@ -119,13 +119,7 @@ public class PlayScene : IDisposable
 
         NetworkDiagnosticsLog.Write(
             "client.scene.start",
-            $"remote={_remoteClient != null} endpoint={ConnectedServerEndpoint ?? "<local>"} " +
-            $"localPresenterSession={_remoteClient?.SessionId ?? _runtime.LocalPlayerSessionId.Value}");
-
-        if (_remoteClient == null)
-        {
-            ApplyInventorySnapshot(_runtime.TryCaptureInventorySnapshot(_runtime.LocalPlayerSessionId));
-        }
+            $"remote=True endpoint={ConnectedServerEndpoint} localPresenterSession={_remoteClient.SessionId}");
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -161,7 +155,7 @@ public class PlayScene : IDisposable
                 fixedDeltaSeconds,
                 simulationCommandFrame,
                 tuning,
-                allowGameplaySimulation: _remoteClient == null && allowGameplayInput);
+                allowGameplaySimulation: false);
             if (result.PrimaryUseTriggered)
             {
                 primaryUseTriggered = true;
@@ -327,16 +321,13 @@ public class PlayScene : IDisposable
         _combatFeedback.Dispose();
         _actionFeedback.Dispose();
         _runtime.Dispose();
-        if (_remoteClient != null)
-        {
-            _remoteClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
+        _remoteClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
     public void ApplyReplicatedMessage(IServerToClientMessage message)
     {
         _clientProtocol.ApplyServerMessage(message);
-        if (message is JoinAcceptedMessage joinAcceptedMessage && _remoteClient != null)
+        if (message is JoinAcceptedMessage joinAcceptedMessage)
         {
             NetworkDiagnosticsLog.Write(
                 "client.apply.join",
@@ -349,26 +340,23 @@ public class PlayScene : IDisposable
         else if (message is ServerSnapshotMessage snapshotMessage)
         {
             NetworkDiagnosticsLog.WriteEvery(
-                $"client.apply.snapshot.{_remoteClient?.SessionId ?? "local"}",
+                $"client.apply.snapshot.{_remoteClient.SessionId}",
                 TimeSpan.FromSeconds(1),
                 "client.apply.snapshot",
-                () => $"local={_remoteClient?.SessionId ?? "<local>"} {NetworkDiagnosticsLog.DescribeSnapshot(snapshotMessage.Snapshot)}");
-            if (_remoteClient != null)
-            {
-                RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
-                ClientCorrectionApplier.ApplySnapshotToRuntime(
-                    _runtime,
-                    snapshotMessage.Snapshot,
-                    _remoteClient.SessionId);
-                RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
-                ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
-                _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
-            }
+                () => $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(snapshotMessage.Snapshot)}");
+            RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
+            ClientCorrectionApplier.ApplySnapshotToRuntime(
+                _runtime,
+                snapshotMessage.Snapshot,
+                _remoteClient.SessionId);
+            RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
+            _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot, _clientPresentationTimeSeconds);
             LogPresenterDiagnostics("snapshot");
         }
-        else if (message is ServerActionMessage actionMessage && _remoteClient != null)
+        else if (message is ServerActionMessage actionMessage)
         {
             NetworkDiagnosticsLog.Write(
                 "client.apply.action",
@@ -523,11 +511,6 @@ public class PlayScene : IDisposable
 
     private void DrainRemoteTransportMessages()
     {
-        if (_remoteClient == null)
-        {
-            return;
-        }
-
         while (_remoteClient.TryDequeueInbound(out IServerToClientMessage? message) && message != null)
         {
             ApplyReplicatedMessage(message);
@@ -542,7 +525,7 @@ public class PlayScene : IDisposable
 
     private void SendRemoteCommandFrameIfConnected(PlayerCommandFrame localCommandFrame)
     {
-        if (_remoteClient == null || !_remoteClient.IsConnected)
+        if (!_remoteClient.IsConnected)
         {
             return;
         }
@@ -577,7 +560,7 @@ public class PlayScene : IDisposable
     private void LogPresenterDiagnostics(string source)
     {
         if (!NetworkDiagnosticsLog.ShouldLogEvery(
-                $"client.presenter.state.{_remoteClient?.SessionId ?? "local"}",
+                $"client.presenter.state.{_remoteClient.SessionId}",
                 TimeSpan.FromSeconds(1)))
         {
             return;
@@ -635,7 +618,7 @@ public class PlayScene : IDisposable
         _lastLocalSimulationCommandFrame = ClearOneShotMoveInputs(simulationSource);
         return ClientSimulationCommandPolicy.PrepareForLocalSimulation(
             simulationSource,
-            useRemoteAuthority: _remoteClient != null);
+            useRemoteAuthority: true);
     }
 
     private static PlayerCommandFrame ClearOneShotMoveInputs(PlayerCommandFrame frame)
@@ -705,17 +688,10 @@ public class PlayScene : IDisposable
                 Vitality = request.Vitality ?? _runtime.Player.Combatant.BaseStats.Vitality
             };
 
-            if (_remoteClient != null)
-            {
-                _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
-                    new PlayerSessionId(_remoteClient.SessionId),
-                    _actionSequences.NextActionSequence(),
-                    new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
-            }
-            else
-            {
-                _runtime.Player.Combatant.ApplyBaseStats(updatedStats);
-            }
+            _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
+                new PlayerSessionId(_remoteClient.SessionId),
+                _actionSequences.NextActionSequence(),
+                new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
 
             persistDesktopConfig = true;
         }
@@ -726,7 +702,7 @@ public class PlayScene : IDisposable
             persistDesktopConfig = true;
         }
 
-        if (request.EquipInventorySlotIndex.HasValue && _remoteClient != null)
+        if (request.EquipInventorySlotIndex.HasValue)
         {
             _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),

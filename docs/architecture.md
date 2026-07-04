@@ -21,6 +21,7 @@ Inside the `Game` constructor:
 - one integrated loopback authoritative server is started for desktop mode
 - a startup connection scene is created next and becomes the primary desktop entry path
 - `PlayScene` is created only after a successful client connection
+- `PlayScene` now requires that connected `RemoteClientSession`, so normal desktop gameplay is also a protocol client of the authoritative server instead of a direct local-authority runtime path
 
 ## Namespace And Source Boundaries
 
@@ -143,7 +144,7 @@ The next client-authority step now also applies a first slice of authoritative l
 - `RemoteWorldMutationApplier` reconciles full world snapshots plus incremental cube mutation deltas into the client runtime map
 - `RemoteEnemyStateApplier` replaces client-local enemy runtime state from authoritative enemy actor snapshots
 
-Remote mode also now changes what the local runtime is allowed to do:
+Connected desktop play also changes what the local runtime is allowed to do:
 
 - local command frames are still captured and mirrored onto the transport
 - local interaction-mode selection may still advance immediately for HUD/viewmodel continuity
@@ -151,7 +152,9 @@ Remote mode also now changes what the local runtime is allowed to do:
 - local primary-use authority is suppressed while connected
 - local enemy simulation is suppressed while connected
 
-That keeps the client usable while reducing the biggest "local runtime fights the server" problems. Later work must still reconcile rollback, combat feedback ownership, and the remaining local-only presentation/runtime assumptions more aggressively.
+`PlayScene` now requires a protocol client session, so this connected-client behavior is the normal desktop path for the first local player as well as later joined clients. The current integrated host still uses TCP loopback as the concrete local transport; the planned next step is an in-memory duplex transport that preserves the same protocol, command, action, and snapshot flow without socket overhead.
+
+That keeps the client usable while reducing the biggest "local runtime fights the server" problems. Later work must still reconcile rollback, combat feedback ownership, gameplay-affecting settings such as floor-size edits, and the remaining local-only presentation/runtime assumptions more aggressively.
 
 The runtime still has an intentional split in player authority depth:
 

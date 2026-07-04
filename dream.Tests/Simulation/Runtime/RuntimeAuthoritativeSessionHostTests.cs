@@ -180,6 +180,100 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void AdvanceTick_SecondaryRemotePrimaryUseCombat_DamagesEnemy()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId primarySession = new("session-a");
+        PlayerSessionId secondarySession = new("session-b");
+        host.JoinSession(primarySession.Value, "Host Player");
+        host.JoinSession(secondarySession.Value, "Second Player");
+
+        runtime.Enemies.Clear();
+        ServerSnapshotEnvelope before = host.ExportSnapshot();
+        ActorSnapshot secondaryActor = Assert.Single(before.Actors, actor => actor.SessionId == secondarySession.Value);
+        EnemyCombatant combatant = new(
+            () => secondaryActor.Position + (Vector3.UnitX * 1.5f),
+            events,
+            actorId: 4002,
+            maxHealth: 100,
+            attackDamage: 10,
+            attackIntervalSeconds: 1f);
+        EnemyActor enemy = new(
+            combatant,
+            secondaryActor.Position + (Vector3.UnitX * 1.5f),
+            aggroRange: 10f,
+            attackRange: 1.35f,
+            moveSpeed: 3f,
+            displayName: "Wolf");
+        runtime.Enemies.Add(enemy);
+
+        IReadOnlyList<AuthoritativeActionResult> results = host.AdvanceTick(
+            serverTick: 1,
+            SimulationClock.FixedDeltaSeconds,
+            [
+                new PlayerCommandFrame(
+                    secondarySession,
+                    1,
+                    new PlayerModeSwitchIntent(PlayerInteractionMode.Combat),
+                    PlayerMoveIntent.None,
+                    new PlayerLookIntent(0f, 0f, Vector3.UnitX),
+                    PrimaryUsePressed: true)
+            ],
+            CreatePlayerTuning(),
+            allowGameplaySimulation: false);
+
+        AuthoritativeActionResult result = Assert.Single(results);
+        CombatResolutionResult payload = Assert.IsType<CombatResolutionResult>(result.Payload);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(secondarySession.Value, result.SessionId);
+        Assert.Equal(4002, payload.TargetActorId);
+        Assert.True(payload.DamageApplied > 0);
+        Assert.True(enemy.Combatant.Health.CurrentHealth < enemy.Combatant.Health.MaxHealth);
+    }
+
+    [Fact]
+    public void AdvanceTick_SecondaryRemotePrimaryUseBuilding_PlacesCube()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId primarySession = new("session-a");
+        PlayerSessionId secondarySession = new("session-b");
+        host.JoinSession(primarySession.Value, "Host Player");
+        host.JoinSession(secondarySession.Value, "Second Player");
+
+        IReadOnlyList<AuthoritativeActionResult> results = host.AdvanceTick(
+            serverTick: 1,
+            SimulationClock.FixedDeltaSeconds,
+            [
+                new PlayerCommandFrame(
+                    secondarySession,
+                    1,
+                    new PlayerModeSwitchIntent(PlayerInteractionMode.Building),
+                    PlayerMoveIntent.None,
+                    new PlayerLookIntent(0f, 0f, Vector3.UnitX),
+                    PrimaryUsePressed: true)
+            ],
+            CreatePlayerTuning(),
+            allowGameplaySimulation: false);
+
+        AuthoritativeActionResult result = Assert.Single(results);
+        WorldMutationResult payload = Assert.IsType<WorldMutationResult>(result.Payload);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(secondarySession.Value, result.SessionId);
+        Assert.Equal(WorldMutationKind.CubePlaced, payload.Kind);
+        Assert.True(payload.Applied);
+        Assert.NotNull(runtime.Map.TryGetCubeAtCell(
+            (int)payload.CellPosition.X,
+            (int)payload.CellPosition.Y,
+            (int)payload.CellPosition.Z));
+    }
+
+    [Fact]
     public void JoinSession_LateJoinerReceivesInitialActorSnapshotsForAlreadyJoinedPlayers()
     {
         SceneEventHub events = new();

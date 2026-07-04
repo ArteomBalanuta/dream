@@ -222,7 +222,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         if (primaryUseTriggered)
         {
-            PlayerActionMessage? actionMessage = TryCreatePrimaryUseActionMessage(commandFrame);
+            PlayerActionMessage? actionMessage = TryCreateCommandPrimaryUseActionMessage(commandFrame);
             if (actionMessage != null)
             {
                 actionResult = ProcessAuthoritativeAction(actionMessage);
@@ -918,11 +918,20 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         }
     }
 
-    private PlayerActionMessage? TryCreatePrimaryUseActionMessage(PlayerCommandFrame commandFrame)
+    public PlayerActionMessage? TryCreateCommandPrimaryUseActionMessage(PlayerCommandFrame commandFrame)
     {
-        return GetSessionInteractionMode(commandFrame.SessionId) switch
+        if (!TryResolveActionContext(commandFrame.SessionId, out AuthoritativeSessionActionContext? context) ||
+            context == null)
         {
-            PlayerInteractionMode.Building => Player.TryCreateBuildUseRequest(true, out BuildUseRequest buildUseRequest)
+            return null;
+        }
+
+        return context.InteractionMode switch
+        {
+            PlayerInteractionMode.Building => PlayerInteraction.TryCreateBuildUseRequest(
+                    context.CombatRayOrigin,
+                    context.CombatRayDirection,
+                    out BuildUseRequest buildUseRequest)
                 ? new PlayerActionMessage(
                     commandFrame.SessionId,
                     commandFrame.Sequence,
@@ -931,7 +940,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             PlayerInteractionMode.Combat => new PlayerActionMessage(
                 commandFrame.SessionId,
                 commandFrame.Sequence,
-                new CombatUseIntent(Player.Camera.Position, Player.Camera.Front)),
+                new CombatUseIntent(context.CombatRayOrigin, context.CombatRayDirection)),
             _ => null
         };
     }

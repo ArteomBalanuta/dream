@@ -110,16 +110,38 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             playerTuning,
             allowGameplaySimulation);
 
+        List<AuthoritativeActionResult> synthesizedCommandActions = [];
         foreach (PlayerCommandFrame secondaryCommand in commandFrames.Where(frame => frame.SessionId != ResolveTickControlledSessionId()))
         {
             Runtime.AdvanceSecondaryRemoteSession(secondaryCommand, deltaTime, playerTuning);
+
+            if (secondaryCommand.PrimaryUsePressed)
+            {
+                PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(secondaryCommand);
+                if (actionMessage != null)
+                {
+                    synthesizedCommandActions.Add(Runtime.ProcessAuthoritativeAction(actionMessage));
+                }
+            }
         }
 
-        IReadOnlyList<AuthoritativeActionResult> actionResults = Runtime.ProcessQueuedAuthoritativeActions(
+        IReadOnlyList<AuthoritativeActionResult> queuedActionResults = Runtime.ProcessQueuedAuthoritativeActions(
             serverTick,
             queuedActions);
 
-        return actionResults;
+        if (synthesizedCommandActions.Count == 0)
+        {
+            return queuedActionResults;
+        }
+
+        if (queuedActionResults.Count == 0)
+        {
+            return synthesizedCommandActions;
+        }
+
+        return synthesizedCommandActions
+            .Concat(queuedActionResults)
+            .ToArray();
     }
 
     public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
