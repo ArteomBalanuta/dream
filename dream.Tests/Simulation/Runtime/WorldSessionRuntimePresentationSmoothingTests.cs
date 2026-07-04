@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -76,5 +77,19 @@ public class WorldSessionRuntimePresentationSmoothingTests
             presentationLeadSeconds: SimulationClock.FixedDeltaSeconds * 0.5f);
 
         Assert.Equal(baseState.Camera.Position.Y, smoothedState.Camera.Position.Y, 5);
+    }
+
+    [Fact]
+    public void CapturePresentationState_UsesStableFullWorldExportForRendering()
+    {
+        using WorldSessionRuntime runtime = new(
+            floorSize: 20,
+            playerStartPosition: new Vector3(1.5f, 1.5f, 1.5f),
+            new SceneEventHub(),
+            loadVisualAssets: false);
+
+        WorldSessionPresentationState state = runtime.CapturePresentationState(maxRenderDistance: 1f);
+
+        Assert.Contains(state.VisibleWorld.Cells, cell => cell.Key == new GeometryCellKey(19, 0, 19));
     }
 }

@@ -378,6 +378,25 @@ public class Map
 
     public GeometryRenderExport CaptureGeometryRenderExport(Vector3 position, float radius)
     {
+        return CaptureGeometryRenderExport(
+            GetRenderCandidateCubes(position, radius),
+            includeCube: cube => IsCubeWithinRadius(cube, position, radius),
+            includeBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
+    }
+
+    public GeometryRenderExport CaptureFullGeometryRenderExport()
+    {
+        return CaptureGeometryRenderExport(
+            _solidCubes,
+            includeCube: _ => true,
+            includeBlock: _ => true);
+    }
+
+    private GeometryRenderExport CaptureGeometryRenderExport(
+        IEnumerable<Cube> cubeCandidates,
+        Func<Cube, bool> includeCube,
+        Func<GeometryRenderBlockDescriptor, bool> includeBlock)
+    {
         List<GeometryRenderCell> cells = new();
         List<GeometryRenderBlockDescriptor> blocks = new();
         List<Cube> compatibilityCubes = new();
@@ -386,9 +405,9 @@ public class Map
 
         // These cube views are still compatibility artifacts while the renderer
         // migrates toward consuming geometry-native exports directly.
-        foreach (Cube cube in GetRenderCandidateCubes(position, radius))
+        foreach (Cube cube in cubeCandidates)
         {
-            if (!IsCubeWithinRadius(cube, position, radius))
+            if (!includeCube(cube))
             {
                 continue;
             }
@@ -428,7 +447,7 @@ public class Map
             {
                 foreach (GeometryRenderBlockDescriptor block in cellBlocks)
                 {
-                    if (!IsGeometryBlockWithinRadius(block, position, radius))
+                    if (!includeBlock(block))
                     {
                         continue;
                     }
@@ -440,7 +459,7 @@ public class Map
 
         foreach (GeometryRenderBlockDescriptor block in _mergedStaticSubcellRenderBlocks)
         {
-            if (!IsGeometryBlockWithinRadius(block, position, radius))
+            if (!includeBlock(block))
             {
                 continue;
             }

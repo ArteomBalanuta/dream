@@ -1,1 +1,1 @@
-Make sure we expose enemy lvl too beside the health bar. 
+Make sure we expose enemy lvl too beside the health bar. Same for player.

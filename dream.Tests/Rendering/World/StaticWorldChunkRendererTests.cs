@@ -117,24 +117,46 @@ public class StaticWorldChunkRendererTests
             Vector3.One,
             GeometryMaterialId.Grass);
         StaticVoxelRenderCell missing = new(
-            new Vector3(16.5f, 0.5f, 0.5f),
+            new Vector3(48.5f, 0.5f, 0.5f),
             Vector3.One,
             GeometryMaterialId.Stone);
-        HashSet<StaticWorldChunkMeshKey> cachedKeys =
-        [
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Top),
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Side),
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Bottom)
-        ];
+        Dictionary<StaticWorldChunkMeshKey, int> cachedSignatures = StaticWorldChunkRenderer
+            .PlanBuildInputs([existing])
+            .ToDictionary(input => input.Key, input => input.Signature);
 
         IReadOnlyList<StaticWorldChunkBuildInput> inputs = StaticWorldChunkRenderer.PlanBuildInputs(
             [existing, missing],
-            cachedKeys,
+            cachedSignatures,
             dirtyChunks: new HashSet<StaticWorldChunkKey>());
 
         StaticWorldChunkBuildInput input = Assert.Single(inputs);
-        Assert.Equal(new StaticWorldChunkKey(1, 0, 0), input.Key.ChunkKey);
+        Assert.Equal(new StaticWorldChunkKey(3, 0, 0), input.Key.ChunkKey);
         Assert.Equal(GeometryMaterialId.Stone, input.Key.MaterialId);
+    }
+
+    [Fact]
+    public void PlanBuildInputsRebuildsCachedChunkWhenVisibleCellsExpandInsideSameChunk()
+    {
+        StaticVoxelRenderCell firstVisibleCell = new(
+            new Vector3(0.5f, 0.5f, 0.5f),
+            Vector3.One,
+            GeometryMaterialId.Grass);
+        StaticVoxelRenderCell newlyVisibleCell = new(
+            new Vector3(1.5f, 0.5f, 0.5f),
+            Vector3.One,
+            GeometryMaterialId.Grass);
+        Dictionary<StaticWorldChunkMeshKey, int> cachedSignatures = StaticWorldChunkRenderer
+            .PlanBuildInputs([firstVisibleCell])
+            .ToDictionary(input => input.Key, input => input.Signature);
+
+        IReadOnlyList<StaticWorldChunkBuildInput> inputs = StaticWorldChunkRenderer.PlanBuildInputs(
+            [firstVisibleCell, newlyVisibleCell],
+            cachedSignatures,
+            dirtyChunks: new HashSet<StaticWorldChunkKey>());
+
+        Assert.Equal(3, inputs.Count);
+        Assert.All(inputs, input => Assert.Equal(new StaticWorldChunkKey(0, 0, 0), input.Key.ChunkKey));
+        Assert.All(inputs, input => Assert.Equal(GeometryMaterialId.Grass, input.Key.MaterialId));
     }
 
     [Fact]
@@ -144,16 +166,13 @@ public class StaticWorldChunkRendererTests
             new Vector3(0.5f, 0.5f, 0.5f),
             Vector3.One,
             GeometryMaterialId.Grass);
-        HashSet<StaticWorldChunkMeshKey> cachedKeys =
-        [
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Top),
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Side),
-            new(new StaticWorldChunkKey(0, 0, 0), GeometryMaterialId.Grass, StaticTerrainMaterialRole.Bottom)
-        ];
+        Dictionary<StaticWorldChunkMeshKey, int> cachedSignatures = StaticWorldChunkRenderer
+            .PlanBuildInputs([existing])
+            .ToDictionary(input => input.Key, input => input.Signature);
 
         IReadOnlyList<StaticWorldChunkBuildInput> inputs = StaticWorldChunkRenderer.PlanBuildInputs(
             [existing],
-            cachedKeys,
+            cachedSignatures,
             dirtyChunks: new HashSet<StaticWorldChunkKey> { new(0, 0, 0) });
 
         Assert.Equal(3, inputs.Count);
@@ -170,6 +189,21 @@ public class StaticWorldChunkRendererTests
         int sandSignature = StaticWorldChunkRenderer.CalculateExportSignature(sandExport);
 
         Assert.NotEqual(grassSignature, sandSignature);
+    }
+
+    [Fact]
+    public void ExportSignatureChangesWhenDirtyCellsArePresent()
+    {
+        GeometryRenderExport cleanExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Grass);
+        GeometryRenderExport dirtyExport = cleanExport with
+        {
+            DirtyCells = [new GeometryCellKey(0, 0, 0)]
+        };
+
+        int cleanSignature = StaticWorldChunkRenderer.CalculateExportSignature(cleanExport);
+        int dirtySignature = StaticWorldChunkRenderer.CalculateExportSignature(dirtyExport);
+
+        Assert.NotEqual(cleanSignature, dirtySignature);
     }
 
     [Fact]

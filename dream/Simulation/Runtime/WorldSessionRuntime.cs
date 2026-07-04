@@ -315,7 +315,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             cameraViewMode);
 
         Stopwatch renderExportStopwatch = Stopwatch.StartNew();
-        GeometryRenderExport visibleWorld = Map.CaptureGeometryRenderExport(presentationCamera.Position, maxRenderDistance);
+        GeometryRenderExport visibleWorld = Map.CaptureFullGeometryRenderExport();
         renderExportStopwatch.Stop();
 
         return WorldSessionPresentationState.Create(

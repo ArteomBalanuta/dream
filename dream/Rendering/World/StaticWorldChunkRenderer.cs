@@ -28,13 +28,13 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     {
         return PlanBuildInputs(
             cells,
-            cachedKeys: new HashSet<StaticWorldChunkMeshKey>(),
+            cachedSignatures: new Dictionary<StaticWorldChunkMeshKey, int>(),
             dirtyChunks: new HashSet<StaticWorldChunkKey>());
     }
 
     public static IReadOnlyList<StaticWorldChunkBuildInput> PlanBuildInputs(
         IReadOnlyList<StaticVoxelRenderCell> cells,
-        IReadOnlySet<StaticWorldChunkMeshKey> cachedKeys,
+        IReadOnlyDictionary<StaticWorldChunkMeshKey, int> cachedSignatures,
         IReadOnlySet<StaticWorldChunkKey> dirtyChunks)
     {
         Dictionary<StaticWorldChunkKey, StaticVoxelRenderCell[]> cellsByChunk = cells
@@ -51,7 +51,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 foreach (StaticTerrainMaterialRole role in StaticTerrainMaterialCatalog.ResolveRoles(materialGroup.Key))
                 {
                     StaticWorldChunkMeshKey meshKey = new(chunkKey, materialGroup.Key, role);
-                    if (cachedKeys.Contains(meshKey) && !dirtyChunks.Contains(chunkKey))
+                    int signature = CalculateInputSignature(meshKey, materialCells, occluderCells);
+                    if (!dirtyChunks.Contains(chunkKey) &&
+                        cachedSignatures.TryGetValue(meshKey, out int cachedSignature) &&
+                        cachedSignature == signature)
                     {
                         continue;
                     }
@@ -60,7 +63,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                         meshKey,
                         materialCells,
                         occluderCells,
-                        CalculateInputSignature(meshKey, materialCells, occluderCells)));
+                        signature));
                 }
             }
         }
@@ -106,7 +109,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 .ToHashSet();
         IReadOnlyList<StaticWorldChunkBuildInput> inputs = exportUnchanged
             ? []
-            : PlanBuildInputs(cells, _signatures.Keys.ToHashSet(), dirtyChunks);
+            : PlanBuildInputs(cells, _signatures, dirtyChunks);
         stopwatch.Stop();
         double planMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
@@ -265,12 +268,12 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     {
         HashCode hash = new();
         hash.Add(key);
-        AddCellsToSignature(hash, materialCells);
-        AddCellsToSignature(hash, occluderCells);
+        AddCellsToSignature(ref hash, materialCells);
+        AddCellsToSignature(ref hash, occluderCells);
         return hash.ToHashCode();
     }
 
-    private static void AddCellsToSignature(HashCode hash, IReadOnlyList<StaticVoxelRenderCell> cells)
+    private static void AddCellsToSignature(ref HashCode hash, IReadOnlyList<StaticVoxelRenderCell> cells)
     {
         hash.Add(cells.Count);
         foreach (StaticVoxelRenderCell cell in cells)
@@ -284,6 +287,15 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     public static int CalculateExportSignature(GeometryRenderExport export)
     {
         HashCode hash = new();
+        hash.Add(export.DirtyCells.Count);
+        foreach (GeometryCellKey dirtyCell in export.DirtyCells
+            .OrderBy(cell => cell.Y)
+            .ThenBy(cell => cell.Z)
+            .ThenBy(cell => cell.X))
+        {
+            hash.Add(dirtyCell);
+        }
+
         Dictionary<Cube, GeometryMaterialId> compatibilityMaterials = new(export.Cells.Count);
         foreach (GeometryRenderCell renderCell in export.Cells)
         {

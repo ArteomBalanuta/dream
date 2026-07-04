@@ -82,4 +82,33 @@ public class MapRenderCandidateTests
         Assert.Contains(export.Cells, cell => cell.Key == new GeometryCellKey(2, 0, 2));
         Assert.Contains(export.CompatibilityCubes, cube => cube.Position == new Vector3(2.5f, 0.5f, 2.5f));
     }
+
+    [Fact]
+    public void CaptureFullGeometryRenderExport_Includes_Far_Cells_That_Radius_Export_Excludes()
+    {
+        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+
+        GeometryRenderExport localExport = map.CaptureGeometryRenderExport(new Vector3(1.5f, 1.5f, 1.5f), 2f);
+        GeometryRenderExport fullExport = map.CaptureFullGeometryRenderExport();
+
+        Assert.DoesNotContain(localExport.Cells, cell => cell.Key == new GeometryCellKey(19, 0, 19));
+        Assert.Contains(fullExport.Cells, cell => cell.Key == new GeometryCellKey(19, 0, 19));
+        Assert.Contains(fullExport.CompatibilityCubes, cube => cube.Position == new Vector3(19.5f, 0.5f, 19.5f));
+    }
+
+    [Fact]
+    public void CaptureFullGeometryRenderExport_Is_Stable_Across_Camera_Positions()
+    {
+        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        map.AddCube(new Vector3(10f, 1f, 10f), isStatic: true, withPhysics: false);
+
+        GeometryRenderExport nearExport = map.CaptureFullGeometryRenderExport();
+        GeometryRenderExport farExport = map.CaptureFullGeometryRenderExport();
+
+        Assert.Equal(
+            nearExport.Cells.Select(cell => cell.Key).OrderBy(key => key.Y).ThenBy(key => key.Z).ThenBy(key => key.X),
+            farExport.Cells.Select(cell => cell.Key).OrderBy(key => key.Y).ThenBy(key => key.Z).ThenBy(key => key.X));
+        Assert.Equal(nearExport.CompatibilityCubes.Count, farExport.CompatibilityCubes.Count);
+        Assert.Equal(nearExport.Blocks.Count, farExport.Blocks.Count);
+    }
 }

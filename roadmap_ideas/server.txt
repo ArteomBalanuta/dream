@@ -1,7 +1,7 @@
 server should support items <-> player relationship so basically each player can have/own items so he can use them - so it is a concept of inventory and active items bar in HUD
 so when he clicks 1 - primary item, 2 - second item etc. up to 6 items.
 
-server should know who owns which item. there may be multiple items etc. ideally each items hould have an id, name, and also client may have different 3d models for items so when player equips an item it changes in the hand; we currently support hands and items 3d separation. 
+server should know who owns which item. there may be multiple items etc. ideally each items would have an id, name, and also client may have different 3d models for items so when player equips an item it changes in the hand; we currently support hands and items 3d separation. 
 
 
 server should be able to spawn items on the floor so when player approaches item is picked up with an magnet animation and now belongs to the player. 

@@ -44,6 +44,10 @@ Guardrail: static chunk meshes are presentation artifacts. They must not become 
 
 The static chunk export signature includes compatibility-cube material ids. Material-only changes must invalidate cached meshes just like coordinate or size changes, otherwise stale buffers can keep rendering an old terrain batch for a still-solid block.
 
+Presentation now feeds static chunk rendering from a stable full-world geometry export instead of a camera-local export. Camera movement should only affect which already-built chunks are visible; it should not invalidate or rebuild the static mesh cache.
+
+Guardrail: do not make camera position part of static mesh source selection. If the world grows too large for full startup export, move to chunk-owned streaming with build/draw radii and background mesh generation instead of reintroducing camera-local mesh inputs.
+
 ### Static And Dynamic Cube Ownership Split
 
 `GeometryRenderExport` now separates static compatibility cubes from dynamic compatibility cubes. Static chunk rendering only consumes the static list, while live rigid-body cubes render through the direct world-batch path from their current transforms.
@@ -62,13 +66,15 @@ Static chunk terrain draws the remaining exterior faces double-sided. This preve
 
 Static chunk meshes are cached by `StaticWorldChunkMeshKey`, which combines chunk key, material id, and material role. Each cache entry has its own signature, so camera movement at the visible-world boundary does not force a full static-world mesh rebuild or synchronous GL re-upload.
 
-Guardrail: do not return to one global visible-export signature for static world buffers. Movement and connect-time presentation should reuse unchanged chunk buffers.
+The per-entry signature must include the actual material cells and neighboring occluder cells used to build that mesh. Reusing a chunk/material/role key without comparing that input signature can preserve a partial mesh built from an earlier camera-local export, which presents as walkable but invisible terrain when the player flies away and returns.
+
+Guardrail: do not return to one global visible-export signature for static world buffers, and do not skip cached chunks by key alone. Movement and connect-time presentation should reuse unchanged chunk buffers only when the cached input signature still matches.
 
 ### Dirty-Chunk Build Planning
 
-Static chunk planning skips cached chunk/material/role keys when their chunk is not dirty. If the visible export changes because the camera or render radius crosses a boundary, the renderer should plan only missing or dirty chunk meshes instead of re-evaluating every cached chunk.
+Static chunk planning skips cached chunk/material/role keys when their chunk is not dirty and the cached input signature still matches. If the visible export changes because the camera or render radius crosses a boundary, the renderer should plan only missing, dirty, or input-changed chunk meshes instead of re-evaluating every cached chunk.
 
-Guardrail: dirty-region decisions should stay keyed by world-space chunks, not by camera position alone.
+Guardrail: dirty-region decisions should stay keyed by world-space chunks, not by camera position alone. Dirty cells must also affect the static export signature, otherwise a render-dirty notification can be skipped when the visible cell list itself has not changed.
 
 Moving placed cubes that cross cell boundaries must dirty both the source and destination cells. Otherwise the static chunk cache can keep the old chunk mesh alive while also building the new one, which makes the rendered position drift away from the live cube position.
 
