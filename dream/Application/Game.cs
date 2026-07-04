@@ -7,6 +7,7 @@ using Dream.Rendering.Core;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using System.Diagnostics;
 
 namespace Dream.Application;
 
@@ -90,11 +91,12 @@ public class Game : GameWindow
             if (_startupScene.TryTakeConnectedSession(out RemoteClientSession? remoteClient) && remoteClient != null)
             {
                 _playScene = new PlayScene(
-                    _settings,
-                    _desktopClientConfig,
-                    PersistDesktopClientConfig,
-                    PlayScene.ResolveLoopbackRemotePlayersEnabled(),
-                    remoteClient);
+                _settings,
+                _desktopClientConfig,
+                PersistDesktopClientConfig,
+                PlayScene.ResolveLoopbackRemotePlayersEnabled(),
+                remoteClient,
+                _localServer);
                 _startupScene.Dispose();
                 _startupScene = null;
             }
@@ -111,6 +113,7 @@ public class Game : GameWindow
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         base.OnRenderFrame(args);
+        Stopwatch frameStopwatch = Stopwatch.StartNew();
         if (_playScene == null)
         {
             _startupScene!.Render(args, IsFocused, MouseState, KeyboardState);
@@ -119,7 +122,13 @@ public class Game : GameWindow
         {
             _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
         }
+        Stopwatch swapStopwatch = Stopwatch.StartNew();
         SwapBuffers();
+        swapStopwatch.Stop();
+        frameStopwatch.Stop();
+        _playScene?.ReportPresentedFramePerformance(
+            frameStopwatch.Elapsed.TotalMilliseconds,
+            swapStopwatch.Elapsed.TotalMilliseconds);
 
         UpdateFPS();
         this.Title = GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint);

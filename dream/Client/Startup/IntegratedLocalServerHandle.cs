@@ -37,6 +37,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 
     public string? ErrorMessage { get; }
 
+    public DedicatedServerPerformanceSnapshot LatestPerformance =>
+        _service?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
+
     public static ValueTask<IntegratedLocalServerHandle> StartAsync(
         int preferredPort = 0,
         Func<DedicatedServerHost>? hostFactory = null)

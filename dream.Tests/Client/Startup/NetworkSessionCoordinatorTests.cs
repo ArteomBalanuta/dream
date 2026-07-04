@@ -3,6 +3,7 @@ using Dream.Client.Networking;
 using Dream.Client.Startup;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
+using Dream.Server;
 
 namespace Dream.Tests.Client.Startup;
 
@@ -107,6 +108,9 @@ public class NetworkSessionCoordinatorTests
         public int BoundPort { get; }
 
         public string? ErrorMessage { get; }
+
+        public DedicatedServerPerformanceSnapshot LatestPerformance =>
+            DedicatedServerPerformanceSnapshot.Empty;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

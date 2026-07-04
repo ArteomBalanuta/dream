@@ -33,6 +33,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
 
     public int ConnectionCount => _connections.Count;
 
+    public DedicatedServerPerformanceSnapshot LatestPerformance { get; private set; } =
+        DedicatedServerPerformanceSnapshot.Empty;
+
     public void Start()
     {
         if (_started)
@@ -70,6 +73,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
         advanceStopwatch?.Stop();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
+            LatestPerformance = new DedicatedServerPerformanceSnapshot(
+                advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
+                SnapshotMilliseconds: 0d,
+                BroadcastMilliseconds: 0d,
+                Sampled: true);
             return executedTicks;
         }
 
@@ -78,6 +86,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
             .ToArray();
         if (joinedConnections.Length == 0)
         {
+            LatestPerformance = new DedicatedServerPerformanceSnapshot(
+                advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
+                SnapshotMilliseconds: 0d,
+                BroadcastMilliseconds: 0d,
+                Sampled: true);
             NetworkDiagnosticsLog.WriteEvery(
                 "server.tick.unjoined",
                 TimeSpan.FromSeconds(1),
@@ -95,6 +108,12 @@ public sealed class DedicatedServerService : IAsyncDisposable
             await connection.SendSnapshotAsync(snapshot, cancellationToken);
         }
         broadcastStopwatch?.Stop();
+
+        LatestPerformance = new DedicatedServerPerformanceSnapshot(
+            advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
+            snapshotStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
+            broadcastStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
+            Sampled: true);
 
         IReadOnlyList<AuthoritativeActionResult> pendingActionResults = _host.DrainPendingActionResults();
         if (pendingActionResults.Count > 0)

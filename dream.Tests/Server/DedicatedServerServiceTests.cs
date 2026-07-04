@@ -67,6 +67,28 @@ public class DedicatedServerServiceTests
     }
 
     [Fact]
+    public async Task AdvanceOnceAsync_Updates_Latest_Performance_Snapshot()
+    {
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        FakeTickDrivenAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using FakeServerTransport transport = new();
+        await using DedicatedServerService service = new(host, transport, codec, framer);
+        FakeTransportConnection connection = new();
+        ServerConnection serverConnection = new(connection, host, codec, framer);
+        service.AttachConnection(serverConnection);
+        host.HandleClientMessage(connection.ConnectionId, new ClientJoinRequestMessage("session-a", "player-a"));
+
+        await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        Assert.True(service.LatestPerformance.TickMilliseconds >= 0d);
+        Assert.True(service.LatestPerformance.SnapshotMilliseconds >= 0d);
+        Assert.True(service.LatestPerformance.BroadcastMilliseconds >= 0d);
+        Assert.True(service.LatestPerformance.HasCounters);
+    }
+
+    [Fact]
     public async Task AdvanceOnceAsync_DoesNotBroadcastSnapshotToUnjoinedConnections()
     {
         TransportJsonCodec codec = new();

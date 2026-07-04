@@ -152,7 +152,7 @@ Guardrail: avoid synchronous socket reads or long protocol processing directly i
 
 ### Optional Performance Counters
 
-The settings panel can show performance counters for render export time, physics time, visible/exported world descriptors, render batches, collision-body count, and static chunk metrics such as visible chunks, mesh count, exposed faces, and triangle count.
+The settings panel can show performance counters for total host frame time, present (`SwapBuffers`) time, render export time, physics time, actor draw slices (enemy, local player, remote players), HUD/ImGui time from the previous frame, visible/exported world descriptors, render batches, collision-body count, static chunk metrics such as visible chunks, mesh count, exposed faces, and triangle count, plus the latest integrated local-server sample for authoritative tick, snapshot, and broadcast time.
 
 Guardrail: when diagnosing performance, prefer these counters and targeted tests over guessing from FPS alone.
 

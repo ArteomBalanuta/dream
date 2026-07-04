@@ -20,7 +20,19 @@ public readonly record struct FramePerformanceSnapshot(
     double StaticChunkSyncMilliseconds = 0d,
     double StaticChunkDrawMilliseconds = 0d,
     int StaticChunkRebuiltMeshes = 0,
-    int StaticChunkReusedMeshes = 0)
+    int StaticChunkReusedMeshes = 0,
+    double TotalFrameMilliseconds = 0d,
+    double EnemyDrawMilliseconds = 0d,
+    double LocalPlayerDrawMilliseconds = 0d,
+    double RemotePlayerDrawMilliseconds = 0d,
+    double WorldDrawMilliseconds = 0d,
+    double ViewModelDrawMilliseconds = 0d,
+    double DebugDrawMilliseconds = 0d,
+    double HudDrawMilliseconds = 0d,
+    double SwapBuffersMilliseconds = 0d,
+    double ServerTickMilliseconds = 0d,
+    double ServerSnapshotMilliseconds = 0d,
+    double ServerBroadcastMilliseconds = 0d)
 {
     public static FramePerformanceSnapshot Empty => default;
 
@@ -44,18 +56,35 @@ public readonly record struct FramePerformanceSnapshot(
         StaticChunkSyncMilliseconds > 0d ||
         StaticChunkDrawMilliseconds > 0d ||
         StaticChunkRebuiltMeshes > 0 ||
-        StaticChunkReusedMeshes > 0;
+        StaticChunkReusedMeshes > 0 ||
+        TotalFrameMilliseconds > 0d ||
+        EnemyDrawMilliseconds > 0d ||
+        LocalPlayerDrawMilliseconds > 0d ||
+        RemotePlayerDrawMilliseconds > 0d ||
+        WorldDrawMilliseconds > 0d ||
+        ViewModelDrawMilliseconds > 0d ||
+        DebugDrawMilliseconds > 0d ||
+        HudDrawMilliseconds > 0d ||
+        SwapBuffersMilliseconds > 0d ||
+        ServerTickMilliseconds > 0d ||
+        ServerSnapshotMilliseconds > 0d ||
+        ServerBroadcastMilliseconds > 0d;
 
     public IEnumerable<string> ToHudLines()
     {
+        yield return $"Frame: total {TotalFrameMilliseconds:0.00} ms, present {SwapBuffersMilliseconds:0.00} ms";
         yield return $"Export: {RenderExportMilliseconds:0.00} ms";
         yield return $"Physics: {PhysicsStepMilliseconds:0.00} ms";
+        yield return $"Draw: world {WorldDrawMilliseconds:0.00} ms, viewmodel {ViewModelDrawMilliseconds:0.00} ms, debug {DebugDrawMilliseconds:0.00} ms";
+        yield return $"Actors: enemy {EnemyDrawMilliseconds:0.00} ms, local {LocalPlayerDrawMilliseconds:0.00} ms, remote {RemotePlayerDrawMilliseconds:0.00} ms";
+        yield return $"HUD: {HudDrawMilliseconds:0.00} ms";
         yield return $"Visible: cubes {VisibleCompatibilityCubes}/{ExportedCompatibilityCubes}, blocks {VisibleGeometryBlocks}/{ExportedGeometryBlocks}";
         yield return $"Batches: cubes {CompatibilityBatchCount}, blocks {GeometryBatchCount}";
         yield return $"Static Chunks: visible {VisibleStaticChunks}, meshes {StaticChunkMeshCount}, faces {StaticChunkExposedFaces}, tris {StaticChunkTriangles}";
         yield return $"Static Timing: signature {StaticChunkSignatureMilliseconds:0.00} ms, extract {StaticChunkExtractMilliseconds:0.00} ms, plan {StaticChunkPlanMilliseconds:0.00} ms, sync {StaticChunkSyncMilliseconds:0.00} ms, draw {StaticChunkDrawMilliseconds:0.00} ms";
         yield return $"Static Cache: rebuilt {StaticChunkRebuiltMeshes}, reused {StaticChunkReusedMeshes}";
         yield return $"Collision Bodies: {CollisionBodyCount}";
+        yield return $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms";
     }
 
     public FramePerformanceSnapshot WithRenderStats(

@@ -9,6 +9,7 @@ using Dream.Client.Input;
 using Dream.Client.Networking;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
+using Dream.Client.Startup;
 using Dream.Configuration;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
@@ -18,6 +19,7 @@ using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
 using Dream.Rendering.World;
+using Dream.Server;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -41,6 +43,7 @@ public class PlayScene : IDisposable
     private readonly GameSettings _settings;
     private readonly DesktopClientConfig? _desktopClientConfig;
     private readonly Action? _persistDesktopClientConfig;
+    private readonly ILocalServerHandle? _localServer;
     private readonly PlayerViewModelController _viewModelController;
     private readonly SceneEventHub _events = new();
     private readonly CombatFeedbackSystem _combatFeedback;
@@ -68,6 +71,9 @@ public class PlayScene : IDisposable
     private bool _localPlayerWasMoving;
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
+    private double _lastPresentedFrameMilliseconds;
+    private double _lastSwapBuffersMilliseconds;
+    private double _lastHudDrawMilliseconds;
     private PlayerInventorySnapshot? _inventory;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
@@ -83,11 +89,13 @@ public class PlayScene : IDisposable
         DesktopClientConfig? clientConfig = null,
         Action? persistDesktopClientConfig = null,
         bool enableLoopbackRemotePlayers = false,
-        RemoteClientSession? remoteClient = null)
+        RemoteClientSession? remoteClient = null,
+        ILocalServerHandle? localServer = null)
     {
         _settings = settings;
         _desktopClientConfig = clientConfig;
         _persistDesktopClientConfig = persistDesktopClientConfig;
+        _localServer = localServer;
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient;
         _renderPerformanceLoggingEnabled = IsRenderPerformanceLoggingEnabled();
@@ -195,7 +203,42 @@ public class PlayScene : IDisposable
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
 
+        Stopwatch worldDrawStopwatch = Stopwatch.StartNew();
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        worldDrawStopwatch.Stop();
+        Stopwatch enemyDrawStopwatch = Stopwatch.StartNew();
+        _render.Enemies.Draw(
+            presentation.Camera,
+            presentation.ActiveEnemies,
+            (float)args.Time,
+            _settings.ShowCollisionGeometry);
+        enemyDrawStopwatch.Stop();
+
+        double localPlayerDrawMilliseconds = 0d;
+        if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
+        {
+            Stopwatch localPlayerStopwatch = Stopwatch.StartNew();
+            _render.LocalPlayers.Draw(
+                new LocalPlayerPresentationState(
+                    _runtime.Player.GetWorldPosition(),
+                    _runtime.Player.Camera.HorizontalForward,
+                    _localPlayerWasMoving),
+                presentation.Camera,
+                (float)args.Time);
+            localPlayerStopwatch.Stop();
+            localPlayerDrawMilliseconds = localPlayerStopwatch.Elapsed.TotalMilliseconds;
+        }
+
+        Stopwatch remotePlayerStopwatch = Stopwatch.StartNew();
+        RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(
+            presentation.Camera,
+            remotePlayerStates,
+            (float)args.Time);
+        remotePlayerStopwatch.Stop();
+        LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
+
+        DedicatedServerPerformanceSnapshot serverPerformance =
+            _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
         FramePerformanceSnapshot performance = presentation.Performance.WithRenderStats(
             worldRenderStats.VisibleCompatibilityCubes,
             worldRenderStats.VisibleGeometryBlocks,
@@ -211,44 +254,46 @@ public class PlayScene : IDisposable
             worldRenderStats.StaticChunkSyncMilliseconds,
             worldRenderStats.StaticChunkDrawMilliseconds,
             worldRenderStats.StaticChunkRebuiltMeshes,
-            worldRenderStats.StaticChunkReusedMeshes);
-        LogRenderPerformanceIfEnabled(args, performance);
-        _render.Enemies.Draw(
-            presentation.Camera,
-            presentation.ActiveEnemies,
-            (float)args.Time,
-            _settings.ShowCollisionGeometry);
-        if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
+            worldRenderStats.StaticChunkReusedMeshes) with
         {
-            _render.LocalPlayers.Draw(
-                new LocalPlayerPresentationState(
-                    _runtime.Player.GetWorldPosition(),
-                    _runtime.Player.Camera.HorizontalForward,
-                    _localPlayerWasMoving),
-                presentation.Camera,
-                (float)args.Time);
-        }
-
-        RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(
-            presentation.Camera,
-            remotePlayerStates,
-            (float)args.Time);
-        LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
-
+            TotalFrameMilliseconds = _lastPresentedFrameMilliseconds,
+            WorldDrawMilliseconds = worldDrawStopwatch.Elapsed.TotalMilliseconds,
+            EnemyDrawMilliseconds = enemyDrawStopwatch.Elapsed.TotalMilliseconds,
+            LocalPlayerDrawMilliseconds = localPlayerDrawMilliseconds,
+            RemotePlayerDrawMilliseconds = remotePlayerStopwatch.Elapsed.TotalMilliseconds,
+            HudDrawMilliseconds = _lastHudDrawMilliseconds,
+            SwapBuffersMilliseconds = _lastSwapBuffersMilliseconds,
+            ServerTickMilliseconds = serverPerformance.TickMilliseconds,
+            ServerSnapshotMilliseconds = serverPerformance.SnapshotMilliseconds,
+            ServerBroadcastMilliseconds = serverPerformance.BroadcastMilliseconds
+        };
         if (_settings.ShowCollisionGeometry)
         {
+            Stopwatch debugDrawStopwatch = Stopwatch.StartNew();
             _render.Debug.DrawCollisionBodies(presentation.MapCollisionBodies, presentation.Camera);
             if (presentation.PlayerCollisionBody != null)
             {
                 _render.DrawCollisionBody(presentation.PlayerCollisionBody, presentation.Camera);
             }
+            debugDrawStopwatch.Stop();
+            performance = performance with
+            {
+                DebugDrawMilliseconds = debugDrawStopwatch.Elapsed.TotalMilliseconds
+            };
         }
 
         if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
         {
+            Stopwatch viewModelDrawStopwatch = Stopwatch.StartNew();
             _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+            viewModelDrawStopwatch.Stop();
+            performance = performance with
+            {
+                ViewModelDrawMilliseconds = viewModelDrawStopwatch.Elapsed.TotalMilliseconds
+            };
         }
 
+        Stopwatch hudStopwatch = Stopwatch.StartNew();
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -263,6 +308,9 @@ public class PlayScene : IDisposable
                 _inventory,
                 ConnectedServerEndpoint,
                 performance);
+        hudStopwatch.Stop();
+        _lastHudDrawMilliseconds = hudStopwatch.Elapsed.TotalMilliseconds;
+        LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
     }
@@ -421,7 +469,7 @@ public class PlayScene : IDisposable
             string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void LogRenderPerformanceIfEnabled(FrameEventArgs args, FramePerformanceSnapshot performance)
+    private void LogRenderPerformanceIfEnabled(FrameEventArgs args, FramePerformanceSnapshot performance, bool windowFocused)
     {
         if (!_renderPerformanceLoggingEnabled || !performance.HasCounters)
         {
@@ -437,6 +485,7 @@ public class PlayScene : IDisposable
         _renderPerformanceLogSeconds = 0d;
         Console.WriteLine(
             $"[render-perf] frame={args.Time * 1000d:0.00}ms pos={LastReportedPlayerPosition} " +
+            $"focused={windowFocused} settings={_settings.SettingsVisible} inventory={_settings.InventoryVisible} " +
             string.Join(" | ", performance.ToHudLines()));
     }
 
@@ -483,6 +532,12 @@ public class PlayScene : IDisposable
         {
             ApplyReplicatedMessage(message);
         }
+    }
+
+    public void ReportPresentedFramePerformance(double totalFrameMilliseconds, double swapBuffersMilliseconds)
+    {
+        _lastPresentedFrameMilliseconds = totalFrameMilliseconds;
+        _lastSwapBuffersMilliseconds = swapBuffersMilliseconds;
     }
 
     private void SendRemoteCommandFrameIfConnected(PlayerCommandFrame localCommandFrame)
