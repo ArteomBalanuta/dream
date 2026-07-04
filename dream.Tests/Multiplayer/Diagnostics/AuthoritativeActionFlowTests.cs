@@ -162,6 +162,24 @@ public class AuthoritativeActionFlowTests
     }
 
     [Fact]
+    public void ProcessAuthoritativeAction_BuildPlacementCreatesDynamicPushableWorldBlock()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+
+        AuthoritativeActionResult result = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            11,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+
+        Assert.True(result.Accepted);
+        Cube placedCube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        Assert.Contains(
+            runtime.Physics.DynamicMapCubeBodies,
+            body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, placedCube));
+    }
+
+    [Fact]
     public void ProcessAuthoritativeAction_UsesSessionOwnedModeForSecondaryRemoteBuildValidation()
     {
         using WorldSessionRuntime runtime = CreateRuntime();

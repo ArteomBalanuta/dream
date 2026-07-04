@@ -171,7 +171,8 @@ Fields:
 
 - `cube_id` primary key
 - `owner_player_name`
-- `cell_x`, `cell_y`, `cell_z`
+- `cell_x`, `cell_y`, `cell_z`: coarse grid ownership cell
+- `center_x`, `center_y`, `center_z`: nullable exact world-space render/physics center for dynamic pushed cubes
 - `material_id`
 - `shape_kind`
 - optional durability/state fields if needed

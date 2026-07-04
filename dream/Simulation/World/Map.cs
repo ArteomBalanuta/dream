@@ -185,6 +185,7 @@ public class Map
         _cubeCells.Remove(cube);
         _placedCubeSpatialIndex.Remove(cube);
         _physicsBinder?.RemoveCellCollisionBodies(key);
+        _physicsBinder?.RemoveCompatibilityCubeBodies(cube);
         return true;
     }
 
@@ -193,7 +194,7 @@ public class Map
         return _cubeCells.TryGetValue(cube, out key);
     }
 
-    public void UpdateCubePosition(Cube cube, Vector3 position)
+    public void UpdateCubePosition(Cube cube, Vector3 position, bool syncPhysics = true)
     {
         if (!_cubeCells.TryGetValue(cube, out GeometryCellKey oldKey))
         {
@@ -210,7 +211,17 @@ public class Map
 
         _placedCubeSpatialIndex.UpdatePosition(cube, position);
 
-        if (oldKey == newKey || !IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)))
+        if (oldKey == newKey)
+        {
+            if (syncPhysics && _physicsBinder != null)
+            {
+                RebuildGeometryCellArtifacts(oldKey, syncPhysics: true);
+            }
+
+            return;
+        }
+
+        if (!IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)))
         {
             return;
         }
@@ -222,7 +233,7 @@ public class Map
             _collisionBodiesByCell.Remove(oldKey);
             _staticPhysicsCells.Remove(oldKey);
             Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
-            RebuildGeometryCellArtifacts(oldKey, syncPhysics: _physicsBinder != null);
+            RebuildGeometryCellArtifacts(oldKey, syncPhysics: syncPhysics && _physicsBinder != null);
 
             GeometryCellRecord movedCell = new(
                 newKey,
@@ -233,7 +244,7 @@ public class Map
             _geometryCells[newKey] = movedCell;
             _cubeCells[cube] = newKey;
             Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
-            RebuildGeometryCellArtifacts(newKey, syncPhysics: _physicsBinder != null);
+            RebuildGeometryCellArtifacts(newKey, syncPhysics: syncPhysics && _physicsBinder != null);
         }
     }
 

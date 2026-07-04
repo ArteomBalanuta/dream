@@ -554,6 +554,40 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void PersistCheckpoint_PersistsMovedPlacedCubeCenter()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId sessionId = new("session-a");
+        host.JoinSession(sessionId.Value, "Player A");
+
+        AuthoritativeActionResult buildResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+        Assert.True(buildResult.Accepted);
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        Vector3 movedCenter = new(7.73f, 1.5f, 7.18f);
+        runtime.Map.UpdateCubePosition(cube, movedCenter, syncPhysics: false);
+
+        runtime.PersistCheckpoint();
+
+        PersistedPlacedCube persistedCube = Assert.Single(worldPersistence.LoadPlacedCubes());
+        Assert.Equal(new Vector3(7f, 1f, 7f), persistedCube.CellPosition);
+        Assert.True(persistedCube.CenterPosition.HasValue);
+        Assert.Equal(movedCenter, persistedCube.CenterPosition.Value);
+    }
+
+    [Fact]
     public void JoinSession_Seeds_StarterInventory_For_FirstTimePlayer()
     {
         SceneEventHub events = new();

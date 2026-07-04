@@ -66,6 +66,13 @@ public class DebugRenderer
 
     private static bool TryResolveDebugPosition(RigidBody body, out Vector3 position)
     {
+        if (body.MotionState != null)
+        {
+            body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+            position = transform.Origin.ToOpenTK();
+            return true;
+        }
+
         switch (body.UserObject)
         {
             case ValueTuple<Cube, Vector3> cubeBody:
@@ -73,10 +80,6 @@ public class DebugRenderer
                 return true;
             case ValueTuple<GeometryCellKey?, GeometrySubcellKey?, Vector3> geometryBody:
                 position = geometryBody.Item3;
-                return true;
-            case GeometryDynamicBodyReference:
-                body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
-                position = transform.Origin.ToOpenTK();
                 return true;
             default:
                 position = default;

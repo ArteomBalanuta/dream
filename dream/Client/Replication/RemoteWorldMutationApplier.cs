@@ -18,8 +18,9 @@ public static class RemoteWorldMutationApplier
                 "Direct map snapshot application requires matching world dimensions.");
         }
 
-        HashSet<(int X, int Y, int Z)> desiredCells = snapshot.PlacedCubeCells
-            .Select(ToCellKey)
+        IReadOnlyList<PlacedCubeSnapshot> desiredPlacedCubes = ResolvePlacedCubes(snapshot);
+        HashSet<(int X, int Y, int Z)> desiredCells = desiredPlacedCubes
+            .Select(cube => ToCellKey(cube.CellPosition))
             .ToHashSet();
         HashSet<(int X, int Y, int Z)> desiredFracturedCells = (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
             .Select(ToCellKey)
@@ -41,14 +42,23 @@ public static class RemoteWorldMutationApplier
             map.RemoveCube(cube);
         }
 
-        foreach ((int x, int y, int z) in desiredCells)
+        foreach (PlacedCubeSnapshot placedCube in desiredPlacedCubes)
         {
-            if (map.TryGetCubeAtCell(x, y, z) == null)
+            (int x, int y, int z) = ToCellKey(placedCube.CellPosition);
+            GeometryCellKey cell = new(x, y, z);
+            Cube? cube = map.TryGetCubeAtCell(x, y, z);
+            if (cube == null)
             {
-                map.TryAddCube(new Vector3(x, y, z));
+                cube = map.TryAddCube(new Vector3(x, y, z));
             }
 
-            map.RestoreSolidCubeCell(new GeometryCellKey(x, y, z));
+            if (cube == null)
+            {
+                continue;
+            }
+
+            map.RestoreSolidCubeCell(cell);
+            map.UpdateCubePosition(cube, placedCube.CenterPosition, syncPhysics: true);
         }
 
         foreach ((int x, int y, int z) in desiredFracturedCells)
@@ -136,6 +146,24 @@ public static class RemoteWorldMutationApplier
             default:
                 throw new InvalidOperationException($"Unsupported world mutation kind '{mutation.Kind}'.");
         }
+    }
+
+    private static IReadOnlyList<PlacedCubeSnapshot> ResolvePlacedCubes(WorldSnapshot snapshot)
+    {
+        if (snapshot.PlacedCubes is { Count: > 0 } placedCubes)
+        {
+            return placedCubes;
+        }
+
+        return snapshot.PlacedCubeCells
+            .Select(cell => new PlacedCubeSnapshot(cell, ToCellCenter(cell)))
+            .ToArray();
+    }
+
+    private static Vector3 ToCellCenter(Vector3 cell)
+    {
+        (int x, int y, int z) = ToCellKey(cell);
+        return new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
     }
 
     private static (int X, int Y, int Z) ToCellKey(Vector3 cellPosition)

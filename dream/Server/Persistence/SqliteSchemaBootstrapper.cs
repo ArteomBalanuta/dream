@@ -32,6 +32,21 @@ public sealed class SqliteSchemaBootstrapper
             tableName: "player_profiles",
             columnName: "experience",
             alterStatement: "ALTER TABLE player_profiles ADD COLUMN experience INTEGER NOT NULL DEFAULT 0;");
+        EnsureColumnExists(
+            connection,
+            tableName: "placed_cube_instances",
+            columnName: "center_x",
+            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_x REAL NULL;");
+        EnsureColumnExists(
+            connection,
+            tableName: "placed_cube_instances",
+            columnName: "center_y",
+            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_y REAL NULL;");
+        EnsureColumnExists(
+            connection,
+            tableName: "placed_cube_instances",
+            columnName: "center_z",
+            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_z REAL NULL;");
     }
 
     public SqliteConnection CreateOpenConnection()

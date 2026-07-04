@@ -12,4 +12,5 @@ public readonly record struct PersistedPlacedCube(
     int CurrentHealth,
     int MaxHealth,
     DateTime CreatedUtc,
-    DateTime UpdatedUtc);
+    DateTime UpdatedUtc,
+    Vector3? CenterPosition = null);

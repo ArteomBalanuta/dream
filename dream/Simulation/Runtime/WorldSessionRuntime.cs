@@ -229,14 +229,15 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             }
         }
 
-        Stopwatch physicsStopwatch = Stopwatch.StartNew();
-        Physics.StepSimulation(delta);
-        physicsStopwatch.Stop();
-        _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
         Player.Update(
             delta,
             playerInput,
             playerTuning);
+        Stopwatch physicsStopwatch = Stopwatch.StartNew();
+        Physics.StepSimulationFixed(delta);
+        physicsStopwatch.Stop();
+        _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
+        Player.SyncCameraFromBody(playerTuning);
 
         if (allowGameplaySimulation)
         {
@@ -487,6 +488,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     public WorldSnapshot ExportWorldSnapshot()
     {
         List<Vector3> placedCubeCells = [];
+        List<PlacedCubeSnapshot> placedCubes = [];
         List<Vector3> fracturedCubeCells = [];
         List<Vector3> authoredSubcellCells = [];
 
@@ -500,7 +502,12 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Vector3 cellPosition = new(cell.Key.X, cell.Key.Y, cell.Key.Z);
             if (cell.SubdivisionState == null)
             {
-                placedCubeCells.Add(cellPosition);
+                Cube? cube = Map.TryGetCubeAtCell(cell.Key.X, cell.Key.Y, cell.Key.Z);
+                Vector3 centerPosition = cube?.Position ??
+                    new Vector3(cell.Key.X + 0.5f, cell.Key.Y + 0.5f, cell.Key.Z + 0.5f);
+                Vector3 authoritativeCell = ToCellPosition(centerPosition);
+                placedCubeCells.Add(authoritativeCell);
+                placedCubes.Add(new PlacedCubeSnapshot(authoritativeCell, centerPosition));
             }
             else if (cell.FracturePieces == null)
             {
@@ -518,7 +525,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Map.Depth,
             placedCubeCells,
             fracturedCubeCells,
-            authoredSubcellCells);
+            authoredSubcellCells,
+            placedCubes);
     }
 
     public AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message)
@@ -791,6 +799,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             PersistEnemy(enemy);
         }
 
+        PersistPlacedCubeCheckpoint();
         PersistFracturePieceCheckpoint();
     }
 
@@ -962,7 +971,9 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         }
 
         GeometryMaterialId placementMaterial = ResolveBuildPlacementMaterial(intent.PlacementTarget);
-        Cube? placedCube = Map.TryAddCube(intent.PlacementTarget, materialId: placementMaterial);
+        Cube? placedCube = Map.TryAddCube(
+            intent.PlacementTarget,
+            materialId: placementMaterial);
         if (placedCube == null || placedCube.Position.Y <= 0f)
         {
             return CreateRejectedActionResult(message, "Build placement rejected by authoritative validation.");
@@ -1316,6 +1327,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 continue;
             }
 
+            if (persistedCube.CenterPosition.HasValue)
+            {
+                Map.UpdateCubePosition(cube, persistedCube.CenterPosition.Value);
+            }
+
             _worldObjects.RegisterCube(
                 cube,
                 Map,
@@ -1434,22 +1450,45 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
+        Vector3 cellPosition = ToCellPosition(cube.Position);
         _worldPersistence.DeleteCubeFracturePieces(record.Actor.Id);
         _worldPersistence.SavePlacedCube(new PersistedPlacedCube(
             record.Actor.Id,
             record.OwnerPlayerName ?? "unknown-player",
-            ToCellPosition(cube.Position),
+            cellPosition,
             GeometryShapeKind.SolidCube,
             materialId,
             record.Health.CurrentHealth,
             record.Health.MaxHealth,
             DateTime.UtcNow,
-            DateTime.UtcNow));
+            DateTime.UtcNow,
+            cube.Position));
     }
 
     private void DeletePersistedPlacedCube(int cubeId)
     {
         _worldPersistence?.DeletePlacedCube(cubeId);
+    }
+
+    private void PersistPlacedCubeCheckpoint()
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        foreach (WorldObjectRecord record in _worldObjects.GetCubeRecords())
+        {
+            if (record.SourceObject is not Cube cube ||
+                !Map.TryGetCellForCube(cube, out GeometryCellKey cell) ||
+                cell.Y == 0)
+            {
+                continue;
+            }
+
+            GeometryCellRecord? geometryCell = Map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
+            PersistPlacedCube(record, geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass);
+        }
     }
 
     private void RestorePersistedCubeFracturePieces()

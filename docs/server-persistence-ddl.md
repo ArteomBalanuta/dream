@@ -73,7 +73,8 @@ Key fields:
 
 - `cube_id`: primary key
 - `owner_player_name`: FK to `player_profiles`
-- `cell_x`, `cell_y`, `cell_z`
+- `cell_x`, `cell_y`, `cell_z`: coarse grid cell that owns the cube
+- `center_x`, `center_y`, `center_z`: nullable exact render/physics center; older rows may be null and restore from the coarse cell center
 - `shape_kind`
 - `material_id`
 - `current_health`, `max_health`
@@ -83,6 +84,7 @@ Used for:
 
 - startup world restore
 - cube placement persistence
+- pushed dynamic cube reconnect restore
 - cube destruction and fracture cleanup
 
 ### `cube_fracture_pieces`

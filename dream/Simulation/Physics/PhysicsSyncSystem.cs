@@ -19,7 +19,9 @@ public class PhysicsSyncSystem
             if (body.UserObject is (Cube cube, Vector3))
             {
                 body.MotionState.GetWorldTransform(out Matrix transform);
-                map.UpdateCubePosition(cube, transform.Origin.ToOpenTK());
+                Vector3 position = transform.Origin.ToOpenTK();
+                map.UpdateCubePosition(cube, position, syncPhysics: false);
+                body.UserObject = (cube, position);
                 continue;
             }
 

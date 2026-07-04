@@ -41,6 +41,10 @@ public class PhysicsSyncSystemTests
 
         Assert.Null(map.TryGetCubeAtCell(3, 1, 3));
         Assert.Same(cube, map.TryGetCubeAtCell(4, 1, 3));
+        (Cube SyncedCube, TkVector3 SyncedPosition) syncedUserObject =
+            Assert.IsType<(Cube SyncedCube, TkVector3 SyncedPosition)>(firstBody.UserObject);
+        Assert.Same(cube, syncedUserObject.SyncedCube);
+        Assert.Equal(new TkVector3(4.1f, 1.5f, 3.5f), syncedUserObject.SyncedPosition);
     }
 
     [Fact]
@@ -67,6 +71,39 @@ public class PhysicsSyncSystemTests
             .First(block => block.CellKey == cell);
         Assert.Equal(movedCenter, firstPieceAfter.Center);
         Assert.Empty(afterExport.DirtyCells);
+    }
+
+    [Fact]
+    public void SyncDynamicMapBodies_DoesNotReplaceActivePhysicsBodyWhenCubeCrossesCellBoundary()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+        Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
+        RigidBody body = Assert.Single(physics.DynamicMapCubeBodies);
+
+        map.UpdateCubePosition(cube, new TkVector3(4.2f, 1.5f, 3.5f), syncPhysics: false);
+
+        Assert.Contains(body, physics.DynamicMapCubeBodies);
+        Assert.Same(cube, map.TryGetCubeAtCell(4, 1, 3));
+        Assert.Null(map.TryGetCubeAtCell(3, 1, 3));
+    }
+
+    [Fact]
+    public void RemoveCube_RemovesCompatibilityBodyEvenAfterPhysicsDrivenCellDrift()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+        Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
+        RigidBody body = Assert.Single(physics.DynamicMapCubeBodies);
+
+        map.UpdateCubePosition(cube, new TkVector3(4.2f, 1.5f, 3.5f), syncPhysics: false);
+
+        Assert.True(map.RemoveCube(cube));
+
+        Assert.DoesNotContain(body, physics.MapCubeBodies);
+        Assert.DoesNotContain(body, physics.DynamicMapCubeBodies);
     }
 
     private static RigidBody CreateBody(

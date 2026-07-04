@@ -169,6 +169,7 @@ public class WorldPhysicsBinder
         _physics.MapCubeBodies.Add(body);
         if (!isStatic)
         {
+            ConfigureDynamicBody(body, new Vector3(0.5f));
             _physics.DynamicMapCubeBodies.Add(body);
         }
 
@@ -208,7 +209,7 @@ public class WorldPhysicsBinder
         body.SetMassProps(mass, inertia);
         if (!descriptor.IsStatic)
         {
-            body.ActivationState = ActivationState.DisableDeactivation;
+            ConfigureDynamicBody(body, descriptor.HalfExtents);
         }
 
         _physics.World.AddRigidBody(body);
@@ -236,5 +237,33 @@ public class WorldPhysicsBinder
         body.CollisionShape?.Dispose();
         body.Dispose();
         return true;
+    }
+
+    public int RemoveCompatibilityCubeBodies(Cube cube)
+    {
+        ArgumentNullException.ThrowIfNull(cube);
+
+        RigidBody[] bodies = _physics.MapCubeBodies
+            .Where(body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube))
+            .ToArray();
+        if (bodies.Length == 0)
+        {
+            return 0;
+        }
+
+        RemoveBodies(bodies);
+        _cubeBodies.Remove(cube);
+        return bodies.Length;
+    }
+
+    private static void ConfigureDynamicBody(RigidBody body, Vector3 halfExtents)
+    {
+        body.ActivationState = ActivationState.DisableDeactivation;
+        body.ContactProcessingThreshold = 0f;
+        float smallestHalfExtent = MathF.Max(0.01f, MathF.Min(halfExtents.X, MathF.Min(halfExtents.Y, halfExtents.Z)));
+        body.CcdMotionThreshold = smallestHalfExtent * 0.5f;
+        body.CcdSweptSphereRadius = smallestHalfExtent * 0.8f;
+        body.Activate(true);
     }
 }

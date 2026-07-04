@@ -112,6 +112,9 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
                 cell_x,
                 cell_y,
                 cell_z,
+                center_x,
+                center_y,
+                center_z,
                 shape_kind,
                 material_id,
                 current_health,
@@ -129,12 +132,15 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
                 reader.GetInt32(0),
                 reader.GetString(1),
                 new Vector3(reader.GetFloat(2), reader.GetFloat(3), reader.GetFloat(4)),
-                ShapeKind: Enum.Parse<GeometryShapeKind>(reader.GetString(5), ignoreCase: true),
-                MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(6), ignoreCase: true),
-                CurrentHealth: reader.GetInt32(7),
-                MaxHealth: reader.GetInt32(8),
-                CreatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(9)),
-                UpdatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(10))));
+                ShapeKind: Enum.Parse<GeometryShapeKind>(reader.GetString(8), ignoreCase: true),
+                MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(9), ignoreCase: true),
+                CurrentHealth: reader.GetInt32(10),
+                MaxHealth: reader.GetInt32(11),
+                CreatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(12)),
+                UpdatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(13)),
+                CenterPosition: reader.IsDBNull(5) || reader.IsDBNull(6) || reader.IsDBNull(7)
+                    ? null
+                    : new Vector3(reader.GetFloat(5), reader.GetFloat(6), reader.GetFloat(7))));
         }
 
         return cubes;
@@ -151,6 +157,9 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
                 cell_x,
                 cell_y,
                 cell_z,
+                center_x,
+                center_y,
+                center_z,
                 shape_kind,
                 material_id,
                 current_health,
@@ -164,6 +173,9 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
                 $cellX,
                 $cellY,
                 $cellZ,
+                $centerX,
+                $centerY,
+                $centerZ,
                 $shapeKind,
                 $materialId,
                 $currentHealth,
@@ -176,6 +188,9 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
                 cell_x = excluded.cell_x,
                 cell_y = excluded.cell_y,
                 cell_z = excluded.cell_z,
+                center_x = excluded.center_x,
+                center_y = excluded.center_y,
+                center_z = excluded.center_z,
                 shape_kind = excluded.shape_kind,
                 material_id = excluded.material_id,
                 current_health = excluded.current_health,
@@ -187,6 +202,9 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         command.Parameters.AddWithValue("$cellX", cube.CellPosition.X);
         command.Parameters.AddWithValue("$cellY", cube.CellPosition.Y);
         command.Parameters.AddWithValue("$cellZ", cube.CellPosition.Z);
+        command.Parameters.AddWithValue("$centerX", (object?)cube.CenterPosition?.X ?? DBNull.Value);
+        command.Parameters.AddWithValue("$centerY", (object?)cube.CenterPosition?.Y ?? DBNull.Value);
+        command.Parameters.AddWithValue("$centerZ", (object?)cube.CenterPosition?.Z ?? DBNull.Value);
         command.Parameters.AddWithValue("$shapeKind", cube.ShapeKind.ToString());
         command.Parameters.AddWithValue("$materialId", cube.MaterialId.ToString());
         command.Parameters.AddWithValue("$currentHealth", cube.CurrentHealth);

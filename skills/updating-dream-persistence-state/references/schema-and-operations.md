@@ -69,16 +69,17 @@ Typical updates:
 Use for placed/destructible world cubes:
 
 - `cube_id`
-- `asset_key`
-- `material_key`
-- `position_x`, `position_y`, `position_z`
-- `size_x`, `size_y`, `size_z`
-- `is_destroyed`
+- `owner_player_name`
+- `cell_x`, `cell_y`, `cell_z`: coarse grid ownership cell
+- `center_x`, `center_y`, `center_z`: nullable exact render/physics center for pushed dynamic cubes
+- `shape_kind`
+- `material_id`
+- `current_health`, `max_health`
 
 Typical updates:
 
-- move or resize cubes
-- mark a bad cube as destroyed
+- move a cube by updating both its coarse cell and exact center
+- repair bad cube HP/material data
 
 ### `cube_fracture_pieces`
 

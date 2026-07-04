@@ -88,6 +88,14 @@ public class Player : IReplicatedPlayerTarget
         LastReportedPosition = currentPosition;
     }
 
+    public void SyncCameraFromBody(PlayerSimulationTuning tuning)
+    {
+        LastReportedPosition = _cameraRig.SyncFromBody(
+            PhysicsBody,
+            tuning.EyeHeightOffset,
+            tuning.MouseSensitivity);
+    }
+
     public void ApplyImmediateLook(Vector2 lookDelta, float mouseSensitivity, bool allowLook)
     {
         _cameraRig.ApplyImmediateLook(mouseSensitivity, lookDelta, allowLook && !_motor.IsFrozen);

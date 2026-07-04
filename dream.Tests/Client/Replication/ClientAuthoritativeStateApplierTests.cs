@@ -84,6 +84,22 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldMutations_AddsReplicatedPlacedCubesAsDynamicBodies()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(
+            runtime.Map,
+            [new WorldMutationDelta(WorldMutationKind.CubePlaced, new Vector3(6f, 1f, 6f))]);
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        Assert.Contains(
+            runtime.Physics.DynamicMapCubeBodies,
+            body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+    }
+
+    [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_ReconcilesFracturedCubeCells()
     {
         Map map = new(loadVisualAssets: false, width: 10, depth: 10);
@@ -151,6 +167,70 @@ public class ClientAuthoritativeStateApplierTests
 
         Assert.NotNull(runtime.Map.TryGetCubeAtCell(6, 1, 6));
         Assert.True(runtime.Physics.MapCubeBodies.Count > initialCollisionBodyCount);
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AddsReplicatedPlacedCubesAsDynamicBodies()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        ServerSnapshotEnvelope snapshot = new(
+            33,
+            new Dictionary<string, ulong>(),
+            Array.Empty<ActorSnapshot>(),
+            PlayerInteractionMode.Building,
+            new WorldSnapshot(
+                runtime.Map.Width,
+                runtime.Map.Height,
+                runtime.Map.Depth,
+                [new Vector3(6f, 1f, 6f)]),
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+
+        RemoteWorldMutationApplier.ApplySnapshotToRuntime(runtime, snapshot);
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        Assert.Contains(
+            runtime.Physics.DynamicMapCubeBodies,
+            body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AlignsDynamicCubeRenderAndCollisionToAuthoritativeCenter()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        Vector3 cell = new(6f, 1f, 6f);
+        Vector3 authoritativeCenter = new(6.72f, 1.5f, 6.18f);
+        ServerSnapshotEnvelope snapshot = new(
+            33,
+            new Dictionary<string, ulong>(),
+            Array.Empty<ActorSnapshot>(),
+            PlayerInteractionMode.Building,
+            new WorldSnapshot(
+                runtime.Map.Width,
+                runtime.Map.Height,
+                runtime.Map.Depth,
+                [cell],
+                PlacedCubes: [new PlacedCubeSnapshot(cell, authoritativeCenter)]),
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+
+        RemoteWorldMutationApplier.ApplySnapshotToRuntime(runtime, snapshot);
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        AssertVector3(authoritativeCenter, cube.Position);
+        GeometryRenderExport export = runtime.Map.CaptureGeometryRenderExport(authoritativeCenter, 2f);
+        Assert.Contains(
+            export.DynamicCompatibilityCubes,
+            candidate => ReferenceEquals(candidate, cube) && ApproximatelyEqual(candidate.Position, authoritativeCenter));
+        BulletSharp.RigidBody body = Assert.Single(
+            runtime.Physics.DynamicMapCubeBodies,
+            candidate => candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+        body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+        Assert.Equal(authoritativeCenter.X, transform.Origin.X, 3);
+        Assert.Equal(authoritativeCenter.Y, transform.Origin.Y, 3);
+        Assert.Equal(authoritativeCenter.Z, transform.Origin.Z, 3);
     }
 
     [Fact]
@@ -597,6 +677,20 @@ public class ClientAuthoritativeStateApplierTests
         return blockMin.X < cellMax.X && blockMax.X > cellMin.X &&
             blockMin.Y < cellMax.Y && blockMax.Y > cellMin.Y &&
             blockMin.Z < cellMax.Z && blockMax.Z > cellMin.Z;
+    }
+
+    private static void AssertVector3(Vector3 expected, Vector3 actual)
+    {
+        Assert.Equal(expected.X, actual.X, 3);
+        Assert.Equal(expected.Y, actual.Y, 3);
+        Assert.Equal(expected.Z, actual.Z, 3);
+    }
+
+    private static bool ApproximatelyEqual(Vector3 left, Vector3 right)
+    {
+        return MathF.Abs(left.X - right.X) < 0.001f &&
+            MathF.Abs(left.Y - right.Y) < 0.001f &&
+            MathF.Abs(left.Z - right.Z) < 0.001f;
     }
 
     private sealed class FakeReplicatedPlayerTarget : IReplicatedPlayerTarget

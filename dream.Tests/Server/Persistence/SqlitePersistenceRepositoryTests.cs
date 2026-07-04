@@ -126,7 +126,8 @@ public sealed class SqlitePersistenceRepositoryTests
             CurrentHealth: 35,
             MaxHealth: 50,
             CreatedUtc: createdUtc,
-            UpdatedUtc: createdUtc);
+            UpdatedUtc: createdUtc,
+            CenterPosition: new Vector3(6.72f, 2.5f, 9.18f));
 
         repository.SavePlacedCube(cube);
         PersistedPlacedCube loaded = Assert.Single(repository.LoadPlacedCubes());
@@ -134,6 +135,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(41, loaded.CubeId);
         Assert.Equal("builder-a", loaded.OwnerPlayerName);
         Assert.Equal(cube.CellPosition, loaded.CellPosition);
+        Assert.Equal(cube.CenterPosition, loaded.CenterPosition);
         Assert.Equal(GeometryShapeKind.SolidCube, loaded.ShapeKind);
         Assert.Equal(GeometryMaterialId.Grass, loaded.MaterialId);
         Assert.Equal(35, loaded.CurrentHealth);

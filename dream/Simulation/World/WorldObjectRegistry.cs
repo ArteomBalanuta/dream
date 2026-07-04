@@ -89,6 +89,13 @@ public sealed class WorldObjectRegistry
         return record != null;
     }
 
+    public IReadOnlyList<WorldObjectRecord> GetCubeRecords()
+    {
+        return _records.Values
+            .Where(record => record.SourceObject is Cube)
+            .ToArray();
+    }
+
     public WorldObjectCubeSnapshot CreateCubeSnapshot()
     {
         List<WorldObjectCubeSnapshotEntry> entries = new(_records.Count);
