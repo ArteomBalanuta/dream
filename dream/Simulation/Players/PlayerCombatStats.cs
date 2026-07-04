@@ -1,3 +1,5 @@
+using Dream.Simulation.Inventory;
+
 namespace Dream.Simulation.Players;
 
 public sealed class PlayerCombatStats
@@ -48,5 +50,16 @@ public sealed class PlayerCombatStats
             maxHealth,
             0.15f,
             1.0f / AttackSpeed);
+    }
+
+    public static PlayerCombatStats Combine(PlayerCombatStats baseStats, ToolStatModifier modifier)
+    {
+        ArgumentNullException.ThrowIfNull(baseStats);
+        return new PlayerCombatStats
+        {
+            Strength = baseStats.Strength + modifier.StrengthBonus,
+            AttackSpeed = baseStats.AttackSpeed + modifier.AttackSpeedBonus,
+            Vitality = baseStats.Vitality + modifier.VitalityBonus
+        };
     }
 }

@@ -26,8 +26,10 @@ Exit criteria:
 
 1. Load persisted item instances and slot assignments into the runtime.
 2. Seed starter inventory for first-time players.
-3. Build authoritative inventory snapshots by player name.
-4. Persist equipped-slot changes.
+3. Store base player stats in persistence and keep equipped-tool state separate.
+4. Recompute effective combat stats on the server from base stats plus the equipped tool.
+5. Build authoritative inventory snapshots by player name.
+6. Persist equipped-slot changes.
 
 Exit criteria:
 
@@ -50,6 +52,7 @@ Exit criteria:
 3. Add a standalone HUD inventory overlay with a `4x4` grid.
 4. Send equip actions when an occupied slot is clicked.
 5. Apply join/result snapshots locally and update the held-item viewmodel.
+6. Remove remote-client local stat pre-application so server results stay authoritative.
 
 Exit criteria:
 

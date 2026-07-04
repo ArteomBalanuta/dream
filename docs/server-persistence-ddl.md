@@ -35,8 +35,13 @@ Key fields:
 Used for:
 
 - creating or restoring a named player profile at join time
-- persisting authoritative stat and mode changes
+- persisting authoritative base stat and mode changes
 - reconnect restore of long-lived character state
+
+Important note:
+
+- effective combat stats from equipped tools are not stored here
+- they are recomputed on the server from base stats plus equipped inventory state
 
 ### `player_world_state`
 

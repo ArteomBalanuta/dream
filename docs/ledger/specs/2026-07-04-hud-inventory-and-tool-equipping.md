@@ -16,7 +16,6 @@ Scope: Authoritative inventory ownership, join/action replication, HUD overlay b
 - full loot, pickup, or drop gameplay
 - stack splitting or drag-and-drop inventory management
 - remote third-person held-item attachments in this slice
-- item stat modifiers changing combat math in this slice
 
 ## Authoritative Model
 
@@ -33,6 +32,7 @@ Scope: Authoritative inventory ownership, join/action replication, HUD overlay b
 - Items are runtime instances with persistent `item_instance_id`.
 - Item definitions are resolved from `item_kind`.
 - Tool presentation uses `visual_id`, which maps to held-item viewmodel definitions on the client.
+- Tool definitions may also carry authoritative combat modifiers for damage-driving stats and attack speed.
 
 ### Starter Loadout
 
@@ -49,6 +49,17 @@ On first join of a new named player, the server seeds a small starter loadout in
 The client sends an explicit equip action with the clicked backpack slot index.
 
 The server validates the slot, updates equipped state, persists it, and returns a fresh authoritative inventory snapshot in the action result.
+
+## Authoritative Combat Stats
+
+- Persistent player profile rows store base player stats.
+- Equipped-tool state stays in inventory persistence.
+- The server computes effective combat stats from:
+  - persisted base stats
+  - the currently equipped tool modifier
+- Attack cadence remains authoritative through server-side `AttackIntervalSeconds`.
+- Damage application remains authoritative on the server.
+- The client may mirror the resulting effective profile for HUD/viewmodel responsiveness, but it does not decide combat cadence or damage.
 
 ## HUD Behavior
 

@@ -372,6 +372,56 @@ public class AuthoritativeActionFlowTests
     }
 
     [Fact]
+    public void ProcessAuthoritativeAction_EquippedFastTool_Shortens_Authoritative_AttackCooldown()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.TryCaptureInventorySnapshot(PlayerSessionId.LocalDefault);
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            1,
+            new BuildUseIntent(new Vector3(6f, 1f, 5f))));
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            2,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(12, 2.5f, 11))));
+        runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            3,
+            new InventoryEquipIntent(1)));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Vector3 cubeCenter = new Vector3(6.5f, 1.5f, 5.5f);
+        Vector3 lookDirection = (cubeCenter - runtime.Player.Camera.Position).Normalized();
+        runtime.Player.SetFacing(lookDirection);
+
+        AuthoritativeActionResult first = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            4,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+        runtime.AdvanceAuthoritativeTick(
+            serverTick: 1,
+            deltaTime: 0.30f,
+            commandFrame: new PlayerCommandFrame(
+                PlayerSessionId.LocalDefault,
+                5,
+                PlayerModeSwitchIntent.None,
+                PlayerMoveIntent.None,
+                PlayerLookIntent.None,
+                PrimaryUsePressed: false),
+            playerTuning: CreatePlayerTuning(),
+            allowGameplaySimulation: false);
+        AuthoritativeActionResult second = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            6,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+
+        Assert.True(first.Accepted);
+        Assert.True(second.Accepted);
+        Assert.Equal(4.0f, runtime.Player.Combatant.Stats.AttackSpeed, 3);
+        Assert.Equal(0.25f, runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds, 3);
+    }
+
+    [Fact]
     public void ProcessAuthoritativeAction_FatalCubeHit_FracturesCubeAndQueuesFractureReplication()
     {
         using WorldSessionRuntime runtime = CreateRuntime();

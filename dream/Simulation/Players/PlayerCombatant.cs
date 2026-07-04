@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
 
 namespace Dream.Simulation.Players;
@@ -12,6 +13,9 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
     private float _attackCooldownRemaining;
+    private ToolStatModifier _equippedToolModifier;
+
+    public PlayerCombatStats BaseStats { get; }
 
     public PlayerCombatStats Stats { get; }
 
@@ -31,8 +35,12 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         _positionProvider = positionProvider;
         _eventHub = eventHub;
         _anchorHeightOffset = anchorHeightOffset;
-        Stats = stats ?? new PlayerCombatStats();
-        DerivedStats = Stats.Derive();
+        BaseStats = new PlayerCombatStats();
+        Stats = new PlayerCombatStats();
+        BaseStats.Strength = (stats ?? new PlayerCombatStats()).Strength;
+        BaseStats.AttackSpeed = (stats ?? new PlayerCombatStats()).AttackSpeed;
+        BaseStats.Vitality = (stats ?? new PlayerCombatStats()).Vitality;
+        RecalculateEffectiveStats();
         Health = new HealthState(DerivedStats.MaxHealth);
         Actor = new CombatActorHandle(actorId, CreatureKind.Player, Health, this);
     }
@@ -53,14 +61,37 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         _attackCooldownRemaining = Math.Max(0f, _attackCooldownRemaining - Math.Max(0f, deltaTime));
     }
 
+    public void ApplyBaseStats(PlayerCombatStats updatedStats)
+    {
+        BaseStats.Strength = updatedStats.Strength;
+        BaseStats.AttackSpeed = updatedStats.AttackSpeed;
+        BaseStats.Vitality = updatedStats.Vitality;
+
+        RecalculateEffectiveStats();
+    }
+
     public void ApplyStats(PlayerCombatStats updatedStats)
     {
-        Stats.Strength = updatedStats.Strength;
-        Stats.AttackSpeed = updatedStats.AttackSpeed;
-        Stats.Vitality = updatedStats.Vitality;
+        ApplyBaseStats(updatedStats);
+    }
 
+    public void ApplyEquippedToolModifier(ToolStatModifier modifier)
+    {
+        _equippedToolModifier = modifier;
+        RecalculateEffectiveStats();
+    }
+
+    private void RecalculateEffectiveStats()
+    {
+        PlayerCombatStats effectiveStats = PlayerCombatStats.Combine(BaseStats, _equippedToolModifier);
+        Stats.Strength = effectiveStats.Strength;
+        Stats.AttackSpeed = effectiveStats.AttackSpeed;
+        Stats.Vitality = effectiveStats.Vitality;
         DerivedStats = Stats.Derive();
-        Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);
+        if (Health != null)
+        {
+            Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);
+        }
     }
 
     public bool TryStartAttack()

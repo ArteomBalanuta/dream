@@ -63,7 +63,7 @@ public static class ClientCorrectionApplier
 
         if (actor.Value.CombatStats.HasValue)
         {
-            runtime.Player.Combatant.ApplyStats(actor.Value.CombatStats.Value.ToCombatStats());
+            runtime.Player.Combatant.ApplyBaseStats(actor.Value.CombatStats.Value.ToCombatStats());
         }
 
         runtime.Player.SetWorldPosition(actor.Value.Position);

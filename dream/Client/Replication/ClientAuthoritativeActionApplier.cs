@@ -60,7 +60,7 @@ public static class ClientAuthoritativeActionApplier
                 break;
 
             case PlayerStatsUpdateResult statsUpdate:
-                runtime.Player.Combatant.ApplyStats(statsUpdate.Stats.ToCombatStats());
+                runtime.Player.Combatant.ApplyBaseStats(statsUpdate.Stats.ToCombatStats());
                 break;
         }
 

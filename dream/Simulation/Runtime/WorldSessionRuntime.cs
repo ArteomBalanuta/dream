@@ -163,6 +163,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         PersistedPlayerWorldState? worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
+        RefreshAuthoritativePlayerCombatStats(sessionId);
     }
 
     public PlayerInventorySnapshot? TryCaptureInventorySnapshot(PlayerSessionId sessionId)
@@ -173,6 +174,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         }
 
         EnsurePlayerInventory(player.DisplayName);
+        RefreshAuthoritativePlayerCombatStats(sessionId);
         return BuildInventorySnapshot(player.DisplayName);
     }
 
@@ -407,7 +409,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 playerTarget.Combatant.Health.MaxHealth,
                 playerTarget.IsAlive,
                 playerTarget.InteractionMode,
-                PlayerCombatStatsSnapshot.From(playerTarget.Combatant.Stats),
+                PlayerCombatStatsSnapshot.From(playerTarget.Combatant.BaseStats),
                 displayName));
         }
 
@@ -771,7 +773,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
-        playerTarget.Combatant.ApplyStats(new PlayerCombatStats
+        playerTarget.Combatant.ApplyBaseStats(new PlayerCombatStats
         {
             Strength = profile.Stats.Strength,
             AttackSpeed = profile.Stats.AttackSpeed,
@@ -781,7 +783,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
         int currentHealth = worldState?.CurrentHealth ?? profile.Stats.CurrentHealth;
-        int maxHealth = profile.Stats.MaxHealth;
+        int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
 
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())
@@ -949,7 +951,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         PlayerCombatant combatant,
         PlayerStatsUpdateIntent intent)
     {
-        combatant.ApplyStats(intent.Stats.ToCombatStats());
+        combatant.ApplyBaseStats(intent.Stats.ToCombatStats());
         PersistPlayerProfile(message.SessionId, combatant);
 
         return new AuthoritativeActionResult(
@@ -957,7 +959,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             message.ActionSequence,
             CurrentServerTick,
             Accepted: true,
-            Payload: new PlayerStatsUpdateResult(PlayerCombatStatsSnapshot.From(combatant.Stats)));
+            Payload: new PlayerStatsUpdateResult(PlayerCombatStatsSnapshot.From(combatant.BaseStats)));
     }
 
     private AuthoritativeActionResult ProcessInventoryEquipAction(
@@ -980,6 +982,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
         PersistInventorySlot(player.DisplayName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+        RefreshAuthoritativePlayerCombatStats(message.SessionId);
 
         return new AuthoritativeActionResult(
             message.SessionId.Value,
@@ -1131,6 +1134,18 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         SeedStarterInventory(playerName, slots);
     }
 
+    private void RefreshAuthoritativePlayerCombatStats(PlayerSessionId sessionId)
+    {
+        if (!TryResolveAuthoritativePlayerTarget(sessionId, out ConnectedPlayer? player, out IAuthoritativePlayerTarget? target)
+            || player == null
+            || target == null)
+        {
+            return;
+        }
+
+        target.Combatant.ApplyEquippedToolModifier(ResolveEquippedToolModifier(player.DisplayName));
+    }
+
     private void SeedStarterInventory(string playerName, Dictionary<int, long> slots)
     {
         int slotIndex = 0;
@@ -1204,6 +1219,18 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             item.StackCount,
             definition.Description,
             definition.DetailLines);
+    }
+
+    private ToolStatModifier ResolveEquippedToolModifier(string playerName)
+    {
+        if (!_inventorySlotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long itemInstanceId)
+            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        {
+            return default;
+        }
+
+        return ToolCatalog.Resolve(item.ItemKind).StatModifier;
     }
 
     private Dictionary<int, long> GetOrCreateInventorySlots(string playerName)
@@ -1315,12 +1342,12 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Stats = new PersistedCreatureStats(
                 CurrentHealth: combatant.Health.CurrentHealth,
                 MaxHealth: combatant.Health.MaxHealth,
-                Strength: combatant.Stats.Strength,
+                Strength: combatant.BaseStats.Strength,
                 Agility: 10,
-                Vitality: combatant.Stats.Vitality,
+                Vitality: combatant.BaseStats.Vitality,
                 Energy: 10,
                 MovementSpeed: 6f,
-                AttackSpeed: combatant.Stats.AttackSpeed,
+                AttackSpeed: combatant.BaseStats.AttackSpeed,
                 Level: 1)
         });
     }

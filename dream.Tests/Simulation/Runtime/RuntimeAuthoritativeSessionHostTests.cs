@@ -244,11 +244,14 @@ public class RuntimeAuthoritativeSessionHostTests
         host.JoinSession("session-a", "Player A");
 
         Assert.Equal(PlayerInteractionMode.Combat, runtime.InteractionMode);
-        Assert.Equal(17, runtime.Player.Combatant.Stats.Strength);
-        Assert.Equal(3.5f, runtime.Player.Combatant.Stats.AttackSpeed);
+        Assert.Equal(17, runtime.Player.Combatant.BaseStats.Strength);
+        Assert.Equal(3.5f, runtime.Player.Combatant.BaseStats.AttackSpeed);
+        Assert.Equal(14, runtime.Player.Combatant.BaseStats.Vitality);
+        Assert.Equal(19, runtime.Player.Combatant.Stats.Strength);
+        Assert.Equal(3.75f, runtime.Player.Combatant.Stats.AttackSpeed);
         Assert.Equal(14, runtime.Player.Combatant.Stats.Vitality);
         Assert.Equal(73, runtime.Player.Combatant.Health.CurrentHealth);
-        Assert.Equal(100, runtime.Player.Combatant.Health.MaxHealth);
+        Assert.Equal(120, runtime.Player.Combatant.Health.MaxHealth);
         Assert.Equal(11f, runtime.Player.GetWorldPosition().X, 3);
         Assert.Equal(7f, runtime.Player.GetWorldPosition().Z, 3);
         Assert.Equal(1f, runtime.Player.Camera.Front.X, 3);
@@ -288,6 +291,46 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal("Field Blade", payload.Inventory.EquippedSlot?.Item?.DisplayName);
         InventorySlotSnapshot equippedBackpackSlot = Assert.Single(payload.Inventory.Slots, slot => slot.IsEquipped);
         Assert.Equal(1, equippedBackpackSlot.SlotIndex);
+    }
+
+    [Fact]
+    public void ProcessAction_InventoryEquip_Recomputes_EffectiveStats_But_Persists_BaseStats()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("session-a", "Player A");
+
+        host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            1,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(12, 2.5f, 11))));
+        host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            2,
+            new InventoryEquipIntent(1)));
+
+        Assert.Equal(12, runtime.Player.Combatant.BaseStats.Strength);
+        Assert.Equal(2.5f, runtime.Player.Combatant.BaseStats.AttackSpeed, 3);
+        Assert.Equal(11, runtime.Player.Combatant.BaseStats.Vitality);
+        Assert.Equal(16, runtime.Player.Combatant.Stats.Strength);
+        Assert.Equal(4.0f, runtime.Player.Combatant.Stats.AttackSpeed, 3);
+        Assert.Equal(11, runtime.Player.Combatant.Stats.Vitality);
+
+        PersistedPlayerProfile? persisted = playerProfiles.TryGet("Player A");
+        Assert.True(persisted.HasValue);
+        PersistedPlayerProfile profile = persisted.Value;
+        Assert.Equal(12, profile.Stats.Strength);
+        Assert.Equal(2.5f, profile.Stats.AttackSpeed, 3);
+        Assert.Equal(11, profile.Stats.Vitality);
     }
 
     [Fact]

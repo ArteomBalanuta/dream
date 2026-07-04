@@ -554,11 +554,10 @@ public class PlayScene : IDisposable
         {
             PlayerCombatStats updatedStats = new()
             {
-                Strength = request.Strength ?? _runtime.Player.Combatant.Stats.Strength,
-                AttackSpeed = request.AttackSpeed ?? _runtime.Player.Combatant.Stats.AttackSpeed,
-                Vitality = request.Vitality ?? _runtime.Player.Combatant.Stats.Vitality
+                Strength = request.Strength ?? _runtime.Player.Combatant.BaseStats.Strength,
+                AttackSpeed = request.AttackSpeed ?? _runtime.Player.Combatant.BaseStats.AttackSpeed,
+                Vitality = request.Vitality ?? _runtime.Player.Combatant.BaseStats.Vitality
             };
-            _runtime.Player.Combatant.ApplyStats(updatedStats);
 
             if (_remoteClient != null)
             {
@@ -566,6 +565,10 @@ public class PlayScene : IDisposable
                     new PlayerSessionId(_remoteClient.SessionId),
                     _nextLocalActionSequence++,
                     new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
+            }
+            else
+            {
+                _runtime.Player.Combatant.ApplyBaseStats(updatedStats);
             }
 
             persistDesktopConfig = true;
@@ -611,7 +614,7 @@ public class PlayScene : IDisposable
             return;
         }
 
-        _desktopClientConfig.CaptureRuntime(_settings, _runtime.Player.Combatant.Stats);
+        _desktopClientConfig.CaptureRuntime(_settings, _runtime.Player.Combatant.BaseStats);
         _persistDesktopClientConfig();
     }
 
@@ -625,7 +628,19 @@ public class PlayScene : IDisposable
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
-        string heldItemId = inventory?.EquippedSlot?.Item?.VisualId ?? ViewModelAssets.DefaultLoadout.HeldItemId;
+        string heldItemId;
+        ToolStatModifier modifier = default;
+        if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
+        {
+            heldItemId = equippedItem.VisualId;
+            modifier = ToolCatalog.Resolve(equippedItem.ItemKind).StatModifier;
+        }
+        else
+        {
+            heldItemId = ViewModelAssets.DefaultLoadout.HeldItemId;
+        }
+
+        _runtime.Player.Combatant.ApplyEquippedToolModifier(modifier);
         _viewModelController.SetHeldItem(heldItemId);
     }
 }

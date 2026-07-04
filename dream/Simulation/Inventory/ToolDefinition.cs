@@ -5,4 +5,5 @@ public readonly record struct ToolDefinition(
     string DisplayName,
     string Description,
     string VisualId,
-    IReadOnlyList<string> DetailLines);
+    IReadOnlyList<string> DetailLines,
+    ToolStatModifier StatModifier);
