@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Simulation.World;
@@ -41,6 +42,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
 
         _transport.Start();
         _started = true;
+        NetworkDiagnosticsLog.Write("server.start", $"port={Port}");
     }
 
     public void AttachConnection(ServerConnection connection)
@@ -54,13 +56,18 @@ public sealed class DedicatedServerService : IAsyncDisposable
         ITransportConnection accepted = await _transport.AcceptClientAsync(cancellationToken);
         ServerConnection connection = new(accepted, _host, _codec, _framer);
         AttachConnection(connection);
+        NetworkDiagnosticsLog.Write(
+            "server.accept",
+            $"connection={connection.ConnectionId} connections={_connections.Count}");
         _ = RunConnectionLoopAsync(connection, cancellationToken);
         return connection;
     }
 
     public async ValueTask<int> AdvanceOnceAsync(double elapsedSeconds, CancellationToken cancellationToken = default)
     {
+        Stopwatch? advanceStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
+        advanceStopwatch?.Stop();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
             return executedTicks;
@@ -71,14 +78,23 @@ public sealed class DedicatedServerService : IAsyncDisposable
             .ToArray();
         if (joinedConnections.Length == 0)
         {
+            NetworkDiagnosticsLog.WriteEvery(
+                "server.tick.unjoined",
+                TimeSpan.FromSeconds(1),
+                "server.tick",
+                () => $"ticks={executedTicks} connections={_connections.Count} joined=0 advanceMs={advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00}");
             return executedTicks;
         }
 
+        Stopwatch? snapshotStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         ServerSnapshotMessage snapshot = _host.CreateSnapshotMessage();
+        snapshotStopwatch?.Stop();
+        Stopwatch? broadcastStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         foreach (ServerConnection connection in joinedConnections)
         {
             await connection.SendSnapshotAsync(snapshot, cancellationToken);
         }
+        broadcastStopwatch?.Stop();
 
         IReadOnlyList<AuthoritativeActionResult> pendingActionResults = _host.DrainPendingActionResults();
         if (pendingActionResults.Count > 0)
@@ -97,6 +113,16 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 }
             }
         }
+
+        NetworkDiagnosticsLog.WriteEvery(
+            "server.tick.joined",
+            TimeSpan.FromSeconds(1),
+            "server.tick",
+            () => $"ticks={executedTicks} elapsed={elapsedSeconds * 1000d:0.00}ms connections={_connections.Count} " +
+                $"joined={joinedConnections.Length} advanceMs={advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
+                $"snapshotMs={snapshotStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
+                $"broadcastMs={broadcastStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} actions={pendingActionResults.Count} " +
+                NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot));
 
         return executedTicks;
     }
@@ -163,6 +189,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             _connections.TryRemove(connection.ConnectionId, out _);
             _host.ReleaseConnection(connection.ConnectionId);
+            NetworkDiagnosticsLog.Write(
+                "server.disconnect",
+                $"connection={connection.ConnectionId} connections={_connections.Count}");
             await connection.DisposeAsync();
         }
     }

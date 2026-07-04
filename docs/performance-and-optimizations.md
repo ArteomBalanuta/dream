@@ -158,6 +158,10 @@ Guardrail: when diagnosing performance, prefer these counters and targeted tests
 
 For repeatable automated profiling, launch the desktop client with `DREAM_AUTO_CONNECT=1` and `DREAM_RENDER_PERF_LOG=1`. Auto-connect enters the integrated local server world without clicking the startup UI, and the render log prints the same performance counters once per second.
 
+For multiplayer visibility and host-FPS investigations, also use `DREAM_NET_DIAGNOSTICS=1`. This separate diagnostics stream is opt-in and rate-limited: it logs server accept/join/snapshot timing, client receive/apply facts, presenter remote-player state, render-side remote-player counts, and command-send latency. Use `DREAM_NET_DIAGNOSTICS_PATH` when the default output-folder `logs/network-diagnostics.log` path is inconvenient.
+
+Guardrail: leave network diagnostics disabled for normal FPS comparisons after the bug is understood. The stream is intentionally bounded, but file and console writes still add observer overhead.
+
 ### Optional Collision Debug Rendering
 
 Collision wireframes are optional and can be expensive in dense worlds. They should be disabled for runtime performance comparisons unless the collision overlay itself is the subject of the measurement.

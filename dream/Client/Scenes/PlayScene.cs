@@ -2,6 +2,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using System.Diagnostics;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Application;
 using Dream.Client.Input;
@@ -12,6 +13,7 @@ using Dream.Configuration;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
@@ -106,6 +108,11 @@ public class PlayScene : IDisposable
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
         _diagnostics = new MultiplayerDiagnostics();
+
+        NetworkDiagnosticsLog.Write(
+            "client.scene.start",
+            $"remote={_remoteClient != null} endpoint={ConnectedServerEndpoint ?? "<local>"} " +
+            $"localPresenterSession={_remoteClient?.SessionId ?? _runtime.LocalPlayerSessionId.Value}");
 
         if (_remoteClient == null)
         {
@@ -222,10 +229,11 @@ public class PlayScene : IDisposable
                 (float)args.Time);
         }
 
-        _render.RemotePlayers.Draw(
+        RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(
             presentation.Camera,
             remotePlayerStates,
             (float)args.Time);
+        LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
 
         if (_settings.ShowCollisionGeometry)
         {
@@ -282,12 +290,21 @@ public class PlayScene : IDisposable
         _clientProtocol.ApplyServerMessage(message);
         if (message is JoinAcceptedMessage joinAcceptedMessage && _remoteClient != null)
         {
+            NetworkDiagnosticsLog.Write(
+                "client.apply.join",
+                $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeJoin(joinAcceptedMessage)}");
             ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
+            LogPresenterDiagnostics("join");
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
         {
+            NetworkDiagnosticsLog.WriteEvery(
+                $"client.apply.snapshot.{_remoteClient?.SessionId ?? "local"}",
+                TimeSpan.FromSeconds(1),
+                "client.apply.snapshot",
+                () => $"local={_remoteClient?.SessionId ?? "<local>"} {NetworkDiagnosticsLog.DescribeSnapshot(snapshotMessage.Snapshot)}");
             if (_remoteClient != null)
             {
                 RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
@@ -301,12 +318,27 @@ public class PlayScene : IDisposable
             }
 
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot, _clientPresentationTimeSeconds);
+            LogPresenterDiagnostics("snapshot");
         }
         else if (message is ServerActionMessage actionMessage && _remoteClient != null)
         {
+            NetworkDiagnosticsLog.Write(
+                "client.apply.action",
+                $"local={_remoteClient.SessionId} resultSession={actionMessage.Result.SessionId} " +
+                $"seq={actionMessage.Result.ActionSequence} accepted={actionMessage.Result.Accepted} " +
+                $"payload={actionMessage.Result.Payload?.GetType().Name ?? "none"}");
             _actionSequences.ObserveActionResult(actionMessage.Result);
-            ClientAuthoritativeActionApplier.ApplyActionResult(_runtime, _events, actionMessage.Result, _diagnostics);
-            if (actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
+            bool resultTargetsLocalSession = string.Equals(
+                actionMessage.Result.SessionId,
+                _remoteClient.SessionId,
+                StringComparison.Ordinal);
+            ClientAuthoritativeActionApplier.ApplyActionResult(
+                _runtime,
+                _events,
+                actionMessage.Result,
+                _remoteClient.SessionId,
+                _diagnostics);
+            if (resultTargetsLocalSession && actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
             {
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
             }
@@ -464,7 +496,64 @@ public class PlayScene : IDisposable
             localCommandFrame,
             new PlayerSessionId(_remoteClient.SessionId),
             _runtime.Player.Camera.Front);
+        Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         _remoteClient.SendCommandFrameAsync(remoteCommandFrame).AsTask().GetAwaiter().GetResult();
+        stopwatch?.Stop();
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            double elapsedMilliseconds = stopwatch?.Elapsed.TotalMilliseconds ?? 0d;
+            NetworkDiagnosticsLog.WriteEvery(
+                $"client.scene.command.{_remoteClient.SessionId}",
+                TimeSpan.FromSeconds(1),
+                "client.scene.command",
+                $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sendMs={elapsedMilliseconds:0.00} " +
+                $"facing={NetworkDiagnosticsLog.FormatVector(remoteCommandFrame.LookIntent.Facing ?? _runtime.Player.Camera.Front)}");
+            if (elapsedMilliseconds > 4d)
+            {
+                NetworkDiagnosticsLog.WriteEvery(
+                    $"client.scene.command.slow.{_remoteClient.SessionId}",
+                    TimeSpan.FromSeconds(1),
+                    "client.scene.command.slow",
+                    $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sendMs={elapsedMilliseconds:0.00}");
+            }
+        }
+    }
+
+    private void LogPresenterDiagnostics(string source)
+    {
+        if (!NetworkDiagnosticsLog.ShouldLogEvery(
+                $"client.presenter.state.{_remoteClient?.SessionId ?? "local"}",
+                TimeSpan.FromSeconds(1)))
+        {
+            return;
+        }
+
+        ClientScenePresenterDebugState state = _scenePresenter.CaptureDebugState(
+            Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
+        NetworkDiagnosticsLog.Write(
+            "client.presenter.state",
+            $"source={source} local={state.LocalSessionId ?? "<none>"} roster={state.RosterCount}[{string.Join(", ", state.RosterSessions)}] " +
+            $"remoteEntries={state.RemoteEntryCount}[{string.Join(", ", state.RemoteSessions)}] sampled={state.SampledRemoteCount}");
+    }
+
+    private static void LogRemotePlayerRenderDiagnostics(
+        Camera camera,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates,
+        RemotePlayerRenderStats stats)
+    {
+        if (!NetworkDiagnosticsLog.ShouldLogEvery("client.render.remote", TimeSpan.FromSeconds(1)))
+        {
+            return;
+        }
+
+        string sessions = string.Join(
+            ", ",
+            remotePlayerStates.Select(player =>
+                $"{player.SessionId}#{player.ActorId}/{player.DisplayName}@{NetworkDiagnosticsLog.FormatVector(player.Pose.Position)} alive={player.IsAlive}"));
+        NetworkDiagnosticsLog.Write(
+            "client.render.remote",
+            $"camera={NetworkDiagnosticsLog.FormatVector(camera.Position)} input={stats.InputCount} alive={stats.AliveCount} " +
+            $"visible={stats.VisibleCount} cachedModels={stats.ModelCount} players=[{sessions}]");
     }
 
     private void ApplyImmediateLocalLook(PlayerCommandFrame commandFrame, bool allowGameplayInput)

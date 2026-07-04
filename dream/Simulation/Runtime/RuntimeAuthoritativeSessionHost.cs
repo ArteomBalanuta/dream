@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
@@ -42,13 +43,16 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             existing.MarkSpawned();
             existing.ResetAcceptedSequences();
             PlayerInventorySnapshot? existingInventory = Runtime.TryCaptureInventorySnapshot(existing.SessionId);
-            return new JoinAcceptedMessage(
+            JoinAcceptedMessage existingAccepted = new(
                 existing.SessionId.Value,
                 existing.ActorId,
                 Runtime.CurrentServerTick,
-                Runtime.ExportWorldSnapshot(),
-                BuildJoinedPlayerRoster(),
-                existingInventory);
+                InitialWorld: Runtime.ExportWorldSnapshot(),
+                Roster: BuildJoinedPlayerRoster(),
+                Inventory: existingInventory,
+                InitialActors: Runtime.CaptureActorSnapshots());
+            LogJoinAccepted("existing", existingAccepted);
+            return existingAccepted;
         }
 
         bool duplicateNameInUse = Runtime.Sessions.Players.Any(player =>
@@ -57,6 +61,9 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             string.Equals(player.DisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase));
         if (duplicateNameInUse)
         {
+            NetworkDiagnosticsLog.Write(
+                "authority.join.reject",
+                $"session={requestedSessionId} name={normalizedDisplayName} reason=duplicate-display-name");
             throw new InvalidOperationException(
                 $"Display name '{normalizedDisplayName}' is already claimed by another active player.");
         }
@@ -64,13 +71,16 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         ConnectedPlayer player = Runtime.AttachRemoteSession(sessionId, normalizedDisplayName);
         Runtime.RestorePersistedPlayerState(sessionId, player.DisplayName);
         PlayerInventorySnapshot? inventory = Runtime.TryCaptureInventorySnapshot(player.SessionId);
-        return new JoinAcceptedMessage(
+        JoinAcceptedMessage accepted = new(
             player.SessionId.Value,
             player.ActorId,
             Runtime.CurrentServerTick,
-            Runtime.ExportWorldSnapshot(),
-            BuildJoinedPlayerRoster(),
-            inventory);
+            InitialWorld: Runtime.ExportWorldSnapshot(),
+            Roster: BuildJoinedPlayerRoster(),
+            Inventory: inventory,
+            InitialActors: Runtime.CaptureActorSnapshots());
+        LogJoinAccepted("new", accepted);
+        return accepted;
     }
 
     public AuthoritativeActionResult ProcessAction(PlayerActionMessage message)
@@ -164,5 +174,17 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             .OrderBy(entry => entry.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.SessionId, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private void LogJoinAccepted(string path, JoinAcceptedMessage accepted)
+    {
+        string primary = Runtime.PrimaryRemoteSessionId?.Value ?? "<none>";
+        string sessions = string.Join(
+            ", ",
+            Runtime.Sessions.Players.Select(player =>
+                $"{player.SessionId.Value}#{player.ActorId}/{player.DisplayName}/local={player.IsLocal}/spawned={player.IsSpawned}"));
+        NetworkDiagnosticsLog.Write(
+            "authority.join.accept",
+            $"path={path} primary={primary} sessions=[{sessions}] {NetworkDiagnosticsLog.DescribeJoin(accepted)}");
     }
 }

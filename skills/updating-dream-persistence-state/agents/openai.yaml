@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Dream Persistence"
+  short_description: "Inspect and edit the live Dream SQLite state"
+  default_prompt: "Use $updating-dream-persistence-state to read the Dream DDL, locate the live SQLite database, inspect persisted rows, and safely update player or world state."

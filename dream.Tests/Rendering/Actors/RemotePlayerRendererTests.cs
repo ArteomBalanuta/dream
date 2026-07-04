@@ -30,7 +30,7 @@ public class RemotePlayerRendererTests
     }
 
     [Fact]
-    public void SelectVisiblePlayers_OnlyFiltersDeadOrTooDistantRemotePlayers()
+    public void SelectVisiblePlayers_KeepsDeadRemotePlayersVisibleWhileFilteringOnlyByDistance()
     {
         Camera camera = new(new Vector3(0f, 2f, 0f));
         List<RemotePlayerPresentationState> players =
@@ -66,7 +66,8 @@ public class RemotePlayerRendererTests
         Assert.Collection(
             visible.OrderBy(player => player.SessionId),
             first => Assert.Equal("behind", first.SessionId),
-            second => Assert.Equal("visible", second.SessionId));
+            second => Assert.Equal("dead", second.SessionId),
+            third => Assert.Equal("visible", third.SessionId));
     }
 
     [Fact]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Profile Dream Multiplayer"
+  short_description: "Launch clients and find bottlenecks"
+  default_prompt: "Use $profiling-dream-multiplayer to launch Dream clients and summarize performance bottlenecks."

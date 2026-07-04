@@ -30,6 +30,26 @@ public class ActorWorldLabelBuilderTests
     }
 
     [Fact]
+    public void CreateRemotePlayerLabels_KeepsDeadPlayersLabeled()
+    {
+        IReadOnlyList<WorldActorLabelState> labels = ActorWorldLabelBuilder.CreateRemotePlayerLabels(
+            [
+                new RemotePlayerPresentationState(
+                    8,
+                    "remote-dead",
+                    "Remote Dead",
+                    new InterpolatedActorPose(new Vector3(6f, 1.5f, 8f), -Vector3.UnitZ),
+                    0,
+                    100,
+                    false)
+            ]);
+
+        WorldActorLabelState label = Assert.Single(labels);
+        Assert.Equal("Remote Dead", label.DisplayName);
+        Assert.Equal("0/100", label.HealthLabel);
+    }
+
+    [Fact]
     public void CreateEnemyLabels_UsesEnemyDisplayNameAndHealthLine()
     {
         EnemyActor enemy = CreateEnemy("Wolf", new Vector3(2f, 0f, 3f), actorId: 2000, maxHealth: 100);

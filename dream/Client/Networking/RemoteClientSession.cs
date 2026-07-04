@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Simulation.Players;
@@ -48,14 +50,25 @@ public sealed class RemoteClientSession : IAsyncDisposable
         codec ??= new TransportJsonCodec();
         framer ??= new LengthPrefixedMessageFramer();
 
+        NetworkDiagnosticsLog.Write(
+            "client.connect.start",
+            $"endpoint={options.EndpointLabel} session={options.SessionId} name={options.DisplayName}");
+        Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         ITransportConnection connection = await transport.ConnectAsync(
             options.Host,
             options.Port,
             cancellationToken);
+        stopwatch?.Stop();
+        NetworkDiagnosticsLog.Write(
+            "client.connect.transport",
+            $"endpoint={options.EndpointLabel} connection={connection.ConnectionId} connectMs={stopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00}");
         RemoteClientSession session = new(connection, codec, framer, options);
         await session.SendHelloAsync(cancellationToken);
         await session.SendJoinRequestAsync(cancellationToken);
         session.StartBackgroundReceive();
+        NetworkDiagnosticsLog.Write(
+            "client.connect.ready",
+            $"endpoint={options.EndpointLabel} connection={connection.ConnectionId} session={options.SessionId}");
         return session;
     }
 
@@ -109,6 +122,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 ?? throw new InvalidOperationException(
                     $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
             _inboundMessages.Enqueue(serverMessage);
+            LogInbound(decoded.Envelope, serverMessage);
         }
 
         return true;
@@ -142,6 +156,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         byte[] payload = EncodeClientMessage(message);
         byte[] framed = _framer.Frame(payload);
+        Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
@@ -150,7 +165,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
         finally
         {
             _sendLock.Release();
+            stopwatch?.Stop();
         }
+
+        LogOutbound(message, framed.Length, stopwatch?.Elapsed.TotalMilliseconds ?? 0d);
     }
 
     private byte[] EncodeClientMessage(IClientToServerMessage message)
@@ -185,6 +203,79 @@ public sealed class RemoteClientSession : IAsyncDisposable
         finally
         {
             IsConnected = false;
+            NetworkDiagnosticsLog.Write(
+                "client.disconnect",
+                $"endpoint={Options.EndpointLabel} connection={_connection.ConnectionId} session={Options.SessionId}");
         }
+    }
+
+    private void LogInbound(TransportEnvelope envelope, IServerToClientMessage message)
+    {
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        string detail = message switch
+        {
+            JoinAcceptedMessage accepted => NetworkDiagnosticsLog.DescribeJoin(accepted),
+            JoinRejectedMessage rejected => $"reason={rejected.Reason}",
+            ServerSnapshotMessage snapshot => NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot),
+            ServerActionMessage action => $"session={action.Result.SessionId} actionSeq={action.Result.ActionSequence} accepted={action.Result.Accepted} payload={action.Result.Payload?.GetType().Name ?? "none"}",
+            ServerHelloMessage hello => $"server={hello.ServerName} protocol={hello.ProtocolVersion} tick={hello.CurrentServerTick}",
+            _ => string.Empty
+        };
+
+        string log = $"endpoint={Options.EndpointLabel} seq={envelope.Sequence} kind={message.MessageKind} queued={_inboundMessages.Count} {detail}";
+        if (message is ServerSnapshotMessage)
+        {
+            NetworkDiagnosticsLog.WriteEvery(
+                $"client.rx.snapshot.{Options.SessionId}",
+                TimeSpan.FromSeconds(1),
+                "client.rx",
+                log);
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write("client.rx", log);
+    }
+
+    private void LogOutbound(IClientToServerMessage message, int byteCount, double elapsedMilliseconds)
+    {
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        string detail = message switch
+        {
+            ClientJoinRequestMessage join => $"session={join.RequestedSessionId} name={join.DisplayName}",
+            PlayerCommandMessage command => $"session={command.CommandFrame.SessionId.Value} commandSeq={command.CommandFrame.Sequence}",
+            PlayerActionMessage action => $"session={action.SessionId.Value} actionSeq={action.ActionSequence} payload={action.Payload.GetType().Name}",
+            ClientHelloMessage hello => $"client={hello.ClientName}",
+            _ => string.Empty
+        };
+
+        string log = $"endpoint={Options.EndpointLabel} kind={message.MessageKind} bytes={byteCount} sendMs={elapsedMilliseconds:0.00} {detail}";
+        if (message is PlayerCommandMessage)
+        {
+            NetworkDiagnosticsLog.WriteEvery(
+                $"client.tx.command.{Options.SessionId}",
+                TimeSpan.FromSeconds(1),
+                "client.tx",
+                log);
+            if (elapsedMilliseconds > 4d)
+            {
+                NetworkDiagnosticsLog.WriteEvery(
+                    $"client.tx.command.slow.{Options.SessionId}",
+                    TimeSpan.FromSeconds(1),
+                    "client.tx.slow",
+                    log);
+            }
+
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write("client.tx", log);
     }
 }

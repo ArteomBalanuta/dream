@@ -7,6 +7,8 @@ using Dream.Application;
 using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Server.Rules;
+using Dream.Simulation.Combat;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -116,6 +118,116 @@ public class RuntimeAuthoritativeSessionHostTests
             secondClientPresenter.BuildRemotePlayerStates(renderTimeSeconds: 1.5),
             player => player.SessionId == "session-a");
         Assert.Equal("Host Player", hostModel.DisplayName);
+    }
+
+    [Fact]
+    public void ProcessAction_PrimaryDead_DoesNotBlockSecondaryRemoteEnemyCombat()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId primarySession = new("session-a");
+        PlayerSessionId secondarySession = new("session-b");
+        host.JoinSession(primarySession.Value, "Host Player");
+        host.JoinSession(secondarySession.Value, "Second Player");
+
+        runtime.Player.SetHealth(0, runtime.Player.Combatant.Health.MaxHealth);
+        runtime.Enemies.Clear();
+
+        ServerSnapshotEnvelope before = host.ExportSnapshot();
+        ActorSnapshot secondaryActor = Assert.Single(before.Actors, actor => actor.SessionId == secondarySession.Value);
+        EnemyCombatant combatant = new(
+            () => secondaryActor.Position + (Vector3.UnitX * 1.5f),
+            events,
+            actorId: 4001,
+            maxHealth: 100,
+            attackDamage: 10,
+            attackIntervalSeconds: 1f);
+        EnemyActor enemy = new(
+            combatant,
+            secondaryActor.Position + (Vector3.UnitX * 1.5f),
+            aggroRange: 10f,
+            attackRange: 1.35f,
+            moveSpeed: 3f,
+            displayName: "Wolf");
+        runtime.Enemies.Add(enemy);
+
+        host.AdvanceTick(
+            serverTick: 1,
+            SimulationClock.FixedDeltaSeconds,
+            [
+                new PlayerCommandFrame(
+                    secondarySession,
+                    1,
+                    new PlayerModeSwitchIntent(PlayerInteractionMode.Combat),
+                    PlayerMoveIntent.None,
+                    new PlayerLookIntent(0f, 0f, Vector3.UnitX),
+                    PrimaryUsePressed: false)
+            ],
+            CreatePlayerTuning(),
+            allowGameplaySimulation: false);
+
+        AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
+            secondarySession,
+            1,
+            new CombatUseIntent(Vector3.Zero, Vector3.UnitX)));
+
+        Assert.True(result.Accepted);
+        CombatResolutionResult payload = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.Equal(4001, payload.TargetActorId);
+        Assert.True(payload.DamageApplied > 0);
+        Assert.True(enemy.Combatant.Health.CurrentHealth < enemy.Combatant.Health.MaxHealth);
+    }
+
+    [Fact]
+    public void JoinSession_LateJoinerReceivesInitialActorSnapshotsForAlreadyJoinedPlayers()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+
+        host.JoinSession("session-a", "Host Player");
+        JoinAcceptedMessage accepted = host.JoinSession("session-b", "Second Player");
+
+        Assert.Contains(
+            accepted.EffectiveInitialActors,
+            actor => actor.Kind == CreatureKind.Player &&
+                actor.SessionId == "session-a" &&
+                actor.DisplayName == "Host Player");
+        Assert.Contains(
+            accepted.EffectiveInitialActors,
+            actor => actor.Kind == CreatureKind.Player &&
+                actor.SessionId == "session-b" &&
+                actor.DisplayName == "Second Player");
+    }
+
+    [Fact]
+    public void ProcessAction_PlayerStatsUpdateOnlyChangesActingPlayerStats()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId hostSession = new("session-a");
+        PlayerSessionId secondSession = new("session-b");
+        host.JoinSession(hostSession.Value, "Host Player");
+        host.JoinSession(secondSession.Value, "Second Player");
+
+        AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
+            hostSession,
+            1,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(22, 4.5f, 16))));
+
+        ServerSnapshotEnvelope snapshot = host.ExportSnapshot();
+        ActorSnapshot hostActor = Assert.Single(snapshot.Actors, actor => actor.SessionId == hostSession.Value);
+        ActorSnapshot secondActor = Assert.Single(snapshot.Actors, actor => actor.SessionId == secondSession.Value);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(22, hostActor.CombatStats?.Strength);
+        Assert.Equal(4.5f, hostActor.CombatStats?.AttackSpeed);
+        Assert.Equal(16, hostActor.CombatStats?.Vitality);
+        Assert.Equal(10, secondActor.CombatStats?.Strength);
+        Assert.Equal(2f, secondActor.CombatStats?.AttackSpeed);
+        Assert.Equal(10, secondActor.CombatStats?.Vitality);
     }
 
     [Fact]

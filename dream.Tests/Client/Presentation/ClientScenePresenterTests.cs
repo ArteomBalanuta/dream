@@ -96,6 +96,35 @@ public class ClientScenePresenterTests
     }
 
     [Fact]
+    public void ApplyJoinAccepted_InitialActorsHydrateVisibleRemotePlayersForLateJoiner()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "temporary-client-id");
+
+        presenter.ApplyJoinAccepted(new JoinAcceptedMessage(
+            "session-b",
+            102,
+            12,
+            InitialWorld: null,
+            Roster:
+            [
+                new PlayerRosterEntry("session-a", 101, "Host Player"),
+                new PlayerRosterEntry("session-b", 102, "Second Player")
+            ],
+            Inventory: null,
+            InitialActors:
+            [
+                new ActorSnapshot(101, CreatureKind.Player, "session-a", new Vector3(5f, 1.5f, 5f), -Vector3.UnitZ, 100, 100, true, null, null, "Host Player"),
+                new ActorSnapshot(102, CreatureKind.Player, "session-b", new Vector3(7f, 1.5f, 7f), -Vector3.UnitZ, 100, 100, true, null, null, "Second Player")
+            ]));
+
+        RemotePlayerPresentationState remote = Assert.Single(
+            presenter.BuildRemotePlayerStates(renderTimeSeconds: 0));
+        Assert.Equal("session-a", remote.SessionId);
+        Assert.Equal("Host Player", remote.DisplayName);
+        Assert.Equal(5f, remote.Pose.Position.X, 3);
+    }
+
+    [Fact]
     public void BuildRemotePlayerStates_ExcludesLocalPlayerAndProjectsRemotePlayers()
     {
         ClientScenePresenter presenter = new(localSessionId: "local-player");

@@ -123,7 +123,7 @@ That host-side foundation now also has its first live transport loop:
 3. `ServerConnection` deframes and decodes client protocol messages, routes them through `DedicatedServerHost`, and frames outbound replies
 4. `DedicatedServerService` advances the authoritative host independently on the fixed tick loop and broadcasts `ServerSnapshotMessage` frames only to connections that have completed join
 
-The current protocol behavior is intentionally conservative: a raw TCP connection may handshake with `client.hello`, but snapshot broadcast waits until the connection has joined a session.
+The current protocol behavior is intentionally conservative: a raw TCP connection may handshake with `client.hello`, but snapshot broadcast waits until the connection has joined a session. `server.join-accepted` now also carries initial actor snapshots for the already-joined shared world, so a late-joining client can render existing players immediately instead of waiting for the next broadcast tick.
 
 The host-side tick seam is now slightly broader too: `LatestPlayerCommandInbox` keeps the latest pending command per joined session, `DedicatedServerHost` drains those commands as a batch for each fixed tick, and `RuntimeAuthoritativeSessionHost` can now apply the primary controlled session plus additional lightweight remote-session actors from the same authoritative tick window.
 

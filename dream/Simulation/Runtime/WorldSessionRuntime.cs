@@ -408,6 +408,36 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public ServerSnapshotEnvelope ExportServerSnapshotEnvelope(bool includeWorldSnapshot = false)
     {
+        IReadOnlyList<ActorSnapshot> actors = CaptureActorSnapshots();
+        Dictionary<string, ulong> acceptedSequences = new();
+        foreach (ConnectedPlayer player in _sessions.Players)
+        {
+            if (player.LastAcceptedCommandSequence.HasValue)
+            {
+                acceptedSequences[player.SessionId.Value] = player.LastAcceptedCommandSequence.Value;
+            }
+        }
+
+        WorldSnapshot? worldSnapshot = includeWorldSnapshot
+            ? ExportWorldSnapshot()
+            : null;
+
+        ServerSnapshotEnvelope envelope = new(
+            CurrentServerTick,
+            acceptedSequences,
+            actors,
+            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
+            worldSnapshot,
+            _pendingWorldMutations.ToArray(),
+            _pendingDamageEvents.ToArray());
+
+        _pendingWorldMutations.Clear();
+        _pendingDamageEvents.Clear();
+        return envelope;
+    }
+
+    public IReadOnlyList<ActorSnapshot> CaptureActorSnapshots()
+    {
         List<ActorSnapshot> actors = [];
 
         foreach (IAuthoritativePlayerTarget playerTarget in EnumerateAuthoritativePlayerTargets())
@@ -450,31 +480,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 null,
                 actor.BehaviorState));
         }
-        Dictionary<string, ulong> acceptedSequences = new();
-        foreach (ConnectedPlayer player in _sessions.Players)
-        {
-            if (player.LastAcceptedCommandSequence.HasValue)
-            {
-                acceptedSequences[player.SessionId.Value] = player.LastAcceptedCommandSequence.Value;
-            }
-        }
 
-        WorldSnapshot? worldSnapshot = includeWorldSnapshot
-            ? ExportWorldSnapshot()
-            : null;
-
-        ServerSnapshotEnvelope envelope = new(
-            CurrentServerTick,
-            acceptedSequences,
-            actors,
-            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
-            worldSnapshot,
-            _pendingWorldMutations.ToArray(),
-            _pendingDamageEvents.ToArray());
-
-        _pendingWorldMutations.Clear();
-        _pendingDamageEvents.Clear();
-        return envelope;
+        return actors;
     }
 
     public WorldSnapshot ExportWorldSnapshot()

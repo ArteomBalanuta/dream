@@ -5,6 +5,7 @@
 - `dream/`: the main C# project directory
 - `dream.Tests/`: xUnit test project for low-harness gameplay and runtime seam coverage
 - `docs/`: documentation files for the project
+- `skills/`: repo-local agent skills for recurring Dream workflows
 - `Directory.Packages.props`: centrally managed NuGet package versions
 - `global.json`: pinned .NET SDK version for consistent local builds
 - `.gitignore`: repository ignore rules
@@ -106,3 +107,9 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 - `docs/configuration.md`: framework, packages, build, and runtime assumptions
 - `docs/rendering-and-assets.md`: rendering path and asset usage details
 - `docs/performance-and-optimizations.md`: current optimization techniques, guardrails, and known performance gaps
+
+## Agent Skill Files
+
+- `skills/creating-dream-skills/`: concise workflow for adding or refining repo-local Dream skills
+- `skills/profiling-dream-multiplayer/`: repeatable server/client launch and diagnostics workflow for multiplayer performance and visibility investigations
+- `skills/updating-dream-persistence-state/`: DDL-aware SQLite inspection and repair workflow for authoritative player, enemy, item, cube, and inventory persistence

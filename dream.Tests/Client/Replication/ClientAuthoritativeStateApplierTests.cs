@@ -332,6 +332,34 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void ClientAuthoritativeActionApplier_ApplyActionResult_IgnoresStatsForDifferentSession()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        PlayerCombatStats before = new()
+        {
+            Strength = runtime.Player.Combatant.BaseStats.Strength,
+            AttackSpeed = runtime.Player.Combatant.BaseStats.AttackSpeed,
+            Vitality = runtime.Player.Combatant.BaseStats.Vitality
+        };
+        AuthoritativeActionResult result = new(
+            "other-session",
+            21,
+            46,
+            Accepted: true,
+            Payload: new PlayerStatsUpdateResult(new PlayerCombatStatsSnapshot(18, 3.5f, 14)));
+
+        ClientAuthoritativeActionApplier.ApplyActionResult(
+            runtime,
+            new SceneEventHub(),
+            result,
+            runtime.LocalPlayerSessionId.Value);
+
+        Assert.Equal(before.Strength, runtime.Player.Combatant.BaseStats.Strength);
+        Assert.Equal(before.AttackSpeed, runtime.Player.Combatant.BaseStats.AttackSpeed, 3);
+        Assert.Equal(before.Vitality, runtime.Player.Combatant.BaseStats.Vitality);
+    }
+
+    [Fact]
     public void ClientSnapshotDamageApplier_ApplyToRuntime_PublishesDamageEventForResolvedEnemy()
     {
         using WorldSessionRuntime runtime = CreateRuntime();
@@ -461,6 +489,48 @@ public class ClientAuthoritativeStateApplierTests
         Assert.Equal(20, runtime.Player.Combatant.Stats.Strength);
         Assert.Equal(4f, runtime.Player.Combatant.Stats.AttackSpeed, 3);
         Assert.Equal(12, runtime.Player.Combatant.Stats.Vitality);
+    }
+
+    [Fact]
+    public void ClientCorrectionApplier_ApplySnapshotToRuntime_UsesLocalActorInteractionMode()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        ServerSnapshotEnvelope snapshot = new(
+            35,
+            new Dictionary<string, ulong>(),
+            [
+                new ActorSnapshot(
+                    101,
+                    CreatureKind.Player,
+                    "remote-primary",
+                    new Vector3(7f, 1.5f, 4f),
+                    -Vector3.UnitZ,
+                    100,
+                    100,
+                    true,
+                    PlayerInteractionMode.Combat),
+                new ActorSnapshot(
+                    runtime.Player.Combatant.Actor.Id,
+                    CreatureKind.Player,
+                    runtime.LocalPlayerSessionId.Value,
+                    new Vector3(5f, 1.5f, 5f),
+                    -Vector3.UnitZ,
+                    100,
+                    100,
+                    true,
+                    PlayerInteractionMode.Building)
+            ],
+            PlayerInteractionMode.Combat,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+
+        ClientCorrectionApplier.ApplySnapshotToRuntime(
+            runtime,
+            snapshot,
+            runtime.LocalPlayerSessionId.Value);
+
+        Assert.Equal(PlayerInteractionMode.Building, runtime.InteractionMode);
     }
 
     [Fact]

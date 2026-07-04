@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Simulation.World;
@@ -72,6 +74,7 @@ public sealed class ServerConnection : IAsyncDisposable
             IClientToServerMessage clientMessage = decoded.Message as IClientToServerMessage
                 ?? throw new InvalidOperationException(
                     $"Received non-client message kind '{decoded.Message.MessageKind}' on server connection '{ConnectionId}'.");
+            LogInbound(decoded.Envelope, clientMessage);
             IReadOnlyList<IServerToClientMessage> replies = _host.HandleClientMessage(ConnectionId, clientMessage);
             foreach (IServerToClientMessage reply in replies)
             {
@@ -84,6 +87,7 @@ public sealed class ServerConnection : IAsyncDisposable
     {
         byte[] payload = EncodeServerMessage(message);
         byte[] framed = _framer.Frame(payload);
+        Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
@@ -92,7 +96,10 @@ public sealed class ServerConnection : IAsyncDisposable
         finally
         {
             _sendLock.Release();
+            stopwatch?.Stop();
         }
+
+        LogOutbound(message, framed.Length, stopwatch?.Elapsed.TotalMilliseconds ?? 0d);
     }
 
     private byte[] EncodeServerMessage(IServerToClientMessage message)
@@ -112,5 +119,66 @@ public sealed class ServerConnection : IAsyncDisposable
             _ => throw new InvalidOperationException(
                 $"Unsupported server message type '{message.GetType().Name}' for connection encoding.")
         };
+    }
+
+    private void LogInbound(TransportEnvelope envelope, IClientToServerMessage message)
+    {
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        string detail = message switch
+        {
+            ClientJoinRequestMessage join => $"session={join.RequestedSessionId} name={join.DisplayName}",
+            PlayerCommandMessage command => $"session={command.CommandFrame.SessionId.Value} commandSeq={command.CommandFrame.Sequence}",
+            PlayerActionMessage action => $"session={action.SessionId.Value} actionSeq={action.ActionSequence} payload={action.Payload.GetType().Name}",
+            ClientHelloMessage hello => $"client={hello.ClientName}",
+            _ => string.Empty
+        };
+
+        string log = $"connection={ConnectionId} seq={envelope.Sequence} kind={message.MessageKind} {detail}";
+        if (message is PlayerCommandMessage)
+        {
+            NetworkDiagnosticsLog.WriteEvery(
+                $"server.rx.command.{ConnectionId}",
+                TimeSpan.FromSeconds(1),
+                "server.rx",
+                log);
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write("server.rx", log);
+    }
+
+    private void LogOutbound(IServerToClientMessage message, int byteCount, double elapsedMilliseconds)
+    {
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        string detail = message switch
+        {
+            JoinAcceptedMessage accepted => NetworkDiagnosticsLog.DescribeJoin(accepted),
+            JoinRejectedMessage rejected => $"reason={rejected.Reason}",
+            ServerSnapshotMessage snapshot => NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot),
+            ServerActionMessage action => $"session={action.Result.SessionId} actionSeq={action.Result.ActionSequence} accepted={action.Result.Accepted} payload={action.Result.Payload?.GetType().Name ?? "none"}",
+            ServerHelloMessage hello => $"server={hello.ServerName}",
+            _ => string.Empty
+        };
+
+        string log = $"connection={ConnectionId} kind={message.MessageKind} bytes={byteCount} sendMs={elapsedMilliseconds:0.00} {detail}";
+        if (message is ServerSnapshotMessage)
+        {
+            NetworkDiagnosticsLog.WriteEvery(
+                $"server.tx.snapshot.{ConnectionId}",
+                TimeSpan.FromSeconds(1),
+                "server.tx",
+                log);
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write("server.tx", log);
     }
 }

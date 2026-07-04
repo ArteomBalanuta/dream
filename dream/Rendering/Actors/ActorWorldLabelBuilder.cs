@@ -16,11 +16,6 @@ public static class ActorWorldLabelBuilder
         List<WorldActorLabelState> labels = [];
         foreach (RemotePlayerPresentationState remotePlayer in remotePlayers)
         {
-            if (!remotePlayer.IsAlive)
-            {
-                continue;
-            }
-
             labels.Add(new WorldActorLabelState(
                 remotePlayer.Pose.Position + PlayerLabelOffset,
                 remotePlayer.DisplayName,

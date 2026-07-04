@@ -1,5 +1,6 @@
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -62,6 +63,12 @@ public sealed class ClientScenePresenter
             if (!observedRemoteActorIds.Contains(actorId))
             {
                 _remotePlayers.Remove(actorId);
+                NetworkDiagnosticsLog.WriteEvery(
+                    $"client.presenter.prune.{actorId}",
+                    TimeSpan.FromSeconds(1),
+                    "client.presenter.prune",
+                    () => $"local={_localSessionId ?? "<none>"} actor={actorId} session={entry.SessionId} snapshotTick={snapshot.ServerTick} " +
+                        NetworkDiagnosticsLog.DescribeSnapshot(snapshot));
             }
         }
 
@@ -77,6 +84,13 @@ public sealed class ClientScenePresenter
                 _playerRoster.Remove(sessionId);
             }
         }
+
+        NetworkDiagnosticsLog.WriteEvery(
+            $"client.presenter.apply.{_localSessionId ?? "none"}",
+            TimeSpan.FromSeconds(1),
+            "client.presenter.apply",
+            () => $"local={_localSessionId ?? "<none>"} remoteEntries={_remotePlayers.Count} roster={DescribeRosterSessions()} " +
+                NetworkDiagnosticsLog.DescribeSnapshot(snapshot));
     }
 
     public void ApplyJoinAccepted(JoinAcceptedMessage joinAccepted)
@@ -92,6 +106,19 @@ public sealed class ClientScenePresenter
                 ? entry.SessionId
                 : entry.DisplayName;
             _playerRoster[entry.SessionId] = new PlayerRosterEntry(entry.SessionId, entry.ActorId, displayName);
+        }
+
+        if (joinAccepted.EffectiveInitialActors.Count > 0)
+        {
+            ApplySnapshot(new ServerSnapshotEnvelope(
+                joinAccepted.CurrentServerTick,
+                new Dictionary<string, ulong>(),
+                joinAccepted.EffectiveInitialActors,
+                PlayerInteractionMode.Building,
+                null,
+                Array.Empty<WorldMutationDelta>(),
+                Array.Empty<DamageEventDelta>()),
+                receivedAtSeconds: 0d);
         }
     }
 
@@ -128,6 +155,31 @@ public sealed class ClientScenePresenter
         return states;
     }
 
+    public ClientScenePresenterDebugState CaptureDebugState(double renderTimeSeconds)
+    {
+        List<string> remoteSessions = [];
+        int sampledRemoteCount = 0;
+        foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers)
+        {
+            remoteSessions.Add($"{entry.SessionId}#{actorId}/{entry.DisplayName}/alive={entry.IsAlive}");
+            if (entry.Buffer.TrySample(renderTimeSeconds, out _))
+            {
+                sampledRemoteCount++;
+            }
+        }
+
+        return new ClientScenePresenterDebugState(
+            _localSessionId,
+            _playerRoster.Count,
+            _playerRoster.Values
+                .Select(entry => $"{entry.SessionId}#{entry.ActorId}/{entry.DisplayName}")
+                .OrderBy(entry => entry, StringComparer.Ordinal)
+                .ToArray(),
+            _remotePlayers.Count,
+            remoteSessions.OrderBy(entry => entry, StringComparer.Ordinal).ToArray(),
+            sampledRemoteCount);
+    }
+
     private RemotePlayerEntry GetOrCreateEntry(int actorId, string sessionId)
     {
         if (_remotePlayers.TryGetValue(actorId, out RemotePlayerEntry? entry))
@@ -138,6 +190,11 @@ public sealed class ClientScenePresenter
         RemotePlayerEntry created = new(sessionId);
         _remotePlayers[actorId] = created;
         return created;
+    }
+
+    private string DescribeRosterSessions()
+    {
+        return $"[{string.Join(", ", _playerRoster.Values.Select(entry => $"{entry.SessionId}#{entry.ActorId}/{entry.DisplayName}"))}]";
     }
 
     private sealed class RemotePlayerEntry(string sessionId)

@@ -14,6 +14,7 @@ public sealed class StartupConnectionScene : IDisposable
     private readonly StartupMenuRenderer _renderer;
     private readonly NetworkSessionCoordinator _coordinator;
     private readonly Action<ClientConnectionOptions>? _persistConnectionOptions;
+    private readonly bool _autoConnectUsesInitialOptions;
     private string _host = string.Empty;
     private string _portText = string.Empty;
     private string _playerName = "dream-client";
@@ -24,11 +25,13 @@ public sealed class StartupConnectionScene : IDisposable
         Vector2i initialSize,
         NetworkSessionCoordinator coordinator,
         ClientConnectionOptions? initialOptions = null,
-        Action<ClientConnectionOptions>? persistConnectionOptions = null)
+        Action<ClientConnectionOptions>? persistConnectionOptions = null,
+        bool autoConnectUsesInitialOptions = false)
     {
         _renderer = new StartupMenuRenderer(initialSize);
         _coordinator = coordinator;
         _persistConnectionOptions = persistConnectionOptions;
+        _autoConnectUsesInitialOptions = autoConnectUsesInitialOptions;
         if (initialOptions != null)
         {
             _host = initialOptions.Host;
@@ -132,9 +135,21 @@ public sealed class StartupConnectionScene : IDisposable
 
     private void TryAutoConnect()
     {
-        if (_autoConnectAttempted ||
-            !_coordinator.IsLocalServerReady ||
-            !IsAutoConnectEnabled())
+        if (_autoConnectAttempted || !IsAutoConnectEnabled())
+        {
+            return;
+        }
+
+        if (_autoConnectUsesInitialOptions)
+        {
+            _autoConnectAttempted = true;
+            ClientConnectionOptions configuredOptions = new(_host, _portText, _playerName);
+            _coordinator.BeginConnect(configuredOptions);
+            _persistConnectionOptions?.Invoke(configuredOptions);
+            return;
+        }
+
+        if (!_coordinator.IsLocalServerReady)
         {
             return;
         }

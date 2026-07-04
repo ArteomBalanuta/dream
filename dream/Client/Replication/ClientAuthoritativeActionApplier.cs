@@ -16,8 +16,24 @@ public static class ClientAuthoritativeActionApplier
         AuthoritativeActionResult result,
         IMultiplayerDiagnosticsSink? diagnostics = null)
     {
+        ApplyActionResult(runtime, events, result, localSessionId: null, diagnostics);
+    }
+
+    public static void ApplyActionResult(
+        WorldSessionRuntime runtime,
+        SceneEventHub events,
+        AuthoritativeActionResult result,
+        string? localSessionId,
+        IMultiplayerDiagnosticsSink? diagnostics = null)
+    {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentNullException.ThrowIfNull(events);
+
+        if (!IsResultForLocalSession(result, localSessionId))
+        {
+            diagnostics?.RecordActionResult(result, correctionApplied: false);
+            return;
+        }
 
         if (!result.Accepted)
         {
@@ -65,5 +81,11 @@ public static class ClientAuthoritativeActionApplier
         }
 
         diagnostics?.RecordActionResult(result, correctionApplied: false);
+    }
+
+    private static bool IsResultForLocalSession(AuthoritativeActionResult result, string? localSessionId)
+    {
+        return string.IsNullOrWhiteSpace(localSessionId) ||
+            string.Equals(result.SessionId, localSessionId, StringComparison.Ordinal);
     }
 }

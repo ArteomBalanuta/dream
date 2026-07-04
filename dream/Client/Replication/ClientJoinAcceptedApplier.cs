@@ -11,7 +11,7 @@ public static class ClientJoinAcceptedApplier
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
-        if (!joinAccepted.InitialWorld.HasValue)
+        if (!joinAccepted.InitialWorld.HasValue && joinAccepted.EffectiveInitialActors.Count == 0)
         {
             return;
         }
@@ -19,13 +19,14 @@ public static class ClientJoinAcceptedApplier
         ServerSnapshotEnvelope bootstrapSnapshot = new(
             joinAccepted.CurrentServerTick,
             new Dictionary<string, ulong>(),
-            Array.Empty<ActorSnapshot>(),
+            joinAccepted.EffectiveInitialActors,
             runtime.InteractionMode,
-            joinAccepted.InitialWorld.Value,
+            joinAccepted.InitialWorld,
             Array.Empty<WorldMutationDelta>(),
             Array.Empty<DamageEventDelta>());
 
         RemoteWorldMutationApplier.ApplySnapshotToRuntime(runtime, bootstrapSnapshot);
+        ClientCorrectionApplier.ApplySnapshotToRuntime(runtime, bootstrapSnapshot, joinAccepted.SessionId);
     }
 
     public static void ApplyToPresenter(ClientScenePresenter presenter, JoinAcceptedMessage joinAccepted)

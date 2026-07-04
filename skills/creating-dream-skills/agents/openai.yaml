@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Dream Skills"
+  short_description: "Author repo-local Dream skills"
+  default_prompt: "Use $creating-dream-skills to add or refine a Dream repo skill."

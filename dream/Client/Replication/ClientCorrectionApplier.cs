@@ -49,8 +49,6 @@ public static class ClientCorrectionApplier
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentException.ThrowIfNullOrWhiteSpace(localSessionId);
 
-        ApplySnapshotMetadata(runtime, snapshot);
-
         ActorSnapshot? actor = snapshot.Actors
             .FirstOrDefault(candidate =>
                 candidate.Kind == CreatureKind.Player &&
@@ -58,8 +56,11 @@ public static class ClientCorrectionApplier
 
         if (actor == null || actor.Value.SessionId == null)
         {
+            ApplySnapshotMetadata(runtime, snapshot);
             return;
         }
+
+        runtime.SetAuthoritativeInteractionMode(actor.Value.InteractionMode ?? snapshot.InteractionMode);
 
         if (actor.Value.CombatStats.HasValue)
         {

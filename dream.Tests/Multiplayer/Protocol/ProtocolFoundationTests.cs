@@ -214,6 +214,43 @@ public class ProtocolFoundationTests
     }
 
     [Fact]
+    public void TransportJsonCodec_RoundTrips_JoinAcceptedMessage_WithInitialActors()
+    {
+        TransportJsonCodec codec = new();
+        JoinAcceptedMessage message = new(
+            "session-b",
+            102,
+            23,
+            InitialWorld: null,
+            Roster: null,
+            Inventory: null,
+            InitialActors:
+            [
+                new ActorSnapshot(
+                    101,
+                    CreatureKind.Player,
+                    "session-a",
+                    new Vector3(5f, 1.5f, 5f),
+                    -Vector3.UnitZ,
+                    100,
+                    100,
+                    true,
+                    PlayerInteractionMode.Building,
+                    new PlayerCombatStatsSnapshot(12, 2.5f, 11),
+                    "Host Player")
+            ]);
+
+        DecodedProtocolMessage decoded = codec.Decode(
+            codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 108), message));
+
+        JoinAcceptedMessage roundTripped = Assert.IsType<JoinAcceptedMessage>(decoded.Message);
+        ActorSnapshot actor = Assert.Single(roundTripped.EffectiveInitialActors);
+        Assert.Equal("session-a", actor.SessionId);
+        Assert.Equal("Host Player", actor.DisplayName);
+        Assert.Equal(12, actor.CombatStats?.Strength);
+    }
+
+    [Fact]
     public void LengthPrefixedMessageFramer_DeframesSingleBufferedPayload()
     {
         LengthPrefixedMessageFramer framer = new();

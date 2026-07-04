@@ -43,12 +43,14 @@ public class Game : GameWindow
         _localServer = IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult();
         NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());
         ClientConnectionOptions? initialOptions = null;
+        bool autoConnectUsesInitialOptions = false;
         if (RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions))
         {
             initialOptions = new ClientConnectionOptions(
                 remoteOptions!.Host,
                 remoteOptions.Port.ToString(),
                 remoteOptions.DisplayName);
+            autoConnectUsesInitialOptions = true;
         }
         else
         {
@@ -59,7 +61,8 @@ public class Game : GameWindow
             new Vector2i(1440, 1024),
             coordinator,
             initialOptions,
-            PersistConnectionOptions);
+            PersistConnectionOptions,
+            autoConnectUsesInitialOptions);
         CursorState = _startupScene.DesiredCursorState;
     }
 

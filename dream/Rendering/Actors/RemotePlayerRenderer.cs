@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Client.Presentation;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
 using Dream.Simulation.Players;
@@ -19,11 +20,12 @@ public sealed class RemotePlayerRenderer
         _render = render;
     }
 
-    public void Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
+    public RemotePlayerRenderStats Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
     {
         PruneModelEntries(remotePlayers);
 
-        foreach (RemotePlayerPresentationState remotePlayer in SelectVisiblePlayers(camera, remotePlayers))
+        IReadOnlyList<RemotePlayerPresentationState> visiblePlayers = SelectVisiblePlayers(camera, remotePlayers);
+        foreach (RemotePlayerPresentationState remotePlayer in visiblePlayers)
         {
             PlayerRenderState renderState = PlayerRenderState.CreateRemote(remotePlayer);
             AnimatedModel model = GetOrCreateModel(remotePlayer.ActorId);
@@ -35,6 +37,12 @@ public sealed class RemotePlayerRenderer
             model.RenderPrepared(shader, renderState.ModelMatrix, renderState.NodeOverrides);
             model.EndRender();
         }
+
+        return new RemotePlayerRenderStats(
+            remotePlayers.Count,
+            remotePlayers.Count(player => player.IsAlive),
+            visiblePlayers.Count,
+            _playerModels.Count);
     }
 
     public static IReadOnlyList<RemotePlayerPresentationState> SelectVisiblePlayers(
@@ -44,11 +52,6 @@ public sealed class RemotePlayerRenderer
         List<RemotePlayerPresentationState> visible = [];
         foreach (RemotePlayerPresentationState remotePlayer in remotePlayers)
         {
-            if (!remotePlayer.IsAlive)
-            {
-                continue;
-            }
-
             if ((remotePlayer.Pose.Position - camera.Position).LengthSquared >
                 WorldVisibility.MaxRenderDistance * WorldVisibility.MaxRenderDistance)
             {
@@ -70,6 +73,7 @@ public sealed class RemotePlayerRenderer
 
         AnimatedModel created = ModelAssets.CreatePlayerInstance();
         _playerModels[actorId] = created;
+        NetworkDiagnosticsLog.Write("client.render.remote.model", $"created actor={actorId} cached={_playerModels.Count}");
         return created;
     }
 
@@ -89,6 +93,7 @@ public sealed class RemotePlayerRenderer
 
             _playerModels[actorId].Dispose();
             _playerModels.Remove(actorId);
+            NetworkDiagnosticsLog.Write("client.render.remote.model", $"pruned actor={actorId} cached={_playerModels.Count}");
         }
     }
 }

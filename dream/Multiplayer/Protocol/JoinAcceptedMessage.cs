@@ -10,9 +10,12 @@ public sealed record JoinAcceptedMessage(
     ulong CurrentServerTick,
     WorldSnapshot? InitialWorld,
     IReadOnlyList<PlayerRosterEntry>? Roster = null,
-    PlayerInventorySnapshot? Inventory = null) : IServerToClientMessage
+    PlayerInventorySnapshot? Inventory = null,
+    IReadOnlyList<ActorSnapshot>? InitialActors = null) : IServerToClientMessage
 {
     public string MessageKind => "server.join-accepted";
 
     public IReadOnlyList<PlayerRosterEntry> EffectiveRoster => Roster ?? Array.Empty<PlayerRosterEntry>();
+
+    public IReadOnlyList<ActorSnapshot> EffectiveInitialActors => InitialActors ?? Array.Empty<ActorSnapshot>();
 }
