@@ -28,7 +28,8 @@ public sealed class SqlitePersistenceRepositoryTests
                 Energy: 22,
                 MovementSpeed: 7.5f,
                 AttackSpeed: 3.25f,
-                Level: 5),
+                Level: 5,
+                Experience: 222),
             createdUtc,
             createdUtc);
 
@@ -49,6 +50,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(7.5f, loaded.Value.Stats.MovementSpeed);
         Assert.Equal(3.25f, loaded.Value.Stats.AttackSpeed);
         Assert.Equal(5, loaded.Value.Stats.Level);
+        Assert.Equal(222, loaded.Value.Stats.Experience);
         Assert.Equal(createdUtc, loaded.Value.CreatedUtc);
         Assert.InRange(loaded.Value.UpdatedUtc, saveStartedUtc, saveFinishedUtc);
     }
@@ -74,6 +76,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(6f, created.Stats.MovementSpeed);
         Assert.Equal(2f, created.Stats.AttackSpeed);
         Assert.Equal(1, created.Stats.Level);
+        Assert.Equal(0, created.Stats.Experience);
         Assert.Equal(created.PlayerName, loaded.PlayerName);
         Assert.Equal(created.InteractionMode, loaded.InteractionMode);
         Assert.Equal(created.Stats, loaded.Stats);
@@ -220,6 +223,33 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Empty(repository.LoadItemInstances());
     }
 
+    [Fact]
+    public void SqliteCombatFormulaRepository_LoadAllEnabled_ReturnsSeededPlayerFormulas()
+    {
+        using TempPersistenceDatabase database = new();
+        using SqliteCombatFormulaRepository repository = new(database.Schema);
+
+        CombatFormulaDefinition[] formulas = repository.LoadAllEnabled()
+            .OrderBy(definition => definition.FormulaKey, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(8, formulas.Length);
+        Assert.Contains(formulas, definition =>
+            definition.FormulaKey == "player.min_damage" &&
+            definition.ExpressionText == "5 + strength * 2" &&
+            definition.Enabled);
+        Assert.Contains(formulas, definition =>
+            definition.FormulaKey == "player.attack_interval_seconds" &&
+            definition.ExpressionText == "1.0 / attack_speed" &&
+            definition.Enabled);
+        Assert.Contains(formulas, definition =>
+            definition.FormulaKey == "player.experience_to_next_level" &&
+            definition.ExpressionText == "1000 + level * 23");
+        Assert.Contains(formulas, definition =>
+            definition.FormulaKey == "enemy.experience_reward" &&
+            definition.ExpressionText == "enemy_level * 14");
+    }
+
     private sealed class TempPersistenceDatabase : IDisposable
     {
         private const string SchemaScript = """
@@ -236,6 +266,7 @@ public sealed class SqlitePersistenceRepositoryTests
                 movement_speed REAL NOT NULL,
                 attack_speed REAL NOT NULL,
                 level INTEGER NOT NULL,
+                experience INTEGER NOT NULL,
                 current_hp INTEGER NOT NULL,
                 max_hp INTEGER NOT NULL,
                 created_utc TEXT NOT NULL,
@@ -314,6 +345,25 @@ public sealed class SqlitePersistenceRepositoryTests
                 updated_utc TEXT NOT NULL,
                 PRIMARY KEY (player_name, slot_index)
             );
+
+            CREATE TABLE IF NOT EXISTS combat_formulas (
+                formula_key TEXT NOT NULL PRIMARY KEY,
+                expression_text TEXT NOT NULL,
+                description TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                updated_utc TEXT NOT NULL
+            );
+
+            INSERT INTO combat_formulas (formula_key, expression_text, description, enabled, updated_utc)
+            VALUES
+                ('player.min_damage', '5 + strength * 2', 'Player minimum melee damage.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.max_damage', '10 + strength * 4', 'Player maximum melee damage.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.max_health', '50 + vitality * 5', 'Player maximum health.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.critical_damage', 'max_damage * 1.5', 'Critical hit damage.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.critical_chance', '0.15', 'Critical hit chance.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.attack_interval_seconds', '1.0 / attack_speed', 'Authoritative attack interval.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('player.experience_to_next_level', '1000 + level * 23', 'Experience required to reach the next level.', 1, '2026-07-04T00:00:00.0000000Z'),
+                ('enemy.experience_reward', 'enemy_level * 14', 'Experience granted for killing an enemy.', 1, '2026-07-04T00:00:00.0000000Z');
             """;
 
         private readonly string _rootDirectory;

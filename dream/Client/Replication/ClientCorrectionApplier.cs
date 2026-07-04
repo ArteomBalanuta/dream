@@ -66,6 +66,12 @@ public static class ClientCorrectionApplier
             runtime.Player.Combatant.ApplyBaseStats(actor.Value.CombatStats.Value.ToCombatStats());
         }
 
+        if (actor.Value.Progression.HasValue)
+        {
+            PlayerProgressionSnapshot progression = actor.Value.Progression.Value;
+            runtime.Player.Combatant.ApplyProgression(progression.Level, progression.Experience);
+        }
+
         runtime.Player.SetWorldPosition(actor.Value.Position);
         runtime.Player.SetHealth(actor.Value.CurrentHealth, actor.Value.MaxHealth);
     }

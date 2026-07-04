@@ -27,6 +27,11 @@ public sealed class SqliteSchemaBootstrapper
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = script;
         command.ExecuteNonQuery();
+        EnsureColumnExists(
+            connection,
+            tableName: "player_profiles",
+            columnName: "experience",
+            alterStatement: "ALTER TABLE player_profiles ADD COLUMN experience INTEGER NOT NULL DEFAULT 0;");
     }
 
     public SqliteConnection CreateOpenConnection()
@@ -47,5 +52,36 @@ public sealed class SqliteSchemaBootstrapper
             value,
             CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+    }
+
+    private static void EnsureColumnExists(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string alterStatement)
+    {
+        bool found = false;
+        using (SqliteCommand pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = $"PRAGMA table_info({tableName});";
+            using SqliteDataReader reader = pragma.ExecuteReader();
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (found)
+        {
+            return;
+        }
+
+        using SqliteCommand alter = connection.CreateCommand();
+        alter.CommandText = alterStatement;
+        alter.ExecuteNonQuery();
     }
 }

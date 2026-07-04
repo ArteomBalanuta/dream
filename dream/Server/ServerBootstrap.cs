@@ -3,6 +3,7 @@ using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Persistence;
+using Dream.Server.Rules;
 
 namespace Dream.Server;
 
@@ -68,9 +69,12 @@ public static class ServerBootstrap
             AssetPaths.Config("player-profiles.db"),
             AssetPaths.Config("player-profiles.init.sql"));
         schema.EnsureSchema();
+        SqliteCombatFormulaRepository formulas = new(schema);
         return new ServerPersistenceBundle(
             schema,
             new SqlitePlayerProfileRepository(schema),
-            new SqliteWorldPersistenceRepository(schema));
+            new SqliteWorldPersistenceRepository(schema),
+            formulas,
+            CombatFormulaService.Create(formulas));
     }
 }

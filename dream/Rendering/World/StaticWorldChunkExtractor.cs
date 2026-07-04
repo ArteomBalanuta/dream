@@ -20,7 +20,7 @@ public static class StaticWorldChunkExtractor
         {
             GeometryMaterialId materialId = compatibilityMaterials.TryGetValue(cube, out GeometryMaterialId mappedMaterialId)
                 ? mappedMaterialId
-                : GeometryMaterialId.Grass;
+                : cube.MaterialId;
 
             cells.Add(new StaticVoxelRenderCell(
                 cube.Position,

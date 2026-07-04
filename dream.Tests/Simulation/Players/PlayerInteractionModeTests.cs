@@ -27,7 +27,7 @@ public class HudStatusSnapshotTests
     [Fact]
     public void Create_Exposes_Current_Health_And_Mode()
     {
-        HudStatusSnapshot snapshot = new(82, 100, PlayerInteractionMode.Combat, 25, 50, 10, 2.0f, 10);
+        HudStatusSnapshot snapshot = new(82, 100, PlayerInteractionMode.Combat, 25, 50, 10, 2.0f, 10, 1, 14, 1023);
 
         Assert.Equal(82, snapshot.CurrentHealth);
         Assert.Equal(100, snapshot.MaxHealth);
@@ -35,5 +35,6 @@ public class HudStatusSnapshotTests
         Assert.Equal("HP: 82/100", snapshot.HealthLabel);
         Assert.Equal("Mode: Combat", snapshot.ModeLabel);
         Assert.Equal("Damage: 25-50", snapshot.DamageLabel);
+        Assert.Equal("LVL: 1", snapshot.LevelLabel);
     }
 }

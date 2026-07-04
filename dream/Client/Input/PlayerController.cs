@@ -107,7 +107,7 @@ public class PlayerController
             verticalAxis,
             jumpPressed: keyboardState.IsKeyDown(Keys.Space),
             freezePressed: keyboardState.IsKeyDown(Keys.F),
-            toggleNoclipPressed: keyboardState.IsKeyDown(Keys.N),
+            toggleNoclipPressed: keyboardState.IsKeyDown(Keys.D0),
             yawDelta: mouseState.Delta.X,
             pitchDelta: mouseState.Delta.Y,
             primaryUsePressed: mouseState.IsButtonDown(MouseButton.Left),
@@ -152,7 +152,7 @@ public class PlayerController
             moveDown: keyboardState.IsKeyDown(Keys.LeftControl),
             jumpPressed: keyboardState.IsKeyDown(Keys.Space),
             freezePressed: keyboardState.IsKeyDown(Keys.F),
-            toggleNoclipPressed: keyboardState.IsKeyDown(Keys.N),
+            toggleNoclipPressed: keyboardState.IsKeyDown(Keys.D0),
             allowGameplayInput: allowGameplayInput);
     }
 

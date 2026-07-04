@@ -39,6 +39,12 @@ public sealed class ConnectedPlayer
         DisplayName = NormalizeDisplayName(displayName, SessionId);
     }
 
+    public void ResetAcceptedSequences()
+    {
+        LastAcceptedCommandSequence = null;
+        LastAcceptedActionSequence = null;
+    }
+
     public bool TryAcceptSequence(ulong sequence)
     {
         if (LastAcceptedCommandSequence.HasValue && sequence <= LastAcceptedCommandSequence.Value)

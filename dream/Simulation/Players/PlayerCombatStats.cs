@@ -1,4 +1,5 @@
 using Dream.Simulation.Inventory;
+using Dream.Server.Rules;
 
 namespace Dream.Simulation.Players;
 
@@ -33,23 +34,10 @@ public sealed class PlayerCombatStats
         set => _vitality = Math.Clamp(value, MinVitality, MaxVitality);
     }
 
-    public PlayerCombatDerivedStats Derive()
+    public PlayerCombatDerivedStats Derive(CombatFormulaService? formulaService = null, int level = 1)
     {
-        int minDamage = 5 + (Strength * 2);
-        int maxDamage = 10 + (Strength * 4);
-        int maxHealth = 50 + (Vitality * 5);
-        int criticalDamage = (int)MathF.Round(maxDamage * 1.5f);
-
-        return new PlayerCombatDerivedStats(
-            Strength,
-            AttackSpeed,
-            Vitality,
-            minDamage,
-            maxDamage,
-            criticalDamage,
-            maxHealth,
-            0.15f,
-            1.0f / AttackSpeed);
+        return (formulaService ?? CombatFormulaService.Default)
+            .EvaluatePlayerDerivedStats(this, level);
     }
 
     public static PlayerCombatStats Combine(PlayerCombatStats baseStats, ToolStatModifier modifier)

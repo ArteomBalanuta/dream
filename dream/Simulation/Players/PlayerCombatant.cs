@@ -3,6 +3,7 @@ using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
+using Dream.Server.Rules;
 
 namespace Dream.Simulation.Players;
 
@@ -10,6 +11,7 @@ namespace Dream.Simulation.Players;
 public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 {
     private readonly Func<Vector3> _positionProvider;
+    private readonly CombatFormulaService _combatFormulaService;
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
     private float _attackCooldownRemaining;
@@ -21,6 +23,10 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
+    public int Level { get; private set; } = 1;
+
+    public int Experience { get; private set; }
+
     public HealthState Health { get; }
 
     public CombatActorHandle Actor { get; }
@@ -30,9 +36,11 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         SceneEventHub? eventHub = null,
         int actorId = 1,
         float anchorHeightOffset = 1.2f,
-        PlayerCombatStats? stats = null)
+        PlayerCombatStats? stats = null,
+        CombatFormulaService? combatFormulaService = null)
     {
         _positionProvider = positionProvider;
+        _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         _eventHub = eventHub;
         _anchorHeightOffset = anchorHeightOffset;
         BaseStats = new PlayerCombatStats();
@@ -75,6 +83,13 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         ApplyBaseStats(updatedStats);
     }
 
+    public void ApplyProgression(int level, int experience)
+    {
+        Level = Math.Max(1, level);
+        Experience = Math.Max(0, experience);
+        RecalculateEffectiveStats();
+    }
+
     public void ApplyEquippedToolModifier(ToolStatModifier modifier)
     {
         _equippedToolModifier = modifier;
@@ -87,7 +102,7 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Stats.Strength = effectiveStats.Strength;
         Stats.AttackSpeed = effectiveStats.AttackSpeed;
         Stats.Vitality = effectiveStats.Vitality;
-        DerivedStats = Stats.Derive();
+        DerivedStats = Stats.Derive(_combatFormulaService, Level);
         if (Health != null)
         {
             Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);

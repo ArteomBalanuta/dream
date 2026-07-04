@@ -62,7 +62,7 @@ public static class StaticTerrainMaterialCatalog
             _ => new StaticTerrainMaterial(
                 materialId,
                 StaticTerrainMaterialRole.Single,
-                Vector4.One,
+                new Vector4(1f, 0f, 1f, 1f),
                 string.Empty)
         };
     }

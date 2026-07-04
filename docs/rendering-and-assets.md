@@ -71,6 +71,8 @@ Static world export rendering now has a first hidden-face culling path. `WorldRe
 
 The static chunk renderer binds terrain textures by material role, not only by broad `GeometryMaterialId`. Grass chunk meshes are split into top, side, and bottom mesh batches so they can bind `grass_top.png`, `grass_block_side_texture.png`, and `Grass_bottom.jpg` respectively, matching the old multi-material glTF cube contract. Dirt, stone, sand, mud, snow, rock, and grass-path materials bind one Poly Haven diffuse texture each through the static terrain material catalog. Intact compatibility cubes must keep the material id from their matching `GeometryRenderCell`, because the authoritative map/server matrix owns the terrain material even when the renderer still receives a coarse `Cube` view.
 
+Live compatibility cubes now also carry their authoritative `GeometryMaterialId` directly on `Cube.MaterialId`. If a live or dynamic compatibility cube does not use one of the explicit glTF-backed cube models, the renderer falls back to a terrain-textured cube draw path resolved from that material id instead of drawing a transparent placeholder or inventing a grass default. Unknown material ids still render visibly through an explicit magenta fallback so parity gaps are obvious during testing.
+
 Generated chunk UVs are face-direction aware. Top and bottom faces tile across `X/Z`, while vertical faces tile horizontally across `X` or `Z` and vertically across `Y`, so long merged cuboids do not stretch or rotate terrain edge textures incorrectly.
 
 For the broader optimization inventory and guardrails around this path, see [Performance And Optimizations](performance-and-optimizations.md).
@@ -306,6 +308,8 @@ The startup world now uses multiple textured terrain variants for intact geometr
 - static chunk terrain textures for `sand_01`, `brown_mud`, `snow_04`, `rocks_ground_08`, and `grass_path_3`
 
 `WorldGenerator` selects between those materials deterministically for the initial world layout. The static chunk path resolves the matching texture through `GeometryMaterialId`; the older compatibility model path still has explicit glTF cube variants only for grass, dirt, and stone.
+
+Imported terrain materials that do not have explicit compatibility glTF cube variants now render through the live terrain-material fallback path when they appear in dynamic compatibility cubes. This keeps dynamic/live world visuals aligned with the authoritative material matrix without requiring a separate glTF cube asset per terrain texture.
 
 ## World Asset Normalization
 

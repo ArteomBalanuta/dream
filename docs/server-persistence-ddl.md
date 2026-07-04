@@ -15,6 +15,7 @@ This document explains the intent behind each table so future runtime and migrat
 - Player identity is currently keyed by `player_name`.
 - Inventory ownership uses item rows plus slot-assignment rows.
 - The server remains the only authority that should write gameplay state into these tables.
+- Authoritative player combat formulas are now persisted as editable expression strings in SQLite.
 
 ## Tables
 
@@ -30,6 +31,7 @@ Key fields:
 - combat stat columns: `strength`, `agility`, `vitality`, `energy`
 - movement/combat tempo: `movement_speed`, `attack_speed`
 - progression and health: `level`, `current_hp`, `max_hp`
+- progression tracking: `level`, `experience`, `current_hp`, `max_hp`
 - timestamps: `created_utc`, `updated_utc`
 
 Used for:
@@ -37,11 +39,13 @@ Used for:
 - creating or restoring a named player profile at join time
 - persisting authoritative base stat and mode changes
 - reconnect restore of long-lived character state
+- reconnect restore of long-lived character progression state
 
 Important note:
 
 - effective combat stats from equipped tools are not stored here
 - they are recomputed on the server from base stats plus equipped inventory state
+- current XP is stored here, while required next-level XP is computed from server formulas
 
 ### `player_world_state`
 
@@ -140,6 +144,30 @@ Used for:
 - dedicated equipped-slot assignment
 - reconnect restore of tool selection
 
+### `combat_formulas`
+
+One row per authoritative combat formula expression.
+
+Key fields:
+
+- `formula_key`: stable formula id such as `player.max_health`
+- `expression_text`: arithmetic expression string used by the authoritative server
+- `description`: plain-language note for the formula
+- `enabled`: active/inactive toggle
+- `updated_utc`
+
+Used for:
+
+- authoritative player stat derivation
+- rebalance of HP, damage, crit, and attack cadence without recompiling
+- rebalance of XP thresholds and enemy XP rewards without recompiling
+- server startup validation of required combat-rule rows
+
+Important note:
+
+- the client does not authoritatively evaluate these expressions
+- the server loads, validates, and evaluates them through a strict whitelisted arithmetic engine
+
 ## Indexes
 
 The current script adds lookup indexes for:
@@ -178,4 +206,5 @@ When extending this schema:
 - prefer additive columns and additive tables
 - keep startup restore queries direct
 - avoid collapsing players, enemies, cubes, and items into one generic entity table
+- keep formula evaluation server-owned even when the source strings live in the DB
 - document new runtime assumptions in the ledger and here together

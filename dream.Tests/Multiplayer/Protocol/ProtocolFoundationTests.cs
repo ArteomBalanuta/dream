@@ -273,7 +273,8 @@ public class ProtocolFoundationTests
                         true,
                         PlayerInteractionMode.Combat,
                         new PlayerCombatStatsSnapshot(16, 3f, 11),
-                        "player-b")
+                        "player-b",
+                        new PlayerProgressionSnapshot(2, 14, 1023))
                 ],
                 PlayerInteractionMode.Combat,
                 null,
@@ -290,6 +291,7 @@ public class ProtocolFoundationTests
         Assert.Equal(PlayerInteractionMode.Combat, actor.InteractionMode);
         Assert.Equal(16, actor.CombatStats?.Strength);
         Assert.Equal("player-b", actor.DisplayName);
+        Assert.Equal(2, actor.Progression?.Level);
     }
 
     [Fact]

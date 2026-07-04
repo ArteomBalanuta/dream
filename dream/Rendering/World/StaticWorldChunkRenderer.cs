@@ -295,10 +295,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         {
             hash.Add(cube.Position);
             hash.Add(cube.Side);
-            if (compatibilityMaterials.TryGetValue(cube, out GeometryMaterialId materialId))
-            {
-                hash.Add(materialId);
-            }
+            GeometryMaterialId materialId = compatibilityMaterials.TryGetValue(cube, out GeometryMaterialId mappedMaterialId)
+                ? mappedMaterialId
+                : cube.MaterialId;
+            hash.Add(materialId);
         }
 
         hash.Add(export.Blocks.Count);

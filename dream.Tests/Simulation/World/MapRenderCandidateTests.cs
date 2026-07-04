@@ -71,4 +71,15 @@ public class MapRenderCandidateTests
         Assert.Contains(dynamicCube, export.DynamicCompatibilityCubes);
         Assert.DoesNotContain(dynamicCube, export.CompatibilityCubes);
     }
+
+    [Fact]
+    public void CaptureGeometryRenderExport_Keeps_Floor_Cell_When_Radius_Intersects_Its_Bounds()
+    {
+        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(1.6f, 1.5f, 2.5f), 0.65f);
+
+        Assert.Contains(export.Cells, cell => cell.Key == new GeometryCellKey(2, 0, 2));
+        Assert.Contains(export.CompatibilityCubes, cube => cube.Position == new Vector3(2.5f, 0.5f, 2.5f));
+    }
 }

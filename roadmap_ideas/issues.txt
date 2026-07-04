@@ -1,3 +1,3 @@
-adjusting mode: combat|building on host player makes so on the joined player. also new player cant change it cause server must be enforcing it by host configs
+I think wolf should have walking and biting animation but they arent in use; also wolf's camera is always pointing towards the player - I think you can address it so wolf moves more naturally - facing the direction it moves. 
 
-i want each player to ahve their own stats and configurations. lets consider using sqlite for this! write a db repo and some schema for it and an interface and connect it to the server engine! 
+Some block are transparent! analyse the server's map against clients rendering - do we render all the textures server exposes? 

@@ -1,4 +1,5 @@
 using Dream.Rendering.Models;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.World;
 
@@ -13,6 +14,7 @@ public class Cube
 {
     public Vector3 Position { get; set; }
     public float Side { get; } = 1.0f;
+    public GeometryMaterialId MaterialId { get; set; } = GeometryMaterialId.Grass;
     public bool IsEmpty { get; set; } = true;
     public bool IsSolid { get; set; } = false;
     public bool IsFire { get; set; } = false;

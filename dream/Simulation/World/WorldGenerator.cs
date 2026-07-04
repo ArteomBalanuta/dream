@@ -85,6 +85,7 @@ public class WorldGenerator
         return new Cube
         {
             Position = new Vector3(geometryCell.Key.X + 0.5f, geometryCell.Key.Y + 0.5f, geometryCell.Key.Z + 0.5f),
+            MaterialId = geometryCell.Definition.MaterialId,
             IsEmpty = false,
             IsSolid = true,
             Animation = ResolveAnimation(geometryCell.Definition.MaterialId),
@@ -466,7 +467,8 @@ public class WorldGenerator
         {
             GeometryMaterialId.Dirt => ModelAssets.DirtCube,
             GeometryMaterialId.Stone => ModelAssets.StoneCube,
-            _ => ModelAssets.GrassCube
+            GeometryMaterialId.Grass => ModelAssets.GrassCube,
+            _ => null
         };
     }
 

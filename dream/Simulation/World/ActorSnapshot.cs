@@ -16,4 +16,5 @@ public readonly record struct ActorSnapshot(
     bool IsAlive,
     PlayerInteractionMode? InteractionMode = null,
     PlayerCombatStatsSnapshot? CombatStats = null,
-    string? DisplayName = null);
+    string? DisplayName = null,
+    PlayerProgressionSnapshot? Progression = null);

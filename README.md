@@ -49,7 +49,7 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `2`: select combat mode
 - Left mouse button: perform the active mode's primary action
 - `V`: toggle inventory
-- `N`: toggle noclip/fly mode
+- `0`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
 - `Esc`: toggle the settings menu and release or re-grab the cursor
 

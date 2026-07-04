@@ -6,6 +6,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Application;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Server.Rules;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -220,7 +221,8 @@ public class RuntimeAuthoritativeSessionHostTests
                 Energy: 10,
                 MovementSpeed: 6f,
                 AttackSpeed: 3.5f,
-                Level: 1),
+                Level: 1,
+                Experience: 27),
             CreatedUtc: now,
             UpdatedUtc: now));
         worldPersistence.SavePlayerWorldState(new PersistedPlayerWorldState(
@@ -247,6 +249,8 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(17, runtime.Player.Combatant.BaseStats.Strength);
         Assert.Equal(3.5f, runtime.Player.Combatant.BaseStats.AttackSpeed);
         Assert.Equal(14, runtime.Player.Combatant.BaseStats.Vitality);
+        Assert.Equal(1, runtime.Player.Combatant.Level);
+        Assert.Equal(27, runtime.Player.Combatant.Experience);
         Assert.Equal(19, runtime.Player.Combatant.Stats.Strength);
         Assert.Equal(3.75f, runtime.Player.Combatant.Stats.AttackSpeed);
         Assert.Equal(14, runtime.Player.Combatant.Stats.Vitality);
@@ -294,6 +298,31 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void JoinSession_RejoiningExistingSession_Allows_Fresh_Action_Sequences()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("session-a", "Player A");
+
+        AuthoritativeActionResult firstAction = host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            5,
+            new InventoryEquipIntent(1)));
+        JoinAcceptedMessage rejoined = host.JoinSession("session-a", "Player A");
+        AuthoritativeActionResult resumedAction = host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            1,
+            new InventoryEquipIntent(0)));
+
+        Assert.True(firstAction.Accepted);
+        Assert.Equal("session-a", rejoined.SessionId);
+        Assert.True(resumedAction.Accepted);
+        InventoryChangedResult payload = Assert.IsType<InventoryChangedResult>(resumedAction.Payload);
+        Assert.Equal("Builder Hammer", payload.Inventory.EquippedSlot?.Item?.DisplayName);
+    }
+
+    [Fact]
     public void ProcessAction_InventoryEquip_Recomputes_EffectiveStats_But_Persists_BaseStats()
     {
         InMemoryPlayerProfileRepository playerProfiles = new();
@@ -331,6 +360,129 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(12, profile.Stats.Strength);
         Assert.Equal(2.5f, profile.Stats.AttackSpeed, 3);
         Assert.Equal(11, profile.Stats.Vitality);
+    }
+
+    [Fact]
+    public void JoinSession_UsesInjectedCombatFormulaServiceForDerivedHealthAndAttackCadence()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
+            new[]
+            {
+                new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_health", "10 + vitality * 10", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_damage", "max_damage * 1.5", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_chance", "0.15", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.attack_interval_seconds", "2.0 / attack_speed", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
+            });
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence,
+            combatFormulaService: formulas);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+
+        host.JoinSession("session-a", "Player A");
+
+        Assert.Equal(110, runtime.Player.Combatant.Health.MaxHealth);
+        Assert.Equal(2.0f / 2.25f, runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds, 3);
+    }
+
+    [Fact]
+    public void ProcessAction_FatalEnemyHit_AwardsExperienceAndPersistsProgression()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
+            new[]
+            {
+                new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_health", "50 + vitality * 5", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_damage", "max_damage * 1.5", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_chance", "0.15", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
+            });
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence,
+            combatFormulaService: formulas);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("session-a", "Player A");
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
+        runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
+
+        AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            3,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+
+        Assert.True(result.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.True(resolution.TargetDied);
+        Assert.Equal(14, runtime.Player.Combatant.Experience);
+        Assert.Equal(1, runtime.Player.Combatant.Level);
+        PersistedPlayerProfile? profile = playerProfiles.TryGet("Player A");
+        Assert.True(profile.HasValue);
+        Assert.Equal(14, profile.Value.Stats.Experience);
+        Assert.Equal(1, profile.Value.Stats.Level);
+    }
+
+    [Fact]
+    public void ProcessAction_FatalEnemyHit_CanLevelUpMoreThanOnceFromFormulaDrivenThresholds()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
+            new[]
+            {
+                new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.max_health", "50 + vitality * 5", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_damage", "max_damage * 1.5", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.critical_chance", "0.15", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("player.experience_to_next_level", "level * 10", "test", true, DateTime.UtcNow),
+                new CombatFormulaDefinition("enemy.experience_reward", "35", "test", true, DateTime.UtcNow)
+            });
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence,
+            combatFormulaService: formulas);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("session-a", "Player A");
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
+        runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
+
+        host.ProcessAction(new PlayerActionMessage(
+            new PlayerSessionId("session-a"),
+            3,
+            new CombatUseIntent(Vector3.Zero, -Vector3.UnitZ)));
+
+        Assert.Equal(3, runtime.Player.Combatant.Level);
+        Assert.Equal(5, runtime.Player.Combatant.Experience);
     }
 
     [Fact]

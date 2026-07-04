@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS player_profiles (
     movement_speed REAL NOT NULL DEFAULT 6.0,
     attack_speed REAL NOT NULL DEFAULT 2.0,
     level INTEGER NOT NULL DEFAULT 1,
+    experience INTEGER NOT NULL DEFAULT 0,
     current_hp INTEGER NOT NULL DEFAULT 100,
     max_hp INTEGER NOT NULL DEFAULT 100,
     created_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS player_profiles (
     CHECK (movement_speed > 0),
     CHECK (attack_speed > 0),
     CHECK (level >= 1),
+    CHECK (experience >= 0),
     CHECK (max_hp >= 1),
     CHECK (current_hp >= 0),
     CHECK (current_hp <= max_hp)
@@ -156,6 +158,30 @@ CREATE TABLE IF NOT EXISTS player_inventory_slots (
 
 CREATE INDEX IF NOT EXISTS ix_player_inventory_slots_item_instance_id
     ON player_inventory_slots (item_instance_id);
+
+CREATE TABLE IF NOT EXISTS combat_formulas (
+    formula_key TEXT NOT NULL PRIMARY KEY,
+    expression_text TEXT NOT NULL,
+    description TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (length(trim(formula_key)) > 0),
+    CHECK (length(trim(expression_text)) > 0),
+    CHECK (length(trim(description)) > 0),
+    CHECK (enabled IN (0, 1))
+);
+
+INSERT INTO combat_formulas (formula_key, expression_text, description, enabled)
+VALUES
+    ('player.min_damage', '5 + strength * 2', 'Player minimum melee damage.', 1),
+    ('player.max_damage', '10 + strength * 4', 'Player maximum melee damage.', 1),
+    ('player.max_health', '50 + vitality * 5', 'Player maximum health.', 1),
+    ('player.critical_damage', 'max_damage * 1.5', 'Critical hit damage.', 1),
+    ('player.critical_chance', '0.15', 'Critical hit chance.', 1),
+    ('player.attack_interval_seconds', '1.0 / attack_speed', 'Authoritative attack interval in seconds.', 1),
+    ('player.experience_to_next_level', '1000 + level * 23', 'Experience required to reach the next level.', 1),
+    ('enemy.experience_reward', 'enemy_level * 14', 'Experience granted for killing an enemy.', 1)
+ON CONFLICT(formula_key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS player_profile_change_log (
     change_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

@@ -418,8 +418,7 @@ public class Render
         }
         else
         {
-            DrawCubeTransparent(camera, modelMatrix);
-            DrawCubeWireframe(camera, modelMatrix);
+            DrawTerrainCubeFallback(camera, modelMatrix, cube.MaterialId);
         }
     }
 
@@ -437,8 +436,7 @@ public class Render
         }
         else
         {
-            DrawCubeTransparent(camera, modelMatrix);
-            DrawCubeWireframe(camera, modelMatrix);
+            DrawTerrainCubeFallback(camera, modelMatrix, block.MaterialId);
         }
     }
 
@@ -448,27 +446,8 @@ public class Render
         GeometryMaterialId materialId,
         StaticTerrainMaterialRole materialRole)
     {
-        Shader shader = GetShader("cube");
         StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId, materialRole);
-        int texture = _staticTerrainTextures.GetOrLoad(material);
-        shader.Use();
-        shader.SetMatrix4("model", Matrix4.Identity);
-        shader.SetMatrix4("view", camera.GetViewMatrix());
-        shader.SetMatrix4("projection", _projection);
-        shader.SetBool("useSkinning", false);
-        shader.SetBool("useInstancing", false);
-        shader.SetVector4("material.baseColorFactor", material.BaseColor);
-        shader.SetFloat("material.metallicFactor", 0f);
-        shader.SetFloat("material.roughnessFactor", 1f);
-        shader.SetBool("material.hasBaseColorTexture", texture != -1);
-        if (texture != -1)
-        {
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, texture);
-            shader.SetInt("material.baseColorTexture", 0);
-        }
-
-        GL.Enable(EnableCap.DepthTest);
+        BindTerrainMaterial(camera, Matrix4.Identity, material);
         // Static terrain meshes are already hidden-face culled. Draw remaining
         // exterior faces double-sided so clipped/edge cameras do not reveal
         // collision-only "transparent" blocks.
@@ -864,6 +843,9 @@ public class Render
         ImGui.Text(status.HealthLabel);
         ImGui.Text(status.ModeLabel);
         ImGui.Text(status.DamageLabel);
+        ImGui.Text(status.LevelLabel);
+        ImGui.Text(status.ExperiencePercentLabel);
+        ImGui.Text(status.ExperienceProgressLabel);
         if (!string.IsNullOrWhiteSpace(connectionLabel))
         {
             ImGui.Text($"Server: {connectionLabel}");
@@ -1047,6 +1029,47 @@ public class Render
             vitality,
             floatingCombatText,
             equipInventorySlotIndex);
+    }
+
+    private void DrawTerrainCubeFallback(
+        Camera camera,
+        Matrix4 modelMatrix,
+        GeometryMaterialId materialId)
+    {
+        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId);
+        BindTerrainMaterial(camera, modelMatrix, material);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(CullFaceMode.Back);
+        GL.BindVertexArray(_vertexArrayObject);
+        DrawCubeFaceFans();
+        GL.BindVertexArray(0);
+    }
+
+    private void BindTerrainMaterial(
+        Camera camera,
+        Matrix4 modelMatrix,
+        StaticTerrainMaterial material)
+    {
+        Shader shader = GetShader("cube");
+        int texture = _staticTerrainTextures.GetOrLoad(material);
+        shader.Use();
+        shader.SetMatrix4("model", modelMatrix);
+        shader.SetMatrix4("view", camera.GetViewMatrix());
+        shader.SetMatrix4("projection", _projection);
+        shader.SetBool("useSkinning", false);
+        shader.SetBool("useInstancing", false);
+        shader.SetVector4("material.baseColorFactor", material.BaseColor);
+        shader.SetFloat("material.metallicFactor", 0f);
+        shader.SetFloat("material.roughnessFactor", 1f);
+        shader.SetBool("material.hasBaseColorTexture", texture != -1);
+        if (texture != -1)
+        {
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            shader.SetInt("material.baseColorTexture", 0);
+        }
+
+        GL.Enable(EnableCap.DepthTest);
     }
 
     private static void DrawInventoryOverlay(

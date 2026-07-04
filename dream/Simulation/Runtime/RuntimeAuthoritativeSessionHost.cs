@@ -3,6 +3,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Server.Rules;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -37,6 +38,9 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
         if (Runtime.Sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
+            existing.UpdateDisplayName(normalizedDisplayName);
+            existing.MarkSpawned();
+            existing.ResetAcceptedSequences();
             PlayerInventorySnapshot? existingInventory = Runtime.TryCaptureInventorySnapshot(existing.SessionId);
             return new JoinAcceptedMessage(
                 existing.SessionId.Value,
@@ -139,7 +143,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             events,
             loadVisualAssets: false,
             playerProfiles: persistence?.PlayerProfiles,
-            worldPersistence: persistence?.World);
+            worldPersistence: persistence?.World,
+            combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence);
     }
 

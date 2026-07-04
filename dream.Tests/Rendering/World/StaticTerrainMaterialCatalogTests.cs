@@ -53,4 +53,13 @@ public class StaticTerrainMaterialCatalogTests
 
         Assert.Equal([StaticTerrainMaterialRole.Single], roles);
     }
+
+    [Fact]
+    public void Resolve_Uses_VisibleFallback_For_UnknownMaterialIds()
+    {
+        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve((GeometryMaterialId)999);
+
+        Assert.False(material.HasTexture);
+        Assert.Equal(new OpenTK.Mathematics.Vector4(1f, 0f, 1f, 1f), material.BaseColor);
+    }
 }

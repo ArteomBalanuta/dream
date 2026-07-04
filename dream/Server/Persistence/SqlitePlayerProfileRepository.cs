@@ -34,7 +34,8 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
                 Energy: 10,
                 MovementSpeed: 6f,
                 AttackSpeed: 2f,
-                Level: 1),
+                Level: 1,
+                Experience: 0),
             now,
             now);
         Save(created);
@@ -57,6 +58,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
                 movement_speed,
                 attack_speed,
                 level,
+                experience,
                 current_hp,
                 max_hp,
                 created_utc,
@@ -91,6 +93,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
                 movement_speed,
                 attack_speed,
                 level,
+                experience,
                 current_hp,
                 max_hp,
                 created_utc,
@@ -107,6 +110,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
                 $movementSpeed,
                 $attackSpeed,
                 $level,
+                $experience,
                 $currentHealth,
                 $maxHealth,
                 $createdUtc,
@@ -122,6 +126,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
                 movement_speed = excluded.movement_speed,
                 attack_speed = excluded.attack_speed,
                 level = excluded.level,
+                experience = excluded.experience,
                 current_hp = excluded.current_hp,
                 max_hp = excluded.max_hp,
                 updated_utc = excluded.updated_utc;
@@ -140,6 +145,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
         command.Parameters.AddWithValue("$movementSpeed", profile.Stats.MovementSpeed);
         command.Parameters.AddWithValue("$attackSpeed", profile.Stats.AttackSpeed);
         command.Parameters.AddWithValue("$level", profile.Stats.Level);
+        command.Parameters.AddWithValue("$experience", profile.Stats.Experience);
         command.Parameters.AddWithValue("$currentHealth", profile.Stats.CurrentHealth);
         command.Parameters.AddWithValue("$maxHealth", profile.Stats.MaxHealth);
         command.Parameters.AddWithValue("$createdUtc", SqliteSchemaBootstrapper.FormatUtc(profile.CreatedUtc == default ? now : profile.CreatedUtc));
@@ -158,16 +164,17 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
             reader.GetString(1),
             Enum.Parse<PlayerInteractionMode>(reader.GetString(2), ignoreCase: true),
             new PersistedCreatureStats(
-                CurrentHealth: reader.GetInt32(10),
-                MaxHealth: reader.GetInt32(11),
+                CurrentHealth: reader.GetInt32(11),
+                MaxHealth: reader.GetInt32(12),
                 Strength: reader.GetInt32(3),
                 Agility: reader.GetInt32(4),
                 Vitality: reader.GetInt32(5),
                 Energy: reader.GetInt32(6),
                 MovementSpeed: reader.GetFloat(7),
                 AttackSpeed: reader.GetFloat(8),
-                Level: reader.GetInt32(9)),
-            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(12)),
-            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(13)));
+                Level: reader.GetInt32(9),
+                Experience: reader.GetInt32(10)),
+            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(13)),
+            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(14)));
     }
 }

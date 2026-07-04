@@ -6,6 +6,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Client.Input;
 using Dream.Client.Replication;
+using Dream.Server.Rules;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -34,7 +35,13 @@ public class Player : IReplicatedPlayerTarget
     public float CollisionReportCooldown = 0.5f;
     private float _collisionReportTimer;
 
-    public Player(Map map, PhysicsIntegrator physics, RigidBody physicsBody, Vector3 position, SceneEventHub? eventHub = null)
+    public Player(
+        Map map,
+        PhysicsIntegrator physics,
+        RigidBody physicsBody,
+        Vector3 position,
+        SceneEventHub? eventHub = null,
+        CombatFormulaService? combatFormulaService = null)
     {
         ArgumentNullException.ThrowIfNull(physics);
         ArgumentNullException.ThrowIfNull(physicsBody);
@@ -48,7 +55,7 @@ public class Player : IReplicatedPlayerTarget
         _physics = physics;
         _motor = new PlayerMotor(_physics);
         _cameraRig = new PlayerCameraRig(position);
-        _combatant = new PlayerCombatant(GetWorldPosition, eventHub);
+        _combatant = new PlayerCombatant(GetWorldPosition, eventHub, combatFormulaService: combatFormulaService);
         PhysicsBody = physicsBody;
         PhysicsBody.AngularFactor = BulletSharp.Math.Vector3.Zero;
         PhysicsBody.Activate();

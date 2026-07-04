@@ -1,4 +1,6 @@
 lets adjust the world defaults, lets make the world floor be 100x100 also make sure we have the floor 50 blocks deep so if i destroy the top one there are 50 more layers bellow. 
 We also need assets to do the sky and we need sun!
 Also night sky with stars and day cycles! 
-And time implementation on the server so we cycle through the day. 
+And time implementation on the server so we cycle through the day. for example 35 irl minutes per day and 25 per night. 
+Address shader used so it simulates the sun! rn source of light is on the floor I think.
+

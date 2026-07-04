@@ -40,6 +40,9 @@ public class WorldSessionPresentationStateTests
             PlayerInteractionMode.Combat,
             derivedStats,
             playerStats,
+            level: 1,
+            experience: 14,
+            experienceToNextLevel: 1023,
             new FramePerformanceSnapshot(
                 RenderExportMilliseconds: 1.5,
                 PhysicsStepMilliseconds: 0.5,
@@ -59,6 +62,9 @@ public class WorldSessionPresentationStateTests
         Assert.Equal(14, state.HudStatus.Strength);
         Assert.Equal(2.5f, state.HudStatus.AttackSpeed);
         Assert.Equal(12, state.HudStatus.Vitality);
+        Assert.Equal(1, state.HudStatus.Level);
+        Assert.Equal(14, state.HudStatus.Experience);
+        Assert.Equal(1023, state.HudStatus.ExperienceToNextLevel);
         Assert.Equal(1.5, state.Performance.RenderExportMilliseconds);
         Assert.Equal(30, state.Performance.CollisionBodyCount);
     }

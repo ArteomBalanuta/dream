@@ -388,7 +388,7 @@ public class Map
         // migrates toward consuming geometry-native exports directly.
         foreach (Cube cube in GetRenderCandidateCubes(position, radius))
         {
-            if ((cube.Position - position).LengthSquared > (radius * radius))
+            if (!IsCubeWithinRadius(cube, position, radius))
             {
                 continue;
             }
@@ -467,6 +467,15 @@ public class Map
         Vector3 halfSize = block.Size * 0.5f;
         Vector3 min = block.Center - halfSize;
         Vector3 max = block.Center + halfSize;
+        float distanceSquared = SquaredDistanceToAabb(position, min, max);
+        return distanceSquared <= radius * radius;
+    }
+
+    private static bool IsCubeWithinRadius(Cube cube, Vector3 position, float radius)
+    {
+        Vector3 halfSize = new(cube.Side * 0.5f);
+        Vector3 min = cube.Position - halfSize;
+        Vector3 max = cube.Position + halfSize;
         float distanceSquared = SquaredDistanceToAabb(position, min, max);
         return distanceSquared <= radius * radius;
     }

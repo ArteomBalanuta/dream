@@ -196,6 +196,28 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
+    public void ExtractCells_Falls_Back_To_CompatibilityCubeMaterial_When_RenderCellMappingIsMissing()
+    {
+        Cube cube = new(isEmpty: false, isSolid: true)
+        {
+            Position = new Vector3(0.5f, 0.5f, 0.5f),
+            MaterialId = GeometryMaterialId.Sand,
+            Animation = null!,
+            ShaderName = "default"
+        };
+
+        GeometryRenderExport export = new(
+            DirtyCells: [],
+            Cells: [],
+            Blocks: [],
+            CompatibilityCubes: [cube]);
+
+        StaticVoxelRenderCell cell = Assert.Single(StaticWorldChunkExtractor.ExtractCells(export));
+
+        Assert.Equal(GeometryMaterialId.Sand, cell.MaterialId);
+    }
+
+    [Fact]
     public void IsChunkVisibleKeepsCameraInsideChunkVisibleEvenWhenLookingAwayFromCenter()
     {
         StaticWorldChunkMesh mesh = StaticWorldChunkMeshBuilder.Build(
@@ -236,6 +258,7 @@ public class StaticWorldChunkRendererTests
         Cube cube = new(isEmpty: false, isSolid: true)
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
+            MaterialId = materialId,
             Animation = null!,
             ShaderName = "default"
         };
@@ -260,12 +283,14 @@ public class StaticWorldChunkRendererTests
         Cube staticCube = new(isEmpty: false, isSolid: true)
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
+            MaterialId = GeometryMaterialId.Grass,
             Animation = null!,
             ShaderName = "default"
         };
         Cube dynamicCube = new(isEmpty: false, isSolid: true)
         {
             Position = dynamicPosition,
+            MaterialId = GeometryMaterialId.Stone,
             Animation = null!,
             ShaderName = "default"
         };

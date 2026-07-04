@@ -9,4 +9,5 @@ public readonly record struct PersistedCreatureStats(
     int Energy,
     float MovementSpeed,
     float AttackSpeed,
-    int Level);
+    int Level,
+    int Experience = 0);

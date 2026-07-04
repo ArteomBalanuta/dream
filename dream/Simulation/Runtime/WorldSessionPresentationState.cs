@@ -28,6 +28,9 @@ public sealed record WorldSessionPresentationState(
         PlayerInteractionMode interactionMode,
         PlayerCombatDerivedStats derivedStats,
         PlayerCombatStats playerStats,
+        int level,
+        int experience,
+        int experienceToNextLevel,
         FramePerformanceSnapshot performance = default)
     {
         return new WorldSessionPresentationState(
@@ -44,7 +47,10 @@ public sealed record WorldSessionPresentationState(
                 derivedStats.MaxDamage,
                 playerStats.Strength,
                 playerStats.AttackSpeed,
-                playerStats.Vitality),
+                playerStats.Vitality,
+                level,
+                experience,
+                experienceToNextLevel),
             performance);
     }
 }

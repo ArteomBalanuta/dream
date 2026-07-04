@@ -10,6 +10,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
 using Dream.Server.Persistence;
+using Dream.Server.Rules;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
@@ -52,6 +53,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private readonly Dictionary<string, Dictionary<int, long>> _inventorySlotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
     private readonly IPlayerProfileRepository? _playerProfiles;
     private readonly IWorldPersistenceRepository? _worldPersistence;
+    private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
     private double _lastPhysicsStepMilliseconds;
     private int _nextRemoteActorId = 2;
@@ -63,19 +65,21 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         SceneEventHub events,
         bool loadVisualAssets = true,
         IPlayerProfileRepository? playerProfiles = null,
-        IWorldPersistenceRepository? worldPersistence = null)
+        IWorldPersistenceRepository? worldPersistence = null,
+        CombatFormulaService? combatFormulaService = null)
     {
         _loadVisualAssets = loadVisualAssets;
         _events = events;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
+        _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
         Map = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
 
         PhysicsFactory physicsFactory = new();
         var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
         Physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
-        Player = new Player(Map, Physics, playerBody, playerStartPosition, _events);
+        Player = new Player(Map, Physics, playerBody, playerStartPosition, _events, _combatFormulaService);
         LocalPlayerSessionId = PlayerSessionId.LocalDefault;
         _sessions.Register(
             LocalPlayerSessionId,
@@ -142,7 +146,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         int actorId = AllocateRemoteActorId();
         Vector3 spawnPosition = ResolveSecondaryRemoteSpawnPosition(_secondaryRemotePlayers.Count);
-        _secondaryRemotePlayers[sessionId] = new RemoteSessionPlayerState(actorId, sessionId, spawnPosition);
+        _secondaryRemotePlayers[sessionId] = new RemoteSessionPlayerState(
+            actorId,
+            sessionId,
+            spawnPosition,
+            combatFormulaService: _combatFormulaService);
         ConnectedPlayer remote = _sessions.Register(
             sessionId,
             actorId,
@@ -320,6 +328,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             Player.Combatant.DerivedStats,
             Player.Combatant.Stats,
+            Player.Combatant.Level,
+            Player.Combatant.Experience,
+            _combatFormulaService.EvaluateExperienceToNextLevel(
+                Player.Combatant.Level,
+                Player.Combatant.Experience),
             new FramePerformanceSnapshot(
                 renderExportStopwatch.Elapsed.TotalMilliseconds,
                 _lastPhysicsStepMilliseconds,
@@ -410,7 +423,13 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 playerTarget.IsAlive,
                 playerTarget.InteractionMode,
                 PlayerCombatStatsSnapshot.From(playerTarget.Combatant.BaseStats),
-                displayName));
+                displayName,
+                new PlayerProgressionSnapshot(
+                    playerTarget.Combatant.Level,
+                    playerTarget.Combatant.Experience,
+                    _combatFormulaService.EvaluateExperienceToNextLevel(
+                        playerTarget.Combatant.Level,
+                        playerTarget.Combatant.Experience))));
         }
 
         foreach (EnemyActor actor in _enemies.ActiveActors)
@@ -618,6 +637,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
             if (receipt.WasFatal)
             {
+                AwardEnemyKillExperience(message.SessionId, enemy.Level);
                 DeletePersistedEnemy(enemy.Combatant.Actor.Id);
                 _enemies.PruneInactive();
             }
@@ -779,6 +799,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             AttackSpeed = profile.Stats.AttackSpeed,
             Vitality = profile.Stats.Vitality
         });
+        playerTarget.Combatant.ApplyProgression(profile.Stats.Level, profile.Stats.Experience);
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
@@ -1348,8 +1369,38 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 Energy: 10,
                 MovementSpeed: 6f,
                 AttackSpeed: combatant.BaseStats.AttackSpeed,
-                Level: 1)
+                Level: combatant.Level,
+                Experience: combatant.Experience)
         });
+    }
+
+    private void AwardEnemyKillExperience(PlayerSessionId sessionId, int enemyLevel)
+    {
+        if (!TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? playerTarget)
+            || playerTarget == null)
+        {
+            return;
+        }
+
+        PlayerCombatant combatant = playerTarget.Combatant;
+        int reward = _combatFormulaService.EvaluateEnemyExperienceReward(enemyLevel, combatant.Level);
+        if (reward <= 0)
+        {
+            return;
+        }
+
+        int level = combatant.Level;
+        int experience = combatant.Experience + reward;
+        int required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        while (experience >= required)
+        {
+            experience -= required;
+            level++;
+            required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        }
+
+        combatant.ApplyProgression(level, experience);
+        PersistPlayerProfile(sessionId, combatant);
     }
 
     private void PersistPlacedCube(WorldObjectRecord record, GeometryMaterialId materialId)

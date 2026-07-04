@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Client.Input;
 using Dream.Multiplayer.Sessions;
+using Dream.Server.Rules;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -17,7 +18,8 @@ public sealed class RemoteSessionPlayerState
         Vector3 position,
         int currentHealth = 100,
         int maxHealth = 100,
-        bool isAlive = true)
+        bool isAlive = true,
+        CombatFormulaService? combatFormulaService = null)
     {
         ActorId = actorId;
         SessionId = sessionId;
@@ -26,7 +28,8 @@ public sealed class RemoteSessionPlayerState
         Combatant = new PlayerCombatant(
             () => Position,
             actorId: actorId,
-            anchorHeightOffset: 1.2f);
+            anchorHeightOffset: 1.2f,
+            combatFormulaService: combatFormulaService);
 
         if (maxHealth != Combatant.Health.MaxHealth)
         {
