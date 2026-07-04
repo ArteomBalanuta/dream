@@ -84,6 +84,31 @@ public class EnemyActorTests
         Assert.Equal(Vector3.UnitX, actor.Forward);
     }
 
+    [Fact]
+    public void Update_Does_Not_Turn_Toward_Player_Outside_Aggro_Range()
+    {
+        EnemyActor actor = CreateActor();
+
+        actor.Update(0.25f, new Vector3(10f, 0f, 0f));
+
+        Assert.Equal(EnemyBehaviorState.Idle, actor.BehaviorState);
+        Assert.Equal(-Vector3.UnitZ, actor.Forward);
+    }
+
+    [Fact]
+    public void Update_Faces_Resolved_Movement_When_Chase_Path_Is_Adjusted()
+    {
+        EnemyActor actor = CreateActor(moveSpeed: 4f);
+
+        actor.Update(
+            0.5f,
+            new Vector3(4f, 0f, 0f),
+            (_, _) => Vector3.UnitZ);
+
+        Assert.Equal(Vector3.UnitZ, actor.Position);
+        Assert.Equal(Vector3.UnitZ, actor.Forward);
+    }
+
     private static EnemyActor CreateActor(float moveSpeed = 3f, float preferredStandOffDistance = 1.25f)
     {
         EnemyCombatant combatant = new(() => Vector3.Zero, maxHealth: 30, attackDamage: 6, attackIntervalSeconds: 1f);

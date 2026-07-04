@@ -147,6 +147,50 @@ public sealed class SqlitePersistenceRepositoryTests
     }
 
     [Fact]
+    public void SqliteWorldPersistenceRepository_SaveCubeFracturePiece_RoundTripsAndDeletesPiecesForSourceCube()
+    {
+        using TempPersistenceDatabase database = new();
+        using SqliteWorldPersistenceRepository repository = new(database.Schema);
+        DateTime createdUtc = new(2026, 7, 4, 8, 30, 0, DateTimeKind.Utc);
+        DateTime saveStartedUtc = DateTime.UtcNow;
+        PersistedCubeFracturePiece first = new(
+            SourceCubeId: 41,
+            PieceIndex: 0,
+            OwnerPlayerName: "builder-a",
+            ParentCell: new Vector3(6f, 2f, 9f),
+            Center: new Vector3(6.18f, 2.22f, 9.33f),
+            SideLength: 0.2f,
+            MaterialId: GeometryMaterialId.Stone,
+            CreatedUtc: createdUtc,
+            UpdatedUtc: createdUtc);
+        PersistedCubeFracturePiece second = first with
+        {
+            PieceIndex = 1,
+            Center = new Vector3(6.72f, 2.17f, 9.64f)
+        };
+
+        repository.SaveCubeFracturePiece(first);
+        repository.SaveCubeFracturePiece(second);
+        PersistedCubeFracturePiece[] loaded = repository.LoadCubeFracturePieces().OrderBy(piece => piece.PieceIndex).ToArray();
+
+        Assert.Equal(2, loaded.Length);
+        Assert.Equal(41, loaded[0].SourceCubeId);
+        Assert.Equal(0, loaded[0].PieceIndex);
+        Assert.Equal("builder-a", loaded[0].OwnerPlayerName);
+        Assert.Equal(first.ParentCell, loaded[0].ParentCell);
+        Assert.Equal(first.Center, loaded[0].Center);
+        Assert.Equal(0.2f, loaded[0].SideLength);
+        Assert.Equal(GeometryMaterialId.Stone, loaded[0].MaterialId);
+        Assert.Equal(createdUtc, loaded[0].CreatedUtc);
+        Assert.InRange(loaded[0].UpdatedUtc, saveStartedUtc, DateTime.UtcNow);
+        Assert.Equal(second.Center, loaded[1].Center);
+
+        repository.DeleteCubeFracturePieces(41);
+
+        Assert.Empty(repository.LoadCubeFracturePieces());
+    }
+
+    [Fact]
     public void SqliteWorldPersistenceRepository_SaveEnemyInstance_RoundTripsAndDeletesEnemy()
     {
         using TempPersistenceDatabase database = new();
@@ -298,6 +342,23 @@ public sealed class SqlitePersistenceRepositoryTests
                 max_health INTEGER NOT NULL,
                 created_utc TEXT NOT NULL,
                 updated_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cube_fracture_pieces (
+                source_cube_id INTEGER NOT NULL,
+                piece_index INTEGER NOT NULL,
+                owner_player_name TEXT NOT NULL,
+                parent_cell_x REAL NOT NULL,
+                parent_cell_y REAL NOT NULL,
+                parent_cell_z REAL NOT NULL,
+                center_x REAL NOT NULL,
+                center_y REAL NOT NULL,
+                center_z REAL NOT NULL,
+                side_length REAL NOT NULL,
+                material_id TEXT NOT NULL,
+                created_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL,
+                PRIMARY KEY (source_cube_id, piece_index)
             );
 
             CREATE TABLE IF NOT EXISTS enemy_instances (

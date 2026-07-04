@@ -119,11 +119,12 @@ public class PhysicsIntegratorOwnershipTests
         Assert.True(fractured);
         Assert.Contains(
             physics.MapCubeBodies,
-            body => body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, TkVector3>);
+            body => body.UserObject is GeometryDynamicBodyReference reference &&
+                reference.CellKey == new GeometryCellKey(3, 1, 3));
     }
 
     [Fact]
-    public void Fractured_Cell_Physics_Bodies_AreStaticSoRenderAndCollisionCannotDrift()
+    public void Fractured_Cell_Physics_Bodies_AreDynamicSoRubbleCanBePushed()
     {
         using PhysicsIntegrator physics = new();
         Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
@@ -131,9 +132,10 @@ public class PhysicsIntegratorOwnershipTests
 
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
 
-        Assert.DoesNotContain(
+        Assert.Contains(
             physics.DynamicMapCubeBodies,
-            body => body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, TkVector3>);
+            body => body.UserObject is GeometryDynamicBodyReference reference &&
+                reference.CellKey == new GeometryCellKey(3, 1, 3));
     }
 
     private static PhysicsIntegrator CreateHarness(

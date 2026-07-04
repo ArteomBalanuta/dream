@@ -51,6 +51,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private readonly List<DamageEventDelta> _pendingDamageEvents = [];
     private readonly Dictionary<long, PersistedItemInstance> _itemInstances = [];
     private readonly Dictionary<string, Dictionary<int, long>> _inventorySlotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
     private readonly IPlayerProfileRepository? _playerProfiles;
     private readonly IWorldPersistenceRepository? _worldPersistence;
     private readonly CombatFormulaService _combatFormulaService;
@@ -337,7 +338,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 renderExportStopwatch.Elapsed.TotalMilliseconds,
                 _lastPhysicsStepMilliseconds,
                 visibleWorld.CompatibilityCubes.Count + visibleWorld.DynamicCompatibilityCubes.Count,
-                visibleWorld.Blocks.Count,
+                visibleWorld.Blocks.Count + visibleWorld.DynamicBlocks.Count,
                 0,
                 0,
                 0,
@@ -445,7 +446,9 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 actor.Combatant.Health.IsAlive,
                 null,
                 null,
-                actor.DisplayName));
+                actor.DisplayName,
+                null,
+                actor.BehaviorState));
         }
         Dictionary<string, ulong> acceptedSequences = new();
         foreach (ConnectedPlayer player in _sessions.Players)
@@ -716,6 +719,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 Map.FractureCubeIntoPieces(cell))
             {
                 DeletePersistedPlacedCube(record.Actor.Id);
+                PersistFracturePieces(record, cell);
                 _worldObjects.Unregister(sourceObject);
                 _events.Publish(new CubeFracturedEvent(destroyedCube, new Vector3(cell.X, cell.Y, cell.Z)));
             }
@@ -779,6 +783,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         {
             PersistEnemy(enemy);
         }
+
+        PersistFracturePieceCheckpoint();
     }
 
     public void ApplyPersistedPlayerState(
@@ -1303,6 +1309,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 ownerPlayerName: persistedCube.OwnerPlayerName);
         }
 
+        RestorePersistedCubeFracturePieces();
+
         IReadOnlyList<PersistedEnemyInstance> enemies = _worldPersistence.LoadActiveEnemies();
         if (enemies.Count == 0)
         {
@@ -1410,6 +1418,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
+        _worldPersistence.DeleteCubeFracturePieces(record.Actor.Id);
         _worldPersistence.SavePlacedCube(new PersistedPlacedCube(
             record.Actor.Id,
             record.OwnerPlayerName ?? "unknown-player",
@@ -1425,6 +1434,92 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private void DeletePersistedPlacedCube(int cubeId)
     {
         _worldPersistence?.DeletePlacedCube(cubeId);
+    }
+
+    private void RestorePersistedCubeFracturePieces()
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        foreach (IGrouping<int, PersistedCubeFracturePiece> group in _worldPersistence
+            .LoadCubeFracturePieces()
+            .GroupBy(piece => piece.SourceCubeId))
+        {
+            PersistedCubeFracturePiece[] pieces = group
+                .OrderBy(piece => piece.PieceIndex)
+                .ToArray();
+            if (pieces.Length == 0)
+            {
+                continue;
+            }
+
+            PersistedCubeFracturePiece first = pieces[0];
+            GeometryCellKey cell = new(
+                (int)MathF.Floor(first.ParentCell.X + 1e-6f),
+                (int)MathF.Floor(first.ParentCell.Y + 1e-6f),
+                (int)MathF.Floor(first.ParentCell.Z + 1e-6f));
+            GeometryFracturePiece[] fracturePieces = pieces
+                .Select(piece => new GeometryFracturePiece(piece.Center, piece.SideLength))
+                .ToArray();
+
+            if (Map.RestoreFracturePieces(cell, first.MaterialId, fracturePieces, withPhysics: true))
+            {
+                _persistedFractureGroups[cell] = new PersistedFractureGroup(
+                    first.SourceCubeId,
+                    first.OwnerPlayerName);
+            }
+        }
+    }
+
+    private void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell)
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        string ownerPlayerName = record.OwnerPlayerName ?? "unknown-player";
+        _persistedFractureGroups[cell] = new PersistedFractureGroup(record.Actor.Id, ownerPlayerName);
+        PersistFracturePiecesForCell(cell);
+    }
+
+    private void PersistFracturePieceCheckpoint()
+    {
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        foreach (GeometryCellKey cell in _persistedFractureGroups.Keys.ToArray())
+        {
+            PersistFracturePiecesForCell(cell);
+        }
+    }
+
+    private void PersistFracturePiecesForCell(GeometryCellKey cell)
+    {
+        if (_worldPersistence == null ||
+            !_persistedFractureGroups.TryGetValue(cell, out PersistedFractureGroup group))
+        {
+            return;
+        }
+
+        foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in
+            Map.CaptureFracturePieces().Where(piece => piece.Cell == cell))
+        {
+            _worldPersistence.SaveCubeFracturePiece(new PersistedCubeFracturePiece(
+                SourceCubeId: group.SourceCubeId,
+                PieceIndex: PieceIndex,
+                OwnerPlayerName: group.OwnerPlayerName,
+                ParentCell: new Vector3(PieceCell.X, PieceCell.Y, PieceCell.Z),
+                Center: Piece.Center,
+                SideLength: Piece.SideLength,
+                MaterialId: MaterialId,
+                CreatedUtc: DateTime.UtcNow,
+                UpdatedUtc: DateTime.UtcNow));
+        }
     }
 
     private void PersistEnemy(EnemyActor enemy)
@@ -1458,6 +1553,10 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     {
         _worldPersistence?.DeleteEnemyInstance(enemyId);
     }
+
+    private readonly record struct PersistedFractureGroup(
+        int SourceCubeId,
+        string OwnerPlayerName);
 
     private GeometryMaterialId ResolveBuildPlacementMaterial(Vector3 placementTarget)
     {

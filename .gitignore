@@ -198,6 +198,10 @@ PublishScripts/
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
+
+# Downloaded asset source archives are too large for normal Git history.
+# Keep extracted runtime assets and license/readme files in the repo instead.
+dream/animations/library/**/*.zip
 # The packages folder can be ignored because of Package Restore
 **/[Pp]ackages/*
 # except build/, which is used as an MSBuild target.

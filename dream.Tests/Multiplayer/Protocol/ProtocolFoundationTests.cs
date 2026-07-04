@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -292,6 +293,44 @@ public class ProtocolFoundationTests
         Assert.Equal(16, actor.CombatStats?.Strength);
         Assert.Equal("player-b", actor.DisplayName);
         Assert.Equal(2, actor.Progression?.Level);
+    }
+
+    [Fact]
+    public void TransportJsonCodec_RoundTrips_ServerSnapshotMessage_WithEnemyBehaviorState()
+    {
+        TransportJsonCodec codec = new();
+        ServerSnapshotMessage message = new(
+            new ServerSnapshotEnvelope(
+                22,
+                new Dictionary<string, ulong>(),
+                [
+                    new ActorSnapshot(
+                        2000,
+                        CreatureKind.Enemy,
+                        null,
+                        new Vector3(4f, 0f, 6f),
+                        Vector3.UnitX,
+                        40,
+                        80,
+                        true,
+                        null,
+                        null,
+                        "Wolf",
+                        null,
+                        EnemyBehaviorState.Attacking)
+                ],
+                PlayerInteractionMode.Combat,
+                null,
+                Array.Empty<WorldMutationDelta>(),
+                Array.Empty<DamageEventDelta>()));
+        TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 102);
+
+        byte[] payload = codec.Encode(envelope, message);
+        DecodedProtocolMessage decoded = codec.Decode(payload);
+
+        ServerSnapshotMessage roundTripped = Assert.IsType<ServerSnapshotMessage>(decoded.Message);
+        ActorSnapshot actor = Assert.Single(roundTripped.Snapshot.Actors);
+        Assert.Equal(EnemyBehaviorState.Attacking, actor.EnemyBehaviorState);
     }
 
     [Fact]

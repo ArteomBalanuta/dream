@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 
 namespace Dream.Simulation.World;
@@ -17,4 +18,5 @@ public readonly record struct ActorSnapshot(
     PlayerInteractionMode? InteractionMode = null,
     PlayerCombatStatsSnapshot? CombatStats = null,
     string? DisplayName = null,
-    PlayerProgressionSnapshot? Progression = null);
+    PlayerProgressionSnapshot? Progression = null,
+    EnemyBehaviorState? EnemyBehaviorState = null);

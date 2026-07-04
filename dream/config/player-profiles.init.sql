@@ -83,6 +83,36 @@ CREATE INDEX IF NOT EXISTS ix_placed_cube_instances_owner_player_name
 CREATE INDEX IF NOT EXISTS ix_placed_cube_instances_updated_utc
     ON placed_cube_instances (updated_utc);
 
+CREATE TABLE IF NOT EXISTS cube_fracture_pieces (
+    source_cube_id INTEGER NOT NULL,
+    piece_index INTEGER NOT NULL,
+    owner_player_name TEXT NOT NULL,
+    parent_cell_x REAL NOT NULL,
+    parent_cell_y REAL NOT NULL,
+    parent_cell_z REAL NOT NULL,
+    center_x REAL NOT NULL,
+    center_y REAL NOT NULL,
+    center_z REAL NOT NULL,
+    side_length REAL NOT NULL,
+    material_id TEXT NOT NULL,
+    created_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (source_cube_id, piece_index),
+    FOREIGN KEY (owner_player_name) REFERENCES player_profiles(player_name) ON DELETE CASCADE,
+    CHECK (piece_index >= 0),
+    CHECK (length(trim(owner_player_name)) > 0),
+    CHECK (side_length > 0)
+);
+
+CREATE INDEX IF NOT EXISTS ix_cube_fracture_pieces_owner_player_name
+    ON cube_fracture_pieces (owner_player_name);
+
+CREATE INDEX IF NOT EXISTS ix_cube_fracture_pieces_parent_cell
+    ON cube_fracture_pieces (parent_cell_x, parent_cell_y, parent_cell_z);
+
+CREATE INDEX IF NOT EXISTS ix_cube_fracture_pieces_updated_utc
+    ON cube_fracture_pieces (updated_utc);
+
 CREATE TABLE IF NOT EXISTS enemy_instances (
     enemy_id INTEGER NOT NULL PRIMARY KEY,
     enemy_kind TEXT NOT NULL,

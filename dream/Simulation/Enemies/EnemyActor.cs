@@ -91,13 +91,10 @@ public sealed class EnemyActor
         toPlayer.Y = 0f;
         float distanceToPlayer = toPlayer.Length;
         Vector3 direction = distanceToPlayer > 0.0001f ? toPlayer / distanceToPlayer : Vector3.Zero;
-        if (direction != Vector3.Zero)
-        {
-            Forward = direction;
-        }
 
         if (distanceToPlayer <= AttackRange)
         {
+            FaceDirection(direction);
             BehaviorState = EnemyBehaviorState.Attacking;
             return;
         }
@@ -110,7 +107,9 @@ public sealed class EnemyActor
             if (step > 0f && direction != Vector3.Zero)
             {
                 Vector3 desiredDelta = direction * step;
-                Position += resolveMovement?.Invoke(Position, desiredDelta) ?? desiredDelta;
+                Vector3 resolvedDelta = resolveMovement?.Invoke(Position, desiredDelta) ?? desiredDelta;
+                Position += resolvedDelta;
+                FaceDirection(resolvedDelta);
             }
 
             return;
@@ -147,11 +146,24 @@ public sealed class EnemyActor
 
     public void SetFacing(Vector3 facing)
     {
-        if (facing.LengthSquared <= 0.000001f)
+        FaceDirection(facing);
+    }
+
+    public void SetAuthoritativeState(Vector3 position, Vector3 facing, EnemyBehaviorState behaviorState)
+    {
+        Position = position;
+        FaceDirection(facing);
+        BehaviorState = behaviorState;
+    }
+
+    private void FaceDirection(Vector3 direction)
+    {
+        direction.Y = 0f;
+        if (direction.LengthSquared <= 0.000001f)
         {
             return;
         }
 
-        Forward = facing.Normalized();
+        Forward = direction.Normalized();
     }
 }

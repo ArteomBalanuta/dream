@@ -205,6 +205,119 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         command.ExecuteNonQuery();
     }
 
+    public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces()
+    {
+        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                source_cube_id,
+                piece_index,
+                owner_player_name,
+                parent_cell_x,
+                parent_cell_y,
+                parent_cell_z,
+                center_x,
+                center_y,
+                center_z,
+                side_length,
+                material_id,
+                created_utc,
+                updated_utc
+            FROM cube_fracture_pieces
+            ORDER BY source_cube_id, piece_index;
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<PersistedCubeFracturePiece> pieces = [];
+        while (reader.Read())
+        {
+            pieces.Add(new PersistedCubeFracturePiece(
+                SourceCubeId: reader.GetInt32(0),
+                PieceIndex: reader.GetInt32(1),
+                OwnerPlayerName: reader.GetString(2),
+                ParentCell: new Vector3(reader.GetFloat(3), reader.GetFloat(4), reader.GetFloat(5)),
+                Center: new Vector3(reader.GetFloat(6), reader.GetFloat(7), reader.GetFloat(8)),
+                SideLength: reader.GetFloat(9),
+                MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(10), ignoreCase: true),
+                CreatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(11)),
+                UpdatedUtc: SqliteSchemaBootstrapper.ParseUtc(reader.GetString(12))));
+        }
+
+        return pieces;
+    }
+
+    public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
+    {
+        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO cube_fracture_pieces (
+                source_cube_id,
+                piece_index,
+                owner_player_name,
+                parent_cell_x,
+                parent_cell_y,
+                parent_cell_z,
+                center_x,
+                center_y,
+                center_z,
+                side_length,
+                material_id,
+                created_utc,
+                updated_utc
+            )
+            VALUES (
+                $sourceCubeId,
+                $pieceIndex,
+                $ownerPlayerName,
+                $parentCellX,
+                $parentCellY,
+                $parentCellZ,
+                $centerX,
+                $centerY,
+                $centerZ,
+                $sideLength,
+                $materialId,
+                $createdUtc,
+                $updatedUtc
+            )
+            ON CONFLICT(source_cube_id, piece_index) DO UPDATE SET
+                owner_player_name = excluded.owner_player_name,
+                parent_cell_x = excluded.parent_cell_x,
+                parent_cell_y = excluded.parent_cell_y,
+                parent_cell_z = excluded.parent_cell_z,
+                center_x = excluded.center_x,
+                center_y = excluded.center_y,
+                center_z = excluded.center_z,
+                side_length = excluded.side_length,
+                material_id = excluded.material_id,
+                updated_utc = excluded.updated_utc;
+            """;
+        command.Parameters.AddWithValue("$sourceCubeId", piece.SourceCubeId);
+        command.Parameters.AddWithValue("$pieceIndex", piece.PieceIndex);
+        command.Parameters.AddWithValue("$ownerPlayerName", piece.OwnerPlayerName.Trim());
+        command.Parameters.AddWithValue("$parentCellX", piece.ParentCell.X);
+        command.Parameters.AddWithValue("$parentCellY", piece.ParentCell.Y);
+        command.Parameters.AddWithValue("$parentCellZ", piece.ParentCell.Z);
+        command.Parameters.AddWithValue("$centerX", piece.Center.X);
+        command.Parameters.AddWithValue("$centerY", piece.Center.Y);
+        command.Parameters.AddWithValue("$centerZ", piece.Center.Z);
+        command.Parameters.AddWithValue("$sideLength", piece.SideLength);
+        command.Parameters.AddWithValue("$materialId", piece.MaterialId.ToString());
+        command.Parameters.AddWithValue("$createdUtc", SqliteSchemaBootstrapper.FormatUtc(piece.CreatedUtc == default ? DateTime.UtcNow : piece.CreatedUtc));
+        command.Parameters.AddWithValue("$updatedUtc", SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow));
+        command.ExecuteNonQuery();
+    }
+
+    public void DeleteCubeFracturePieces(int sourceCubeId)
+    {
+        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM cube_fracture_pieces WHERE source_cube_id = $sourceCubeId;";
+        command.Parameters.AddWithValue("$sourceCubeId", sourceCubeId);
+        command.ExecuteNonQuery();
+    }
+
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies()
     {
         using SqliteConnection connection = _schema.CreateOpenConnection();

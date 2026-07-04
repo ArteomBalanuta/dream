@@ -135,7 +135,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The first enemy asset is a repo-owned animated wolf-compatible `.glb` under `dream/animations/enemies/wolf.glb`.
 - Current skinned-model support is intentionally first-pass: one logical skin per asset is supported cleanly, which is enough for the current wolf milestone.
 - Imported world assets can now declare authored-height and target-world-height normalization metadata so render scale is derived from explicit sizing intent instead of from opaque one-off constants.
-- The repo now keeps a curated asset vault under `dream/animations/library/` for CC0 source packs and terrain textures from Kenney, Quaternius, and Poly Haven.
+- The repo now keeps a curated asset vault under `dream/animations/library/` for CC0 source packs and terrain textures from Kenney, Quaternius, Poly Haven, and OpenGameArt-derived sky libraries. Current library content includes Quaternius `animals`, `characters`, `fantasy-props-megakit`, `stylized-nature-megakit`, and `survival-pack`; Kenney `animated-characters-retro`, `food-kit`, and `nature-kit`; the Poly Haven terrain texture set used by the world-material pipeline; and `skyboxes/cloudy-skyboxes` with CC0 cubemap and panorama skies covering sunny, sunset, and night variants.
 
 ## Project Layout
 

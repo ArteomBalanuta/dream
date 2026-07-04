@@ -230,6 +230,29 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
+    public void ExportSignature_Ignores_Dynamic_Geometry_Blocks()
+    {
+        GeometryRenderExport first = CreateExportWithDynamicGeometryBlock(new Vector3(3.25f, 1.25f, 3.25f));
+        GeometryRenderExport second = CreateExportWithDynamicGeometryBlock(new Vector3(8.25f, 1.25f, 8.25f));
+
+        int firstSignature = StaticWorldChunkRenderer.CalculateExportSignature(first);
+        int secondSignature = StaticWorldChunkRenderer.CalculateExportSignature(second);
+
+        Assert.Equal(firstSignature, secondSignature);
+    }
+
+    [Fact]
+    public void ExtractCells_Excludes_Dynamic_Geometry_Blocks()
+    {
+        GeometryRenderExport export = CreateExportWithDynamicGeometryBlock(new Vector3(3.25f, 1.25f, 3.25f));
+
+        IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
+
+        StaticVoxelRenderCell cell = Assert.Single(cells);
+        Assert.Equal(new Vector3(0.5f, 0.5f, 0.5f), cell.Center);
+    }
+
+    [Fact]
     public void ExtractCells_Falls_Back_To_CompatibilityCubeMaterial_When_RenderCellMappingIsMissing()
     {
         Cube cube = new(isEmpty: false, isSolid: true)
@@ -355,5 +378,31 @@ public class StaticWorldChunkRendererTests
             Blocks: [],
             CompatibilityCubes: [staticCube],
             dynamicCompatibilityCubes: [dynamicCube]);
+    }
+
+    private static GeometryRenderExport CreateExportWithDynamicGeometryBlock(Vector3 dynamicPosition)
+    {
+        Cube staticCube = new(isEmpty: false, isSolid: true)
+        {
+            Position = new Vector3(0.5f, 0.5f, 0.5f),
+            MaterialId = GeometryMaterialId.Grass,
+            Animation = null!,
+            ShaderName = "default"
+        };
+        GeometryRenderBlockDescriptor dynamicBlock = new(
+            new GeometryCellKey(3, 1, 3),
+            dynamicPosition,
+            0.2f,
+            GeometryMaterialId.Stone,
+            null,
+            "default");
+
+        return new GeometryRenderExport(
+            DirtyCells: [],
+            Cells: [],
+            Blocks: [],
+            CompatibilityCubes: [staticCube],
+            dynamicCompatibilityCubes: [],
+            dynamicBlocks: [dynamicBlock]);
     }
 }

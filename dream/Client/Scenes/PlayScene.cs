@@ -57,8 +57,8 @@ public class PlayScene : IDisposable
     private readonly WorldSessionRuntime _runtime;
     private readonly ServerTickRunner _tickRunner = new();
     private readonly bool _enableLoopbackRemotePlayers;
+    private readonly ClientActionSequenceTracker _actionSequences = new();
     private ulong _nextLocalCommandSequence = 1;
-    private ulong _nextLocalActionSequence = 1;
     private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
     private bool _wasInventoryTogglePressed;
@@ -131,6 +131,7 @@ public class PlayScene : IDisposable
             allowGameplayInput);
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
+        _actionSequences.ObserveCommandSequence(commandFrame.Sequence);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _localSimulationCommandInbox.Enqueue(commandFrame);
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
@@ -303,6 +304,7 @@ public class PlayScene : IDisposable
         }
         else if (message is ServerActionMessage actionMessage && _remoteClient != null)
         {
+            _actionSequences.ObserveActionResult(actionMessage.Result);
             ClientAuthoritativeActionApplier.ApplyActionResult(_runtime, _events, actionMessage.Result, _diagnostics);
             if (actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
             {
@@ -563,7 +565,7 @@ public class PlayScene : IDisposable
             {
                 _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
                     new PlayerSessionId(_remoteClient.SessionId),
-                    _nextLocalActionSequence++,
+                    _actionSequences.NextActionSequence(),
                     new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
             }
             else
@@ -584,7 +586,7 @@ public class PlayScene : IDisposable
         {
             _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
-                _nextLocalActionSequence++,
+                _actionSequences.NextActionSequence(),
                 new InventoryEquipIntent(request.EquipInventorySlotIndex.Value))).AsTask().GetAwaiter().GetResult();
         }
 

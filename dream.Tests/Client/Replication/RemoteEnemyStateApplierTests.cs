@@ -61,6 +61,42 @@ public class RemoteEnemyStateApplierTests
         Assert.Empty(registry.ActiveActors);
     }
 
+    [Fact]
+    public void ApplyActorSnapshots_UpdatesExistingEnemyAndPreservesVisualState()
+    {
+        EnemyRegistry registry = new();
+        EnemyActor existing = CreateEnemy(actorId: 3000, position: new Vector3(1f, 0f, 1f));
+        registry.Add(existing);
+
+        RemoteEnemyStateApplier.ApplyActorSnapshots(
+            registry,
+            [
+                new ActorSnapshot(
+                    3000,
+                    CreatureKind.Enemy,
+                    null,
+                    new Vector3(4f, 0f, 6f),
+                    Vector3.UnitX,
+                    55,
+                    80,
+                    true,
+                    null,
+                    null,
+                    "Wolf Alpha",
+                    null,
+                    EnemyBehaviorState.Chasing)
+            ]);
+
+        EnemyActor actor = Assert.Single(registry.ActiveActors);
+        Assert.Same(existing, actor);
+        Assert.Same(existing.VisualState, actor.VisualState);
+        Assert.Equal(new Vector3(4f, 0f, 6f), actor.Position);
+        Assert.Equal(Vector3.UnitX, actor.Forward);
+        Assert.Equal(EnemyBehaviorState.Chasing, actor.BehaviorState);
+        Assert.Equal(55, actor.Combatant.Health.CurrentHealth);
+        Assert.Equal(80, actor.Combatant.Health.MaxHealth);
+    }
+
     private static EnemyActor CreateEnemy(int actorId, Vector3 position)
     {
         EnemyCombatant combatant = new(

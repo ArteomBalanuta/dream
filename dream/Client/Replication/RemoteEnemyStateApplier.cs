@@ -14,11 +14,20 @@ public static class RemoteEnemyStateApplier
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(actors);
 
-        registry.Clear();
+        HashSet<int> activeEnemyActorIds = [];
         foreach (ActorSnapshot actor in actors)
         {
             if (actor.Kind != CreatureKind.Enemy || actor.CurrentHealth <= 0 || !actor.IsAlive)
             {
+                continue;
+            }
+
+            activeEnemyActorIds.Add(actor.ActorId);
+            EnemyBehaviorState behaviorState = actor.EnemyBehaviorState ?? EnemyBehaviorState.Idle;
+            if (registry.TryGetEnemyByActorId(actor.ActorId, out EnemyActor? existing) && existing != null)
+            {
+                existing.Combatant.Health.SetAuthoritativeState(actor.CurrentHealth, actor.MaxHealth);
+                existing.SetAuthoritativeState(actor.Position, actor.Facing, behaviorState);
                 continue;
             }
 
@@ -40,8 +49,10 @@ public static class RemoteEnemyStateApplier
                 collisionRadius: WolfAssetDefinition.CollisionRadius,
                 collisionHeight: WolfAssetDefinition.CollisionHeight,
                 displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? "Wolf" : actor.DisplayName);
-            enemy.SetFacing(actor.Facing);
+            enemy.SetAuthoritativeState(actor.Position, actor.Facing, behaviorState);
             registry.Add(enemy);
         }
+
+        registry.RemoveAllExcept(activeEnemyActorIds);
     }
 }

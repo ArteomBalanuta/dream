@@ -10,4 +10,5 @@ public readonly record struct GeometryCollisionBodyDescriptor(
     bool IsStatic,
     GeometryCellKey? CellKey = null,
     GeometrySubcellKey? SubcellKey = null,
-    Cube? CompatibilityCube = null);
+    Cube? CompatibilityCube = null,
+    int? FracturePieceIndex = null);

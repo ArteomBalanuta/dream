@@ -118,7 +118,7 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
-    public void FractureCubeIntoPieces_ReplacesCoarseCellWithDeterministicRubblePieces()
+    public void FractureCubeIntoPieces_ReplacesCoarseCellWithSeparatedRubblePieces()
     {
         Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
@@ -133,12 +133,73 @@ public class MapGeometryFacadeTests
         Assert.NotNull(geometryCell.SubdivisionState);
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
         Assert.DoesNotContain(export.DynamicCompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
-        Assert.Equal(4, export.Blocks.Count(block => block.CellKey == new GeometryCellKey(3, 1, 3)));
-        Assert.Equal(4, collision.Bodies.Count(body => body.CellKey == new GeometryCellKey(3, 1, 3)));
-        Assert.All(export.Blocks, block =>
+        Assert.DoesNotContain(export.Blocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
+        Assert.InRange(export.DynamicBlocks.Count(block => block.CellKey == new GeometryCellKey(3, 1, 3)), 5, 7);
+        Assert.Equal(
+            export.DynamicBlocks.Count(block => block.CellKey == new GeometryCellKey(3, 1, 3)),
+            collision.Bodies.Count(body => body.CellKey == new GeometryCellKey(3, 1, 3)));
+        Assert.All(export.DynamicBlocks, block =>
         {
-            Assert.InRange(block.SideLength, 0.18f, 0.42f);
-            Assert.InRange((block.Center - new Vector3(3.5f, 1.5f, 3.5f)).Length, 0.05f, 0.6f);
+            Assert.InRange(block.SideLength, 0.14f, 0.28f);
+            Assert.InRange((block.Center - new Vector3(3.5f, 1.5f, 3.5f)).Length, 0.05f, 0.75f);
+        });
+
+        GeometryRenderBlockDescriptor[] pieces = export.DynamicBlocks
+            .Where(block => block.CellKey == new GeometryCellKey(3, 1, 3))
+            .ToArray();
+        for (int first = 0; first < pieces.Length; first++)
+        {
+            for (int second = first + 1; second < pieces.Length; second++)
+            {
+                float centerDistanceXz = new Vector2(
+                    pieces[first].Center.X - pieces[second].Center.X,
+                    pieces[first].Center.Z - pieces[second].Center.Z).Length;
+                float minimumSeparatedDistance = ((pieces[first].SideLength + pieces[second].SideLength) * 0.5f) + 0.01f;
+                Assert.True(
+                    centerDistanceXz >= minimumSeparatedDistance,
+                    $"Pieces {first} and {second} were packed too tightly: {centerDistanceXz} < {minimumSeparatedDistance}");
+            }
+        }
+    }
+
+    [Fact]
+    public void CubeFracturePattern_UsesRandomizedCentersForEachFractureEvent()
+    {
+        GeometryCellKey cell = new(3, 1, 3);
+
+        IReadOnlyList<GeometryFracturePiece> first = CubeFracturePattern.CreateFirstPassRubble(cell, new Random(101));
+        IReadOnlyList<GeometryFracturePiece> second = CubeFracturePattern.CreateFirstPassRubble(cell, new Random(202));
+
+        Assert.NotEqual(
+            first.Select(piece => piece.Center).ToArray(),
+            second.Select(piece => piece.Center).ToArray());
+    }
+
+    [Fact]
+    public void RestoreFracturePieces_RehydratesPersistedPiecesIntoRenderAndCollisionExports()
+    {
+        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        GeometryCellKey cell = new(3, 1, 3);
+        GeometryFracturePiece[] pieces =
+        [
+            new(new Vector3(3.2f, 1.2f, 3.25f), 0.2f),
+            new(new Vector3(3.72f, 1.18f, 3.68f), 0.18f)
+        ];
+
+        bool restored = map.RestoreFracturePieces(cell, GeometryMaterialId.Stone, pieces, withPhysics: false);
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+
+        Assert.True(restored);
+        Assert.NotNull(map.TryGetCubeAtCell(3, 1, 3));
+        Assert.DoesNotContain(renderExport.Blocks, block => block.CellKey == cell);
+        Assert.Equal(2, renderExport.DynamicBlocks.Count(block => block.CellKey == cell));
+        Assert.Equal(2, collisionExport.Bodies.Count(body => body.CellKey == cell));
+        Assert.All(renderExport.DynamicBlocks.Where(block => block.CellKey == cell), block =>
+        {
+            Assert.Equal(GeometryMaterialId.Stone, block.MaterialId);
+            Assert.Contains(pieces, piece => piece.Center == block.Center && piece.SideLength == block.SideLength);
         });
     }
 
@@ -153,9 +214,12 @@ public class MapGeometryFacadeTests
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
 
-        Assert.Equal(4, renderExport.Blocks.Count);
-        Assert.Equal(4, collisionExport.Bodies.Count(body => body.Kind == GeometryCollisionBodyKind.Subcell));
-        foreach (GeometryRenderBlockDescriptor block in renderExport.Blocks)
+        Assert.Empty(renderExport.Blocks);
+        Assert.InRange(renderExport.DynamicBlocks.Count, 5, 7);
+        Assert.Equal(
+            renderExport.DynamicBlocks.Count,
+            collisionExport.Bodies.Count(body => body.Kind == GeometryCollisionBodyKind.Subcell));
+        foreach (GeometryRenderBlockDescriptor block in renderExport.DynamicBlocks)
         {
             GeometryCollisionBodyDescriptor collisionBody = Assert.Single(
                 collisionExport.Bodies,
@@ -259,7 +323,7 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
-    public void FractureCubeIntoPieces_IsDeterministicPerCell()
+    public void FractureCubeIntoPieces_RandomizesEachDestructionEvent()
     {
         Map first = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
         first.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
@@ -272,14 +336,14 @@ public class MapGeometryFacadeTests
         GeometryRenderExport firstExport = first.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
         GeometryRenderExport secondExport = second.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
 
-        Assert.Equal(
-            firstExport.Blocks
+        Assert.NotEqual(
+            firstExport.DynamicBlocks
                 .OrderBy(block => block.Center.X)
                 .ThenBy(block => block.Center.Y)
                 .ThenBy(block => block.Center.Z)
                 .Select(block => (block.Center, block.SideLength))
                 .ToArray(),
-            secondExport.Blocks
+            secondExport.DynamicBlocks
                 .OrderBy(block => block.Center.X)
                 .ThenBy(block => block.Center.Y)
                 .ThenBy(block => block.Center.Z)
@@ -288,7 +352,7 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
-    public void FractureCubeIntoPieces_ExportsStaticCollisionPieces()
+    public void FractureCubeIntoPieces_ExportsDynamicCollisionPieces()
     {
         Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
@@ -299,6 +363,10 @@ public class MapGeometryFacadeTests
 
         Assert.All(
             collisionExport.Bodies.Where(body => body.CellKey == new GeometryCellKey(3, 1, 3)),
-            body => Assert.True(body.IsStatic));
+            body =>
+            {
+                Assert.False(body.IsStatic);
+                Assert.NotNull(body.FracturePieceIndex);
+            });
     }
 }

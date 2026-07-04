@@ -237,6 +237,29 @@ public class Map
         }
     }
 
+    public bool UpdateFracturePiecePosition(GeometryCellKey cell, int pieceIndex, Vector3 center)
+    {
+        if (!_geometryCells.TryGetValue(cell, out GeometryCellRecord? record) ||
+            record.FracturePieces == null ||
+            pieceIndex < 0 ||
+            pieceIndex >= record.FracturePieces.Count)
+        {
+            return false;
+        }
+
+        GeometryFracturePiece[] pieces = record.FracturePieces.ToArray();
+        if (pieces[pieceIndex].Center == center)
+        {
+            return true;
+        }
+
+        pieces[pieceIndex] = pieces[pieceIndex] with { Center = center };
+        record.SetFracturePieces(pieces);
+        _renderBlocksByCell[cell] = BuildRenderBlocks(record);
+        _collisionBodiesByCell[cell] = BuildCollisionBodies(record);
+        return true;
+    }
+
     public GeometryCellRecord? TryGetGeometryCellAtCell(int x, int y, int z)
     {
         GeometryCellKey key = new GeometryCellKey(x, y, z);
@@ -314,6 +337,67 @@ public class Map
             existingCell.Definition.MaterialId);
         RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         return true;
+    }
+
+    public bool RestoreFracturePieces(
+        GeometryCellKey cell,
+        GeometryMaterialId materialId,
+        IReadOnlyList<GeometryFracturePiece> pieces,
+        bool withPhysics = true)
+    {
+        if (cell.Y == 0 ||
+            pieces.Count == 0 ||
+            !IsInBounds(new Vector3(cell.X, cell.Y, cell.Z)))
+        {
+            return false;
+        }
+
+        Cube? existingCube = TryGetCubeAtCell(cell.X, cell.Y, cell.Z);
+        if (existingCube != null)
+        {
+            RemoveCube(existingCube);
+        }
+
+        GeometryCellRecord geometryCell = _generator.CreateGeometryCell(
+            new Vector3(cell.X, cell.Y, cell.Z),
+            isFloor: false,
+            materialId);
+        GeometrySubdivisionState subdivision = geometryCell.EnsureSubdivisionState();
+        int resolution = geometryCell.Definition.SubdivisionResolution;
+        for (int x = 0; x < resolution; x++)
+        {
+            for (int y = 0; y < resolution; y++)
+            {
+                for (int z = 0; z < resolution; z++)
+                {
+                    subdivision.SetChildSolid(new GeometrySubcellKey(x, y, z), isSolid: false);
+                }
+            }
+        }
+
+        geometryCell.SetFracturePieces(pieces.ToArray());
+        TryAddGeometryCell(geometryCell, isStatic: false, withPhysics);
+        return true;
+    }
+
+    public IReadOnlyList<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
+        CaptureFracturePieces()
+    {
+        List<(GeometryCellKey, int, GeometryFracturePiece, GeometryMaterialId)> pieces = [];
+        foreach (GeometryCellRecord record in _geometryCells.Values)
+        {
+            if (record.FracturePieces == null)
+            {
+                continue;
+            }
+
+            for (int index = 0; index < record.FracturePieces.Count; index++)
+            {
+                pieces.Add((record.Key, index, record.FracturePieces[index], record.Definition.MaterialId));
+            }
+        }
+
+        return pieces;
     }
 
     public bool RestoreGeneratedStartupCell(GeometryCellKey cell)
@@ -399,6 +483,7 @@ public class Map
     {
         List<GeometryRenderCell> cells = new();
         List<GeometryRenderBlockDescriptor> blocks = new();
+        List<GeometryRenderBlockDescriptor> dynamicBlocks = new();
         List<Cube> compatibilityCubes = new();
         List<Cube> dynamicCompatibilityCubes = new();
         HashSet<GeometryCellKey> includedCells = [];
@@ -452,7 +537,14 @@ public class Map
                         continue;
                     }
 
-                    blocks.Add(block);
+                    if (cell.FracturePieces != null)
+                    {
+                        dynamicBlocks.Add(block);
+                    }
+                    else
+                    {
+                        blocks.Add(block);
+                    }
                 }
             }
         }
@@ -475,7 +567,8 @@ public class Map
             Cells: cells,
             Blocks: blocks,
             CompatibilityCubes: compatibilityCubes,
-            dynamicCompatibilityCubes: dynamicCompatibilityCubes);
+            dynamicCompatibilityCubes: dynamicCompatibilityCubes,
+            dynamicBlocks: dynamicBlocks);
     }
 
     private static bool IsGeometryBlockWithinRadius(
@@ -776,12 +869,13 @@ public class Map
         if (record.FracturePieces is { Count: > 0 })
         {
             return record.FracturePieces
-                .Select(piece => new GeometryCollisionBodyDescriptor(
+                .Select((piece, index) => new GeometryCollisionBodyDescriptor(
                     GeometryCollisionBodyKind.Subcell,
                     piece.Center,
                     new Vector3(piece.SideLength * 0.5f),
-                    IsStatic: true,
-                    CellKey: record.Key))
+                    IsStatic: false,
+                    CellKey: record.Key,
+                    FracturePieceIndex: index))
                 .ToArray();
         }
 

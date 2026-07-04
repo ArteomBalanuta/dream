@@ -85,11 +85,37 @@ public class WorldRenderer
             }
         }
 
+        List<GeometryRenderBlockDescriptor> visibleDynamicBlocks = new();
+        foreach (GeometryRenderBlockDescriptor block in export.DynamicBlocks)
+        {
+            if (!WorldVisibility.IsGeometryBlockVisible(camera.Position, camera.Front, block))
+            {
+                continue;
+            }
+
+            visibleDynamicBlocks.Add(block);
+        }
+
+        List<WorldGeometryRenderBatch> dynamicBlockBatches = WorldRenderBatchPlanner.CreateGeometryBlockBatches(visibleDynamicBlocks);
+        foreach (WorldGeometryRenderBatch batch in dynamicBlockBatches)
+        {
+            if (batch.Animation != null)
+            {
+                _render.DrawGeometryBlockBatch(camera, batch.Animation, batch.ShaderName, batch.Blocks);
+                continue;
+            }
+
+            foreach (GeometryRenderBlockDescriptor block in batch.Blocks)
+            {
+                _render.DrawGeometryBlock(camera, block);
+            }
+        }
+
         return new WorldRenderStats(
             VisibleCompatibilityCubes: visibleDynamicCubes.Count,
-            VisibleGeometryBlocks: 0,
+            VisibleGeometryBlocks: visibleDynamicBlocks.Count,
             CompatibilityBatchCount: dynamicBatches.Count,
-            GeometryBatchCount: 0,
+            GeometryBatchCount: dynamicBlockBatches.Count,
             VisibleStaticChunks: staticStats.VisibleChunks,
             StaticChunkMeshCount: staticStats.MeshCount,
             StaticChunkExposedFaces: staticStats.ExposedFaces,

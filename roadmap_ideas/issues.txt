@@ -1,6 +1,3 @@
-I think wolf has walking and biting animation but they aren't displaying; 
-Also wolf's camera is always pointing towards the player - I think you can address it so wolf moves more naturally - facing the direction it moves. 
-
 after destroying the block - small block can't be pushed or moved also smaller blocks are too tightly located their collision wires are fused (not sure that is the issue but check) I want random distribution of them after I destroy them, so it is not the same pattern for each newly spawned piece.
 
 

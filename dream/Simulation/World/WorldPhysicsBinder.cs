@@ -190,7 +190,12 @@ public class WorldPhysicsBinder
 
         object userObject = descriptor.CompatibilityCube != null
             ? (descriptor.CompatibilityCube, descriptor.Center)
-            : (descriptor.CellKey, descriptor.SubcellKey, descriptor.Center);
+            : descriptor.FracturePieceIndex.HasValue && descriptor.CellKey.HasValue
+                ? new GeometryDynamicBodyReference(
+                    descriptor.CellKey.Value,
+                    descriptor.FracturePieceIndex.Value,
+                    descriptor.Center)
+                : (descriptor.CellKey, descriptor.SubcellKey, descriptor.Center);
 
         var body = new RigidBody(rbInfo)
         {
@@ -201,6 +206,10 @@ public class WorldPhysicsBinder
         };
 
         body.SetMassProps(mass, inertia);
+        if (!descriptor.IsStatic)
+        {
+            body.ActivationState = ActivationState.DisableDeactivation;
+        }
 
         _physics.World.AddRigidBody(body);
         _physics.MapCubeBodies.Add(body);

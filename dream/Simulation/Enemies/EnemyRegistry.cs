@@ -26,6 +26,17 @@ public sealed class EnemyRegistry
         _actors.Clear();
     }
 
+    public bool TryGetEnemyByActorId(int actorId, out EnemyActor? actor)
+    {
+        actor = _actors.FirstOrDefault(candidate => candidate.Combatant.Actor.Id == actorId);
+        return actor != null;
+    }
+
+    public void RemoveAllExcept(IReadOnlySet<int> activeActorIds)
+    {
+        _actors.RemoveAll(actor => !activeActorIds.Contains(actor.Combatant.Actor.Id));
+    }
+
     public void UpdateAll(
         float deltaTime,
         Vector3 playerPosition,

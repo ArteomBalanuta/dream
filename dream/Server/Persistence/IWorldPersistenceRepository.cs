@@ -12,6 +12,12 @@ public interface IWorldPersistenceRepository
 
     void DeletePlacedCube(int cubeId);
 
+    IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces();
+
+    void SaveCubeFracturePiece(PersistedCubeFracturePiece piece);
+
+    void DeleteCubeFracturePieces(int sourceCubeId);
+
     IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies();
 
     void SaveEnemyInstance(PersistedEnemyInstance enemy);

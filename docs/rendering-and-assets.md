@@ -98,6 +98,8 @@ For each active enemy actor, the renderer currently:
 - advances clip playback
 - renders the model in world space with the main camera view and world projection
 
+Remote enemy replication preserves existing `EnemyActor` instances when authoritative snapshots arrive. This is important for animation continuity: recreating the actor every snapshot also recreates `EnemyVisualState`, which repeatedly restarts walk/attack clip playback before the animation can visibly advance.
+
 The animated-model path now composes the scene instance transform with the glTF node world transform in the correct order for this renderer. That matters for authored assets such as the wolf, whose mesh node carries its own non-identity local scale.
 
 This is intentionally the first dedicated world-actor render seam so future creatures do not have to masquerade as cubes just to appear in the scene.
@@ -264,10 +266,24 @@ The repository currently includes:
 - A Kenney blocky player model under `dream/animations/players/`
 - First-person hands and held-item blockout assets under `dream/animations/viewmodels/`
 - A curated source library under `dream/animations/library/` with:
-  - Quaternius animal and character packs in `library/quaternius/`
-  - Kenney `nature-kit` and `animated-characters-retro` packs in `library/kenney/`
+  - Quaternius `animals` and `characters` source packs in `library/quaternius/`
+  - Quaternius `fantasy-props-megakit` for medieval props, tools, weapons, vegetables, furniture, and stalls
+  - Quaternius `stylized-nature-megakit` for stylized trees, plants, flowers, grass, and rock sets
+  - Quaternius `survival-pack` for utility items, camp gear, tools, firearms, and general-purpose props
+  - Kenney `animated-characters-retro`, `food-kit`, and `nature-kit` packs in `library/kenney/`
   - Poly Haven terrain textures in `library/polyhaven/`
+  - OpenGameArt `skyboxes/cloudy-skyboxes` with CC0 cubemap and panorama sky backgrounds
 - A font file under `dream/fonts/`
+
+The current source library is intentionally broader than the live runtime set. The repo now has reusable inventory for:
+
+- character and creature reference assets
+- food, fruit, and kitchen props
+- fantasy weapons, tools, market props, and furniture
+- stylized trees, foliage, flowers, and rock formations
+- survival tools, camp objects, and general-purpose item meshes
+- cubemap and panorama skies for sunny, sunset, cloudy, and night background work
+- terrain textures for the world material pipeline
 
 These asset directories are copied into the build output and resolved at runtime relative to the application base directory, as documented in [configuration.md](configuration.md).
 

@@ -75,7 +75,23 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 - `Grass_bottom.jpg`
 - `grass_block_side_texture.png`
 - `me.png`
+- `enemies/`: gameplay-facing creature assets such as `wolf.glb`
 - `players/`: Kenney blocky player model, texture dependency, and copied CC0 license for remote-player rendering
+- `viewmodels/`: first-person blockout hands and held-item assets
+- `library/`: curated source vault for reusable CC0 packs and textures
+
+### `dream/animations/library/`
+
+- `quaternius/animals/`: Quaternius source creatures used as future creature-asset references
+- `quaternius/characters/`: Quaternius character source pack already staged for future actor work
+- `quaternius/fantasy-props-megakit/`: Quaternius medieval/fantasy prop library with weapons, tools, vegetables, stalls, furniture, and related textures/licenses
+- `quaternius/stylized-nature-megakit/`: Quaternius stylized environment library with trees, plants, flowers, rocks, grass, and related textures in `glTF`, `FBX`, and `OBJ`
+- `quaternius/survival-pack/`: Quaternius utility prop library with `Blends`, `FBX`, and `OBJ` exports for tools, weapons, camp gear, and general-purpose items
+- `kenney/animated-characters-retro/`: Kenney animated stylized character source pack
+- `kenney/food-kit/`: Kenney food-and-prop library for consumables, fruit, dishes, and kitchen set dressing
+- `kenney/nature-kit/`: Kenney nature/environment pack used as a reusable source library
+- `polyhaven/`: terrain texture source folders used by world-material rendering
+- `skyboxes/cloudy-skyboxes/`: OpenGameArt CC0 skybox library with both horizontal-cross cubemaps and equirectangular panoramas for day, sunset, and night skies
 
 ### `dream/fonts/`
 

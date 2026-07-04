@@ -2,6 +2,7 @@ using BulletSharp;
 using OpenTK.Mathematics;
 using Dream.Rendering.Core;
 using Dream.Simulation.Players;
+using Dream.Simulation.Physics;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -59,7 +60,8 @@ public class DebugRenderer
     public static bool ShouldDrawCollisionBody(RigidBody body)
     {
         return body.UserObject is (Cube, Vector3) ||
-            body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, Vector3>;
+            body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, Vector3> ||
+            body.UserObject is GeometryDynamicBodyReference;
     }
 
     private static bool TryResolveDebugPosition(RigidBody body, out Vector3 position)
@@ -71,6 +73,10 @@ public class DebugRenderer
                 return true;
             case ValueTuple<GeometryCellKey?, GeometrySubcellKey?, Vector3> geometryBody:
                 position = geometryBody.Item3;
+                return true;
+            case GeometryDynamicBodyReference:
+                body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+                position = transform.Origin.ToOpenTK();
                 return true;
             default:
                 position = default;

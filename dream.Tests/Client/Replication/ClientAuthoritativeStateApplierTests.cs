@@ -103,7 +103,7 @@ public class ClientAuthoritativeStateApplierTests
 
         Assert.NotNull(map.TryGetCubeAtCell(2, 1, 2));
         Assert.NotNull(fracturedCell.SubdivisionState);
-        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
+        Assert.Contains(export.DynamicBlocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
         Assert.Null(map.TryGetCubeAtCell(8, 1, 8));
     }
@@ -125,7 +125,7 @@ public class ClientAuthoritativeStateApplierTests
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
 
         Assert.NotNull(fracturedCell.SubdivisionState);
-        Assert.Contains(export.Blocks, block => block.CellKey == new GeometryCellKey(4, 1, 4));
+        Assert.Contains(export.DynamicBlocks, block => block.CellKey == new GeometryCellKey(4, 1, 4));
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(4.5f, 1.5f, 4.5f));
     }
 

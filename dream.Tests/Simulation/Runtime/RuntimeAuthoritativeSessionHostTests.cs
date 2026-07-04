@@ -263,6 +263,91 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void Constructor_RestoresPersistedCubeFracturePiecesIntoAuthoritativeMap()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        GeometryCellKey cell = new(4, 1, 4);
+        PersistedCubeFracturePiece persistedPiece = new(
+            SourceCubeId: 88,
+            PieceIndex: 0,
+            OwnerPlayerName: "builder-a",
+            ParentCell: new Vector3(cell.X, cell.Y, cell.Z),
+            Center: new Vector3(4.25f, 1.2f, 4.35f),
+            SideLength: 0.2f,
+            MaterialId: GeometryMaterialId.Sand,
+            CreatedUtc: DateTime.UtcNow,
+            UpdatedUtc: DateTime.UtcNow);
+        worldPersistence.SaveCubeFracturePiece(persistedPiece);
+        SceneEventHub events = new();
+
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+
+        GeometryRenderExport export = runtime.Map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
+        GeometryRenderBlockDescriptor block = Assert.Single(export.DynamicBlocks, block => block.CellKey == cell);
+        Assert.Equal(persistedPiece.Center, block.Center);
+        Assert.Equal(persistedPiece.SideLength, block.SideLength);
+        Assert.Equal(GeometryMaterialId.Sand, block.MaterialId);
+    }
+
+    [Fact]
+    public void ProcessAction_FatalCubeHit_PersistsFracturePiecesAndDeletesPlacedCube()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            10,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId sessionId = new("session-a");
+        host.JoinSession(sessionId.Value, "Player A");
+        runtime.Enemies.Clear();
+        AuthoritativeActionResult buildResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+        PersistedPlacedCube persistedCube = Assert.Single(worldPersistence.LoadPlacedCubes());
+        host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            2,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        runtime.Player.SetWorldPosition(new Vector3(5f, 1.5f, 7.5f));
+        runtime.Player.SetFacing(Vector3.UnitX);
+
+        AuthoritativeActionResult combatResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            3,
+            new CombatUseIntent(new Vector3(5f, 1.5f, 7.5f), Vector3.UnitX)));
+
+        Assert.True(buildResult.Accepted);
+        Assert.True(combatResult.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(combatResult.Payload);
+        Assert.True(resolution.TargetDied);
+        Assert.Empty(worldPersistence.LoadPlacedCubes());
+        PersistedCubeFracturePiece[] pieces = worldPersistence.LoadCubeFracturePieces().ToArray();
+        Assert.InRange(pieces.Length, 5, 7);
+        Assert.All(pieces, piece =>
+        {
+            Assert.Equal(persistedCube.CubeId, piece.SourceCubeId);
+            Assert.Equal("Player A", piece.OwnerPlayerName);
+            Assert.Equal(persistedCube.CellPosition, piece.ParentCell);
+            Assert.Equal(persistedCube.MaterialId, piece.MaterialId);
+        });
+    }
+
+    [Fact]
     public void JoinSession_Seeds_StarterInventory_For_FirstTimePlayer()
     {
         SceneEventHub events = new();
@@ -689,6 +774,8 @@ public class RuntimeAuthoritativeSessionHostTests
     private sealed class InMemoryWorldPersistenceRepository : IWorldPersistenceRepository
     {
         private readonly Dictionary<string, PersistedPlayerWorldState> _players = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, PersistedPlacedCube> _placedCubes = [];
+        private readonly List<PersistedCubeFracturePiece> _fracturePieces = [];
 
         public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName)
         {
@@ -700,14 +787,31 @@ public class RuntimeAuthoritativeSessionHostTests
             _players[state.PlayerName] = state;
         }
 
-        public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => Array.Empty<PersistedPlacedCube>();
+        public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => _placedCubes.Values.ToArray();
 
         public void SavePlacedCube(PersistedPlacedCube cube)
         {
+            _placedCubes[cube.CubeId] = cube;
         }
 
         public void DeletePlacedCube(int cubeId)
         {
+            _placedCubes.Remove(cubeId);
+        }
+
+        public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
+
+        public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
+        {
+            _fracturePieces.RemoveAll(existing =>
+                existing.SourceCubeId == piece.SourceCubeId &&
+                existing.PieceIndex == piece.PieceIndex);
+            _fracturePieces.Add(piece);
+        }
+
+        public void DeleteCubeFracturePieces(int sourceCubeId)
+        {
+            _fracturePieces.RemoveAll(piece => piece.SourceCubeId == sourceCubeId);
         }
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Array.Empty<PersistedEnemyInstance>();

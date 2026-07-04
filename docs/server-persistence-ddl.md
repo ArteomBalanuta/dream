@@ -85,6 +85,32 @@ Used for:
 - cube placement persistence
 - cube destruction and fracture cleanup
 
+### `cube_fracture_pieces`
+
+One row per persisted fragment produced when a destructible cube fractures.
+
+Key fields:
+
+- composite PK: `source_cube_id`, `piece_index`
+- `owner_player_name`: original cube owner, FK to `player_profiles`
+- `parent_cell_x`, `parent_cell_y`, `parent_cell_z`: coarse cell that owns the rubble group
+- `center_x`, `center_y`, `center_z`: authoritative fragment center in world coordinates
+- `side_length`: fragment cube size
+- `material_id`: material used by render and collision rehydration
+- timestamps
+
+Used for:
+
+- restoring destroyed-cube rubble on server startup or client rejoin
+- keeping render and collision fragments aligned after authoritative physics updates
+- preserving ownership/material metadata after the source cube leaves `placed_cube_instances`
+
+Important note:
+
+- the source cube row is deleted when it fractures
+- the rubble pieces become the persistent world representation for that cell
+- the runtime may keep a hidden compatibility cell so map queries can find the rubble group, but render/collision export uses the stored fragment pieces
+
 ### `enemy_instances`
 
 One row per currently active enemy instance.
@@ -175,6 +201,7 @@ The current script adds lookup indexes for:
 - recently updated player profiles
 - recently updated player world state
 - cube ownership and update time
+- cube fracture ownership, parent cell, and update time
 - enemy update time
 - item ownership and update time
 - slot lookup by `item_instance_id`

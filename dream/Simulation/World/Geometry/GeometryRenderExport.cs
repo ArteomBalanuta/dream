@@ -9,13 +9,15 @@ public readonly record struct GeometryRenderExport
         IReadOnlyList<GeometryRenderCell> Cells,
         IReadOnlyList<GeometryRenderBlockDescriptor> Blocks,
         IReadOnlyList<Cube> CompatibilityCubes,
-        IReadOnlyList<Cube>? dynamicCompatibilityCubes = null)
+        IReadOnlyList<Cube>? dynamicCompatibilityCubes = null,
+        IReadOnlyList<GeometryRenderBlockDescriptor>? dynamicBlocks = null)
     {
         this.DirtyCells = DirtyCells;
         this.Cells = Cells;
         this.Blocks = Blocks;
         this.CompatibilityCubes = CompatibilityCubes;
         DynamicCompatibilityCubes = dynamicCompatibilityCubes ?? Array.Empty<Cube>();
+        DynamicBlocks = dynamicBlocks ?? Array.Empty<GeometryRenderBlockDescriptor>();
     }
 
     public IReadOnlyList<GeometryCellKey> DirtyCells { get; init; }
@@ -23,4 +25,5 @@ public readonly record struct GeometryRenderExport
     public IReadOnlyList<GeometryRenderBlockDescriptor> Blocks { get; init; }
     public IReadOnlyList<Cube> CompatibilityCubes { get; init; }
     public IReadOnlyList<Cube> DynamicCompatibilityCubes { get; init; }
+    public IReadOnlyList<GeometryRenderBlockDescriptor> DynamicBlocks { get; init; }
 }
