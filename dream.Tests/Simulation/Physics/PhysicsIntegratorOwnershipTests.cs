@@ -138,6 +138,28 @@ public class PhysicsIntegratorOwnershipTests
                 reference.CellKey == new GeometryCellKey(3, 1, 3));
     }
 
+    [Fact]
+    public void FractureCubeIntoPieces_RemovesCompatibilityBodyAfterPhysicsDrivenCellDrift()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
+        Cube cube = Assert.IsType<Cube>(map.TryGetCubeAtCell(3, 1, 3));
+
+        map.UpdateCubePosition(cube, new TkVector3(4.2f, 1.5f, 3.5f), syncPhysics: false);
+        bool fractured = map.FractureCubeIntoPieces(new GeometryCellKey(4, 1, 3));
+
+        Assert.True(fractured);
+        Assert.DoesNotContain(
+            physics.MapCubeBodies,
+            body => body.UserObject is ValueTuple<Cube, TkVector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+        Assert.Contains(
+            physics.DynamicMapCubeBodies,
+            body => body.UserObject is GeometryDynamicBodyReference reference &&
+                reference.CellKey == new GeometryCellKey(4, 1, 3));
+    }
+
     private static PhysicsIntegrator CreateHarness(
         Action<RigidBody> addRigidBodyToWorld,
         Action<RigidBody> removeRigidBodyFromWorld,

@@ -196,10 +196,19 @@ public class Map
 
     public void UpdateCubePosition(Cube cube, Vector3 position, bool syncPhysics = true)
     {
+        UpdateCubePosition(cube, position, reservedTargetCells: null, syncPhysics);
+    }
+
+    internal bool UpdateCubePosition(
+        Cube cube,
+        Vector3 position,
+        ISet<GeometryCellKey>? reservedTargetCells,
+        bool syncPhysics = true)
+    {
         if (!_cubeCells.TryGetValue(cube, out GeometryCellKey oldKey))
         {
             cube.Position = position;
-            return;
+            return false;
         }
 
         GeometryCellKey newKey = new(
@@ -218,12 +227,17 @@ public class Map
                 RebuildGeometryCellArtifacts(oldKey, syncPhysics: true);
             }
 
-            return;
+            return true;
         }
 
         if (!IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)))
         {
-            return;
+            return false;
+        }
+
+        if (!CanTransitionCubeToCell(cube, newKey, reservedTargetCells))
+        {
+            return false;
         }
 
         if (_geometryCells.TryGetValue(oldKey, out GeometryCellRecord? oldCell))
@@ -245,7 +259,11 @@ public class Map
             _cubeCells[cube] = newKey;
             Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
             RebuildGeometryCellArtifacts(newKey, syncPhysics: syncPhysics && _physicsBinder != null);
+            reservedTargetCells?.Add(newKey);
+            return true;
         }
+
+        return false;
     }
 
     public bool UpdateFracturePiecePosition(GeometryCellKey cell, int pieceIndex, Vector3 center)
@@ -310,6 +328,7 @@ public class Map
             return false;
         }
 
+        Cube? compatibilityCube = Cubes[cell.X, cell.Y, cell.Z];
         GeometrySubdivisionState subdivision = record.EnsureSubdivisionState();
         int resolution = record.Definition.SubdivisionResolution;
         for (int x = 0; x < resolution; x++)
@@ -326,6 +345,11 @@ public class Map
 
         record.SetFracturePieces(CubeFracturePattern.CreateFirstPassRubble(cell));
         RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
+        if (compatibilityCube != null)
+        {
+            _physicsBinder?.RemoveCompatibilityCubeBodies(compatibilityCube);
+        }
+
         return true;
     }
 
@@ -917,6 +941,32 @@ public class Map
     {
         return record.SubdivisionState == null &&
             record.Definition.ShapeKind == GeometryShapeKind.SolidCube;
+    }
+
+    private bool CanTransitionCubeToCell(
+        Cube cube,
+        GeometryCellKey newKey,
+        ISet<GeometryCellKey>? reservedTargetCells)
+    {
+        if (reservedTargetCells?.Contains(newKey) == true)
+        {
+            return false;
+        }
+
+        Cube? occupiedCube = Cubes[newKey.X, newKey.Y, newKey.Z];
+        if (occupiedCube != null && !ReferenceEquals(occupiedCube, cube))
+        {
+            return false;
+        }
+
+        if (_geometryCells.TryGetValue(newKey, out GeometryCellRecord? record) &&
+            !ReferenceEquals(occupiedCube, cube) &&
+            record.SubdivisionState != null)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private bool IsStaticCompatibilityRender(GeometryCellKey key)

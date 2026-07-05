@@ -106,6 +106,53 @@ public class PhysicsSyncSystemTests
         Assert.DoesNotContain(body, physics.DynamicMapCubeBodies);
     }
 
+    [Fact]
+    public void SyncDynamicMapBodies_WhenTwoDynamicCubesResolveToSameCell_KeepsDistinctLogicalOwnership()
+    {
+        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
+        map.AddCube(new TkVector3(5f, 1f, 3f), withPhysics: false);
+        Cube firstCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
+        Cube secondCube = Assert.IsType<Cube>(map.Cubes[5, 1, 3]);
+        RigidBody firstBody = CreateBody(new BulletSharp.Math.Vector3(4.2f, 1.5f, 3.5f));
+        RigidBody secondBody = CreateBody(new BulletSharp.Math.Vector3(4.8f, 1.5f, 3.5f));
+        firstBody.UserObject = (firstCube, firstCube.Position);
+        secondBody.UserObject = (secondCube, secondCube.Position);
+        PhysicsSyncSystem sync = new();
+
+        sync.SyncDynamicMapBodies(map, [firstBody, secondBody]);
+
+        Assert.Same(firstCube, map.TryGetCubeAtCell(4, 1, 3));
+        Assert.Same(secondCube, map.TryGetCubeAtCell(5, 1, 3));
+        Assert.NotEqual(firstCube.Position, secondCube.Position);
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new TkVector3(4.5f, 1.5f, 3.5f), 4f);
+        Assert.Contains(firstCube, export.DynamicCompatibilityCubes);
+        Assert.Contains(secondCube, export.DynamicCompatibilityCubes);
+    }
+
+    [Fact]
+    public void SyncDynamicMapBodies_WhenDynamicCubeResolvesIntoFracturedCell_PreservesFractureOwnership()
+    {
+        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        map.AddCube(new TkVector3(4f, 1f, 4f), withPhysics: false);
+        map.FractureCubeIntoPieces(new GeometryCellKey(4, 1, 4));
+        map.AddCube(new TkVector3(6f, 1f, 4f), withPhysics: false);
+        Cube movingCube = Assert.IsType<Cube>(map.Cubes[6, 1, 4]);
+        RigidBody body = CreateBody(new BulletSharp.Math.Vector3(4.3f, 1.5f, 4.4f));
+        body.UserObject = (movingCube, movingCube.Position);
+        PhysicsSyncSystem sync = new();
+
+        sync.SyncDynamicMapBodies(map, [body]);
+
+        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(4, 1, 4));
+        Assert.NotNull(fracturedCell.FracturePieces);
+        Assert.Same(movingCube, map.TryGetCubeAtCell(6, 1, 4));
+        Assert.NotSame(movingCube, map.TryGetCubeAtCell(4, 1, 4));
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new TkVector3(4.5f, 1.5f, 4.5f), 6f);
+        Assert.Contains(movingCube, export.DynamicCompatibilityCubes);
+        Assert.Contains(export.DynamicBlocks, block => block.CellKey == new GeometryCellKey(4, 1, 4));
+    }
+
     private static RigidBody CreateBody(
         BulletSharp.Math.Vector3 position,
         Action? onGetWorldTransform = null)

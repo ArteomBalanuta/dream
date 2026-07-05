@@ -252,7 +252,24 @@ public class WorldPhysicsBinder
             return 0;
         }
 
+        HashSet<RigidBody> bodySet = bodies.ToHashSet();
         RemoveBodies(bodies);
+        List<GeometryCellKey> emptyCells = [];
+        foreach ((GeometryCellKey cellKey, List<RigidBody> cellBodies) in _geometryCellBodies)
+        {
+            cellBodies.RemoveAll(bodySet.Contains);
+            if (cellBodies.Count == 0)
+            {
+                emptyCells.Add(cellKey);
+            }
+        }
+
+        foreach (GeometryCellKey cellKey in emptyCells)
+        {
+            _geometryCellBodies.Remove(cellKey);
+        }
+
+        _mergedStaticCollisionBodies.RemoveAll(bodySet.Contains);
         _cubeBodies.Remove(cube);
         return bodies.Length;
     }
