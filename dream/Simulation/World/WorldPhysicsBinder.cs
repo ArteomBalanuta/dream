@@ -104,6 +104,40 @@ public class WorldPhysicsBinder
         _geometryCellBodies.Remove(cellKey);
     }
 
+    public void ReindexCompatibilityCubeBody(Cube cube, GeometryCellKey oldCellKey, GeometryCellKey newCellKey)
+    {
+        ArgumentNullException.ThrowIfNull(cube);
+
+        if (oldCellKey == newCellKey ||
+            !_geometryCellBodies.TryGetValue(oldCellKey, out List<RigidBody>? oldBodies))
+        {
+            return;
+        }
+
+        List<RigidBody> movedBodies = oldBodies
+            .Where(body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube))
+            .ToList();
+        if (movedBodies.Count == 0)
+        {
+            return;
+        }
+
+        oldBodies.RemoveAll(movedBodies.Contains);
+        if (oldBodies.Count == 0)
+        {
+            _geometryCellBodies.Remove(oldCellKey);
+        }
+
+        if (!_geometryCellBodies.TryGetValue(newCellKey, out List<RigidBody>? newBodies))
+        {
+            newBodies = [];
+            _geometryCellBodies[newCellKey] = newBodies;
+        }
+
+        newBodies.AddRange(movedBodies);
+    }
+
     private void RemoveBodies(IEnumerable<RigidBody> bodies)
     {
         foreach (RigidBody body in bodies)

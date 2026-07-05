@@ -258,6 +258,11 @@ public class Map
             _geometryCells[newKey] = movedCell;
             _cubeCells[cube] = newKey;
             Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
+            if (!syncPhysics)
+            {
+                _physicsBinder?.ReindexCompatibilityCubeBody(cube, oldKey, newKey);
+            }
+
             RebuildGeometryCellArtifacts(newKey, syncPhysics: syncPhysics && _physicsBinder != null);
             reservedTargetCells?.Add(newKey);
             return true;
