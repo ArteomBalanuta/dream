@@ -39,8 +39,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly ConcurrentQueue<PendingConnectionReply> _pendingJoinReplies = new();
     private readonly bool _deferJoinsToTick;
-    // Join requests received since the last tick, touched only under _authoritySync.
-    private readonly List<PendingJoin> _pendingJoins = [];
+    // Join requests received since the last tick, touched only under _authoritySync. The tick
+    // swaps in _applyingJoins before routing, because a failed join releases its connection and
+    // ReleaseConnection edits _pendingJoins.
+    private List<PendingJoin> _pendingJoins = [];
+    private List<PendingJoin> _applyingJoins = [];
     private readonly object _authoritySync = new();
 
     // Tick scratch, touched only under _authoritySync. The context list mirrors _connections and
@@ -66,8 +69,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // ids and spawn lanes) then depends only on which sessions joined in which tick, not on their
     // arrival order. HandleClientMessage returns no reply for a deferred join; the JoinAccepted or
     // JoinRejected comes from DrainPendingJoinRepliesInto after the tick, and the caller must
-    // deliver it. Off by default: DedicatedServerService delivers only the replies that
-    // HandleClientMessage returns.
+    // deliver it. DedicatedServerService delivers both kinds of reply; the dedicated and
+    // integrated servers turn this on through ServerBootstrap.CreateAuthoritativeHost.
     public DedicatedServerHost(
         IAuthoritativeSessionHost? authority,
         IProtocolRouter router,
@@ -107,7 +110,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         return new DedicatedServerHost(authority: null, router);
     }
 
-    public static DedicatedServerHost CreateRuntimeAttached(Dream.Server.Persistence.ServerPersistenceBundle? persistence = null)
+    public static DedicatedServerHost CreateRuntimeAttached(
+        Dream.Server.Persistence.ServerPersistenceBundle? persistence = null,
+        bool deferJoinsToTick = false)
     {
         ProtocolRouter router = new(
             [
@@ -119,7 +124,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             ],
             Array.Empty<IClientMessageHandler>());
 
-        return new DedicatedServerHost(RuntimeAuthoritativeSessionHost.CreateDefault(persistence), router);
+        return new DedicatedServerHost(RuntimeAuthoritativeSessionHost.CreateDefault(persistence), router, deferJoinsToTick);
     }
 
     public IReadOnlyList<IServerToClientMessage> HandleClientMessage(
@@ -376,14 +381,17 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return;
         }
 
-        if (_pendingJoins.Count > 1)
+        List<PendingJoin> joins = _pendingJoins;
+        _pendingJoins = _applyingJoins;
+        _applyingJoins = joins;
+        if (joins.Count > 1)
         {
-            _pendingJoins.Sort(ComparePendingJoinsOrdinal);
+            joins.Sort(ComparePendingJoinsOrdinal);
         }
 
-        for (int i = 0; i < _pendingJoins.Count; i++)
+        for (int i = 0; i < joins.Count; i++)
         {
-            PendingJoin join = _pendingJoins[i];
+            PendingJoin join = joins[i];
             if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
             {
                 continue;
@@ -399,7 +407,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             context.ClearOutboundMessages();
         }
 
-        _pendingJoins.Clear();
+        joins.Clear();
     }
 
     private readonly record struct PendingJoin(string ConnectionId, ClientJoinRequestMessage Request);
