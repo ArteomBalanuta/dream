@@ -122,10 +122,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 AllowGameplayInput: true,
                 AllowLook: true),
             tuning);
-        Stopwatch physicsStopwatch = Stopwatch.StartNew();
+        long physicsStart = Stopwatch.GetTimestamp();
         Physics.StepSimulationFixed(deltaTime);
-        physicsStopwatch.Stop();
-        _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
+        _lastPhysicsStepMilliseconds = Stopwatch.GetElapsedTime(physicsStart).TotalMilliseconds;
         Player.SyncCameraFromBody(tuning);
         _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
         return playPrimaryUse;
@@ -142,11 +141,11 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
             Player.GetWorldPosition(),
             cameraViewMode);
 
-        Stopwatch renderExportStopwatch = Stopwatch.StartNew();
+        long renderExportStart = Stopwatch.GetTimestamp();
         GeometryRenderExport visibleWorld = Map.CapturePresentationGeometryRenderExport(
             presentationCamera.Position,
             maxRenderDistance);
-        renderExportStopwatch.Stop();
+        double renderExportMilliseconds = Stopwatch.GetElapsedTime(renderExportStart).TotalMilliseconds;
 
         return WorldSessionPresentationState.Create(
             presentationCamera,
@@ -164,7 +163,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 Player.Combatant.Level,
                 Player.Combatant.Experience),
             new FramePerformanceSnapshot(
-                renderExportStopwatch.Elapsed.TotalMilliseconds,
+                renderExportMilliseconds,
                 _lastPhysicsStepMilliseconds,
                 visibleWorld.CompatibilityCubes.Count + visibleWorld.DynamicCompatibilityCubes.Count,
                 visibleWorld.Blocks.Count + visibleWorld.DynamicBlocks.Count,

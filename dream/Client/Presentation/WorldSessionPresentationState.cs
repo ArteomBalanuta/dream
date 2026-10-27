@@ -8,7 +8,9 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Client.Presentation;
 
-
+// One frame's presentation capture. ActiveEnemies may be the enemy registry's live list (see
+// SelectActiveEnemies), so consumers read it during the frame it was captured for and never keep
+// it, or this state, across frames.
 public sealed record WorldSessionPresentationState(
     Camera Camera,
     GeometryRenderExport VisibleWorld,
@@ -36,7 +38,7 @@ public sealed record WorldSessionPresentationState(
         return new WorldSessionPresentationState(
             camera,
             visibleWorld,
-            activeEnemies.Where(actor => actor.IsActive).ToArray(),
+            SelectActiveEnemies(activeEnemies),
             mapCollisionBodies,
             playerCollisionBody,
             new HudStatusSnapshot(
@@ -52,5 +54,41 @@ public sealed record WorldSessionPresentationState(
                 experience,
                 experienceToNextLevel),
             performance);
+    }
+
+    // When every actor is active, which is the steady state, the caller's list is returned as is
+    // instead of being copied each frame. Otherwise only the active actors are copied out.
+    private static IReadOnlyList<EnemyActor> SelectActiveEnemies(IEnumerable<EnemyActor> actors)
+    {
+        if (actors is not IReadOnlyList<EnemyActor> list)
+        {
+            return actors.Where(actor => actor.IsActive).ToArray();
+        }
+
+        int activeCount = 0;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (list[i].IsActive)
+            {
+                activeCount++;
+            }
+        }
+
+        if (activeCount == list.Count)
+        {
+            return list;
+        }
+
+        var active = new EnemyActor[activeCount];
+        int next = 0;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (list[i].IsActive)
+            {
+                active[next++] = list[i];
+            }
+        }
+
+        return active;
     }
 }
