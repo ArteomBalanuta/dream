@@ -11,21 +11,16 @@ namespace Dream.Tests.Integration;
 
 // A session that leaves the dedicated server (ReleaseConnection) and joins again under the same
 // session id, as a reconnecting client does. WorldSessionRuntime.AttachRemoteSession handles a
-// returning session (RemoteSessionPlayerStateTests), but the server join path,
-// RuntimeAuthoritativeSessionHost.JoinSession, takes its own existing-session branch: it marks the
-// player spawned and answers JoinAccepted without attaching it to the runtime again. Found by the
-// MEM-3/MEM-9/NET-7 long-run churn test (LongRunServerChurnIntegrationTests).
+// returning session (RemoteSessionPlayerStateTests); the server join path,
+// RuntimeAuthoritativeSessionHost.JoinSession, used to take its own existing-session branch that only
+// marked the player spawned, so a rejoined session had no player. Found by the MEM-3/MEM-9/NET-7
+// long-run churn test (LongRunServerChurnIntegrationTests).
 public class SessionRejoinIntegrationTests
 {
-    private const string Bug =
-        "Production bug: RuntimeAuthoritativeSessionHost.JoinSession (RuntimeAuthoritativeSessionHost.cs:52-68) " +
-        "handles a returning session by MarkSpawned only and never calls WorldSessionRuntime.AttachRemoteSession, " +
-        "so a rejoined secondary has no RemoteSessionPlayerState and a rejoined former primary is never re-seated.";
-
     private const string SessionA = "session-a";
     private const string SessionB = "session-b";
 
-    [Fact(Skip = Bug)]
+    [Fact]
     public void Secondary_LeavesAndRejoinsOnANewConnection_IsListedAndMovesAgain()
     {
         using Server server = new();
@@ -56,7 +51,7 @@ public class SessionRejoinIntegrationTests
         Assert.True((server.Actor(SessionB)!.Value.Position - before).Length > 0.5f, "The rejoined player does not move.");
     }
 
-    [Fact(Skip = Bug)]
+    [Fact]
     public void FormerPrimary_LeavesAndRejoinsWhileTheSeatIsFree_RetakesTheSeat()
     {
         using Server server = new();
