@@ -3,11 +3,13 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
+using Dream.Client.World;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -130,15 +132,17 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_AddsReplicatedPlacedCubesAsDynamicBodies()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        // A locally simulated map (no replicated cube bodies), as the authoritative runtime builds it.
+        using PhysicsIntegrator physics = new();
+        Map map = CreateSimulatedMap(physics);
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
-            runtime.Map,
+            map,
             [new WorldMutationDelta(WorldMutationKind.CubePlaced, new Vector3(6f, 1f, 6f))]);
 
-        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        Cube cube = Assert.IsType<Cube>(map.TryGetCubeAtCell(6, 1, 6));
         Assert.Contains(
-            runtime.Physics.DynamicMapCubeBodies,
+            physics.DynamicMapCubeBodies,
             body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
                 ReferenceEquals(cubeBody.Item1, cube));
     }
@@ -269,7 +273,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AddsCollisionBodiesForReplicatedPlacedCubes()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         int initialCollisionBodyCount = runtime.Physics.MapCubeBodies.Count;
         ServerSnapshotEnvelope snapshot = new(
             33,
@@ -291,9 +295,29 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
-    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AddsReplicatedPlacedCubesAsDynamicBodies()
+    public void RemoteWorldMutationApplier_ApplyWorldSnapshot_AddsPlacedCubesAsDynamicBodiesOnSimulatedMap()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using PhysicsIntegrator physics = new();
+        Map map = CreateSimulatedMap(physics);
+        WorldSnapshot snapshot = new(
+            map.Width,
+            map.Height,
+            map.Depth,
+            [new Vector3(6f, 1f, 6f)]);
+
+        RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
+
+        Cube cube = Assert.IsType<Cube>(map.TryGetCubeAtCell(6, 1, 6));
+        Assert.Contains(
+            physics.DynamicMapCubeBodies,
+            body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AddsReplicatedPlacedCubesAsKinematicBodies()
+    {
+        using ClientWorldSession runtime = CreateRuntime();
         ServerSnapshotEnvelope snapshot = new(
             33,
             new Dictionary<string, ulong>(),
@@ -310,16 +334,50 @@ public class ClientAuthoritativeStateApplierTests
         RemoteWorldMutationApplier.ApplySnapshotToRuntime(runtime, snapshot);
 
         Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(6, 1, 6));
-        Assert.Contains(
-            runtime.Physics.DynamicMapCubeBodies,
-            body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+        BulletSharp.RigidBody body = Assert.Single(
+            runtime.Physics.MapCubeBodies,
+            candidate => candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
                 ReferenceEquals(cubeBody.Item1, cube));
+        Assert.True(body.CollisionFlags.HasFlag(BulletSharp.CollisionFlags.KinematicObject));
+        Assert.DoesNotContain(body, runtime.Physics.DynamicMapCubeBodies);
     }
 
     [Fact]
-    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AlignsDynamicCubeRenderAndCollisionToAuthoritativeCenter()
+    public void RemoteWorldMutationApplier_ApplyWorldSnapshot_AlignsDynamicCubeRenderAndCollisionToAuthoritativeCenter()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using PhysicsIntegrator physics = new();
+        Map map = CreateSimulatedMap(physics);
+        Vector3 cell = new(6f, 1f, 6f);
+        Vector3 authoritativeCenter = new(6.72f, 1.5f, 6.18f);
+        WorldSnapshot snapshot = new(
+            map.Width,
+            map.Height,
+            map.Depth,
+            [cell],
+            PlacedCubes: [new PlacedCubeSnapshot(cell, authoritativeCenter)]);
+
+        RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
+
+        Cube cube = Assert.IsType<Cube>(map.TryGetCubeAtCell(6, 1, 6));
+        AssertVector3(authoritativeCenter, cube.Position);
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(authoritativeCenter, 2f);
+        Assert.Contains(
+            export.DynamicCompatibilityCubes,
+            candidate => ReferenceEquals(candidate, cube) && ApproximatelyEqual(candidate.Position, authoritativeCenter));
+        BulletSharp.RigidBody body = Assert.Single(
+            physics.DynamicMapCubeBodies,
+            candidate => candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+        body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+        Assert.Equal(authoritativeCenter.X, transform.Origin.X, 3);
+        Assert.Equal(authoritativeCenter.Y, transform.Origin.Y, 3);
+        Assert.Equal(authoritativeCenter.Z, transform.Origin.Z, 3);
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplySnapshotToRuntime_AlignsReplicatedCubeRenderAndCollisionToAuthoritativeCenter()
+    {
+        using ClientWorldSession runtime = CreateRuntime();
         Vector3 cell = new(6f, 1f, 6f);
         Vector3 authoritativeCenter = new(6.72f, 1.5f, 6.18f);
         ServerSnapshotEnvelope snapshot = new(
@@ -345,9 +403,10 @@ public class ClientAuthoritativeStateApplierTests
             export.DynamicCompatibilityCubes,
             candidate => ReferenceEquals(candidate, cube) && ApproximatelyEqual(candidate.Position, authoritativeCenter));
         BulletSharp.RigidBody body = Assert.Single(
-            runtime.Physics.DynamicMapCubeBodies,
+            runtime.Physics.MapCubeBodies,
             candidate => candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
                 ReferenceEquals(cubeBody.Item1, cube));
+        Assert.True(body.CollisionFlags.HasFlag(BulletSharp.CollisionFlags.KinematicObject));
         body.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
         Assert.Equal(authoritativeCenter.X, transform.Origin.X, 3);
         Assert.Equal(authoritativeCenter.Y, transform.Origin.Y, 3);
@@ -357,7 +416,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientJoinAcceptedApplier_ApplyToRuntime_RebuildsClientFloorFromInitialWorld()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         ClientScenePresenter presenter = new(localSessionId: "session-a");
         JoinAcceptedMessage joinAccepted = new(
             "session-a",
@@ -385,7 +444,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeStartupTerrain()
     {
-        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using ClientWorldSession clientRuntime = CreateRuntime();
         using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
         JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
 
@@ -411,7 +470,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeSubcellStartupShapes()
     {
-        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using ClientWorldSession clientRuntime = CreateRuntime();
         using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
         JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
 
@@ -437,7 +496,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientJoinAcceptedApplier_ApplyToRuntime_BatchesAuthoritativeSubcellRestore()
     {
-        using WorldSessionRuntime clientRuntime = CreateRuntime();
+        using ClientWorldSession clientRuntime = CreateRuntime();
         using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
         JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
 
@@ -471,7 +530,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_AppliesAcceptedWorldMutationToRuntime()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         AuthoritativeActionResult result = new(
             "session-a",
             17,
@@ -490,7 +549,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_PublishesDamageEventForAcceptedCombatResult()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         SceneEventHub events = new();
         List<DamageAppliedEvent> observed = [];
         using IDisposable subscription = events.Subscribe<DamageAppliedEvent>(evt => observed.Add(evt));
@@ -517,7 +576,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_AppliesPlayerStatsUpdateToRuntime()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         AuthoritativeActionResult result = new(
             "session-a",
             20,
@@ -535,7 +594,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_IgnoresStatsForDifferentSession()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         PlayerCombatStats before = new()
         {
             Strength = runtime.Player.Combatant.BaseStats.Strength,
@@ -563,7 +622,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientSnapshotDamageApplier_ApplyToRuntime_PublishesDamageEventForResolvedEnemy()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         SceneEventHub events = new();
         List<DamageAppliedEvent> observed = [];
         using IDisposable subscription = events.Subscribe<DamageAppliedEvent>(evt => observed.Add(evt));
@@ -600,7 +659,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_AppliesRejectedCorrectionImmediately()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         runtime.Player.SetFacing(-Vector3.UnitZ);
         AuthoritativeActionResult result = new(
             "session-a",
@@ -626,7 +685,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientCorrectionApplier_ApplySnapshotToRuntime_DoesNotOverwriteLocalCameraFacing()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         runtime.Player.SetFacing(Vector3.UnitX);
         ServerSnapshotEnvelope snapshot = new(
             33,
@@ -660,7 +719,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientCorrectionApplier_ApplySnapshotToRuntime_AppliesAuthoritativeCombatStats()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         ServerSnapshotEnvelope snapshot = new(
             34,
             new Dictionary<string, ulong>(),
@@ -695,7 +754,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientCorrectionApplier_ApplySnapshotToRuntime_UsesLocalActorInteractionMode()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         ServerSnapshotEnvelope snapshot = new(
             35,
             new Dictionary<string, ulong>(),
@@ -737,7 +796,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_PublishesRejectedActionEvent()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         SceneEventHub events = new();
         List<AuthoritativeActionRejectedEvent> observed = [];
         using IDisposable subscription = events.Subscribe<AuthoritativeActionRejectedEvent>(evt => observed.Add(evt));
@@ -760,7 +819,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_RecordsDiagnosticsForRejectedAction()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         RecordingDiagnosticsSink diagnostics = new();
         AuthoritativeActionResult result = new(
             "session-a",
@@ -779,13 +838,24 @@ public class ClientAuthoritativeStateApplierTests
         Assert.Equal((ulong)25, diagnostics.RecordedResults[0].ActionSequence);
     }
 
-    private static WorldSessionRuntime CreateRuntime()
+    private static ClientWorldSession CreateRuntime()
     {
-        return new WorldSessionRuntime(
+        return new ClientWorldSession(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             new SceneEventHub(),
             loadVisualAssets: false);
+    }
+
+    // The map shape WorldSessionRuntime builds: startup terrain and locally simulated cube bodies.
+    private static Map CreateSimulatedMap(PhysicsIntegrator physics)
+    {
+        return new Map(
+            physics,
+            loadVisualAssets: false,
+            generateStartupTerrain: true,
+            width: 10,
+            depth: 10);
     }
 
     private static bool IntersectsCell(GeometryRenderBlockDescriptor block, GeometryCellKey cell)

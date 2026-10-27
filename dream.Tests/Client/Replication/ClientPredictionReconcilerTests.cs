@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Replication;
+using Dream.Client.World;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -118,7 +119,7 @@ public class ClientPredictionReconcilerTests
     [Fact]
     public void ApplySnapshotToRuntime_WithReconciler_KeepsPredictedPositionAndVelocity()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         ClientPredictionReconciler reconciler = new();
         Vector3 predicted = runtime.Player.GetWorldPosition();
         reconciler.RecordPrediction(3, predicted);
@@ -138,7 +139,7 @@ public class ClientPredictionReconcilerTests
     [Fact]
     public void ApplySnapshotToRuntime_WithReconciler_SnapsOnLargeDivergence()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         ClientPredictionReconciler reconciler = new();
         reconciler.RecordPrediction(3, runtime.Player.GetWorldPosition());
         Vector3 server = new(8f, 1.5f, 8f);
@@ -155,7 +156,7 @@ public class ClientPredictionReconcilerTests
     [Fact]
     public void NudgeWorldPosition_MovesBodyAndCameraWithoutZeroingVelocity()
     {
-        using WorldSessionRuntime runtime = CreateRuntime();
+        using ClientWorldSession runtime = CreateRuntime();
         Vector3 start = runtime.Player.GetWorldPosition();
         Vector3 cameraStart = runtime.Player.Camera.Position;
         runtime.Player.PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(0f, 0f, 5f);
@@ -204,7 +205,7 @@ public class ClientPredictionReconcilerTests
     }
 
     private static ServerSnapshotEnvelope CreateLocalSnapshot(
-        WorldSessionRuntime runtime,
+        ClientWorldSession runtime,
         Vector3 position,
         ulong acknowledgedSequence)
     {
@@ -228,9 +229,9 @@ public class ClientPredictionReconcilerTests
             Array.Empty<DamageEventDelta>());
     }
 
-    private static WorldSessionRuntime CreateRuntime()
+    private static ClientWorldSession CreateRuntime()
     {
-        return new WorldSessionRuntime(
+        return new ClientWorldSession(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             new SceneEventHub(),
