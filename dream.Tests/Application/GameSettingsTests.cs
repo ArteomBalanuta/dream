@@ -4,6 +4,7 @@ using Dream.Application;
 using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
+using Dream.Simulation.Players;
 
 namespace Dream.Tests.Application;
 
@@ -290,5 +291,42 @@ public class GameSettingsTests
         settings.ResetViewModelRig();
 
         Assert.Equal(0.500f, settings.ViewModelRig.BodyAnchor.VerticalDrop);
+    }
+
+    [Fact]
+    public void ToPlayerSimulationTuning_Noclip_Is_Faster_Than_Standard_Move_Speed()
+    {
+        GameSettings settings = new(new Vector2i(1440, 1024))
+        {
+            MoveSpeed = 4f,
+            NoclipSpeed = 18f
+        };
+
+        PlayerSimulationTuning tuning = settings.ToPlayerSimulationTuning();
+
+        Assert.True(tuning.NoclipSpeed > tuning.MoveSpeed);
+    }
+
+    [Fact]
+    public void ToPlayerSimulationTuning_Copies_Every_Movement_Value_From_Settings()
+    {
+        GameSettings settings = new(new Vector2i(1440, 1024))
+        {
+            EyeHeightOffset = 0.5f,
+            MouseSensitivity = 1.25f,
+            MoveSpeed = 7.5f,
+            NoclipSpeed = 33f,
+            JumpVelocity = 9f
+        };
+
+        PlayerSimulationTuning tuning = settings.ToPlayerSimulationTuning();
+
+        Assert.Equal(new PlayerSimulationTuning(0.5f, 1.25f, 7.5f, 33f, 9f), tuning);
+    }
+
+    [Fact]
+    public void ToPlayerSimulationTuning_Throws_For_Null_Settings()
+    {
+        Assert.Throws<ArgumentNullException>(() => GameSettingsSimulationExtensions.ToPlayerSimulationTuning(null!));
     }
 }
