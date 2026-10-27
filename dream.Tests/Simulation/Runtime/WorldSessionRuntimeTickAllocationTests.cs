@@ -227,8 +227,7 @@ public class WorldSessionRuntimeTickAllocationTests
         WorldSessionRuntime runtime = new(
             WorldDefaults.StartupFloorSize,
             PlayerStart,
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         foreach (PlayerSessionId session in RemoteSessions)
         {
             runtime.AttachRemoteSession(session, session.Value);

@@ -37,7 +37,7 @@ public class PresentationExportAliasingIntegrationTests(ITestOutputHelper output
     public void MapPresentationExport_IsNeverMutatedAfterTheFact_WhileRubbleMoves()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: MapSize, depth: MapSize);
+        Map map = new(physics, width: MapSize, depth: MapSize);
         BuildScene(map);
         PhysicsSyncSystem sync = new();
 
@@ -56,7 +56,7 @@ public class PresentationExportAliasingIntegrationTests(ITestOutputHelper output
     [Fact]
     public void ClientWorldSessionPresentationState_IsNeverMutatedAfterTheFact_WhileRubbleMovesThroughPredictionTicks()
     {
-        using ClientWorldSession session = new(MapSize, new Vector3(6f, 1.5f, 1.5f), new SceneEventHub(), loadVisualAssets: false);
+        using ClientWorldSession session = new(MapSize, new Vector3(6f, 1.5f, 1.5f), new SceneEventHub());
         BuildScene(session.Map);
         ulong tick = 0;
 

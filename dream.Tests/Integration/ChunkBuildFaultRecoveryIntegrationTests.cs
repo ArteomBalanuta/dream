@@ -26,7 +26,6 @@ public class ChunkBuildFaultRecoveryIntegrationTests(ITestOutputHelper output)
     {
         Map map = new(
             physics: null,
-            loadVisualAssets: false,
             generateStartupTerrain: true,
             width: WorldDefaults.StartupFloorSize,
             depth: WorldDefaults.StartupFloorSize);

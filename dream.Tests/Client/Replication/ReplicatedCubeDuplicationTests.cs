@@ -20,7 +20,7 @@ public class ReplicatedCubeDuplicationTests
     [Fact]
     public void ApplyWorldMutations_CubeMovedWithoutClientCopy_DoesNotCreateCube()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         int cubeCountBefore = map.SolidCubes.Count;
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
@@ -182,8 +182,7 @@ public class ReplicatedCubeDuplicationTests
         return new WorldSessionRuntime(
             FloorSize,
             new Vector3(5f, 1.5f, 5f),
-            events ?? new SceneEventHub(),
-            loadVisualAssets: false);
+            events ?? new SceneEventHub());
     }
 
     private static ClientWorldSession CreateClient()
@@ -191,8 +190,7 @@ public class ReplicatedCubeDuplicationTests
         return new ClientWorldSession(
             FloorSize,
             new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
     }
 
     private static void AdvanceClientTicks(ClientWorldSession client, int count)

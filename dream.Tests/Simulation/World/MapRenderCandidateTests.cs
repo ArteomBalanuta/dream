@@ -11,7 +11,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void GetRenderCandidateCubes_Returns_Local_Floor_And_Nearby_Placed_Cubes()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 100, depth: 100);
+        var map = new Map(physics: null, width: 100, depth: 100);
         map.AddCube(new Vector3(10, 1, 10), withPhysics: false);
         map.AddCube(new Vector3(80, 1, 80), withPhysics: false);
 
@@ -26,7 +26,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void GetRenderCandidateCubes_Does_Not_Duplicate_Placed_Cube_On_Floor_Level()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
 
         List<Cube> candidates = map.GetRenderCandidateCubes(new Vector3(2f, 1.5f, 2f), 10f).ToList();
         int matchingFloorTiles = candidates.Count(cube => cube.Position == new Vector3(2.5f, 0.5f, 2.5f));
@@ -37,7 +37,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void CaptureGeometryRenderExport_Dirties_Old_And_New_Cells_When_Placed_Cube_Crosses_Cell_Boundary()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
         map.UpdateCubePosition(cube, new Vector3(4.1f, 1.5f, 3.5f));
@@ -58,7 +58,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void UpdateCubePosition_RejectedOccupiedTarget_LeavesCubeAndSpatialIndexAtAcceptedPosition()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new Vector3(4f, 1f, 3f), withPhysics: false);
         Cube movingCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
@@ -76,7 +76,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void CaptureGeometryRenderExport_Splits_Static_And_Dynamic_Compatibility_Cubes()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
         map.AddCube(new Vector3(5f, 1f, 5f), isStatic: true, withPhysics: false);
         map.AddCube(new Vector3(6f, 1f, 6f), isStatic: false, withPhysics: false);
         Cube staticCube = Assert.IsType<Cube>(map.Cubes[5, 1, 5]);
@@ -93,7 +93,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void CaptureGeometryRenderExport_Keeps_Floor_Cell_When_Radius_Intersects_Its_Bounds()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
 
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(1.6f, 1.5f, 2.5f), 0.65f);
 
@@ -104,7 +104,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void CaptureFullGeometryRenderExport_Includes_Far_Cells_That_Radius_Export_Excludes()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
 
         GeometryRenderExport localExport = map.CaptureGeometryRenderExport(new Vector3(1.5f, 1.5f, 1.5f), 2f);
         GeometryRenderExport fullExport = map.CaptureFullGeometryRenderExport();
@@ -117,7 +117,7 @@ public class MapRenderCandidateTests
     [Fact]
     public void CaptureFullGeometryRenderExport_Is_Stable_Across_Camera_Positions()
     {
-        var map = new Map(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        var map = new Map(physics: null, width: 20, depth: 20);
         map.AddCube(new Vector3(10f, 1f, 10f), isStatic: true, withPhysics: false);
 
         GeometryRenderExport nearExport = map.CaptureFullGeometryRenderExport();

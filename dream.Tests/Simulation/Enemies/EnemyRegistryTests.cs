@@ -52,7 +52,7 @@ public class EnemyRegistryTests
     [Fact]
     public void UpdateAll_Blocks_Chase_Movement_Through_Placed_Cubes_When_Map_Is_Provided()
     {
-        Map map = new(width: 5, height: 4, depth: 4, loadVisualAssets: false);
+        Map map = new(width: 5, height: 4, depth: 4);
         map.AddCube(new Vector3(1f, 1f, 0f), withPhysics: false);
         EnemyRegistry registry = new();
         EnemyActor actor = new(

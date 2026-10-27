@@ -21,7 +21,7 @@ public class WorldReplicationIdentityTests
     [Fact]
     public void CubeMoved_ResolvesByActorIdNotByWhateverCubeIsInTheSourceCell()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Cube a = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: false));
         Cube b = Assert.IsType<Cube>(map.TryAddCube(new Vector3(4f, 2f, 3f), withPhysics: false));
         map.AssignReplicatedCubeId(a, 10);
@@ -39,7 +39,7 @@ public class WorldReplicationIdentityTests
     [Fact]
     public void CubeDestroyed_ResolvesByActorId()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Cube a = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: false));
         Cube b = Assert.IsType<Cube>(map.TryAddCube(new Vector3(4f, 2f, 3f), withPhysics: false));
         map.AssignReplicatedCubeId(a, 10);
@@ -159,7 +159,7 @@ public class WorldReplicationIdentityTests
     public void FracturePieces_UseDebrisGroupThatPlayersIgnore()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         map.AddCube(new Vector3(3f, 1f, 3f));
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
 
@@ -173,7 +173,7 @@ public class WorldReplicationIdentityTests
 
     private static WorldSessionRuntime CreateServer(out RuntimeAuthoritativeSessionHost host)
     {
-        WorldSessionRuntime runtime = new(FloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        WorldSessionRuntime runtime = new(FloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         runtime.Enemies.Clear();
         host = new RuntimeAuthoritativeSessionHost(runtime);
         return runtime;
@@ -181,6 +181,6 @@ public class WorldReplicationIdentityTests
 
     private static ClientWorldSession CreateClient()
     {
-        return new ClientWorldSession(FloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        return new ClientWorldSession(FloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
     }
 }

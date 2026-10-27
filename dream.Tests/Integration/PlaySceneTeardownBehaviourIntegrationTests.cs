@@ -92,7 +92,7 @@ public class PlaySceneTeardownBehaviourIntegrationTests
         SetField(scene, "_render", render);
         SetField(scene, "_combatFeedback", combatFeedback);
         SetField(scene, "_actionFeedback", new AuthoritativeActionFeedbackSystem(events));
-        SetField(scene, "_runtime", new ClientWorldSession(8, new Vector3(4f, 1.5f, 4f), events, loadVisualAssets: false));
+        SetField(scene, "_runtime", new ClientWorldSession(8, new Vector3(4f, 1.5f, 4f), events));
         SetField(scene, "_remoteClient", new RemoteClientSession(
             connection,
             new TransportJsonCodec(),

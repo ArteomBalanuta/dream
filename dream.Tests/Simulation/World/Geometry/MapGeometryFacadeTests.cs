@@ -11,7 +11,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void Map_Initializes_Floor_As_Geometry_Records()
     {
-        Map map = new Map(width: 24, height: 8, depth: 24, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new Map(width: 24, height: 8, depth: 24, generateStartupTerrain: true);
 
         Assert.True(map.GeometryCells.Count >= 24 * 24);
         GeometryCellRecord floorRecord = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(0, 0, 0));
@@ -23,7 +23,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void AddCube_Adds_Geometry_Record_Alongside_Compatibility_Cube()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
 
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false));
         GeometryCellRecord geometryCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(3, 1, 3));
@@ -37,7 +37,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void ApplyGeometrySubcellSolid_Activates_Subdivision_Without_Adding_Neighbor_Cubes()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         int initialSolidCount = map.SolidCubes.Count;
 
@@ -56,7 +56,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void CaptureGeometryRenderExport_Uses_Nearby_Compatibility_Cubes()
     {
-        Map map = new Map(width: 20, height: 8, depth: 20, loadVisualAssets: false);
+        Map map = new Map(width: 20, height: 8, depth: 20);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new Vector3(18f, 1f, 18f), withPhysics: false);
 
@@ -70,7 +70,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void CaptureGeometryCollisionExport_Includes_Merged_Floor_And_Placed_Cube_Bodies()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         GeometryCollisionExport export = map.CaptureGeometryCollisionExport();
@@ -82,7 +82,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void CaptureGeometryRenderExport_ForSubdividedCell_UsesRefinedBlocksInsteadOfCoarseCompatibilityCube()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         map.ApplyGeometrySubcellSolid(
@@ -102,7 +102,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void CaptureGeometryCollisionExport_ForSubdividedCell_UsesRefinedSubcellBodies()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         map.ApplyGeometrySubcellSolid(
@@ -121,7 +121,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void FractureCubeIntoPieces_ReplacesCoarseCellWithSeparatedRubblePieces()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         bool fractured = map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
@@ -182,7 +182,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void RestoreFracturePieces_RehydratesPersistedPiecesIntoRenderAndCollisionExports()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         GeometryCellKey cell = new(3, 1, 3);
         GeometryFracturePiece[] pieces =
         [
@@ -212,7 +212,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void RestoreFracturePieces_RejectsInvalidPiecesBeforeRenderOrCollisionExport()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         GeometryCellKey cell = new(3, 1, 3);
         GeometryFracturePiece[] invalidPieces =
         [
@@ -235,7 +235,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void FractureCubeIntoPieces_UsesSameCentersAndSizesForRenderAndCollisionPieces()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
@@ -265,7 +265,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void CaptureGeometryRenderExport_Includes_Moved_FracturePieces_By_Piece_Position()
     {
-        Map map = new Map(width: 10, height: 8, depth: 10, loadVisualAssets: false);
+        Map map = new Map(width: 10, height: 8, depth: 10);
         GeometryCellKey parentCell = new(2, 1, 2);
         map.AddCube(new Vector3(parentCell.X, parentCell.Y, parentCell.Z), withPhysics: false);
         Assert.True(map.FractureCubeIntoPieces(parentCell));
@@ -283,7 +283,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void StartupSculpture_VisualFillScale_DoesNotInflateCollisionBodies()
     {
-        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new Map(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(18.5f, 2f, 16.5f), 8f);
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
@@ -307,7 +307,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void StartupSculpture_Merges_StaticSubcellCollisionBodies()
     {
-        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new Map(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
@@ -324,7 +324,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void StartupSculpture_Merges_StaticSubcellCollisionBodies_Across_Cell_Boundaries()
     {
-        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new Map(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
@@ -342,7 +342,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void StartupSculpture_Uses_Coarse_StaticCollision_For_ResponsiveBootstrap()
     {
-        Map map = new Map(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new Map(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
         int sculptedCollisionBodies = collisionExport.Bodies.Count(body =>
@@ -372,11 +372,11 @@ public class MapGeometryFacadeTests
     [Fact]
     public void FractureCubeIntoPieces_ProducesSameRubbleForSameCellOnEveryMap()
     {
-        Map first = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map first = new Map(width: 8, height: 8, depth: 8);
         first.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         first.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
 
-        Map second = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map second = new Map(width: 8, height: 8, depth: 8);
         second.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         second.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
 
@@ -401,7 +401,7 @@ public class MapGeometryFacadeTests
     [Fact]
     public void FractureCubeIntoPieces_ExportsDynamicCollisionPieces()
     {
-        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new Map(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));

@@ -523,8 +523,7 @@ public class AuthoritativeActionFlowTests
         return new WorldSessionRuntime(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
     }
 
     private static PlayerSimulationTuning CreatePlayerTuning()

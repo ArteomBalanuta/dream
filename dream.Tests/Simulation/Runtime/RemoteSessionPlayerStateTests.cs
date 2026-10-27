@@ -20,7 +20,7 @@ public class RemoteSessionPlayerStateTests
     public void ApplyCommand_UpdatesInteractionModeAndFacingImmediately()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         using RemoteSessionPlayerState state = CreateState(map, physics, new Vector3(4f, 1.5f, 4f));
 
         state.ApplyCommand(CreateCommand(1, forward: 0f, facing: Vector3.UnitX, mode: PlayerInteractionMode.Combat));
@@ -34,7 +34,7 @@ public class RemoteSessionPlayerStateTests
     public void Simulate_MovesAlongClientFacingThroughPhysics()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         using RemoteSessionPlayerState state = CreateState(map, physics, new Vector3(4f, 1.5f, 4f));
         state.ApplyCommand(CreateCommand(1, forward: 1f, facing: Vector3.UnitX));
 
@@ -48,7 +48,7 @@ public class RemoteSessionPlayerStateTests
     public void Simulate_FallsUnderGravity()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         using RemoteSessionPlayerState state = CreateState(map, physics, new Vector3(4f, 4.5f, 4f));
 
         Step(state, physics, ticks: 96);
@@ -60,7 +60,7 @@ public class RemoteSessionPlayerStateTests
     public void Simulate_IsBlockedByStaticCube()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         Assert.NotNull(map.TryAddCube(new Vector3(6f, 1f, 4f), isStatic: true));
         using RemoteSessionPlayerState state = CreateState(map, physics, new Vector3(4.5f, 1.5f, 4.5f));
         state.ApplyCommand(CreateCommand(1, forward: 1f, facing: Vector3.UnitX));
@@ -74,7 +74,7 @@ public class RemoteSessionPlayerStateTests
     public void Simulate_KeepsMovingWithoutNewCommandsAtTheSameRate()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 20, depth: 20);
+        Map map = new(physics, width: 20, depth: 20);
         using RemoteSessionPlayerState everyTick = CreateState(map, physics, new Vector3(2.5f, 1.5f, 2.5f), "session-b");
         using RemoteSessionPlayerState sparse = CreateState(map, physics, new Vector3(2.5f, 1.5f, 8.5f), "session-c");
 
@@ -96,7 +96,7 @@ public class RemoteSessionPlayerStateTests
     public void Dispose_RemovesTheBodyFromThePhysicsWorld()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         RemoteSessionPlayerState state = CreateState(map, physics, new Vector3(4f, 1.5f, 4f));
         Assert.Single(physics.SessionPlayerBodies);
 
@@ -108,7 +108,7 @@ public class RemoteSessionPlayerStateTests
     [Fact]
     public void Runtime_SecondarySession_PushesDynamicCubeLikeThePrimary()
     {
-        using WorldSessionRuntime runtime = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         runtime.Enemies.Clear();
         PlayerSessionId primary = new("session-a");
         PlayerSessionId secondary = new("session-b");
@@ -135,7 +135,7 @@ public class RemoteSessionPlayerStateTests
     [Fact]
     public void Runtime_PrimaryDetach_ParksItsBodyAndRejoinUnparksIt()
     {
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         PlayerSessionId primary = new("session-a");
         runtime.AttachRemoteSession(primary);
 
@@ -150,7 +150,7 @@ public class RemoteSessionPlayerStateTests
     [Fact]
     public void Runtime_SecondaryDetach_RemovesItsBody()
     {
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         runtime.AttachRemoteSession(new PlayerSessionId("session-a"));
         PlayerSessionId secondary = new("session-b");
         runtime.AttachRemoteSession(secondary);
@@ -166,7 +166,7 @@ public class RemoteSessionPlayerStateTests
     {
         // A leaves, C takes the primary seat, A returns. A used to keep C's actor id without a
         // seat and could neither move nor act nor appear in snapshots.
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         PlayerSessionId a = new("session-a");
         PlayerSessionId c = new("session-c");
         runtime.AttachRemoteSession(a, "A");

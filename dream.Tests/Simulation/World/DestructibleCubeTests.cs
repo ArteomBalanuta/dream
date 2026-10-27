@@ -10,7 +10,7 @@ public class MapRemovalTests
     [Fact]
     public void RemoveCube_Removes_Placed_Cube_From_World_Collections()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
 
@@ -25,7 +25,7 @@ public class MapRemovalTests
     [Fact]
     public void RemoveCube_Does_Not_Remove_Floor_Cube()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         Cube floorCube = Assert.IsType<Cube>(map.Cubes[3, 0, 3]);
 
         bool removed = map.RemoveCube(floorCube);
@@ -37,7 +37,7 @@ public class MapRemovalTests
     [Fact]
     public void RemoveCube_Removes_Placed_Cube_Even_After_Position_Drift()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
         cube.Position = new Vector3(4.1f, 1.5f, 3.5f);
@@ -52,7 +52,7 @@ public class MapRemovalTests
     [Fact]
     public void TryGetFirstSolidCubeAlongRay_Ignores_Floor_And_Finds_Placed_Cube()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
 
         Cube? hit = map.TryGetFirstSolidCubeAlongRay(
@@ -70,7 +70,7 @@ public class WorldObjectRegistryTests
     [Fact]
     public void Snapshot_Restores_Remaining_Health_To_Copied_Placed_Cube()
     {
-        Map source = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map source = new(width: 8, height: 8, depth: 8);
         source.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube sourceCube = Assert.IsType<Cube>(source.Cubes[3, 1, 3]);
 
@@ -79,7 +79,7 @@ public class WorldObjectRegistryTests
         record.ApplyDamage(20);
         WorldObjectCubeSnapshot snapshot = registry.CreateCubeSnapshot();
 
-        Map target = new(width: 10, height: 8, depth: 10, loadVisualAssets: false);
+        Map target = new(width: 10, height: 8, depth: 10);
         source.CopyPlacedCubesTo(target);
         registry.RestoreCubeSnapshot(target, snapshot);
 
@@ -92,7 +92,7 @@ public class WorldObjectRegistryTests
     [Fact]
     public void CombatAnchor_Is_Top_Centered_Above_Cube()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
 

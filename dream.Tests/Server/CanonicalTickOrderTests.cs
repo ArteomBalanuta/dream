@@ -132,7 +132,7 @@ public class CanonicalTickOrderTests
     {
         string[] Describe(string[] arrivalOrder)
         {
-            WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+            WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             using DedicatedServerHost host = CreateHost(new RuntimeAuthoritativeSessionHost(runtime), deferJoinsToTick: true);
             for (int i = 0; i < arrivalOrder.Length; i++)
             {
@@ -207,7 +207,7 @@ public class CanonicalTickOrderTests
     public void RuntimeHost_PrimarySeatAndSecondaryLethalHits_CreditTheOrdinallyFirstSession(bool ordinallyFirstHoldsPrimarySeat)
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         string seatHolder = ordinallyFirstHoldsPrimarySeat ? SessionA : SessionB;
         string secondary = ordinallyFirstHoldsPrimarySeat ? SessionB : SessionA;
@@ -249,7 +249,7 @@ public class CanonicalTickOrderTests
     public void DedicatedServerHost_PrimarySeatAndSecondaryLethalHits_CreditTheOrdinallyFirstSession(bool ordinallyFirstHoldsPrimarySeat)
     {
         SceneEventHub events = new();
-        WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using DedicatedServerHost host = CreateHost(new RuntimeAuthoritativeSessionHost(runtime));
         string seatHolder = ordinallyFirstHoldsPrimarySeat ? SessionA : SessionB;
         string secondary = ordinallyFirstHoldsPrimarySeat ? SessionB : SessionA;
@@ -289,7 +289,7 @@ public class CanonicalTickOrderTests
     public void RuntimeHost_PrimarySeatAndSecondaryBuildIntoSameCell_TheOrdinallyFirstSessionPlaces(bool ordinallyFirstHoldsPrimarySeat)
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         string seatHolder = ordinallyFirstHoldsPrimarySeat ? SessionA : SessionB;
         string secondary = ordinallyFirstHoldsPrimarySeat ? SessionB : SessionA;
@@ -331,7 +331,7 @@ public class CanonicalTickOrderTests
     [Fact]
     public void Runtime_SecondaryPlayers_AreCapturedInOrdinalOrderAfterAttachAndDetach()
     {
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         runtime.AttachRemoteSession(new PlayerSessionId(HostSession), "Host");
         runtime.AttachRemoteSession(new PlayerSessionId("session-z"), "Z");
         runtime.AttachRemoteSession(new PlayerSessionId(SessionC), "C");
@@ -378,7 +378,7 @@ public class CanonicalTickOrderTests
     private static (AuthoritativeActionResult[] Results, int EnemyHealth) RunRuntimeHostLethalTick(bool joinBFirst)
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         string first = joinBFirst ? SessionB : SessionC;
         string second = joinBFirst ? SessionC : SessionB;
@@ -406,7 +406,7 @@ public class CanonicalTickOrderTests
     private static (AuthoritativeActionResult[] Results, int EnemyHealth) RunDedicatedHostLethalTick(bool joinBFirst)
     {
         SceneEventHub events = new();
-        WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using DedicatedServerHost host = CreateHost(new RuntimeAuthoritativeSessionHost(runtime));
         string first = joinBFirst ? SessionB : SessionC;
         string second = joinBFirst ? SessionC : SessionB;

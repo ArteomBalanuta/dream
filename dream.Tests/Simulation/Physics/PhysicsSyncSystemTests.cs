@@ -14,7 +14,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void SyncDynamicMapBodies_SnapshotsBodiesBeforeIterating()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics: null, width: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
 
@@ -50,7 +50,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void SyncDynamicMapBodies_UpdatesFracturePieceRenderCenterFromDynamicBody()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics: null, width: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         GeometryCellKey cell = new(3, 1, 3);
         map.FractureCubeIntoPieces(cell);
@@ -76,7 +76,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void UpdateFracturePiecePositions_AppliesMultipleMovedPiecesForOneCell()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics: null, width: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         GeometryCellKey cell = new(3, 1, 3);
         map.FractureCubeIntoPieces(cell);
@@ -110,7 +110,7 @@ public class PhysicsSyncSystemTests
     public void SyncDynamicMapBodies_DoesNotReplaceActivePhysicsBodyWhenCubeCrossesCellBoundary()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
         RigidBody body = Assert.Single(physics.DynamicMapCubeBodies);
@@ -126,7 +126,7 @@ public class PhysicsSyncSystemTests
     public void RemoveCube_RemovesCompatibilityBodyEvenAfterPhysicsDrivenCellDrift()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
         RigidBody body = Assert.Single(physics.DynamicMapCubeBodies);
@@ -142,7 +142,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void SyncDynamicMapBodies_WhenTwoDynamicCubesResolveToSameCell_KeepsDistinctLogicalOwnership()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new TkVector3(5f, 1f, 3f), withPhysics: false);
         Cube firstCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
@@ -167,7 +167,7 @@ public class PhysicsSyncSystemTests
     public void SyncDynamicMapBodies_WhenMoveIsRejected_KeepsBodyForTransientRejections()
     {
         // Resetting on the first rejection teleported pushed cubes back every tick.
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new TkVector3(4f, 1f, 3f), withPhysics: false);
         Cube movingCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
@@ -187,7 +187,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void SyncDynamicMapBodies_WhenMoveStaysRejected_RestoresBodyToAcceptedMapCenter()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new TkVector3(4f, 1f, 3f), withPhysics: false);
         Cube movingCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
@@ -218,7 +218,7 @@ public class PhysicsSyncSystemTests
     [Fact]
     public void SyncDynamicMapBodies_WhenDynamicCubeResolvesIntoFracturedCell_EntersReleasedCellAndKeepsRubble()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new TkVector3(4f, 1f, 4f), withPhysics: false);
         map.FractureCubeIntoPieces(new GeometryCellKey(4, 1, 4));
         map.AddCube(new TkVector3(6f, 1f, 4f), withPhysics: false);

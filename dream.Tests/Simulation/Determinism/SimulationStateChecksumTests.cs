@@ -43,7 +43,7 @@ public class SimulationStateChecksumTests
     {
         List<ActorSnapshot> reversedActors = BuildActors();
         reversedActors.Reverse();
-        Map reversedMap = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map reversedMap = new(width: 8, height: 4, depth: 8);
         Assert.True(reversedMap.RestoreFracturePieces(RubbleCell, GeometryMaterialId.Rock, RubblePieces(), withPhysics: false));
         Assert.True(reversedMap.RestoreFracturePieces(new GeometryCellKey(5, 1, 1), GeometryMaterialId.Sand, OtherRubblePieces(), withPhysics: false));
         Assert.True(reversedMap.AddCube(PlacedCube, withPhysics: false, materialId: GeometryMaterialId.Stone));
@@ -228,8 +228,8 @@ public class SimulationStateChecksumTests
     public void Checksum_IsIndependentOfCubeInsertionOrder()
     {
         Vector3[] cells = [new(1f, 1f, 6f), new(6f, 2f, 1f), new(3f, 1f, 3f)];
-        Map forward = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
-        Map backward = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map forward = new(width: 8, height: 4, depth: 8);
+        Map backward = new(width: 8, height: 4, depth: 8);
         foreach (Vector3 cell in cells)
         {
             Assert.True(forward.AddCube(cell, withPhysics: false, materialId: GeometryMaterialId.Stone));
@@ -255,8 +255,8 @@ public class SimulationStateChecksumTests
     public void Checksum_DistinguishesWhichCubeHoldsWhichInCellOffset()
     {
         // The cube key is its cell, so the same offsets assigned to different cells must differ.
-        Map first = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
-        Map second = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map first = new(width: 8, height: 4, depth: 8);
+        Map second = new(width: 8, height: 4, depth: 8);
         foreach (Map map in new[] { first, second })
         {
             Assert.True(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));
@@ -317,8 +317,8 @@ public class SimulationStateChecksumTests
     [Fact]
     public void RuntimeOverload_MatchesTheComponentOverload_AndIsEqualForTwoRuntimesWithTheSameSeed()
     {
-        using WorldSessionRuntime first = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false, simulationSeed: 11UL);
-        using WorldSessionRuntime second = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false, simulationSeed: 11UL);
+        using WorldSessionRuntime first = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), simulationSeed: 11UL);
+        using WorldSessionRuntime second = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), simulationSeed: 11UL);
 
         ulong checksum = SimulationStateChecksum.Compute(first);
 
@@ -330,7 +330,7 @@ public class SimulationStateChecksumTests
 
     private static Map BuildMap()
     {
-        Map map = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 4, depth: 8);
         Assert.True(map.AddCube(PlacedCube, withPhysics: false, materialId: GeometryMaterialId.Stone));
         Assert.True(map.RestoreFracturePieces(RubbleCell, GeometryMaterialId.Rock, RubblePieces(), withPhysics: false));
         return map;

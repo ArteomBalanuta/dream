@@ -79,7 +79,7 @@ public class EnemyRegistryAllocationTests
     [Fact]
     public void UpdateAll_ChasingWolfOnMap_AllocatesNothing()
     {
-        Map map = new(width: 16, height: 4, depth: 16, loadVisualAssets: false);
+        Map map = new(width: 16, height: 4, depth: 16);
         EnemyRegistry registry = new();
         EnemyActor wolf = CreateEnemy(new Vector3(2.5f, 1f, 2.5f), 2200, aggroRange: 10f);
         registry.Add(wolf);
@@ -112,7 +112,7 @@ public class EnemyRegistryAllocationTests
     [Fact]
     public void Update_WithMap_MovesExactlyLikeTheResolverDelegate()
     {
-        Map map = new(width: 5, height: 4, depth: 4, loadVisualAssets: false);
+        Map map = new(width: 5, height: 4, depth: 4);
         map.AddCube(new Vector3(2f, 1f, 0f), withPhysics: false);
         EnemyActor withMap = CreateEnemy(new Vector3(0.5f, 1f, 0.5f), 2300, aggroRange: 6f);
         EnemyActor withDelegate = CreateEnemy(new Vector3(0.5f, 1f, 0.5f), 2301, aggroRange: 6f);

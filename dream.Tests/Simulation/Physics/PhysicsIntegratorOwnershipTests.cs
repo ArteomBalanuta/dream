@@ -80,7 +80,7 @@ public class PhysicsIntegratorOwnershipTests
             addRigidBodyToWorld: _ => { },
             removeRigidBodyFromWorld: _ => { },
             disposeRigidBody: _ => { });
-        Map map = new(loadVisualAssets: false);
+        Map map = new();
         RigidBody registeredBody = CreateBodyToken();
         RigidBody otherBody = CreateBodyToken();
         physics.RegisterPlayerBody(registeredBody, PhysicsBodyOwnership.IntegratorOwned);
@@ -95,7 +95,7 @@ public class PhysicsIntegratorOwnershipTests
     public void Map_With_Physics_Registers_Floor_And_Placed_Cube_Bodies_From_GeometryCollisionExport()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        Map map = new(physics, width: 8, height: 8, depth: 8);
 
         Assert.Single(physics.MapCubeBodies);
 
@@ -111,7 +111,7 @@ public class PhysicsIntegratorOwnershipTests
     public void Fractured_Cell_Physics_Bodies_Remain_Registered_For_Debug_Rendering()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        Map map = new(physics, width: 8, height: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
 
         bool fractured = map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
@@ -127,7 +127,7 @@ public class PhysicsIntegratorOwnershipTests
     public void Fractured_Cell_Physics_Bodies_AreDynamicSoRubbleCanBePushed()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        Map map = new(physics, width: 8, height: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
 
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
@@ -142,7 +142,7 @@ public class PhysicsIntegratorOwnershipTests
     public void FractureCubeIntoPieces_RemovesCompatibilityBodyAfterPhysicsDrivenCellDrift()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, height: 8, depth: 8);
+        Map map = new(physics, width: 8, height: 8, depth: 8);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: true);
         Cube cube = Assert.IsType<Cube>(map.TryGetCubeAtCell(3, 1, 3));
 

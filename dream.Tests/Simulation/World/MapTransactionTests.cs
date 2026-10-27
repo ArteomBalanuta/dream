@@ -19,7 +19,7 @@ public class MapTransactionTests
     {
         // Bodies are listed trailing-first: a single ordered pass rejected the trailing cube
         // because the leading cube had not left its cell yet.
-        Map map = new(physics: null, loadVisualAssets: false, width: 12, depth: 12);
+        Map map = new(physics: null, width: 12, depth: 12);
         Cube trailing = Assert.IsType<Cube>(map.TryAddCube(new TkVector3(3f, 1f, 3f), withPhysics: false));
         Cube leading = Assert.IsType<Cube>(map.TryAddCube(new TkVector3(4f, 1f, 3f), withPhysics: false));
         RigidBody trailingBody = CreateBody(new TkVector3(4.05f, 1.5f, 3.5f), trailing);
@@ -36,7 +36,7 @@ public class MapTransactionTests
     [Fact]
     public void FracturedCell_IsReleasedForPlacementWhileRubbleRemains()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new TkVector3(3f, 1f, 3f), withPhysics: false);
         GeometryCellKey cell = new(3, 1, 3);
 
@@ -55,7 +55,7 @@ public class MapTransactionTests
     public void RubbleAndCubeInTheSameOriginCell_KeepSeparatePhysicsBodies()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         map.AddCube(new TkVector3(3f, 1f, 3f));
         map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
         int rubbleBodies = physics.DynamicMapCubeBodies.Count(body => body.UserObject is GeometryDynamicBodyReference);
@@ -73,7 +73,7 @@ public class MapTransactionTests
     public void HitRay_UsesTheCubesActualBoxNotItsCell()
     {
         // A cube pushed to x=3.95 still owns cell 3 but visibly spans 3.45..4.45.
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new TkVector3(3f, 1f, 3f), withPhysics: false));
         map.UpdateCubePosition(cube, new TkVector3(3.95f, 1.5f, 3.5f), syncPhysics: false);
         Assert.Same(cube, map.TryGetCubeAtCell(3, 1, 3));
@@ -90,7 +90,7 @@ public class MapTransactionTests
     [Fact]
     public void InvariantCheck_ReportsAMissingCubeIndex()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         Assert.NotNull(map.TryAddCube(new TkVector3(3f, 1f, 3f), withPhysics: false));
         Assert.Empty(map.FindInvariantViolations());
 

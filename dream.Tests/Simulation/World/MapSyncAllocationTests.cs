@@ -46,7 +46,7 @@ public class MapSyncAllocationTests
     [Fact]
     public void UpdateFracturePiecePositions_RestingRubble_DoesNotAllocate()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 16, depth: 16);
+        Map map = new(physics: null, width: 16, depth: 16);
         List<(GeometryCellKey Cell, List<(int PieceIndex, Vector3 Center)> Updates)> cells = [];
         foreach (GeometryCellKey cell in new GeometryCellKey[] { new(3, 1, 3), new(7, 1, 7), new(11, 1, 11) })
         {
@@ -80,7 +80,7 @@ public class MapSyncAllocationTests
     [Fact]
     public void UpdateFracturePiecePositions_MovingRubble_AllocatesOnlyThePieceCopy()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 16, depth: 16);
+        Map map = new(physics: null, width: 16, depth: 16);
         GeometryCellKey cell = new(5, 1, 5);
         Assert.True(map.AddCube(new Vector3(cell.X, cell.Y, cell.Z), withPhysics: false));
         Assert.True(map.FractureCubeIntoPieces(cell));
@@ -159,7 +159,7 @@ public class MapSyncAllocationTests
     private static long MeasureCubeMove(bool withPhysics, bool syncPhysics, bool crossCell, long budget)
     {
         using PhysicsIntegrator? physics = withPhysics ? new PhysicsIntegrator() : null;
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: withPhysics));
         (Vector3 even, Vector3 odd) = MovePositions(crossCell);
         int toggle = 0;
@@ -178,7 +178,7 @@ public class MapSyncAllocationTests
     {
         using PhysicsIntegrator physics = new();
         WorldPhysicsBinder binder = new(physics);
-        Map cubeSource = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map cubeSource = new(physics: null, width: 10, depth: 10);
         Cube cube = Assert.IsType<Cube>(cubeSource.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: false));
         (Vector3 even, Vector3 odd) = MovePositions(crossCell);
         GeometryCellKey evenKey = new(3, 2, 3);
@@ -229,7 +229,7 @@ public class MapSyncAllocationTests
     private static string RunEquivalenceScenario()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 12, depth: 12);
+        Map map = new(physics, width: 12, depth: 12);
         Dictionary<Cube, string> names = new(ReferenceEqualityComparer.Instance);
         Cube Add(string name, Vector3 cell, bool isStatic, bool withPhysics)
         {

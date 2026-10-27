@@ -221,13 +221,11 @@ public class CombatDeterminismTests
                 floorSize: 10,
                 playerStartPosition: new Vector3(5f, 1.5f, 5f),
                 events,
-                loadVisualAssets: false,
                 simulationSeed: simulationSeed.Value)
             : new WorldSessionRuntime(
                 floorSize: 10,
                 playerStartPosition: new Vector3(5f, 1.5f, 5f),
-                events,
-                loadVisualAssets: false);
+                events);
     }
 
     private static Vector3 FindActorPosition(ServerSnapshotEnvelope snapshot, string sessionId)

@@ -45,7 +45,7 @@ public class PresentationFramePoolingIntegrationTests
     [Fact]
     public void Hundred_Frames_Of_World_And_Enemy_Churn_Keep_Pooled_Batches_Enemies_Visual_States_And_Labels_Fresh()
     {
-        using ClientWorldSession session = new(FloorSize, PlayerStart, new SceneEventHub(), loadVisualAssets: false);
+        using ClientWorldSession session = new(FloorSize, PlayerStart, new SceneEventHub());
         WorldRenderBatchPlanner planner = new(Resolver);
         EnemyVisualStateCache visualStates = new();
         ActorHealthLabelCache healthLabels = new();

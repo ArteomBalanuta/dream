@@ -16,7 +16,7 @@ public class MapStaticRenderDirtyTests
     [Fact]
     public void DynamicCubeCrossingCells_IsRenderDirtyButNotStaticDirty()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 20, depth: 20);
+        Map map = new(physics: null, width: 20, depth: 20);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false));
         DrainExports(map);
 
@@ -31,7 +31,7 @@ public class MapStaticRenderDirtyTests
     [Fact]
     public void FracturePieceMovement_IsNotStaticDirty()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         GeometryCellKey cell = new(3, 1, 3);
         map.FractureCubeIntoPieces(cell);
@@ -48,7 +48,7 @@ public class MapStaticRenderDirtyTests
     [Fact]
     public void RemovingStaticCube_IsStaticDirty()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), isStatic: true, withPhysics: false));
         DrainExports(map);
 
@@ -62,7 +62,7 @@ public class MapStaticRenderDirtyTests
     public void SubdividingPlacedCube_IsStaticDirty()
     {
         // Subdivided, unfractured cells export their blocks in the static Blocks list.
-        Map map = new(physics: null, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics: null, width: 10, depth: 10);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         DrainExports(map);
 
@@ -75,7 +75,7 @@ public class MapStaticRenderDirtyTests
     [Fact]
     public void PushingDynamicCube_KeepsStaticChunkExportSignatureStable()
     {
-        Map map = new(physics: null, loadVisualAssets: false, generateStartupTerrain: true, width: 20, depth: 20);
+        Map map = new(physics: null, generateStartupTerrain: true, width: 20, depth: 20);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(FindOpenCell(map), withPhysics: false));
         Assert.True(map.TryGetCellForCube(cube, out GeometryCellKey startCell));
         DrainExports(map);

@@ -13,7 +13,7 @@ public class CombatUseResolverTests
     [Fact]
     public void TryResolveDestructibleCubeHit_Returns_Null_When_Ray_Hits_Nothing()
     {
-        Map map = new(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        Map map = new(width: 8, height: 8, depth: 8);
         WorldObjectRegistry registry = new();
 
         WorldObjectRecord? record = CombatUseResolver.TryResolveDestructibleCubeHit(
@@ -29,7 +29,7 @@ public class CombatUseResolverTests
     [Fact]
     public void TryResolveDestructibleCubeHit_Respects_Max_Hit_Distance()
     {
-        Map map = new(width: 12, height: 8, depth: 12, loadVisualAssets: false);
+        Map map = new(width: 12, height: 8, depth: 12);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube cube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
 
@@ -66,7 +66,7 @@ public class CombatUseResolverTests
     [Fact]
     public void TryResolveDestructibleCubeHit_Rebinds_Visible_Moved_Cube_When_Registry_Identity_Drifts()
     {
-        Map map = new(width: 12, height: 8, depth: 12, loadVisualAssets: false);
+        Map map = new(width: 12, height: 8, depth: 12);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         Cube registeredCube = Assert.IsType<Cube>(map.Cubes[3, 1, 3]);
 
@@ -105,7 +105,7 @@ public class CombatUseResolverTests
     [Fact]
     public void TryResolveDestructibleCubeHit_Skips_Fractured_Parent_Cell()
     {
-        Map map = new(width: 12, height: 8, depth: 12, loadVisualAssets: false);
+        Map map = new(width: 12, height: 8, depth: 12);
         map.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
         map.AddCube(new Vector3(3f, 1f, 2f), withPhysics: false);
         Assert.True(map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3)));

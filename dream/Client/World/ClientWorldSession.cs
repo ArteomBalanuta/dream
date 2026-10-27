@@ -27,7 +27,6 @@ namespace Dream.Client.World;
 // the cube duplication bug. This type has none of those paths.
 public sealed class ClientWorldSession : IClientWorldState, IDisposable
 {
-    private readonly bool _loadVisualAssets;
     private readonly CombatFormulaService _combatFormulaService;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private double _lastPhysicsStepMilliseconds;
@@ -36,11 +35,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         int floorSize,
         Vector3 playerStartPosition,
         SceneEventHub events,
-        bool loadVisualAssets = true,
         CombatFormulaService? combatFormulaService = null)
     {
         ArgumentNullException.ThrowIfNull(events);
-        _loadVisualAssets = loadVisualAssets;
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
         Map = CreateMap(floorSize);
@@ -199,7 +196,6 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     {
         return new Map(
             Physics,
-            loadVisualAssets: _loadVisualAssets,
             generateStartupTerrain: true,
             width: floorSize,
             depth: floorSize,

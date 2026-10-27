@@ -18,8 +18,7 @@ public class ClientWorldSessionPresentationTests
         using ClientWorldSession session = new(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         PlayerSimulationTuning tuning = new(
             EyeHeightOffset: 0.35f,
             MouseSensitivity: 2.5f,
@@ -55,8 +54,7 @@ public class ClientWorldSessionPresentationTests
         using ClientWorldSession session = new(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         PlayerSimulationTuning tuning = new(
             EyeHeightOffset: 0.35f,
             MouseSensitivity: 2.5f,
@@ -87,8 +85,7 @@ public class ClientWorldSessionPresentationTests
         using ClientWorldSession session = new(
             floorSize: 20,
             playerStartPosition: new Vector3(1.5f, 1.5f, 1.5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         session.Map.AddCube(new Vector3(18f, 1f, 18f), isStatic: false, withPhysics: false);
 
         WorldSessionPresentationState state = session.CapturePresentationState(maxRenderDistance: 1f);

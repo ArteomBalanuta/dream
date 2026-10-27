@@ -82,7 +82,6 @@ public class Map
 
     public Map(
         PhysicsIntegrator? physics = null,
-        bool loadVisualAssets = true,
         bool generateStartupTerrain = false,
         int width = 25,
         int height = 8,
@@ -91,7 +90,7 @@ public class Map
     {
         _physics = physics;
         _grid = new WorldGrid(width, height, depth);
-        _generator = new WorldGenerator(loadVisualAssets);
+        _generator = new WorldGenerator();
         _generateStartupTerrain = generateStartupTerrain;
         _physicsBinder = _physics != null ? new WorldPhysicsBinder(_physics, replicatedCubeBodies) : null;
         Initialize();

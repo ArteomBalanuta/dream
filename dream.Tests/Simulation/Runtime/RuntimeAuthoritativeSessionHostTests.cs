@@ -63,7 +63,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_StoresRequestedDisplayName_OnConnectedPlayer()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         JoinAcceptedMessage accepted = host.JoinSession("session-a", "Player A");
@@ -78,7 +78,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_ReturnsCurrentJoinedPlayerRoster()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         host.JoinSession("session-a", "Player A");
@@ -102,7 +102,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_FirstJoinedRemoteSessionRemainsPrimaryActorOwnerForLaterClients()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         host.JoinSession("session-a", "Host Player");
@@ -125,7 +125,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void ProcessAction_PrimaryDead_DoesNotBlockSecondaryRemoteEnemyCombat()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId primarySession = new("session-a");
         PlayerSessionId secondarySession = new("session-b");
@@ -184,7 +184,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_SecondaryRemotePrimaryUseCombat_DamagesEnemy()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId primarySession = new("session-a");
         PlayerSessionId secondarySession = new("session-b");
@@ -239,7 +239,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_SecondaryRemotePrimaryUseBuilding_PlacesCube()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId primarySession = new("session-a");
         PlayerSessionId secondarySession = new("session-b");
@@ -278,7 +278,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_LateJoinerReceivesInitialActorSnapshotsForAlreadyJoinedPlayers()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         host.JoinSession("session-a", "Host Player");
@@ -300,7 +300,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void ProcessAction_PlayerStatsUpdateOnlyChangesActingPlayerStats()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId hostSession = new("session-a");
         PlayerSessionId secondSession = new("session-b");
@@ -329,7 +329,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_DoesNotDrainPendingWorldMutationsForExistingClients()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("session-a", "Player A");
 
@@ -368,7 +368,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_RejectsDuplicateDisplayNameAcrossDifferentSessions()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         host.JoinSession("session-a", "Player A");
@@ -405,7 +405,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_TracksInteractionModePerSessionInsteadOfGlobally()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSimulationTuning tuning = CreatePlayerTuning();
         PlayerSessionId primarySession = new("session-a");
@@ -467,7 +467,6 @@ public class RuntimeAuthoritativeSessionHostTests
             20,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -514,7 +513,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
 
@@ -535,7 +533,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -586,7 +583,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -614,7 +610,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void ProcessAction_MovedPlacedCube_RemainsDamageable_When_RegistryLink_Is_Missing()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId sessionId = new("session-a");
         host.JoinSession(sessionId.Value, "Player A");
@@ -675,7 +671,6 @@ public class RuntimeAuthoritativeSessionHostTests
             12,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -740,7 +735,6 @@ public class RuntimeAuthoritativeSessionHostTests
             14,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -805,7 +799,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceAuthoritativeTick_PhysicsMovedCube_QueuesAuthoritativeMoveMutation()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events);
         runtime.Enemies.Clear();
         AuthoritativeActionResult buildResult = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
             PlayerSessionId.LocalDefault,
@@ -847,7 +841,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_Seeds_StarterInventory_For_FirstTimePlayer()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
 
         JoinAcceptedMessage accepted = host.JoinSession("session-a", "Player A");
@@ -863,7 +857,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void ProcessAction_InventoryEquip_Changes_Authoritative_EquippedTool()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("session-a", "Player A");
 
@@ -882,7 +876,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void JoinSession_RejoiningExistingSession_Allows_Fresh_Action_Sequences()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("session-a", "Player A");
 
@@ -913,7 +907,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
@@ -965,7 +958,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence,
             combatFormulaService: formulas);
@@ -999,7 +991,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence,
             combatFormulaService: formulas);
@@ -1047,7 +1038,6 @@ public class RuntimeAuthoritativeSessionHostTests
             10,
             new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: playerProfiles,
             worldPersistence: worldPersistence,
             combatFormulaService: formulas);
@@ -1070,7 +1060,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_PrimaryRemoteCommandMovesForwardAlongClientFacing()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSimulationTuning tuning = CreatePlayerTuning();
         PlayerSessionId sessionId = new("session-a");
@@ -1108,7 +1098,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_PrimaryRemoteStrafeMovesAlongClientFacingRightAxis()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSimulationTuning tuning = CreatePlayerTuning();
         PlayerSessionId sessionId = new("session-a");
@@ -1140,7 +1130,7 @@ public class RuntimeAuthoritativeSessionHostTests
     public void AdvanceTick_PrimaryRemoteCommandWithoutFacingUsesExistingAuthoritativeFacing()
     {
         SceneEventHub events = new();
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSimulationTuning tuning = CreatePlayerTuning();
         PlayerSessionId sessionId = new("session-a");

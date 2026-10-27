@@ -237,7 +237,6 @@ public class PresentationExportCacheTests
         // Startup size, so the merged sculpture cells are generated.
         return new Map(
             physics: null,
-            loadVisualAssets: false,
             generateStartupTerrain: true,
             width: WorldDefaults.StartupFloorSize,
             depth: WorldDefaults.StartupFloorSize);

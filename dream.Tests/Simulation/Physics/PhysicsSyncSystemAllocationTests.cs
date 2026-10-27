@@ -28,7 +28,7 @@ public class PhysicsSyncSystemAllocationTests
     public void SyncDynamicMapBodies_RestingCubes_DoesNotAllocate()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 16, depth: 16);
+        Map map = new(physics, width: 16, depth: 16);
         for (int x = 1; x < 15; x += 2)
         {
             for (int z = 1; z < 15; z += 2)
@@ -51,7 +51,7 @@ public class PhysicsSyncSystemAllocationTests
     public void SyncDynamicMapBodies_RestingRubbleAndCubes_DoesNotAllocate()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 16, depth: 16);
+        Map map = new(physics, width: 16, depth: 16);
         for (int x = 1; x < 15; x += 2)
         {
             for (int z = 1; z < 15; z += 2)
@@ -165,7 +165,7 @@ public class PhysicsSyncSystemAllocationTests
 
     private static string RunScriptedScenario()
     {
-        Map map = new(physics: null, loadVisualAssets: false, width: 12, depth: 12);
+        Map map = new(physics: null, width: 12, depth: 12);
         TkVector3[] cubeCells =
         [
             new(2f, 1f, 2f), new(3f, 1f, 2f), new(4f, 1f, 2f),

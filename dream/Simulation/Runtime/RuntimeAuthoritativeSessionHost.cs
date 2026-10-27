@@ -280,7 +280,6 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             floorSize: WorldDefaults.StartupFloorSize,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             events,
-            loadVisualAssets: false,
             playerProfiles: persistence?.PlayerProfiles,
             worldPersistence: persistence?.World,
             combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default,

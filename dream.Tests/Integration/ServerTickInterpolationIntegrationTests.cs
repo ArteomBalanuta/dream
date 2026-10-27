@@ -33,7 +33,7 @@ public class ServerTickInterpolationIntegrationTests(ITestOutputHelper output)
     {
         SceneEventHub events = new();
         // A 10-cell floor has no startup terrain; larger maps put landmark cubes next to the spawn point.
-        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using WorldSessionRuntime runtime = new(10, new Vector3(5f, 1.5f, 5f), events);
         using RuntimeAuthoritativeSessionHost authority = new(runtime);
         using DedicatedServerHost host = CreateHost(authority);
         TransportJsonCodec codec = new();
