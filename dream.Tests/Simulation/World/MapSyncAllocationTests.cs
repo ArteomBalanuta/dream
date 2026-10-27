@@ -15,18 +15,18 @@ using Xunit.Abstractions;
 namespace Dream.Tests.Simulation.World;
 
 // Map's per-tick physics-sync entry points, UpdateCubePosition and UpdateFracturePiecePositions,
-// run for every dynamic body on every client and server tick. Bytes per call, Debug, before MEM-9
-// and after:
+// run for every dynamic body on every client and server tick. Bytes per call, Debug, before MEM-9,
+// after MEM-9 and, with physics, after MEM-10 (WorldPhysicsBinder and WorldSpatialIndex):
 //   UpdateFracturePiecePositions, 3 cells of resting rubble              1496 -> 0
 //   UpdateFracturePiecePositions, 1 cell, 5 pieces moving                2184 -> 104 (the piece copy)
 //   UpdateCubePosition, map without physics, same cell, sync on or off      0 -> 0
 //   UpdateCubePosition, map without physics, cell change, sync on or off  280 -> 64 (the moved record)
-//   UpdateCubePosition, map with physics, same cell, sync on              416 -> 200 (binder)
+//   UpdateCubePosition, map with physics, same cell, sync on              416 -> 200 -> 0
 //   UpdateCubePosition, map with physics, same cell, sync off               0 -> 0
-//   UpdateCubePosition, map with physics, cell change, sync on            832 -> 616 (64 + binder)
-//   UpdateCubePosition, map with physics, cell change, sync off           656 -> 440 (64 + binder)
-// With physics, the rest is WorldPhysicsBinder's own (moving and reindexing the cube's body),
-// which is measured on its own as the budget.
+//   UpdateCubePosition, map with physics, cell change, sync on            832 -> 616 -> 64 (the moved record)
+//   UpdateCubePosition, map with physics, cell change, sync off           656 -> 440 -> 64 (the moved record)
+// WorldPhysicsBinder's own move and reindex of the cube's body is also measured on its own and
+// must allocate nothing.
 public class MapSyncAllocationTests
 {
     // A GeometryCellRecord on 64-bit. The record keyed by the new cell is the one allocation a
@@ -132,7 +132,8 @@ public class MapSyncAllocationTests
     public void UpdateCubePosition_WithPhysics_AllocatesNoMoreThanTheBinder(bool crossCell, bool syncPhysics)
     {
         long binderBytes = MeasureBinderMove(crossCell, syncPhysics);
-        long budget = binderBytes + (crossCell ? MovedRecordBytes : 0);
+        Assert.True(binderBytes == 0, $"WorldPhysicsBinder allocated {binderBytes} B per move; budget is 0 B.");
+        long budget = crossCell ? MovedRecordBytes : 0;
         long bytes = MeasureCubeMove(withPhysics: true, syncPhysics, crossCell, budget);
         _output.WriteLine($"physics, crossCell={crossCell}, sync={syncPhysics}: {bytes} B; binder alone {binderBytes} B");
     }

@@ -17,7 +17,8 @@ namespace Dream.Tests.Client.Replication;
 // own lookups are 352 (after: 352); ClientCorrectionApplier on a six-actor snapshot 120 (after: 0);
 // ApplyWorldMutations with two resolving CubeMoved deltas 256, with Map.UpdateCubePosition 0 on a
 // bare map (after: 0); ApplySnapshotToRuntime with the same deltas on a client session 1416, of
-// which the session map's own updates are 832 (after: 832).
+// which the session map's own updates were 832 (after MEM-7: 832; after MEM-9: 400, all in
+// WorldPhysicsBinder; after MEM-10: 0, so the whole call is 0).
 public class ApplierAllocationTests
 {
     private const string LocalSessionId = "session-local";
@@ -142,8 +143,9 @@ public class ApplierAllocationTests
         ServerSnapshotEnvelope even = CreateMoveSnapshot(CreateMoves(0.5f));
         ServerSnapshotEnvelope odd = CreateMoveSnapshot(CreateMoves(0.6f));
 
+        // The session map's synced moves, WorldPhysicsBinder included, allocate nothing (MEM-10).
         int mapToggle = 0;
-        long mapBytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long mapBytes = AllocationAssert.AtMost(0, () =>
         {
             float offset = (mapToggle++ & 1) == 0 ? 0.5f : 0.6f;
             runtime.Map.UpdateCubePosition(first, new Vector3(3f + offset, 2.5f, 3.5f), syncPhysics: true);
