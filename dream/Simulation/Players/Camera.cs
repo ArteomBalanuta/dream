@@ -1,8 +1,6 @@
 namespace Dream.Simulation.Players;
 
 ﻿using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 
 public class Camera
 {

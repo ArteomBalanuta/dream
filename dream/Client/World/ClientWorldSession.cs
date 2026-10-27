@@ -117,7 +117,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         Player.Update(
             deltaTime,
             new PlayerSimulationInput(
-                PlayerController.CreateMovementCommand(Player.Camera, Player.IsNoclipEnabled, commandFrame.MoveIntent),
+                PlayerMovementResolver.CreateMovementCommand(Player.Camera, Player.IsNoclipEnabled, commandFrame.MoveIntent),
                 new Vector2(commandFrame.LookIntent.YawDelta, commandFrame.LookIntent.PitchDelta),
                 AllowGameplayInput: true,
                 AllowLook: true),

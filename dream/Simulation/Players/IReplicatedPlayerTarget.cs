@@ -1,6 +1,6 @@
 using OpenTK.Mathematics;
 
-namespace Dream.Client.Replication;
+namespace Dream.Simulation.Players;
 
 
 public interface IReplicatedPlayerTarget
