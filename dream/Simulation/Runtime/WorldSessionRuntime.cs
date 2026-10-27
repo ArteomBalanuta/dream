@@ -437,6 +437,8 @@ public sealed class WorldSessionRuntime : IDisposable
             _enemies.PruneInactive();
             EnsureWolfExists();
             ResolvePlayerEnemySeparation(_tickPlayerTargets);
+            // Do not keep a detached (disposed) secondary referenced until the next tick.
+            _tickPlayerTargets.Clear();
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);

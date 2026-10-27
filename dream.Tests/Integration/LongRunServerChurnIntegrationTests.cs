@@ -81,9 +81,9 @@ public class LongRunServerChurnIntegrationTests(ITestOutputHelper output)
     }
 
     // The full script: c rejoins on 260 and a, the former primary, rejoins on 520 after d took the seat.
-    // A session that rejoins through RuntimeAuthoritativeSessionHost.JoinSession is accepted but never
-    // gets a player again; see SessionRejoinIntegrationTests.
-    [Fact(Skip = "Production bug: RuntimeAuthoritativeSessionHost.JoinSession (RuntimeAuthoritativeSessionHost.cs:50-66) takes the existing-session branch on a rejoin and only calls MarkSpawned; it never calls WorldSessionRuntime.AttachRemoteSession, so the secondary's RemoteSessionPlayerState removed by DetachRemoteSession is not recreated and the former primary is not re-seated. The rejoined session is missing from every snapshot. See SessionRejoinIntegrationTests.")]
+    // A rejoin goes through RuntimeAuthoritativeSessionHost.JoinSession's existing-session branch,
+    // which attaches the session to the runtime again; see SessionRejoinIntegrationTests.
+    [Fact]
     public void FourSessions_ThousandTicks_WithRejoins_TwoServersMatchEveryTick_AndInvariantsHold()
     {
         RunLockstepScript(withRejoins: true);

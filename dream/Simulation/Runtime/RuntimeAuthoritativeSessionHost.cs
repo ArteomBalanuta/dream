@@ -51,8 +51,27 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
         if (Runtime.Sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
-            existing.UpdateDisplayName(normalizedDisplayName);
-            existing.MarkSpawned();
+            // A session that left stays registered (DetachRemoteSession only despawns it), so a
+            // reconnect lands here. It must go through AttachRemoteSession like a first join: that
+            // recreates the secondary player DetachRemoteSession disposed, re-seats a returning former
+            // primary (or gives it its own seat when the primary seat was taken) and invalidates the
+            // cached player targets. For a session that is still attached it creates nothing.
+            bool returning = !existing.IsSpawned;
+            if (existing.IsLocal)
+            {
+                existing.UpdateDisplayName(normalizedDisplayName);
+                existing.MarkSpawned();
+            }
+            else
+            {
+                existing = Runtime.AttachRemoteSession(sessionId, normalizedDisplayName);
+                if (returning)
+                {
+                    // DetachRemoteSession saved the profile; a recreated player starts from it.
+                    Runtime.RestorePersistedPlayerState(sessionId, existing.DisplayName);
+                }
+            }
+
             existing.ResetAcceptedSequences();
             PlayerInventorySnapshot? existingInventory = Runtime.TryCaptureInventorySnapshot(existing.SessionId);
             JoinAcceptedMessage existingAccepted = new(
