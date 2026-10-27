@@ -46,6 +46,11 @@ public class Game : GameWindow
         _desktopClientConfigPath = AssetPaths.Config("desktop-client.txt");
         _desktopClientConfig = DesktopClientTextConfig.LoadOrCreate(_desktopClientConfigPath);
         _settings = new GameSettings(new Vector2i(1440, 1024), viewModelRig, _desktopClientConfig);
+        // The single-threaded GameWindow runs update and render together off UpdateFrequency (0 = uncapped).
+        // VSync stays off; the cap keeps a focused client from spinning at four-digit FPS.
+        int frameCap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
+        UpdateFrequency = frameCap;
+        Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
         _localServer = new OnDemandLocalServerHandle(
             () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult());
         NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());

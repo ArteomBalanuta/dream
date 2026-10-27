@@ -30,6 +30,9 @@ public sealed class DesktopClientConfig
 
     public FloatingCombatTextTuning FloatingCombatText { get; set; } = FloatingCombatTextTuning.Default;
 
+    // Render frame cap in FPS; 0 means uncapped.
+    public int MaxFramesPerSecond { get; set; } = FrameRateCap.Default;
+
     public ClientConnectionOptions ToConnectionOptions()
     {
         Sanitize();
@@ -89,5 +92,6 @@ public sealed class DesktopClientConfig
         AttackSpeed = Math.Clamp(AttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed);
         Vitality = Math.Clamp(Vitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality);
         FloatingCombatText = FloatingCombatText.Clamp();
+        MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
     }
 }
