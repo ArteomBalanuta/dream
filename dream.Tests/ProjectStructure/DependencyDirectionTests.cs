@@ -62,6 +62,14 @@ public class DependencyDirectionTests
         AssertNoReferences(relativeFolder, SimulationForbiddenTokens);
     }
 
+    // DEC-3 moved the GameSettings coupling out of Simulation.Players; desktop client
+    // configuration must not leak back into the headless simulation either.
+    [Fact]
+    public void SimulationSources_DoNotReferenceDesktopConfiguration()
+    {
+        AssertNoReferences(Path.Combine("dream", "Simulation"), ["Dream.Configuration", "GameSettings"]);
+    }
+
     private static void AssertNoReferences(string relativeFolder, IReadOnlyList<string> forbiddenTokens)
     {
         string repoRoot = FindRepoRoot();
