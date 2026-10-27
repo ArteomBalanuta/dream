@@ -399,6 +399,7 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
             AppendPartDiff(diff, "world", mine.World, theirs.World);
             AppendPartDiff(diff, "actors", mine.Actors, theirs.Actors);
             AppendPartDiff(diff, "rubble", mine.Rubble, theirs.Rubble);
+            AppendPartDiff(diff, "cubes", mine.Cubes, theirs.Cubes);
             AppendPartDiff(diff, "mutation sequence", mine.WorldMutationSequence, theirs.WorldMutationSequence);
 
             Dictionary<string, ActorSnapshot> myActors = _lastActors.ToDictionary(ActorKey, StringComparer.Ordinal);
