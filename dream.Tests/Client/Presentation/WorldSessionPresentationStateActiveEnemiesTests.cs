@@ -85,6 +85,9 @@ public class WorldSessionPresentationStateActiveEnemiesTests
     {
         // Before MEM-5 a capture allocated 856 B: a Stopwatch for the export timing and the
         // Where iterator over the enemy registry came on top of the 744 B measured afterwards.
+        // GFX-4 added four pre-draw doubles to the FramePerformanceSnapshot carried inside each
+        // presentation state, so the same single state allocation is now 32 B larger (776 B).
+        // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
@@ -92,7 +95,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             loadVisualAssets: false);
 
         AllocationAssert.AtMost(
-            744,
+            776,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 
