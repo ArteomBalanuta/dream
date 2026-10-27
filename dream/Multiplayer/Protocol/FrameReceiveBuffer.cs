@@ -44,6 +44,29 @@ public sealed class FrameReceiveBuffer
         return true;
     }
 
+    // Zero-copy variant: payload aliases the internal buffer and is valid only until the next Append.
+    // An empty frame is reported as consumed with an empty payload.
+    public bool TryReadPayload(IMessageFramer framer, out ReadOnlySpan<byte> payload)
+    {
+        ArgumentNullException.ThrowIfNull(framer);
+        ReadOnlySpan<byte> buffered = _buffer.AsSpan(_start, _end - _start);
+        if (!framer.TryReadFrameBounds(buffered, out int payloadOffset, out int payloadLength, out int consumed))
+        {
+            payload = default;
+            return false;
+        }
+
+        payload = buffered.Slice(payloadOffset, payloadLength);
+        _start += consumed;
+        if (_start == _end)
+        {
+            _start = 0;
+            _end = 0;
+        }
+
+        return true;
+    }
+
     private void EnsureWritable(int count)
     {
         if (_end + count <= _buffer.Length)

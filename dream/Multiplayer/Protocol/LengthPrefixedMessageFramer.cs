@@ -35,6 +35,19 @@ public sealed class LengthPrefixedMessageFramer : IMessageFramer
     public bool TryDeframe(ReadOnlySpan<byte> buffer, out byte[]? payload, out int bytesConsumed)
     {
         payload = null;
+        if (!TryReadFrameBounds(buffer, out int payloadOffset, out int payloadLength, out bytesConsumed))
+        {
+            return false;
+        }
+
+        payload = buffer.Slice(payloadOffset, payloadLength).ToArray();
+        return true;
+    }
+
+    public bool TryReadFrameBounds(ReadOnlySpan<byte> buffer, out int payloadOffset, out int payloadLength, out int bytesConsumed)
+    {
+        payloadOffset = 0;
+        payloadLength = 0;
         bytesConsumed = 0;
 
         if (buffer.Length < HeaderLength)
@@ -42,30 +55,31 @@ public sealed class LengthPrefixedMessageFramer : IMessageFramer
             return false;
         }
 
-        int payloadLength = BinaryPrimitives.ReadInt32LittleEndian(buffer);
-        if (payloadLength < 0)
+        int declaredLength = BinaryPrimitives.ReadInt32LittleEndian(buffer);
+        if (declaredLength < 0)
         {
             throw new InvalidOperationException("Negative frame length is invalid.");
         }
 
-        if (payloadLength > _maxPayloadBytes)
+        if (declaredLength > _maxPayloadBytes)
         {
             throw new InvalidOperationException(
-                $"Frame payload length {payloadLength} exceeds configured maximum {_maxPayloadBytes} bytes.");
+                $"Frame payload length {declaredLength} exceeds configured maximum {_maxPayloadBytes} bytes.");
         }
 
-        if (payloadLength > int.MaxValue - HeaderLength)
+        if (declaredLength > int.MaxValue - HeaderLength)
         {
             throw new InvalidOperationException("Frame length overflow is invalid.");
         }
 
-        int totalLength = HeaderLength + payloadLength;
+        int totalLength = HeaderLength + declaredLength;
         if (buffer.Length < totalLength)
         {
             return false;
         }
 
-        payload = buffer.Slice(HeaderLength, payloadLength).ToArray();
+        payloadOffset = HeaderLength;
+        payloadLength = declaredLength;
         bytesConsumed = totalLength;
         return true;
     }
