@@ -53,11 +53,7 @@ public static class ClientCorrectionApplier
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentException.ThrowIfNullOrWhiteSpace(localSessionId);
 
-        ActorSnapshot? actor = snapshot.Actors
-            .FirstOrDefault(candidate =>
-                candidate.Kind == CreatureKind.Player &&
-                string.Equals(candidate.SessionId, localSessionId, StringComparison.Ordinal));
-
+        ActorSnapshot? actor = FindLocalPlayer(snapshot.Actors, localSessionId);
         if (actor == null || actor.Value.SessionId == null)
         {
             ApplySnapshotMetadata(runtime, snapshot);
@@ -106,5 +102,22 @@ public static class ClientCorrectionApplier
         {
             runtime.Player.SetWorldPosition(correction.CorrectedPosition.Value);
         }
+    }
+
+    // The first player actor of the local session, as FirstOrDefault returned it, without the
+    // closure and boxed enumerator that cost on every snapshot.
+    private static ActorSnapshot? FindLocalPlayer(IReadOnlyList<ActorSnapshot> actors, string localSessionId)
+    {
+        for (int i = 0; i < actors.Count; i++)
+        {
+            ActorSnapshot candidate = actors[i];
+            if (candidate.Kind == CreatureKind.Player &&
+                string.Equals(candidate.SessionId, localSessionId, StringComparison.Ordinal))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }
