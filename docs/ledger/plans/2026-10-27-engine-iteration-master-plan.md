@@ -1,7 +1,7 @@
 # Engine Iteration Master Plan: Hot Paths, GL Ownership, Determinism, Decoupling, Wire
 
 Purpose: Split one iteration of foundation work into many independent tasks that implementers can run in parallel waves.
-Status: Wave 1 integrated and verified on `integrate/engine-iteration` (see `docs/ledger/work-log/2026-10-27-engine-iteration-wave-1.md`). Waves 2–6 are planned.
+Status: Waves 1 and 2 integrated and verified on `integrate/engine-iteration` (see the `2026-10-27-engine-iteration-wave-1.md` and `-wave-2.md` work-logs). Waves 3–6 are planned.
 Scope: Voxel meshing and render export, GL resource ownership and threading, the deterministic authoritative simulation, simulation/presentation decoupling, the wire protocol and server I/O.
 
 ## How This Plan Was Made
