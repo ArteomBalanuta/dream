@@ -13,14 +13,22 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
-    private readonly IPlayerCommandInbox _commandInbox = new LatestPlayerCommandInbox();
-    private readonly IPlayerActionQueue _actionQueue = new PlayerActionQueue();
+    private readonly LatestPlayerCommandInbox _commandInbox = new();
+    private readonly PlayerActionQueue _actionQueue = new();
     private readonly ServerTickRunner _tickRunner = new();
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly object _authoritySync = new();
+
+    // Tick scratch, touched only under _authoritySync. The context list mirrors _connections and
+    // is rebuilt only after a connection is added or removed.
+    private readonly List<ServerRoutingContext> _connectionContexts = [];
+    private readonly List<PlayerSessionId> _joinedSessionIds = [];
+    private readonly List<PlayerCommandFrame> _tickCommands = [];
+    private readonly List<QueuedPlayerAction> _tickActions = [];
+    private int _connectionsChanged = 1;
     private readonly BackgroundCheckpointWriter? _checkpointWrites;
     private double _checkpointElapsedSeconds;
 
@@ -100,57 +108,38 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     public int AdvanceTime(double elapsedSeconds)
     {
-        ITickDrivenAuthoritativeSessionHost tickDrivenAuthority = _tickDrivenAuthority
-            ?? throw new InvalidOperationException(
+        if (_tickDrivenAuthority == null)
+        {
+            throw new InvalidOperationException(
                 "Cannot advance server time before a runtime-backed authoritative session host is attached.");
+        }
 
         lock (_authoritySync)
         {
-            return _tickRunner.Advance(elapsedSeconds, (tick, fixedDeltaSeconds) =>
-            {
-                PlayerSessionId[] joinedSessionIds = ResolveJoinedSessionIds();
-                IReadOnlyList<PlayerCommandFrame> pendingCommands = _commandInbox.Drain(joinedSessionIds);
-                IReadOnlyList<QueuedPlayerAction> pendingActions = _actionQueue.Drain(joinedSessionIds);
-                IReadOnlyList<AuthoritativeActionResult> actionResults = tickDrivenAuthority.AdvanceTick(
-                    tick,
-                    fixedDeltaSeconds,
-                    pendingCommands,
-                    pendingActions,
-                    DefaultServerTuning,
-                    allowGameplaySimulation: true);
-                foreach (AuthoritativeActionResult actionResult in actionResults)
-                {
-                    _pendingActionResults.Enqueue(actionResult);
-                }
-
-                if (Runtime != null)
-                {
-                    _checkpointElapsedSeconds += fixedDeltaSeconds;
-                    while (_checkpointElapsedSeconds >= 5d)
-                    {
-                        // Capture is in-memory; the database write runs off the tick thread.
-                        if (_checkpointWrites != null &&
-                            Runtime.CapturePersistenceCheckpoint() is { } checkpoint)
-                        {
-                            _checkpointWrites.Enqueue(checkpoint);
-                        }
-
-                        _checkpointElapsedSeconds -= 5d;
-                    }
-                }
-            });
+            return _tickRunner.Advance(
+                elapsedSeconds,
+                this,
+                static (host, tick, fixedDeltaSeconds) => host.RunTick(tick, fixedDeltaSeconds));
         }
     }
 
     public IReadOnlyList<AuthoritativeActionResult> DrainPendingActionResults()
     {
         List<AuthoritativeActionResult> drained = [];
+        DrainPendingActionResultsInto(drained);
+        return drained;
+    }
+
+    // Replaces the destination's contents with every pending action result, oldest first.
+    public void DrainPendingActionResultsInto(List<AuthoritativeActionResult> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        destination.Clear();
         while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
         {
-            drained.Add(actionResult);
+            destination.Add(actionResult);
         }
-
-        return drained;
     }
 
     public ServerSnapshotMessage CreateSnapshotMessage(bool includeWorldSnapshot = false)
@@ -234,7 +223,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
         }
 
-        _connections.TryRemove(connectionId, out _);
+        if (_connections.TryRemove(connectionId, out _))
+        {
+            Volatile.Write(ref _connectionsChanged, 1);
+        }
     }
 
     public void Dispose()
@@ -251,7 +243,12 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     private ServerRoutingContext GetOrCreateConnectionContext(string connectionId)
     {
-        return _connections.GetOrAdd(
+        if (_connections.TryGetValue(connectionId, out ServerRoutingContext? existing))
+        {
+            return existing;
+        }
+
+        ServerRoutingContext context = _connections.GetOrAdd(
             connectionId,
             static (id, state) => new ServerRoutingContext(
                 id,
@@ -259,15 +256,70 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 state.CommandInbox,
                 state.ActionQueue,
                 state.SessionClaims),
-            (Authority: _authority, CommandInbox: _commandInbox, ActionQueue: _actionQueue, SessionClaims: (IServerSessionClaimRegistry)this));
+            (Authority: _authority,
+                CommandInbox: (IPlayerCommandInbox)_commandInbox,
+                ActionQueue: (IPlayerActionQueue)_actionQueue,
+                SessionClaims: (IServerSessionClaimRegistry)this));
+        Volatile.Write(ref _connectionsChanged, 1);
+        return context;
     }
 
-    private PlayerSessionId[] ResolveJoinedSessionIds()
+    private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
-        return _connections.Values
-            .Select(context => context.LastJoinRequest)
-            .Where(join => join != null)
-            .Select(join => new PlayerSessionId(join!.RequestedSessionId))
-            .ToArray();
+        RefreshJoinedSessionIds();
+        _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);
+        _actionQueue.DrainInto(_joinedSessionIds, _tickActions);
+        IReadOnlyList<AuthoritativeActionResult> actionResults = _tickDrivenAuthority!.AdvanceTick(
+            tick,
+            fixedDeltaSeconds,
+            _tickCommands,
+            _tickActions,
+            DefaultServerTuning,
+            allowGameplaySimulation: true);
+        for (int i = 0; i < actionResults.Count; i++)
+        {
+            _pendingActionResults.Enqueue(actionResults[i]);
+        }
+
+        WorldSessionRuntime? runtime = Runtime;
+        if (runtime != null)
+        {
+            _checkpointElapsedSeconds += fixedDeltaSeconds;
+            while (_checkpointElapsedSeconds >= 5d)
+            {
+                // Capture is in-memory; the database write runs off the tick thread.
+                if (_checkpointWrites != null &&
+                    runtime.CapturePersistenceCheckpoint() is { } checkpoint)
+                {
+                    _checkpointWrites.Enqueue(checkpoint);
+                }
+
+                _checkpointElapsedSeconds -= 5d;
+            }
+        }
+    }
+
+    // Connections are added and removed off the tick thread. Enumerating the ConcurrentDictionary
+    // is safe during those changes, and a change made mid-enumeration sets the flag again for the
+    // next tick. Join state is re-read every tick because LastJoinRequest changes on its own.
+    private void RefreshJoinedSessionIds()
+    {
+        if (Interlocked.Exchange(ref _connectionsChanged, 0) != 0)
+        {
+            _connectionContexts.Clear();
+            foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
+            {
+                _connectionContexts.Add(connection.Value);
+            }
+        }
+
+        _joinedSessionIds.Clear();
+        for (int i = 0; i < _connectionContexts.Count; i++)
+        {
+            if (_connectionContexts[i].LastJoinRequest is { } join)
+            {
+                _joinedSessionIds.Add(new PlayerSessionId(join.RequestedSessionId));
+            }
+        }
     }
 }

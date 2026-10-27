@@ -44,19 +44,40 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
 
         List<PlayerCommandFrame> drained = [];
         PlayerSessionId[] requestedSessionIds = sessionIds.ToArray();
+        DrainInto(requestedSessionIds, drained);
+        return drained;
+    }
+
+    // Replaces the destination's contents with the pending frames of the given sessions, in session order.
+    public void DrainInto(IReadOnlyList<PlayerSessionId> sessionIds, List<PlayerCommandFrame> destination)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIds);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        destination.Clear();
         lock (_sync)
         {
-            foreach (PlayerSessionId sessionId in requestedSessionIds)
+            if (_pending.Count == 0)
             {
-                if (_pending.TryGetValue(sessionId, out PlayerCommandFrame commandFrame))
+                return;
+            }
+
+            for (int i = 0; i < sessionIds.Count; i++)
+            {
+                if (_pending.Remove(sessionIds[i], out PlayerCommandFrame commandFrame))
                 {
-                    _pending.Remove(sessionId);
-                    drained.Add(commandFrame);
+                    destination.Add(commandFrame);
                 }
             }
         }
+    }
 
-        return drained;
+    public bool TryDrain(PlayerSessionId sessionId, out PlayerCommandFrame commandFrame)
+    {
+        lock (_sync)
+        {
+            return _pending.Remove(sessionId, out commandFrame);
+        }
     }
 
     private static PlayerCommandFrame Merge(PlayerCommandFrame existing, PlayerCommandFrame incoming)
