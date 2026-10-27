@@ -133,10 +133,14 @@ public sealed class DedicatedServerService : IAsyncDisposable
         snapshotStopwatch?.Stop();
         Stopwatch? broadcastStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         // Enqueue only: each connection's writer task does the socket I/O, so a stalled client
-        // cannot hold up the tick loop for everyone else.
+        // cannot hold up the tick loop for everyone else. The snapshot payload is the same for
+        // every joined connection (it carries every session's accepted command sequence), so it
+        // is serialized once, by the first writer that needs it, and each connection adds only
+        // its own envelope.
+        SharedEncodedPayload sharedPayload = new(_codec, snapshot);
         for (int i = 0; i < joinedConnections.Count; i++)
         {
-            joinedConnections[i].EnqueueSnapshot(snapshot);
+            joinedConnections[i].EnqueueSnapshot(snapshot, sharedPayload);
         }
         broadcastStopwatch?.Stop();
 
