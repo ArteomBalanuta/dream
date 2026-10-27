@@ -1,11 +1,17 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Dream.Rendering.World;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Core;
 
 public sealed class StaticMeshBuffer : IDisposable
 {
-    private const int FloatsPerVertex = 8;
+    public const int VertexStride = 32;
+    public const int PositionOffset = 0;
+    public const int NormalOffset = 12;
+    public const int TexCoordOffset = 24;
 
     // Must match the attribute locations declared in shaders/cubeVertex.glsl.
     public const int PositionAttributeLocation = 0;
@@ -17,6 +23,11 @@ public sealed class StaticMeshBuffer : IDisposable
     private readonly int _indexCount;
     private bool _disposed;
 
+    static StaticMeshBuffer()
+    {
+        VerifyVertexLayout();
+    }
+
     public StaticMeshBuffer(StaticWorldChunkMesh mesh)
     {
         _indexCount = mesh.Indices.Count;
@@ -24,32 +35,31 @@ public sealed class StaticMeshBuffer : IDisposable
         _vertexBufferObject = GL.GenBuffer();
         _elementBufferObject = GL.GenBuffer();
 
-        float[] vertices = FlattenVertices(mesh.Vertices);
-        uint[] indices = mesh.Indices.ToArray();
+        ReadOnlySpan<StaticWorldVertex> vertices = AsReadOnlySpan(mesh.Vertices);
+        ReadOnlySpan<uint> indices = AsReadOnlySpan(mesh.Indices);
 
         GL.BindVertexArray(_vertexArrayObject);
 
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
         GL.BufferData(
             BufferTarget.ArrayBuffer,
-            vertices.Length * sizeof(float),
-            vertices,
+            vertices.Length * VertexStride,
+            ref MemoryMarshal.GetReference(vertices),
             BufferUsageHint.StaticDraw);
 
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, _elementBufferObject);
         GL.BufferData(
             BufferTarget.ElementArrayBuffer,
             indices.Length * sizeof(uint),
-            indices,
+            ref MemoryMarshal.GetReference(indices),
             BufferUsageHint.StaticDraw);
 
-        int stride = FloatsPerVertex * sizeof(float);
         GL.EnableVertexAttribArray(PositionAttributeLocation);
-        GL.VertexAttribPointer(PositionAttributeLocation, 3, VertexAttribPointerType.Float, false, stride, 0);
+        GL.VertexAttribPointer(PositionAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, PositionOffset);
         GL.EnableVertexAttribArray(NormalAttributeLocation);
-        GL.VertexAttribPointer(NormalAttributeLocation, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        GL.VertexAttribPointer(NormalAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, NormalOffset);
         GL.EnableVertexAttribArray(TexCoordAttributeLocation);
-        GL.VertexAttribPointer(TexCoordAttributeLocation, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        GL.VertexAttribPointer(TexCoordAttributeLocation, 2, VertexAttribPointerType.Float, false, VertexStride, TexCoordOffset);
 
         GL.BindVertexArray(0);
     }
@@ -79,23 +89,32 @@ public sealed class StaticMeshBuffer : IDisposable
         _disposed = true;
     }
 
-    private static float[] FlattenVertices(IReadOnlyList<StaticWorldVertex> vertices)
+    // Vertices are uploaded as raw memory, so the struct layout must match the attribute offsets above.
+    public static void VerifyVertexLayout()
     {
-        float[] result = new float[vertices.Count * FloatsPerVertex];
-        for (int i = 0; i < vertices.Count; i++)
+        if (Unsafe.SizeOf<StaticWorldVertex>() != VertexStride)
         {
-            StaticWorldVertex vertex = vertices[i];
-            int offset = i * FloatsPerVertex;
-            result[offset] = vertex.Position.X;
-            result[offset + 1] = vertex.Position.Y;
-            result[offset + 2] = vertex.Position.Z;
-            result[offset + 3] = vertex.Normal.X;
-            result[offset + 4] = vertex.Normal.Y;
-            result[offset + 5] = vertex.Normal.Z;
-            result[offset + 6] = vertex.TexCoord.X;
-            result[offset + 7] = vertex.TexCoord.Y;
+            throw new InvalidOperationException(
+                $"StaticWorldVertex is {Unsafe.SizeOf<StaticWorldVertex>()} bytes; the GL layout expects {VertexStride}.");
         }
 
-        return result;
+        StaticWorldVertex probe = new(new Vector3(1f, 2f, 3f), new Vector3(4f, 5f, 6f), new Vector2(7f, 8f));
+        ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(new ReadOnlySpan<StaticWorldVertex>(in probe));
+        if (MemoryMarshal.Read<Vector3>(bytes.Slice(PositionOffset)) != probe.Position ||
+            MemoryMarshal.Read<Vector3>(bytes.Slice(NormalOffset)) != probe.Normal ||
+            MemoryMarshal.Read<Vector2>(bytes.Slice(TexCoordOffset)) != probe.TexCoord)
+        {
+            throw new InvalidOperationException("StaticWorldVertex field offsets do not match the GL attribute offsets.");
+        }
+    }
+
+    private static ReadOnlySpan<T> AsReadOnlySpan<T>(IReadOnlyList<T> items)
+    {
+        return items switch
+        {
+            List<T> list => CollectionsMarshal.AsSpan(list),
+            T[] array => array,
+            _ => items.ToArray()
+        };
     }
 }

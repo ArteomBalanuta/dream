@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 
@@ -16,6 +17,9 @@ public sealed record StaticWorldChunkMesh(
     public int TriangleCount => Indices.Count / 3;
 }
 
+// Uploaded to GL as raw bytes: position at 0, normal at 12, tex coord at 24, 32-byte stride.
+// StaticMeshBuffer.VerifyVertexLayout checks this before any upload.
+[StructLayout(LayoutKind.Sequential)]
 public readonly record struct StaticWorldVertex(
     Vector3 Position,
     Vector3 Normal,
