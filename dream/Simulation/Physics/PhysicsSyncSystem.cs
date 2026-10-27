@@ -17,24 +17,55 @@ public class PhysicsSyncSystem
     // resolve within a few ticks.
     public const int RejectionsBeforeReset = 8;
 
+    private static readonly PhysicsCubeMoveDelta[] NoMovedCubes = [];
+
     private readonly Dictionary<RigidBody, int> _rejectionStreaks = new();
 
-    public PhysicsSyncResult SyncDynamicMapBodies(Map map, IEnumerable<RigidBody> dynamicBodies)
-    {
-        RigidBody[] bodies = dynamicBodies as RigidBody[] ?? dynamicBodies.ToArray();
-        List<PendingCubeSync> pendingCubeSyncs = [];
-        List<PendingFracturePieceSync> pendingFracturePieceSyncs = [];
-        List<PhysicsCubeMoveDelta> movedCubes = [];
+    // Per-call scratch state, cleared on each sync so steady-state ticks allocate nothing here.
+    private readonly List<RigidBody> _bodies = [];
+    private readonly List<PendingCubeSync> _pendingCubeSyncs = [];
+    private readonly List<PendingCubeSync> _cubeRetryBuffer = [];
+    private readonly List<PendingFracturePieceSync> _pendingFracturePieceSyncs = [];
+    private readonly List<PhysicsCubeMoveDelta> _movedCubes = [];
+    private readonly HashSet<GeometryCellKey> _reservedTargetCells = [];
+    private readonly Dictionary<GeometryCellKey, List<PendingFracturePieceSync>> _fractureSyncsByCell = [];
+    private readonly List<GeometryCellKey> _fractureCellOrder = [];
+    private readonly Stack<List<PendingFracturePieceSync>> _fractureSyncListPool = new();
+    private readonly List<(int PieceIndex, Vector3 Center)> _fracturePieceUpdates = [];
+    private readonly HashSet<RigidBody> _liveBodies = [];
+    private readonly List<RigidBody> _staleStreakBodies = [];
 
-        foreach (RigidBody body in bodies)
+    // The returned MovedCubes belongs to the caller and stays valid across later syncs: it is a
+    // new array when cubes moved and a shared empty array otherwise.
+    public PhysicsSyncResult SyncDynamicMapBodies(Map map, IReadOnlyList<RigidBody> dynamicBodies)
+    {
+        // Snapshot the bodies: motion-state callbacks and map updates can change the live list.
+        List<RigidBody> bodies = _bodies;
+        bodies.Clear();
+        for (int i = 0; i < dynamicBodies.Count; i++)
         {
-            if (body.UserObject is (Cube cube, Vector3 previousCenter))
+            bodies.Add(dynamicBodies[i]);
+        }
+
+        List<PendingCubeSync> pendingCubeSyncs = _pendingCubeSyncs;
+        List<PendingFracturePieceSync> pendingFracturePieceSyncs = _pendingFracturePieceSyncs;
+        List<PhysicsCubeMoveDelta> movedCubes = _movedCubes;
+        pendingCubeSyncs.Clear();
+        pendingFracturePieceSyncs.Clear();
+        movedCubes.Clear();
+
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            RigidBody body = bodies[i];
+            // A type pattern, not the positional (Cube, Vector3) pattern: on object the positional
+            // form goes through ITuple and boxes the Vector3 on every check.
+            if (body.UserObject is ValueTuple<Cube, Vector3> cubeBody && cubeBody.Item1 is Cube cube)
             {
                 body.MotionState.GetWorldTransform(out Matrix transform);
                 pendingCubeSyncs.Add(new PendingCubeSync(
                     body,
                     cube,
-                    previousCenter,
+                    cubeBody.Item2,
                     transform.Origin.ToOpenTK()));
                 continue;
             }
@@ -52,19 +83,23 @@ public class PhysicsSyncSystem
         }
 
         PruneRejectionStreaks(bodies);
-        HashSet<GeometryCellKey> reservedTargetCells = [];
+        HashSet<GeometryCellKey> reservedTargetCells = _reservedTargetCells;
+        reservedTargetCells.Clear();
 
         // Multi-pass commit: a cube whose target cell is still owned by a cube that moves away
         // later in the same tick is retried after that cube has moved. A single ordered pass
         // rejected the trailing cubes of every pushed row. Swaps remain conservatively rejected.
+        // The pending and retry lists swap roles after each pass.
         List<PendingCubeSync> remaining = pendingCubeSyncs;
+        List<PendingCubeSync> retry = _cubeRetryBuffer;
         bool progressed = true;
         while (remaining.Count > 0 && progressed)
         {
             progressed = false;
-            List<PendingCubeSync> retry = [];
-            foreach (PendingCubeSync pendingSync in remaining)
+            retry.Clear();
+            for (int i = 0; i < remaining.Count; i++)
             {
+                PendingCubeSync pendingSync = remaining[i];
                 bool hadPreviousCell = map.TryGetCellForCube(pendingSync.Cube, out GeometryCellKey previousCell);
                 if (!map.UpdateCubePosition(
                         pendingSync.Cube,
@@ -78,7 +113,11 @@ public class PhysicsSyncSystem
 
                 progressed = true;
                 _rejectionStreaks.Remove(pendingSync.Body);
-                pendingSync.Body.UserObject = (pendingSync.Cube, pendingSync.Position);
+                if (!AreBitEqual(pendingSync.PreviousCenter, pendingSync.Position))
+                {
+                    pendingSync.Body.UserObject = (pendingSync.Cube, pendingSync.Position);
+                }
+
                 if (hadPreviousCell &&
                     map.TryGetCellForCube(pendingSync.Cube, out GeometryCellKey currentCell) &&
                     HasMeaningfulMovement(pendingSync.PreviousCenter, pendingSync.Position))
@@ -91,11 +130,12 @@ public class PhysicsSyncSystem
                 }
             }
 
-            remaining = retry;
+            (remaining, retry) = (retry, remaining);
         }
 
-        foreach (PendingCubeSync rejected in remaining)
+        for (int i = 0; i < remaining.Count; i++)
         {
+            PendingCubeSync rejected = remaining[i];
             int streak = _rejectionStreaks.TryGetValue(rejected.Body, out int previous) ? previous + 1 : 1;
             if (streak < RejectionsBeforeReset)
             {
@@ -110,33 +150,71 @@ public class PhysicsSyncSystem
             ResetBodyToCenter(rejected.Body, acceptedCenter);
         }
 
-        foreach (IGrouping<GeometryCellKey, PendingFracturePieceSync> cellGroup in pendingFracturePieceSyncs.GroupBy(sync => sync.CellKey))
+        SyncFracturePieces(map, pendingFracturePieceSyncs);
+
+        ReportInvariantViolationsInDebugBuilds(map, movedCubes.Count);
+        return new PhysicsSyncResult(movedCubes.Count == 0 ? NoMovedCubes : movedCubes.ToArray());
+    }
+
+    // Groups fracture-piece syncs by cell in first-seen order, as GroupBy did, and lets the map
+    // accept or reject each cell's pieces together.
+    private void SyncFracturePieces(Map map, List<PendingFracturePieceSync> pendingFracturePieceSyncs)
+    {
+        _fractureSyncsByCell.Clear();
+        _fractureCellOrder.Clear();
+        for (int i = 0; i < pendingFracturePieceSyncs.Count; i++)
         {
-            PendingFracturePieceSync[] cellSyncs = cellGroup.ToArray();
-            bool accepted = map.UpdateFracturePiecePositions(
-                cellGroup.Key,
-                cellSyncs
-                    .Select(sync => (sync.PieceIndex, sync.Center))
-                    .ToArray(),
-                out HashSet<int> acceptedPieceIndices);
-            foreach (PendingFracturePieceSync pendingSync in cellSyncs)
+            PendingFracturePieceSync pendingSync = pendingFracturePieceSyncs[i];
+            if (!_fractureSyncsByCell.TryGetValue(pendingSync.CellKey, out List<PendingFracturePieceSync>? cellSyncs))
             {
+                cellSyncs = _fractureSyncListPool.Count > 0 ? _fractureSyncListPool.Pop() : [];
+                _fractureSyncsByCell.Add(pendingSync.CellKey, cellSyncs);
+                _fractureCellOrder.Add(pendingSync.CellKey);
+            }
+
+            cellSyncs.Add(pendingSync);
+        }
+
+        for (int cellIndex = 0; cellIndex < _fractureCellOrder.Count; cellIndex++)
+        {
+            GeometryCellKey cell = _fractureCellOrder[cellIndex];
+            List<PendingFracturePieceSync> cellSyncs = _fractureSyncsByCell[cell];
+            _fracturePieceUpdates.Clear();
+            for (int i = 0; i < cellSyncs.Count; i++)
+            {
+                _fracturePieceUpdates.Add((cellSyncs[i].PieceIndex, cellSyncs[i].Center));
+            }
+
+            bool accepted = map.UpdateFracturePiecePositions(
+                cell,
+                _fracturePieceUpdates,
+                out HashSet<int> acceptedPieceIndices);
+            for (int i = 0; i < cellSyncs.Count; i++)
+            {
+                PendingFracturePieceSync pendingSync = cellSyncs[i];
                 if (accepted && acceptedPieceIndices.Contains(pendingSync.PieceIndex))
                 {
-                    pendingSync.Body.UserObject = new GeometryDynamicBodyReference(
-                        pendingSync.CellKey,
-                        pendingSync.PieceIndex,
-                        pendingSync.Center);
+                    if (!AreBitEqual(pendingSync.PreviousCenter, pendingSync.Center))
+                    {
+                        pendingSync.Body.UserObject = new GeometryDynamicBodyReference(
+                            pendingSync.CellKey,
+                            pendingSync.PieceIndex,
+                            pendingSync.Center);
+                    }
                 }
                 else
                 {
                     ResetBodyToCenter(pendingSync.Body, pendingSync.PreviousCenter);
                 }
             }
+
+            cellSyncs.Clear();
+            _fractureSyncListPool.Push(cellSyncs);
         }
 
-        ReportInvariantViolationsInDebugBuilds(map, movedCubes.Count);
-        return new PhysicsSyncResult(movedCubes);
+        _fractureSyncsByCell.Clear();
+        _fractureCellOrder.Clear();
+        _fracturePieceUpdates.Clear();
     }
 
     // Debug builds verify the map's parallel indexes after any tick that moved a cube, so a
@@ -160,18 +238,45 @@ public class PhysicsSyncSystem
         Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write("map.invariant", $"count={violations.Count} {detail}");
     }
 
-    private void PruneRejectionStreaks(RigidBody[] liveBodies)
+    private void PruneRejectionStreaks(List<RigidBody> liveBodies)
     {
         if (_rejectionStreaks.Count == 0)
         {
             return;
         }
 
-        HashSet<RigidBody> live = [.. liveBodies];
-        foreach (RigidBody stale in _rejectionStreaks.Keys.Where(body => !live.Contains(body)).ToArray())
+        HashSet<RigidBody> live = _liveBodies;
+        live.Clear();
+        for (int i = 0; i < liveBodies.Count; i++)
         {
-            _rejectionStreaks.Remove(stale);
+            live.Add(liveBodies[i]);
         }
+
+        _staleStreakBodies.Clear();
+        foreach (RigidBody body in _rejectionStreaks.Keys)
+        {
+            if (!live.Contains(body))
+            {
+                _staleStreakBodies.Add(body);
+            }
+        }
+
+        for (int i = 0; i < _staleStreakBodies.Count; i++)
+        {
+            _rejectionStreaks.Remove(_staleStreakBodies[i]);
+        }
+
+        _staleStreakBodies.Clear();
+        live.Clear();
+    }
+
+    // Skipping the UserObject write when the stored center is bit-identical avoids re-boxing the
+    // tuple or reference for every resting body; readers observe the same value either way.
+    private static bool AreBitEqual(Vector3 left, Vector3 right)
+    {
+        return BitConverter.SingleToInt32Bits(left.X) == BitConverter.SingleToInt32Bits(right.X) &&
+            BitConverter.SingleToInt32Bits(left.Y) == BitConverter.SingleToInt32Bits(right.Y) &&
+            BitConverter.SingleToInt32Bits(left.Z) == BitConverter.SingleToInt32Bits(right.Z);
     }
 
     private static bool HasMeaningfulMovement(Vector3 previous, Vector3 current)
