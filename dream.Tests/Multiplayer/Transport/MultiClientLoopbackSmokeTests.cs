@@ -21,6 +21,12 @@ namespace Dream.Tests.Multiplayer.Transport;
 // review fixes working together rather than unit by unit.
 public class MultiClientLoopbackSmokeTests
 {
+    // 0.6 s of walking at 60 ticks per second.
+    private const ulong WalkTicks = 36;
+
+    // Consecutive replicated positions (one per server tick) that must agree before a player
+    // counts as at rest.
+    private const int RestSamples = 15;
 
     [Fact]
     public async Task TwoClients_AreBothPhysicsSimulatedAndKeepMatchingWorlds()
@@ -37,22 +43,41 @@ public class MultiClientLoopbackSmokeTests
         await using (a.Session)
         await using (b.Session)
         {
-            Stopwatch clock = Stopwatch.StartNew();
+            // Phases follow the server tick and the replicated state that session-a observes, not
+            // the wall clock. Under a loaded test run this loop can stall for a second at a time
+            // (snapshots then drain in bunches), so a wall-clock schedule sent the jump late and
+            // stopped sampling while session-b was still in the air.
+            Stopwatch deadline = Stopwatch.StartNew();
             ulong sequence = 0;
+            ulong? walkStartTick = null;
             bool jumpSent = false;
-            while (clock.Elapsed < TimeSpan.FromSeconds(3))
+            while (deadline.Elapsed < TimeSpan.FromSeconds(30))
             {
                 sequence++;
+                walkStartTick ??= a.LatestServerTick;
                 // Both walk a little, then session-b jumps once: a jump only shows up in Y for a
                 // physics player (secondary sessions used to be ghosts with a fixed height).
-                bool walking = clock.Elapsed < TimeSpan.FromSeconds(0.6);
-                // Time-based: loop iterations vary with timer granularity and snapshot work.
-                bool jump = !jumpSent && clock.Elapsed > TimeSpan.FromSeconds(1.0);
+                bool walking = walkStartTick == null || a.LatestServerTick < walkStartTick + WalkTicks;
+                // Jump only once session-b has come to rest after the walk, so the jump starts
+                // from the ground. The server latches JumpPressed until its next tick.
+                bool jump = !jumpSent && !walking && a.IsAtRest("session-b", RestSamples);
                 jumpSent |= jump;
                 a.Session.QueueCommandFrame(CreateCommand("session-a", sequence, walking, jump: false));
                 b.Session.QueueCommandFrame(CreateCommand("session-b", sequence, walking, jump));
                 a.Drain();
                 b.Drain();
+                if (jumpSent &&
+                    a.MaxY("session-b") > a.FirstY("session-b") + 0.3f &&
+                    a.IsAtRest("session-b", RestSamples) &&
+                    a.ChecksumsVerified > 0 &&
+                    b.ChecksumsVerified > 0 &&
+                    a.Snapshots > 60 &&
+                    b.Snapshots > 60)
+                {
+                    // Jumped, landed and settled, with checksums seen on both clients.
+                    break;
+                }
+
                 await Task.Delay(15);
             }
 
@@ -131,6 +156,7 @@ public class MultiClientLoopbackSmokeTests
 
                 ServerSnapshotEnvelope snapshot = snapshotMessage.Snapshot;
                 Snapshots++;
+                LatestServerTick = snapshot.ServerTick;
                 RemoteWorldMutationApplier.ApplySnapshotToRuntime(_world, snapshot);
                 if (snapshot.WorldChecksum.HasValue)
                 {
@@ -152,6 +178,28 @@ public class MultiClientLoopbackSmokeTests
                     trail.Add(actor.Position);
                 }
             }
+        }
+
+        public ulong? LatestServerTick { get; private set; }
+
+        // True once the last `samples` replicated positions of the session agree to within 1 cm.
+        public bool IsAtRest(string session, int samples)
+        {
+            if (!_positions.TryGetValue(session, out List<Vector3>? trail) || trail.Count < samples)
+            {
+                return false;
+            }
+
+            Vector3 last = trail[^1];
+            for (int i = trail.Count - samples; i < trail.Count; i++)
+            {
+                if ((trail[i] - last).Length > 0.01f)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         public float Moved(string session) => (Trail(session)[^1] - Trail(session)[0]).Xz.Length;
