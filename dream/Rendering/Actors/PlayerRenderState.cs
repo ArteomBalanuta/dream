@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using OpenTK.Mathematics;
 using Dream.Client.Presentation;
 using Dream.Rendering.Models;
@@ -43,20 +44,23 @@ public readonly record struct PlayerRenderState(
             Matrix4.CreateTranslation(position + PlayerModelAssetDefinition.BodyCenterToFootOffset);
 
         return new PlayerRenderState(
-            PlayerModelAssetDefinition.ModelPath,
+            PlayerModelPath,
             "enemy",
             isMoving ? PlayerModelAssetDefinition.WalkClip : PlayerModelAssetDefinition.IdleClip,
             modelMatrix,
-            CreateNodeOverrides());
+            DefaultNodeOverrides);
     }
 
-    private static IReadOnlyDictionary<string, Matrix4> CreateNodeOverrides()
-    {
-        return new Dictionary<string, Matrix4>
+    // ModelPath combines paths on every read; the runtime root does not change, so resolve it once.
+    private static readonly string PlayerModelPath = PlayerModelAssetDefinition.ModelPath;
+
+    // Shared by every player and every frame: the head override is always Identity. It is
+    // wrapped read-only so no caller can mutate the shared instance.
+    private static readonly IReadOnlyDictionary<string, Matrix4> DefaultNodeOverrides =
+        new ReadOnlyDictionary<string, Matrix4>(new Dictionary<string, Matrix4>
         {
             [PlayerModelAssetDefinition.HeadNodeName] = Matrix4.Identity
-        };
-    }
+        });
 
     private static float ResolveYawRadians(Vector3 authoredForward, Vector3 desiredForward)
     {
