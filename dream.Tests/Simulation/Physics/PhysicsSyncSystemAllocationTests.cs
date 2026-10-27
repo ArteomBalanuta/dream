@@ -48,7 +48,7 @@ public class PhysicsSyncSystemAllocationTests
     }
 
     [Fact]
-    public void SyncDynamicMapBodies_RestingRubbleAndCubes_AllocatesNoMoreThanMapFracturePieceUpdates()
+    public void SyncDynamicMapBodies_RestingRubbleAndCubes_DoesNotAllocate()
     {
         using PhysicsIntegrator physics = new();
         Map map = new(physics, loadVisualAssets: false, width: 16, depth: 16);
@@ -71,8 +71,9 @@ public class PhysicsSyncSystemAllocationTests
         List<RigidBody> bodies = physics.DynamicMapCubeBodies;
         sync.SyncDynamicMapBodies(map, bodies);
 
-        // Map.UpdateFracturePiecePositions allocates internally (piece copy, accepted-index set,
-        // enumerator); that cost is Map's and is measured on its own as the budget.
+        // Map.UpdateFracturePiecePositions with a reused accepted-index set costs nothing for
+        // resting pieces since MEM-9 (it was 1496 B per tick here before), so neither the map
+        // updates on their own nor the whole sync may allocate.
         Dictionary<GeometryCellKey, List<(int PieceIndex, TkVector3 Center)>> updatesByCell = [];
         int rubbleBodyCount = 0;
         foreach (RigidBody body in bodies)
@@ -93,19 +94,20 @@ public class PhysicsSyncSystemAllocationTests
 
         Assert.True(rubbleBodyCount > 0);
         Assert.Equal(fracturedCells.Length, updatesByCell.Count);
-        long mapBytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        HashSet<int> acceptedPieceIndices = [];
+        long mapBytes = AllocationAssert.AtMost(0, () =>
         {
             foreach (KeyValuePair<GeometryCellKey, List<(int PieceIndex, TkVector3 Center)>> entry in updatesByCell)
             {
-                map.UpdateFracturePiecePositions(entry.Key, entry.Value, out HashSet<int> _);
+                Assert.True(map.UpdateFracturePiecePositions(entry.Key, entry.Value, acceptedPieceIndices));
             }
         });
 
-        long syncBytes = AllocationAssert.AtMost(mapBytes, () => sync.SyncDynamicMapBodies(map, bodies));
+        long syncBytes = AllocationAssert.AtMost(0, () => sync.SyncDynamicMapBodies(map, bodies));
 
         _output.WriteLine(
             $"resting rubble+cubes: bodies={bodies.Count} rubble={rubbleBodyCount} " +
-            $"bytesPerSync={syncBytes} mapFractureBudget={mapBytes}");
+            $"bytesPerSync={syncBytes} mapFractureUpdates={mapBytes}");
     }
 
     [Fact]
