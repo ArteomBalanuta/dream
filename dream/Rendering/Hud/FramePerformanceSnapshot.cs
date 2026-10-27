@@ -70,21 +70,60 @@ public readonly record struct FramePerformanceSnapshot(
         ServerSnapshotMilliseconds > 0d ||
         ServerBroadcastMilliseconds > 0d;
 
+    public const int HudLineCount = 13;
+
+    // Text for the console log and tests. The HUD draws through TryFormatHudLine instead.
     public IEnumerable<string> ToHudLines()
     {
-        yield return $"Frame: total {TotalFrameMilliseconds:0.00} ms, present {SwapBuffersMilliseconds:0.00} ms";
-        yield return $"Export: {RenderExportMilliseconds:0.00} ms";
-        yield return $"Physics: {PhysicsStepMilliseconds:0.00} ms";
-        yield return $"Draw: world {WorldDrawMilliseconds:0.00} ms, viewmodel {ViewModelDrawMilliseconds:0.00} ms, debug {DebugDrawMilliseconds:0.00} ms";
-        yield return $"Actors: enemy {EnemyDrawMilliseconds:0.00} ms, local {LocalPlayerDrawMilliseconds:0.00} ms, remote {RemotePlayerDrawMilliseconds:0.00} ms";
-        yield return $"HUD: {HudDrawMilliseconds:0.00} ms";
-        yield return $"Visible: cubes {VisibleCompatibilityCubes}/{ExportedCompatibilityCubes}, blocks {VisibleGeometryBlocks}/{ExportedGeometryBlocks}";
-        yield return $"Batches: cubes {CompatibilityBatchCount}, blocks {GeometryBatchCount}";
-        yield return $"Static Chunks: visible {VisibleStaticChunks}, meshes {StaticChunkMeshCount}, faces {StaticChunkExposedFaces}, tris {StaticChunkTriangles}";
-        yield return $"Static Timing: signature {StaticChunkSignatureMilliseconds:0.00} ms, extract {StaticChunkExtractMilliseconds:0.00} ms, plan {StaticChunkPlanMilliseconds:0.00} ms, sync {StaticChunkSyncMilliseconds:0.00} ms, draw {StaticChunkDrawMilliseconds:0.00} ms";
-        yield return $"Static Cache: rebuilt {StaticChunkRebuiltMeshes}, reused {StaticChunkReusedMeshes}";
-        yield return $"Collision Bodies: {CollisionBodyCount}";
-        yield return $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms";
+        for (int index = 0; index < HudLineCount; index++)
+        {
+            yield return FormatHudLine(index);
+        }
+    }
+
+    public string FormatHudLine(int index)
+    {
+        return index switch
+        {
+            0 => $"Frame: total {TotalFrameMilliseconds:0.00} ms, present {SwapBuffersMilliseconds:0.00} ms",
+            1 => $"Export: {RenderExportMilliseconds:0.00} ms",
+            2 => $"Physics: {PhysicsStepMilliseconds:0.00} ms",
+            3 => $"Draw: world {WorldDrawMilliseconds:0.00} ms, viewmodel {ViewModelDrawMilliseconds:0.00} ms, debug {DebugDrawMilliseconds:0.00} ms",
+            4 => $"Actors: enemy {EnemyDrawMilliseconds:0.00} ms, local {LocalPlayerDrawMilliseconds:0.00} ms, remote {RemotePlayerDrawMilliseconds:0.00} ms",
+            5 => $"HUD: {HudDrawMilliseconds:0.00} ms",
+            6 => $"Visible: cubes {VisibleCompatibilityCubes}/{ExportedCompatibilityCubes}, blocks {VisibleGeometryBlocks}/{ExportedGeometryBlocks}",
+            7 => $"Batches: cubes {CompatibilityBatchCount}, blocks {GeometryBatchCount}",
+            8 => $"Static Chunks: visible {VisibleStaticChunks}, meshes {StaticChunkMeshCount}, faces {StaticChunkExposedFaces}, tris {StaticChunkTriangles}",
+            9 => $"Static Timing: signature {StaticChunkSignatureMilliseconds:0.00} ms, extract {StaticChunkExtractMilliseconds:0.00} ms, plan {StaticChunkPlanMilliseconds:0.00} ms, sync {StaticChunkSyncMilliseconds:0.00} ms, draw {StaticChunkDrawMilliseconds:0.00} ms",
+            10 => $"Static Cache: rebuilt {StaticChunkRebuiltMeshes}, reused {StaticChunkReusedMeshes}",
+            11 => $"Collision Bodies: {CollisionBodyCount}",
+            12 => $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms",
+            _ => throw new ArgumentOutOfRangeException(nameof(index))
+        };
+    }
+
+    // Same text as FormatHudLine, written as UTF-8 with the current culture and no string.
+    // HudTextAllocationTests keeps the two in step.
+    // Returns false when the destination is too small.
+    public bool TryFormatHudLine(int index, Span<byte> destination, out int bytesWritten)
+    {
+        return index switch
+        {
+            0 => HudText.TryWrite(destination, $"Frame: total {TotalFrameMilliseconds:0.00} ms, present {SwapBuffersMilliseconds:0.00} ms", out bytesWritten),
+            1 => HudText.TryWrite(destination, $"Export: {RenderExportMilliseconds:0.00} ms", out bytesWritten),
+            2 => HudText.TryWrite(destination, $"Physics: {PhysicsStepMilliseconds:0.00} ms", out bytesWritten),
+            3 => HudText.TryWrite(destination, $"Draw: world {WorldDrawMilliseconds:0.00} ms, viewmodel {ViewModelDrawMilliseconds:0.00} ms, debug {DebugDrawMilliseconds:0.00} ms", out bytesWritten),
+            4 => HudText.TryWrite(destination, $"Actors: enemy {EnemyDrawMilliseconds:0.00} ms, local {LocalPlayerDrawMilliseconds:0.00} ms, remote {RemotePlayerDrawMilliseconds:0.00} ms", out bytesWritten),
+            5 => HudText.TryWrite(destination, $"HUD: {HudDrawMilliseconds:0.00} ms", out bytesWritten),
+            6 => HudText.TryWrite(destination, $"Visible: cubes {VisibleCompatibilityCubes}/{ExportedCompatibilityCubes}, blocks {VisibleGeometryBlocks}/{ExportedGeometryBlocks}", out bytesWritten),
+            7 => HudText.TryWrite(destination, $"Batches: cubes {CompatibilityBatchCount}, blocks {GeometryBatchCount}", out bytesWritten),
+            8 => HudText.TryWrite(destination, $"Static Chunks: visible {VisibleStaticChunks}, meshes {StaticChunkMeshCount}, faces {StaticChunkExposedFaces}, tris {StaticChunkTriangles}", out bytesWritten),
+            9 => HudText.TryWrite(destination, $"Static Timing: signature {StaticChunkSignatureMilliseconds:0.00} ms, extract {StaticChunkExtractMilliseconds:0.00} ms, plan {StaticChunkPlanMilliseconds:0.00} ms, sync {StaticChunkSyncMilliseconds:0.00} ms, draw {StaticChunkDrawMilliseconds:0.00} ms", out bytesWritten),
+            10 => HudText.TryWrite(destination, $"Static Cache: rebuilt {StaticChunkRebuiltMeshes}, reused {StaticChunkReusedMeshes}", out bytesWritten),
+            11 => HudText.TryWrite(destination, $"Collision Bodies: {CollisionBodyCount}", out bytesWritten),
+            12 => HudText.TryWrite(destination, $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms", out bytesWritten),
+            _ => throw new ArgumentOutOfRangeException(nameof(index))
+        };
     }
 
     public FramePerformanceSnapshot WithRenderStats(
