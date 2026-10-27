@@ -116,8 +116,16 @@ public sealed class StartupMenuRenderer : IDisposable
             connectPressed);
     }
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         GL.DeleteTexture(_fontTexture);
         _shaderObj.Dispose();
         GL.DeleteBuffer(_vertexBuffer);

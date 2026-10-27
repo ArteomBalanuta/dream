@@ -59,6 +59,7 @@ public class AnimatedModel : IDisposable
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
     private readonly Dictionary<string, Animation> _animations = new();
     private readonly List<int> _textures = new();
+    private bool _disposed;
     private readonly ReusableMatrixBuffer _instanceSourceMatrices = new();
     private readonly ReusableMatrixBuffer _instanceNodeMatrices = new();
     private int _instanceModelBuffer;
@@ -442,6 +443,7 @@ public class AnimatedModel : IDisposable
 
     public void BeginRender(Shader shader, Matrix4 view, Matrix4 projection, bool enableCulling = true)
     {
+        ThrowIfDisposed();
         GL.Enable(EnableCap.DepthTest);
         if (enableCulling)
         {
@@ -465,6 +467,7 @@ public class AnimatedModel : IDisposable
         Matrix4 modelMatrix,
         IReadOnlyDictionary<string, Matrix4>? nodeOverrides = null)
     {
+        ThrowIfDisposed();
         foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
         {
             if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
@@ -492,6 +495,7 @@ public class AnimatedModel : IDisposable
         Shader shader,
         IReadOnlyList<Matrix4> modelMatrices)
     {
+        ThrowIfDisposed();
         if (modelMatrices.Count == 0)
         {
             return;
@@ -511,6 +515,7 @@ public class AnimatedModel : IDisposable
         Matrix4[] modelMatrices,
         int count)
     {
+        ThrowIfDisposed();
         if (count == 0)
         {
             return;
@@ -706,8 +711,19 @@ public class AnimatedModel : IDisposable
         _ => PrimitiveType.Triangles
     };
 
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         foreach (var texture in _textures) GL.DeleteTexture(texture);
         if (_instanceModelBuffer != 0)
         {
@@ -721,6 +737,9 @@ public class AnimatedModel : IDisposable
             GL.DeleteBuffer(mesh.VBO);
             GL.DeleteBuffer(mesh.EBO);
         }
+
+        _textures.Clear();
+        _meshPrimitives.Clear();
     }
     #endregion
 
