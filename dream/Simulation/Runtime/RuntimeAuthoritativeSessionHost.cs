@@ -114,17 +114,30 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         PlayerSimulationTuning playerTuning,
         bool allowGameplaySimulation = true)
     {
-        PlayerCommandFrame? commandFrame = commandFrames
-            .FirstOrDefault(frame => frame.SessionId == ResolveTickControlledSessionId());
-        PlayerCommandFrame[] secondaryCommands = commandFrames
-            .Where(frame => frame.SessionId != ResolveTickControlledSessionId())
-            .ToArray();
+        ArgumentNullException.ThrowIfNull(commandFrames);
+        ArgumentNullException.ThrowIfNull(queuedActions);
+
+        // Resolved once, before the runtime advances, like the snapshot the LINQ version took.
+        // With no frame for the controlled seat the runtime still receives a default frame, as before.
+        PlayerSessionId controlledSessionId = ResolveTickControlledSessionId();
+        PlayerCommandFrame commandFrame = default;
+        for (int i = 0; i < commandFrames.Count; i++)
+        {
+            if (commandFrames[i].SessionId == controlledSessionId)
+            {
+                commandFrame = commandFrames[i];
+                break;
+            }
+        }
 
         // Record secondary commands first so this tick's physics step simulates them, exactly
         // like the primary seat's command.
-        foreach (PlayerCommandFrame secondaryCommand in secondaryCommands)
+        for (int i = 0; i < commandFrames.Count; i++)
         {
-            Runtime.AdvanceSecondaryRemoteSession(secondaryCommand, deltaTime, playerTuning);
+            if (commandFrames[i].SessionId != controlledSessionId)
+            {
+                Runtime.AdvanceSecondaryRemoteSession(commandFrames[i], deltaTime, playerTuning);
+            }
         }
 
         Runtime.AdvanceAuthoritativeTick(
@@ -134,24 +147,27 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             playerTuning,
             allowGameplaySimulation);
 
-        List<AuthoritativeActionResult> synthesizedCommandActions = [];
-        foreach (PlayerCommandFrame secondaryCommand in secondaryCommands)
+        List<AuthoritativeActionResult>? synthesizedCommandActions = null;
+        for (int i = 0; i < commandFrames.Count; i++)
         {
-            if (secondaryCommand.PrimaryUsePressed)
+            PlayerCommandFrame secondaryCommand = commandFrames[i];
+            if (secondaryCommand.SessionId != controlledSessionId && secondaryCommand.PrimaryUsePressed)
             {
                 PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(secondaryCommand);
                 if (actionMessage != null)
                 {
+                    synthesizedCommandActions ??= [];
                     synthesizedCommandActions.Add(Runtime.ProcessAuthoritativeAction(actionMessage));
                 }
             }
         }
 
-        IReadOnlyList<AuthoritativeActionResult> queuedActionResults = Runtime.ProcessQueuedAuthoritativeActions(
-            serverTick,
-            queuedActions);
+        // AdvanceAuthoritativeTick already set the runtime's tick, so an empty queue needs no call.
+        IReadOnlyList<AuthoritativeActionResult> queuedActionResults = queuedActions.Count == 0
+            ? Array.Empty<AuthoritativeActionResult>()
+            : Runtime.ProcessQueuedAuthoritativeActions(serverTick, queuedActions);
 
-        if (synthesizedCommandActions.Count == 0)
+        if (synthesizedCommandActions == null)
         {
             return queuedActionResults;
         }
@@ -161,9 +177,14 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             return synthesizedCommandActions;
         }
 
-        return synthesizedCommandActions
-            .Concat(queuedActionResults)
-            .ToArray();
+        AuthoritativeActionResult[] combined = new AuthoritativeActionResult[synthesizedCommandActions.Count + queuedActionResults.Count];
+        synthesizedCommandActions.CopyTo(combined);
+        for (int i = 0; i < queuedActionResults.Count; i++)
+        {
+            combined[synthesizedCommandActions.Count + i] = queuedActionResults[i];
+        }
+
+        return combined;
     }
 
     public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(

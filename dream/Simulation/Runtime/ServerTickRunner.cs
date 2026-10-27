@@ -19,11 +19,22 @@ public sealed class ServerTickRunner
     {
         ArgumentNullException.ThrowIfNull(tickAction);
 
+        return Advance(
+            elapsedSeconds,
+            tickAction,
+            static (action, tick, fixedDeltaSeconds) => action(tick, fixedDeltaSeconds));
+    }
+
+    // Callers pass a static lambda plus explicit state so a tick allocates no closure.
+    public int Advance<TState>(double elapsedSeconds, TState state, Action<TState, ulong, float> tickAction)
+    {
+        ArgumentNullException.ThrowIfNull(tickAction);
+
         int executedTicks = _clock.QueueElapsed(elapsedSeconds);
         for (int i = 0; i < executedTicks; i++)
         {
             ulong tick = LastCompletedTick + 1;
-            tickAction(tick, SimulationClock.FixedDeltaSeconds);
+            tickAction(state, tick, SimulationClock.FixedDeltaSeconds);
             LastCompletedTick = tick;
         }
 
