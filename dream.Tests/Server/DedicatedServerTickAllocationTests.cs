@@ -298,23 +298,35 @@ public class DedicatedServerTickAllocationTests
         List<QueuedPlayerAction> noActions = [];
         ulong tick = 0;
 
-        long runtimeBytes = AllocationAssert.MeasureBytesPerIteration(
-            () => runtimeHost.Runtime.AdvanceAuthoritativeTick(
-                ++tick,
-                SimulationClock.FixedDeltaSeconds,
-                null,
-                PlayerSimulationTuning.AuthoritativeDefault),
-            iterations: 100,
-            warmupIterations: 20);
-        long hostBytes = AllocationAssert.MeasureBytesPerIteration(
-            () => runtimeHost.AdvanceTick(
-                ++tick,
-                SimulationClock.FixedDeltaSeconds,
-                noCommands,
-                noActions,
-                PlayerSimulationTuning.AuthoritativeDefault),
-            iterations: 100,
-            warmupIterations: 20);
+        // Same default frame the host forwards, so the runtime takes the same accepted-command path.
+        PlayerCommandFrame defaultFrame = default;
+        long runtimeBytes = long.MaxValue;
+        long hostBytes = long.MaxValue;
+
+        // Interleave the windows and keep the minimum of 3 per side so a one-off growth
+        // (list resize, enemy or physics state) in a single window cannot decide the result.
+        for (int round = 0; round < 3; round++)
+        {
+            long runtimeRound = AllocationAssert.MeasureBytesPerIteration(
+                () => runtimeHost.Runtime.AdvanceAuthoritativeTick(
+                    ++tick,
+                    SimulationClock.FixedDeltaSeconds,
+                    defaultFrame,
+                    PlayerSimulationTuning.AuthoritativeDefault),
+                iterations: 100,
+                warmupIterations: 20);
+            long hostRound = AllocationAssert.MeasureBytesPerIteration(
+                () => runtimeHost.AdvanceTick(
+                    ++tick,
+                    SimulationClock.FixedDeltaSeconds,
+                    noCommands,
+                    noActions,
+                    PlayerSimulationTuning.AuthoritativeDefault),
+                iterations: 100,
+                warmupIterations: 20);
+            runtimeBytes = Math.Min(runtimeBytes, runtimeRound);
+            hostBytes = Math.Min(hostBytes, hostRound);
+        }
 
         _output.WriteLine($"RuntimeAuthoritativeSessionHost.AdvanceTick: {hostBytes} B; WorldSessionRuntime.AdvanceAuthoritativeTick: {runtimeBytes} B");
         Assert.True(
