@@ -28,7 +28,12 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly SemaphoreSlim _outboundSignal = new(0, int.MaxValue);
     private readonly object _sendLoopSync = new();
     private Task? _sendLoopTask;
+    // One reusable pooled buffer for every outbound frame; only touched while _sendLock is held.
+    private readonly PooledFrameWriter _frameWriter = new();
+    private readonly string _commandLogKey;
+    private readonly string _slowCommandLogKey;
     private long _sentCommandCount;
+    // Assigned under _sendLock together with the encode, so sequences follow wire order.
     private ulong _nextOutboundSequence = 1;
 
     public RemoteClientSession(
@@ -41,6 +46,8 @@ public sealed class RemoteClientSession : IAsyncDisposable
         _codec = codec;
         _framer = framer;
         Options = options;
+        _commandLogKey = $"client.tx.command.{options.SessionId}";
+        _slowCommandLogKey = $"client.tx.command.slow.{options.SessionId}";
     }
 
     public RemoteClientOptions Options { get; }
@@ -261,6 +268,8 @@ public sealed class RemoteClientSession : IAsyncDisposable
             }
         }
 
+        // The send loop has exited, so no encode or send still holds the pooled frame buffer.
+        _frameWriter.Dispose();
         _shutdown.Dispose();
         _sendLock.Dispose();
         await _connection.DisposeAsync();
@@ -268,13 +277,17 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     private async ValueTask SendMessageAsync(IClientToServerMessage message, CancellationToken cancellationToken)
     {
-        byte[] payload = EncodeClientMessage(message);
-        byte[] framed = _framer.Frame(payload);
         Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
+        int frameLength;
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
-            await _connection.SendAsync(framed, cancellationToken);
+            ReadOnlyMemory<byte> frame = EncodeClientFrame(message);
+            frameLength = frame.Length;
+            // frame aliases _frameWriter's pooled buffer. Passing it to the transport is safe only
+            // because the send is awaited here, inside _sendLock, before the next encode reuses the
+            // buffer; transports must not keep the memory after SendAsync completes.
+            await _connection.SendAsync(frame, cancellationToken);
         }
         finally
         {
@@ -282,26 +295,41 @@ public sealed class RemoteClientSession : IAsyncDisposable
             stopwatch?.Stop();
         }
 
-        LogOutbound(message, framed.Length, stopwatch?.Elapsed.TotalMilliseconds ?? 0d);
+        LogOutbound(message, frameLength, stopwatch?.Elapsed.TotalMilliseconds ?? 0d);
     }
 
-    private byte[] EncodeClientMessage(IClientToServerMessage message)
+    // Caller holds _sendLock.
+    private ReadOnlyMemory<byte> EncodeClientFrame(IClientToServerMessage message)
     {
         TransportEnvelope envelope = new(
             TransportEnvelope.CurrentProtocolVersion,
             message.MessageKind,
             _nextOutboundSequence++);
 
-        return message switch
+        _frameWriter.BeginFrame(_framer);
+        switch (message)
         {
-            ClientHelloMessage hello => _codec.Encode(envelope, hello),
-            ClientJoinRequestMessage joinRequest => _codec.Encode(envelope, joinRequest),
-            PlayerCommandMessage command => _codec.Encode(envelope, command),
-            PlayerActionMessage action => _codec.Encode(envelope, action),
-            ClientWorldResyncRequestMessage resync => _codec.Encode(envelope, resync),
-            _ => throw new InvalidOperationException(
-                $"Unsupported client message type '{message.GetType().Name}' for remote client encoding.")
-        };
+            case ClientHelloMessage hello:
+                _codec.Encode(envelope, hello, _frameWriter);
+                break;
+            case ClientJoinRequestMessage joinRequest:
+                _codec.Encode(envelope, joinRequest, _frameWriter);
+                break;
+            case PlayerCommandMessage command:
+                _codec.Encode(envelope, command, _frameWriter);
+                break;
+            case PlayerActionMessage action:
+                _codec.Encode(envelope, action, _frameWriter);
+                break;
+            case ClientWorldResyncRequestMessage resync:
+                _codec.Encode(envelope, resync, _frameWriter);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported client message type '{message.GetType().Name}' for remote client encoding.");
+        }
+
+        return _frameWriter.CompleteFrame(_framer);
     }
 
     private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
@@ -362,6 +390,36 @@ public sealed class RemoteClientSession : IAsyncDisposable
             return;
         }
 
+        if (message is PlayerCommandMessage)
+        {
+            // Commands are rate-limited; build the log line only when a limiter lets it through.
+            bool logCommand = NetworkDiagnosticsLog.ShouldLogEvery(_commandLogKey, TimeSpan.FromSeconds(1));
+            bool logSlow = elapsedMilliseconds > 4d
+                && NetworkDiagnosticsLog.ShouldLogEvery(_slowCommandLogKey, TimeSpan.FromSeconds(1));
+            if (!logCommand && !logSlow)
+            {
+                return;
+            }
+
+            string commandLog = DescribeOutbound(message, byteCount, elapsedMilliseconds);
+            if (logCommand)
+            {
+                NetworkDiagnosticsLog.Write("client.tx", commandLog);
+            }
+
+            if (logSlow)
+            {
+                NetworkDiagnosticsLog.Write("client.tx.slow", commandLog);
+            }
+
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write("client.tx", DescribeOutbound(message, byteCount, elapsedMilliseconds));
+    }
+
+    private string DescribeOutbound(IClientToServerMessage message, int byteCount, double elapsedMilliseconds)
+    {
         string detail = message switch
         {
             ClientJoinRequestMessage join => $"session={join.RequestedSessionId} name={join.DisplayName}",
@@ -371,26 +429,6 @@ public sealed class RemoteClientSession : IAsyncDisposable
             _ => string.Empty
         };
 
-        string log = $"endpoint={Options.EndpointLabel} kind={message.MessageKind} bytes={byteCount} sendMs={elapsedMilliseconds:0.00} {detail}";
-        if (message is PlayerCommandMessage)
-        {
-            NetworkDiagnosticsLog.WriteEvery(
-                $"client.tx.command.{Options.SessionId}",
-                TimeSpan.FromSeconds(1),
-                "client.tx",
-                log);
-            if (elapsedMilliseconds > 4d)
-            {
-                NetworkDiagnosticsLog.WriteEvery(
-                    $"client.tx.command.slow.{Options.SessionId}",
-                    TimeSpan.FromSeconds(1),
-                    "client.tx.slow",
-                    log);
-            }
-
-            return;
-        }
-
-        NetworkDiagnosticsLog.Write("client.tx", log);
+        return $"endpoint={Options.EndpointLabel} kind={message.MessageKind} bytes={byteCount} sendMs={elapsedMilliseconds:0.00} {detail}";
     }
 }

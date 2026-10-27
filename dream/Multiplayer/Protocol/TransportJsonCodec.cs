@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 
 namespace Dream.Multiplayer.Protocol;
@@ -15,32 +16,126 @@ public sealed class TransportJsonCodec : IProtocolCodec
         SerializerOptions.Converters.Add(new Vector3JsonConverter());
     }
 
+    // Matches the writer JsonSerializer.SerializeToUtf8Bytes builds from SerializerOptions, so the
+    // single-pass output is byte-identical to the old WireEnvelope encode.
+    private static readonly JsonWriterOptions WriterOptions = new()
+    {
+        Encoder = SerializerOptions.Encoder,
+        Indented = SerializerOptions.WriteIndented
+    };
+
     public byte[] Encode<TMessage>(TransportEnvelope envelope, TMessage message)
         where TMessage : IProtocolMessage
     {
-        ArgumentNullException.ThrowIfNull(message);
-        if (envelope.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)
-        {
-            throw new InvalidOperationException(
-                $"Cannot encode protocol version {envelope.ProtocolVersion}. " +
-                $"Supported version: {TransportEnvelope.CurrentProtocolVersion}.");
-        }
+        ArrayBufferWriter<byte> buffer = new();
+        Encode(envelope, message, buffer);
+        return buffer.WrittenSpan.ToArray();
+    }
 
+    // Property order and names match the old WireEnvelope serialized with the camelCase policy:
+    // protocolVersion, messageKind, sequence, payload.
+    public void Encode<TMessage>(TransportEnvelope envelope, TMessage message, IBufferWriter<byte> destination)
+        where TMessage : IProtocolMessage
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(destination);
+        ValidateProtocolVersion(envelope);
         if (!string.Equals(envelope.MessageKind, message.MessageKind, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"Envelope message kind '{envelope.MessageKind}' does not match payload kind '{message.MessageKind}'.");
         }
 
-        WireEnvelope wireEnvelope = new()
+        Utf8JsonWriter writer = RentWriter(destination);
+        try
         {
-            ProtocolVersion = envelope.ProtocolVersion,
-            MessageKind = envelope.MessageKind,
-            Sequence = envelope.Sequence,
-            Payload = JsonSerializer.SerializeToElement(message, SerializerOptions)
-        };
+            WriteEnvelopeHeader(writer, envelope);
+            JsonSerializer.Serialize(writer, message, SerializerOptions);
+            writer.WriteEndObject();
+            writer.Flush();
+        }
+        finally
+        {
+            ReturnWriter(writer, destination);
+        }
+    }
 
-        return JsonSerializer.SerializeToUtf8Bytes(wireEnvelope, SerializerOptions);
+    public void EncodePayload<TMessage>(TMessage message, IBufferWriter<byte> destination)
+        where TMessage : IProtocolMessage
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        Utf8JsonWriter writer = RentWriter(destination);
+        try
+        {
+            JsonSerializer.Serialize(writer, message, SerializerOptions);
+            writer.Flush();
+        }
+        finally
+        {
+            ReturnWriter(writer, destination);
+        }
+    }
+
+    public void WriteEnvelope(TransportEnvelope envelope, ReadOnlySpan<byte> payloadJson, IBufferWriter<byte> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ValidateProtocolVersion(envelope);
+        if (payloadJson.IsEmpty)
+        {
+            throw new ArgumentException("Payload JSON must not be empty.", nameof(payloadJson));
+        }
+
+        Utf8JsonWriter writer = RentWriter(destination);
+        try
+        {
+            WriteEnvelopeHeader(writer, envelope);
+            writer.WriteRawValue(payloadJson, skipInputValidation: true);
+            writer.WriteEndObject();
+            writer.Flush();
+        }
+        finally
+        {
+            ReturnWriter(writer, destination);
+        }
+    }
+
+    private static void ValidateProtocolVersion(TransportEnvelope envelope)
+    {
+        if (envelope.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)
+        {
+            throw new InvalidOperationException(
+                $"Cannot encode protocol version {envelope.ProtocolVersion}. " +
+                $"Supported version: {TransportEnvelope.CurrentProtocolVersion}.");
+        }
+    }
+
+    // Leaves the writer positioned after the "payload" property name.
+    private static void WriteEnvelopeHeader(Utf8JsonWriter writer, TransportEnvelope envelope)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("protocolVersion"u8, envelope.ProtocolVersion);
+        writer.WriteString("messageKind"u8, envelope.MessageKind);
+        writer.WriteNumber("sequence"u8, envelope.Sequence);
+        writer.WritePropertyName("payload"u8);
+    }
+
+    // A PooledFrameWriter carries a cached Utf8JsonWriter, so steady-state encodes into it allocate
+    // nothing; any other destination gets a writer of its own.
+    private static Utf8JsonWriter RentWriter(IBufferWriter<byte> destination)
+    {
+        return destination is PooledFrameWriter pooled
+            ? pooled.GetJsonWriter(WriterOptions)
+            : new Utf8JsonWriter(destination, WriterOptions);
+    }
+
+    private static void ReturnWriter(Utf8JsonWriter writer, IBufferWriter<byte> destination)
+    {
+        if (destination is not PooledFrameWriter)
+        {
+            writer.Dispose();
+        }
     }
 
     public DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload)
@@ -153,16 +248,5 @@ public sealed class TransportJsonCodec : IProtocolCodec
 
         TMessage? message = JsonSerializer.Deserialize<TMessage>(ref payloadReader, SerializerOptions);
         return message ?? throw new InvalidOperationException($"Failed to deserialize message '{typeof(TMessage).Name}'.");
-    }
-
-    private sealed class WireEnvelope
-    {
-        public int ProtocolVersion { get; init; }
-
-        public string? MessageKind { get; init; }
-
-        public ulong Sequence { get; init; }
-
-        public JsonElement Payload { get; init; }
     }
 }

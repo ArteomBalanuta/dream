@@ -5,7 +5,7 @@ namespace Dream.Multiplayer.Protocol;
 
 public sealed class LengthPrefixedMessageFramer : IMessageFramer
 {
-    private const int HeaderLength = sizeof(int);
+    private const int PrefixLength = sizeof(int);
     private readonly int _maxPayloadBytes;
 
     public LengthPrefixedMessageFramer(int maxPayloadBytes = 1024 * 1024)
@@ -18,18 +18,36 @@ public sealed class LengthPrefixedMessageFramer : IMessageFramer
         _maxPayloadBytes = maxPayloadBytes;
     }
 
+    public int HeaderLength => PrefixLength;
+
     public byte[] Frame(ReadOnlySpan<byte> payload)
     {
-        if (payload.Length > _maxPayloadBytes)
+        EnsurePayloadFits(payload.Length);
+        byte[] framed = new byte[PrefixLength + payload.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(framed, payload.Length);
+        payload.CopyTo(framed.AsSpan(PrefixLength));
+        return framed;
+    }
+
+    public void WriteHeader(Span<byte> header, int payloadLength)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(payloadLength);
+        if (header.Length < PrefixLength)
         {
-            throw new InvalidOperationException(
-                $"Payload length {payload.Length} exceeds configured maximum {_maxPayloadBytes} bytes.");
+            throw new ArgumentException($"Header span must be at least {PrefixLength} bytes.", nameof(header));
         }
 
-        byte[] framed = new byte[HeaderLength + payload.Length];
-        BinaryPrimitives.WriteInt32LittleEndian(framed, payload.Length);
-        payload.CopyTo(framed.AsSpan(HeaderLength));
-        return framed;
+        EnsurePayloadFits(payloadLength);
+        BinaryPrimitives.WriteInt32LittleEndian(header, payloadLength);
+    }
+
+    private void EnsurePayloadFits(int payloadLength)
+    {
+        if (payloadLength > _maxPayloadBytes)
+        {
+            throw new InvalidOperationException(
+                $"Payload length {payloadLength} exceeds configured maximum {_maxPayloadBytes} bytes.");
+        }
     }
 
     public bool TryDeframe(ReadOnlySpan<byte> buffer, out byte[]? payload, out int bytesConsumed)
@@ -50,7 +68,7 @@ public sealed class LengthPrefixedMessageFramer : IMessageFramer
         payloadLength = 0;
         bytesConsumed = 0;
 
-        if (buffer.Length < HeaderLength)
+        if (buffer.Length < PrefixLength)
         {
             return false;
         }
@@ -67,18 +85,18 @@ public sealed class LengthPrefixedMessageFramer : IMessageFramer
                 $"Frame payload length {declaredLength} exceeds configured maximum {_maxPayloadBytes} bytes.");
         }
 
-        if (declaredLength > int.MaxValue - HeaderLength)
+        if (declaredLength > int.MaxValue - PrefixLength)
         {
             throw new InvalidOperationException("Frame length overflow is invalid.");
         }
 
-        int totalLength = HeaderLength + declaredLength;
+        int totalLength = PrefixLength + declaredLength;
         if (buffer.Length < totalLength)
         {
             return false;
         }
 
-        payloadOffset = HeaderLength;
+        payloadOffset = PrefixLength;
         payloadLength = declaredLength;
         bytesConsumed = totalLength;
         return true;
