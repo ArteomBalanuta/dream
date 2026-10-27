@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Dream.Assets;
 using Dream.Client.Networking;
 using Dream.Client.Scenes;
@@ -168,6 +169,7 @@ public class Game : GameWindow
     // closed its connection to it. A scene that throws still lets the rest of the teardown run.
     protected override void OnUnload()
     {
+        List<Exception>? failures = null;
         try
         {
             try
@@ -181,10 +183,39 @@ public class Game : GameWindow
                 _startupScene = null;
             }
         }
-        finally
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+
+        try
         {
             base.OnUnload();
-            _localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+        finally
+        {
+            try
+            {
+                _localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
+        }
+
+        if (failures is not null)
+        {
+            if (failures.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+
+            throw new AggregateException(failures);
         }
     }
 

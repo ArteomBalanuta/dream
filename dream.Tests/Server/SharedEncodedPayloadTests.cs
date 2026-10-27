@@ -90,6 +90,47 @@ public class SharedEncodedPayloadTests
     }
 
     [Fact]
+    public void Gate_IsAPrivateObject_NotTheInstance_AndNoLockOnThisRemains()
+    {
+        System.Reflection.FieldInfo gate = typeof(SharedEncodedPayload).GetField(
+            "_gate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.NotNull(gate);
+        Assert.Equal(typeof(object), gate.FieldType);
+
+        StubCodec codec = new() { EncodeDelayMilliseconds = 100 };
+        SharedEncodedPayload payload = new(codec, CreateMessage());
+        // Outside code holding the payload's own monitor must not block the encode or its waiters.
+        lock (payload)
+        {
+            Task<int> reader = Task.Run(() => payload.Bytes.Length);
+            Assert.True(reader.Wait(TimeSpan.FromSeconds(10)), "A lock on the payload instance blocked a reader.");
+        }
+
+        string source = File.ReadAllText(Path.Combine(
+            FindRepoRoot(), "dream", "Multiplayer", "Protocol", "SharedEncodedPayload.cs"));
+        Assert.DoesNotContain("lock (this)", source);
+        Assert.DoesNotContain("Monitor.Wait(this)", source);
+        Assert.DoesNotContain("Monitor.PulseAll(this)", source);
+    }
+
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? current = new(AppContext.BaseDirectory);
+        while (current != null)
+        {
+            if (Directory.Exists(Path.Combine(current.FullName, "dream")) &&
+                Directory.Exists(Path.Combine(current.FullName, "dream.Tests")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root.");
+    }
+
+    [Fact]
     public void CreateAndReadOnce_GateOverheadIsSmall()
     {
         StubCodec codec = new();
