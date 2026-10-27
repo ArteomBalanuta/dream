@@ -27,6 +27,9 @@ public class AnimatedModel : IDisposable
     private static readonly bool EnableDiagnostics =
         string.Equals(Environment.GetEnvironmentVariable("DREAM_MODEL_DIAGNOSTICS"), "1", StringComparison.Ordinal);
     private const int MaxSupportedJoints = 64;
+    // Matches `uniform mat4 jointMatrices[64]` in cubeVertex.glsl. Built once so skinning
+    // never formats uniform names per draw.
+    private static readonly string[] JointMatrixUniformNames = CreateJointMatrixUniformNames();
 
     #region Structures
     private struct MeshBuffers
@@ -66,12 +69,16 @@ public class AnimatedModel : IDisposable
     private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
     private string? _idleClipName;
     private SkinningData? _skinning;
+    private AnimatedModelPose _pose = null!;
+    private List<MeshBuffers>?[] _renderablePrimitives = [];
 
     public AnimatedModel(string filePath)
     {
         _model = ModelRoot.Load(filePath);
         Initialize();
     }
+
+    public static string GetJointMatrixUniformName(int jointIndex) => JointMatrixUniformNames[jointIndex];
 
     #region Initialization
     private void Initialize()
@@ -80,6 +87,31 @@ public class AnimatedModel : IDisposable
         LoadSkinning();
         LoadMeshes();
         LoadAnimations();
+        LoadPose();
+    }
+
+    private void LoadPose()
+    {
+        _pose = new AnimatedModelPose(_model);
+        _renderablePrimitives = new List<MeshBuffers>?[_pose.RenderableNodeCount];
+        for (int i = 0; i < _renderablePrimitives.Length; i++)
+        {
+            Node node = _pose.GetRenderableNode(i);
+            _renderablePrimitives[i] = SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out List<MeshBuffers> primitives)
+                ? primitives
+                : null;
+        }
+    }
+
+    private static string[] CreateJointMatrixUniformNames()
+    {
+        string[] names = new string[MaxSupportedJoints];
+        for (int i = 0; i < names.Length; i++)
+        {
+            names[i] = $"jointMatrices[{i}]";
+        }
+
+        return names;
     }
 
     private void LoadSkinning()
@@ -100,7 +132,7 @@ public class AnimatedModel : IDisposable
         for (int i = 0; i < skin.JointsCount; i++)
         {
             (Node Joint, System.Numerics.Matrix4x4 InverseBindMatrix) = skin.GetJoint(i);
-            joints[i] = new SkinJoint(Joint, InverseBindMatrix.ToOpenTK());
+            joints[i] = new SkinJoint(Joint.LogicalIndex, InverseBindMatrix.ToOpenTK());
         }
 
         _skinning = new SkinningData(joints);
@@ -425,11 +457,7 @@ public class AnimatedModel : IDisposable
 
     private void UpdateNodes(Animation animation, float time)
     {
-        foreach (var node in _model.LogicalNodes)
-        {
-            if (!animation.FindChannels(node).Any()) continue;
-            node.LocalTransform = node.GetLocalTransform(animation, time);
-        }
+        _pose.Apply(animation, time);
     }
     #endregion
 
@@ -468,12 +496,14 @@ public class AnimatedModel : IDisposable
         IReadOnlyDictionary<string, Matrix4>? nodeOverrides = null)
     {
         ThrowIfDisposed();
-        foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
+        for (int nodeIndex = 0; nodeIndex < _renderablePrimitives.Length; nodeIndex++)
         {
-            if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
+            List<MeshBuffers>? primitives = _renderablePrimitives[nodeIndex];
+            if (primitives == null)
                 continue;
 
-            var nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
+            Node node = _pose.GetRenderableNode(nodeIndex);
+            var nodeWorldMatrix = _pose.GetRenderableNodeWorldMatrix(nodeIndex).ToOpenTK();
             if (!string.IsNullOrWhiteSpace(node.Name) &&
                 nodeOverrides != null &&
                 nodeOverrides.TryGetValue(node.Name, out Matrix4 nodeOverride))
@@ -522,14 +552,15 @@ public class AnimatedModel : IDisposable
         }
 
         Matrix4[] instanceMatrices = _instanceNodeMatrices.Rent(count);
-        foreach (Node node in SceneNodeTraversal.EnumerateRenderableNodes(_model.DefaultScene.VisualChildren))
+        for (int nodeIndex = 0; nodeIndex < _renderablePrimitives.Length; nodeIndex++)
         {
-            if (!SafeDictionaryLookup.TryGetValue(_meshPrimitives, node.Mesh, out var primitives))
+            List<MeshBuffers>? primitives = _renderablePrimitives[nodeIndex];
+            if (primitives == null)
             {
                 continue;
             }
 
-            Matrix4 nodeWorldMatrix = node.WorldMatrix.ToOpenTK();
+            Matrix4 nodeWorldMatrix = _pose.GetRenderableNodeWorldMatrix(nodeIndex).ToOpenTK();
             for (int i = 0; i < count; i++)
             {
                 instanceMatrices[i] = AnimatedModelTransformComposer.ComposeInstanceNodeMatrix(
@@ -638,14 +669,15 @@ public class AnimatedModel : IDisposable
         }
 
         shader.SetBool("useSkinning", true);
+        int[] jointLocations = shader.GetUniformLocations(JointMatrixUniformNames);
         for (int i = 0; i < _skinning.Joints.Length; i++)
         {
             SkinJoint joint = _skinning.Joints[i];
             Matrix4 jointMatrix = AnimatedModelTransformComposer.ComposeSkinJointMatrix(
                 meshWorldMatrix,
-                joint.Node.WorldMatrix.ToOpenTK(),
+                _pose.GetNodeWorldMatrix(joint.NodeIndex).ToOpenTK(),
                 joint.InverseBindMatrix);
-            shader.SetMatrix4($"jointMatrices[{i}]", jointMatrix);
+            shader.SetMatrix4(jointLocations[i], jointMatrix);
         }
     }
 
@@ -803,7 +835,7 @@ public class AnimatedModel : IDisposable
         public bool HasOcclusionTexture;
     }
 
-    private readonly record struct SkinJoint(Node Node, Matrix4 InverseBindMatrix);
+    private readonly record struct SkinJoint(int NodeIndex, Matrix4 InverseBindMatrix);
 
     private sealed class SkinningData
     {
@@ -815,6 +847,327 @@ public class AnimatedModel : IDisposable
         public SkinJoint[] Joints { get; }
     }
     #endregion
+}
+
+// The animated pose of one model instance: a local and a world matrix per logical node,
+// and keyframe arrays per animated node, all built at load. SharpGLTF builds new curve samplers
+// on every Node.GetLocalTransform(animation, time) call, its linear samplers allocate on every
+// GetPoint, and Node.WorldMatrix allocates while it walks the parents. So the pose keeps its own
+// copy of the hierarchy and the keyframes, and leaves the glTF nodes at their loaded state.
+// It has no GL dependency.
+public sealed class AnimatedModelPose
+{
+    private readonly Node[] _nodes;
+    private readonly int[] _parentIndices;
+    private readonly int[] _hierarchyOrder;
+    private readonly System.Numerics.Vector3[] _scales;
+    private readonly System.Numerics.Quaternion[] _rotations;
+    private readonly System.Numerics.Vector3[] _translations;
+    private readonly System.Numerics.Matrix4x4[] _localMatrices;
+    private readonly System.Numerics.Matrix4x4[] _worldMatrices;
+    private readonly Node[] _renderableNodes;
+    private readonly int[] _renderableNodeIndices;
+    private readonly Dictionary<Animation, AnimatedNodeTrack[]> _tracksByAnimation = new();
+
+    public AnimatedModelPose(ModelRoot model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        _nodes = model.LogicalNodes.ToArray();
+        int nodeCount = _nodes.Length;
+        _parentIndices = new int[nodeCount];
+        _scales = new System.Numerics.Vector3[nodeCount];
+        _rotations = new System.Numerics.Quaternion[nodeCount];
+        _translations = new System.Numerics.Vector3[nodeCount];
+        _localMatrices = new System.Numerics.Matrix4x4[nodeCount];
+        _worldMatrices = new System.Numerics.Matrix4x4[nodeCount];
+
+        for (int i = 0; i < nodeCount; i++)
+        {
+            Node node = _nodes[i];
+            _parentIndices[i] = node.VisualParent?.LogicalIndex ?? -1;
+            _localMatrices[i] = node.LocalMatrix;
+
+            SharpGLTF.Transforms.AffineTransform localTransform = node.LocalTransform;
+            if (localTransform.IsMatrix)
+            {
+                System.Numerics.Matrix4x4.Decompose(
+                    localTransform.Matrix,
+                    out _scales[i],
+                    out _rotations[i],
+                    out _translations[i]);
+            }
+            else
+            {
+                _scales[i] = localTransform.Scale;
+                _rotations[i] = localTransform.Rotation;
+                _translations[i] = localTransform.Translation;
+            }
+        }
+
+        _hierarchyOrder = CreateHierarchyOrder(_parentIndices);
+
+        List<Node> renderableNodes = [];
+        SceneNodeTraversal.CollectRenderableNodes(model.DefaultScene.VisualChildren, renderableNodes);
+        _renderableNodes = renderableNodes.ToArray();
+        _renderableNodeIndices = new int[_renderableNodes.Length];
+        for (int i = 0; i < _renderableNodes.Length; i++)
+        {
+            _renderableNodeIndices[i] = _renderableNodes[i].LogicalIndex;
+        }
+
+        foreach (Animation animation in model.LogicalAnimations)
+        {
+            _tracksByAnimation[animation] = CreateTracks(animation);
+        }
+
+        UpdateWorldMatrices();
+    }
+
+    public int NodeCount => _nodes.Length;
+
+    public int RenderableNodeCount => _renderableNodes.Length;
+
+    public Node GetRenderableNode(int renderableIndex) => _renderableNodes[renderableIndex];
+
+    public System.Numerics.Matrix4x4 GetRenderableNodeWorldMatrix(int renderableIndex) =>
+        _worldMatrices[_renderableNodeIndices[renderableIndex]];
+
+    public System.Numerics.Matrix4x4 GetNodeLocalMatrix(int logicalIndex) => _localMatrices[logicalIndex];
+
+    public System.Numerics.Matrix4x4 GetNodeWorldMatrix(int logicalIndex) => _worldMatrices[logicalIndex];
+
+    public int GetAnimatedNodeCount(Animation animation) => GetTracks(animation).Length;
+
+    // Same result as assigning node.GetLocalTransform(animation, time) to every node the
+    // animation targets: channels the animation lacks keep the node's current value.
+    public void Apply(Animation animation, float time)
+    {
+        AnimatedNodeTrack[] tracks = GetTracks(animation);
+        for (int i = 0; i < tracks.Length; i++)
+        {
+            AnimatedNodeTrack track = tracks[i];
+            int nodeIndex = track.NodeIndex;
+            if (track.Scale != null)
+            {
+                _scales[nodeIndex] = track.Scale.Sample(time);
+            }
+
+            if (track.Rotation != null)
+            {
+                _rotations[nodeIndex] = track.Rotation.Sample(time);
+            }
+
+            if (track.Translation != null)
+            {
+                _translations[nodeIndex] = track.Translation.Sample(time);
+            }
+
+            _localMatrices[nodeIndex] = new SharpGLTF.Transforms.AffineTransform(
+                _scales[nodeIndex],
+                _rotations[nodeIndex],
+                _translations[nodeIndex]).Matrix;
+        }
+
+        UpdateWorldMatrices();
+    }
+
+    private AnimatedNodeTrack[] GetTracks(Animation animation)
+    {
+        if (!_tracksByAnimation.TryGetValue(animation, out AnimatedNodeTrack[]? tracks))
+        {
+            tracks = CreateTracks(animation);
+            _tracksByAnimation[animation] = tracks;
+        }
+
+        return tracks;
+    }
+
+    private AnimatedNodeTrack[] CreateTracks(Animation animation)
+    {
+        List<AnimatedNodeTrack> tracks = [];
+        for (int i = 0; i < _nodes.Length; i++)
+        {
+            Node node = _nodes[i];
+            if (!animation.FindChannels(node).Any())
+            {
+                continue;
+            }
+
+            tracks.Add(new AnimatedNodeTrack(
+                i,
+                KeyframeCurve<System.Numerics.Vector3>.Create(
+                    animation.FindScaleChannel(node)?.GetScaleSampler(),
+                    static (a, b, amount) => System.Numerics.Vector3.Lerp(a, b, amount)),
+                KeyframeCurve<System.Numerics.Quaternion>.Create(
+                    animation.FindRotationChannel(node)?.GetRotationSampler(),
+                    static (a, b, amount) => System.Numerics.Quaternion.Slerp(a, b, amount)),
+                KeyframeCurve<System.Numerics.Vector3>.Create(
+                    animation.FindTranslationChannel(node)?.GetTranslationSampler(),
+                    static (a, b, amount) => System.Numerics.Vector3.Lerp(a, b, amount))));
+        }
+
+        return tracks.ToArray();
+    }
+
+    private void UpdateWorldMatrices()
+    {
+        for (int i = 0; i < _hierarchyOrder.Length; i++)
+        {
+            int nodeIndex = _hierarchyOrder[i];
+            int parentIndex = _parentIndices[nodeIndex];
+            _worldMatrices[nodeIndex] = parentIndex < 0
+                ? _localMatrices[nodeIndex]
+                : _localMatrices[nodeIndex] * _worldMatrices[parentIndex];
+        }
+    }
+
+    private static int[] CreateHierarchyOrder(int[] parentIndices)
+    {
+        int[] order = new int[parentIndices.Length];
+        bool[] placed = new bool[parentIndices.Length];
+        int count = 0;
+        for (int i = 0; i < parentIndices.Length; i++)
+        {
+            count = PlaceWithAncestors(i, parentIndices, placed, order, count);
+        }
+
+        return order;
+    }
+
+    private static int PlaceWithAncestors(int nodeIndex, int[] parentIndices, bool[] placed, int[] order, int count)
+    {
+        if (placed[nodeIndex])
+        {
+            return count;
+        }
+
+        int parentIndex = parentIndices[nodeIndex];
+        if (parentIndex >= 0)
+        {
+            count = PlaceWithAncestors(parentIndex, parentIndices, placed, order, count);
+        }
+
+        placed[nodeIndex] = true;
+        order[count] = nodeIndex;
+        return count + 1;
+    }
+
+    private sealed class AnimatedNodeTrack(
+        int nodeIndex,
+        KeyframeCurve<System.Numerics.Vector3>? scale,
+        KeyframeCurve<System.Numerics.Quaternion>? rotation,
+        KeyframeCurve<System.Numerics.Vector3>? translation)
+    {
+        public int NodeIndex { get; } = nodeIndex;
+        public KeyframeCurve<System.Numerics.Vector3>? Scale { get; } = scale;
+        public KeyframeCurve<System.Numerics.Quaternion>? Rotation { get; } = rotation;
+        public KeyframeCurve<System.Numerics.Vector3>? Translation { get; } = translation;
+    }
+
+    // One animation channel as flat key and value arrays. LINEAR and STEP sample with a binary
+    // search and no allocations. CUBICSPLINE (unused by the current assets) keeps SharpGLTF's own
+    // curve sampler, which is correct but allocates per sample.
+    private sealed class KeyframeCurve<T>
+        where T : struct
+    {
+        private readonly float[] _times;
+        private readonly T[] _values;
+        private readonly bool _step;
+        private readonly Func<T, T, float, T> _interpolate;
+        private readonly SharpGLTF.Animations.ICurveSampler<T>? _cubicSampler;
+
+        private KeyframeCurve(
+            float[] times,
+            T[] values,
+            bool step,
+            Func<T, T, float, T> interpolate,
+            SharpGLTF.Animations.ICurveSampler<T>? cubicSampler)
+        {
+            _times = times;
+            _values = values;
+            _step = step;
+            _interpolate = interpolate;
+            _cubicSampler = cubicSampler;
+        }
+
+        public static KeyframeCurve<T>? Create(IAnimationSampler<T>? sampler, Func<T, T, float, T> interpolate)
+        {
+            if (sampler == null)
+            {
+                return null;
+            }
+
+            if (sampler.InterpolationMode == AnimationInterpolationMode.CUBICSPLINE)
+            {
+                return new KeyframeCurve<T>([], [], step: false, interpolate, sampler.CreateCurveSampler());
+            }
+
+            (float Key, T Value)[] keys = sampler.GetLinearKeys().ToArray();
+            if (keys.Length == 0)
+            {
+                return null;
+            }
+
+            float[] times = new float[keys.Length];
+            T[] values = new T[keys.Length];
+            for (int i = 0; i < keys.Length; i++)
+            {
+                times[i] = keys[i].Key;
+                values[i] = keys[i].Value;
+            }
+
+            return new KeyframeCurve<T>(
+                times,
+                values,
+                sampler.InterpolationMode == AnimationInterpolationMode.STEP,
+                interpolate,
+                cubicSampler: null);
+        }
+
+        public T Sample(float time)
+        {
+            if (_cubicSampler != null)
+            {
+                return _cubicSampler.GetPoint(time);
+            }
+
+            int last = _times.Length - 1;
+            if (time <= _times[0])
+            {
+                return _values[0];
+            }
+
+            if (time >= _times[last])
+            {
+                return _values[last];
+            }
+
+            // Largest key index whose time is at or before the sample time.
+            int low = 0;
+            int high = last;
+            while (high - low > 1)
+            {
+                int middle = (low + high) >> 1;
+                if (_times[middle] <= time)
+                {
+                    low = middle;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+
+            if (_step)
+            {
+                return _values[low];
+            }
+
+            float amount = (time - _times[low]) / (_times[high] - _times[low]);
+            return _interpolate(_values[low], _values[high], amount);
+        }
+    }
 }
 
 public static class GltfExtensions

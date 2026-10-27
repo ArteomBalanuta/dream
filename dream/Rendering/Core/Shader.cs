@@ -11,6 +11,7 @@ public sealed class Shader : IDisposable
 {
     public int Handle { get; private set; }
     private readonly Dictionary<string, int> _uniformLocations = new();
+    private readonly Dictionary<string[], int[]> _uniformLocationTables = new(ReferenceEqualityComparer.Instance);
 
     public Shader(string vertexPath, string fragmentPath)
     {
@@ -100,9 +101,34 @@ public sealed class Shader : IDisposable
         return location;
     }
 
+    // Resolves a table of uniform names once per program. The table is keyed by the array
+    // instance, so callers pass a static array and get the same int[] back on every call.
+    public int[] GetUniformLocations(string[] uniformNames)
+    {
+        ArgumentNullException.ThrowIfNull(uniformNames);
+        if (_uniformLocationTables.TryGetValue(uniformNames, out int[]? existing))
+        {
+            return existing;
+        }
+
+        int[] locations = new int[uniformNames.Length];
+        for (int i = 0; i < uniformNames.Length; i++)
+        {
+            locations[i] = GetUniformLocation(uniformNames[i]);
+        }
+
+        _uniformLocationTables[uniformNames] = locations;
+        return locations;
+    }
+
     public void SetMatrix4(string uniformName, Matrix4 matrix)
     {
         int location = GetUniformLocation(uniformName);
+        GL.UniformMatrix4(location, false, ref matrix);
+    }
+
+    public void SetMatrix4(int location, Matrix4 matrix)
+    {
         GL.UniformMatrix4(location, false, ref matrix);
     }
 
@@ -155,6 +181,7 @@ public sealed class Shader : IDisposable
         GL.DeleteProgram(Handle);
         Handle = 0;
         _uniformLocations.Clear();
+        _uniformLocationTables.Clear();
     }
     #endregion
 }

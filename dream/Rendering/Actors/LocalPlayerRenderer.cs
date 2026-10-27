@@ -25,7 +25,7 @@ public sealed class LocalPlayerRenderer
             localPlayer.Facing,
             localPlayer.IsMoving);
         AnimatedModel model = GetOrCreateModel();
-        _clipTracker.TryApplyClip(LocalActorId, renderState.ClipName, model.PlayLoop);
+        _clipTracker.TryApplyClip(LocalActorId, renderState.ClipName, model);
         model.Update(deltaTime);
 
         Shader shader = _render.GetShader(renderState.ShaderName);
