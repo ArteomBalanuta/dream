@@ -209,9 +209,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
 
         _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
-        while (_receiveBuffer.TryReadFrame(_framer, out byte[]? payload))
+        DrainInboundFrames();
+        return true;
+    }
+
+    private void DrainInboundFrames()
+    {
+        while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
-            if (payload == null)
+            if (payload.IsEmpty)
             {
                 continue;
             }
@@ -223,8 +229,6 @@ public sealed class RemoteClientSession : IAsyncDisposable
             _inboundMessages.Enqueue(serverMessage);
             LogInbound(decoded.Envelope, serverMessage);
         }
-
-        return true;
     }
 
     public void StartBackgroundReceive()

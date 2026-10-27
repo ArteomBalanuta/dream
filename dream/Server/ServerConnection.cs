@@ -224,9 +224,9 @@ public sealed class ServerConnection : IAsyncDisposable
 
     private void FlushInboundFrames()
     {
-        while (_receiveBuffer.TryReadFrame(_framer, out byte[]? payload))
+        while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
-            if (payload == null)
+            if (payload.IsEmpty)
             {
                 continue;
             }
