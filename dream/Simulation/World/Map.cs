@@ -24,6 +24,8 @@ public class Map
     private readonly Dictionary<GeometryCellKey, IReadOnlyList<GeometryCollisionBodyDescriptor>> _collisionBodiesByCell = new();
     private readonly HashSet<GeometryCellKey> _staticPhysicsCells = [];
     private readonly HashSet<GeometryCellKey> _pendingRenderDirtyCells = [];
+    private readonly HashSet<GeometryCellKey> _pendingStaticRenderDirtyCells = [];
+    private readonly HashSet<GeometryCellKey> _staticRenderCells = [];
     private readonly HashSet<GeometryCellKey> _pendingCollisionDirtyCells = [];
     private IReadOnlyList<GeometryRenderBlockDescriptor> _mergedStaticSubcellRenderBlocks = [];
     private HashSet<GeometryCellKey> _mergedStaticSubcellRenderCells = [];
@@ -34,6 +36,17 @@ public class Map
     private bool _initializing;
     private readonly WorldSpatialIndex _placedCubeSpatialIndex = new();
     private readonly Dictionary<Cube, GeometryCellKey> _cubeCells = new();
+    // Fracture rubble is stored apart from cell occupancy, keyed by the cell it came from. It used
+    // to live in the fractured cube's own cell record, so the cell stayed blocked for cubes and
+    // placement forever even after the pieces rolled away, and a later cube could not coexist
+    // with old rubble. Rubble has its own render/collision descriptors and physics bodies.
+    private readonly Dictionary<GeometryCellKey, GeometryCellRecord> _rubbleCells = new();
+    private readonly Dictionary<GeometryCellKey, IReadOnlyList<GeometryRenderBlockDescriptor>> _rubbleRenderBlocks = new();
+    private readonly Dictionary<GeometryCellKey, IReadOnlyList<GeometryCollisionBodyDescriptor>> _rubbleCollisionBodies = new();
+    // Server actor ids of replicated cubes, so deltas resolve a cube by identity rather than
+    // by whatever cube currently sits in a cell.
+    private readonly Dictionary<int, Cube> _cubesByReplicatedId = new();
+    private readonly Dictionary<Cube, int> _replicatedIdsByCube = new();
 
     public int Width => _grid.Width;
     public int Height => _grid.Height;
@@ -42,19 +55,28 @@ public class Map
     public IReadOnlyList<Cube> SolidCubes => _solidCubes;
     public IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> GeometryCells => _geometryCells;
 
+    // Rubble records (FracturePieces set), keyed by origin cell.
+    public IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> RubbleCells => _rubbleCells;
+
+    public GeometryCellRecord? TryGetRubbleAtCell(GeometryCellKey cell)
+    {
+        return _rubbleCells.TryGetValue(cell, out GeometryCellRecord? record) ? record : null;
+    }
+
     public Map(
         PhysicsIntegrator? physics = null,
         bool loadVisualAssets = true,
         bool generateStartupTerrain = false,
         int width = 25,
         int height = 8,
-        int depth = 25)
+        int depth = 25,
+        bool replicatedCubeBodies = false)
     {
         _physics = physics;
         _grid = new WorldGrid(width, height, depth);
         _generator = new WorldGenerator(loadVisualAssets);
         _generateStartupTerrain = generateStartupTerrain;
-        _physicsBinder = _physics != null ? new WorldPhysicsBinder(_physics) : null;
+        _physicsBinder = _physics != null ? new WorldPhysicsBinder(_physics, replicatedCubeBodies) : null;
         Initialize();
     }
 
@@ -157,6 +179,15 @@ public class Map
 
             target.TryAddGeometryCell(geometryCell, isStatic: false, withPhysics: target._physics != null);
         }
+
+        foreach (GeometryCellRecord rubble in _rubbleCells.Values)
+        {
+            target.RestoreFracturePieces(
+                rubble.Key,
+                rubble.Definition.MaterialId,
+                rubble.FracturePieces!,
+                withPhysics: target._physics != null);
+        }
     }
 
     public bool IsInBounds(Vector3 position)
@@ -178,15 +209,48 @@ public class Map
         _renderBlocksByCell.Remove(key);
         _collisionBodiesByCell.Remove(key);
         _staticPhysicsCells.Remove(key);
-        _pendingRenderDirtyCells.Add(key);
+        MarkRenderDirty(key);
         _pendingCollisionDirtyCells.Add(key);
         Cubes[x, y, z] = null;
         _solidCubes.Remove(cube);
         _cubeCells.Remove(cube);
+        if (_replicatedIdsByCube.Remove(cube, out int replicatedId))
+        {
+            _cubesByReplicatedId.Remove(replicatedId);
+        }
+
         _placedCubeSpatialIndex.Remove(cube);
         _physicsBinder?.RemoveCellCollisionBodies(key);
         _physicsBinder?.RemoveCompatibilityCubeBodies(cube);
         return true;
+    }
+
+    public void AssignReplicatedCubeId(Cube cube, int actorId)
+    {
+        ArgumentNullException.ThrowIfNull(cube);
+        if (_replicatedIdsByCube.TryGetValue(cube, out int previousId))
+        {
+            _cubesByReplicatedId.Remove(previousId);
+        }
+
+        if (_cubesByReplicatedId.TryGetValue(actorId, out Cube? previousCube) && !ReferenceEquals(previousCube, cube))
+        {
+            _replicatedIdsByCube.Remove(previousCube);
+        }
+
+        _cubesByReplicatedId[actorId] = cube;
+        _replicatedIdsByCube[cube] = actorId;
+    }
+
+    public bool TryGetCubeByReplicatedId(int actorId, out Cube? cube)
+    {
+        if (_cubesByReplicatedId.TryGetValue(actorId, out cube) && _cubeCells.ContainsKey(cube))
+        {
+            return true;
+        }
+
+        cube = null;
+        return false;
     }
 
     public bool TryGetCellForCube(Cube cube, out GeometryCellKey key)
@@ -205,9 +269,9 @@ public class Map
         ISet<GeometryCellKey>? reservedTargetCells,
         bool syncPhysics = true)
     {
-        if (!_cubeCells.TryGetValue(cube, out GeometryCellKey oldKey))
+        if (!_cubeCells.TryGetValue(cube, out GeometryCellKey oldKey) ||
+            !IsFinite(position))
         {
-            cube.Position = position;
             return false;
         }
 
@@ -216,21 +280,23 @@ public class Map
             (int)MathF.Floor(position.Y + 1e-6f),
             (int)MathF.Floor(position.Z + 1e-6f));
 
-        cube.Position = position;
-
-        _placedCubeSpatialIndex.UpdatePosition(cube, position);
-
         if (oldKey == newKey)
         {
+            cube.Position = position;
+            _placedCubeSpatialIndex.UpdatePosition(cube, position);
             if (syncPhysics && _physicsBinder != null)
             {
-                RebuildGeometryCellArtifacts(oldKey, syncPhysics: true);
+                // Replicated moves arrive every tick; moving the live body avoids disposing and
+                // reallocating Bullet shape/motion state/body per cube per tick.
+                bool sameCellBodyMoved = _physicsBinder.TryMoveCompatibilityCubeBody(cube, oldKey, newKey, position);
+                RebuildGeometryCellArtifacts(oldKey, syncPhysics: !sameCellBodyMoved);
             }
 
             return true;
         }
 
-        if (!IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)))
+        if (!IsInBounds(new Vector3(newKey.X, newKey.Y, newKey.Z)) ||
+            !_geometryCells.TryGetValue(oldKey, out GeometryCellRecord? oldCell))
         {
             return false;
         }
@@ -240,57 +306,106 @@ public class Map
             return false;
         }
 
-        if (_geometryCells.TryGetValue(oldKey, out GeometryCellRecord? oldCell))
+        cube.Position = position;
+        _placedCubeSpatialIndex.UpdatePosition(cube, position);
+
+        // A static cube leaving its cell becomes dynamic in the new one, which needs a new body;
+        // every other synced move keeps and reindexes the live body.
+        bool bodyMoved = syncPhysics &&
+            _physicsBinder != null &&
+            !_staticPhysicsCells.Contains(oldKey) &&
+            _physicsBinder.TryMoveCompatibilityCubeBody(cube, oldKey, newKey, position);
+        bool rebuildPhysics = syncPhysics && _physicsBinder != null && !bodyMoved;
+
+        _geometryCells.Remove(oldKey);
+        _renderBlocksByCell.Remove(oldKey);
+        _collisionBodiesByCell.Remove(oldKey);
+        _staticPhysicsCells.Remove(oldKey);
+        Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
+        RebuildGeometryCellArtifacts(oldKey, syncPhysics: rebuildPhysics);
+
+        GeometryCellRecord movedCell = new(
+            newKey,
+            oldCell.Definition,
+            oldCell.SubdivisionState,
+            oldCell.FracturePieces);
+
+        _geometryCells[newKey] = movedCell;
+        _cubeCells[cube] = newKey;
+        Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
+        if (!syncPhysics)
         {
-            _geometryCells.Remove(oldKey);
-            _renderBlocksByCell.Remove(oldKey);
-            _collisionBodiesByCell.Remove(oldKey);
-            _staticPhysicsCells.Remove(oldKey);
-            Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
-            RebuildGeometryCellArtifacts(oldKey, syncPhysics: syncPhysics && _physicsBinder != null);
-
-            GeometryCellRecord movedCell = new(
-                newKey,
-                oldCell.Definition,
-                oldCell.SubdivisionState,
-                oldCell.FracturePieces);
-
-            _geometryCells[newKey] = movedCell;
-            _cubeCells[cube] = newKey;
-            Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
-            if (!syncPhysics)
-            {
-                _physicsBinder?.ReindexCompatibilityCubeBody(cube, oldKey, newKey);
-            }
-
-            RebuildGeometryCellArtifacts(newKey, syncPhysics: syncPhysics && _physicsBinder != null);
-            reservedTargetCells?.Add(newKey);
-            return true;
+            _physicsBinder?.ReindexCompatibilityCubeBody(cube, oldKey, newKey);
         }
 
-        return false;
+        RebuildGeometryCellArtifacts(newKey, syncPhysics: rebuildPhysics);
+        reservedTargetCells?.Add(newKey);
+        return true;
     }
 
     public bool UpdateFracturePiecePosition(GeometryCellKey cell, int pieceIndex, Vector3 center)
     {
-        if (!_geometryCells.TryGetValue(cell, out GeometryCellRecord? record) ||
+        return UpdateFracturePiecePositions(cell, [(pieceIndex, center)]);
+    }
+
+    public bool UpdateFracturePiecePositions(
+        GeometryCellKey cell,
+        IReadOnlyList<(int PieceIndex, Vector3 Center)> updates)
+    {
+        return UpdateFracturePiecePositions(cell, updates, out _);
+    }
+
+    public bool UpdateFracturePiecePositions(
+        GeometryCellKey cell,
+        IReadOnlyList<(int PieceIndex, Vector3 Center)> updates,
+        out HashSet<int> acceptedPieceIndices)
+    {
+        if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? record) ||
             record.FracturePieces == null ||
-            pieceIndex < 0 ||
-            pieceIndex >= record.FracturePieces.Count)
+            updates.Count == 0)
+        {
+            acceptedPieceIndices = [];
+            return false;
+        }
+
+        acceptedPieceIndices = [];
+        GeometryFracturePiece[] pieces = record.FracturePieces.ToArray();
+        bool changed = false;
+        foreach ((int pieceIndex, Vector3 center) in updates)
+        {
+            if (pieceIndex < 0 || pieceIndex >= pieces.Length)
+            {
+                continue;
+            }
+
+            GeometryFracturePiece movedPiece = pieces[pieceIndex] with { Center = center };
+            if (!movedPiece.IsValid())
+            {
+                continue;
+            }
+
+            acceptedPieceIndices.Add(pieceIndex);
+            if (pieces[pieceIndex].Center == center)
+            {
+                continue;
+            }
+
+            pieces[pieceIndex] = movedPiece;
+            changed = true;
+        }
+
+        if (acceptedPieceIndices.Count == 0)
         {
             return false;
         }
 
-        GeometryFracturePiece[] pieces = record.FracturePieces.ToArray();
-        if (pieces[pieceIndex].Center == center)
+        if (!changed)
         {
             return true;
         }
 
-        pieces[pieceIndex] = pieces[pieceIndex] with { Center = center };
         record.SetFracturePieces(pieces);
-        _renderBlocksByCell[cell] = BuildRenderBlocks(record);
-        _collisionBodiesByCell[cell] = BuildCollisionBodies(record);
+        RebuildRubbleArtifacts(cell, syncPhysics: false);
         return true;
     }
 
@@ -333,28 +448,15 @@ public class Map
             return false;
         }
 
+        GeometryMaterialId materialId = record.Definition.MaterialId;
         Cube? compatibilityCube = Cubes[cell.X, cell.Y, cell.Z];
-        GeometrySubdivisionState subdivision = record.EnsureSubdivisionState();
-        int resolution = record.Definition.SubdivisionResolution;
-        for (int x = 0; x < resolution; x++)
+        if (compatibilityCube == null || !RemoveCube(compatibilityCube))
         {
-            for (int y = 0; y < resolution; y++)
-            {
-                for (int z = 0; z < resolution; z++)
-                {
-                    GeometrySubcellKey subcell = new(x, y, z);
-                    subdivision.SetChildSolid(subcell, isSolid: false);
-                }
-            }
+            _geometryCells.Remove(cell);
+            RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         }
 
-        record.SetFracturePieces(CubeFracturePattern.CreateFirstPassRubble(cell));
-        RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
-        if (compatibilityCube != null)
-        {
-            _physicsBinder?.RemoveCompatibilityCubeBodies(compatibilityCube);
-        }
-
+        SetRubble(cell, materialId, CubeFracturePattern.CreateFirstPassRubble(cell), _physicsBinder != null);
         return true;
     }
 
@@ -392,18 +494,43 @@ public class Map
             return false;
         }
 
-        Cube? existingCube = TryGetCubeAtCell(cell.X, cell.Y, cell.Z);
-        if (existingCube != null)
+        GeometryFracturePiece[] validPieces = pieces
+            .Where(GeometryFracturePiece.IsValid)
+            .ToArray();
+        if (validPieces.Length == 0)
         {
-            RemoveCube(existingCube);
+            return false;
         }
 
-        GeometryCellRecord geometryCell = _generator.CreateGeometryCell(
+        // Restoring rubble no longer removes a cube in the origin cell: rubble does not occupy it.
+        // (Persistence restore used to delete a legitimately placed cube here.)
+        SetRubble(cell, materialId, validPieces, withPhysics && _physicsBinder != null);
+        return true;
+    }
+
+    public bool RemoveRubble(GeometryCellKey cell)
+    {
+        if (!_rubbleCells.Remove(cell))
+        {
+            return false;
+        }
+
+        RebuildRubbleArtifacts(cell, syncPhysics: _physicsBinder != null);
+        return true;
+    }
+
+    private void SetRubble(
+        GeometryCellKey cell,
+        GeometryMaterialId materialId,
+        IReadOnlyList<GeometryFracturePiece> pieces,
+        bool syncPhysics)
+    {
+        GeometryCellRecord rubble = _generator.CreateGeometryCell(
             new Vector3(cell.X, cell.Y, cell.Z),
             isFloor: false,
             materialId);
-        GeometrySubdivisionState subdivision = geometryCell.EnsureSubdivisionState();
-        int resolution = geometryCell.Definition.SubdivisionResolution;
+        GeometrySubdivisionState subdivision = rubble.EnsureSubdivisionState();
+        int resolution = rubble.Definition.SubdivisionResolution;
         for (int x = 0; x < resolution; x++)
         {
             for (int y = 0; y < resolution; y++)
@@ -415,16 +542,41 @@ public class Map
             }
         }
 
-        geometryCell.SetFracturePieces(pieces.ToArray());
-        TryAddGeometryCell(geometryCell, isStatic: false, withPhysics);
-        return true;
+        rubble.SetFracturePieces(pieces);
+        _rubbleCells[cell] = rubble;
+        RebuildRubbleArtifacts(cell, syncPhysics);
+    }
+
+    private void RebuildRubbleArtifacts(GeometryCellKey cell, bool syncPhysics)
+    {
+        _pendingRenderDirtyCells.Add(cell);
+        _pendingCollisionDirtyCells.Add(cell);
+        if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? rubble))
+        {
+            _rubbleRenderBlocks.Remove(cell);
+            _rubbleCollisionBodies.Remove(cell);
+            if (syncPhysics)
+            {
+                _physicsBinder?.RemoveRubbleBodies(cell);
+            }
+
+            return;
+        }
+
+        _rubbleRenderBlocks[cell] = BuildRenderBlocks(rubble);
+        IReadOnlyList<GeometryCollisionBodyDescriptor> bodies = BuildCollisionBodies(rubble);
+        _rubbleCollisionBodies[cell] = bodies;
+        if (syncPhysics)
+        {
+            _physicsBinder?.SyncRubbleBodies(cell, bodies);
+        }
     }
 
     public IReadOnlyList<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
         CaptureFracturePieces()
     {
         List<(GeometryCellKey, int, GeometryFracturePiece, GeometryMaterialId)> pieces = [];
-        foreach (GeometryCellRecord record in _geometryCells.Values)
+        foreach (GeometryCellRecord record in _rubbleCells.Values)
         {
             if (record.FracturePieces == null)
             {
@@ -433,7 +585,13 @@ public class Map
 
             for (int index = 0; index < record.FracturePieces.Count; index++)
             {
-                pieces.Add((record.Key, index, record.FracturePieces[index], record.Definition.MaterialId));
+                GeometryFracturePiece piece = record.FracturePieces[index];
+                if (!piece.IsValid())
+                {
+                    continue;
+                }
+
+                pieces.Add((record.Key, index, piece, record.Definition.MaterialId));
             }
         }
 
@@ -504,22 +662,38 @@ public class Map
     {
         return CaptureGeometryRenderExport(
             GetRenderCandidateCubes(position, radius),
-            includeCube: cube => IsCubeWithinRadius(cube, position, radius),
-            includeBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
+            includeStaticCube: cube => IsCubeWithinRadius(cube, position, radius),
+            includeDynamicCube: cube => IsCubeWithinRadius(cube, position, radius),
+            includeStaticBlock: block => IsGeometryBlockWithinRadius(block, position, radius),
+            includeDynamicBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
     }
 
     public GeometryRenderExport CaptureFullGeometryRenderExport()
     {
         return CaptureGeometryRenderExport(
             _solidCubes,
-            includeCube: _ => true,
-            includeBlock: _ => true);
+            includeStaticCube: _ => true,
+            includeDynamicCube: _ => true,
+            includeStaticBlock: _ => true,
+            includeDynamicBlock: _ => true);
+    }
+
+    public GeometryRenderExport CapturePresentationGeometryRenderExport(Vector3 position, float radius)
+    {
+        return CaptureGeometryRenderExport(
+            _solidCubes,
+            includeStaticCube: _ => true,
+            includeDynamicCube: cube => IsCubeWithinRadius(cube, position, radius),
+            includeStaticBlock: _ => true,
+            includeDynamicBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
     }
 
     private GeometryRenderExport CaptureGeometryRenderExport(
         IEnumerable<Cube> cubeCandidates,
-        Func<Cube, bool> includeCube,
-        Func<GeometryRenderBlockDescriptor, bool> includeBlock)
+        Func<Cube, bool> includeStaticCube,
+        Func<Cube, bool> includeDynamicCube,
+        Func<GeometryRenderBlockDescriptor, bool> includeStaticBlock,
+        Func<GeometryRenderBlockDescriptor, bool> includeDynamicBlock)
     {
         List<GeometryRenderCell> cells = new();
         List<GeometryRenderBlockDescriptor> blocks = new();
@@ -532,15 +706,23 @@ public class Map
         // migrates toward consuming geometry-native exports directly.
         foreach (Cube cube in cubeCandidates)
         {
-            if (!includeCube(cube))
-            {
-                continue;
-            }
-
             if (!TryGetCellForCube(cube, out GeometryCellKey key) ||
                 !_geometryCells.TryGetValue(key, out GeometryCellRecord? cell))
             {
                 continue;
+            }
+
+            bool usesCoarseCompatibilityRender = ShouldUseCoarseCompatibilityRender(cell);
+            if (usesCoarseCompatibilityRender)
+            {
+                bool isStaticCompatibility = IsStaticCompatibilityRender(key);
+                bool shouldIncludeCube = isStaticCompatibility
+                    ? includeStaticCube(cube)
+                    : includeDynamicCube(cube);
+                if (!shouldIncludeCube)
+                {
+                    continue;
+                }
             }
 
             if (!includedCells.Add(key))
@@ -549,7 +731,7 @@ public class Map
             }
 
             cells.Add(new GeometryRenderCell(key, cell, cube));
-            if (ShouldUseCoarseCompatibilityRender(cell))
+            if (usesCoarseCompatibilityRender)
             {
                 if (IsStaticCompatibilityRender(key))
                 {
@@ -570,9 +752,11 @@ public class Map
 
             if (_renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? cellBlocks))
             {
+                Func<GeometryRenderBlockDescriptor, bool> shouldIncludeBlock =
+                    cell.FracturePieces != null ? includeDynamicBlock : includeStaticBlock;
                 foreach (GeometryRenderBlockDescriptor block in cellBlocks)
                 {
-                    if (!includeBlock(block))
+                    if (!shouldIncludeBlock(block))
                     {
                         continue;
                     }
@@ -589,9 +773,20 @@ public class Map
             }
         }
 
+        foreach (IReadOnlyList<GeometryRenderBlockDescriptor> rubbleBlocks in _rubbleRenderBlocks.Values)
+        {
+            foreach (GeometryRenderBlockDescriptor block in rubbleBlocks)
+            {
+                if (includeDynamicBlock(block))
+                {
+                    dynamicBlocks.Add(block);
+                }
+            }
+        }
+
         foreach (GeometryRenderBlockDescriptor block in _mergedStaticSubcellRenderBlocks)
         {
-            if (!includeBlock(block))
+            if (!includeStaticBlock(block))
             {
                 continue;
             }
@@ -600,7 +795,9 @@ public class Map
         }
 
         GeometryCellKey[] dirtyCells = _pendingRenderDirtyCells.ToArray();
+        GeometryCellKey[] staticDirtyCells = _pendingStaticRenderDirtyCells.ToArray();
         _pendingRenderDirtyCells.Clear();
+        _pendingStaticRenderDirtyCells.Clear();
 
         return new GeometryRenderExport(
             DirtyCells: dirtyCells,
@@ -608,7 +805,8 @@ public class Map
             Blocks: blocks,
             CompatibilityCubes: compatibilityCubes,
             dynamicCompatibilityCubes: dynamicCompatibilityCubes,
-            dynamicBlocks: dynamicBlocks);
+            dynamicBlocks: dynamicBlocks,
+            staticDirtyCells: staticDirtyCells);
     }
 
     private static bool IsGeometryBlockWithinRadius(
@@ -672,6 +870,10 @@ public class Map
         }
 
         bodies.AddRange(_mergedStaticSubcellCollisionBodies);
+        foreach (IReadOnlyList<GeometryCollisionBodyDescriptor> rubbleBodies in _rubbleCollisionBodies.Values)
+        {
+            bodies.AddRange(rubbleBodies);
+        }
 
         GeometryCellKey[] dirtyCells = _pendingCollisionDirtyCells.ToArray();
         _pendingCollisionDirtyCells.Clear();
@@ -702,28 +904,153 @@ public class Map
             return null;
         }
 
+        const float minimumHitDistance = 0.25f;
         Vector3 normalizedDirection = direction.Normalized();
-        const float stepSize = 0.10f;
+        Cube? closest = null;
+        float closestDistance = float.MaxValue;
 
-        for (float distance = 0.25f; distance <= maxDistance; distance += stepSize)
+        // Test the ray against each nearby cube's actual box. Sampling by integer cell missed the
+        // visible part of a pushed, off-center cube and hit empty space in its cell instead.
+        Vector3 midpoint = origin + (normalizedDirection * (maxDistance * 0.5f));
+        foreach (Cube cube in _placedCubeSpatialIndex.GetNearby(midpoint, (maxDistance * 0.5f) + 1f))
         {
-            Vector3 sample = origin + (normalizedDirection * distance);
-            Vector3 cell = ToCellPosition(sample);
-            Cube? cube = TryGetCubeAtCell((int)cell.X, (int)cell.Y, (int)cell.Z);
-            if (cube == null)
+            if (!_cubeCells.TryGetValue(cube, out GeometryCellKey key) ||
+                (_geometryCells.TryGetValue(key, out GeometryCellRecord? record) && record.SubdivisionState != null))
             {
                 continue;
             }
 
-            if (!includeFloor && cell.Y == 0)
+            // Slightly inclusive so a ray running along a face (eye exactly on a cell boundary with
+            // float residue in the facing) still hits, as the old cell sampling did.
+            Vector3 halfSize = new((cube.Side * 0.5f) + 0.001f);
+            if (TryIntersectRayWithBox(origin, normalizedDirection, cube.Position - halfSize, cube.Position + halfSize, out float enter, out float exit) &&
+                exit >= minimumHitDistance &&
+                enter <= maxDistance &&
+                Math.Max(enter, 0f) < closestDistance)
             {
-                continue;
+                closest = cube;
+                closestDistance = Math.Max(enter, 0f);
             }
-
-            return cube;
         }
 
-        return null;
+        if (includeFloor)
+        {
+            for (float distance = minimumHitDistance; distance <= Math.Min(maxDistance, closestDistance); distance += 0.10f)
+            {
+                Vector3 cell = ToCellPosition(origin + (normalizedDirection * distance));
+                if (cell.Y == 0 && TryGetCubeAtCell((int)cell.X, 0, (int)cell.Z) is Cube floor)
+                {
+                    return floor;
+                }
+            }
+        }
+
+        return closest;
+    }
+
+    private static bool TryIntersectRayWithBox(
+        Vector3 origin,
+        Vector3 direction,
+        Vector3 min,
+        Vector3 max,
+        out float enter,
+        out float exit)
+    {
+        enter = float.MinValue;
+        exit = float.MaxValue;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            float o = origin[axis];
+            float d = direction[axis];
+            if (MathF.Abs(d) < 1e-8f)
+            {
+                if (o < min[axis] || o > max[axis])
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            float t1 = (min[axis] - o) / d;
+            float t2 = (max[axis] - o) / d;
+            enter = Math.Max(enter, Math.Min(t1, t2));
+            exit = Math.Min(exit, Math.Max(t1, t2));
+            if (enter > exit)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Consistency checks across the map's parallel indexes. Mutations update several indexes
+    // step by step; this makes a broken invariant visible (tests, and debug builds after
+    // physics sync) instead of surfacing later as an invisible or duplicated cube.
+    public IReadOnlyList<string> FindInvariantViolations()
+    {
+        List<string> violations = [];
+        for (int x = 0; x < Width; x++)
+        {
+            for (int y = 0; y < Height; y++)
+            {
+                for (int z = 0; z < Depth; z++)
+                {
+                    if (Cubes[x, y, z] is not Cube cube)
+                    {
+                        continue;
+                    }
+
+                    GeometryCellKey key = new(x, y, z);
+                    if (!_cubeCells.TryGetValue(cube, out GeometryCellKey indexed) || indexed != key)
+                    {
+                        violations.Add($"Cubes[{x},{y},{z}] is not indexed to its cell");
+                    }
+
+                    if (!_geometryCells.ContainsKey(key))
+                    {
+                        violations.Add($"Cubes[{x},{y},{z}] has no geometry record");
+                    }
+                }
+            }
+        }
+
+        foreach ((Cube cube, GeometryCellKey key) in _cubeCells)
+        {
+            if (!ReferenceEquals(TryGetCubeAtCell(key.X, key.Y, key.Z), cube))
+            {
+                violations.Add($"cube indexed at {key} is not the occupant of that cell");
+            }
+        }
+
+        if (_cubeCells.Count != _solidCubes.Count)
+        {
+            violations.Add($"solid cube list has {_solidCubes.Count} entries but {_cubeCells.Count} cubes are indexed");
+        }
+
+        foreach (GeometryCellRecord record in _geometryCells.Values)
+        {
+            if (record.FracturePieces != null)
+            {
+                violations.Add($"cell {record.Key} holds rubble; rubble belongs in the rubble store");
+            }
+
+            if (ShouldUseCoarseCompatibilityRender(record) && TryGetCubeAtCell(record.Key.X, record.Key.Y, record.Key.Z) == null)
+            {
+                violations.Add($"solid cell {record.Key} has no cube");
+            }
+        }
+
+        foreach ((int id, Cube cube) in _cubesByReplicatedId)
+        {
+            if (!_replicatedIdsByCube.TryGetValue(cube, out int reverse) || reverse != id)
+            {
+                violations.Add($"replicated id {id} is not mapped back to its cube");
+            }
+        }
+
+        return violations;
     }
 
     public IEnumerable<Cube> GetNearbySolidCubes(Vector3 position, float radius)
@@ -827,7 +1154,7 @@ public class Map
         {
             _renderBlocksByCell.Remove(key);
             _collisionBodiesByCell.Remove(key);
-            _pendingRenderDirtyCells.Add(key);
+            MarkRenderDirty(key);
             _pendingCollisionDirtyCells.Add(key);
             if (syncPhysics)
             {
@@ -847,7 +1174,7 @@ public class Map
 
         _renderBlocksByCell[key] = renderBlocks;
         _collisionBodiesByCell[key] = collisionBodies;
-        _pendingRenderDirtyCells.Add(key);
+        MarkRenderDirty(key);
         _pendingCollisionDirtyCells.Add(key);
 
         bool needsMergedStaticSubcellCollision = ShouldUseMergedStaticSubcellCollision(geometryCell);
@@ -870,6 +1197,7 @@ public class Map
         if (record.FracturePieces is { Count: > 0 })
         {
             return record.FracturePieces
+                .Where(GeometryFracturePiece.IsValid)
                 .Select(piece => _generator.CreateRenderBlockDescriptor(
                     record,
                     piece.Center,
@@ -908,15 +1236,25 @@ public class Map
         bool isStatic = _staticPhysicsCells.Contains(record.Key);
         if (record.FracturePieces is { Count: > 0 })
         {
-            return record.FracturePieces
-                .Select((piece, index) => new GeometryCollisionBodyDescriptor(
+            List<GeometryCollisionBodyDescriptor> fractureBodies = [];
+            for (int index = 0; index < record.FracturePieces.Count; index++)
+            {
+                GeometryFracturePiece piece = record.FracturePieces[index];
+                if (!piece.IsValid())
+                {
+                    continue;
+                }
+
+                fractureBodies.Add(new GeometryCollisionBodyDescriptor(
                     GeometryCollisionBodyKind.Subcell,
                     piece.Center,
                     new Vector3(piece.SideLength * 0.5f),
                     IsStatic: false,
                     CellKey: record.Key,
-                    FracturePieceIndex: index))
-                .ToArray();
+                    FracturePieceIndex: index));
+            }
+
+            return fractureBodies;
         }
 
         if (ShouldUseCoarseCompatibilityRender(record))
@@ -940,6 +1278,37 @@ public class Map
         }
 
         return BuildMergedSubcellCollisionBodies(record, isStatic);
+    }
+
+    // Call after the cell's state has changed. Static dirtiness is tracked against what the cell
+    // contributed before and after, so removing or converting static content still invalidates it.
+    private void MarkRenderDirty(GeometryCellKey key)
+    {
+        _pendingRenderDirtyCells.Add(key);
+        bool wasStatic = _staticRenderCells.Contains(key);
+        bool isStatic = _geometryCells.TryGetValue(key, out GeometryCellRecord? record) &&
+            IsStaticRenderContent(record);
+        if (isStatic)
+        {
+            _staticRenderCells.Add(key);
+        }
+        else
+        {
+            _staticRenderCells.Remove(key);
+        }
+
+        if (wasStatic || isStatic)
+        {
+            _pendingStaticRenderDirtyCells.Add(key);
+        }
+    }
+
+    // Mirrors the static/dynamic split in CaptureGeometryRenderExport.
+    private bool IsStaticRenderContent(GeometryCellRecord record)
+    {
+        return ShouldUseCoarseCompatibilityRender(record)
+            ? IsStaticCompatibilityRender(record.Key)
+            : record.FracturePieces == null;
     }
 
     private static bool ShouldUseCoarseCompatibilityRender(GeometryCellRecord record)
@@ -977,6 +1346,16 @@ public class Map
     private bool IsStaticCompatibilityRender(GeometryCellKey key)
     {
         return _staticPhysicsCells.Contains(key) || key.Y == 0;
+    }
+
+    private static bool IsFinite(Vector3 value)
+    {
+        return !float.IsNaN(value.X) &&
+            !float.IsNaN(value.Y) &&
+            !float.IsNaN(value.Z) &&
+            !float.IsInfinity(value.X) &&
+            !float.IsInfinity(value.Y) &&
+            !float.IsInfinity(value.Z);
     }
 
     private static float ResolveSubcellVisualFillScale(GeometryCellRecord record)

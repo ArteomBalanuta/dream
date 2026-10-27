@@ -32,6 +32,27 @@ public readonly record struct PlayerSimulationTuning(
     float NoclipSpeed,
     float JumpVelocity)
 {
+    // Movement values the authoritative server simulates with. Client prediction must use the
+    // same ones: predicting with a local NoclipSpeed of 150 against a server at 18 pulled the
+    // player back on every snapshot.
+    public static PlayerSimulationTuning AuthoritativeDefault { get; } = new(
+        EyeHeightOffset: 0.35f,
+        MouseSensitivity: 2.5f,
+        MoveSpeed: 6f,
+        NoclipSpeed: 18f,
+        JumpVelocity: 5f);
+
+    // Keeps client-only view settings (eye height, mouse sensitivity) and takes movement from the server.
+    public PlayerSimulationTuning WithAuthoritativeMovement()
+    {
+        return this with
+        {
+            MoveSpeed = AuthoritativeDefault.MoveSpeed,
+            NoclipSpeed = AuthoritativeDefault.NoclipSpeed,
+            JumpVelocity = AuthoritativeDefault.JumpVelocity
+        };
+    }
+
     public static PlayerSimulationTuning FromSettings(GameSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);

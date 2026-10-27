@@ -43,6 +43,17 @@ public class PlayerCameraRig
         }
     }
 
+    // Shifts the body without touching its velocity, for soft network corrections.
+    public void Translate(RigidBody body, Vector3 delta)
+    {
+        body.MotionState.GetWorldTransform(out Matrix current);
+        Matrix transform = Matrix.Translation((current.Origin.ToOpenTK() + delta).ToBullet());
+        body.WorldTransform = transform;
+        body.MotionState.SetWorldTransform(ref transform);
+        body.Activate(true);
+        Camera.Position += delta;
+    }
+
     public void Teleport(RigidBody body, Vector3 position, float eyeHeightOffset)
     {
         Matrix transform = Matrix.Translation(position.ToBullet());

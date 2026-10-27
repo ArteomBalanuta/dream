@@ -120,7 +120,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         stopwatch.Restart();
         HashSet<StaticWorldChunkKey> dirtyChunks = exportUnchanged
             ? []
-            : export.DirtyCells
+            : export.StaticDirtyCells
                 .Select(cell => StaticWorldChunkKey.FromWorldPosition(new Vector3(cell.X, cell.Y, cell.Z)))
                 .ToHashSet();
         IReadOnlyList<StaticWorldChunkBuildInput> inputs = exportUnchanged
@@ -228,12 +228,18 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             return;
         }
 
-        _queuedBuildRequest = request;
+        // Replacing a queued request used to drop its dirty chunks, and with them the removal of
+        // meshes for chunks that became empty (a static ghost with no collision).
+        _queuedBuildRequest = _queuedBuildRequest == null
+            ? request
+            : StaticWorldChunkBuildRequest.MergeSuperseded(_queuedBuildRequest, request);
     }
 
     private void DrainCompletedBuild()
     {
-        if (_activeBuildTask == null || !_activeBuildTask.IsCompleted)
+        // Finish uploading the current batch before taking the next one; overwriting a partially
+        // applied batch skipped its remaining meshes and its stale-mesh removal.
+        if (_activeUploadBatch != null || _activeBuildTask == null || !_activeBuildTask.IsCompleted)
         {
             if (_activeBuildTask == null && _queuedBuildRequest != null)
             {
@@ -251,7 +257,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         if (_queuedBuildRequest != null &&
             _queuedBuildRequest.ExportSignature != completed.ExportSignature)
         {
-            StaticWorldChunkBuildRequest nextRequest = _queuedBuildRequest;
+            // The completed batch is superseded; carry its dirty chunks so empty-chunk removals survive.
+            StaticWorldChunkBuildRequest nextRequest = StaticWorldChunkBuildRequest.MergeDirtyChunks(
+                _queuedBuildRequest,
+                completed.DirtyChunks);
             _queuedBuildRequest = null;
             _activeBuildTask = StartBuildTask(nextRequest);
             return;
@@ -369,8 +378,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     public static int CalculateExportSignature(GeometryRenderExport export)
     {
         HashCode hash = new();
-        hash.Add(export.DirtyCells.Count);
-        foreach (GeometryCellKey dirtyCell in export.DirtyCells
+        hash.Add(export.StaticDirtyCells.Count);
+        foreach (GeometryCellKey dirtyCell in export.StaticDirtyCells
             .OrderBy(cell => cell.Y)
             .ThenBy(cell => cell.Z)
             .ThenBy(cell => cell.X))

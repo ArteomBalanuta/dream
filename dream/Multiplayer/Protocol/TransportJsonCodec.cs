@@ -66,6 +66,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
             "client.join-request" => DeserializeMessage<ClientJoinRequestMessage>(wireEnvelope.Payload),
             "player.command" => DeserializeMessage<PlayerCommandMessage>(wireEnvelope.Payload),
             "player.action" => DeserializeMessage<PlayerActionMessage>(wireEnvelope.Payload),
+            "client.world-resync" => DeserializeMessage<ClientWorldResyncRequestMessage>(wireEnvelope.Payload),
             "server.hello" => DeserializeMessage<ServerHelloMessage>(wireEnvelope.Payload),
             "server.join-accepted" => DeserializeMessage<JoinAcceptedMessage>(wireEnvelope.Payload),
             "server.join-rejected" => DeserializeMessage<JoinRejectedMessage>(wireEnvelope.Payload),

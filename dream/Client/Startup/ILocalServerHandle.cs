@@ -11,4 +11,11 @@ public interface ILocalServerHandle : IAsyncDisposable
     string? ErrorMessage { get; }
 
     DedicatedServerPerformanceSnapshot LatestPerformance { get; }
+
+    // Handles that start lazily report false until EnsureStarted runs.
+    bool IsStarted => true;
+
+    void EnsureStarted()
+    {
+    }
 }

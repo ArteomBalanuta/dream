@@ -8,12 +8,7 @@ namespace Dream.Server;
 
 public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
 {
-    private static readonly PlayerSimulationTuning DefaultServerTuning = new(
-        EyeHeightOffset: 0.35f,
-        MouseSensitivity: 2.5f,
-        MoveSpeed: 6f,
-        NoclipSpeed: 18f,
-        JumpVelocity: 5f);
+    private static readonly PlayerSimulationTuning DefaultServerTuning = PlayerSimulationTuning.AuthoritativeDefault;
 
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
@@ -26,6 +21,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly object _authoritySync = new();
+    private readonly BackgroundCheckpointWriter? _checkpointWrites;
     private double _checkpointElapsedSeconds;
 
     public DedicatedServerHost(
@@ -35,7 +31,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         _authority = authority;
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
+        _checkpointWrites = Runtime?.CheckpointWriter is { } checkpointWriter
+            ? new BackgroundCheckpointWriter(checkpointWriter)
+            : null;
     }
+
+    public BackgroundCheckpointWriter? CheckpointWrites => _checkpointWrites;
+
+    // How long until the tick runner's next fixed tick is due.
+    public double SecondsUntilNextTick =>
+        TickPacer.SecondsUntilNextTick(_tickRunner.RemainingSeconds, SimulationClock.FixedDeltaSeconds);
 
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
@@ -46,7 +51,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 new ClientHelloHandler(),
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
-                new PlayerActionHandler()
+                new PlayerActionHandler(),
+                new WorldResyncRequestHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
@@ -60,7 +66,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 new ClientHelloHandler(),
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
-                new PlayerActionHandler()
+                new PlayerActionHandler(),
+                new WorldResyncRequestHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
@@ -121,7 +128,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     _checkpointElapsedSeconds += fixedDeltaSeconds;
                     while (_checkpointElapsedSeconds >= 5d)
                     {
-                        Runtime.PersistCheckpoint();
+                        // Capture is in-memory; the database write runs off the tick thread.
+                        if (_checkpointWrites != null &&
+                            Runtime.CapturePersistenceCheckpoint() is { } checkpoint)
+                        {
+                            _checkpointWrites.Enqueue(checkpoint);
+                        }
+
                         _checkpointElapsedSeconds -= 5d;
                     }
                 }
@@ -151,6 +164,21 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         lock (_authoritySync)
         {
             return new ServerSnapshotMessage(_authority.ExportSnapshot(includeWorldSnapshot));
+        }
+    }
+
+    // With no joined receiver, pending world and damage deltas have nobody to reach. Later joiners
+    // get the current world in JoinAccepted, so the backlog is dropped instead of replayed on top of it.
+    public void DiscardUndeliveredSnapshotDeltas()
+    {
+        if (_authority == null)
+        {
+            return;
+        }
+
+        lock (_authoritySync)
+        {
+            _ = _authority.ExportSnapshot();
         }
     }
 
@@ -196,11 +224,23 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             {
                 _sessionClaims.TryRemove(sessionId, out _);
             }
+
+            if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
+            {
+                lock (_authoritySync)
+                {
+                    runtimeAuthority.ReleaseSession(sessionId);
+                }
+            }
         }
+
+        _connections.TryRemove(connectionId, out _);
     }
 
     public void Dispose()
     {
+        // Finish pending checkpoint writes before the authority disposes its persistence.
+        _checkpointWrites?.Dispose();
         switch (_authority)
         {
             case IDisposable disposable:

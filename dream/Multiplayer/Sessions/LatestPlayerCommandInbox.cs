@@ -8,6 +8,17 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
     private readonly object _sync = new();
     private readonly Dictionary<PlayerSessionId, PlayerCommandFrame> _pending = new();
 
+    public bool HasPending
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _pending.Count > 0;
+            }
+        }
+    }
+
     public void Enqueue(PlayerCommandFrame commandFrame)
     {
         lock (_sync)

@@ -140,6 +140,12 @@ That means the desktop client is now connected to the live transport edge withou
 The next client-authority step now also applies a first slice of authoritative local state back into the runtime:
 
 - `ClientCorrectionApplier` mirrors the authoritative local-player actor snapshot onto the client runtime player position, facing, and health
+- in connected play, the local player's position is reconciled rather than hard-snapped. `ClientPredictionReconciler` records the predicted position after each local tick, keyed by command sequence. Each snapshot compares the server position with the prediction for `LastAcceptedCommandSequences[localSession]`:
+  - errors up to 5 cm are ignored;
+  - errors up to 3 m are blended in over 0.1 s through `Player.NudgeWorldPosition`, which keeps velocity, and the remaining history is shifted so the error is not applied twice;
+  - larger errors, or snapshots with no acknowledged command, snap the player.
+  The join bootstrap and rejected-action corrections still snap, and they reset the reconciler.
+- client prediction uses `PlayerSimulationTuning.WithAuthoritativeMovement()`: the server's move, noclip and jump values (`PlayerSimulationTuning.AuthoritativeDefault`, which the server host also uses), with local eye height and mouse sensitivity. The local `NoclipSpeed` setting therefore has no effect in connected play until the server accepts per-player tuning.
 - `ClientCorrectionApplier` now also mirrors the authoritative interaction mode from `ServerSnapshotEnvelope` onto the client runtime so HUD and future use-routing logic can converge on server-owned mode state
 - `RemoteWorldMutationApplier` reconciles full world snapshots plus incremental cube mutation deltas into the client runtime map
 - `RemoteEnemyStateApplier` replaces client-local enemy runtime state from authoritative enemy actor snapshots
@@ -151,6 +157,34 @@ Connected desktop play also changes what the local runtime is allowed to do:
 - local movement and look simulation are suppressed while connected
 - local primary-use authority is suppressed while connected
 - local enemy simulation is suppressed while connected
+- the desktop client's world is a `ClientWorldSession` (`Client/World`), not a `WorldSessionRuntime`. It owns the replicated `Map` (built with `replicatedCubeBodies`, so placed cubes are kinematic and move only through server `CubeMoved` deltas), the locally predicted `Player`, and the replicated `EnemyRegistry`.
+  - `AdvancePredictionTick` predicts the local player, steps physics and settles rubble. It has no server paths: no authoritative actions, replication export, session registration, persistence or wolf spawn.
+  - Client appliers target `IClientWorldState`.
+  - `ClientWorldBoundaryTests` fails if client code references `WorldSessionRuntime` again.
+  - The local use/attack animation is driven from the held primary-use input at the attack cadence. Before, the stripped simulation frame meant it never played in connected play.
+
+World mutation deltas carry a server-assigned `Sequence`, and `JoinAcceptedMessage.InitialWorldMutationSequence` names the last delta already folded into `InitialWorld`.
+- `RemoteWorldMutationApplier.ApplySnapshotToRuntime` skips sequenced deltas at or below the client's acknowledged sequence.
+- Cube deltas and `PlacedCubeSnapshot` carry the cube's server `ActorId`. Clients resolve moves and destroys through `Map.TryGetCubeByReplicatedId` before falling back to the cell.
+- A `CubeMoved` delta whose cube the client cannot find is dropped and logged as `client.world.move-miss`; it never creates a cube.
+- The server drops a same-cell `CubeMoved` from a snapshot batch when a later mutation for the same cube follows (`WorldSessionRuntime.CoalesceSameCellMoves`). Cross-cell moves stay in order.
+- About once a second a snapshot carries `WorldChecksum` (`WorldStateChecksum`: intact raised cube cells and rubble origins with materials). A client whose world no longer matches sends `ClientWorldResyncRequestMessage` (rate-limited to one per 2 s). `WorldResyncRequestHandler` answers that connection only with `ExportWorldResync`: a full world whose `MutationSequence` the client acknowledges. Deltas pending for other clients are not drained.
+- `DedicatedServerService` discards pending deltas on ticks with no joined connection instead of keeping them as a backlog.
+- Rubble is client-cosmetic for players. Fracture pieces use the Bullet `DebrisFilter` group and players use `CharacterFilter`, and neither collides with the other on server or client, so locally simulated rubble cannot make prediction diverge.
+
+Every joined session gets the same server-side player.
+- The first session takes the runtime's primary `Player` seat. Later sessions get a `RemoteSessionPlayerState` that wraps its own physics `Player`, with a body registered through `PhysicsIntegrator.AddSessionPlayerBody`. Previously later sessions were kinematic ghosts with no gravity, jump or collision.
+- All sessions are simulated before the physics step and reuse their last command when none arrives, so movement no longer depends on command arrival rate.
+- When the primary leaves, its body is parked out of the world (`SetPlayerBodyParked`) instead of staying as an invisible collider. A secondary's body is removed when it leaves.
+- A former primary that returns after the seat was taken gets its own secondary seat instead of a dead shared actor id.
+
+Networking and timing:
+- Both TCP ends set `NoDelay`.
+- The client sends at most one merged command per client tick through a background writer (`RemoteClientSession.QueueCommandFrame`), and queues actions in order.
+- Each `ServerConnection` has an ordered outbound queue drained by its own writer. The tick loop only enqueues; unsent consecutive snapshots are merged (`ServerSnapshotEnvelope.TryCoalesce`), and a backlog over 512 messages faults the connection and drops it.
+- Receive paths deframe through `FrameReceiveBuffer` instead of copying the whole backlog per frame.
+- The server tick loop runs on a dedicated thread paced by `TickPacer` (1 ms timer resolution plus a short spin).
+- The desktop starts the integrated server only when local hosting is used (`OnDemandLocalServerHandle`).
 
 `PlayScene` now requires a protocol client session, so this connected-client behavior is the normal desktop path for the first local player as well as later joined clients. The current integrated host still uses TCP loopback as the concrete local transport; the planned next step is an in-memory duplex transport that preserves the same protocol, command, action, and snapshot flow without socket overhead.
 

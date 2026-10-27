@@ -46,9 +46,9 @@ public class Player : IReplicatedPlayerTarget
         ArgumentNullException.ThrowIfNull(physics);
         ArgumentNullException.ThrowIfNull(physicsBody);
 
-        if (!ReferenceEquals(physics.PlayerBody, physicsBody))
+        if (!physics.IsPlayerBody(physicsBody))
         {
-            throw new InvalidOperationException("Player requires the integrator registered player body.");
+            throw new InvalidOperationException("Player requires a registered player body (the primary body or a session player body).");
         }
 
         _map = map;
@@ -193,6 +193,17 @@ public class Player : IReplicatedPlayerTarget
 
     public bool IsNoclipEnabled => _motor.IsNoclipEnabled;
 
+    public void NudgeWorldPosition(Vector3 delta)
+    {
+        if (delta == Vector3.Zero)
+        {
+            return;
+        }
+
+        _cameraRig.Translate(PhysicsBody, delta);
+        LastReportedPosition = GetWorldPosition();
+    }
+
     public void SetWorldPosition(Vector3 position)
     {
         _cameraRig.Teleport(PhysicsBody, position, 0.35f);
@@ -238,6 +249,9 @@ public class Player : IReplicatedPlayerTarget
         public PlayerContactCallback(RigidBody playerBody)
         {
             _playerBody = playerBody;
+            // Match the player body's filter so contact tests (grounding) ignore rubble too.
+            CollisionFilterGroup = (int)PhysicsIntegrator.PlayerCollisionGroup;
+            CollisionFilterMask = (int)PhysicsIntegrator.PlayerCollisionMask;
         }
 
         public override float AddSingleResult(

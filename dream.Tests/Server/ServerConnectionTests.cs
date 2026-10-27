@@ -24,6 +24,7 @@ public class ServerConnectionTests
         await transport.QueueInboundAsync(codec, framer, new ClientJoinRequestMessage("session-a", "player-a"), sequence: 1);
 
         bool keepOpen = await connection.ProcessIncomingAsync();
+        Assert.True(await connection.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
         DecodedProtocolMessage reply = transport.SingleOutbound(codec, framer);
 
         Assert.True(keepOpen);

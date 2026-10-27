@@ -6,6 +6,11 @@ namespace Dream.Rendering.Core;
 public sealed class StaticMeshBuffer : IDisposable
 {
     private const int FloatsPerVertex = 8;
+
+    // Must match the attribute locations declared in shaders/cubeVertex.glsl.
+    public const int PositionAttributeLocation = 0;
+    public const int NormalAttributeLocation = 1;
+    public const int TexCoordAttributeLocation = 3;
     private readonly int _vertexArrayObject;
     private readonly int _vertexBufferObject;
     private readonly int _elementBufferObject;
@@ -39,12 +44,12 @@ public sealed class StaticMeshBuffer : IDisposable
             BufferUsageHint.StaticDraw);
 
         int stride = FloatsPerVertex * sizeof(float);
-        GL.EnableVertexAttribArray(0);
-        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, 0);
-        GL.EnableVertexAttribArray(1);
-        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
-        GL.EnableVertexAttribArray(3);
-        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        GL.EnableVertexAttribArray(PositionAttributeLocation);
+        GL.VertexAttribPointer(PositionAttributeLocation, 3, VertexAttribPointerType.Float, false, stride, 0);
+        GL.EnableVertexAttribArray(NormalAttributeLocation);
+        GL.VertexAttribPointer(NormalAttributeLocation, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        GL.EnableVertexAttribArray(TexCoordAttributeLocation);
+        GL.VertexAttribPointer(TexCoordAttributeLocation, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
 
         GL.BindVertexArray(0);
     }

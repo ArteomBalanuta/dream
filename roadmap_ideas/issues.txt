@@ -1,3 +1,19 @@
-after destroying the block - small block can't be pushed or moved also smaller blocks are too tightly located their collision wires are fused (not sure that is the issue but check) I want random distribution of them after I destroy them, so it is not the same pattern for each newly spawned piece.
+while trying to move small pieces of a destroyed cube i encountered this:
+
+Fatal error.
+0xC0000005
+   at BulletSharp.UnsafeNativeMethods.btMotionState_getWorldTransform(IntPtr, BulletSharp.Math.Matrix ByRef)
+   at Dream.Simulation.Physics.PhysicsSyncSystem.SyncDynamicMapBodies(Dream.Simulation.World.Map, System.Collections.Generic.IEnumerable`1<BulletSharp.RigidBody>)
+   at Dream.Simulation.Runtime.WorldSessionRuntime.UpdateAcceptedCommand(Single, Dream.Simulation.Players.PlayerCommandFrame, Dream.Simulation.Players.PlayerSimulationTuning, Boolean)
+   at Dream.Simulation.Runtime.WorldSessionRuntime.AdvanceAuthoritativeTick(UInt64, Single, System.Nullable`1<Dream.Simulation.Players.PlayerCommandFrame>, Dream.Simulation.Players.PlayerSimulationTuning, Boolean)
+   at Dream.Simulation.Runtime.WorldSessionRuntime.AdvanceAuthoritativeTick(UInt64, Single, Dream.Simulation.Players.PlayerCommandFrame, Dream.Simulation.Players.PlayerSimulationTuning, Boolean)
+   at Dream.Client.Scenes.PlayScene+<>c__DisplayClass45_0.<Update>b__0(UInt64, Single)
+   at Dream.Simulation.Runtime.ServerTickRunner.Advance(Double, System.Action`2<UInt64,Single>)
+   at Dream.Client.Scenes.PlayScene.Update(OpenTK.Windowing.Common.FrameEventArgs, OpenTK.Windowing.GraphicsLibraryFramework.KeyboardState, OpenTK.Windowing.GraphicsLibraryFramework.MouseState)
+   at Dream.Application.Game.OnUpdateFrame(OpenTK.Windowing.Common.FrameEventArgs)
+   at OpenTK.Windowing.Desktop.GameWindow.Run()
+   at Dream.Application.Program.RunDesktop()
+   at Dream.Application.Program.Main(System.String[])
 
 
+There is a edge case bug for example if i move multiple cubes A solid one and small ones.. there is a chance rendering of the small will stop. They will become invisible yet i see the collision frames of them. I think it has something to do with transactions we lack currently and our renderer <-> physics <-> cube collisions too. Analyze where transcations would hugely boost the impl so such small bugs wont repeat. I could be wrong double check me. 

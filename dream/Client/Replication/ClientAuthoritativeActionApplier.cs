@@ -11,7 +11,7 @@ namespace Dream.Client.Replication;
 public static class ClientAuthoritativeActionApplier
 {
     public static void ApplyActionResult(
-        WorldSessionRuntime runtime,
+        IClientWorldState runtime,
         SceneEventHub events,
         AuthoritativeActionResult result,
         IMultiplayerDiagnosticsSink? diagnostics = null)
@@ -20,7 +20,7 @@ public static class ClientAuthoritativeActionApplier
     }
 
     public static void ApplyActionResult(
-        WorldSessionRuntime runtime,
+        IClientWorldState runtime,
         SceneEventHub events,
         AuthoritativeActionResult result,
         string? localSessionId,

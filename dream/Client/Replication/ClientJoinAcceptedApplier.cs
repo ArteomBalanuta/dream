@@ -7,13 +7,19 @@ namespace Dream.Client.Replication;
 
 public static class ClientJoinAcceptedApplier
 {
-    public static void ApplyToRuntime(WorldSessionRuntime runtime, JoinAcceptedMessage joinAccepted)
+    public static void ApplyToRuntime(IClientWorldState runtime, JoinAcceptedMessage joinAccepted)
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
         if (!joinAccepted.InitialWorld.HasValue && joinAccepted.EffectiveInitialActors.Count == 0)
         {
             return;
+        }
+
+        if (joinAccepted.InitialWorld.HasValue && joinAccepted.InitialWorldMutationSequence.HasValue)
+        {
+            // Deltas up to this sequence are already part of InitialWorld; replaying them duplicates cubes.
+            runtime.AcknowledgeReplicatedWorldMutations(joinAccepted.InitialWorldMutationSequence.Value);
         }
 
         ServerSnapshotEnvelope bootstrapSnapshot = new(

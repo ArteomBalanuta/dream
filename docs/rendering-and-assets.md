@@ -327,6 +327,8 @@ The startup world now uses multiple textured terrain variants for intact geometr
 
 Imported terrain materials that do not have explicit compatibility glTF cube variants now render through the live terrain-material fallback path when they appear in dynamic compatibility cubes. This keeps dynamic/live world visuals aligned with the authoritative material matrix without requiring a separate glTF cube asset per terrain texture.
 
+The fallback path (`Render.DrawTerrainCubeFallback`) draws a `StaticMeshBuffer` built by `TerrainFallbackCubeMesh`: a unit cube from `StaticWorldChunkMeshBuilder` with positions, normals and 0–1 UVs on all six faces, wound counter-clockwise for back-face culling. Until 2026-10-27 it drew the position-only debug cube VAO. The `cube` shader then read disabled normal and UV attributes, so fallback cubes and rubble rendered flat and untextured, and three faces were culled away because of inconsistent winding. The position-only VAO remains for debug, collision and wireframe draws. `StaticMeshBuffer` exposes its attribute locations, which a test checks against `shaders/cubeVertex.glsl`.
+
 ## World Asset Normalization
 
 Imported world assets do not always arrive in gameplay-ready scale. The current project now handles that through explicit normalization metadata instead of through arbitrary render-only scale tweaking.

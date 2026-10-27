@@ -11,11 +11,16 @@ public sealed class TcpClientTransport : ITransportConnection
     public TcpClientTransport(TcpClient client, string? connectionId = null)
     {
         _client = client;
+        // Commands and snapshots are small, latency-sensitive writes; Nagle batching plus delayed
+        // ACK held them back in bursts.
+        _client.NoDelay = true;
         _stream = client.GetStream();
         ConnectionId = connectionId ?? client.Client.RemoteEndPoint?.ToString() ?? Guid.NewGuid().ToString("N");
     }
 
     public string ConnectionId { get; }
+
+    public bool NoDelay => _client.NoDelay;
 
     public static async ValueTask<TcpClientTransport> ConnectAsync(
         string host,

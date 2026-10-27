@@ -35,7 +35,7 @@ public readonly record struct WorldSessionUpdateResult(
 // WorldSessionRuntime is the first authoritative simulation seam extracted from PlayScene.
 // It owns runtime truth and stable update order, while the desktop scene remains responsible
 // for client-only input capture, viewmodel presentation, HUD, and rendering.
-public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTarget
+public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
     private readonly bool _loadVisualAssets;
@@ -54,6 +54,14 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
     private readonly IPlayerProfileRepository? _playerProfiles;
     private readonly IWorldPersistenceRepository? _worldPersistence;
+    private readonly IPersistenceCheckpointWriter? _checkpointWriter;
+    // Immediate writes go through an ordered queue (background on the dedicated server) and the
+    // identity/profile lookups the tick needs are served from memory, so gameplay actions no
+    // longer read whole tables or commit on the simulation thread.
+    private readonly PersistenceWriteQueue? _writes;
+    private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _knownProfileNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
     private double _lastPhysicsStepMilliseconds;
@@ -67,15 +75,21 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         bool loadVisualAssets = true,
         IPlayerProfileRepository? playerProfiles = null,
         IWorldPersistenceRepository? worldPersistence = null,
-        CombatFormulaService? combatFormulaService = null)
+        CombatFormulaService? combatFormulaService = null,
+        IPersistenceCheckpointWriter? checkpointWriter = null,
+        PersistenceWriteQueue? persistenceWrites = null)
     {
+        _writes = persistenceWrites ??
+            (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _loadVisualAssets = loadVisualAssets;
         _events = events;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
+        _checkpointWriter = checkpointWriter ??
+            (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
-        Map = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
+        Map = CreateMap(floorSize);
 
         PhysicsFactory physicsFactory = new();
         var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
@@ -93,10 +107,30 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         _worldObjects = new WorldObjectRegistry();
         _enemies = new EnemyRegistry();
         SubscribeReplicationExports();
+
         RestorePersistedWorldState();
     }
 
     public Map Map { get; private set; }
+
+    public ulong LastWorldMutationSequence { get; private set; }
+
+    public ulong LastAppliedReplicatedWorldMutationSequence { get; private set; }
+
+    public void AcknowledgeReplicatedWorldMutations(ulong sequence)
+    {
+        LastAppliedReplicatedWorldMutationSequence = Math.Max(LastAppliedReplicatedWorldMutationSequence, sequence);
+    }
+
+    private Map CreateMap(int floorSize)
+    {
+        return new Map(
+            Physics,
+            loadVisualAssets: _loadVisualAssets,
+            generateStartupTerrain: true,
+            width: floorSize,
+            depth: floorSize);
+    }
 
     public PhysicsIntegrator Physics { get; }
 
@@ -121,13 +155,28 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
     {
-        if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
+        if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null && !existing.IsLocal)
         {
             existing.UpdateDisplayName(displayName);
+            existing.MarkSpawned();
             _sessionInteractionModes.TryAdd(existing.SessionId, PlayerInteractionMode.Building);
-            if (!existing.IsLocal && PrimaryRemoteSessionId == null && existing.ActorId == Player.Combatant.Actor.Id)
+            if (existing.ActorId == Player.Combatant.Actor.Id)
             {
-                PrimaryRemoteSessionId = existing.SessionId;
+                if (PrimaryRemoteSessionId == null || PrimaryRemoteSessionId == existing.SessionId)
+                {
+                    SeatPrimary(existing.SessionId);
+                    return existing;
+                }
+
+                // The primary seat was taken while this player was away. Previously the returning
+                // session kept the primary actor id without owning the seat, so it could neither
+                // move nor act. Give it its own seat instead.
+                return RegisterSecondarySession(existing.SessionId, existing.DisplayName);
+            }
+
+            if (!_secondaryRemotePlayers.ContainsKey(existing.SessionId))
+            {
+                CreateSecondaryPlayer(existing.SessionId, existing.ActorId);
             }
 
             return existing;
@@ -141,17 +190,23 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 isLocal: false,
                 displayName: displayName);
             _sessionInteractionModes[primary.SessionId] = PlayerInteractionMode.Building;
-            PrimaryRemoteSessionId = primary.SessionId;
+            SeatPrimary(primary.SessionId);
             return primary;
         }
 
+        return RegisterSecondarySession(sessionId, displayName);
+    }
+
+    private void SeatPrimary(PlayerSessionId sessionId)
+    {
+        PrimaryRemoteSessionId = sessionId;
+        Physics.SetPlayerBodyParked(false);
+    }
+
+    private ConnectedPlayer RegisterSecondarySession(PlayerSessionId sessionId, string? displayName)
+    {
         int actorId = AllocateRemoteActorId();
-        Vector3 spawnPosition = ResolveSecondaryRemoteSpawnPosition(_secondaryRemotePlayers.Count);
-        _secondaryRemotePlayers[sessionId] = new RemoteSessionPlayerState(
-            actorId,
-            sessionId,
-            spawnPosition,
-            combatFormulaService: _combatFormulaService);
+        CreateSecondaryPlayer(sessionId, actorId);
         ConnectedPlayer remote = _sessions.Register(
             sessionId,
             actorId,
@@ -161,6 +216,49 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         return remote;
     }
 
+    private void CreateSecondaryPlayer(PlayerSessionId sessionId, int actorId)
+    {
+        Vector3 spawnPosition = ResolveSecondaryRemoteSpawnPosition(_secondaryRemotePlayers.Count);
+        _secondaryRemotePlayers[sessionId] = new RemoteSessionPlayerState(
+            actorId,
+            sessionId,
+            spawnPosition,
+            Map,
+            Physics,
+            combatFormulaService: _combatFormulaService);
+    }
+
+    public void DetachRemoteSession(PlayerSessionId sessionId)
+    {
+        if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player) ||
+            player == null ||
+            player.IsLocal)
+        {
+            return;
+        }
+
+        PersistPlayerProfile(sessionId, TryResolveAuthoritativePlayerTarget(
+            sessionId,
+            out _,
+            out IAuthoritativePlayerTarget? target)
+                ? target!.Combatant
+                : Player.Combatant);
+        player.MarkDespawned();
+        player.ResetAcceptedSequences();
+
+        if (PrimaryRemoteSessionId == sessionId)
+        {
+            PrimaryRemoteSessionId = null;
+            _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
+            // Without an occupant the primary body would stay as an invisible collider.
+            Physics.SetPlayerBodyParked(true);
+        }
+        else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
+        {
+            secondary.Dispose();
+        }
+    }
+
     public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
     {
         if (_playerProfiles == null)
@@ -168,7 +266,10 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
+        // Join is rare and runs off the tick; make queued writes for this player visible first.
+        _writes?.Flush(TimeSpan.FromSeconds(5));
         PersistedPlayerProfile profile = _playerProfiles.GetOrCreate(playerName);
+        CacheProfile(playerName, profile);
         PersistedPlayerWorldState? worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
@@ -229,15 +330,33 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             }
         }
 
-        Player.Update(
-            delta,
-            playerInput,
-            playerTuning);
+        if (!Physics.IsPlayerBodyParked)
+        {
+            Player.Update(
+                delta,
+                playerInput,
+                playerTuning);
+        }
+
+        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        {
+            secondary.AdvanceCombat(delta);
+            secondary.Simulate(delta, playerTuning);
+        }
+
         Stopwatch physicsStopwatch = Stopwatch.StartNew();
         Physics.StepSimulationFixed(delta);
         physicsStopwatch.Stop();
         _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
-        Player.SyncCameraFromBody(playerTuning);
+        if (!Physics.IsPlayerBodyParked)
+        {
+            Player.SyncCameraFromBody(playerTuning);
+        }
+
+        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        {
+            secondary.SyncAfterPhysicsStep(playerTuning);
+        }
 
         if (allowGameplaySimulation)
         {
@@ -250,7 +369,17 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             ResolvePlayerEnemySeparation(playerTargets);
         }
 
-        _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
+        PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
+        foreach (PhysicsCubeMoveDelta movedCube in syncResult.MovedCubes)
+        {
+            QueueWorldMutation(new WorldMutationDelta(
+                WorldMutationKind.CubeMoved,
+                movedCube.SourceCellPosition,
+                movedCube.TargetCellPosition,
+                movedCube.CenterPosition,
+                ActorId: _worldObjects.TryGet(movedCube.Cube)?.Actor.Id));
+        }
+
         return new WorldSessionUpdateResult(primaryUseTriggered, actionResult);
     }
 
@@ -317,7 +446,9 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             cameraViewMode);
 
         Stopwatch renderExportStopwatch = Stopwatch.StartNew();
-        GeometryRenderExport visibleWorld = Map.CaptureFullGeometryRenderExport();
+        GeometryRenderExport visibleWorld = Map.CapturePresentationGeometryRenderExport(
+            presentationCamera.Position,
+            maxRenderDistance);
         renderExportStopwatch.Stop();
 
         return WorldSessionPresentationState.Create(
@@ -381,12 +512,16 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         Physics.ResetMapBodies();
 
-        var rebuiltMap = new Map(Physics, loadVisualAssets: _loadVisualAssets, generateStartupTerrain: true, width: floorSize, depth: floorSize);
+        var rebuiltMap = CreateMap(floorSize);
         previousMap.CopyPlacedCubesTo(rebuiltMap);
         _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
 
         Map = rebuiltMap;
         Player.BindMap(rebuiltMap);
+        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        {
+            secondary.PhysicsPlayer.BindMap(rebuiltMap);
+        }
         _enemies.ClampToMapBounds(rebuiltMap);
 
         Vector3 clampedPosition = new(
@@ -404,12 +539,63 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             subscription.Dispose();
         }
 
+        // Finish queued persistence writes before the owner disposes the repositories.
+        _writes?.Dispose();
         Physics.Dispose();
     }
+
+    public PersistenceWriteQueue? PersistenceWrites => _writes;
+
+    public const ulong WorldChecksumIntervalTicks = 64;
+    private ulong _nextWorldChecksumTick;
 
     public ServerSnapshotEnvelope ExportServerSnapshotEnvelope(bool includeWorldSnapshot = false)
     {
         IReadOnlyList<ActorSnapshot> actors = CaptureActorSnapshots();
+        WorldSnapshot? worldSnapshot = includeWorldSnapshot
+            ? ExportWorldSnapshot()
+            : null;
+        WorldMutationDelta[] mutations = CoalesceSameCellMoves(_pendingWorldMutations);
+
+        ulong? checksum = null;
+        if (CurrentServerTick >= _nextWorldChecksumTick)
+        {
+            checksum = WorldStateChecksum.Compute(Map);
+            _nextWorldChecksumTick = CurrentServerTick + WorldChecksumIntervalTicks;
+        }
+
+        ServerSnapshotEnvelope envelope = new(
+            CurrentServerTick,
+            CaptureAcceptedCommandSequences(),
+            actors,
+            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
+            worldSnapshot,
+            mutations,
+            _pendingDamageEvents.ToArray(),
+            checksum,
+            checksum.HasValue ? LastWorldMutationSequence : 0);
+
+        _pendingWorldMutations.Clear();
+        _pendingDamageEvents.Clear();
+        return envelope;
+    }
+
+    // Full world for a client that reported a checksum mismatch. Pending deltas stay queued for
+    // everyone; the world carries the sequence they are already reflected up to.
+    public ServerSnapshotEnvelope ExportWorldResyncEnvelope()
+    {
+        return new ServerSnapshotEnvelope(
+            CurrentServerTick,
+            CaptureAcceptedCommandSequences(),
+            CaptureActorSnapshots(),
+            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
+            ExportWorldSnapshot(),
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+    }
+
+    private Dictionary<string, ulong> CaptureAcceptedCommandSequences()
+    {
         Dictionary<string, ulong> acceptedSequences = new();
         foreach (ConnectedPlayer player in _sessions.Players)
         {
@@ -419,22 +605,36 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             }
         }
 
-        WorldSnapshot? worldSnapshot = includeWorldSnapshot
-            ? ExportWorldSnapshot()
-            : null;
+        return acceptedSequences;
+    }
 
-        ServerSnapshotEnvelope envelope = new(
-            CurrentServerTick,
-            acceptedSequences,
-            actors,
-            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
-            worldSnapshot,
-            _pendingWorldMutations.ToArray(),
-            _pendingDamageEvents.ToArray());
+    // A resting or jostled cube emits a same-cell CubeMoved every tick. Such a move only changes
+    // the exact center, so it can be dropped whenever a later mutation for the same cube follows
+    // in the batch. Cross-cell moves are kept in order because they change cell occupancy.
+    public static WorldMutationDelta[] CoalesceSameCellMoves(IReadOnlyList<WorldMutationDelta> mutations)
+    {
+        List<WorldMutationDelta> kept = new(mutations.Count);
+        HashSet<int> laterActors = [];
+        for (int index = mutations.Count - 1; index >= 0; index--)
+        {
+            WorldMutationDelta mutation = mutations[index];
+            if (mutation.ActorId is int actorId)
+            {
+                bool sameCellMove = mutation.Kind == WorldMutationKind.CubeMoved &&
+                    mutation.TargetCellPosition == mutation.CellPosition;
+                if (sameCellMove && laterActors.Contains(actorId))
+                {
+                    continue;
+                }
 
-        _pendingWorldMutations.Clear();
-        _pendingDamageEvents.Clear();
-        return envelope;
+                laterActors.Add(actorId);
+            }
+
+            kept.Add(mutation);
+        }
+
+        kept.Reverse();
+        return kept.ToArray();
     }
 
     public IReadOnlyList<ActorSnapshot> CaptureActorSnapshots()
@@ -490,6 +690,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         List<Vector3> placedCubeCells = [];
         List<PlacedCubeSnapshot> placedCubes = [];
         List<Vector3> fracturedCubeCells = [];
+        List<FracturedCubeSnapshot> fracturedCubes = [];
         List<Vector3> authoredSubcellCells = [];
 
         foreach (GeometryCellRecord cell in Map.GeometryCells.Values)
@@ -507,16 +708,28 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                     new Vector3(cell.Key.X + 0.5f, cell.Key.Y + 0.5f, cell.Key.Z + 0.5f);
                 Vector3 authoritativeCell = ToCellPosition(centerPosition);
                 placedCubeCells.Add(authoritativeCell);
-                placedCubes.Add(new PlacedCubeSnapshot(authoritativeCell, centerPosition));
-            }
-            else if (cell.FracturePieces == null)
-            {
-                authoredSubcellCells.Add(cellPosition);
+                placedCubes.Add(new PlacedCubeSnapshot(
+                    authoritativeCell,
+                    centerPosition,
+                    cell.Definition.MaterialId,
+                    cube != null ? _worldObjects.TryGet(cube)?.Actor.Id : null));
             }
             else
             {
-                fracturedCubeCells.Add(cellPosition);
+                authoredSubcellCells.Add(cellPosition);
             }
+        }
+
+        foreach (GeometryCellRecord rubble in Map.RubbleCells.Values)
+        {
+            Vector3 originCell = new(rubble.Key.X, rubble.Key.Y, rubble.Key.Z);
+            fracturedCubeCells.Add(originCell);
+            fracturedCubes.Add(new FracturedCubeSnapshot(
+                originCell,
+                rubble.Definition.MaterialId,
+                rubble.FracturePieces!
+                    .Where(GeometryFracturePiece.IsValid)
+                    .ToArray()));
         }
 
         return new WorldSnapshot(
@@ -526,7 +739,9 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             placedCubeCells,
             fracturedCubeCells,
             authoredSubcellCells,
-            placedCubes);
+            placedCubes,
+            fracturedCubes,
+            LastWorldMutationSequence);
     }
 
     public AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message)
@@ -599,9 +814,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             SetSessionInteractionMode(commandFrame.SessionId, commandFrame.RequestedMode.Mode.Value);
         }
 
-        actor.AdvanceCombat(deltaTime);
-        actor.ApplyCommand(commandFrame, playerTuning, deltaTime);
-        actor.ClampToMap(Map);
+        // Movement is simulated in the next tick before the physics step, together with every
+        // other session; deltaTime and tuning are applied there.
+        _ = deltaTime;
+        _ = playerTuning;
+        actor.ApplyCommand(commandFrame);
     }
 
     private void ApplyInteractionModeSelection(PlayerSessionId sessionId, PlayerInteractionCommand command)
@@ -696,6 +913,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                     MaxHealth: 0));
         }
 
+        record = RepairCubeRecordFromPersistence(record);
+
         PlayerAttackResolution cubeAttack = combatant.ResolveAttack(
             () => Random.Shared.Next(
                 combatant.DerivedStats.MinDamage,
@@ -733,10 +952,21 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             if (Map.TryGetCellForCube(destroyedCube, out GeometryCellKey cell) &&
                 Map.FractureCubeIntoPieces(cell))
             {
+                GeometryCellRecord? fracturedCell = Map.TryGetRubbleAtCell(cell);
+                GeometryMaterialId materialId = fracturedCell?.Definition.MaterialId ?? GeometryMaterialId.Grass;
+                GeometryFracturePiece[] fracturePieces = Map.CaptureFracturePieces()
+                    .Where(piece => piece.Cell == cell)
+                    .Select(piece => piece.Piece)
+                    .Where(GeometryFracturePiece.IsValid)
+                    .ToArray();
                 DeletePersistedPlacedCube(record.Actor.Id);
                 PersistFracturePieces(record, cell);
-                _worldObjects.Unregister(sourceObject);
-                _events.Publish(new CubeFracturedEvent(destroyedCube, new Vector3(cell.X, cell.Y, cell.Z)));
+                _worldObjects.Unregister(sourceObject, preserveDetachedRecord: false);
+                _events.Publish(new CubeFracturedEvent(
+                    destroyedCube,
+                    new Vector3(cell.X, cell.Y, cell.Z),
+                    materialId,
+                    fracturePieces));
             }
             else if (_worldObjects.TryRemove(record))
             {
@@ -746,7 +976,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                     new Vector3(
                         MathF.Floor(destroyedCube.Position.X + 1e-6f),
                         MathF.Floor(destroyedCube.Position.Y + 1e-6f),
-                        MathF.Floor(destroyedCube.Position.Z + 1e-6f))));
+                        MathF.Floor(destroyedCube.Position.Z + 1e-6f)),
+                    record.Actor.Id));
             }
         }
         else
@@ -769,13 +1000,31 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 record.Health.MaxHealth));
     }
 
+    public IPersistenceCheckpointWriter? CheckpointWriter => _checkpointWriter;
+
+    // Synchronous capture-and-write. The dedicated server instead captures under its lock and
+    // writes on a background worker; see DedicatedServerHost.
     public void PersistCheckpoint()
+    {
+        PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint();
+        if (checkpoint != null)
+        {
+            _checkpointWriter?.Write(checkpoint);
+        }
+    }
+
+    // Copies the volatile authoritative state without touching the database, so it is cheap
+    // enough to run on the tick thread.
+    public PersistenceCheckpoint? CapturePersistenceCheckpoint()
     {
         if (_worldPersistence == null)
         {
-            return;
+            return null;
         }
 
+        DateTime now = DateTime.UtcNow;
+        List<PersistedPlayerWorldState> worldStates = [];
+        List<PlayerCheckpointVitals> vitals = [];
         foreach (ConnectedPlayer player in _sessions.Players.Where(player => !player.IsLocal))
         {
             if (!TryResolveAuthoritativePlayerTarget(player.SessionId, out _, out IAuthoritativePlayerTarget? target)
@@ -784,23 +1033,31 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 continue;
             }
 
-            PersistPlayerProfile(player.SessionId, target.Combatant);
-            _worldPersistence.SavePlayerWorldState(new PersistedPlayerWorldState(
+            vitals.Add(new PlayerCheckpointVitals(
+                player.DisplayName,
+                GetSessionInteractionMode(player.SessionId),
+                target.Combatant.Health.CurrentHealth,
+                target.Combatant.Health.MaxHealth));
+            worldStates.Add(new PersistedPlayerWorldState(
                 player.DisplayName,
                 target.Position,
                 target.Facing,
                 CurrentHealth: target.Combatant.Health.CurrentHealth,
                 CurrentEnergy: 0,
-                UpdatedUtc: DateTime.UtcNow));
+                UpdatedUtc: now));
         }
 
-        foreach (EnemyActor enemy in _enemies.ActiveActors.Where(enemy => enemy.IsActive))
-        {
-            PersistEnemy(enemy);
-        }
+        PersistedEnemyInstance[] enemies = _enemies.ActiveActors
+            .Where(enemy => enemy.IsActive)
+            .Select(enemy => CreatePersistedEnemy(enemy, now))
+            .ToArray();
 
-        PersistPlacedCubeCheckpoint();
-        PersistFracturePieceCheckpoint();
+        return new PersistenceCheckpoint(
+            worldStates,
+            vitals,
+            enemies,
+            CapturePlacedCubeCheckpoint(now),
+            CaptureFracturePieceCheckpoint(now));
     }
 
     public void ApplyPersistedPlayerState(
@@ -987,7 +1244,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             ownerPlayerName: ownerPlayerName);
         PersistPlacedCube(record, placementMaterial);
         Vector3 placedCell = ToCellPosition(placedCube.Position);
-        _events.Publish(new CubePlacedEvent(placedCube, placedCell));
+        _events.Publish(new CubePlacedEvent(placedCube, placedCell, placementMaterial));
 
         return new AuthoritativeActionResult(
             message.SessionId.Value,
@@ -1057,27 +1314,38 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             Rejection: new RejectedUseDelta(reason));
     }
 
+    // Sequences let clients skip deltas already folded into the join-time world snapshot.
+    private void QueueWorldMutation(WorldMutationDelta mutation)
+    {
+        LastWorldMutationSequence++;
+        _pendingWorldMutations.Add(mutation with { Sequence = LastWorldMutationSequence });
+    }
+
     private void SubscribeReplicationExports()
     {
         _subscriptions.Add(_events.Subscribe<CubePlacedEvent>(evt =>
         {
-            _pendingWorldMutations.Add(new WorldMutationDelta(
+            QueueWorldMutation(new WorldMutationDelta(
                 WorldMutationKind.CubePlaced,
-                evt.CellPosition));
+                evt.CellPosition,
+                MaterialId: evt.MaterialId,
+                ActorId: _worldObjects.TryGet(evt.Cube)?.Actor.Id));
         }));
 
         _subscriptions.Add(_events.Subscribe<CubeDestroyedEvent>(evt =>
         {
-            _pendingWorldMutations.Add(new WorldMutationDelta(
+            QueueWorldMutation(new WorldMutationDelta(
                 WorldMutationKind.CubeDestroyed,
-                evt.CellPosition));
+                evt.CellPosition,
+                ActorId: evt.ActorId));
         }));
 
         _subscriptions.Add(_events.Subscribe<CubeFracturedEvent>(evt =>
         {
-            _pendingWorldMutations.Add(new WorldMutationDelta(
-                WorldMutationKind.CubeFractured,
-                evt.CellPosition));
+            QueueWorldMutation(WorldMutationDelta.Fractured(
+                evt.CellPosition,
+                evt.MaterialId,
+                evt.Pieces));
         }));
 
         _subscriptions.Add(_events.Subscribe<DamageAppliedEvent>(evt =>
@@ -1139,8 +1407,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
-        PersistedPlayerProfile profile = _playerProfiles.GetOrCreate(player.DisplayName);
-        _playerProfiles.Save(profile with
+        PersistedPlayerProfile profile = GetCachedProfile(player.DisplayName);
+        SaveProfile(player.DisplayName, profile with
         {
             DisplayName = player.DisplayName,
             InteractionMode = interactionMode
@@ -1222,7 +1490,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 UpdatedUtc: DateTime.UtcNow);
             _itemInstances[item.ItemInstanceId] = item;
             slots[slotIndex] = itemInstanceId;
-            _worldPersistence?.SaveItemInstance(item);
+            EnqueueWorldWrite(world => world.SaveItemInstance(item));
             PersistInventorySlot(playerName, slotIndex, itemInstanceId);
             slotIndex++;
         }
@@ -1300,11 +1568,12 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     private void PersistInventorySlot(string playerName, int slotIndex, long itemInstanceId)
     {
-        _worldPersistence?.SaveInventorySlot(new PersistedInventorySlot(
+        PersistedInventorySlot slot = new(
             playerName,
             slotIndex,
             itemInstanceId,
-            DateTime.UtcNow));
+            DateTime.UtcNow);
+        EnqueueWorldWrite(world => world.SaveInventorySlot(slot));
     }
 
     private void RestorePersistedWorldState()
@@ -1319,6 +1588,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
         foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
         {
+            _persistedCubes[persistedCube.CubeId] = persistedCube;
+            _knownProfileNames.Add(persistedCube.OwnerPlayerName);
             Cube? cube = Map.TryAddCube(
                 persistedCube.CellPosition,
                 materialId: persistedCube.MaterialId);
@@ -1395,8 +1666,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
-        PersistedPlayerProfile existing = _playerProfiles.GetOrCreate(player.DisplayName);
-        _playerProfiles.Save(existing with
+        PersistedPlayerProfile existing = GetCachedProfile(player.DisplayName);
+        SaveProfile(player.DisplayName, existing with
         {
             DisplayName = player.DisplayName,
             InteractionMode = GetSessionInteractionMode(sessionId),
@@ -1450,11 +1721,16 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
+        record = RepairCubeRecordFromPersistence(record);
+        if (!TryResolveCubePersistenceIdentity(record, cube, out int cubeId, out string ownerPlayerName))
+        {
+            return;
+        }
+
         Vector3 cellPosition = ToCellPosition(cube.Position);
-        _worldPersistence.DeleteCubeFracturePieces(record.Actor.Id);
-        _worldPersistence.SavePlacedCube(new PersistedPlacedCube(
-            record.Actor.Id,
-            record.OwnerPlayerName ?? "unknown-player",
+        PersistedPlacedCube persisted = new(
+            cubeId,
+            ownerPlayerName,
             cellPosition,
             GeometryShapeKind.SolidCube,
             materialId,
@@ -1462,24 +1738,71 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             record.Health.MaxHealth,
             DateTime.UtcNow,
             DateTime.UtcNow,
-            cube.Position));
+            cube.Position);
+        _persistedCubes[cubeId] = persisted;
+        EnqueueWorldWrite(world =>
+        {
+            world.DeleteCubeFracturePieces(cubeId);
+            world.SavePlacedCube(persisted);
+        });
     }
 
     private void DeletePersistedPlacedCube(int cubeId)
     {
-        _worldPersistence?.DeletePlacedCube(cubeId);
+        _persistedCubes.Remove(cubeId);
+        EnqueueWorldWrite(world => world.DeletePlacedCube(cubeId));
     }
 
-    private void PersistPlacedCubeCheckpoint()
+    private void EnqueueWorldWrite(Action<IWorldPersistenceRepository> write)
     {
-        if (_worldPersistence == null)
+        if (_worldPersistence == null || _writes == null)
         {
             return;
         }
 
+        IWorldPersistenceRepository world = _worldPersistence;
+        _writes.Enqueue(() => write(world));
+    }
+
+    private PersistedPlayerProfile GetCachedProfile(string playerName)
+    {
+        if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached))
+        {
+            return cached;
+        }
+
+        // Only reached for a player whose profile was not loaded at join.
+        PersistedPlayerProfile loaded = _playerProfiles!.GetOrCreate(playerName);
+        CacheProfile(playerName, loaded);
+        return loaded;
+    }
+
+    private void CacheProfile(string playerName, PersistedPlayerProfile profile)
+    {
+        _profileCache[playerName] = profile;
+        _profileCache[profile.PlayerName] = profile;
+        _knownProfileNames.Add(playerName);
+        _knownProfileNames.Add(profile.PlayerName);
+    }
+
+    private void SaveProfile(string playerName, PersistedPlayerProfile profile)
+    {
+        CacheProfile(playerName, profile);
+        IPlayerProfileRepository profiles = _playerProfiles!;
+        _writes?.Enqueue(() => profiles.Save(profile));
+    }
+
+    // The previous per-cube checkpoint path repaired identities from the database, reloading
+    // the whole placed-cube table and querying profiles once per cube on the tick thread. The
+    // capture uses registry identity only; records without a persistence owner are left to the
+    // placement/combat paths that still repair identity before writing.
+    private IReadOnlyList<PersistedPlacedCube> CapturePlacedCubeCheckpoint(DateTime now)
+    {
+        List<PersistedPlacedCube> cubes = [];
         foreach (WorldObjectRecord record in _worldObjects.GetCubeRecords())
         {
             if (record.SourceObject is not Cube cube ||
+                string.IsNullOrWhiteSpace(record.OwnerPlayerName) ||
                 !Map.TryGetCellForCube(cube, out GeometryCellKey cell) ||
                 cell.Y == 0)
             {
@@ -1487,8 +1810,25 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             }
 
             GeometryCellRecord? geometryCell = Map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
-            PersistPlacedCube(record, geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass);
+            PersistedPlacedCube captured = new(
+                record.Actor.Id,
+                record.OwnerPlayerName,
+                new Vector3(cell.X, cell.Y, cell.Z),
+                GeometryShapeKind.SolidCube,
+                geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass,
+                record.Health.CurrentHealth,
+                record.Health.MaxHealth,
+                now,
+                now,
+                cube.Position);
+            cubes.Add(captured);
+            if (_persistedCubes.ContainsKey(captured.CubeId))
+            {
+                _persistedCubes[captured.CubeId] = captured;
+            }
         }
+
+        return cubes;
     }
 
     private void RestorePersistedCubeFracturePieces()
@@ -1535,22 +1875,46 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             return;
         }
 
-        string ownerPlayerName = record.OwnerPlayerName ?? "unknown-player";
-        _persistedFractureGroups[cell] = new PersistedFractureGroup(record.Actor.Id, ownerPlayerName);
-        PersistFracturePiecesForCell(cell);
-    }
-
-    private void PersistFracturePieceCheckpoint()
-    {
-        if (_worldPersistence == null)
+        if (record.SourceObject is not Cube cube ||
+            !TryResolveCubePersistenceIdentity(record, cube, out int sourceCubeId, out string ownerPlayerName))
         {
             return;
         }
 
-        foreach (GeometryCellKey cell in _persistedFractureGroups.Keys.ToArray())
+        _persistedFractureGroups[cell] = new PersistedFractureGroup(sourceCubeId, ownerPlayerName);
+        PersistFracturePiecesForCell(cell);
+    }
+
+    private IReadOnlyList<PersistedCubeFracturePiece> CaptureFracturePieceCheckpoint(DateTime now)
+    {
+        if (_persistedFractureGroups.Count == 0)
         {
-            PersistFracturePiecesForCell(cell);
+            return [];
         }
+
+        // One map scan for all groups instead of one full scan per fractured cell.
+        List<PersistedCubeFracturePiece> pieces = [];
+        foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in
+            Map.CaptureFracturePieces())
+        {
+            if (!_persistedFractureGroups.TryGetValue(PieceCell, out PersistedFractureGroup group))
+            {
+                continue;
+            }
+
+            pieces.Add(new PersistedCubeFracturePiece(
+                SourceCubeId: group.SourceCubeId,
+                PieceIndex: PieceIndex,
+                OwnerPlayerName: group.OwnerPlayerName,
+                ParentCell: new Vector3(PieceCell.X, PieceCell.Y, PieceCell.Z),
+                Center: Piece.Center,
+                SideLength: Piece.SideLength,
+                MaterialId: MaterialId,
+                CreatedUtc: now,
+                UpdatedUtc: now));
+        }
+
+        return pieces;
     }
 
     private void PersistFracturePiecesForCell(GeometryCellKey cell)
@@ -1564,7 +1928,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in
             Map.CaptureFracturePieces().Where(piece => piece.Cell == cell))
         {
-            _worldPersistence.SaveCubeFracturePiece(new PersistedCubeFracturePiece(
+            PersistedCubeFracturePiece persistedPiece = new(
                 SourceCubeId: group.SourceCubeId,
                 PieceIndex: PieceIndex,
                 OwnerPlayerName: group.OwnerPlayerName,
@@ -1573,18 +1937,20 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 SideLength: Piece.SideLength,
                 MaterialId: MaterialId,
                 CreatedUtc: DateTime.UtcNow,
-                UpdatedUtc: DateTime.UtcNow));
+                UpdatedUtc: DateTime.UtcNow);
+            EnqueueWorldWrite(world => world.SaveCubeFracturePiece(persistedPiece));
         }
     }
 
     private void PersistEnemy(EnemyActor enemy)
     {
-        if (_worldPersistence == null)
-        {
-            return;
-        }
+        PersistedEnemyInstance persisted = CreatePersistedEnemy(enemy, DateTime.UtcNow);
+        EnqueueWorldWrite(world => world.SaveEnemyInstance(persisted));
+    }
 
-        _worldPersistence.SaveEnemyInstance(new PersistedEnemyInstance(
+    private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, DateTime now)
+    {
+        return new PersistedEnemyInstance(
             enemy.Combatant.Actor.Id,
             enemy.EnemyKind,
             enemy.DisplayName,
@@ -1600,18 +1966,137 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
                 MovementSpeed: enemy.MoveSpeed,
                 AttackSpeed: 1f / Math.Max(0.05f, enemy.Combatant.AttackIntervalSeconds),
                 Level: enemy.Level),
-            DateTime.UtcNow,
-            DateTime.UtcNow));
+            now,
+            now);
     }
 
     private void DeletePersistedEnemy(int enemyId)
     {
-        _worldPersistence?.DeleteEnemyInstance(enemyId);
+        EnqueueWorldWrite(world => world.DeleteEnemyInstance(enemyId));
     }
 
     private readonly record struct PersistedFractureGroup(
         int SourceCubeId,
         string OwnerPlayerName);
+
+    private WorldObjectRecord RepairCubeRecordFromPersistence(WorldObjectRecord record)
+    {
+        if (_worldPersistence == null ||
+            record.SourceObject is not Cube cube ||
+            !TryResolvePersistedPlacedCube(cube, out PersistedPlacedCube persistedCube))
+        {
+            return record;
+        }
+
+        bool identityMatches =
+            record.Actor.Id == persistedCube.CubeId &&
+            string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase) &&
+            record.Health.CurrentHealth == persistedCube.CurrentHealth &&
+            record.Health.MaxHealth == persistedCube.MaxHealth;
+        if (identityMatches)
+        {
+            return record;
+        }
+
+        return _worldObjects.ReplaceCubeRecordIdentity(
+            cube,
+            Map,
+            persistedCube.CubeId,
+            persistedCube.MaxHealth,
+            persistedCube.CurrentHealth,
+            persistedCube.OwnerPlayerName);
+    }
+
+    private bool TryResolveCubePersistenceIdentity(
+        WorldObjectRecord record,
+        Cube cube,
+        out int cubeId,
+        out string ownerPlayerName)
+    {
+        if (IsValidPersistenceOwnerName(record.OwnerPlayerName))
+        {
+            cubeId = record.Actor.Id;
+            ownerPlayerName = record.OwnerPlayerName!;
+            return true;
+        }
+
+        if (TryResolvePersistedPlacedCube(cube, out PersistedPlacedCube persistedCube))
+        {
+            cubeId = persistedCube.CubeId;
+            ownerPlayerName = persistedCube.OwnerPlayerName;
+            return true;
+        }
+
+        cubeId = default;
+        ownerPlayerName = string.Empty;
+        return false;
+    }
+
+    private bool TryResolvePersistedPlacedCube(Cube cube, out PersistedPlacedCube persistedCube)
+    {
+        persistedCube = default;
+        if (_worldPersistence == null)
+        {
+            return false;
+        }
+
+        // In-memory index of persisted rows (loaded at startup, kept current by saves, deletes
+        // and checkpoints) instead of reading the whole table on every hit and placement.
+        if (_persistedCubes.Count == 0)
+        {
+            return false;
+        }
+
+        GeometryCellKey currentCell = ToGeometryCellKey(cube.Position);
+        PersistedPlacedCube[] exactCellMatches = _persistedCubes.Values
+            .Where(candidate => ToGeometryCellKey(candidate.CellPosition) == currentCell)
+            .ToArray();
+        if (exactCellMatches.Length == 1)
+        {
+            persistedCube = exactCellMatches[0];
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool IsValidPersistenceOwnerName(string? ownerPlayerName)
+    {
+        if (string.IsNullOrWhiteSpace(ownerPlayerName))
+        {
+            return false;
+        }
+
+        if (_playerProfiles == null || _knownProfileNames.Contains(ownerPlayerName))
+        {
+            return true;
+        }
+
+        // Rare: an owner who neither joined nor owns a restored cube. Cache a positive answer.
+        if (_playerProfiles.TryGet(ownerPlayerName) != null)
+        {
+            _knownProfileNames.Add(ownerPlayerName);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static GeometryCellKey ToGeometryCellKey(Vector3 position)
+    {
+        return new GeometryCellKey(
+            (int)MathF.Floor(position.X + 1e-6f),
+            (int)MathF.Floor(position.Y + 1e-6f),
+            (int)MathF.Floor(position.Z + 1e-6f));
+    }
+
+    private static Vector3 GetCellCenter(Vector3 cellPosition)
+    {
+        return new Vector3(
+            MathF.Floor(cellPosition.X + 1e-6f) + 0.5f,
+            MathF.Floor(cellPosition.Y + 1e-6f) + 0.5f,
+            MathF.Floor(cellPosition.Z + 1e-6f) + 0.5f);
+    }
 
     private GeometryMaterialId ResolveBuildPlacementMaterial(Vector3 placementTarget)
     {
@@ -1628,7 +2113,8 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
         if (PrimaryRemoteSessionId.HasValue &&
             _sessions.TryGet(PrimaryRemoteSessionId.Value, out ConnectedPlayer? primary) &&
             primary != null &&
-            !primary.IsLocal)
+            !primary.IsLocal &&
+            primary.IsSpawned)
         {
             return primary.SessionId;
         }
@@ -1642,6 +2128,7 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
             _sessions.TryGet(PrimaryRemoteSessionId.Value, out ConnectedPlayer? primary) &&
             primary != null &&
             !primary.IsLocal &&
+            primary.IsSpawned &&
             primary.ActorId == Player.Combatant.Actor.Id;
     }
 
@@ -1718,10 +2205,21 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
 
     private IEnumerable<IAuthoritativePlayerTarget> EnumerateAuthoritativePlayerTargets()
     {
-        yield return CreatePrimaryAuthoritativePlayerTarget(ResolvePrimaryControlledSessionId());
+        PlayerSessionId primarySessionId = ResolvePrimaryControlledSessionId();
+        if (primarySessionId != LocalPlayerSessionId || !_sessions.Players.Any(player => !player.IsLocal && player.IsSpawned))
+        {
+            yield return CreatePrimaryAuthoritativePlayerTarget(primarySessionId);
+        }
 
         foreach ((PlayerSessionId sessionId, RemoteSessionPlayerState actor) in _secondaryRemotePlayers)
         {
+            if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player) ||
+                player == null ||
+                !player.IsSpawned)
+            {
+                continue;
+            }
+
             yield return CreateSecondaryAuthoritativePlayerTarget(sessionId, actor);
         }
     }
@@ -1761,6 +2259,11 @@ public sealed class WorldSessionRuntime : IDisposable, IReplicatedSessionStateTa
     {
         playerTarget = null;
         if (!_sessions.TryGet(sessionId, out player) || player == null)
+        {
+            return false;
+        }
+
+        if (!player.IsLocal && !player.IsSpawned)
         {
             return false;
         }

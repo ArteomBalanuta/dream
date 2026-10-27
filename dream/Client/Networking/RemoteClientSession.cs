@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Simulation.Players;
 
@@ -14,11 +15,20 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly IProtocolCodec _codec;
     private readonly IMessageFramer _framer;
     private readonly byte[] _receiveChunk = new byte[16 * 1024];
-    private readonly List<byte> _receiveBuffer = [];
+    private readonly FrameReceiveBuffer _receiveBuffer = new();
     private readonly ConcurrentQueue<IServerToClientMessage> _inboundMessages = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private Task? _receiveLoopTask;
+    // Outbound traffic from the render thread is only enqueued; one writer task sends it, so a
+    // full socket buffer can no longer block a frame. Commands collapse into one merged pending
+    // frame (one-shot inputs are OR-ed), actions keep their order.
+    private readonly LatestPlayerCommandInbox _pendingCommands = new();
+    private readonly ConcurrentQueue<IClientToServerMessage> _pendingMessages = new();
+    private readonly SemaphoreSlim _outboundSignal = new(0, int.MaxValue);
+    private readonly object _sendLoopSync = new();
+    private Task? _sendLoopTask;
+    private long _sentCommandCount;
     private ulong _nextOutboundSequence = 1;
 
     public RemoteClientSession(
@@ -94,6 +104,96 @@ public sealed class RemoteClientSession : IAsyncDisposable
         await SendMessageAsync(actionMessage, cancellationToken);
     }
 
+    public long SentCommandCount => Interlocked.Read(ref _sentCommandCount);
+
+    public void QueueCommandFrame(PlayerCommandFrame commandFrame)
+    {
+        _pendingCommands.Enqueue(commandFrame);
+        SignalSendLoop();
+    }
+
+    public void QueueWorldResyncRequest(ulong clientChecksum)
+    {
+        _pendingMessages.Enqueue(new ClientWorldResyncRequestMessage(clientChecksum));
+        SignalSendLoop();
+    }
+
+    public void QueuePlayerAction(PlayerActionMessage actionMessage)
+    {
+        ArgumentNullException.ThrowIfNull(actionMessage);
+        _pendingMessages.Enqueue(actionMessage);
+        SignalSendLoop();
+    }
+
+    // Waits until everything queued so far has been written, or the timeout expires.
+    public async ValueTask<bool> FlushOutboundAsync(TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (_pendingMessages.IsEmpty && !_pendingCommands.HasPending && _outboundSignal.CurrentCount == 0 && !_sending)
+            {
+                return true;
+            }
+
+            await Task.Delay(1);
+        }
+
+        return false;
+    }
+
+    private volatile bool _sending;
+
+    private void SignalSendLoop()
+    {
+        lock (_sendLoopSync)
+        {
+            _sendLoopTask ??= Task.Run(() => SendLoopAsync(_shutdown.Token));
+        }
+
+        _outboundSignal.Release();
+    }
+
+    private async Task SendLoopAsync(CancellationToken cancellationToken)
+    {
+        PlayerSessionId[] sessionIds = [new PlayerSessionId(SessionId)];
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await _outboundSignal.WaitAsync(cancellationToken);
+                _sending = true;
+                try
+                {
+                    while (_pendingMessages.TryDequeue(out IClientToServerMessage? message))
+                    {
+                        await SendMessageAsync(message, cancellationToken);
+                    }
+
+                    foreach (PlayerCommandFrame command in _pendingCommands.Drain(sessionIds))
+                    {
+                        await SendMessageAsync(new PlayerCommandMessage(command), cancellationToken);
+                        Interlocked.Increment(ref _sentCommandCount);
+                    }
+                }
+                finally
+                {
+                    _sending = false;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            IsConnected = false;
+            NetworkDiagnosticsLog.Write(
+                "client.send.error",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} error={ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     public bool TryDequeueInbound(out IServerToClientMessage? message)
     {
         return _inboundMessages.TryDequeue(out message);
@@ -108,10 +208,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
             return false;
         }
 
-        _receiveBuffer.AddRange(_receiveChunk.AsSpan(0, bytesRead).ToArray());
-        while (_framer.TryDeframe(_receiveBuffer.ToArray(), out byte[]? payload, out int bytesConsumed))
+        _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
+        while (_receiveBuffer.TryReadFrame(_framer, out byte[]? payload))
         {
-            _receiveBuffer.RemoveRange(0, bytesConsumed);
             if (payload == null)
             {
                 continue;
@@ -136,6 +235,17 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _shutdown.Cancel();
+        if (_sendLoopTask != null)
+        {
+            try
+            {
+                await _sendLoopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
         if (_receiveLoopTask != null)
         {
             try
@@ -184,6 +294,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             ClientJoinRequestMessage joinRequest => _codec.Encode(envelope, joinRequest),
             PlayerCommandMessage command => _codec.Encode(envelope, command),
             PlayerActionMessage action => _codec.Encode(envelope, action),
+            ClientWorldResyncRequestMessage resync => _codec.Encode(envelope, resync),
             _ => throw new InvalidOperationException(
                 $"Unsupported client message type '{message.GetType().Name}' for remote client encoding.")
         };

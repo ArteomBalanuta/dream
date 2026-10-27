@@ -81,17 +81,23 @@ public class WorldSessionRuntimePresentationSmoothingTests
     }
 
     [Fact]
-    public void CapturePresentationState_UsesStableFullWorldExportForRendering()
+    public void CapturePresentationState_UsesStableStaticExportAndBoundsDynamicGeometry()
     {
         using WorldSessionRuntime runtime = new(
             floorSize: 20,
             playerStartPosition: new Vector3(1.5f, 1.5f, 1.5f),
             new SceneEventHub(),
             loadVisualAssets: false);
+        runtime.Map.AddCube(new Vector3(18f, 1f, 18f), isStatic: false, withPhysics: false);
 
         WorldSessionPresentationState state = runtime.CapturePresentationState(maxRenderDistance: 1f);
 
         Assert.Contains(state.VisibleWorld.Cells, cell => cell.Key == new GeometryCellKey(19, 0, 19));
+        Assert.Contains(state.VisibleWorld.Cells, cell => cell.Key == new GeometryCellKey(1, 0, 1));
+        Assert.DoesNotContain(state.VisibleWorld.Cells, cell => cell.Key == new GeometryCellKey(18, 1, 18));
+        Assert.DoesNotContain(
+            state.VisibleWorld.DynamicCompatibilityCubes,
+            cube => cube.Position == new Vector3(18.5f, 1.5f, 18.5f));
     }
 
     [Fact]

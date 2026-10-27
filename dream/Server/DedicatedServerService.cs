@@ -66,13 +66,31 @@ public sealed class DedicatedServerService : IAsyncDisposable
         return connection;
     }
 
+    // Waits until every connection has written its queued messages (tests and shutdown).
+    public async ValueTask<bool> FlushOutboundAsync(TimeSpan timeout)
+    {
+        bool flushed = true;
+        foreach (ServerConnection connection in _connections.Values)
+        {
+            flushed &= await connection.FlushOutboundAsync(timeout);
+        }
+
+        return flushed;
+    }
+
     public async ValueTask<int> AdvanceOnceAsync(double elapsedSeconds, CancellationToken cancellationToken = default)
     {
+        await DropFaultedConnectionsAsync();
         Stopwatch? advanceStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
         advanceStopwatch?.Stop();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
+            if (executedTicks > 0)
+            {
+                _host.DiscardUndeliveredSnapshotDeltas();
+            }
+
             LatestPerformance = new DedicatedServerPerformanceSnapshot(
                 advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
                 SnapshotMilliseconds: 0d,
@@ -86,6 +104,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
             .ToArray();
         if (joinedConnections.Length == 0)
         {
+            _host.DiscardUndeliveredSnapshotDeltas();
             LatestPerformance = new DedicatedServerPerformanceSnapshot(
                 advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
                 SnapshotMilliseconds: 0d,
@@ -103,9 +122,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
         ServerSnapshotMessage snapshot = _host.CreateSnapshotMessage();
         snapshotStopwatch?.Stop();
         Stopwatch? broadcastStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
+        // Enqueue only: each connection's writer task does the socket I/O, so a stalled client
+        // cannot hold up the tick loop for everyone else.
         foreach (ServerConnection connection in joinedConnections)
         {
-            await connection.SendSnapshotAsync(snapshot, cancellationToken);
+            connection.EnqueueSnapshot(snapshot);
         }
         broadcastStopwatch?.Stop();
 
@@ -128,7 +149,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
 
                 foreach (ServerConnection connection in targetConnections)
                 {
-                    await connection.SendActionAsync(new ServerActionMessage(actionResult), cancellationToken);
+                    connection.Enqueue(new ServerActionMessage(actionResult));
                 }
             }
         }
@@ -181,15 +202,42 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
-    private async Task TickLoopAsync(CancellationToken cancellationToken)
+    // Runs on a dedicated thread and waits for each tick deadline with TickPacer, so most loop
+    // iterations execute exactly one tick and send one snapshot.
+    private Task TickLoopAsync(CancellationToken cancellationToken)
     {
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        while (!cancellationToken.IsCancellationRequested)
+        return Task.Factory.StartNew(
+            () =>
+            {
+                using TickPacer pacer = new();
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    double elapsedSeconds = stopwatch.Elapsed.TotalSeconds;
+                    stopwatch.Restart();
+                    AdvanceOnceAsync(elapsedSeconds, cancellationToken).AsTask().GetAwaiter().GetResult();
+                    pacer.WaitFor(_host.SecondsUntilNextTick, cancellationToken);
+                }
+            },
+            cancellationToken,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+    }
+
+    private async ValueTask DropFaultedConnectionsAsync()
+    {
+        foreach (ServerConnection connection in _connections.Values.Where(connection => connection.IsFaulted).ToArray())
         {
-            double elapsedSeconds = stopwatch.Elapsed.TotalSeconds;
-            stopwatch.Restart();
-            await AdvanceOnceAsync(elapsedSeconds, cancellationToken);
-            await Task.Delay(1, cancellationToken);
+            if (!_connections.TryRemove(connection.ConnectionId, out _))
+            {
+                continue;
+            }
+
+            _host.ReleaseConnection(connection.ConnectionId);
+            NetworkDiagnosticsLog.Write(
+                "server.disconnect",
+                $"connection={connection.ConnectionId} reason=faulted connections={_connections.Count}");
+            await connection.DisposeAsync();
         }
     }
 
@@ -204,14 +252,19 @@ public sealed class DedicatedServerService : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException)
+        {
+        }
         finally
         {
-            _connections.TryRemove(connection.ConnectionId, out _);
-            _host.ReleaseConnection(connection.ConnectionId);
-            NetworkDiagnosticsLog.Write(
-                "server.disconnect",
-                $"connection={connection.ConnectionId} connections={_connections.Count}");
-            await connection.DisposeAsync();
+            if (_connections.TryRemove(connection.ConnectionId, out _))
+            {
+                _host.ReleaseConnection(connection.ConnectionId);
+                NetworkDiagnosticsLog.Write(
+                    "server.disconnect",
+                    $"connection={connection.ConnectionId} connections={_connections.Count}");
+                await connection.DisposeAsync();
+            }
         }
     }
 }

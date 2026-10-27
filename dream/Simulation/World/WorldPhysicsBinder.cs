@@ -11,14 +11,19 @@ namespace Dream.Simulation.World;
 public class WorldPhysicsBinder
 {
     private readonly PhysicsIntegrator _physics;
+    private readonly bool _replicatedCubeBodies;
     private readonly Dictionary<Cube, RigidBody> _cubeBodies = new();
     private readonly Dictionary<GeometryCellKey, List<RigidBody>> _geometryCellBodies = new();
     private readonly List<RigidBody> _mergedStaticCollisionBodies = new();
+    private readonly Dictionary<GeometryCellKey, List<RigidBody>> _rubbleBodies = new();
     private RigidBody? _floorBody;
 
-    public WorldPhysicsBinder(PhysicsIntegrator physics)
+    // Replicated cube bodies belong to a client mirror map: full cubes are moved only by
+    // authoritative server deltas, so they are kinematic and never enter the local sync list.
+    public WorldPhysicsBinder(PhysicsIntegrator physics, bool replicatedCubeBodies = false)
     {
         _physics = physics;
+        _replicatedCubeBodies = replicatedCubeBodies;
     }
 
     public void AddFloorBody(int width, int depth)
@@ -72,6 +77,27 @@ public class WorldPhysicsBinder
         if (bodies.Count > 0)
         {
             _geometryCellBodies[cellKey] = bodies;
+        }
+    }
+
+    // Rubble bodies are indexed apart from cell bodies so a cube in the same origin cell and its
+    // old rubble never replace each other's bodies.
+    public void SyncRubbleBodies(GeometryCellKey originCell, IReadOnlyList<GeometryCollisionBodyDescriptor> descriptors)
+    {
+        RemoveRubbleBodies(originCell);
+        if (descriptors.Count == 0)
+        {
+            return;
+        }
+
+        _rubbleBodies[originCell] = descriptors.Select(AddGeometryBody).ToList();
+    }
+
+    public void RemoveRubbleBodies(GeometryCellKey originCell)
+    {
+        if (_rubbleBodies.Remove(originCell, out List<RigidBody>? bodies))
+        {
+            RemoveBodies(bodies);
         }
     }
 
@@ -138,6 +164,45 @@ public class WorldPhysicsBinder
         newBodies.AddRange(movedBodies);
     }
 
+    // Moves a compatibility cube's existing body to an authoritative center instead of
+    // disposing and recreating it. Returns false when the cube has no body indexed under
+    // oldCellKey, so the caller can fall back to a full cell rebuild.
+    public bool TryMoveCompatibilityCubeBody(
+        Cube cube,
+        GeometryCellKey oldCellKey,
+        GeometryCellKey newCellKey,
+        Vector3 center)
+    {
+        ArgumentNullException.ThrowIfNull(cube);
+
+        if (!_geometryCellBodies.TryGetValue(oldCellKey, out List<RigidBody>? oldBodies))
+        {
+            return false;
+        }
+
+        RigidBody? body = oldBodies.Find(candidate =>
+            candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+            ReferenceEquals(cubeBody.Item1, cube));
+        if (body == null)
+        {
+            return false;
+        }
+
+        Matrix transform = Matrix.Translation(center.ToBullet());
+        body.WorldTransform = transform;
+        body.MotionState?.SetWorldTransform(ref transform);
+        body.UserObject = (cube, center);
+        if (!body.CollisionFlags.HasFlag(CollisionFlags.KinematicObject))
+        {
+            body.LinearVelocity = BulletSharp.Math.Vector3.Zero;
+            body.AngularVelocity = BulletSharp.Math.Vector3.Zero;
+        }
+
+        body.Activate(true);
+        ReindexCompatibilityCubeBody(cube, oldCellKey, newCellKey);
+        return true;
+    }
+
     private void RemoveBodies(IEnumerable<RigidBody> bodies)
     {
         foreach (RigidBody body in bodies)
@@ -182,7 +247,8 @@ public class WorldPhysicsBinder
             Margin = 0f
         };
 
-        float mass = isStatic ? 0f : 1f;
+        bool isReplicated = !isStatic && _replicatedCubeBodies;
+        float mass = isStatic || isReplicated ? 0f : 1f;
         Vector3 position = cube.Position;
         var startTransform = Matrix.Translation(position.ToBullet());
         var motionState = new DefaultMotionState(startTransform);
@@ -199,9 +265,14 @@ public class WorldPhysicsBinder
 
         body.SetMassProps(mass, inertia);
 
+        if (isReplicated)
+        {
+            ConfigureReplicatedBody(body);
+        }
+
         _physics.World.AddRigidBody(body);
         _physics.MapCubeBodies.Add(body);
-        if (!isStatic)
+        if (!isStatic && !isReplicated)
         {
             ConfigureDynamicBody(body, new Vector3(0.5f));
             _physics.DynamicMapCubeBodies.Add(body);
@@ -217,7 +288,12 @@ public class WorldPhysicsBinder
             Margin = 0f
         };
 
-        float mass = descriptor.IsStatic ? 0f : 1f;
+        // Fracture pieces stay locally simulated on mirrors because their motion is not replicated yet.
+        bool isReplicated = !descriptor.IsStatic &&
+            _replicatedCubeBodies &&
+            descriptor.CompatibilityCube != null;
+        bool isSimulated = !descriptor.IsStatic && !isReplicated;
+        float mass = isSimulated ? 1f : 0f;
         var startTransform = Matrix.Translation(descriptor.Center.ToBullet());
         var motionState = new DefaultMotionState(startTransform);
         shape.CalculateLocalInertia(mass, out var inertia);
@@ -241,14 +317,26 @@ public class WorldPhysicsBinder
         };
 
         body.SetMassProps(mass, inertia);
-        if (!descriptor.IsStatic)
+        if (isSimulated)
         {
             ConfigureDynamicBody(body, descriptor.HalfExtents);
         }
+        else if (isReplicated)
+        {
+            ConfigureReplicatedBody(body);
+        }
 
-        _physics.World.AddRigidBody(body);
+        if (descriptor.FracturePieceIndex.HasValue)
+        {
+            _physics.AddDebrisBody(body);
+        }
+        else
+        {
+            _physics.World.AddRigidBody(body);
+        }
+
         _physics.MapCubeBodies.Add(body);
-        if (!descriptor.IsStatic)
+        if (isSimulated)
         {
             _physics.DynamicMapCubeBodies.Add(body);
         }
@@ -308,13 +396,21 @@ public class WorldPhysicsBinder
         return bodies.Length;
     }
 
+    private static void ConfigureReplicatedBody(RigidBody body)
+    {
+        body.CollisionFlags |= CollisionFlags.KinematicObject;
+        body.ActivationState = ActivationState.DisableDeactivation;
+    }
+
     private static void ConfigureDynamicBody(RigidBody body, Vector3 halfExtents)
     {
-        body.ActivationState = ActivationState.DisableDeactivation;
-        body.ContactProcessingThreshold = 0f;
         float smallestHalfExtent = MathF.Max(0.01f, MathF.Min(halfExtents.X, MathF.Min(halfExtents.Y, halfExtents.Z)));
-        body.CcdMotionThreshold = smallestHalfExtent * 0.5f;
-        body.CcdSweptSphereRadius = smallestHalfExtent * 0.8f;
+        body.ActivationState = ActivationState.ActiveTag;
+        body.ContactProcessingThreshold = smallestHalfExtent * 0.5f;
+        body.CcdMotionThreshold = smallestHalfExtent;
+        body.CcdSweptSphereRadius = smallestHalfExtent * 0.45f;
+        body.SetDamping(0.15f, 0.85f);
+        body.SetSleepingThresholds(0.05f, 0.05f);
         body.Activate(true);
     }
 }

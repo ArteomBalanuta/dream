@@ -30,12 +30,31 @@ public sealed class NetworkSessionCoordinator
     public string LocalServerStatus =>
         _localServer.ErrorMessage != null
             ? $"Local server failed: {_localServer.ErrorMessage}"
-            : _localServer.IsReady
-                ? $"Local server ready on 127.0.0.1:{_localServer.BoundPort}"
-                : "Starting local server...";
+            : !_localServer.IsStarted
+                ? LocalServerNotStartedMessage
+                : _localServer.IsReady
+                    ? $"Local server ready on 127.0.0.1:{_localServer.BoundPort}"
+                    : "Starting local server...";
+
+    private const string LocalServerNotStartedMessage =
+        "Local server not started; it starts on Use Local Server or a localhost connect.";
+
+    // The integrated server runs a full authoritative world, so it starts only when local hosting
+    // is actually used instead of on every launch.
+    public void EnsureLocalServerStarted()
+    {
+        if (_localServer.IsStarted)
+        {
+            return;
+        }
+
+        _localServer.EnsureStarted();
+        RefreshIdleState();
+    }
 
     public ClientConnectionOptions UseLocalServerDefaults(string playerName)
     {
+        EnsureLocalServerStarted();
         int localPort = _localServer.BoundPort > 0 ? _localServer.BoundPort : ServerBootstrap.DefaultPort;
         return new ClientConnectionOptions("127.0.0.1", localPort.ToString(), playerName);
     }
@@ -44,12 +63,15 @@ public sealed class NetworkSessionCoordinator
     {
         ArgumentNullException.ThrowIfNull(configuredOptions);
 
-        if (IsLoopbackHost(configuredOptions.Host) && _localServer.IsReady)
+        if (!IsLoopbackHost(configuredOptions.Host))
         {
-            return UseLocalServerDefaults(configuredOptions.PlayerName);
+            return configuredOptions;
         }
 
-        return configuredOptions;
+        EnsureLocalServerStarted();
+        return _localServer.IsReady
+            ? UseLocalServerDefaults(configuredOptions.PlayerName)
+            : configuredOptions;
     }
 
     public void BeginConnect(ClientConnectionOptions options)
@@ -58,6 +80,7 @@ public sealed class NetworkSessionCoordinator
         {
             return;
         }
+
 
         if (!options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out string? error))
         {
@@ -105,6 +128,13 @@ public sealed class NetworkSessionCoordinator
         {
             State = ConnectionFlowState.Failed;
             StatusMessage = _localServer.ErrorMessage;
+            return;
+        }
+
+        if (!_localServer.IsStarted)
+        {
+            State = ConnectionFlowState.ReadyToConnect;
+            StatusMessage = LocalServerNotStartedMessage;
             return;
         }
 

@@ -20,12 +20,33 @@ public class PhysicsIntegrator : IDisposable
     public List<RigidBody> MapCubeBodies { get; } = new();
     public List<RigidBody> DynamicMapCubeBodies { get; } = new();
 
+    // Fracture rubble is simulated per client and never replicated, so players do not collide
+    // with it on either side; otherwise local rubble would make prediction diverge from the server.
+    public const CollisionFilterGroups PlayerCollisionGroup = CollisionFilterGroups.CharacterFilter;
+    public const CollisionFilterGroups PlayerCollisionMask = CollisionFilterGroups.AllFilter & ~CollisionFilterGroups.DebrisFilter;
+    public const CollisionFilterGroups DebrisCollisionGroup = CollisionFilterGroups.DebrisFilter;
+    public const CollisionFilterGroups DebrisCollisionMask = CollisionFilterGroups.AllFilter & ~CollisionFilterGroups.CharacterFilter;
+
+    public void AddDebrisBody(RigidBody body)
+    {
+        World.AddRigidBody(body, DebrisCollisionGroup, DebrisCollisionMask);
+    }
+
+    // Bodies of additional server-side session players (every session beyond the primary seat).
+    private readonly List<RigidBody> _sessionPlayerBodies = new();
+
+    public IReadOnlyList<RigidBody> SessionPlayerBodies => _sessionPlayerBodies;
+
+    // True while the primary player body is removed from the world (its seat is empty).
+    public bool IsPlayerBodyParked { get; private set; }
+
     private readonly DefaultCollisionConfiguration _collisionConfig;
     private readonly CollisionDispatcher _dispatcher;
     private readonly BroadphaseInterface _broadphase;
     private readonly SequentialImpulseConstraintSolver _solver;
     private PhysicsBodyOwnership? _playerBodyOwnership;
     private readonly Action<RigidBody> _addRigidBodyToWorld;
+    private readonly Action<RigidBody> _addPlayerBodyToWorld;
     private readonly Action<RigidBody> _removeRigidBodyFromWorld;
     private readonly Action<RigidBody> _disposeRigidBody;
 
@@ -41,6 +62,7 @@ public class PhysicsIntegrator : IDisposable
         World.SolverInfo.SolverMode = SolverModes.UseWarmStarting;
         World.DispatchInfo.UseContinuous = true;
         _addRigidBodyToWorld = World.AddRigidBody;
+        _addPlayerBodyToWorld = body => World.AddRigidBody(body, PlayerCollisionGroup, PlayerCollisionMask);
         _removeRigidBodyFromWorld = World.RemoveRigidBody;
         _disposeRigidBody = DisposeBody;
     }
@@ -60,6 +82,7 @@ public class PhysicsIntegrator : IDisposable
         _broadphase = null!;
         _solver = null!;
         _addRigidBodyToWorld = addRigidBodyToWorld;
+        _addPlayerBodyToWorld = addRigidBodyToWorld;
         _removeRigidBodyFromWorld = removeRigidBodyFromWorld;
         _disposeRigidBody = disposeRigidBody;
     }
@@ -85,7 +108,51 @@ public class PhysicsIntegrator : IDisposable
 
         PlayerBody = playerBody;
         _playerBodyOwnership = ownership;
-        _addRigidBodyToWorld(playerBody);
+        _addPlayerBodyToWorld(playerBody);
+    }
+
+    public bool IsPlayerBody(RigidBody body)
+    {
+        return ReferenceEquals(PlayerBody, body) || _sessionPlayerBodies.Contains(body);
+    }
+
+    public void AddSessionPlayerBody(RigidBody body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        _sessionPlayerBodies.Add(body);
+        _addPlayerBodyToWorld(body);
+    }
+
+    public void RemoveSessionPlayerBody(RigidBody body)
+    {
+        if (!_sessionPlayerBodies.Remove(body))
+        {
+            return;
+        }
+
+        _removeRigidBodyFromWorld(body);
+        _disposeRigidBody(body);
+    }
+
+    // Takes the primary body out of the world while no session occupies its seat, so it does not
+    // leave an invisible collider where the last occupant stood.
+    public void SetPlayerBodyParked(bool parked)
+    {
+        if (PlayerBody == null || parked == IsPlayerBodyParked)
+        {
+            return;
+        }
+
+        if (parked)
+        {
+            _removeRigidBodyFromWorld(PlayerBody);
+        }
+        else
+        {
+            _addPlayerBodyToWorld(PlayerBody);
+        }
+
+        IsPlayerBodyParked = parked;
     }
 
     public RigidBody DetachPlayerBody()
@@ -121,9 +188,20 @@ public class PhysicsIntegrator : IDisposable
 
     public void Dispose()
     {
+        foreach (RigidBody sessionBody in _sessionPlayerBodies)
+        {
+            _removeRigidBodyFromWorld(sessionBody);
+            _disposeRigidBody(sessionBody);
+        }
+
+        _sessionPlayerBodies.Clear();
         if (PlayerBody != null)
         {
-            _removeRigidBodyFromWorld(PlayerBody);
+            if (!IsPlayerBodyParked)
+            {
+                _removeRigidBodyFromWorld(PlayerBody);
+            }
+
             if (_playerBodyOwnership == PhysicsBodyOwnership.IntegratorOwned)
             {
                 _disposeRigidBody(PlayerBody);

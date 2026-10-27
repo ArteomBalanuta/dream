@@ -28,11 +28,47 @@ public class DedicatedServerServiceTests
         host.HandleClientMessage(connection.ConnectionId, new ClientJoinRequestMessage("session-a", "player-a"));
 
         int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
         DecodedProtocolMessage outbound = connection.SingleOutbound(codec, framer);
 
         Assert.Equal(1, executedTicks);
         ServerSnapshotMessage snapshot = Assert.IsType<ServerSnapshotMessage>(outbound.Message);
         Assert.Equal((ulong)1, snapshot.Snapshot.ServerTick);
+    }
+
+    [Fact]
+    public async Task AdvanceOnceAsync_DiscardsSnapshotDeltasWhenNoConnectionIsJoined()
+    {
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        FakeTickDrivenAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using FakeServerTransport transport = new();
+        await using DedicatedServerService service = new(host, transport, codec, framer);
+        FakeTransportConnection connection = new();
+        service.AttachConnection(new ServerConnection(connection, host, codec, framer));
+
+        int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        Assert.Equal(1, executedTicks);
+        Assert.Empty(connection.OutboundFrames);
+        Assert.Equal(1, authority.ExportCount);
+    }
+
+    [Fact]
+    public async Task AdvanceOnceAsync_DiscardsSnapshotDeltasWhenNoConnectionsExist()
+    {
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        FakeTickDrivenAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using FakeServerTransport transport = new();
+        await using DedicatedServerService service = new(host, transport, codec, framer);
+
+        int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        Assert.Equal(1, executedTicks);
+        Assert.Equal(1, authority.ExportCount);
     }
 
     [Fact]
@@ -56,6 +92,7 @@ public class DedicatedServerServiceTests
                 new CombatUseIntent(OpenTK.Mathematics.Vector3.Zero, -OpenTK.Mathematics.Vector3.UnitZ)));
 
         int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
 
         Assert.Equal(1, executedTicks);
         Assert.Equal(2, connection.OutboundFrames.Count);
@@ -206,8 +243,11 @@ public class DedicatedServerServiceTests
                     Applied: true));
         }
 
+        public int ExportCount { get; private set; }
+
         public ServerSnapshotEnvelope ExportSnapshot(bool includeWorldSnapshot = false)
         {
+            ExportCount++;
             return new ServerSnapshotEnvelope(
                 CurrentServerTick,
                 new Dictionary<string, ulong>(),

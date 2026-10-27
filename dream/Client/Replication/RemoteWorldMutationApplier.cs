@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -19,11 +20,12 @@ public static class RemoteWorldMutationApplier
         }
 
         IReadOnlyList<PlacedCubeSnapshot> desiredPlacedCubes = ResolvePlacedCubes(snapshot);
+        IReadOnlyList<FracturedCubeSnapshot> desiredFracturedCubes = ResolveFracturedCubes(snapshot);
         HashSet<(int X, int Y, int Z)> desiredCells = desiredPlacedCubes
             .Select(cube => ToCellKey(cube.CellPosition))
             .ToHashSet();
-        HashSet<(int X, int Y, int Z)> desiredFracturedCells = (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
-            .Select(ToCellKey)
+        HashSet<(int X, int Y, int Z)> desiredFracturedCells = desiredFracturedCubes
+            .Select(cube => ToCellKey(cube.CellPosition))
             .ToHashSet();
         HashSet<(int X, int Y, int Z)> desiredAuthoredSubcellCells = (snapshot.AuthoredSubcellCells ?? Array.Empty<Vector3>())
             .Select(ToCellKey)
@@ -47,9 +49,20 @@ public static class RemoteWorldMutationApplier
             (int x, int y, int z) = ToCellKey(placedCube.CellPosition);
             GeometryCellKey cell = new(x, y, z);
             Cube? cube = map.TryGetCubeAtCell(x, y, z);
+            GeometryCellRecord? existingCell = map.TryGetGeometryCellAtCell(x, y, z);
+            if (cube != null &&
+                (existingCell?.Definition.MaterialId != placedCube.MaterialId ||
+                    existingCell?.SubdivisionState != null))
+            {
+                map.RemoveCube(cube);
+                cube = null;
+            }
+
             if (cube == null)
             {
-                cube = map.TryAddCube(new Vector3(x, y, z));
+                cube = map.TryAddCube(
+                    new Vector3(x, y, z),
+                    materialId: placedCube.MaterialId);
             }
 
             if (cube == null)
@@ -59,10 +72,25 @@ public static class RemoteWorldMutationApplier
 
             map.RestoreSolidCubeCell(cell);
             map.UpdateCubePosition(cube, placedCube.CenterPosition, syncPhysics: true);
+            if (placedCube.ActorId is int actorId)
+            {
+                map.AssignReplicatedCubeId(cube, actorId);
+            }
         }
 
-        foreach ((int x, int y, int z) in desiredFracturedCells)
+        foreach (FracturedCubeSnapshot fracturedCube in desiredFracturedCubes)
         {
+            (int x, int y, int z) = ToCellKey(fracturedCube.CellPosition);
+            if (fracturedCube.Pieces.Count > 0)
+            {
+                map.RestoreFracturePieces(
+                    new GeometryCellKey(x, y, z),
+                    fracturedCube.MaterialId,
+                    fracturedCube.Pieces,
+                    withPhysics: true);
+                continue;
+            }
+
             if (map.TryGetCubeAtCell(x, y, z) == null)
             {
                 map.TryAddCube(new Vector3(x, y, z));
@@ -86,19 +114,66 @@ public static class RemoteWorldMutationApplier
         }
     }
 
-    public static void ApplySnapshotToRuntime(WorldSessionRuntime runtime, ServerSnapshotEnvelope snapshot)
+    public static void ApplySnapshotToRuntime(IClientWorldState runtime, ServerSnapshotEnvelope snapshot)
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
         if (snapshot.World != null)
         {
             ApplyFullWorldSnapshot(runtime, snapshot.World.Value);
+            if (snapshot.World.Value.MutationSequence is ulong worldSequence)
+            {
+                runtime.AcknowledgeReplicatedWorldMutations(worldSequence);
+            }
         }
 
-        ApplyWorldMutations(runtime.Map, snapshot.WorldMutations);
+        ApplyWorldMutations(runtime.Map, TakeUnappliedMutations(runtime, snapshot));
+        if (snapshot.WorldChecksum.HasValue)
+        {
+            // The server exported every delta up to this sequence in this or earlier snapshots
+            // (same-cell moves may have been coalesced away).
+            runtime.AcknowledgeReplicatedWorldMutations(snapshot.WorldChecksumSequence);
+        }
     }
 
-    private static void ApplyFullWorldSnapshot(WorldSessionRuntime runtime, WorldSnapshot snapshot)
+    // True when the snapshot carries a world checksum and the client's world, after applying
+    // everything up to that point, no longer matches it. The client then requests a resync.
+    public static bool IsWorldOutOfSync(IClientWorldState runtime, ServerSnapshotEnvelope snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        return snapshot.WorldChecksum is ulong expected &&
+            runtime.LastAppliedReplicatedWorldMutationSequence == snapshot.WorldChecksumSequence &&
+            WorldStateChecksum.Compute(runtime.Map) != expected;
+    }
+
+    private static IReadOnlyList<WorldMutationDelta> TakeUnappliedMutations(
+        IClientWorldState runtime,
+        ServerSnapshotEnvelope snapshot)
+    {
+        List<WorldMutationDelta> unapplied = new(snapshot.WorldMutations.Count);
+        foreach (WorldMutationDelta mutation in snapshot.WorldMutations)
+        {
+            // Unsequenced deltas predate sequencing and are always applied.
+            if (mutation.Sequence == 0)
+            {
+                unapplied.Add(mutation);
+                continue;
+            }
+
+            // A full world snapshot already reflects every delta exported alongside it.
+            bool alreadyApplied = snapshot.World != null ||
+                mutation.Sequence <= runtime.LastAppliedReplicatedWorldMutationSequence;
+            runtime.AcknowledgeReplicatedWorldMutations(mutation.Sequence);
+            if (!alreadyApplied)
+            {
+                unapplied.Add(mutation);
+            }
+        }
+
+        return unapplied;
+    }
+
+    private static void ApplyFullWorldSnapshot(IClientWorldState runtime, WorldSnapshot snapshot)
     {
         if (snapshot.Width != snapshot.Depth)
         {
@@ -120,14 +195,34 @@ public static class RemoteWorldMutationApplier
         switch (mutation.Kind)
         {
             case WorldMutationKind.CubePlaced:
-                if (map.TryGetCubeAtCell(x, y, z) == null)
+                GeometryMaterialId placementMaterial = mutation.MaterialId ?? GeometryMaterialId.Grass;
+                Cube? placedCube = map.TryGetCubeAtCell(x, y, z);
+                GeometryCellRecord? placedCell = map.TryGetGeometryCellAtCell(x, y, z);
+                if (placedCube != null &&
+                    (placedCell?.Definition.MaterialId != placementMaterial ||
+                        placedCell?.SubdivisionState != null))
                 {
-                    map.TryAddCube(new Vector3(x, y, z));
+                    map.RemoveCube(placedCube);
+                    placedCube = null;
+                }
+
+                if (placedCube == null)
+                {
+                    placedCube = map.TryAddCube(
+                        new Vector3(x, y, z),
+                        materialId: placementMaterial);
+                }
+
+                if (placedCube != null && mutation.ActorId is int placedId)
+                {
+                    map.AssignReplicatedCubeId(placedCube, placedId);
                 }
                 break;
 
             case WorldMutationKind.CubeDestroyed:
-                Cube? cube = map.TryGetCubeAtCell(x, y, z);
+                Cube? cube = mutation.ActorId is int destroyedId && map.TryGetCubeByReplicatedId(destroyedId, out Cube? byId)
+                    ? byId
+                    : map.TryGetCubeAtCell(x, y, z);
                 if (cube != null)
                 {
                     map.RemoveCube(cube);
@@ -135,12 +230,34 @@ public static class RemoteWorldMutationApplier
                 break;
 
             case WorldMutationKind.CubeFractured:
+                if (mutation.FracturePieces is { Count: > 0 } pieces &&
+                    mutation.MaterialId.HasValue)
+                {
+                    // The cube in that cell is the one that fractured; rubble no longer replaces it
+                    // implicitly because rubble does not occupy cells.
+                    if (map.TryGetCubeAtCell(x, y, z) is Cube fracturedCube)
+                    {
+                        map.RemoveCube(fracturedCube);
+                    }
+
+                    map.RestoreFracturePieces(
+                        new GeometryCellKey(x, y, z),
+                        mutation.MaterialId.Value,
+                        pieces,
+                        withPhysics: true);
+                    break;
+                }
+
                 if (map.TryGetCubeAtCell(x, y, z) == null)
                 {
                     map.TryAddCube(new Vector3(x, y, z));
                 }
 
                 map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
+                break;
+
+            case WorldMutationKind.CubeMoved:
+                ApplyCubeMovedMutation(map, mutation, x, y, z);
                 break;
 
             default:
@@ -158,6 +275,49 @@ public static class RemoteWorldMutationApplier
         return snapshot.PlacedCubeCells
             .Select(cell => new PlacedCubeSnapshot(cell, ToCellCenter(cell)))
             .ToArray();
+    }
+
+    private static IReadOnlyList<FracturedCubeSnapshot> ResolveFracturedCubes(WorldSnapshot snapshot)
+    {
+        if (snapshot.FracturedCubes is { Count: > 0 } fracturedCubes)
+        {
+            return fracturedCubes;
+        }
+
+        return (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
+            .Select(cell => new FracturedCubeSnapshot(
+                cell,
+                GeometryMaterialId.Grass,
+                Array.Empty<GeometryFracturePiece>()))
+            .ToArray();
+    }
+
+    private static void ApplyCubeMovedMutation(Map map, WorldMutationDelta mutation, int sourceX, int sourceY, int sourceZ)
+    {
+        Vector3 authoritativeCenter = mutation.CenterPosition ??
+            ToCellCenter(mutation.TargetCellPosition ?? mutation.CellPosition);
+        // Resolve by server identity first: a cell lookup can pick up a different cube that the
+        // client still has in the source cell.
+        Cube? cube = mutation.ActorId is int movedId && map.TryGetCubeByReplicatedId(movedId, out Cube? byId)
+            ? byId
+            : map.TryGetCubeAtCell(sourceX, sourceY, sourceZ);
+        if (cube == null && mutation.TargetCellPosition.HasValue)
+        {
+            (int targetX, int targetY, int targetZ) = ToCellKey(mutation.TargetCellPosition.Value);
+            cube = map.TryGetCubeAtCell(targetX, targetY, targetZ);
+        }
+
+        // A move never creates a cube: materializing one here duplicated whichever copy the
+        // client already had elsewhere and lost its material.
+        if (cube == null)
+        {
+            NetworkDiagnosticsLog.Write(
+                "client.world.move-miss",
+                () => $"source=({sourceX},{sourceY},{sourceZ}) target={mutation.TargetCellPosition} seq={mutation.Sequence}");
+            return;
+        }
+
+        map.UpdateCubePosition(cube, authoritativeCenter, syncPhysics: true);
     }
 
     private static Vector3 ToCellCenter(Vector3 cell)

@@ -10,9 +10,11 @@ public readonly record struct GeometryRenderExport
         IReadOnlyList<GeometryRenderBlockDescriptor> Blocks,
         IReadOnlyList<Cube> CompatibilityCubes,
         IReadOnlyList<Cube>? dynamicCompatibilityCubes = null,
-        IReadOnlyList<GeometryRenderBlockDescriptor>? dynamicBlocks = null)
+        IReadOnlyList<GeometryRenderBlockDescriptor>? dynamicBlocks = null,
+        IReadOnlyList<GeometryCellKey>? staticDirtyCells = null)
     {
         this.DirtyCells = DirtyCells;
+        StaticDirtyCells = staticDirtyCells ?? DirtyCells;
         this.Cells = Cells;
         this.Blocks = Blocks;
         this.CompatibilityCubes = CompatibilityCubes;
@@ -21,6 +23,11 @@ public readonly record struct GeometryRenderExport
     }
 
     public IReadOnlyList<GeometryCellKey> DirtyCells { get; init; }
+
+    // Dirty cells whose static render content (CompatibilityCubes/Blocks) changed, before or
+    // after the mutation. Dynamic cubes and fracture pieces never appear here, so moving them
+    // does not invalidate static chunk meshes.
+    public IReadOnlyList<GeometryCellKey> StaticDirtyCells { get; init; }
     public IReadOnlyList<GeometryRenderCell> Cells { get; init; }
     public IReadOnlyList<GeometryRenderBlockDescriptor> Blocks { get; init; }
     public IReadOnlyList<Cube> CompatibilityCubes { get; init; }

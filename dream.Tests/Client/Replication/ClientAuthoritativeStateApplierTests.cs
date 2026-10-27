@@ -66,6 +66,31 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldSnapshot_Preserves_PlacedCube_Material()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Vector3 cell = new(2f, 1f, 2f);
+        WorldSnapshot snapshot = new(
+            10,
+            8,
+            10,
+            [cell],
+            PlacedCubes:
+            [
+                new PlacedCubeSnapshot(
+                    cell,
+                    new Vector3(2.5f, 1.5f, 2.5f),
+                    GeometryMaterialId.Stone)
+            ]);
+
+        RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
+
+        GeometryCellRecord geometryCell = Assert.IsType<GeometryCellRecord>(
+            map.TryGetGeometryCellAtCell(2, 1, 2));
+        Assert.Equal(GeometryMaterialId.Stone, geometryCell.Definition.MaterialId);
+    }
+
+    [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesWorldMutations()
     {
         Map map = new(loadVisualAssets: false, width: 10, depth: 10);
@@ -81,6 +106,25 @@ public class ClientAuthoritativeStateApplierTests
 
         Assert.Null(map.TryGetCubeAtCell(4, 1, 4));
         Assert.NotNull(map.TryGetCubeAtCell(6, 1, 6));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldMutations_Preserves_PlacedCube_Material()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(
+            map,
+            [
+                new WorldMutationDelta(
+                    WorldMutationKind.CubePlaced,
+                    new Vector3(6f, 1f, 6f),
+                    MaterialId: GeometryMaterialId.Dirt)
+            ]);
+
+        GeometryCellRecord geometryCell = Assert.IsType<GeometryCellRecord>(
+            map.TryGetGeometryCellAtCell(6, 1, 6));
+        Assert.Equal(GeometryMaterialId.Dirt, geometryCell.Definition.MaterialId);
     }
 
     [Fact]
@@ -100,6 +144,22 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesAuthoritativeCubeMovedMutation()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false));
+        Vector3 authoritativeCenter = new(5.2f, 1.5f, 4.65f);
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(
+            map,
+            [WorldMutationDelta.Moved(new Vector3(4f, 1f, 4f), authoritativeCenter)]);
+
+        Assert.Null(map.TryGetCubeAtCell(4, 1, 4));
+        Assert.Same(cube, map.TryGetCubeAtCell(5, 1, 4));
+        AssertVector3(authoritativeCenter, cube.Position);
+    }
+
+    [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_ReconcilesFracturedCubeCells()
     {
         Map map = new(loadVisualAssets: false, width: 10, depth: 10);
@@ -114,7 +174,7 @@ public class ClientAuthoritativeStateApplierTests
 
         RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
 
-        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(3, 1, 3));
+        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetRubbleAtCell(new GeometryCellKey(3, 1, 3)));
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
 
         Assert.NotNull(map.TryGetCubeAtCell(2, 1, 2));
@@ -122,6 +182,40 @@ public class ClientAuthoritativeStateApplierTests
         Assert.Contains(export.DynamicBlocks, block => block.CellKey == new GeometryCellKey(3, 1, 3));
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(3.5f, 1.5f, 3.5f));
         Assert.Null(map.TryGetCubeAtCell(8, 1, 8));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldSnapshot_UsesAuthoritativeFracturePieces()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        GeometryFracturePiece[] pieces =
+        [
+            new(new Vector3(3.2f, 1.2f, 3.2f), 0.2f),
+            new(new Vector3(3.7f, 1.3f, 3.65f), 0.24f)
+        ];
+        WorldSnapshot snapshot = new(
+            10,
+            8,
+            10,
+            Array.Empty<Vector3>(),
+            [new Vector3(3f, 1f, 3f)],
+            FracturedCubes:
+            [
+                new FracturedCubeSnapshot(new Vector3(3f, 1f, 3f), GeometryMaterialId.Stone, pieces)
+            ]);
+
+        RemoteWorldMutationApplier.ApplyWorldSnapshot(map, snapshot);
+
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
+        Assert.Equal(2, export.DynamicBlocks.Count(block => block.CellKey == new GeometryCellKey(3, 1, 3)));
+        Assert.Contains(export.DynamicBlocks, block =>
+            block.MaterialId == GeometryMaterialId.Stone &&
+            block.Center == pieces[0].Center &&
+            block.SideLength == pieces[0].SideLength);
+        Assert.Contains(export.DynamicBlocks, block =>
+            block.MaterialId == GeometryMaterialId.Stone &&
+            block.Center == pieces[1].Center &&
+            block.SideLength == pieces[1].SideLength);
     }
 
     [Fact]
@@ -137,12 +231,39 @@ public class ClientAuthoritativeStateApplierTests
 
         RemoteWorldMutationApplier.ApplyWorldMutations(map, mutations);
 
-        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(4, 1, 4));
+        GeometryCellRecord fracturedCell = Assert.IsType<GeometryCellRecord>(map.TryGetRubbleAtCell(new GeometryCellKey(4, 1, 4)));
+        Assert.Null(map.TryGetCubeAtCell(4, 1, 4));
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
 
         Assert.NotNull(fracturedCell.SubdivisionState);
         Assert.Contains(export.DynamicBlocks, block => block.CellKey == new GeometryCellKey(4, 1, 4));
         Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.Position == new Vector3(4.5f, 1.5f, 4.5f));
+    }
+
+    [Fact]
+    public void RemoteWorldMutationApplier_ApplyWorldMutations_UsesAuthoritativeFracturePieces()
+    {
+        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false);
+        GeometryFracturePiece[] pieces =
+        [
+            new(new Vector3(4.18f, 1.18f, 4.22f), 0.18f),
+            new(new Vector3(4.72f, 1.26f, 4.65f), 0.22f)
+        ];
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(
+            map,
+            [WorldMutationDelta.Fractured(new Vector3(4f, 1f, 4f), GeometryMaterialId.Stone, pieces)]);
+
+        GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
+        GeometryRenderBlockDescriptor[] dynamicBlocks = export.DynamicBlocks
+            .Where(block => block.CellKey == new GeometryCellKey(4, 1, 4))
+            .OrderBy(block => block.Center.X)
+            .ToArray();
+        Assert.Equal(2, dynamicBlocks.Length);
+        Assert.Equal(GeometryMaterialId.Stone, dynamicBlocks[0].MaterialId);
+        Assert.Contains(dynamicBlocks, block => block.Center == pieces[0].Center && block.SideLength == pieces[0].SideLength);
+        Assert.Contains(dynamicBlocks, block => block.Center == pieces[1].Center && block.SideLength == pieces[1].SideLength);
     }
 
     [Fact]

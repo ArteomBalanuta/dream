@@ -12,7 +12,7 @@ using Dream.Simulation.World;
 namespace Dream.Simulation.Runtime;
 
 
-public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSessionHost, IDisposable
+public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSessionHost, IWorldResyncSource, IDisposable
 {
     private readonly IDisposable? _ownedDependency;
 
@@ -50,13 +50,15 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 InitialWorld: Runtime.ExportWorldSnapshot(),
                 Roster: BuildJoinedPlayerRoster(),
                 Inventory: existingInventory,
-                InitialActors: Runtime.CaptureActorSnapshots());
+                InitialActors: Runtime.CaptureActorSnapshots(),
+                InitialWorldMutationSequence: Runtime.LastWorldMutationSequence);
             LogJoinAccepted("existing", existingAccepted);
             return existingAccepted;
         }
 
         bool duplicateNameInUse = Runtime.Sessions.Players.Any(player =>
             !player.IsLocal &&
+            player.IsSpawned &&
             player.SessionId != sessionId &&
             string.Equals(player.DisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase));
         if (duplicateNameInUse)
@@ -78,7 +80,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             InitialWorld: Runtime.ExportWorldSnapshot(),
             Roster: BuildJoinedPlayerRoster(),
             Inventory: inventory,
-            InitialActors: Runtime.CaptureActorSnapshots());
+            InitialActors: Runtime.CaptureActorSnapshots(),
+            InitialWorldMutationSequence: Runtime.LastWorldMutationSequence);
         LogJoinAccepted("new", accepted);
         return accepted;
     }
@@ -86,6 +89,16 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     public AuthoritativeActionResult ProcessAction(PlayerActionMessage message)
     {
         return Runtime.ProcessAuthoritativeAction(message);
+    }
+
+    public void ReleaseSession(string sessionId)
+    {
+        Runtime.DetachRemoteSession(new PlayerSessionId(sessionId));
+    }
+
+    public ServerSnapshotEnvelope ExportWorldResync()
+    {
+        return Runtime.ExportWorldResyncEnvelope();
     }
 
     public ServerSnapshotEnvelope ExportSnapshot(bool includeWorldSnapshot = false)
@@ -103,6 +116,17 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     {
         PlayerCommandFrame? commandFrame = commandFrames
             .FirstOrDefault(frame => frame.SessionId == ResolveTickControlledSessionId());
+        PlayerCommandFrame[] secondaryCommands = commandFrames
+            .Where(frame => frame.SessionId != ResolveTickControlledSessionId())
+            .ToArray();
+
+        // Record secondary commands first so this tick's physics step simulates them, exactly
+        // like the primary seat's command.
+        foreach (PlayerCommandFrame secondaryCommand in secondaryCommands)
+        {
+            Runtime.AdvanceSecondaryRemoteSession(secondaryCommand, deltaTime, playerTuning);
+        }
+
         Runtime.AdvanceAuthoritativeTick(
             serverTick,
             deltaTime,
@@ -111,10 +135,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             allowGameplaySimulation);
 
         List<AuthoritativeActionResult> synthesizedCommandActions = [];
-        foreach (PlayerCommandFrame secondaryCommand in commandFrames.Where(frame => frame.SessionId != ResolveTickControlledSessionId()))
+        foreach (PlayerCommandFrame secondaryCommand in secondaryCommands)
         {
-            Runtime.AdvanceSecondaryRemoteSession(secondaryCommand, deltaTime, playerTuning);
-
             if (secondaryCommand.PrimaryUsePressed)
             {
                 PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(secondaryCommand);
@@ -176,7 +198,9 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             loadVisualAssets: false,
             playerProfiles: persistence?.PlayerProfiles,
             worldPersistence: persistence?.World,
-            combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default);
+            combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default,
+            checkpointWriter: persistence != null ? new SqlitePersistenceCheckpointWriter(persistence.Schema) : null,
+            persistenceWrites: persistence != null ? PersistenceWriteQueue.Background() : null);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence);
     }
 
@@ -188,7 +212,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     private IReadOnlyList<PlayerRosterEntry> BuildJoinedPlayerRoster()
     {
         return Runtime.Sessions.Players
-            .Where(player => !player.IsLocal)
+            .Where(player => !player.IsLocal && player.IsSpawned)
             .Select(player => new PlayerRosterEntry(
                 player.SessionId.Value,
                 player.ActorId,

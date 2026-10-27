@@ -34,6 +34,7 @@ public class Render
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
+    private readonly StaticMeshBuffer _fallbackCubeBuffer;
     private Dictionary<string, Shader> _shaders = new();
     private Matrix4 _projection;
 
@@ -284,6 +285,7 @@ public class Render
 
     public void DisposeHUD()
     {
+        _fallbackCubeBuffer.Dispose();
         _staticTerrainTextures.Dispose();
         GL.DeleteTexture(_fontTexture);
         _hudShader.Dispose();
@@ -354,6 +356,10 @@ public class Render
 
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindVertexArray(0);
+
+        // The position-only cube VAO above serves debug/collision draws. Textured fallback cubes
+        // need normals and UVs, so they use a mesh with the static terrain vertex layout.
+        _fallbackCubeBuffer = new StaticMeshBuffer(TerrainFallbackCubeMesh.Create());
 
         InitializeHUD();
     }
@@ -1040,9 +1046,7 @@ public class Render
         BindTerrainMaterial(camera, modelMatrix, material);
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(CullFaceMode.Back);
-        GL.BindVertexArray(_vertexArrayObject);
-        DrawCubeFaceFans();
-        GL.BindVertexArray(0);
+        _fallbackCubeBuffer.Draw();
     }
 
     private void BindTerrainMaterial(

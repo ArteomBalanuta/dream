@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using System.Reflection;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Protocol;
@@ -379,6 +380,28 @@ public class RuntimeAuthoritativeSessionHostTests
     }
 
     [Fact]
+    public void ReleaseConnection_Allows_Fresh_Session_To_Rejoin_Same_DisplayName()
+    {
+        using DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached();
+
+        JoinAcceptedMessage firstJoin = Assert.IsType<JoinAcceptedMessage>(Assert.Single(host.HandleClientMessage(
+            "connection-1",
+            new ClientJoinRequestMessage("session-a", "Player A"))));
+        host.ReleaseConnection("connection-1");
+        JoinAcceptedMessage secondJoin = Assert.IsType<JoinAcceptedMessage>(Assert.Single(host.HandleClientMessage(
+            "connection-2",
+            new ClientJoinRequestMessage("session-b", "Player A"))));
+        ServerSnapshotEnvelope snapshot = host.CreateSnapshotMessage().Snapshot;
+
+        Assert.Equal("session-a", firstJoin.SessionId);
+        Assert.Equal("session-b", secondJoin.SessionId);
+        Assert.Contains(secondJoin.EffectiveRoster, player => player.SessionId == "session-b");
+        Assert.DoesNotContain(secondJoin.EffectiveRoster, player => player.SessionId == "session-a");
+        Assert.Contains(snapshot.Actors, actor => actor.SessionId == "session-b");
+        Assert.DoesNotContain(snapshot.Actors, actor => actor.SessionId == "session-a");
+    }
+
+    [Fact]
     public void AdvanceTick_TracksInteractionModePerSessionInsteadOfGlobally()
     {
         SceneEventHub events = new();
@@ -585,6 +608,239 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(new Vector3(7f, 1f, 7f), persistedCube.CellPosition);
         Assert.True(persistedCube.CenterPosition.HasValue);
         Assert.Equal(movedCenter, persistedCube.CenterPosition.Value);
+    }
+
+    [Fact]
+    public void ProcessAction_MovedPlacedCube_RemainsDamageable_When_RegistryLink_Is_Missing()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId sessionId = new("session-a");
+        host.JoinSession(sessionId.Value, "Player A");
+        runtime.Enemies.Clear();
+
+        AuthoritativeActionResult buildResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+        Assert.True(buildResult.Accepted);
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        Vector3 movedCenter = new(8.25f, 1.5f, 7.5f);
+        runtime.Map.UpdateCubePosition(cube, movedCenter, syncPhysics: false);
+        Assert.Same(cube, runtime.Map.TryGetCubeAtCell(8, 1, 7));
+
+        WorldObjectRegistry registry = GetWorldObjects(runtime);
+        Assert.True(registry.Unregister(cube));
+
+        host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            2,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Vector3 origin = new(8.25f, 1.5f, 10.5f);
+        runtime.Player.SetWorldPosition(origin);
+        runtime.Player.SetFacing(-Vector3.UnitZ);
+        Assert.NotNull(CombatUseResolver.TryResolveDestructibleCubeHit(
+            runtime.Map,
+            registry,
+            origin,
+            -Vector3.UnitZ,
+            CombatUseResolver.DefaultHitRange));
+        AuthoritativeActionResult combatResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            3,
+            new CombatUseIntent(origin, -Vector3.UnitZ)));
+
+        Assert.True(combatResult.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(combatResult.Payload);
+        Assert.True(
+            resolution.DamageApplied > 0,
+            $"Expected moved cube damage, got actor={resolution.TargetActorId}, kind={resolution.TargetKind}, damage={resolution.DamageApplied}, died={resolution.TargetDied}, health={resolution.CurrentHealth}/{resolution.MaxHealth}.");
+        Assert.True(resolution.TargetDied);
+        Assert.Contains(
+            runtime.Map.CaptureFracturePieces(),
+            piece => piece.Cell == new GeometryCellKey(8, 1, 7));
+    }
+
+    [Fact]
+    public void ProcessAction_MovedPlacedCube_PersistsOriginalOwnership_When_RegistryLink_Is_Missing()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            12,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId sessionId = new("session-a");
+        host.JoinSession(sessionId.Value, "Player A");
+        runtime.Enemies.Clear();
+
+        AuthoritativeActionResult buildResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+        Assert.True(buildResult.Accepted);
+        PersistedPlacedCube persistedCube = Assert.Single(worldPersistence.LoadPlacedCubes());
+
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        Vector3 movedCenter = new(8.25f, 1.5f, 7.5f);
+        runtime.Map.UpdateCubePosition(cube, movedCenter, syncPhysics: false);
+        Assert.Same(cube, runtime.Map.TryGetCubeAtCell(8, 1, 7));
+
+        WorldObjectRegistry registry = GetWorldObjects(runtime);
+        Assert.True(registry.Unregister(cube));
+
+        host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            2,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Vector3 origin = new(8.25f, 1.5f, 10.5f);
+        runtime.Player.SetWorldPosition(origin);
+        runtime.Player.SetFacing(-Vector3.UnitZ);
+
+        AuthoritativeActionResult combatResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            3,
+            new CombatUseIntent(origin, -Vector3.UnitZ)));
+
+        Assert.True(combatResult.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(combatResult.Payload);
+        Assert.True(resolution.TargetDied);
+        Assert.Empty(worldPersistence.LoadPlacedCubes());
+
+        PersistedCubeFracturePiece[] pieces = worldPersistence.LoadCubeFracturePieces()
+            .OrderBy(piece => piece.PieceIndex)
+            .ToArray();
+        Assert.NotEmpty(pieces);
+        Assert.All(pieces, piece =>
+        {
+            Assert.Equal(persistedCube.CubeId, piece.SourceCubeId);
+            Assert.Equal("Player A", piece.OwnerPlayerName);
+            Assert.Equal(new Vector3(8f, 1f, 7f), piece.ParentCell);
+        });
+    }
+
+    [Fact]
+    public void ProcessAction_MovedPlacedCube_DoesNotStealNearbyCubeIdentity_When_RegistryLink_Is_Missing()
+    {
+        InMemoryPlayerProfileRepository playerProfiles = new();
+        InMemoryWorldPersistenceRepository worldPersistence = new();
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(
+            14,
+            new Vector3(5f, 1.5f, 5f),
+            events,
+            loadVisualAssets: false,
+            playerProfiles: playerProfiles,
+            worldPersistence: worldPersistence);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        PlayerSessionId sessionId = new("session-a");
+        host.JoinSession(sessionId.Value, "Player A");
+        runtime.Enemies.Clear();
+        runtime.Player.SetWorldPosition(new Vector3(6.5f, 1.5f, 6.5f));
+
+        Assert.True(host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f)))).Accepted);
+        Assert.True(host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            2,
+            new BuildUseIntent(new Vector3(8f, 1f, 6f)))).Accepted);
+
+        PersistedPlacedCube[] beforeCombat = worldPersistence.LoadPlacedCubes()
+            .OrderBy(cube => cube.CubeId)
+            .ToArray();
+        Assert.Equal(2, beforeCombat.Length);
+        PersistedPlacedCube movedCubePersisted = beforeCombat[0];
+        PersistedPlacedCube nearbyCubePersisted = beforeCombat[1];
+
+        Cube movedCube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        runtime.Map.UpdateCubePosition(movedCube, new Vector3(8.8f, 1.5f, 7.5f), syncPhysics: false);
+        Assert.Same(movedCube, runtime.Map.TryGetCubeAtCell(8, 1, 7));
+
+        WorldObjectRegistry registry = GetWorldObjects(runtime);
+        Assert.True(registry.Unregister(movedCube));
+
+        host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            3,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+
+        Vector3 origin = new(8.8f, 1.5f, 10.5f);
+        runtime.Player.SetWorldPosition(origin);
+        runtime.Player.SetFacing(-Vector3.UnitZ);
+
+        AuthoritativeActionResult combatResult = host.ProcessAction(new PlayerActionMessage(
+            sessionId,
+            4,
+            new CombatUseIntent(origin, -Vector3.UnitZ)));
+
+        Assert.True(combatResult.Accepted);
+        CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(combatResult.Payload);
+        Assert.True(resolution.TargetDied);
+
+        PersistedPlacedCube remainingCube = Assert.Single(worldPersistence.LoadPlacedCubes());
+        Assert.Equal(nearbyCubePersisted.CubeId, remainingCube.CubeId);
+        Assert.Equal(nearbyCubePersisted.CellPosition, remainingCube.CellPosition);
+
+        PersistedCubeFracturePiece[] fracturePieces = worldPersistence.LoadCubeFracturePieces().ToArray();
+        Assert.NotEmpty(fracturePieces);
+        Assert.All(fracturePieces, piece => Assert.NotEqual(nearbyCubePersisted.CubeId, piece.SourceCubeId));
+        Assert.Contains(fracturePieces, piece => piece.SourceCubeId == movedCubePersisted.CubeId);
+    }
+
+    [Fact]
+    public void AdvanceAuthoritativeTick_PhysicsMovedCube_QueuesAuthoritativeMoveMutation()
+    {
+        SceneEventHub events = new();
+        using WorldSessionRuntime runtime = new(12, new Vector3(5f, 1.5f, 5f), events, loadVisualAssets: false);
+        runtime.Enemies.Clear();
+        AuthoritativeActionResult buildResult = runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
+            PlayerSessionId.LocalDefault,
+            1,
+            new BuildUseIntent(new Vector3(7f, 1f, 7f))));
+        Assert.True(buildResult.Accepted);
+        Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
+        BulletSharp.RigidBody body = Assert.Single(
+            runtime.Physics.DynamicMapCubeBodies,
+            candidate => candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+                ReferenceEquals(cubeBody.Item1, cube));
+        Vector3 authoritativeCenter = new(8.18f, 1.5f, 7.44f);
+        BulletSharp.Math.Matrix transform = BulletSharp.Math.Matrix.Translation(
+            new BulletSharp.Math.Vector3(authoritativeCenter.X, authoritativeCenter.Y, authoritativeCenter.Z));
+        body.WorldTransform = transform;
+        body.MotionState.SetWorldTransform(ref transform);
+
+        runtime.AdvanceAuthoritativeTick(
+            serverTick: 2,
+            SimulationClock.FixedDeltaSeconds,
+            new PlayerCommandFrame(
+                PlayerSessionId.LocalDefault,
+                Sequence: 1,
+                PlayerModeSwitchIntent.None,
+                new PlayerMoveIntent(ForwardAxis: 0f, StrafeAxis: 0f),
+                PlayerLookIntent.None,
+                PrimaryUsePressed: false),
+            CreatePlayerTuning(),
+            allowGameplaySimulation: false);
+
+        ServerSnapshotEnvelope snapshot = runtime.ExportServerSnapshotEnvelope();
+        WorldMutationDelta move = Assert.Single(snapshot.WorldMutations, mutation => mutation.Kind == WorldMutationKind.CubeMoved);
+        Assert.Equal(new Vector3(7f, 1f, 7f), move.CellPosition);
+        Assert.Equal(new Vector3(8f, 1f, 7f), move.TargetCellPosition);
+        Assert.Equal(authoritativeCenter, move.CenterPosition);
     }
 
     [Fact]
@@ -976,6 +1232,14 @@ public class RuntimeAuthoritativeSessionHostTests
             MoveSpeed: 6f,
             NoclipSpeed: 150f,
             JumpVelocity: 5f);
+    }
+
+    private static WorldObjectRegistry GetWorldObjects(WorldSessionRuntime runtime)
+    {
+        FieldInfo field = typeof(WorldSessionRuntime).GetField(
+            "_worldObjects",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return (WorldObjectRegistry)field.GetValue(runtime)!;
     }
 
     private sealed class InMemoryPlayerProfileRepository : IPlayerProfileRepository

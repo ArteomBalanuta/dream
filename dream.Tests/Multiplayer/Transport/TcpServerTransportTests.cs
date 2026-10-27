@@ -16,4 +16,19 @@ public class TcpServerTransportTests
 
         Assert.InRange(transport.Port, 1, 65535);
     }
+
+    [Fact]
+    public async Task AcceptedAndConnectedConnections_DisableNagle()
+    {
+        // Small command/snapshot writes were batched by Nagle and delayed ACK.
+        await using TcpServerTransport server = new(IPAddress.Loopback, 0);
+        server.Start();
+        ValueTask<ITransportConnection> accept = server.AcceptClientAsync();
+
+        await using TcpClientTransport client = await TcpClientTransport.ConnectAsync("127.0.0.1", server.Port);
+        await using ITransportConnection accepted = await accept;
+
+        Assert.True(client.NoDelay);
+        Assert.True(Assert.IsType<TcpClientTransport>(accepted).NoDelay);
+    }
 }

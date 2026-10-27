@@ -214,18 +214,33 @@ public class StaticWorldChunkRendererTests
     }
 
     [Fact]
-    public void ExportSignatureChangesWhenDirtyCellsArePresent()
+    public void ExportSignatureChangesWhenStaticDirtyCellsArePresent()
     {
         GeometryRenderExport cleanExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Grass);
         GeometryRenderExport dirtyExport = cleanExport with
         {
-            DirtyCells = [new GeometryCellKey(0, 0, 0)]
+            StaticDirtyCells = [new GeometryCellKey(0, 0, 0)]
         };
 
         int cleanSignature = StaticWorldChunkRenderer.CalculateExportSignature(cleanExport);
         int dirtySignature = StaticWorldChunkRenderer.CalculateExportSignature(dirtyExport);
 
         Assert.NotEqual(cleanSignature, dirtySignature);
+    }
+
+    [Fact]
+    public void ExportSignature_Ignores_DynamicOnlyDirtyCells()
+    {
+        GeometryRenderExport cleanExport = CreateSingleCompatibilityCubeExport(GeometryMaterialId.Grass);
+        GeometryRenderExport dynamicDirtyExport = cleanExport with
+        {
+            DirtyCells = [new GeometryCellKey(3, 1, 3)],
+            StaticDirtyCells = []
+        };
+
+        Assert.Equal(
+            StaticWorldChunkRenderer.CalculateExportSignature(cleanExport),
+            StaticWorldChunkRenderer.CalculateExportSignature(dynamicDirtyExport));
     }
 
     [Fact]

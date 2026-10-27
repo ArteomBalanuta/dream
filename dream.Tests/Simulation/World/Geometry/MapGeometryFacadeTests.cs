@@ -125,7 +125,10 @@ public class MapGeometryFacadeTests
 
         bool fractured = map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3));
 
-        GeometryCellRecord geometryCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(3, 1, 3));
+        // Rubble lives apart from cell occupancy: the fractured cell itself is released.
+        GeometryCellRecord geometryCell = Assert.IsType<GeometryCellRecord>(map.TryGetRubbleAtCell(new GeometryCellKey(3, 1, 3)));
+        Assert.Null(map.TryGetGeometryCellAtCell(3, 1, 3));
+        Assert.Null(map.TryGetCubeAtCell(3, 1, 3));
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
         GeometryCollisionExport collision = map.CaptureGeometryCollisionExport();
 
@@ -192,7 +195,9 @@ public class MapGeometryFacadeTests
         GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
 
         Assert.True(restored);
-        Assert.NotNull(map.TryGetCubeAtCell(3, 1, 3));
+        // Restored rubble no longer materializes a cube in its origin cell.
+        Assert.Null(map.TryGetCubeAtCell(3, 1, 3));
+        Assert.NotNull(map.TryGetRubbleAtCell(cell));
         Assert.DoesNotContain(renderExport.Blocks, block => block.CellKey == cell);
         Assert.Equal(2, renderExport.DynamicBlocks.Count(block => block.CellKey == cell));
         Assert.Equal(2, collisionExport.Bodies.Count(body => body.CellKey == cell));
@@ -201,6 +206,29 @@ public class MapGeometryFacadeTests
             Assert.Equal(GeometryMaterialId.Stone, block.MaterialId);
             Assert.Contains(pieces, piece => piece.Center == block.Center && piece.SideLength == block.SideLength);
         });
+    }
+
+    [Fact]
+    public void RestoreFracturePieces_RejectsInvalidPiecesBeforeRenderOrCollisionExport()
+    {
+        Map map = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
+        GeometryCellKey cell = new(3, 1, 3);
+        GeometryFracturePiece[] invalidPieces =
+        [
+            new(new Vector3(float.NaN, 1.2f, 3.2f), 0.2f),
+            new(new Vector3(3.7f, 1.3f, 3.65f), 0f),
+            new(new Vector3(3.7f, 1.3f, 3.65f), -0.2f),
+            new(new Vector3(3.7f, 1.3f, 3.65f), 1.25f)
+        ];
+
+        bool restored = map.RestoreFracturePieces(cell, GeometryMaterialId.Stone, invalidPieces, withPhysics: false);
+
+        Assert.False(restored);
+        Assert.Null(map.TryGetGeometryCellAtCell(3, 1, 3));
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
+        GeometryCollisionExport collisionExport = map.CaptureGeometryCollisionExport();
+        Assert.DoesNotContain(renderExport.DynamicBlocks, block => block.CellKey == cell);
+        Assert.DoesNotContain(collisionExport.Bodies, body => body.CellKey == cell);
     }
 
     [Fact]
@@ -231,6 +259,24 @@ public class MapGeometryFacadeTests
             Assert.Equal(block.SideLength * 0.5f, collisionBody.HalfExtents.Y, 4);
             Assert.Equal(block.SideLength * 0.5f, collisionBody.HalfExtents.Z, 4);
         }
+    }
+
+    [Fact]
+    public void CaptureGeometryRenderExport_Includes_Moved_FracturePieces_By_Piece_Position()
+    {
+        Map map = new Map(width: 10, height: 8, depth: 10, loadVisualAssets: false);
+        GeometryCellKey parentCell = new(2, 1, 2);
+        map.AddCube(new Vector3(parentCell.X, parentCell.Y, parentCell.Z), withPhysics: false);
+        Assert.True(map.FractureCubeIntoPieces(parentCell));
+
+        Vector3 movedPieceCenter = new(7.25f, 1.25f, 7.25f);
+        Assert.True(map.UpdateFracturePiecePosition(parentCell, pieceIndex: 0, movedPieceCenter));
+
+        GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(movedPieceCenter, radius: 1f);
+
+        Assert.Contains(
+            renderExport.DynamicBlocks,
+            block => block.CellKey == parentCell && block.Center == movedPieceCenter);
     }
 
     [Fact]

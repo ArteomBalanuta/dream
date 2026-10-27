@@ -14,8 +14,21 @@ public sealed class ServerConnection : IAsyncDisposable
     private readonly IMessageFramer _framer;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly byte[] _receiveChunk = new byte[16 * 1024];
-    private readonly List<byte> _receiveBuffer = [];
+    private readonly FrameReceiveBuffer _receiveBuffer = new();
     private ulong _nextOutboundSequence = 1;
+
+    // Ordered outbound queue drained by one writer task per connection. The tick loop only
+    // enqueues, so one slow client can no longer stall the authoritative simulation. A snapshot
+    // queued directly behind another unsent snapshot is merged into it (latest actor state,
+    // concatenated world mutations and damage), so a lagging client's backlog stays bounded.
+    public const int MaxPendingOutboundMessages = 512;
+    private readonly object _outboundSync = new();
+    private readonly LinkedList<IServerToClientMessage> _outbound = new();
+    private readonly SemaphoreSlim _outboundSignal = new(0, int.MaxValue);
+    private readonly CancellationTokenSource _writerShutdown = new();
+    private Task? _writerTask;
+    private bool _writing;
+    private long _coalescedSnapshots;
 
     public ServerConnection(
         ITransportConnection transport,
@@ -31,6 +44,81 @@ public sealed class ServerConnection : IAsyncDisposable
 
     public string ConnectionId => _transport.ConnectionId;
 
+    public int PendingOutboundCount
+    {
+        get
+        {
+            lock (_outboundSync)
+            {
+                return _outbound.Count;
+            }
+        }
+    }
+
+    public long CoalescedSnapshots => Interlocked.Read(ref _coalescedSnapshots);
+
+    // Set when the writer failed or the backlog overflowed; the service drops faulted connections.
+    public bool IsFaulted { get; private set; }
+
+    public void EnqueueSnapshot(ServerSnapshotMessage snapshotMessage)
+    {
+        ArgumentNullException.ThrowIfNull(snapshotMessage);
+        lock (_outboundSync)
+        {
+            if (_outbound.Last?.Value is ServerSnapshotMessage pending &&
+                ServerSnapshotEnvelope.TryCoalesce(pending.Snapshot, snapshotMessage.Snapshot, out ServerSnapshotEnvelope merged))
+            {
+                _outbound.Last.Value = new ServerSnapshotMessage(merged);
+                _coalescedSnapshots++;
+                return;
+            }
+        }
+
+        Enqueue(snapshotMessage);
+    }
+
+    public void Enqueue(IServerToClientMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        lock (_outboundSync)
+        {
+            if (IsFaulted)
+            {
+                return;
+            }
+
+            if (_outbound.Count >= MaxPendingOutboundMessages)
+            {
+                Fault($"outbound backlog exceeded {MaxPendingOutboundMessages} messages");
+                return;
+            }
+
+            _outbound.AddLast(message);
+            _writerTask ??= Task.Run(() => WriteLoopAsync(_writerShutdown.Token));
+        }
+
+        _outboundSignal.Release();
+    }
+
+    public async ValueTask<bool> FlushOutboundAsync(TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (_outboundSync)
+            {
+                if (IsFaulted || (_outbound.Count == 0 && !_writing))
+                {
+                    return !IsFaulted;
+                }
+            }
+
+            await Task.Delay(1);
+        }
+
+        return false;
+    }
+
     public async ValueTask<bool> ProcessIncomingAsync(CancellationToken cancellationToken = default)
     {
         int bytesRead = await _transport.ReceiveAsync(_receiveChunk, cancellationToken);
@@ -39,9 +127,9 @@ public sealed class ServerConnection : IAsyncDisposable
             return false;
         }
 
-        _receiveBuffer.AddRange(_receiveChunk.AsSpan(0, bytesRead).ToArray());
-        await FlushInboundFramesAsync(cancellationToken);
-        return true;
+        _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
+        FlushInboundFrames();
+        return !IsFaulted;
     }
 
     public ValueTask SendSnapshotAsync(ServerSnapshotMessage snapshotMessage, CancellationToken cancellationToken = default)
@@ -54,17 +142,90 @@ public sealed class ServerConnection : IAsyncDisposable
         return SendMessageAsync(actionMessage, cancellationToken);
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        _writerShutdown.Cancel();
+        if (_writerTask != null)
+        {
+            try
+            {
+                await _writerTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _writerShutdown.Dispose();
         _sendLock.Dispose();
-        return _transport.DisposeAsync();
+        await _transport.DisposeAsync();
     }
 
-    private async ValueTask FlushInboundFramesAsync(CancellationToken cancellationToken)
+    private async Task WriteLoopAsync(CancellationToken cancellationToken)
     {
-        while (_framer.TryDeframe(_receiveBuffer.ToArray(), out byte[]? payload, out int bytesConsumed))
+        try
         {
-            _receiveBuffer.RemoveRange(0, bytesConsumed);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await _outboundSignal.WaitAsync(cancellationToken);
+                while (true)
+                {
+                    IServerToClientMessage message;
+                    lock (_outboundSync)
+                    {
+                        if (_outbound.First == null)
+                        {
+                            break;
+                        }
+
+                        message = _outbound.First.Value;
+                        _outbound.RemoveFirst();
+                        _writing = true;
+                    }
+
+                    try
+                    {
+                        await SendMessageAsync(message, cancellationToken);
+                    }
+                    finally
+                    {
+                        lock (_outboundSync)
+                        {
+                            _writing = false;
+                        }
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            lock (_outboundSync)
+            {
+                Fault($"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    // Caller holds _outboundSync.
+    private void Fault(string reason)
+    {
+        if (IsFaulted)
+        {
+            return;
+        }
+
+        IsFaulted = true;
+        _outbound.Clear();
+        NetworkDiagnosticsLog.Write("server.connection.fault", $"connection={ConnectionId} reason={reason}");
+    }
+
+    private void FlushInboundFrames()
+    {
+        while (_receiveBuffer.TryReadFrame(_framer, out byte[]? payload))
+        {
             if (payload == null)
             {
                 continue;
@@ -78,7 +239,7 @@ public sealed class ServerConnection : IAsyncDisposable
             IReadOnlyList<IServerToClientMessage> replies = _host.HandleClientMessage(ConnectionId, clientMessage);
             foreach (IServerToClientMessage reply in replies)
             {
-                await SendMessageAsync(reply, cancellationToken);
+                Enqueue(reply);
             }
         }
     }

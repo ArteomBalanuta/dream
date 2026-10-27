@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Simulation.Combat;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.World;
 
@@ -8,6 +9,7 @@ namespace Dream.Simulation.World;
 public sealed class WorldObjectRegistry
 {
     private readonly Dictionary<object, WorldObjectRecord> _records = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Cube, DetachedCubeRecord> _detachedCubeRecords = new(ReferenceEqualityComparer.Instance);
     private int _nextActorId = 1000;
 
     public WorldObjectRecord Register(
@@ -23,6 +25,11 @@ public sealed class WorldObjectRegistry
         if (_records.TryGetValue(sourceObject, out WorldObjectRecord? existing))
         {
             return existing;
+        }
+
+        if (sourceObject is Cube cube)
+        {
+            _detachedCubeRecords.Remove(cube);
         }
 
         int resolvedActorId = actorId ?? _nextActorId++;
@@ -67,9 +74,65 @@ public sealed class WorldObjectRegistry
         return record;
     }
 
-    public bool Unregister(object sourceObject)
+    public WorldObjectRecord? TryResolveCubeRecord(Map map, Cube cube)
     {
-        return _records.Remove(sourceObject);
+        if (_records.TryGetValue(cube, out WorldObjectRecord? exact))
+        {
+            return exact;
+        }
+
+        if (_detachedCubeRecords.TryGetValue(cube, out DetachedCubeRecord detached))
+        {
+            _detachedCubeRecords.Remove(cube);
+            return RegisterCube(
+                cube,
+                map,
+                detached.MaxHealth,
+                detached.CurrentHealth,
+                detached.ActorId,
+                detached.OwnerPlayerName);
+        }
+
+        if (!TryGetAuthoritativeCubeCell(map, cube, out GeometryCellKey cell) || cell.Y == 0)
+        {
+            return null;
+        }
+
+        WorldObjectRecord[] matchingCellRecords = _records.Values
+            .Where(record => record.SourceObject is Cube candidate && IsCubeAtCell(candidate, cell))
+            .ToArray();
+
+        if (matchingCellRecords.Length == 1)
+        {
+            return RebindCubeRecord(matchingCellRecords[0], cube, map);
+        }
+
+        return RegisterCube(cube, map);
+    }
+
+    public bool Unregister(object sourceObject, bool preserveDetachedRecord = true)
+    {
+        if (!_records.Remove(sourceObject, out WorldObjectRecord? record))
+        {
+            return false;
+        }
+
+        if (sourceObject is Cube cube && preserveDetachedRecord)
+        {
+            _detachedCubeRecords[cube] = new DetachedCubeRecord(
+                record.Actor.Id,
+                record.Health.MaxHealth,
+                record.Health.CurrentHealth,
+                record.OwnerPlayerName);
+            return true;
+        }
+
+        if (sourceObject is Cube removedCube)
+        {
+            _detachedCubeRecords.Remove(removedCube);
+        }
+
+        return true;
     }
 
     public bool TryRemove(WorldObjectRecord record)
@@ -78,9 +141,45 @@ public sealed class WorldObjectRegistry
         if (removed)
         {
             _records.Remove(record.SourceObject);
+            if (record.SourceObject is Cube cube)
+            {
+                _detachedCubeRecords.Remove(cube);
+            }
         }
 
         return removed;
+    }
+
+    public WorldObjectRecord ReplaceCubeRecordIdentity(
+        Cube cube,
+        Map map,
+        int actorId,
+        int maxHealth,
+        int currentHealth,
+        string? ownerPlayerName)
+    {
+        _records.Remove(cube);
+        _detachedCubeRecords.Remove(cube);
+
+        if (TryGetAuthoritativeCubeCell(map, cube, out GeometryCellKey cell))
+        {
+            object[] staleEntries = _records.Values
+                .Where(record => record.SourceObject is Cube candidate && IsCubeAtCell(candidate, cell))
+                .Select(record => record.SourceObject)
+                .ToArray();
+            foreach (object staleEntry in staleEntries)
+            {
+                _records.Remove(staleEntry);
+            }
+        }
+
+        return RegisterCube(
+            cube,
+            map,
+            maxHealth,
+            currentHealth,
+            actorId,
+            ownerPlayerName);
     }
 
     public bool TryGetByActorId(int actorId, out WorldObjectRecord record)
@@ -124,6 +223,7 @@ public sealed class WorldObjectRegistry
     public void RestoreCubeSnapshot(Map map, WorldObjectCubeSnapshot snapshot)
     {
         _records.Clear();
+        _detachedCubeRecords.Clear();
 
         foreach (WorldObjectCubeSnapshotEntry entry in snapshot.Entries)
         {
@@ -144,6 +244,49 @@ public sealed class WorldObjectRegistry
             (int)MathF.Floor(position.Y + 1e-6f),
             (int)MathF.Floor(position.Z + 1e-6f));
     }
+
+    private WorldObjectRecord RebindCubeRecord(WorldObjectRecord record, Cube cube, Map map)
+    {
+        _records.Remove(record.SourceObject);
+        return RegisterCube(
+            cube,
+            map,
+            record.Health.MaxHealth,
+            record.Health.CurrentHealth,
+            record.Actor.Id,
+            record.OwnerPlayerName);
+    }
+
+    private static bool TryGetAuthoritativeCubeCell(Map map, Cube cube, out GeometryCellKey cell)
+    {
+        if (map.TryGetCellForCube(cube, out cell))
+        {
+            return true;
+        }
+
+        cell = ToCellKey(cube.Position);
+        Cube? occupant = map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z);
+        return ReferenceEquals(occupant, cube);
+    }
+
+    private static bool IsCubeAtCell(Cube cube, GeometryCellKey cell)
+    {
+        return ToCellKey(cube.Position) == cell;
+    }
+
+    private static GeometryCellKey ToCellKey(Vector3 position)
+    {
+        return new GeometryCellKey(
+            (int)MathF.Floor(position.X + 1e-6f),
+            (int)MathF.Floor(position.Y + 1e-6f),
+            (int)MathF.Floor(position.Z + 1e-6f));
+    }
+
+    private readonly record struct DetachedCubeRecord(
+        int ActorId,
+        int MaxHealth,
+        int CurrentHealth,
+        string? OwnerPlayerName);
 }
 
 public sealed class WorldObjectRecord : IDamageable, ICombatAnchorProvider

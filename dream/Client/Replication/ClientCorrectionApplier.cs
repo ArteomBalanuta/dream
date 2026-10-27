@@ -41,10 +41,14 @@ public static class ClientCorrectionApplier
         }
     }
 
+    // Without a reconciler the local player is hard-snapped to the snapshot position, which is
+    // right for the join bootstrap. Connected play passes a reconciler so normal snapshots only
+    // correct real divergence instead of pulling the player back by the latency gap.
     public static void ApplySnapshotToRuntime(
-        WorldSessionRuntime runtime,
+        IClientWorldState runtime,
         ServerSnapshotEnvelope snapshot,
-        string localSessionId)
+        string localSessionId,
+        ClientPredictionReconciler? reconciler = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentException.ThrowIfNullOrWhiteSpace(localSessionId);
@@ -73,12 +77,27 @@ public static class ClientCorrectionApplier
             runtime.Player.Combatant.ApplyProgression(progression.Level, progression.Experience);
         }
 
-        runtime.Player.SetWorldPosition(actor.Value.Position);
+        if (reconciler == null)
+        {
+            runtime.Player.SetWorldPosition(actor.Value.Position);
+        }
+        else
+        {
+            ulong? acknowledged = snapshot.LastAcceptedCommandSequences.TryGetValue(localSessionId, out ulong sequence)
+                ? sequence
+                : null;
+            ClientReconciliationResult result = reconciler.Reconcile(acknowledged, actor.Value.Position);
+            if (result.Kind == ClientReconciliationKind.Snap)
+            {
+                runtime.Player.SetWorldPosition(result.SnapPosition);
+            }
+        }
+
         runtime.Player.SetHealth(actor.Value.CurrentHealth, actor.Value.MaxHealth);
     }
 
     public static void ApplyCorrectionDeltaToRuntimePlayer(
-        WorldSessionRuntime runtime,
+        IClientWorldState runtime,
         ClientCorrectionDelta correction)
     {
         ArgumentNullException.ThrowIfNull(runtime);

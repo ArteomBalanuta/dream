@@ -44,9 +44,9 @@ Guardrail: static chunk meshes are presentation artifacts. They must not become 
 
 The static chunk export signature includes compatibility-cube material ids. Material-only changes must invalidate cached meshes just like coordinate or size changes, otherwise stale buffers can keep rendering an old terrain batch for a still-solid block.
 
-Presentation now feeds static chunk rendering from a stable full-world geometry export instead of a camera-local export. Camera movement should only affect which already-built chunks are visible; it should not invalidate or rebuild the static mesh cache.
+Presentation feeds static chunk rendering from a stable static-world geometry source instead of a camera-local static source. Dynamic cubes and fracture pieces remain radius-filtered for presentation, but static terrain stays full and stable so camera movement only affects which already-built chunks are visible; it should not invalidate or rebuild the static mesh cache.
 
-Guardrail: do not make camera position part of static mesh source selection. If the world grows too large for full startup export, move to chunk-owned streaming with build/draw radii and background mesh generation instead of reintroducing camera-local mesh inputs.
+Guardrail: do not make camera position part of static mesh source selection. If the world grows too large for the stable static source, move to chunk-owned streaming with build/draw radii and background mesh generation instead of reintroducing camera-local static mesh inputs. Keep dynamic physics-owned bodies out of the static chunk cache.
 
 ### Static And Dynamic Cube Ownership Split
 
@@ -74,9 +74,15 @@ Guardrail: do not return to one global visible-export signature for static world
 
 Static chunk planning skips cached chunk/material/role keys when their chunk is not dirty and the cached input signature still matches. If the visible export changes because the camera or render radius crosses a boundary, the renderer should plan only missing, dirty, or input-changed chunk meshes instead of re-evaluating every cached chunk.
 
-Guardrail: dirty-region decisions should stay keyed by world-space chunks, not by camera position alone. Dirty cells must also affect the static export signature, otherwise a render-dirty notification can be skipped when the visible cell list itself has not changed.
+Guardrail: dirty-region decisions should stay keyed by world-space chunks, not by camera position alone. Static dirty cells must also affect the static export signature, otherwise a render-dirty notification can be skipped when the visible cell list itself has not changed.
 
 Moving placed cubes that cross cell boundaries must dirty both the source and destination cells. Otherwise the static chunk cache can keep the old chunk mesh alive while also building the new one, which makes the rendered position drift away from the live cube position.
+
+`GeometryRenderExport` carries two dirty sets. `DirtyCells` lists every render-dirty cell. `StaticDirtyCells` lists only cells whose static render content (`CompatibilityCubes` or `Blocks`) changed, before or after the mutation. `Map.MarkRenderDirty` tracks which cells currently contribute static content, so removing or converting a static cell still invalidates its chunk. `StaticWorldChunkRenderer` reads only `StaticDirtyCells`. Before 2026-10-27 it read `DirtyCells`, so every frame a dynamic cube or fracture piece moved forced a full static extract, a chunk re-plan and identical chunk rebuilds, which was the main frame-rate drop when pushing cubes.
+
+Guardrail: dynamic cubes and fracture pieces are drawn from `DynamicCompatibilityCubes` and `DynamicBlocks` every frame and are not part of static chunk meshes. Their movement must never reach `StaticDirtyCells`.
+
+`Map.UpdateCubePosition(..., syncPhysics: true)` moves a compatibility cube's existing Bullet body in place through `WorldPhysicsBinder.TryMoveCompatibilityCubeBody`, and reindexes it when the cube crosses cells. It falls back to a full cell rebuild only when the cube has no indexed body, or when a static cube leaves its cell and has to become dynamic. Replicated `CubeMoved` deltas arrive every server tick per moving cube, so the client must not dispose and reallocate a shape, a motion state and a body for each one.
 
 ### Worker Mesh Build With Render-Thread Upload
 
@@ -116,6 +122,12 @@ Subdivided cells emit geometry-native collision cuboids, and solid subcell runs 
 
 Guardrail: collision descriptors should be derived from geometry occupancy, not from visual-only scale such as `VisualFillScale`.
 
+### Batched Dynamic Fracture Sync
+
+Physics sync groups moved fracture-piece bodies by parent geometry cell before updating map presentation data. Each dirty rubble cell copies its piece list and rebuilds render/collision descriptors once per tick, even when several mini-cubes in that cell moved.
+
+Guardrail: do not update moving fracture pieces one body at a time through full cell artifact rebuilds. The authoritative body transforms can arrive per rigid body, but map/render/collision descriptor refresh should stay batched by dirty cell.
+
 ### Coarse Static Startup Collision
 
 Static startup sculpture collision is intentionally coarser than render geometry for responsive bootstrap. Static collision uses merged/coarse bodies, while dynamic and fractured cells keep the more focused per-cell update path.
@@ -135,6 +147,28 @@ Guardrail: floor rendering and floor collision can differ internally, but their 
 The desktop host advances authoritative gameplay through `ServerTickRunner` and `SimulationClock` at a fixed `64 Hz` tick rate. Render-frame delta no longer directly owns authoritative simulation cadence.
 
 Guardrail: client presentation, camera, and input feel should remain render-frame responsive; fixed tick should not quantize camera motion.
+
+`SimulationClock` caps catch-up at `DefaultMaxTicksPerAdvance` (8) ticks per advance and drops the excess time, counting it in `DroppedTicks`. Without the cap, a stall replayed every missed tick back to back with the latest command. The 0.5 s checkpoint stall became about 34 ticks in a burst, which teleported players and pushed cubes. The cap applies to the server host and to the desktop client mirror.
+
+Guardrail: a stall must slow the world down, not replay it in a burst. Do not remove the cap to "catch up".
+
+### Checkpoint Persistence Off The Tick
+
+Every 5 s, `DedicatedServerHost` calls `WorldSessionRuntime.CapturePersistenceCheckpoint()` under the authority lock. The capture copies player world state, profile vitals, enemies, placed cubes and fracture pieces into a `PersistenceCheckpoint` without any database access. `BackgroundCheckpointWriter` then writes it on one background worker, and if a newer checkpoint is waiting it replaces the older pending one. `SqlitePersistenceCheckpointWriter` writes the whole checkpoint on one connection inside one transaction, with one prepared command per table.
+
+Before 2026-10-27 the checkpoint ran on the tick thread, opened a connection and autocommitted per row, and repaired every cube's identity by reloading the whole `placed_cube_instances` table. The 2026-07-05 perf logs show 528–575 ms server ticks on exactly the checkpoint ticks.
+
+Guardrail: checkpoint writes can land after the tick thread deleted rows. Writers must only `UPDATE` existing cube, fracture-piece and enemy rows, and touch only the volatile profile fields (`interaction_mode`, `current_hp`, `max_hp`). Re-inserting deleted rows would resurrect destroyed cubes on restart, and writing whole profiles could roll back experience saved after the capture.
+
+### Network Send Path Off The Simulation
+
+The client sends at most one merged command per client tick through `RemoteClientSession`'s background writer. Before, it sent a blocking command per render frame: about 110–250 per second against a server that consumes 64, each decoded under the authority lock. Each `ServerConnection` drains an ordered outbound queue on its own writer task. The tick loop only enqueues, merges consecutive unsent snapshots and faults a connection whose backlog passes 512 messages. Both TCP ends disable Nagle. The server tick loop runs on a dedicated thread paced by `TickPacer`, so most iterations run exactly one tick. Before, a 15.6 ms `Task.Delay(1)` beat against the 15.625 ms tick.
+
+Guardrail: never await a socket write from the tick loop or block the render thread on a send.
+
+### Persistence Off The Simulation
+
+Gameplay actions no longer read SQLite on the tick. Before, every cube hit and placement reloaded the whole `placed_cube_instances` table. Immediate writes go through the ordered `PersistenceWriteQueue`. See `docs/server-persistence-ddl.md`.
 
 ### Latest Command Inbox
 

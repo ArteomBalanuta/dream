@@ -149,6 +149,7 @@ public sealed class StartupConnectionScene : IDisposable
             return;
         }
 
+        _coordinator.EnsureLocalServerStarted();
         if (!_coordinator.IsLocalServerReady)
         {
             return;

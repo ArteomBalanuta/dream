@@ -23,6 +23,9 @@ public class Game : GameWindow
     private readonly DesktopClientConfig _desktopClientConfig;
     private readonly string _desktopClientConfigPath;
     private readonly ILocalServerHandle _localServer;
+    // Title setters are synchronous Win32 calls; skip them when the text has not changed.
+    private readonly ChangedTextSink _consoleTitle = new(text => Console.Title = text);
+    private readonly ChangedTextSink _windowTitle;
     private StartupConnectionScene? _startupScene;
     private PlayScene? _playScene;
 
@@ -36,12 +39,14 @@ public class Game : GameWindow
         Title = GameWindowTitleBuilder.BaseTitle
     })
     {
+        _windowTitle = new ChangedTextSink(text => Title = text);
         ViewModelRigSettings viewModelRig = ViewModelRigTextConfig.LoadOrCreate(
             AssetPaths.Config("viewmodel-rig.txt"));
         _desktopClientConfigPath = AssetPaths.Config("desktop-client.txt");
         _desktopClientConfig = DesktopClientTextConfig.LoadOrCreate(_desktopClientConfigPath);
         _settings = new GameSettings(new Vector2i(1440, 1024), viewModelRig, _desktopClientConfig);
-        _localServer = IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult();
+        _localServer = new OnDemandLocalServerHandle(
+            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult());
         NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());
         ClientConnectionOptions? initialOptions = null;
         bool autoConnectUsesInitialOptions = false;
@@ -104,7 +109,8 @@ public class Game : GameWindow
         else
         {
             _playScene.Update(args, KeyboardState, MouseState);
-            Console.Title = $"Player Position: {_playScene.LastReportedPlayerPosition}";
+            Vector3 position = _playScene.LastReportedPlayerPosition;
+            _consoleTitle.Set($"Player Position: ({position.X:0.0}, {position.Y:0.0}, {position.Z:0.0})");
         }
 
         CursorState = _playScene?.DesiredCursorState ?? _startupScene!.DesiredCursorState;
@@ -131,7 +137,7 @@ public class Game : GameWindow
             swapStopwatch.Elapsed.TotalMilliseconds);
 
         UpdateFPS();
-        this.Title = GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint);
+        _windowTitle.Set(GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint));
     }
 
     protected override void OnResize(ResizeEventArgs e)

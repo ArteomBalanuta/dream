@@ -22,7 +22,7 @@ public static class CombatUseResolver
             return null;
         }
 
-        return registry.TryGet(hitCube);
+        return registry.TryResolveCubeRecord(map, hitCube);
     }
 
     public static EnemyActor? TryResolveEnemyHit(

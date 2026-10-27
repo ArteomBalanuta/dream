@@ -11,7 +11,8 @@ public sealed record JoinAcceptedMessage(
     WorldSnapshot? InitialWorld,
     IReadOnlyList<PlayerRosterEntry>? Roster = null,
     PlayerInventorySnapshot? Inventory = null,
-    IReadOnlyList<ActorSnapshot>? InitialActors = null) : IServerToClientMessage
+    IReadOnlyList<ActorSnapshot>? InitialActors = null,
+    ulong? InitialWorldMutationSequence = null) : IServerToClientMessage
 {
     public string MessageKind => "server.join-accepted";
 

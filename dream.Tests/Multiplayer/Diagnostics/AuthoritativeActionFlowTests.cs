@@ -467,10 +467,16 @@ public class AuthoritativeActionFlowTests
         Assert.True(result.Accepted);
         CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(result.Payload);
         Assert.True(resolution.TargetDied);
-        Assert.Contains(envelope.WorldMutations, mutation =>
+        WorldMutationDelta fractureMutation = Assert.Single(envelope.WorldMutations, mutation =>
             mutation.Kind == WorldMutationKind.CubeFractured &&
             mutation.CellPosition == new Vector3(6f, 1f, 5f));
+        Assert.NotNull(fractureMutation.FracturePieces);
+        Assert.NotEmpty(fractureMutation.FracturePieces);
+        Assert.NotNull(fractureMutation.MaterialId);
         Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(6f, 1f, 5f));
+        FracturedCubeSnapshot fracturedSnapshot = Assert.Single(snapshot.FracturedCubes ?? Array.Empty<FracturedCubeSnapshot>(), cube =>
+            cube.CellPosition == new Vector3(6f, 1f, 5f));
+        Assert.Equal(fractureMutation.FracturePieces, fracturedSnapshot.Pieces);
         Assert.DoesNotContain(snapshot.PlacedCubeCells, cell => cell == new Vector3(6f, 1f, 5f));
     }
 
@@ -504,9 +510,11 @@ public class AuthoritativeActionFlowTests
         Assert.True(result.Accepted);
         CombatResolutionResult resolution = Assert.IsType<CombatResolutionResult>(result.Payload);
         Assert.True(resolution.TargetDied);
-        Assert.Contains(envelope.WorldMutations, mutation =>
+        WorldMutationDelta fractureMutation = Assert.Single(envelope.WorldMutations, mutation =>
             mutation.Kind == WorldMutationKind.CubeFractured &&
             mutation.CellPosition == new Vector3(7f, 1f, 5f));
+        Assert.NotNull(fractureMutation.FracturePieces);
+        Assert.NotEmpty(fractureMutation.FracturePieces);
         Assert.Contains(snapshot.FracturedCubeCells ?? Array.Empty<Vector3>(), cell => cell == new Vector3(7f, 1f, 5f));
     }
 

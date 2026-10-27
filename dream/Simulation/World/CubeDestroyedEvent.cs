@@ -2,4 +2,4 @@ namespace Dream.Simulation.World;
 
 using OpenTK.Mathematics;
 
-public readonly record struct CubeDestroyedEvent(Cube Cube, Vector3 CellPosition);
+public readonly record struct CubeDestroyedEvent(Cube Cube, Vector3 CellPosition, int? ActorId = null);

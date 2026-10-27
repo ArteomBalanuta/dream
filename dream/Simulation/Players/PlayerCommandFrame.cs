@@ -10,6 +10,18 @@ public readonly record struct PlayerCommandFrame(
     PlayerLookIntent LookIntent,
     bool PrimaryUsePressed)
 {
+    // No movement, look, mode request or primary use.
+    public static PlayerCommandFrame CreateIdle(PlayerSessionId sessionId, ulong sequence)
+    {
+        return new PlayerCommandFrame(
+            sessionId,
+            sequence,
+            PlayerModeSwitchIntent.None,
+            PlayerMoveIntent.None,
+            PlayerLookIntent.None,
+            PrimaryUsePressed: false);
+    }
+
     public PlayerInteractionCommand ToInteractionCommand()
     {
         return new PlayerInteractionCommand(

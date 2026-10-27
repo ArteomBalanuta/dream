@@ -10,6 +10,7 @@ using Dream.Client.Networking;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
 using Dream.Client.Startup;
+using Dream.Client.World;
 using Dream.Configuration;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
@@ -57,12 +58,13 @@ public class PlayScene : IDisposable
     private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
     private readonly bool _renderPerformanceLoggingEnabled;
 
-    // Authoritative world/player/physics ownership now flows through WorldSessionRuntime.
+    // The client's replicated world and predicted local player; authority lives on the server.
     // PlayScene remains the desktop composition root plus client presentation owner.
-    private readonly WorldSessionRuntime _runtime;
+    private readonly ClientWorldSession _runtime;
     private readonly ServerTickRunner _tickRunner = new();
     private readonly bool _enableLoopbackRemotePlayers;
     private readonly ClientActionSequenceTracker _actionSequences = new();
+    private readonly ClientPredictionReconciler _predictionReconciler = new();
     private ulong _nextLocalCommandSequence = 1;
     private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
@@ -99,13 +101,16 @@ public class PlayScene : IDisposable
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient ?? throw new ArgumentNullException(nameof(remoteClient));
         _renderPerformanceLoggingEnabled = IsRenderPerformanceLoggingEnabled();
-        // The desktop scene now delegates authoritative world-stack creation to WorldSessionRuntime
-        // while remaining the client composition root for presentation systems.
+        // The desktop scene owns a client world (replicated map + predicted player); the server
+        // owns authority. PlayScene remains the composition root for presentation systems.
         _viewModelController = new PlayerViewModelController(ViewModelCatalog.CreateDefault(), _settings);
         _clientProtocol = ClientProtocolSession.CreateDefault();
 
         Vector3 playerStartPosition = new Vector3(5, 1.5f, 5);
-        _runtime = new WorldSessionRuntime(_settings.FloorSize, playerStartPosition, _events);
+        _runtime = new ClientWorldSession(
+            _settings.FloorSize,
+            playerStartPosition,
+            _events);
         if (_desktopClientConfig != null)
         {
             _runtime.Player.Combatant.ApplyStats(_desktopClientConfig.ToPlayerCombatStats());
@@ -127,6 +132,7 @@ public class PlayScene : IDisposable
         float delta = (float)args.Time;
         _clientPresentationTimeSeconds += args.Time;
         DrainRemoteTransportMessages();
+        _runtime.Player.NudgeWorldPosition(_predictionReconciler.TakeSmoothingStep(delta));
 
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
@@ -144,19 +150,34 @@ public class PlayScene : IDisposable
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _localSimulationCommandInbox.Enqueue(commandFrame);
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
-        SendRemoteCommandFrameIfConnected(commandFrame);
-        PlayerSimulationTuning tuning = PlayerSimulationTuning.FromSettings(_settings);
+        // Predict with the server's movement values; a local NoclipSpeed the server does not use
+        // makes every snapshot disagree with the prediction.
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.FromSettings(_settings).WithAuthoritativeMovement();
         bool primaryUseTriggered = false;
         _tickRunner.Advance(args.Time, (tick, fixedDeltaSeconds) =>
         {
-            PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(commandFrame);
-            WorldSessionUpdateResult result = _runtime.AdvanceAuthoritativeTick(
+            PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(
+                commandFrame,
+                out PlayerCommandFrame? freshSourceFrame);
+            if (freshSourceFrame.HasValue)
+            {
+                // One merged command per client tick: the server consumes at most one per tick,
+                // so per-frame sends only cost decoding and lock contention.
+                QueueRemoteCommandFrame(freshSourceFrame.Value);
+            }
+
+            // The simulation frame has primary use stripped (the server owns the action), so the
+            // local animation is driven from the held input instead. Before, it never played.
+            bool playPrimaryUse = _runtime.AdvancePredictionTick(
                 tick,
                 fixedDeltaSeconds,
                 simulationCommandFrame,
                 tuning,
-                allowGameplaySimulation: false);
-            if (result.PrimaryUseTriggered)
+                primaryUseHeld: _lastLocalSimulationCommandFrame?.PrimaryUsePressed ?? false);
+            _predictionReconciler.RecordPrediction(
+                simulationCommandFrame.Sequence,
+                _runtime.Player.GetWorldPosition());
+            if (playPrimaryUse)
             {
                 primaryUseTriggered = true;
             }
@@ -333,6 +354,7 @@ public class PlayScene : IDisposable
                 "client.apply.join",
                 $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeJoin(joinAcceptedMessage)}");
             ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
+            _predictionReconciler.Reset();
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
             LogPresenterDiagnostics("join");
@@ -345,10 +367,12 @@ public class PlayScene : IDisposable
                 "client.apply.snapshot",
                 () => $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(snapshotMessage.Snapshot)}");
             RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
+            RequestWorldResyncIfOutOfSync(snapshotMessage.Snapshot);
             ClientCorrectionApplier.ApplySnapshotToRuntime(
                 _runtime,
                 snapshotMessage.Snapshot,
-                _remoteClient.SessionId);
+                _remoteClient.SessionId,
+                _predictionReconciler);
             RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
@@ -374,6 +398,12 @@ public class PlayScene : IDisposable
                 actionMessage.Result,
                 _remoteClient.SessionId,
                 _diagnostics);
+            if (resultTargetsLocalSession && actionMessage.Result.Correction?.CorrectedPosition != null)
+            {
+                // A rejected-action correction hard-snaps the player, so earlier predictions no longer apply.
+                _predictionReconciler.Reset();
+            }
+
             if (resultTargetsLocalSession && actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
             {
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
@@ -523,7 +553,27 @@ public class PlayScene : IDisposable
         _lastSwapBuffersMilliseconds = swapBuffersMilliseconds;
     }
 
-    private void SendRemoteCommandFrameIfConnected(PlayerCommandFrame localCommandFrame)
+    private const double WorldResyncRequestCooldownSeconds = 2d;
+    private double _lastWorldResyncRequestSeconds = double.NegativeInfinity;
+
+    // A missed or rejected delta used to leave the client's world diverged until reconnect.
+    private void RequestWorldResyncIfOutOfSync(ServerSnapshotEnvelope snapshot)
+    {
+        if (!RemoteWorldMutationApplier.IsWorldOutOfSync(_runtime, snapshot) ||
+            _clientPresentationTimeSeconds - _lastWorldResyncRequestSeconds < WorldResyncRequestCooldownSeconds)
+        {
+            return;
+        }
+
+        _lastWorldResyncRequestSeconds = _clientPresentationTimeSeconds;
+        ulong clientChecksum = WorldStateChecksum.Compute(_runtime.Map);
+        NetworkDiagnosticsLog.Write(
+            "client.world.resync-request",
+            $"session={_remoteClient.SessionId} expected={snapshot.WorldChecksum} actual={clientChecksum} seq={snapshot.WorldChecksumSequence}");
+        _remoteClient.QueueWorldResyncRequest(clientChecksum);
+    }
+
+    private void QueueRemoteCommandFrame(PlayerCommandFrame localCommandFrame)
     {
         if (!_remoteClient.IsConnected)
         {
@@ -534,27 +584,13 @@ public class PlayScene : IDisposable
             localCommandFrame,
             new PlayerSessionId(_remoteClient.SessionId),
             _runtime.Player.Camera.Front);
-        Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
-        _remoteClient.SendCommandFrameAsync(remoteCommandFrame).AsTask().GetAwaiter().GetResult();
-        stopwatch?.Stop();
-        if (NetworkDiagnosticsLog.IsEnabled)
-        {
-            double elapsedMilliseconds = stopwatch?.Elapsed.TotalMilliseconds ?? 0d;
-            NetworkDiagnosticsLog.WriteEvery(
-                $"client.scene.command.{_remoteClient.SessionId}",
-                TimeSpan.FromSeconds(1),
-                "client.scene.command",
-                $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sendMs={elapsedMilliseconds:0.00} " +
+        _remoteClient.QueueCommandFrame(remoteCommandFrame);
+        NetworkDiagnosticsLog.WriteEvery(
+            $"client.scene.command.{_remoteClient.SessionId}",
+            TimeSpan.FromSeconds(1),
+            "client.scene.command",
+            () => $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sent={_remoteClient.SentCommandCount} " +
                 $"facing={NetworkDiagnosticsLog.FormatVector(remoteCommandFrame.LookIntent.Facing ?? _runtime.Player.Camera.Front)}");
-            if (elapsedMilliseconds > 4d)
-            {
-                NetworkDiagnosticsLog.WriteEvery(
-                    $"client.scene.command.slow.{_remoteClient.SessionId}",
-                    TimeSpan.FromSeconds(1),
-                    "client.scene.command.slow",
-                    $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sendMs={elapsedMilliseconds:0.00}");
-            }
-        }
     }
 
     private void LogPresenterDiagnostics(string source)
@@ -607,13 +643,16 @@ public class PlayScene : IDisposable
             allowLook: true);
     }
 
-    private PlayerCommandFrame ResolveLocalSimulationCommandFrame(PlayerCommandFrame currentFrame)
+    private PlayerCommandFrame ResolveLocalSimulationCommandFrame(
+        PlayerCommandFrame currentFrame,
+        out PlayerCommandFrame? freshSourceFrame)
     {
         IReadOnlyList<PlayerCommandFrame> pendingFrames =
             _localSimulationCommandInbox.Drain([currentFrame.SessionId]);
-        PlayerCommandFrame simulationSource = pendingFrames.Count > 0
-            ? pendingFrames[^1]
-            : _lastLocalSimulationCommandFrame ?? ClearOneShotMoveInputs(currentFrame);
+        freshSourceFrame = pendingFrames.Count > 0 ? pendingFrames[^1] : null;
+        PlayerCommandFrame simulationSource = freshSourceFrame
+            ?? _lastLocalSimulationCommandFrame
+            ?? ClearOneShotMoveInputs(currentFrame);
 
         _lastLocalSimulationCommandFrame = ClearOneShotMoveInputs(simulationSource);
         return ClientSimulationCommandPolicy.PrepareForLocalSimulation(
@@ -688,10 +727,10 @@ public class PlayScene : IDisposable
                 Vitality = request.Vitality ?? _runtime.Player.Combatant.BaseStats.Vitality
             };
 
-            _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
+            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
-                new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats)))).AsTask().GetAwaiter().GetResult();
+                new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats))));
 
             persistDesktopConfig = true;
         }
@@ -704,10 +743,10 @@ public class PlayScene : IDisposable
 
         if (request.EquipInventorySlotIndex.HasValue)
         {
-            _remoteClient.SendPlayerActionAsync(new PlayerActionMessage(
+            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
-                new InventoryEquipIntent(request.EquipInventorySlotIndex.Value))).AsTask().GetAwaiter().GetResult();
+                new InventoryEquipIntent(request.EquipInventorySlotIndex.Value)));
         }
 
         if (request.RequestedResolution.HasValue)

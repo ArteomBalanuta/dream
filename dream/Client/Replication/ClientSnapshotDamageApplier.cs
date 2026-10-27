@@ -8,7 +8,7 @@ namespace Dream.Client.Replication;
 public static class ClientSnapshotDamageApplier
 {
     public static void ApplyToRuntime(
-        WorldSessionRuntime runtime,
+        IClientWorldState runtime,
         SceneEventHub events,
         ServerSnapshotEnvelope snapshot)
     {
