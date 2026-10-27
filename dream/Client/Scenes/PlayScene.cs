@@ -3,6 +3,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Application;
 using Dream.Client.Input;
@@ -78,6 +79,7 @@ public class PlayScene : IDisposable
     private double _lastSwapBuffersMilliseconds;
     private double _lastHudDrawMilliseconds;
     private PlayerInventorySnapshot? _inventory;
+    private bool _disposed;
 
     // Inputs and output of the prediction tick for the current frame. The tick runner calls a
     // static lambda with this scene as its state, so these are fields rather than captured locals.
@@ -85,8 +87,8 @@ public class PlayScene : IDisposable
     private PlayerSimulationTuning _tickTuning;
     private bool _tickPrimaryUseTriggered;
 
-    // The part of Render before the world draw, which the frame snapshot has no field for: GL.Clear,
-    // presentation capture and the remote-player states. Reported in the render-perf log line.
+    // The part of Render before the world draw: GL.Clear, presentation capture and the
+    // remote-player states. Reported in the frame snapshot and the render-perf log line.
     private double _lastClearMilliseconds;
     private double _lastPresentationCaptureMilliseconds;
     private double _lastRemotePlayerStatesMilliseconds;
@@ -313,7 +315,11 @@ public class PlayScene : IDisposable
             SwapBuffersMilliseconds = _lastSwapBuffersMilliseconds,
             ServerTickMilliseconds = serverPerformance.TickMilliseconds,
             ServerSnapshotMilliseconds = serverPerformance.SnapshotMilliseconds,
-            ServerBroadcastMilliseconds = serverPerformance.BroadcastMilliseconds
+            ServerBroadcastMilliseconds = serverPerformance.BroadcastMilliseconds,
+            PreDrawMilliseconds = _lastClearMilliseconds + _lastPresentationCaptureMilliseconds + _lastRemotePlayerStatesMilliseconds,
+            PreDrawClearMilliseconds = _lastClearMilliseconds,
+            PreDrawCaptureMilliseconds = _lastPresentationCaptureMilliseconds,
+            PreDrawRemoteStatesMilliseconds = _lastRemotePlayerStatesMilliseconds
         };
         if (_settings.ShowCollisionGeometry)
         {
@@ -367,11 +373,56 @@ public class PlayScene : IDisposable
         _render.Hud.UpdateProjectionForSettings(_settings);
     }
 
+    // Runs on the render thread while the GL context is still current (Game.OnUnload disposes the
+    // scene before base.OnUnload). GL is released first: Render, then the shared model cache, which
+    // world cubes, enemies and viewmodels only reference for drawing, so it must outlive the last
+    // draw and Render's renderers. The cache is cleared, so a later scene reloads the models.
+    // Each step runs even if an earlier one throws, so a network failure cannot skip GL cleanup
+    // or the reverse; the failures are rethrown at the end.
     public void Dispose()
     {
-        _combatFeedback.Dispose();
-        _actionFeedback.Dispose();
-        _runtime.Dispose();
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        List<Exception>? failures = null;
+        RunDisposeStep(_render.Dispose, ref failures);
+        RunDisposeStep(ModelAssets.DisposeAll, ref failures);
+        RunDisposeStep(_combatFeedback.Dispose, ref failures);
+        RunDisposeStep(_actionFeedback.Dispose, ref failures);
+        RunDisposeStep(_runtime.Dispose, ref failures);
+        RunDisposeStep(DisposeRemoteClient, ref failures);
+
+        if (failures == null)
+        {
+            return;
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw new AggregateException(failures);
+    }
+
+    private static void RunDisposeStep(Action step, ref List<Exception>? failures)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+    }
+
+    private void DisposeRemoteClient()
+    {
         _remoteClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
