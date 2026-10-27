@@ -23,9 +23,22 @@ public class PlayerMotor
     private const float WorldFloorTopY = 1f;
     private const float MinimumWorldFloorCenterY = WorldFloorTopY + PlayerHalfHeight;
 
+    // The grounded probe reuses one native-backed contact callback. A Player passes in its own
+    // and disposes it. A standalone motor (tests) creates one on first use and owns it; it is
+    // replaced, and the old one disposed, only if a different body is probed. The motor is not
+    // IDisposable, so a standalone motor's last callback is left to BulletSharp's finalizer.
+    private Player.PlayerContactCallback? _contactCallback;
+    private bool _ownsContactCallback;
+
     public PlayerMotor(PhysicsIntegrator physics)
     {
         _physics = physics;
+    }
+
+    internal PlayerMotor(PhysicsIntegrator physics, Player.PlayerContactCallback contactCallback)
+    {
+        _physics = physics;
+        _contactCallback = contactCallback ?? throw new ArgumentNullException(nameof(contactCallback));
     }
 
     public bool IsFrozen { get; private set; }
@@ -203,11 +216,42 @@ public class PlayerMotor
 
     private bool IsGrounded(RigidBody body, Vector3 currentPosition)
     {
-        var callback = new Player.PlayerContactCallback(body);
-        _physics.World.ContactTest(body, callback);
+        Player.PlayerContactCallback callback = GetContactCallback(body);
+        callback.RunContactTest(_physics.World);
         float playerBottom = currentPosition.Y - PlayerHalfHeight;
 
-        return callback.Collisions.Any(collision =>
-            collision.ContactPoint.Y <= playerBottom + GroundEpsilon);
+        // Same test as the former Collisions.Any(...) without its closure and enumerator.
+        List<Player.CollisionData> contacts = callback.Collisions;
+        bool grounded = false;
+        for (int i = 0; i < contacts.Count; i++)
+        {
+            if (contacts[i].ContactPoint.Y <= playerBottom + GroundEpsilon)
+            {
+                grounded = true;
+                break;
+            }
+        }
+
+        contacts.Clear();
+        return grounded;
+    }
+
+    private Player.PlayerContactCallback GetContactCallback(RigidBody body)
+    {
+        if (_contactCallback != null && ReferenceEquals(_contactCallback.PlayerBody, body))
+        {
+            return _contactCallback;
+        }
+
+        if (!_ownsContactCallback && _contactCallback != null)
+        {
+            // A Player's motor only ever probes the Player's own body.
+            throw new InvalidOperationException("PlayerMotor was given a contact callback for a different body.");
+        }
+
+        _contactCallback?.Dispose();
+        _contactCallback = new Player.PlayerContactCallback(body);
+        _ownsContactCallback = true;
+        return _contactCallback;
     }
 }

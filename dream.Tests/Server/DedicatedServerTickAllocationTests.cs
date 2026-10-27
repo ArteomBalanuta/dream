@@ -33,9 +33,11 @@ public class DedicatedServerTickAllocationTests
     // ServerConnection, which this task does not own. Release measured 856 B; the fake authority adds nothing.
     private const long JoinedServiceTickBudgetBytes = 1024 + AsyncStateMachineBudgetBytes;
 
-    // The runtime host layer may add only a little on top of the runtime tick it wraps; the slack
-    // absorbs run-to-run variation in the real runtime's own allocations.
-    private const long RuntimeHostOverheadBudgetBytes = 128;
+    // The runtime host layer may add nothing on top of the runtime tick it wraps. Since MEM-11
+    // the idle runtime tick itself allocates nothing (the per-player collision report was its
+    // last allocation), so there is no run-to-run variation left to absorb: both are 0 B.
+    private const long RuntimeTickBudgetBytes = 0;
+    private const long RuntimeHostOverheadBudgetBytes = 0;
 
     private static readonly PlayerSessionId SessionA = new("session-a");
     private static readonly PlayerSessionId SessionB = new("session-b");
@@ -329,6 +331,9 @@ public class DedicatedServerTickAllocationTests
         }
 
         _output.WriteLine($"RuntimeAuthoritativeSessionHost.AdvanceTick: {hostBytes} B; WorldSessionRuntime.AdvanceAuthoritativeTick: {runtimeBytes} B");
+        Assert.True(
+            runtimeBytes <= RuntimeTickBudgetBytes,
+            $"Runtime tick allocated {runtimeBytes} B; budget is {RuntimeTickBudgetBytes} B.");
         Assert.True(
             hostBytes - runtimeBytes <= RuntimeHostOverheadBudgetBytes,
             $"Host tick allocated {hostBytes} B against {runtimeBytes} B for the runtime tick; overhead budget is {RuntimeHostOverheadBudgetBytes} B.");

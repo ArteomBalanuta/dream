@@ -78,6 +78,22 @@ public class Camera
         return clone;
     }
 
+    // Allocation-free alternative to Clone for per-frame callers that keep a target Camera.
+    // It produces the same camera Clone does: position and sensitivity are copied and the
+    // facing is rebuilt from Front, so the angles are normalized exactly as in Clone.
+    public void CopyTo(Camera target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (ReferenceEquals(target, this))
+        {
+            return;
+        }
+
+        target.Position = Position;
+        target.MouseSensitivity = MouseSensitivity;
+        target.SetFacing(Front);
+    }
+
 
     private void UpdateVectors()
     {
