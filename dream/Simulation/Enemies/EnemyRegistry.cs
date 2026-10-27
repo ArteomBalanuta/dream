@@ -14,7 +14,21 @@ public sealed class EnemyRegistry
 
     public IReadOnlyList<EnemyActor> ActiveActors => _actors;
 
-    public bool HasActiveActors => _actors.Any(actor => actor.IsActive);
+    public bool HasActiveActors
+    {
+        get
+        {
+            for (int i = 0; i < _actors.Count; i++)
+            {
+                if (_actors[i].IsActive)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
 
     public void Add(EnemyActor actor)
     {
@@ -28,13 +42,24 @@ public sealed class EnemyRegistry
 
     public bool TryGetEnemyByActorId(int actorId, out EnemyActor? actor)
     {
-        actor = _actors.FirstOrDefault(candidate => candidate.Combatant.Actor.Id == actorId);
+        actor = FindByActorId(actorId);
         return actor != null;
     }
 
+    // Compacts in place, keeping the survivors' order, so a client snapshot allocates nothing here.
     public void RemoveAllExcept(IReadOnlySet<int> activeActorIds)
     {
-        _actors.RemoveAll(actor => !activeActorIds.Contains(actor.Combatant.Actor.Id));
+        int kept = 0;
+        for (int i = 0; i < _actors.Count; i++)
+        {
+            EnemyActor actor = _actors[i];
+            if (activeActorIds.Contains(actor.Combatant.Actor.Id))
+            {
+                _actors[kept++] = actor;
+            }
+        }
+
+        _actors.RemoveRange(kept, _actors.Count - kept);
     }
 
     public void UpdateAll(
@@ -69,17 +94,7 @@ public sealed class EnemyRegistry
         foreach (EnemyActor actor in _actors)
         {
             IAuthoritativePlayerTarget? target = ResolveNearestTarget(actor, playerTargets);
-            actor.Update(
-                deltaTime,
-                target?.Position,
-                map == null
-                    ? null
-                    : (from, desiredDelta) => EnemyMovementCollision.ResolveStep(
-                        map,
-                        from,
-                        desiredDelta,
-                        actor.CollisionRadius,
-                        actor.CollisionHeight));
+            actor.Update(deltaTime, target?.Position, map);
             actor.TryAttack(target?.Combatant, events);
         }
     }
@@ -126,7 +141,7 @@ public sealed class EnemyRegistry
 
     public void PruneInactive()
     {
-        _actors.RemoveAll(actor => !actor.IsActive);
+        _actors.RemoveAll(static actor => !actor.IsActive);
     }
 
     public void ClampToMapBounds(Map map)
@@ -144,7 +159,7 @@ public sealed class EnemyRegistry
 
     public bool TryGetActorById(int actorId, out CombatActorHandle actor)
     {
-        EnemyActor? match = _actors.FirstOrDefault(candidate => candidate.Combatant.Actor.Id == actorId);
+        EnemyActor? match = FindByActorId(actorId);
         if (match == null)
         {
             actor = default;
@@ -155,6 +170,21 @@ public sealed class EnemyRegistry
         return true;
     }
 
+    private EnemyActor? FindByActorId(int actorId)
+    {
+        for (int i = 0; i < _actors.Count; i++)
+        {
+            if (_actors[i].Combatant.Actor.Id == actorId)
+            {
+                return _actors[i];
+            }
+        }
+
+        return null;
+    }
+
+    // Indexed, so the interface list's enumerator is not boxed. The first of equally near targets
+    // wins, so the caller's target order decides ties.
     private static IAuthoritativePlayerTarget? ResolveNearestTarget(
         EnemyActor actor,
         IReadOnlyList<IAuthoritativePlayerTarget> playerTargets)
@@ -162,8 +192,9 @@ public sealed class EnemyRegistry
         IAuthoritativePlayerTarget? bestTarget = null;
         float bestDistanceSquared = float.MaxValue;
 
-        foreach (IAuthoritativePlayerTarget target in playerTargets)
+        for (int i = 0; i < playerTargets.Count; i++)
         {
+            IAuthoritativePlayerTarget target = playerTargets[i];
             if (!target.IsSpawned || !target.IsAlive)
             {
                 continue;
