@@ -3,7 +3,6 @@ using BulletSharp.Math;
 using OpenTK.Mathematics;
 using Xunit;
 using TkVector3 = OpenTK.Mathematics.Vector3;
-using Dream.Application;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -13,20 +12,6 @@ namespace Dream.Tests.Simulation.Players;
 
 public class PlayerMotorTests
 {
-    [Fact]
-    public void GetNoclipSpeed_Is_Faster_Than_Standard_Move_Speed()
-    {
-        GameSettings settings = new(new OpenTK.Mathematics.Vector2i(1440, 1024))
-        {
-            MoveSpeed = 4f,
-            NoclipSpeed = 18f
-        };
-
-        float noclipSpeed = PlayerMotor.GetNoclipSpeed(settings);
-
-        Assert.True(noclipSpeed > settings.MoveSpeed);
-    }
-
     [Fact]
     public void Update_WhenDisablingNoclipWhileInsideFloor_SnapsBodyBackAboveFloor()
     {

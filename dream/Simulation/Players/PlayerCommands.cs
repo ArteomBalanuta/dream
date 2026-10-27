@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Application;
 
 namespace Dream.Simulation.Players;
 
@@ -53,16 +52,6 @@ public readonly record struct PlayerSimulationTuning(
         };
     }
 
-    public static PlayerSimulationTuning FromSettings(GameSettings settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        return new PlayerSimulationTuning(
-            settings.EyeHeightOffset,
-            settings.MouseSensitivity,
-            settings.MoveSpeed,
-            settings.NoclipSpeed,
-            settings.JumpVelocity);
-    }
 }
 
 public readonly record struct BuildUseRequest(Vector3 PlacementTarget);

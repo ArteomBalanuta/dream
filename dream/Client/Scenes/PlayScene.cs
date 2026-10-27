@@ -155,7 +155,7 @@ public class PlayScene : IDisposable
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
         // Predict with the server's movement values; a local NoclipSpeed the server does not use
         // makes every snapshot disagree with the prediction.
-        PlayerSimulationTuning tuning = PlayerSimulationTuning.FromSettings(_settings).WithAuthoritativeMovement();
+        PlayerSimulationTuning tuning = _settings.ToPlayerSimulationTuning().WithAuthoritativeMovement();
         bool primaryUseTriggered = false;
         _tickRunner.Advance(args.Time, (tick, fixedDeltaSeconds) =>
         {

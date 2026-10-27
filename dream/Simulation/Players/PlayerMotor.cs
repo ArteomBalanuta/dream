@@ -2,7 +2,6 @@ using BulletSharp;
 using BulletSharp.Math;
 using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
-using Dream.Application;
 using Dream.Simulation.Physics;
 
 namespace Dream.Simulation.Players;
@@ -32,8 +31,6 @@ public class PlayerMotor
     public bool IsFrozen { get; private set; }
 
     public bool IsNoclipEnabled { get; private set; }
-
-    public static float GetNoclipSpeed(GameSettings settings) => settings.NoclipSpeed;
 
     public void Update(
         RigidBody body,
