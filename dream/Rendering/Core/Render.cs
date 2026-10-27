@@ -477,10 +477,11 @@ public class Render
         Shader shader = GetShader(shaderName);
         Matrix4 view = camera.GetViewMatrix();
         Matrix4[] modelMatrices = _geometryBlockMatrices.Rent(blocks.Count);
+        // A batch shares one material, and its animation is that material's resolved model.
+        float assetScale = ResolveCubeAssetScale(animation);
         for (int i = 0; i < blocks.Count; i++)
         {
             GeometryRenderBlockDescriptor block = blocks[i];
-            float assetScale = ResolveCubeAssetScale(CubeMaterialModelCatalog.Resolve(block.MaterialId));
             modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(
                 block.Center,
                 block.VisualSize,
@@ -1259,10 +1260,11 @@ public class Render
         Shader shader = GetShader(shaderName);
         Matrix4 view = camera.GetViewMatrix();
         Matrix4[] modelMatrices = _animatedCubeMatrices.Rent(cubes.Count);
+        // A batch shares one material, and its animation is that material's resolved model.
+        float assetScale = ResolveCubeAssetScale(animation);
         for (int i = 0; i < cubes.Count; i++)
         {
             Cube cube = cubes[i];
-            float assetScale = ResolveCubeAssetScale(CubeMaterialModelCatalog.Resolve(cube.MaterialId));
             modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
         }
 

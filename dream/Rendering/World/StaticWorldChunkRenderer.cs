@@ -24,7 +24,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private StaticWorldChunkBuildRequest? _activeBuildRequest;
     private StaticWorldChunkBuildRequest? _queuedBuildRequest;
     private StaticWorldChunkUploadBatch? _activeUploadBatch;
-    // Dirty chunks of failed builds, folded into the next planned request so empty-chunk removals survive.
+    // Dirty chunks of failed builds and of exports seen during the build-fault backoff, folded into
+    // the next planned request so empty-chunk removals survive.
     private HashSet<StaticWorldChunkKey>? _retryDirtyChunks;
     private int _lastAppliedExportSignature;
     private int? _lastScheduledExportSignature;
@@ -157,11 +158,19 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         stopwatch.Restart();
         bool buildBackoffActive = ConsumeBuildBackoffFrame();
-        if (!exportUnchanged &&
-            !buildBackoffActive &&
-            exportSignature != _lastScheduledExportSignature)
+        // An equal signature means the scheduled request already carries these dirty chunks.
+        if (!exportUnchanged && exportSignature != _lastScheduledExportSignature)
         {
-            ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks, inputs));
+            if (buildBackoffActive)
+            {
+                // The map drains its static dirty cells on every capture, so a backoff frame keeps
+                // them (already unioned with the old retry set) for the request scheduled after it.
+                _retryDirtyChunks = dirtyChunks;
+            }
+            else
+            {
+                ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks, inputs));
+            }
         }
 
         StaticWorldChunkSyncStats syncStats = ApplyPendingUploads();

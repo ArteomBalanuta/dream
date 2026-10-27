@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 
 namespace Dream.Rendering.Core;
 
@@ -33,10 +34,31 @@ public class ResourceCache<T>
             return;
         }
 
+        // Every item is released even if an earlier release throws; the cache is already empty.
+        List<Exception>? failures = null;
         foreach (T value in snapshot)
         {
-            release(value);
+            try
+            {
+                release(value);
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
         }
+
+        if (failures == null)
+        {
+            return;
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw new AggregateException(failures);
     }
 }
 

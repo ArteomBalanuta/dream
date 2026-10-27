@@ -37,10 +37,15 @@ public static class StaticWorldChunkMeshBuilder
     {
         int cellCount = materialCells.Count;
         int includedFaceMask = GetIncludedFaceMask(materialId, materialRole);
-        byte[] exposedFaceMasks = ArrayPool<byte>.Shared.Rent(cellCount);
-        FaceOccluderIndex occluderIndex = FaceOccluderIndex.Create(occluderCells);
+        byte[]? exposedFaceMasks = null;
+        FaceOccluderIndex occluderIndex = default;
+        bool hasOccluderIndex = false;
         try
         {
+            exposedFaceMasks = ArrayPool<byte>.Shared.Rent(cellCount);
+            occluderIndex = FaceOccluderIndex.Create(occluderCells);
+            hasOccluderIndex = true;
+
             // Pass 1 decides which faces are exposed so the output lists are allocated once at their final size.
             int exposedFaceCount = 0;
             for (int cellIndex = 0; cellIndex < cellCount; cellIndex++)
@@ -97,8 +102,16 @@ public static class StaticWorldChunkMeshBuilder
         }
         finally
         {
-            occluderIndex.Release();
-            ArrayPool<byte>.Shared.Return(exposedFaceMasks);
+            // Only arrays that were actually rented go back to the pool.
+            if (hasOccluderIndex)
+            {
+                occluderIndex.Release();
+            }
+
+            if (exposedFaceMasks != null)
+            {
+                ArrayPool<byte>.Shared.Return(exposedFaceMasks);
+            }
         }
     }
 
@@ -319,11 +332,46 @@ public static class StaticWorldChunkMeshBuilder
         public static FaceOccluderIndex Create(IReadOnlyList<StaticVoxelRenderCell> occluderCells)
         {
             int count = occluderCells.Count;
-            int[] planeKeys = ArrayPool<int>.Shared.Rent(count * DirectionCount);
-            int[] occluderSlots = ArrayPool<int>.Shared.Rent(count * DirectionCount);
-            Vector3[] mins = ArrayPool<Vector3>.Shared.Rent(count);
-            Vector3[] maxs = ArrayPool<Vector3>.Shared.Rent(count);
+            int[]? planeKeys = null;
+            int[]? occluderSlots = null;
+            Vector3[]? mins = null;
+            Vector3[]? maxs = null;
+            try
+            {
+                planeKeys = ArrayPool<int>.Shared.Rent(count * DirectionCount);
+                occluderSlots = ArrayPool<int>.Shared.Rent(count * DirectionCount);
+                mins = ArrayPool<Vector3>.Shared.Rent(count);
+                maxs = ArrayPool<Vector3>.Shared.Rent(count);
+                Fill(occluderCells, count, planeKeys, occluderSlots, mins, maxs);
+                return new FaceOccluderIndex(count, planeKeys, occluderSlots, mins, maxs);
+            }
+            catch
+            {
+                // The index never took ownership, so return whatever was rented before the failure.
+                ReturnIfRented(planeKeys);
+                ReturnIfRented(occluderSlots);
+                ReturnIfRented(mins);
+                ReturnIfRented(maxs);
+                throw;
+            }
+        }
 
+        private static void ReturnIfRented<T>(T[]? array)
+        {
+            if (array != null)
+            {
+                ArrayPool<T>.Shared.Return(array);
+            }
+        }
+
+        private static void Fill(
+            IReadOnlyList<StaticVoxelRenderCell> occluderCells,
+            int count,
+            int[] planeKeys,
+            int[] occluderSlots,
+            Vector3[] mins,
+            Vector3[] maxs)
+        {
             for (int i = 0; i < count; i++)
             {
                 StaticVoxelRenderCell occluder = occluderCells[i];
@@ -347,8 +395,6 @@ public static class StaticWorldChunkMeshBuilder
             {
                 planeKeys.AsSpan(direction * count, count).Sort(occluderSlots.AsSpan(direction * count, count));
             }
-
-            return new FaceOccluderIndex(count, planeKeys, occluderSlots, mins, maxs);
         }
 
         public void Release()
