@@ -107,7 +107,6 @@ public class StaticWorldChunkRendererFaultTests
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
             MaterialId = GeometryMaterialId.Grass,
-            Animation = null!,
             ShaderName = "default"
         };
 
