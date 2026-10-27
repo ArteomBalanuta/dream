@@ -390,10 +390,7 @@ public class AnimatedModel : IDisposable
             shader.SetMatrix4("model", modelMatrix);
             ApplySkinning(shader, primitive, meshWorldMatrix);
 
-            if (TryGetMaterial(primitive.MaterialIndex, out MaterialData? material))
-            {
-                SetMaterialProperties(shader, material);
-            }
+            SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
 
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
@@ -414,10 +411,7 @@ public class AnimatedModel : IDisposable
             shader.SetMatrix4("model", Matrix4.Identity);
             ApplySkinning(shader, primitive, meshWorldMatrix);
 
-            if (TryGetMaterial(primitive.MaterialIndex, out MaterialData? material))
-            {
-                SetMaterialProperties(shader, material);
-            }
+            SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
 
             GL.BindVertexArray(primitive.VAO);
             UploadInstanceModelMatrices(modelMatrices, count);
@@ -532,6 +526,20 @@ public class AnimatedModel : IDisposable
     #endregion
 
     #region Helper Methods
+    // glTF default material for primitives without one: white base colour, no textures,
+    // metallic and roughness 1, opaque. Always applied so no state leaks from the previous draw.
+    private static readonly MaterialData DefaultMaterial = new()
+    {
+        BaseColorFactor = Vector4.One,
+        EmissiveFactor = Vector3.Zero,
+        MetallicFactor = 1f,
+        RoughnessFactor = 1f,
+        AlphaCutoff = 0.5f,
+    };
+
+    private MaterialData ResolveMaterial(int materialIndex) =>
+        TryGetMaterial(materialIndex, out MaterialData? material) ? material : DefaultMaterial;
+
     private bool TryGetMaterial(int materialIndex, [NotNullWhen(true)] out MaterialData? material)
     {
         material = materialIndex >= 0 && materialIndex < _materials.Length
