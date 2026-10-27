@@ -9,19 +9,45 @@ namespace Dream.Rendering.World;
 
 public sealed class StaticWorldChunkRenderer : IDisposable
 {
+    public const string BuildFaultSource = "static-chunk-build";
+    public const int BuildFaultBaseBackoffFrames = 15;
+    public const int BuildFaultMaxBackoffFrames = 480;
     private const int MaxMeshUploadsPerFrame = 8;
     // Only used when the export is unchanged, where dirty chunks are neither planned nor scheduled.
     private static readonly HashSet<StaticWorldChunkKey> UnchangedExportDirtyChunks = [];
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMesh> _meshes = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, int> _signatures = new();
+    private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
+    private readonly IRenderFaultSink _faultSink;
     private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
+    private StaticWorldChunkBuildRequest? _activeBuildRequest;
     private StaticWorldChunkBuildRequest? _queuedBuildRequest;
     private StaticWorldChunkUploadBatch? _activeUploadBatch;
+    // Dirty chunks of failed builds, folded into the next planned request so empty-chunk removals survive.
+    private HashSet<StaticWorldChunkKey>? _retryDirtyChunks;
     private int _lastAppliedExportSignature;
-    private int _lastScheduledExportSignature;
+    private int? _lastScheduledExportSignature;
+    private int _consecutiveBuildFaults;
+    private int _buildBackoffFramesRemaining;
     private bool _hasAppliedExport;
     private bool _disposed;
+
+    public StaticWorldChunkRenderer(
+        Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>>? startBuildTask = null,
+        IRenderFaultSink? faultSink = null)
+    {
+        _startBuildTask = startBuildTask ?? StartDefaultBuildTask;
+        _faultSink = faultSink ?? RenderFaultLog.Shared;
+    }
+
+    public static StaticWorldChunkBuildBatch BuildBatch(StaticWorldChunkBuildRequest request)
+    {
+        return new StaticWorldChunkBuildBatch(
+            request.ExportSignature,
+            request.DirtyChunks,
+            BuildOutputs(request.Inputs));
+    }
 
     public static IReadOnlyList<StaticWorldChunkBuildOutput> BuildOutputs(IReadOnlyList<StaticWorldChunkBuildInput> inputs)
     {
@@ -122,9 +148,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         stopwatch.Restart();
         HashSet<StaticWorldChunkKey> dirtyChunks = exportUnchanged
             ? UnchangedExportDirtyChunks
-            : export.StaticDirtyCells
-                .Select(cell => StaticWorldChunkKey.FromWorldPosition(new Vector3(cell.X, cell.Y, cell.Z)))
-                .ToHashSet();
+            : CollectDirtyChunks(export);
         IReadOnlyList<StaticWorldChunkBuildInput> inputs = exportUnchanged
             ? []
             : PlanBuildInputs(cells, _signatures, dirtyChunks);
@@ -132,7 +156,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         double planMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
         stopwatch.Restart();
+        bool buildBackoffActive = ConsumeBuildBackoffFrame();
         if (!exportUnchanged &&
+            !buildBackoffActive &&
             exportSignature != _lastScheduledExportSignature)
         {
             ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks, inputs));
@@ -188,9 +214,12 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             return;
         }
 
+        BackgroundWork.ObserveAndForget(_activeBuildTask, _faultSink, BuildFaultSource);
         _activeBuildTask = null;
+        _activeBuildRequest = null;
         _queuedBuildRequest = null;
         _activeUploadBatch = null;
+        _retryDirtyChunks = null;
         ClearBuffers();
         _disposed = true;
     }
@@ -206,7 +235,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         _meshes.Clear();
         _signatures.Clear();
         _lastAppliedExportSignature = 0;
-        _lastScheduledExportSignature = 0;
+        _lastScheduledExportSignature = null;
+        _consecutiveBuildFaults = 0;
+        _buildBackoffFramesRemaining = 0;
         _hasAppliedExport = false;
     }
 
@@ -221,12 +252,38 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         _signatures.Remove(key);
     }
 
+    private HashSet<StaticWorldChunkKey> CollectDirtyChunks(GeometryRenderExport export)
+    {
+        HashSet<StaticWorldChunkKey> dirtyChunks = export.StaticDirtyCells
+            .Select(cell => StaticWorldChunkKey.FromWorldPosition(new Vector3(cell.X, cell.Y, cell.Z)))
+            .ToHashSet();
+        if (_retryDirtyChunks != null)
+        {
+            dirtyChunks.UnionWith(_retryDirtyChunks);
+        }
+
+        return dirtyChunks;
+    }
+
+    private bool ConsumeBuildBackoffFrame()
+    {
+        if (_buildBackoffFramesRemaining <= 0)
+        {
+            return false;
+        }
+
+        _buildBackoffFramesRemaining--;
+        return true;
+    }
+
     private void ScheduleBuild(StaticWorldChunkBuildRequest request)
     {
+        // The request was planned with the retry chunks already folded into its dirty set.
+        _retryDirtyChunks = null;
         _lastScheduledExportSignature = request.ExportSignature;
         if (_activeBuildTask == null)
         {
-            _activeBuildTask = StartBuildTask(request);
+            StartBuild(request);
             return;
         }
 
@@ -241,21 +298,39 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     {
         // Finish uploading the current batch before taking the next one; overwriting a partially
         // applied batch skipped its remaining meshes and its stale-mesh removal.
-        if (_activeUploadBatch != null || _activeBuildTask == null || !_activeBuildTask.IsCompleted)
+        if (_activeUploadBatch != null || _activeBuildTask == null)
         {
             if (_activeBuildTask == null && _queuedBuildRequest != null)
             {
                 StaticWorldChunkBuildRequest nextRequest = _queuedBuildRequest;
                 _queuedBuildRequest = null;
-                _activeBuildTask = StartBuildTask(nextRequest);
+                StartBuild(nextRequest);
             }
 
             return;
         }
 
-        StaticWorldChunkBuildBatch completed = _activeBuildTask.GetAwaiter().GetResult();
-        _activeBuildTask = null;
+        if (!BackgroundWork.TryTakeCompleted(
+            ref _activeBuildTask,
+            out StaticWorldChunkBuildBatch? completed,
+            out Exception? fault))
+        {
+            if (fault != null)
+            {
+                HandleBuildFault(fault);
+            }
 
+            return;
+        }
+
+        _activeBuildRequest = null;
+        if (completed == null)
+        {
+            HandleBuildFault(new InvalidOperationException("Static chunk build produced no batch."));
+            return;
+        }
+
+        _consecutiveBuildFaults = 0;
         if (_queuedBuildRequest != null &&
             _queuedBuildRequest.ExportSignature != completed.ExportSignature)
         {
@@ -264,11 +339,50 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 _queuedBuildRequest,
                 completed.DirtyChunks);
             _queuedBuildRequest = null;
-            _activeBuildTask = StartBuildTask(nextRequest);
+            StartBuild(nextRequest);
             return;
         }
 
         _activeUploadBatch = new StaticWorldChunkUploadBatch(completed);
+    }
+
+    // Keeps every existing buffer and never creates an upload batch, so the last good world stays
+    // visible and no stale-mesh removal runs for chunks that were not rebuilt.
+    private void HandleBuildFault(Exception fault)
+    {
+        StaticWorldChunkBuildRequest? failedRequest = _activeBuildRequest;
+        _activeBuildRequest = null;
+        _faultSink.Report(BuildFaultSource, fault);
+
+        HashSet<StaticWorldChunkKey> retryDirtyChunks = _retryDirtyChunks ?? [];
+        if (failedRequest != null)
+        {
+            retryDirtyChunks.UnionWith(failedRequest.DirtyChunks);
+        }
+
+        // A queued request is re-planned from the next export anyway; only its dirty chunks matter.
+        if (_queuedBuildRequest != null)
+        {
+            retryDirtyChunks.UnionWith(_queuedBuildRequest.DirtyChunks);
+            _queuedBuildRequest = null;
+        }
+
+        _retryDirtyChunks = retryDirtyChunks;
+        _lastScheduledExportSignature = null;
+        _consecutiveBuildFaults++;
+        _buildBackoffFramesRemaining = CalculateBuildBackoffFrames(_consecutiveBuildFaults);
+    }
+
+    public static int CalculateBuildBackoffFrames(int consecutiveFaults)
+    {
+        if (consecutiveFaults <= 0)
+        {
+            return 0;
+        }
+
+        int doublings = Math.Min(consecutiveFaults - 1, 30);
+        long frames = (long)BuildFaultBaseBackoffFrames << doublings;
+        return (int)Math.Min(frames, BuildFaultMaxBackoffFrames);
     }
 
     private StaticWorldChunkSyncStats ApplyPendingUploads()
@@ -324,12 +438,22 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         }
     }
 
-    private static Task<StaticWorldChunkBuildBatch> StartBuildTask(StaticWorldChunkBuildRequest request)
+    private void StartBuild(StaticWorldChunkBuildRequest request)
     {
-        return Task.Run(() => new StaticWorldChunkBuildBatch(
-            request.ExportSignature,
-            request.DirtyChunks,
-            BuildOutputs(request.Inputs)));
+        _activeBuildRequest = request;
+        try
+        {
+            _activeBuildTask = _startBuildTask(request);
+        }
+        catch (Exception ex)
+        {
+            _activeBuildTask = Task.FromException<StaticWorldChunkBuildBatch>(ex);
+        }
+    }
+
+    private static Task<StaticWorldChunkBuildBatch> StartDefaultBuildTask(StaticWorldChunkBuildRequest request)
+    {
+        return Task.Run(() => BuildBatch(request));
     }
 
     private static StaticVoxelRenderCell[] CollectNeighborOccluders(
