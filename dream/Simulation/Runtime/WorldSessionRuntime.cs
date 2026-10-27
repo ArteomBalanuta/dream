@@ -4,6 +4,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
 using Dream.Server.Rules;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Physics;
@@ -30,6 +31,15 @@ public readonly record struct WorldSessionUpdateResult(
 public sealed class WorldSessionRuntime : IDisposable
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
+
+    // Seed used when the host supplies none. Every attack roll derives from this seed plus the
+    // tick, session, action sequence and target, so a fixed default keeps runs reproducible.
+    public const ulong DefaultSimulationSeed = 0x6472_6561_6D5F_7631UL;
+
+    // Ordinal by session id, so per-tick iteration over secondary players never depends on join history.
+    private static readonly Comparison<RemoteSessionPlayerState> CompareSecondaryBySessionId =
+        static (left, right) => string.CompareOrdinal(left.SessionId.Value, right.SessionId.Value);
+
     private readonly bool _loadVisualAssets;
     private readonly SceneEventHub _events;
     private readonly PhysicsSyncSystem _physicsSync = new();
@@ -37,6 +47,8 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly EnemyRegistry _enemies;
     private readonly PlayerSessionRegistry _sessions = new();
     private readonly Dictionary<PlayerSessionId, RemoteSessionPlayerState> _secondaryRemotePlayers = new();
+    // _secondaryRemotePlayers' values in ordinal session-id order; rebuilt on attach and detach.
+    private RemoteSessionPlayerState[] _orderedSecondaryRemotePlayers = [];
     private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly List<WorldMutationDelta> _pendingWorldMutations = [];
@@ -68,8 +80,10 @@ public sealed class WorldSessionRuntime : IDisposable
         IWorldPersistenceRepository? worldPersistence = null,
         CombatFormulaService? combatFormulaService = null,
         IPersistenceCheckpointWriter? checkpointWriter = null,
-        PersistenceWriteQueue? persistenceWrites = null)
+        PersistenceWriteQueue? persistenceWrites = null,
+        ulong simulationSeed = DefaultSimulationSeed)
     {
+        SimulationSeed = simulationSeed;
         _writes = persistenceWrites ??
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _loadVisualAssets = loadVisualAssets;
@@ -136,6 +150,9 @@ public sealed class WorldSessionRuntime : IDisposable
     public PlayerSessionRegistry Sessions => _sessions;
 
     public ulong CurrentServerTick { get; private set; }
+
+    // Root of every seeded simulation roll; see ResolveSeededAttack.
+    public ulong SimulationSeed { get; }
 
     public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
     {
@@ -210,6 +227,15 @@ public sealed class WorldSessionRuntime : IDisposable
             Map,
             Physics,
             combatFormulaService: _combatFormulaService);
+        RebuildOrderedSecondaryRemotePlayers();
+    }
+
+    private void RebuildOrderedSecondaryRemotePlayers()
+    {
+        RemoteSessionPlayerState[] ordered = new RemoteSessionPlayerState[_secondaryRemotePlayers.Count];
+        _secondaryRemotePlayers.Values.CopyTo(ordered, 0);
+        Array.Sort(ordered, CompareSecondaryBySessionId);
+        _orderedSecondaryRemotePlayers = ordered;
     }
 
     public void DetachRemoteSession(PlayerSessionId sessionId)
@@ -239,6 +265,7 @@ public sealed class WorldSessionRuntime : IDisposable
         }
         else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
         {
+            RebuildOrderedSecondaryRemotePlayers();
             secondary.Dispose();
         }
     }
@@ -322,7 +349,7 @@ public sealed class WorldSessionRuntime : IDisposable
                 playerTuning);
         }
 
-        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        foreach (RemoteSessionPlayerState secondary in _orderedSecondaryRemotePlayers)
         {
             secondary.AdvanceCombat(delta);
             secondary.Simulate(delta, playerTuning);
@@ -334,7 +361,7 @@ public sealed class WorldSessionRuntime : IDisposable
             Player.SyncCameraFromBody(playerTuning);
         }
 
-        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        foreach (RemoteSessionPlayerState secondary in _orderedSecondaryRemotePlayers)
         {
             secondary.SyncAfterPhysicsStep(playerTuning);
         }
@@ -455,7 +482,7 @@ public sealed class WorldSessionRuntime : IDisposable
 
         Map = rebuiltMap;
         Player.BindMap(rebuiltMap);
-        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        foreach (RemoteSessionPlayerState secondary in _orderedSecondaryRemotePlayers)
         {
             secondary.PhysicsPlayer.BindMap(rebuiltMap);
         }
@@ -758,6 +785,28 @@ public sealed class WorldSessionRuntime : IDisposable
         actor.ApplyCommand(commandFrame);
     }
 
+    // Counter-based: the rolls are a pure function of (simulation seed, tick, session, action
+    // sequence, target), so they do not depend on the order actions are processed in a tick, and a
+    // replay of the same actions reproduces them. The target is the hit actor's id: the enemy's, or
+    // the cube's world-object actor id (stable for the cube's life, unlike its cell once it moves).
+    private PlayerAttackResolution ResolveSeededAttack(
+        PlayerCombatant combatant,
+        PlayerActionMessage message,
+        ulong targetSeed)
+    {
+        DeterministicRandom rng = new(Seed.Combine(
+            SimulationSeed,
+            CurrentServerTick,
+            StableHash.Of(message.SessionId.Value),
+            message.ActionSequence,
+            targetSeed));
+        return combatant.ResolveAttack(
+            () => rng.NextInt(
+                combatant.DerivedStats.MinDamage,
+                combatant.DerivedStats.MaxDamage + 1),
+            rng.NextDouble);
+    }
+
     private void ApplyInteractionModeSelection(PlayerSessionId sessionId, PlayerInteractionCommand command)
     {
         if (command.SelectBuildingModePressed)
@@ -793,11 +842,10 @@ public sealed class WorldSessionRuntime : IDisposable
             CombatUseResolver.DefaultHitRange);
         if (enemy != null)
         {
-            PlayerAttackResolution attack = combatant.ResolveAttack(
-                () => Random.Shared.Next(
-                    combatant.DerivedStats.MinDamage,
-                    combatant.DerivedStats.MaxDamage + 1),
-                () => Random.Shared.NextDouble());
+            PlayerAttackResolution attack = ResolveSeededAttack(
+                combatant,
+                message,
+                Seed.FromInt(enemy.Combatant.Actor.Id));
             DamageReceipt receipt = enemy.Combatant.ApplyDamage(attack.Damage);
             if (receipt.AppliedAmount > 0)
             {
@@ -852,11 +900,10 @@ public sealed class WorldSessionRuntime : IDisposable
 
         record = RepairCubeRecordFromPersistence(record);
 
-        PlayerAttackResolution cubeAttack = combatant.ResolveAttack(
-            () => Random.Shared.Next(
-                combatant.DerivedStats.MinDamage,
-                combatant.DerivedStats.MaxDamage + 1),
-            () => Random.Shared.NextDouble());
+        PlayerAttackResolution cubeAttack = ResolveSeededAttack(
+            combatant,
+            message,
+            Seed.FromInt(record.Actor.Id));
         DamageReceipt cubeReceipt = record.ApplyDamage(cubeAttack.Damage);
         if (cubeReceipt.AppliedAmount > 0)
         {
@@ -2148,8 +2195,9 @@ public sealed class WorldSessionRuntime : IDisposable
             yield return CreatePrimaryAuthoritativePlayerTarget(primarySessionId);
         }
 
-        foreach ((PlayerSessionId sessionId, RemoteSessionPlayerState actor) in _secondaryRemotePlayers)
+        foreach (RemoteSessionPlayerState actor in _orderedSecondaryRemotePlayers)
         {
+            PlayerSessionId sessionId = actor.SessionId;
             if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player) ||
                 player == null ||
                 !player.IsSpawned)

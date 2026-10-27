@@ -10,6 +10,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 {
     private static readonly PlayerSimulationTuning DefaultServerTuning = PlayerSimulationTuning.AuthoritativeDefault;
 
+    // ConcurrentDictionary enumeration order follows string hash codes, which .NET randomizes per
+    // process, so joined sessions are put in ordinal session-id order before they drive the tick.
+    private static readonly Comparison<PlayerSessionId> CompareSessionIdsOrdinal =
+        static (left, right) => string.CompareOrdinal(left.Value, right.Value);
+
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
@@ -301,7 +306,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     // Connections are added and removed off the tick thread. Enumerating the ConcurrentDictionary
     // is safe during those changes, and a change made mid-enumeration sets the flag again for the
-    // next tick. Join state is re-read every tick because LastJoinRequest changes on its own.
+    // next tick. Join state is re-read every tick because LastJoinRequest changes on its own, and
+    // the result is sorted in place (ordinal), so the command drain, the runtime tick and the
+    // synthesized primary-use actions see sessions in the same order on every server process.
     private void RefreshJoinedSessionIds()
     {
         if (Interlocked.Exchange(ref _connectionsChanged, 0) != 0)
@@ -320,6 +327,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             {
                 _joinedSessionIds.Add(new PlayerSessionId(join.RequestedSessionId));
             }
+        }
+
+        if (_joinedSessionIds.Count > 1)
+        {
+            _joinedSessionIds.Sort(CompareSessionIdsOrdinal);
         }
     }
 }

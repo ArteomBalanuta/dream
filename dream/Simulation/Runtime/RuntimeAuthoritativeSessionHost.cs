@@ -14,7 +14,19 @@ namespace Dream.Simulation.Runtime;
 
 public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSessionHost, IWorldResyncSource, IDisposable
 {
+    // Ordinal by session id, then by sequence, so frames from different sessions are applied in
+    // the same order on every process regardless of how the caller collected them.
+    private static readonly Comparison<PlayerCommandFrame> CompareBySessionIdThenSequence =
+        static (left, right) =>
+        {
+            int bySession = string.CompareOrdinal(left.SessionId.Value, right.SessionId.Value);
+            return bySession != 0 ? bySession : left.Sequence.CompareTo(right.Sequence);
+        };
+
     private readonly IDisposable? _ownedDependency;
+
+    // Tick scratch: this tick's secondary command frames in canonical order. Reused every tick.
+    private readonly List<PlayerCommandFrame> _orderedSecondaryCommands = [];
 
     public RuntimeAuthoritativeSessionHost(WorldSessionRuntime runtime)
         : this(runtime, null)
@@ -130,14 +142,27 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             }
         }
 
-        // Record secondary commands first so this tick's physics step simulates them, exactly
-        // like the primary seat's command.
+        // Secondary commands and their primary-use actions run in ordinal session-id order, so two
+        // players hitting the same target in one tick resolve the same way on every server run.
+        _orderedSecondaryCommands.Clear();
         for (int i = 0; i < commandFrames.Count; i++)
         {
             if (commandFrames[i].SessionId != controlledSessionId)
             {
-                Runtime.AdvanceSecondaryRemoteSession(commandFrames[i], deltaTime, playerTuning);
+                _orderedSecondaryCommands.Add(commandFrames[i]);
             }
+        }
+
+        if (_orderedSecondaryCommands.Count > 1)
+        {
+            _orderedSecondaryCommands.Sort(CompareBySessionIdThenSequence);
+        }
+
+        // Record secondary commands first so this tick's physics step simulates them, exactly
+        // like the primary seat's command.
+        for (int i = 0; i < _orderedSecondaryCommands.Count; i++)
+        {
+            Runtime.AdvanceSecondaryRemoteSession(_orderedSecondaryCommands[i], deltaTime, playerTuning);
         }
 
         Runtime.AdvanceAuthoritativeTick(
@@ -148,10 +173,10 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             allowGameplaySimulation);
 
         List<AuthoritativeActionResult>? synthesizedCommandActions = null;
-        for (int i = 0; i < commandFrames.Count; i++)
+        for (int i = 0; i < _orderedSecondaryCommands.Count; i++)
         {
-            PlayerCommandFrame secondaryCommand = commandFrames[i];
-            if (secondaryCommand.SessionId != controlledSessionId && secondaryCommand.PrimaryUsePressed)
+            PlayerCommandFrame secondaryCommand = _orderedSecondaryCommands[i];
+            if (secondaryCommand.PrimaryUsePressed)
             {
                 PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(secondaryCommand);
                 if (actionMessage != null)
