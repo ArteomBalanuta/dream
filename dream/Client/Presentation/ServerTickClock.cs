@@ -8,8 +8,8 @@ namespace Dream.Client.Presentation;
 // RenderTick follows that target without ever stepping back: a late snapshot pulls the estimate
 // back and widens the delay at the same moment, which used to jump remote players backwards.
 // Instead of moving its position, RenderTick slews its advance rate (between 0x and 2x real time)
-// toward the target, so it holds or slows while the target is behind and catches up when it is
-// ahead. Only Reset and snaps move it discontinuously.
+// toward the target, so it slows while the target is behind (holding only when 4+ ticks ahead)
+// and catches up when it is ahead. Only Reset and snaps move it discontinuously.
 public sealed class ServerTickClock
 {
     public const double DefaultInterpolationDelayTicks = 6d;
@@ -78,11 +78,12 @@ public sealed class ServerTickClock
         }
 
         double elapsedTicks = elapsedSeconds * SimulationClock.AuthoritativeTicksPerSecond;
-        double error = RenderTargetTick - _renderTick;
+        double errorBefore = RenderTargetTick - _renderTick;
         _estimatedTick += elapsedTicks;
 
         double target = RenderTargetTick;
-        if (error + elapsedTicks > SnapThresholdTicks)
+        double error = target - _renderTick;
+        if (error > SnapThresholdTicks)
         {
             // Far behind (for example after a long stall): catching up gradually would only
             // fast-forward through stale motion, so jump forward.
@@ -90,10 +91,21 @@ public sealed class ServerTickClock
             return;
         }
 
-        double rate = Math.Clamp(1d + (error * RenderRateGain), MinRenderRate, MaxRenderRate);
-        double next = _renderTick + (elapsedTicks * rate);
-        // Stop at the target instead of crossing it on a long frame, and never move backwards.
-        _renderTick = Math.Min(next, Math.Max(_renderTick, target));
+        if (error >= 0d)
+        {
+            // At or behind the target, including a long frame during which the target passed
+            // RenderTick: the rate from the current error is >= 1, so it moves forward, and it
+            // stops at the target instead of crossing it.
+            double catchUpRate = Math.Clamp(1d + (error * RenderRateGain), MinRenderRate, MaxRenderRate);
+            _renderTick = Math.Min(_renderTick + (elapsedTicks * catchUpRate), target);
+            return;
+        }
+
+        // Still ahead after the target moved: slow down by the gap at frame start (rate in [0, 1)).
+        // The target advances at 1x, so a gap g becomes g * (1 - gain * elapsedTicks) (or g - elapsedTicks
+        // once the rate clamps to 0) and stays positive; RenderTick only moves forward.
+        double rate = Math.Clamp(1d + (errorBefore * RenderRateGain), MinRenderRate, MaxRenderRate);
+        _renderTick += elapsedTicks * rate;
     }
 
     public void Observe(ulong snapshotTick)

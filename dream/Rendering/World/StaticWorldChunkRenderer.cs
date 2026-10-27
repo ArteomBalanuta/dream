@@ -332,13 +332,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             return;
         }
 
-        _activeBuildRequest = null;
         if (completed == null)
         {
+            // HandleBuildFault reads _activeBuildRequest to retry its dirty chunks, then clears it.
             HandleBuildFault(new InvalidOperationException("Static chunk build produced no batch."));
             return;
         }
 
+        _activeBuildRequest = null;
         _consecutiveBuildFaults = 0;
         if (_queuedBuildRequest != null &&
             _queuedBuildRequest.ExportSignature != completed.ExportSignature)
