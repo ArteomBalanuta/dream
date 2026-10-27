@@ -77,7 +77,7 @@ Scope: Voxel meshing and render export, GL resource ownership and threading, the
   - DEC-8: `loadVisualAssets` removal and a whole-Simulation dependency assertion.
   - GFX-8: async model cache.
 - **Wave 6:** NET-4: enemy interpolation.
-- **Added after wave 1:** a render frame cap or VSync. The perf run showed the uncapped loop at about 1,300 FPS starving a second local client. This needs a decision from the user.
+- **Added and done after wave 1:** a configurable frame cap (`max_fps`, default 144), chosen over VSync by the user.
 - **Deferred, design-gated:**
   - NET-5: buffered command stream and protocol bump.
   - WIRE-7: delta actors.

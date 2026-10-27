@@ -81,14 +81,26 @@ Setup: one dedicated server and two auto-connecting desktop clients for 30 s, ru
 | Unfocused client median frame | 24 ms | 262 ms |
 | Unfocused client FPS | 53 | 2 |
 
-**Finding: background client starved of GPU time.** The game sets no VSync and no frame cap. The faster focused client now saturates the GPU and starves a second client on the same machine. Its time lands in arbitrary GL calls: enemy draw, HUD and present. No code path regressed, but two clients on one PC would notice. The fix is to turn on VSync or add a frame cap, which is a behaviour decision and is proposed as the next task.
+**Finding: an uncapped render loop.**
+- The game set no frame cap. The focused client ran at about 1,300 FPS and the unfocused client dropped to 2 FPS.
+- The user confirmed the unfocused client recovers as soon as its window is focused, so most of its slowdown is unfocused-window behaviour. The uncapped loop next to it made that worse and wasted GPU time.
+
+**Frame cap, added after wave 1 at the user's request.**
+- Setting: `max_fps` in `desktop-client.txt`. Default 144; 0 means uncapped; any other value is clamped to 30–500. `DREAM_MAX_FPS` overrides it without persisting.
+- It is applied through `GameWindow.UpdateFrequency`, with VSync left off.
+- In the single-threaded window, input and the per-frame update also run at most at the cap. Client prediction keeps its own fixed 64 Hz tick.
+- Re-run with two clients (`logs/perf-run-20261027-214349` in the integration worktree):
+  - Both clients held 144 FPS, including the unfocused one.
+  - Median frame work was 0.60 ms (unfocused) and 0.54 ms (focused).
+  - Server `advanceMs` median was 0.06 ms, with one tick per loop.
+  - Both clients rendered each other, with no exceptions, render faults or resyncs.
 
 An earlier run (`logs/perf-run-20261027-210629`) overlapped with the tester's suite runs and showed the same pattern, plus CPU contention.
 
 ## Verification
 
 - `dotnet build dream/dream.csproj` succeeded with 29 warnings, all pre-existing.
-- `dotnet test dream.Tests/dream.Tests.csproj` passed 904 of 904 in two full runs after fix loop 2. Before fix loop 2 it passed 901 of 901, three times in a row. The base was 694 and task A's base was 679.
+- `dotnet test dream.Tests/dream.Tests.csproj` passed 942 of 942 after the frame cap, and 904 of 904 in two full runs after fix loop 2. Before fix loop 2 it passed 901 of 901, three times in a row. The base was 694 and task A's base was 679.
 - `MultiClientLoopbackSmokeTests` and `TickPacerTests` passed 5 of 5 isolated runs.
   - Each failed once under full-suite load during implementer runs: a timing `InRange` check and a timing overshoot.
   - Neither failed in the three final full runs. Both are timing-sensitive and remain a known flake risk under heavy parallel load.
