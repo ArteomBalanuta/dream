@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Determinism;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -20,7 +21,10 @@ public class SimulationStateChecksumTests
     // SimulationStateChecksum or WorldStateChecksum on purpose, rerun this test, check that only
     // the intended change moved the value, and paste the new value from the failure message here.
     // Mismatched versions of the checksum across a server and a recording are then expected.
-    private const ulong GoldenChecksum = 12876812463915946221UL;
+    // History: re-pinned when the Cubes part (solid cube cell and in-cell position) was added and
+    // HashActor began hashing InteractionMode, CombatStats and EnemyBehaviorState; the fixture
+    // actors gained those fields so the golden value pins them too.
+    private const ulong GoldenChecksum = 10650874071440684154UL;
 
     [Fact]
     public void IdenticalState_GivesIdenticalChecksum()
@@ -64,6 +68,15 @@ public class SimulationStateChecksumTests
     [InlineData("actor id")]
     [InlineData("session")]
     [InlineData("actor removed")]
+    [InlineData("interaction mode")]
+    [InlineData("interaction mode removed")]
+    [InlineData("strength")]
+    [InlineData("attack speed")]
+    [InlineData("vitality")]
+    [InlineData("combat stats removed")]
+    [InlineData("enemy behavior state")]
+    [InlineData("enemy behavior state removed")]
+    [InlineData("enemy behavior state added to player")]
     public void Checksum_ChangesWhenAnActorFieldChanges(string field)
     {
         Map map = BuildMap();
@@ -71,6 +84,7 @@ public class SimulationStateChecksumTests
         List<ActorSnapshot> actors = BuildActors();
         ActorSnapshot player = actors[0];
         PlayerProgressionSnapshot progression = player.Progression!.Value;
+        PlayerCombatStatsSnapshot stats = player.CombatStats!.Value;
         switch (field)
         {
             case "position":
@@ -106,6 +120,33 @@ public class SimulationStateChecksumTests
             case "actor removed":
                 actors.RemoveAt(1);
                 break;
+            case "interaction mode":
+                actors[0] = player with { InteractionMode = PlayerInteractionMode.Building };
+                break;
+            case "interaction mode removed":
+                actors[0] = player with { InteractionMode = null };
+                break;
+            case "strength":
+                actors[0] = player with { CombatStats = stats with { Strength = stats.Strength + 1 } };
+                break;
+            case "attack speed":
+                actors[0] = player with { CombatStats = stats with { AttackSpeed = stats.AttackSpeed + 0.0001f } };
+                break;
+            case "vitality":
+                actors[0] = player with { CombatStats = stats with { Vitality = stats.Vitality + 1 } };
+                break;
+            case "combat stats removed":
+                actors[0] = player with { CombatStats = null };
+                break;
+            case "enemy behavior state":
+                actors[1] = actors[1] with { EnemyBehaviorState = EnemyBehaviorState.Attacking };
+                break;
+            case "enemy behavior state removed":
+                actors[1] = actors[1] with { EnemyBehaviorState = null };
+                break;
+            case "enemy behavior state added to player":
+                actors[0] = player with { EnemyBehaviorState = EnemyBehaviorState.Idle };
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(field), field, null);
         }
@@ -128,6 +169,10 @@ public class SimulationStateChecksumTests
 
         Assert.True(map.UpdateFracturePiecePosition(RubbleCell, 0, RubblePieces()[0].Center + new Vector3(0.00002f, 0f, 0f)));
         Assert.Equal(baseline, SimulationStateChecksum.Compute(map, actors, MutationSequence));
+
+        Cube cube = map.TryGetCubeAtCell(2, 1, 2)!;
+        map.UpdateCubePosition(cube, cube.Position + new Vector3(0.00002f, 0f, -0.00002f), syncPhysics: false);
+        Assert.Equal(baseline, SimulationStateChecksum.Compute(map, actors, MutationSequence));
     }
 
     [Fact]
@@ -142,6 +187,90 @@ public class SimulationStateChecksumTests
         Assert.NotEqual(baseline.Combined, moved.Combined);
         Assert.NotEqual(baseline.Rubble, moved.Rubble);
         Assert.Equal(baseline.World, moved.World);
+    }
+
+    [Fact]
+    public void Checksum_ChangesOnlyTheCubesPart_WhenACubeMovesWithinItsCell()
+    {
+        Map map = BuildMap();
+        SimulationStateChecksum.Parts baseline = SimulationStateChecksum.ComputeParts(map, BuildActors(), MutationSequence);
+        Cube cube = map.TryGetCubeAtCell(2, 1, 2)!;
+        Assert.True(map.TryGetCellForCube(cube, out GeometryCellKey before));
+
+        map.UpdateCubePosition(cube, cube.Position + new Vector3(0.3f, 0f, 0f), syncPhysics: false);
+        Assert.True(map.TryGetCellForCube(cube, out GeometryCellKey after));
+        Assert.Equal(before, after);
+        SimulationStateChecksum.Parts moved = SimulationStateChecksum.ComputeParts(map, BuildActors(), MutationSequence);
+
+        Assert.NotEqual(baseline.Combined, moved.Combined);
+        Assert.NotEqual(baseline.Cubes, moved.Cubes);
+        Assert.Equal(baseline with { Cubes = moved.Cubes }, moved);
+    }
+
+    [Theory]
+    [InlineData(0.00011f)]
+    [InlineData(-0.0002f)]
+    public void Checksum_ChangesOnlyTheCubesPart_WhenACubeMovesByMoreThanTheQuantum(float delta)
+    {
+        Map map = BuildMap();
+        Cube cube = map.TryGetCubeAtCell(2, 1, 2)!;
+        map.UpdateCubePosition(cube, new Vector3(2.4f, cube.Position.Y, 2.4f), syncPhysics: false);
+        SimulationStateChecksum.Parts first = SimulationStateChecksum.ComputeParts(map, BuildActors(), MutationSequence);
+
+        map.UpdateCubePosition(cube, cube.Position + new Vector3(0f, 0f, delta), syncPhysics: false);
+        SimulationStateChecksum.Parts second = SimulationStateChecksum.ComputeParts(map, BuildActors(), MutationSequence);
+
+        Assert.NotEqual(first.Cubes, second.Cubes);
+        Assert.Equal(first with { Cubes = second.Cubes }, second);
+    }
+
+    [Fact]
+    public void Checksum_IsIndependentOfCubeInsertionOrder()
+    {
+        Vector3[] cells = [new(1f, 1f, 6f), new(6f, 2f, 1f), new(3f, 1f, 3f)];
+        Map forward = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map backward = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        foreach (Vector3 cell in cells)
+        {
+            Assert.True(forward.AddCube(cell, withPhysics: false, materialId: GeometryMaterialId.Stone));
+        }
+
+        for (int index = cells.Length - 1; index >= 0; index--)
+        {
+            Assert.True(backward.AddCube(cells[index], withPhysics: false, materialId: GeometryMaterialId.Stone));
+        }
+
+        foreach (Map map in new[] { forward, backward })
+        {
+            Cube cube = map.TryGetCubeAtCell(6, 2, 1)!;
+            map.UpdateCubePosition(cube, new Vector3(6.2f, cube.Position.Y, 1.3f), syncPhysics: false);
+        }
+
+        Assert.Equal(
+            SimulationStateChecksum.ComputeParts(forward, BuildActors(), MutationSequence),
+            SimulationStateChecksum.ComputeParts(backward, BuildActors(), MutationSequence));
+    }
+
+    [Fact]
+    public void Checksum_DistinguishesWhichCubeHoldsWhichInCellOffset()
+    {
+        // The cube key is its cell, so the same offsets assigned to different cells must differ.
+        Map first = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        Map second = new(width: 8, height: 4, depth: 8, loadVisualAssets: false);
+        foreach (Map map in new[] { first, second })
+        {
+            Assert.True(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));
+            Assert.True(map.AddCube(new Vector3(5f, 1f, 5f), withPhysics: false));
+        }
+
+        first.UpdateCubePosition(first.TryGetCubeAtCell(1, 1, 1)!, new Vector3(1.3f, 1f, 1f), syncPhysics: false);
+        first.UpdateCubePosition(first.TryGetCubeAtCell(5, 1, 5)!, new Vector3(5.6f, 1f, 5f), syncPhysics: false);
+        second.UpdateCubePosition(second.TryGetCubeAtCell(1, 1, 1)!, new Vector3(1.6f, 1f, 1f), syncPhysics: false);
+        second.UpdateCubePosition(second.TryGetCubeAtCell(5, 1, 5)!, new Vector3(5.3f, 1f, 5f), syncPhysics: false);
+
+        Assert.NotEqual(
+            SimulationStateChecksum.ComputeParts(first, BuildActors(), MutationSequence).Cubes,
+            SimulationStateChecksum.ComputeParts(second, BuildActors(), MutationSequence).Cubes);
     }
 
     [Fact]
@@ -234,6 +363,8 @@ public class SimulationStateChecksumTests
                 90,
                 100,
                 true,
+                InteractionMode: PlayerInteractionMode.Combat,
+                CombatStats: new PlayerCombatStatsSnapshot(5, 1.25f, 3),
                 Progression: new PlayerProgressionSnapshot(2, 30, 70)),
             new ActorSnapshot(
                 4300,
@@ -243,7 +374,8 @@ public class SimulationStateChecksumTests
                 -Vector3.UnitX,
                 40,
                 50,
-                true)
+                true,
+                EnemyBehaviorState: EnemyBehaviorState.Chasing)
         ];
     }
 }
