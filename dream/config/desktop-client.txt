@@ -12,3 +12,4 @@ vitality=10
 damage_text_size=2.35
 damage_text_speed=0.6
 damage_text_crit_depth=5
+max_fps=144

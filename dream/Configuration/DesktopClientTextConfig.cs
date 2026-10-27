@@ -73,7 +73,8 @@ public static class DesktopClientTextConfig
             $"vitality={config.Vitality}",
             $"damage_text_size={Format(config.FloatingCombatText.SizeMultiplier)}",
             $"damage_text_speed={Format(config.FloatingCombatText.MotionSpeedMultiplier)}",
-            $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}"
+            $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
+            $"max_fps={config.MaxFramesPerSecond}"
         }) + Environment.NewLine;
     }
 
@@ -119,6 +120,9 @@ public static class DesktopClientTextConfig
                     case "vitality":
                         config.Vitality = integer;
                         break;
+                    case "max_fps":
+                        config.MaxFramesPerSecond = integer;
+                        break;
                 }
             }
 
@@ -144,6 +148,9 @@ public static class DesktopClientTextConfig
                 break;
             case "vitality":
                 config.Vitality = (int)MathF.Round(parsed);
+                break;
+            case "max_fps":
+                config.MaxFramesPerSecond = (int)MathF.Round(parsed);
                 break;
             case "damage_text_size":
                 config.FloatingCombatText = config.FloatingCombatText with { SizeMultiplier = parsed };

@@ -71,8 +71,9 @@ The previous `SixLabors.ImageSharp 3.1.6` vulnerability warnings were removed by
 
 The current `Game` constructor creates a window with:
 
-- Title: `Physics Integrated Game`
+- Title: `dream` (`GameWindowTitleBuilder.BaseTitle`)
 - Initial size: `1440 x 1024`
+- Frame cap: `GameWindow.UpdateFrequency` from `max_fps` (default `144`) or `DREAM_MAX_FPS`; VSync stays off (see Desktop Client Text Config)
 
 The project also grabs the cursor on startup.
 
@@ -165,9 +166,13 @@ Current behavior:
 
 The `camera_view` key currently accepts `first_person` or `third_person`.
 
+The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. VSync stays off. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
+
 ## Profiling Environment Flags
 
 For repeatable local profiling, set `DREAM_AUTO_CONNECT=1` before launching the desktop client. The startup scene waits for the integrated loopback server, applies its current local endpoint, and begins the same connection flow as the Connect button without requiring UI input.
+
+Set `DREAM_MAX_FPS` to override the `max_fps` frame cap for one run without writing it back to `config/desktop-client.txt`. It uses the same rules: `0` means uncapped and other integers are clamped to `30`-`500`. A non-integer value is ignored and the config value is used.
 
 Set `DREAM_RENDER_PERF_LOG=1` to print one render-performance line per second while in gameplay. The log includes render-export time, physics time, static chunk signature/extract/plan/sync/draw timings, static chunk cache reuse, visible chunk/triangle counts, and collision-body count.
 
