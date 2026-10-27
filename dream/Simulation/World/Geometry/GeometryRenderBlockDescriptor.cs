@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Rendering.Models;
 
 namespace Dream.Simulation.World.Geometry;
 
@@ -8,7 +7,6 @@ public readonly record struct GeometryRenderBlockDescriptor(
     Vector3 Center,
     float SideLength,
     GeometryMaterialId MaterialId,
-    AnimatedModel? Animation,
     string ShaderName,
     GeometrySubcellKey? SubcellKey = null,
     float VisualFillScale = 1f,

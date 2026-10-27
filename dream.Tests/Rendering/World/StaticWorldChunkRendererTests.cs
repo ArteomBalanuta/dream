@@ -296,7 +296,6 @@ public class StaticWorldChunkRendererTests
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
             MaterialId = GeometryMaterialId.Sand,
-            Animation = null!,
             ShaderName = "default"
         };
 
@@ -353,7 +352,6 @@ public class StaticWorldChunkRendererTests
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
             MaterialId = materialId,
-            Animation = null!,
             ShaderName = "default"
         };
         GeometryCellRecord cell = new(
@@ -378,14 +376,12 @@ public class StaticWorldChunkRendererTests
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
             MaterialId = GeometryMaterialId.Grass,
-            Animation = null!,
             ShaderName = "default"
         };
         Cube dynamicCube = new(isEmpty: false, isSolid: true)
         {
             Position = dynamicPosition,
             MaterialId = GeometryMaterialId.Stone,
-            Animation = null!,
             ShaderName = "default"
         };
         GeometryCellRecord staticCell = new(
@@ -423,7 +419,6 @@ public class StaticWorldChunkRendererTests
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
             MaterialId = GeometryMaterialId.Grass,
-            Animation = null!,
             ShaderName = "default"
         };
         GeometryRenderBlockDescriptor dynamicBlock = new(
@@ -431,7 +426,6 @@ public class StaticWorldChunkRendererTests
             dynamicPosition,
             0.2f,
             GeometryMaterialId.Stone,
-            null,
             "default");
 
         return new GeometryRenderExport(
