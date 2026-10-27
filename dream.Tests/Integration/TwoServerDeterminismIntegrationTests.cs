@@ -7,11 +7,11 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
-using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Integration;
 
@@ -19,9 +19,9 @@ namespace Dream.Tests.Integration;
 // authority), the same simulation seed and the same scripted command and action stream for 300
 // ticks: three players walk, all of them fight an enemy until it dies (after which the runtime's
 // own wolf spawns and fights back), and the primary breaks a cube it built until it fractures
-// into rubble. After every tick an order-independent hash of the authoritative state is
-// compared: every actor (position quantized to 1e-4, health, alive), the world checksum and
-// every rubble piece.
+// into rubble. After every tick the production SimulationStateChecksum of the authoritative
+// state is compared: every actor (position and facing quantized to 1e-4, health, alive,
+// progression), the world checksum, every rubble piece and the world mutation sequence.
 public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
 {
     private const int Ticks = 300;
@@ -213,7 +213,8 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
         private int _hits;
         private int _playerDamageTaken;
         private int _currentTick;
-        private string _lastHash = string.Empty;
+        private SimulationStateChecksum.Parts? _lastParts;
+        private IReadOnlyList<ActorSnapshot> _lastActors = [];
         // Deferred joins are applied by a tick of their own, so script tick t runs as server tick t + 1.
         private readonly ulong _tickOffset;
 
@@ -362,7 +363,7 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
             }
 
             _playerDamageTaken += Math.Max(0, healthBefore - PlayerHealthTotal());
-            _lastHash = ComputeHash();
+            CaptureChecksum();
         }
 
         // Seat and actor id per session, which the hash leaves out (players are keyed by session).
@@ -387,20 +388,31 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
             return executed;
         }
 
-        public string Hash() => _lastHash.Length == 0 ? _lastHash = ComputeHash() : _lastHash;
+        public ulong Hash() => Parts().Combined;
 
+        // Names the checksum components that differ, and for actors the ones whose hash differs.
         public string LastDiff(ScriptedServer other)
         {
-            string[] mine = Hash().Split('\n');
-            string[] theirs = other.Hash().Split('\n');
+            SimulationStateChecksum.Parts mine = Parts();
+            SimulationStateChecksum.Parts theirs = other.Parts();
             StringBuilder diff = new();
-            for (int i = 0; i < Math.Max(mine.Length, theirs.Length); i++)
+            AppendPartDiff(diff, "world", mine.World, theirs.World);
+            AppendPartDiff(diff, "actors", mine.Actors, theirs.Actors);
+            AppendPartDiff(diff, "rubble", mine.Rubble, theirs.Rubble);
+            AppendPartDiff(diff, "mutation sequence", mine.WorldMutationSequence, theirs.WorldMutationSequence);
+
+            Dictionary<string, ActorSnapshot> myActors = _lastActors.ToDictionary(ActorKey, StringComparer.Ordinal);
+            Dictionary<string, ActorSnapshot> theirActors = other._lastActors.ToDictionary(ActorKey, StringComparer.Ordinal);
+            foreach (string key in myActors.Keys.Union(theirActors.Keys).Order(StringComparer.Ordinal))
             {
-                string left = i < mine.Length ? mine[i] : "<none>";
-                string right = i < theirs.Length ? theirs[i] : "<none>";
-                if (left != right)
+                bool hasMine = myActors.TryGetValue(key, out ActorSnapshot left);
+                bool hasTheirs = theirActors.TryGetValue(key, out ActorSnapshot right);
+                if (hasMine != hasTheirs ||
+                    SimulationStateChecksum.HashActor(left) != SimulationStateChecksum.HashActor(right))
                 {
-                    diff.Append(" [").Append(left).Append(" vs ").Append(right).Append(']');
+                    diff.Append(" [").Append(key).Append(": ")
+                        .Append(hasMine ? left.ToString() : "<none>").Append(" vs ")
+                        .Append(hasTheirs ? right.ToString() : "<none>").Append(']');
                 }
             }
 
@@ -424,38 +436,34 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
                 .Sum(actor => actor.CurrentHealth);
         }
 
-        // Order independent: actors sorted by key, rubble sorted by cell and piece index.
-        // Players are keyed by session id, because secondary actor ids are allocated in join order.
-        private string ComputeHash()
+        private SimulationStateChecksum.Parts Parts()
         {
-            StringBuilder hash = new();
-            IEnumerable<string> actors = _runtime.CaptureActorSnapshots()
-                .Select(actor =>
-                    $"{(actor.Kind == CreatureKind.Player ? "player:" + actor.SessionId : "enemy:" + actor.ActorId.ToString(CultureInfo.InvariantCulture))} " +
-                    $"pos={Quantize(actor.Position)} hp={actor.CurrentHealth}/{actor.MaxHealth} alive={actor.IsAlive}")
-                .Order(StringComparer.Ordinal);
-            foreach (string actor in actors)
+            if (!_lastParts.HasValue)
             {
-                hash.Append(actor).Append('\n');
+                CaptureChecksum();
             }
 
-            hash.Append("world=").Append(WorldStateChecksum.Compute(_runtime.Map).ToString(CultureInfo.InvariantCulture)).Append('\n');
-            IEnumerable<string> rubble = _runtime.Map.CaptureFracturePieces()
-                .Select(piece => $"rubble {piece.Cell} #{piece.PieceIndex} {Quantize(piece.Piece.Center)} side={piece.Piece.SideLength.ToString("R", CultureInfo.InvariantCulture)} {piece.MaterialId}")
-                .Order(StringComparer.Ordinal);
-            foreach (string piece in rubble)
-            {
-                hash.Append(piece).Append('\n');
-            }
-
-            return hash.ToString();
+            return _lastParts!.Value;
         }
 
-        private static string Quantize(Vector3 value)
+        private void CaptureChecksum()
         {
-            return string.Create(
-                CultureInfo.InvariantCulture,
-                $"({MathF.Round(value.X * 10000f)},{MathF.Round(value.Y * 10000f)},{MathF.Round(value.Z * 10000f)})");
+            _lastActors = _runtime.CaptureActorSnapshots();
+            _lastParts = SimulationStateChecksum.ComputeParts(_runtime.Map, _lastActors, _runtime.LastWorldMutationSequence);
+        }
+
+        private static void AppendPartDiff(StringBuilder diff, string name, ulong left, ulong right)
+        {
+            if (left != right)
+            {
+                diff.Append(" [").Append(name).Append(' ').Append(left).Append(" vs ").Append(right).Append(']');
+            }
+        }
+
+        // Players are keyed by session id, because secondary actor ids are allocated in join order.
+        private static string ActorKey(ActorSnapshot actor)
+        {
+            return actor.Kind == CreatureKind.Player ? "player:" + actor.SessionId : "enemy:" + actor.ActorId.ToString(CultureInfo.InvariantCulture);
         }
     }
 }
