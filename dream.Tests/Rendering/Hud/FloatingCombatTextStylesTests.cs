@@ -1,5 +1,6 @@
 using Xunit;
 using Dream.Rendering.Hud;
+using Dream.Simulation.Combat;
 
 namespace Dream.Tests.Rendering.Hud;
 

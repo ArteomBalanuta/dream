@@ -1,4 +1,3 @@
-using Dream.Rendering.Hud;
 
 namespace Dream.Simulation.Combat;
 
