@@ -1,7 +1,7 @@
 # Engine Iteration Master Plan: Hot Paths, GL Ownership, Determinism, Decoupling, Wire
 
 Purpose: Split one iteration of foundation work into many independent tasks that implementers can run in parallel waves.
-Status: Waves 1–3 integrated and verified on `integrate/engine-iteration`. See the wave-1, wave-2 and wave-3 work-logs. Waves 4–6 are still planned.
+Status: Waves 1–4 integrated and verified on `integrate/engine-iteration` (see the wave work-logs). Waves 5–6 run in continuous mode.
 Scope: Voxel meshing and render export, GL resource ownership and threading, the deterministic authoritative simulation, simulation/presentation decoupling, the wire protocol and server I/O.
 
 ## How This Plan Was Made
@@ -92,3 +92,18 @@ The full analyst write-ups (evidence, risks, tests) are in the iteration work-lo
 ## Integration
 
 The integrator creates `integrate/engine-iteration` from `iteration/engine-base` and merges the wave's task branches in table order, building after each merge. The tester and reviewer then run on the integration branch. Fix loops are capped at two, then the user is asked. Nothing is pushed or merged into `master`.
+
+## Revised Waves 5 And 6 (after wave 4)
+
+- **Wave 5:**
+  - **DEC-8:** remove `loadVisualAssets`.
+  - **GFX-8:** async model cache, so nothing loads synchronously during a draw.
+  - **MEM-10:** remove `WorldPhysicsBinder` move allocations.
+  - **MEM-11:** remove `Player` collision-check and grounded-probe allocations.
+  - **WIRE-10:** hand-written converters for the command and actor-snapshot types, plus `[JsonIgnore]` on the derived properties. This replaces WIRE-8, which was not merged; see the wave-4 work-log.
+- **Wave 6:**
+  - **NET-4:** interpolate remote enemies on the tick timeline.
+  - **NET-8:** a per-server simulation seed, persisted.
+  - **GFX-9:** each enemy gets its own model instance, so clips differ per wolf.
+  - **NET-9:** add a public lookup from a cube to its replicated id, and key the checksum by that id.
+
