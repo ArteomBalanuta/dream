@@ -37,7 +37,6 @@ public class PlayScene : IDisposable
 {
     private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
     private const string RenderPerformanceLogEnvironmentVariable = "DREAM_RENDER_PERF_LOG";
-    private const double RemotePlayerInterpolationDelaySeconds = 1d / 10d;
 
     // Client-local presentation state that should remain scene-owned after the runtime split.
     private readonly Render _render;
@@ -65,6 +64,7 @@ public class PlayScene : IDisposable
     private readonly bool _enableLoopbackRemotePlayers;
     private readonly ClientActionSequenceTracker _actionSequences = new();
     private readonly ClientPredictionReconciler _predictionReconciler = new();
+    private readonly ServerTickClock _serverTickClock = new();
     private ulong _nextLocalCommandSequence = 1;
     private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
@@ -77,6 +77,9 @@ public class PlayScene : IDisposable
     private double _lastSwapBuffersMilliseconds;
     private double _lastHudDrawMilliseconds;
     private PlayerInventorySnapshot? _inventory;
+
+    private double RemotePlayerRenderTick =>
+        _serverTickClock.EstimatedTick - _serverTickClock.InterpolationDelayTicks;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
@@ -131,6 +134,7 @@ public class PlayScene : IDisposable
     {
         float delta = (float)args.Time;
         _clientPresentationTimeSeconds += args.Time;
+        _serverTickClock.Advance(args.Time);
         DrainRemoteTransportMessages();
         _runtime.Player.NudgeWorldPosition(_predictionReconciler.TakeSmoothingStep(delta));
 
@@ -216,7 +220,7 @@ public class PlayScene : IDisposable
             (float)_tickRunner.RemainingSeconds,
             _settings.CameraViewMode);
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
-            Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
+            RemotePlayerRenderTick);
 
         Stopwatch worldDrawStopwatch = Stopwatch.StartNew();
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
@@ -355,6 +359,7 @@ public class PlayScene : IDisposable
                 $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeJoin(joinAcceptedMessage)}");
             ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
             _predictionReconciler.Reset();
+            _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
             LogPresenterDiagnostics("join");
@@ -377,7 +382,8 @@ public class PlayScene : IDisposable
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
-            _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot, _clientPresentationTimeSeconds);
+            _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
+            _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
             LogPresenterDiagnostics("snapshot");
         }
         else if (message is ServerActionMessage actionMessage)
@@ -603,7 +609,7 @@ public class PlayScene : IDisposable
         }
 
         ClientScenePresenterDebugState state = _scenePresenter.CaptureDebugState(
-            Math.Max(0d, _clientPresentationTimeSeconds - RemotePlayerInterpolationDelaySeconds));
+            RemotePlayerRenderTick);
         NetworkDiagnosticsLog.Write(
             "client.presenter.state",
             $"source={source} local={state.LocalSessionId ?? "<none>"} roster={state.RosterCount}[{string.Join(", ", state.RosterSessions)}] " +

@@ -8,5 +8,4 @@ public readonly record struct RemotePlayerSnapshotSample(
     string SessionId,
     ulong ServerTick,
     Vector3 Position,
-    Vector3 Facing,
-    double ReceivedAtSeconds);
+    Vector3 Facing);

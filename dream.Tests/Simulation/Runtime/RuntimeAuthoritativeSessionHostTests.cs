@@ -112,11 +112,11 @@ public class RuntimeAuthoritativeSessionHostTests
 
         ServerSnapshotEnvelope snapshot = host.ExportSnapshot();
         ClientScenePresenter secondClientPresenter = new(localSessionId: "session-b");
-        secondClientPresenter.ApplySnapshot(snapshot, receivedAtSeconds: 1.0);
-        secondClientPresenter.ApplySnapshot(snapshot, receivedAtSeconds: 2.0);
+        secondClientPresenter.ApplySnapshot(snapshot);
+        secondClientPresenter.ApplySnapshot(snapshot);
 
         RemotePlayerPresentationState hostModel = Assert.Single(
-            secondClientPresenter.BuildRemotePlayerStates(renderTimeSeconds: 1.5),
+            secondClientPresenter.BuildRemotePlayerStates(renderTick: snapshot.ServerTick),
             player => player.SessionId == "session-a");
         Assert.Equal("Host Player", hostModel.DisplayName);
     }
