@@ -10,6 +10,8 @@ namespace Dream.Rendering.World;
 public sealed class StaticWorldChunkRenderer : IDisposable
 {
     private const int MaxMeshUploadsPerFrame = 8;
+    // Only used when the export is unchanged, where dirty chunks are neither planned nor scheduled.
+    private static readonly HashSet<StaticWorldChunkKey> UnchangedExportDirtyChunks = [];
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMesh> _meshes = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, int> _signatures = new();
@@ -119,7 +121,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         stopwatch.Restart();
         HashSet<StaticWorldChunkKey> dirtyChunks = exportUnchanged
-            ? []
+            ? UnchangedExportDirtyChunks
             : export.StaticDirtyCells
                 .Select(cell => StaticWorldChunkKey.FromWorldPosition(new Vector3(cell.X, cell.Y, cell.Z)))
                 .ToHashSet();
@@ -377,6 +379,11 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     public static int CalculateExportSignature(GeometryRenderExport export)
     {
+        if (export.StaticContentVersion != 0)
+        {
+            return CalculateVersionedExportSignature(export);
+        }
+
         HashCode hash = new();
         hash.Add(export.StaticDirtyCells.Count);
         foreach (GeometryCellKey dirtyCell in export.StaticDirtyCells
@@ -415,6 +422,20 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         }
 
         return hash.ToHashCode();
+    }
+
+    // The map's static content version already identifies the static cubes and blocks, so only
+    // it and the static dirty cells are hashed. Dirty cells are combined order-independently.
+    private static int CalculateVersionedExportSignature(GeometryRenderExport export)
+    {
+        IReadOnlyList<GeometryCellKey> staticDirtyCells = export.StaticDirtyCells;
+        int dirtyCellsHash = 0;
+        for (int index = 0; index < staticDirtyCells.Count; index++)
+        {
+            dirtyCellsHash = unchecked(dirtyCellsHash + HashCode.Combine(staticDirtyCells[index]));
+        }
+
+        return HashCode.Combine(export.StaticContentVersion, staticDirtyCells.Count, dirtyCellsHash);
     }
 
     private static float DistanceSquaredToBounds(Vector3 point, StaticWorldChunkBounds bounds)

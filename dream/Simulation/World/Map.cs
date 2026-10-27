@@ -48,12 +48,29 @@ public class Map
     private readonly Dictionary<int, Cube> _cubesByReplicatedId = new();
     private readonly Dictionary<Cube, int> _replicatedIdsByCube = new();
 
+    // Process-wide, so two maps (or a rebuilt map) never report the same static content version.
+    private static long _staticContentVersionSource;
+
+    // Cells whose render content is dynamic (the complement of _staticRenderCells among
+    // _geometryCells), so the per-frame presentation export only visits those.
+    private readonly HashSet<GeometryCellKey> _dynamicRenderCells = [];
+
+    // Radius-independent static part of the presentation export, valid while
+    // _cachedStaticRenderVersion == StaticContentVersion. Never mutated once built.
+    private long _cachedStaticRenderVersion;
+    private GeometryRenderCell[] _cachedStaticRenderCells = [];
+    private Cube[] _cachedStaticCompatibilityCubes = [];
+    private GeometryRenderBlockDescriptor[] _cachedStaticRenderBlocks = [];
+
     public int Width => _grid.Width;
     public int Height => _grid.Height;
     public int Depth => _grid.Depth;
     public Cube?[,,] Cubes => _grid.Cubes;
     public IReadOnlyList<Cube> SolidCubes => _solidCubes;
     public IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> GeometryCells => _geometryCells;
+
+    // Changes whenever static render content may have changed; see GeometryRenderExport.StaticContentVersion.
+    public long StaticContentVersion { get; private set; } = Interlocked.Increment(ref _staticContentVersionSource);
 
     // Rubble records (FracturePieces set), keyed by origin cell.
     public IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> RubbleCells => _rubbleCells;
@@ -282,6 +299,13 @@ public class Map
 
         if (oldKey == newKey)
         {
+            // A static cube moving inside its cell skips MarkRenderDirty when physics is not synced,
+            // but its position is part of the static content.
+            if (cube.Position != position && _staticRenderCells.Contains(oldKey))
+            {
+                BumpStaticContentVersion();
+            }
+
             cube.Position = position;
             _placedCubeSpatialIndex.UpdatePosition(cube, position);
             if (syncPhysics && _physicsBinder != null)
@@ -678,14 +702,145 @@ public class Map
             includeDynamicBlock: _ => true);
     }
 
+    // Same content as CaptureGeometryRenderExport over every solid cube with static content always
+    // included and dynamic content limited to the radius. The static part is cached per
+    // StaticContentVersion; only dynamic cells and rubble are visited each frame.
     public GeometryRenderExport CapturePresentationGeometryRenderExport(Vector3 position, float radius)
     {
-        return CaptureGeometryRenderExport(
-            _solidCubes,
-            includeStaticCube: _ => true,
-            includeDynamicCube: cube => IsCubeWithinRadius(cube, position, radius),
-            includeStaticBlock: _ => true,
-            includeDynamicBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
+        if (_cachedStaticRenderVersion != StaticContentVersion)
+        {
+            RebuildStaticPresentationCache();
+        }
+
+        List<GeometryRenderCell>? dynamicCells = null;
+        List<Cube>? dynamicCompatibilityCubes = null;
+        List<GeometryRenderBlockDescriptor>? dynamicBlocks = null;
+        foreach (GeometryCellKey key in _dynamicRenderCells)
+        {
+            if (!_geometryCells.TryGetValue(key, out GeometryCellRecord? cell) ||
+                IsStaticRenderContent(cell) ||
+                Cubes[key.X, key.Y, key.Z] is not Cube cube ||
+                !_cubeCells.TryGetValue(cube, out GeometryCellKey cubeKey) ||
+                cubeKey != key)
+            {
+                continue;
+            }
+
+            if (ShouldUseCoarseCompatibilityRender(cell))
+            {
+                if (!IsCubeWithinRadius(cube, position, radius))
+                {
+                    continue;
+                }
+
+                (dynamicCells ??= []).Add(new GeometryRenderCell(key, cell, cube));
+                (dynamicCompatibilityCubes ??= []).Add(cube);
+                continue;
+            }
+
+            (dynamicCells ??= []).Add(new GeometryRenderCell(key, cell, cube));
+            if (_mergedStaticSubcellRenderCells.Contains(key) ||
+                !_renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? cellBlocks))
+            {
+                continue;
+            }
+
+            AddBlocksWithinRadius(cellBlocks, position, radius, ref dynamicBlocks);
+        }
+
+        foreach (IReadOnlyList<GeometryRenderBlockDescriptor> rubbleBlocks in _rubbleRenderBlocks.Values)
+        {
+            AddBlocksWithinRadius(rubbleBlocks, position, radius, ref dynamicBlocks);
+        }
+
+        GeometryCellKey[] dirtyCells = DrainCells(_pendingRenderDirtyCells);
+        GeometryCellKey[] staticDirtyCells = DrainCells(_pendingStaticRenderDirtyCells);
+        IReadOnlyList<GeometryRenderCell> cells = dynamicCells == null
+            ? _cachedStaticRenderCells
+            : new ConcatenatedReadOnlyList<GeometryRenderCell>(_cachedStaticRenderCells, dynamicCells);
+
+        return new GeometryRenderExport(
+            DirtyCells: dirtyCells,
+            Cells: cells,
+            Blocks: _cachedStaticRenderBlocks,
+            CompatibilityCubes: _cachedStaticCompatibilityCubes,
+            dynamicCompatibilityCubes: dynamicCompatibilityCubes,
+            dynamicBlocks: dynamicBlocks,
+            staticDirtyCells: staticDirtyCells)
+        {
+            StaticContentVersion = StaticContentVersion
+        };
+    }
+
+    // The static half of CaptureGeometryRenderExport with every static cube and block included.
+    private void RebuildStaticPresentationCache()
+    {
+        List<GeometryRenderCell> cells = [];
+        List<Cube> compatibilityCubes = [];
+        List<GeometryRenderBlockDescriptor> blocks = [];
+        HashSet<GeometryCellKey> includedCells = [];
+        foreach (Cube cube in _solidCubes)
+        {
+            if (!TryGetCellForCube(cube, out GeometryCellKey key) ||
+                !_geometryCells.TryGetValue(key, out GeometryCellRecord? cell) ||
+                !IsStaticRenderContent(cell) ||
+                !includedCells.Add(key))
+            {
+                continue;
+            }
+
+            cells.Add(new GeometryRenderCell(key, cell, cube));
+            if (ShouldUseCoarseCompatibilityRender(cell))
+            {
+                compatibilityCubes.Add(cube);
+                continue;
+            }
+
+            if (_mergedStaticSubcellRenderCells.Contains(key))
+            {
+                continue;
+            }
+
+            if (_renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? cellBlocks))
+            {
+                blocks.AddRange(cellBlocks);
+            }
+        }
+
+        blocks.AddRange(_mergedStaticSubcellRenderBlocks);
+        _cachedStaticRenderCells = cells.ToArray();
+        _cachedStaticCompatibilityCubes = compatibilityCubes.ToArray();
+        _cachedStaticRenderBlocks = blocks.ToArray();
+        _cachedStaticRenderVersion = StaticContentVersion;
+    }
+
+    private static void AddBlocksWithinRadius(
+        IReadOnlyList<GeometryRenderBlockDescriptor> source,
+        Vector3 position,
+        float radius,
+        ref List<GeometryRenderBlockDescriptor>? destination)
+    {
+        // Indexed loop: enumerating through the interface would allocate an enumerator per cell.
+        for (int index = 0; index < source.Count; index++)
+        {
+            GeometryRenderBlockDescriptor block = source[index];
+            if (IsGeometryBlockWithinRadius(block, position, radius))
+            {
+                (destination ??= []).Add(block);
+            }
+        }
+    }
+
+    private static GeometryCellKey[] DrainCells(HashSet<GeometryCellKey> cells)
+    {
+        if (cells.Count == 0)
+        {
+            return Array.Empty<GeometryCellKey>();
+        }
+
+        GeometryCellKey[] drained = cells.ToArray();
+        cells.Clear();
+        return drained;
     }
 
     private GeometryRenderExport CaptureGeometryRenderExport(
@@ -1291,16 +1446,31 @@ public class Map
         if (isStatic)
         {
             _staticRenderCells.Add(key);
+            _dynamicRenderCells.Remove(key);
         }
         else
         {
             _staticRenderCells.Remove(key);
+            if (record != null)
+            {
+                _dynamicRenderCells.Add(key);
+            }
+            else
+            {
+                _dynamicRenderCells.Remove(key);
+            }
         }
 
         if (wasStatic || isStatic)
         {
             _pendingStaticRenderDirtyCells.Add(key);
+            BumpStaticContentVersion();
         }
+    }
+
+    private void BumpStaticContentVersion()
+    {
+        StaticContentVersion = Interlocked.Increment(ref _staticContentVersionSource);
     }
 
     // Mirrors the static/dynamic split in CaptureGeometryRenderExport.
@@ -1417,6 +1587,7 @@ public class Map
         }
 
         _mergedStaticSubcellRenderBlocks = blocks;
+        BumpStaticContentVersion();
     }
 
     private void RebuildMergedStaticSubcellCollisionBodiesIfNeeded(

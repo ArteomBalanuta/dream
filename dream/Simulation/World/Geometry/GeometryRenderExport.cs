@@ -33,4 +33,9 @@ public readonly record struct GeometryRenderExport
     public IReadOnlyList<Cube> CompatibilityCubes { get; init; }
     public IReadOnlyList<Cube> DynamicCompatibilityCubes { get; init; }
     public IReadOnlyList<GeometryRenderBlockDescriptor> DynamicBlocks { get; init; }
+
+    // Identifies the static content (CompatibilityCubes, Blocks and the static Cells) of the map
+    // that produced this export: equal non-zero versions mean identical static content. 0 means
+    // unknown, so consumers must inspect the content itself.
+    public long StaticContentVersion { get; init; }
 }
