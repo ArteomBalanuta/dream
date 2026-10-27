@@ -241,94 +241,165 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
     }
 
     [Fact]
-    public async Task V1Client_IsDisconnectedWithoutAReply_AndTheOtherClientsKeepPlaying()
+    public async Task V1Client_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying()
     {
-        await using ServerUnderTest server = await ServerUnderTest.StartAsync();
-        await using RawClient a = await server.ConnectAndJoinAsync(PrimarySession);
-        await using RawClient b = await server.ConnectAndJoinAsync(EarlySecondary);
-        for (int i = 0; i < 20; i++)
+        const string ExpectedReason = "Client uses protocol v1; this server uses v2.";
+        List<Exception> unobserved = [];
+        EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
         {
-            await a.SendCommandAsync(walking: true);
-            await b.SendCommandAsync(walking: false);
-            await server.TickAsync();
-            Assert.True(await server.FlushAllAsync());
-        }
-
-        // A protocol v1 client: v1 serializer options (explicit nulls and messageKind in the
-        // payload) and protocolVersion 1 in the envelope, framed exactly like a v2 frame.
-        ClientHelloMessage hello = new("legacy-v1-client");
-        byte[] v1Hello = JsonSerializer.SerializeToUtf8Bytes(
-            new { protocolVersion = 1, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
-            ProtocolWireOptions.V1);
-        InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-        Assert.Equal("Unsupported protocol version 1. Supported version: 2.", versionError.Message);
-
-        using TcpClient legacy = new();
-        await legacy.ConnectAsync(IPAddress.Loopback, server.Port);
-        ServerConnection legacyConnection = await server.AcceptAsync();
-        Assert.Equal(3, server.Service.ConnectionCount);
-        NetworkStream legacyStream = legacy.GetStream();
-        await legacyStream.WriteAsync(new LengthPrefixedMessageFramer().Frame(v1Hello));
-
-        // The server reads the frame, fails to decode it, and closes only that connection.
-        byte[] buffer = new byte[4096];
-        int received = 0;
-        using (CancellationTokenSource readTimeout = new(Timeout))
-        {
-            while (true)
+            // The handler is process-wide; keep only faults caused by this test's v1 frame.
+            if (args.Exception.Flatten().InnerExceptions.Any(inner => inner.ToString().Contains("protocol version 1", StringComparison.OrdinalIgnoreCase)))
             {
-                int read;
-                try
+                lock (unobserved)
                 {
-                    read = await legacyStream.ReadAsync(buffer, readTimeout.Token);
+                    unobserved.Add(args.Exception);
                 }
-                catch (IOException)
-                {
-                    // A reset is also a close.
-                    break;
-                }
-
-                if (read == 0)
-                {
-                    break;
-                }
-
-                received += read;
             }
-        }
-
-        // Nothing was sent back: no ServerHello, no rejection frame.
-        Assert.Equal(0, received);
-        await WaitUntilAsync(() => server.Service.ConnectionCount == 2, "the v1 connection was never dropped");
-        Assert.False(server.Host.IsConnectionJoined(legacyConnection.ConnectionId));
-
-        // The server keeps ticking and the v2 clients keep receiving every snapshot.
-        int framesBefore = a.Frames.Count;
-        for (int i = 0; i < 30; i++)
+        };
+        TaskScheduler.UnobservedTaskException += onUnobserved;
+        try
         {
-            await a.SendCommandAsync(walking: true);
-            await b.SendCommandAsync(walking: true);
+            await using ServerUnderTest server = await ServerUnderTest.StartAsync();
+            List<ServerConnectionError> connectionErrors = [];
+            server.Service.ConnectionError += error =>
+            {
+                lock (connectionErrors)
+                {
+                    connectionErrors.Add(error);
+                }
+            };
+            await using RawClient a = await server.ConnectAndJoinAsync(PrimarySession);
+            await using RawClient b = await server.ConnectAndJoinAsync(EarlySecondary);
+            for (int i = 0; i < 20; i++)
+            {
+                await a.SendCommandAsync(walking: true);
+                await b.SendCommandAsync(walking: false);
+                await server.TickAsync();
+                Assert.True(await server.FlushAllAsync());
+            }
+
+            // A protocol v1 client: v1 serializer options (explicit nulls and messageKind in the
+            // payload) and protocolVersion 1 in the envelope, framed exactly like a v2 frame.
+            ClientHelloMessage hello = new("legacy-v1-client");
+            byte[] v1Hello = JsonSerializer.SerializeToUtf8Bytes(
+                new { protocolVersion = 1, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
+                ProtocolWireOptions.V1);
+            InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
+            Assert.Equal("Unsupported protocol version 1. Supported version: 2.", versionError.Message);
+
+            using TcpClient legacy = new();
+            await legacy.ConnectAsync(IPAddress.Loopback, server.Port);
+            ServerConnection legacyConnection = await server.AcceptAsync();
+            Assert.Equal(3, server.Service.ConnectionCount);
+            NetworkStream legacyStream = legacy.GetStream();
+            await legacyStream.WriteAsync(new LengthPrefixedMessageFramer().Frame(v1Hello));
+
+            // The server reads the frame, fails to decode it, answers with one v2 rejection that
+            // names both versions, and closes only that connection.
+            using MemoryStream received = new();
+            byte[] buffer = new byte[4096];
+            using (CancellationTokenSource readTimeout = new(Timeout))
+            {
+                while (true)
+                {
+                    int read;
+                    try
+                    {
+                        read = await legacyStream.ReadAsync(buffer, readTimeout.Token);
+                    }
+                    catch (IOException)
+                    {
+                        // A reset is also a close.
+                        break;
+                    }
+
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    received.Write(buffer, 0, read);
+                }
+            }
+
+            byte[] receivedBytes = received.ToArray();
+            Assert.True(
+                new LengthPrefixedMessageFramer().TryDeframe(receivedBytes, out byte[]? rejectionPayload, out int consumed),
+                $"expected one complete rejection frame, got {receivedBytes.Length} bytes");
+            Assert.Equal(receivedBytes.Length, consumed);
+            DecodedProtocolMessage rejection = new TransportJsonCodec().Decode(rejectionPayload!);
+            Assert.Equal(TransportEnvelope.CurrentProtocolVersion, rejection.Envelope.ProtocolVersion);
+            Assert.Equal(1UL, rejection.Envelope.Sequence);
+            Assert.Equal(ExpectedReason, Assert.IsType<JoinRejectedMessage>(rejection.Message).Reason);
+
+            await WaitUntilAsync(() => server.Service.ConnectionCount == 2, "the v1 connection was never dropped");
+            Assert.False(server.Host.IsConnectionJoined(legacyConnection.ConnectionId));
+
+            // The server logged the reason once, for that connection only (its id is the remote
+            // endpoint), as a protocol mismatch rather than a generic error.
+            lock (connectionErrors)
+            {
+                ServerConnectionError logged = Assert.Single(connectionErrors);
+                Assert.Equal(legacyConnection.ConnectionId, logged.ConnectionId);
+                Assert.EndsWith($":{((IPEndPoint)legacy.Client.LocalEndPoint!).Port}", logged.ConnectionId);
+                Assert.Equal("protocol-mismatch", logged.Kind);
+                Assert.Equal(ExpectedReason, logged.Reason);
+                ProtocolVersionMismatchException mismatch = Assert.IsType<ProtocolVersionMismatchException>(logged.Exception);
+                Assert.Equal(1, mismatch.PeerVersion);
+                Assert.Equal(versionError.Message, mismatch.InnerException!.Message);
+            }
+
+            // The connection loop task must not end faulted: force the finalizers that would
+            // report an unobserved task exception and check that none came from this connection.
+            for (int i = 0; i < 5; i++)
+            {
+                await Task.Delay(20);
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            lock (unobserved)
+            {
+                Assert.Empty(unobserved);
+            }
+
+            // The server keeps ticking and the v2 clients keep receiving every snapshot.
+            int framesBefore = a.Frames.Count;
+            for (int i = 0; i < 30; i++)
+            {
+                await a.SendCommandAsync(walking: true);
+                await b.SendCommandAsync(walking: true);
+                await server.TickAsync();
+                Assert.True(await server.FlushAllAsync());
+            }
+
+            ulong lastTick = server.Host.Runtime!.CurrentServerTick;
+            await a.WaitForSnapshotTickAsync(lastTick);
+            await b.WaitForSnapshotTickAsync(lastTick);
+            Assert.True(a.Frames.Count >= framesBefore + 30);
+            foreach (RawClient client in new[] { a, b })
+            {
+                Assert.Null(client.ReadFault);
+                AssertEnvelopeSequencesAreGapFree(client);
+                Assert.True(client.IsConnected);
+            }
+
+            lock (connectionErrors)
+            {
+                Assert.Single(connectionErrors);
+            }
+
+            // A v2 client can still join afterwards.
+            await using RawClient c = await server.ConnectAndJoinAsync(LateSecondary);
             await server.TickAsync();
             Assert.True(await server.FlushAllAsync());
+            await c.WaitForSnapshotTickAsync(server.Host.Runtime!.CurrentServerTick);
+            Assert.Null(c.ReadFault);
         }
-
-        ulong lastTick = server.Host.Runtime!.CurrentServerTick;
-        await a.WaitForSnapshotTickAsync(lastTick);
-        await b.WaitForSnapshotTickAsync(lastTick);
-        Assert.True(a.Frames.Count >= framesBefore + 30);
-        foreach (RawClient client in new[] { a, b })
+        finally
         {
-            Assert.Null(client.ReadFault);
-            AssertEnvelopeSequencesAreGapFree(client);
-            Assert.True(client.IsConnected);
+            TaskScheduler.UnobservedTaskException -= onUnobserved;
         }
-
-        // A v2 client can still join afterwards.
-        await using RawClient c = await server.ConnectAndJoinAsync(LateSecondary);
-        await server.TickAsync();
-        Assert.True(await server.FlushAllAsync());
-        await c.WaitForSnapshotTickAsync(server.Host.Runtime!.CurrentServerTick);
-        Assert.Null(c.ReadFault);
     }
 
     private static void AssertEnvelopeSequencesAreGapFree(RawClient client)

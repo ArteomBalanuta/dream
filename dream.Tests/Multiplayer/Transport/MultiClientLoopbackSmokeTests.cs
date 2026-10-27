@@ -49,21 +49,31 @@ public class MultiClientLoopbackSmokeTests
             // stopped sampling while session-b was still in the air.
             Stopwatch deadline = Stopwatch.StartNew();
             ulong sequence = 0;
-            ulong? walkStartTick = null;
+            ulong? walkStartTickA = null;
+            ulong? walkStartTickB = null;
             bool jumpSent = false;
             while (deadline.Elapsed < TimeSpan.FromSeconds(30))
             {
                 sequence++;
-                walkStartTick ??= a.LatestServerTick;
+                // Each session's walk window starts once that session is joined and simulated:
+                // session-a's at its first snapshot, session-b's at the first snapshot that
+                // session-b receives showing itself. Anchoring session-b to session-a's first
+                // snapshot let the window run out while session-b's join was still pending under
+                // load; the server drops commands for an unjoined session and applies only the
+                // newest command per session per tick, so session-b's walk frames were lost or
+                // replaced by idle ones and it barely moved.
+                walkStartTickA ??= a.LatestServerTick;
+                walkStartTickB ??= b.FirstSelfServerTick;
                 // Both walk a little, then session-b jumps once: a jump only shows up in Y for a
                 // physics player (secondary sessions used to be ghosts with a fixed height).
-                bool walking = walkStartTick == null || a.LatestServerTick < walkStartTick + WalkTicks;
+                bool walkingA = walkStartTickA == null || a.LatestServerTick < walkStartTickA + WalkTicks;
+                bool walkingB = walkStartTickB == null || a.LatestServerTick < walkStartTickB + WalkTicks;
                 // Jump only once session-b has come to rest after the walk, so the jump starts
                 // from the ground. The server latches JumpPressed until its next tick.
-                bool jump = !jumpSent && !walking && a.IsAtRest("session-b", RestSamples);
+                bool jump = !jumpSent && !walkingB && a.IsAtRest("session-b", RestSamples);
                 jumpSent |= jump;
-                a.Session.QueueCommandFrame(CreateCommand("session-a", sequence, walking, jump: false));
-                b.Session.QueueCommandFrame(CreateCommand("session-b", sequence, walking, jump));
+                a.Session.QueueCommandFrame(CreateCommand("session-a", sequence, walkingA, jump: false));
+                b.Session.QueueCommandFrame(CreateCommand("session-b", sequence, walkingB, jump));
                 a.Drain();
                 b.Drain();
                 if (jumpSent &&
@@ -113,10 +123,13 @@ public class MultiClientLoopbackSmokeTests
         private readonly ClientWorldSession _world;
         private readonly Dictionary<string, List<Vector3>> _positions = new(StringComparer.Ordinal);
 
+        private readonly string _sessionId;
+
         private ClientUnderTest(RemoteClientSession session, ClientWorldSession world)
         {
             Session = session;
             _world = world;
+            _sessionId = session.SessionId;
         }
 
         public RemoteClientSession Session { get; }
@@ -176,11 +189,19 @@ public class MultiClientLoopbackSmokeTests
                     }
 
                     trail.Add(actor.Position);
+                    if (actor.SessionId == _sessionId)
+                    {
+                        FirstSelfServerTick ??= snapshot.ServerTick;
+                    }
                 }
             }
         }
 
         public ulong? LatestServerTick { get; private set; }
+
+        // The server tick of the first snapshot that showed this client's own player: from then
+        // on the session is joined and its commands are simulated.
+        public ulong? FirstSelfServerTick { get; private set; }
 
         // True once the last `samples` replicated positions of the session agree to within 1 cm.
         public bool IsAtRest(string session, int samples)

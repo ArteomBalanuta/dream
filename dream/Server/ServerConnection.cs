@@ -148,6 +148,14 @@ public sealed class ServerConnection : IAsyncDisposable
         return SendMessageAsync(actionMessage, sharedPayload: null, cancellationToken);
     }
 
+    // Sends a rejection straight to the transport ahead of anything still queued; used just
+    // before the service closes a connection it cannot serve.
+    public ValueTask SendJoinRejectedAsync(JoinRejectedMessage rejection, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(rejection);
+        return SendMessageAsync(rejection, sharedPayload: null, cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposeState, 1) != 0)
@@ -327,7 +335,16 @@ public sealed class ServerConnection : IAsyncDisposable
                 continue;
             }
 
-            DecodedProtocolMessage decoded = _codec.Decode(payload);
+            DecodedProtocolMessage decoded;
+            try
+            {
+                decoded = _codec.Decode(payload);
+            }
+            catch (Exception ex) when (ProtocolVersionMismatchException.ReadForeignProtocolVersion(payload) is int clientVersion)
+            {
+                throw ProtocolVersionMismatchException.FromClient(clientVersion, ex);
+            }
+
             IClientToServerMessage clientMessage = decoded.Message as IClientToServerMessage
                 ?? throw new InvalidOperationException(
                     $"Received non-client message kind '{decoded.Message.MessageKind}' on server connection '{ConnectionId}'.");
