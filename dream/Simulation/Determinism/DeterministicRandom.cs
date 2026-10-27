@@ -88,6 +88,17 @@ public static class Seed
         return Combine(Combine(Combine(a, b), c), d);
     }
 
+    public static ulong Combine(ulong a, ulong b, ulong c, ulong d, ulong e)
+    {
+        return Combine(Combine(a, b, c, d), e);
+    }
+
+    // Sign-extends, so negative ids such as actor ids map to distinct seed components.
+    public static ulong FromInt(int value)
+    {
+        return ToSeedComponent(value);
+    }
+
     public static ulong FromCell(int x, int y, int z)
     {
         return Combine(ToSeedComponent(x), ToSeedComponent(y), ToSeedComponent(z));
