@@ -34,4 +34,9 @@ public static class ModelAssets
 
     public static AnimatedModel Get(string path) =>
         Cache.GetOrAdd(path, modelPath => new AnimatedModel(modelPath));
+
+    /// <summary>
+    /// Releases every cached model. Only valid at scene teardown, after the last draw that uses them.
+    /// </summary>
+    public static void DisposeAll() => Cache.DisposeAll();
 }
