@@ -301,8 +301,8 @@ public class Render : IDisposable
             return;
         }
 
-        _disposed = true;
         GLUtils.AssertRenderThread("Render disposal");
+        _disposed = true;
 
         List<Exception>? failures = null;
         RunDisposeStep(_worldRenderer.Dispose, ref failures);
@@ -310,7 +310,12 @@ public class Render : IDisposable
         RunDisposeStep(_remotePlayerRenderer.Dispose, ref failures);
         RunDisposeStep(_shaders.DisposeAll, ref failures);
         RunDisposeStep(DeleteDebugCubeBuffers, ref failures);
-        RunDisposeStep(DisposeHud, ref failures);
+        RunDisposeStep(_fallbackCubeBuffer.Dispose, ref failures);
+        RunDisposeStep(_staticTerrainTextures.Dispose, ref failures);
+        RunDisposeStep(DeleteFontTexture, ref failures);
+        RunDisposeStep(_hudShader.Dispose, ref failures);
+        RunDisposeStep(_shaderObj.Dispose, ref failures);
+        RunDisposeStep(DeleteHudBuffers, ref failures);
         RunDisposeStep(DestroyImGuiContext, ref failures);
 
         if (failures == null)
@@ -346,19 +351,19 @@ public class Render : IDisposable
         _vertexArrayObject = 0;
     }
 
-    private void DisposeHud()
+    private void DeleteFontTexture()
     {
-        _fallbackCubeBuffer.Dispose();
-        _staticTerrainTextures.Dispose();
         GL.DeleteTexture(_fontTexture);
-        _hudShader.Dispose();
-        _shaderObj.Dispose();
+        _fontTexture = 0;
+    }
+
+    private void DeleteHudBuffers()
+    {
         GL.DeleteBuffer(_hudVbo);
         GL.DeleteBuffer(_vertexBuffer);
         GL.DeleteBuffer(_indexBuffer);
         GL.DeleteVertexArray(_hudVao);
         GL.DeleteVertexArray(_vertexArray);
-        _fontTexture = 0;
         _hudVbo = 0;
         _vertexBuffer = 0;
         _indexBuffer = 0;

@@ -140,7 +140,6 @@ public sealed class RemotePlayerRenderer : IDisposable
     public void Dispose()
     {
         _activeActorIds.Clear();
-        _clipTracker.RemoveExcept(_activeActorIds);
 
         List<Exception>? failures = null;
         foreach (AnimatedModel model in _playerModels.Values)
@@ -156,6 +155,15 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
 
         _playerModels.Clear();
+        try
+        {
+            _clipTracker.RemoveExcept(_activeActorIds);
+        }
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+
         if (failures == null)
         {
             return;
