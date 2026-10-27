@@ -598,8 +598,7 @@ public class PlayScene : IDisposable
             $"[render-perf] frame={args.Time * 1000d:0.00}ms pos={LastReportedPlayerPosition} " +
             $"focused={windowFocused} settings={_settings.SettingsVisible} inventory={_settings.InventoryVisible} " +
             string.Join(" | ", performance.ToHudLines()) +
-            $" | preDraw={_lastClearMilliseconds + _lastPresentationCaptureMilliseconds + _lastRemotePlayerStatesMilliseconds:0.00}ms " +
-            $"clear={_lastClearMilliseconds:0.00}ms capture={_lastPresentationCaptureMilliseconds:0.00}ms " +
+            $" | clear={_lastClearMilliseconds:0.00}ms capture={_lastPresentationCaptureMilliseconds:0.00}ms " +
             $"remoteStates={_lastRemotePlayerStatesMilliseconds:0.00}ms");
     }
 

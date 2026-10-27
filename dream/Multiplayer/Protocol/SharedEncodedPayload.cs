@@ -24,11 +24,14 @@ public sealed class SharedEncodedPayload
     private const int StateEncoding = 1;
     private const int StateDone = 2;
 
+    // Private gate: a lock on the public instance could be contended by outside code. Created
+    // only by a waiter, so the common (uncontended) path allocates nothing for it.
+    private object? _gate;
     private readonly IProtocolCodec _codec;
 
     // Published (volatile) before _state becomes StateDone; null while unencoded or after a fault.
     private volatile byte[]? _bytes;
-    private Exception? _fault;
+    private ExceptionDispatchInfo? _fault;
     private int _state;
 
     public SharedEncodedPayload(IProtocolCodec codec, ServerSnapshotMessage message)
@@ -48,7 +51,7 @@ public sealed class SharedEncodedPayload
     public ReadOnlySpan<byte> Bytes => GetBytes();
 
     // Once-gate: the caller that wins the CompareExchange encodes; the others spin briefly and
-    // then wait on the instance monitor. No delegate or event is allocated.
+    // then wait on the private gate monitor. No delegate or event is allocated.
     private byte[] GetBytes()
     {
         byte[]? bytes = _bytes;
@@ -65,14 +68,20 @@ public sealed class SharedEncodedPayload
             }
             catch (Exception ex)
             {
-                _fault = ex;
+                _fault = ExceptionDispatchInfo.Capture(ex);
             }
             finally
             {
-                Volatile.Write(ref _state, StateDone);
-                lock (this)
+                // Full fence (Exchange) so the state write is visible before _gate is read; a waiter
+                // publishes _gate with another full fence before it re-checks the state.
+                Interlocked.Exchange(ref _state, StateDone);
+                object? gate = Volatile.Read(ref _gate);
+                if (gate is not null)
                 {
-                    Monitor.PulseAll(this);
+                    lock (gate)
+                    {
+                        Monitor.PulseAll(gate);
+                    }
                 }
             }
         }
@@ -97,20 +106,24 @@ public sealed class SharedEncodedPayload
             return;
         }
 
-        // The completer sets StateDone before taking the lock to pulse, so checking the state
-        // while holding the lock cannot miss the pulse.
-        lock (this)
+        // The gate is published before the state is re-checked and the completer sets StateDone
+        // before reading the gate, so either the completer sees the gate and pulses under the lock,
+        // or the waiter sees StateDone; the pulse cannot be missed.
+        object gate = Volatile.Read(ref _gate) ?? Interlocked.CompareExchange(ref _gate, new object(), null) ?? _gate!;
+        lock (gate)
         {
             while (Volatile.Read(ref _state) != StateDone)
             {
-                Monitor.Wait(this);
+                Monitor.Wait(gate);
             }
         }
     }
 
     private byte[] Rethrow()
     {
-        ExceptionDispatchInfo.Throw(_fault!);
+        // Captured once when the fault happened; Throw() on the shared info rethrows the same
+        // exception instance without readers racing to re-capture its stack trace.
+        _fault!.Throw();
         return null!;
     }
 

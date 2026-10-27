@@ -115,7 +115,19 @@ public class SceneTeardownTests
         Assert.True(startupScene < baseUnload, "The startup scene must be disposed before base.OnUnload.");
         Assert.True(playScene < localServer && startupScene < localServer, "The local server must outlive the scenes' connections.");
         Assert.True(baseUnload < localServer);
-        Assert.Matches(@"finally\s*\{\s*base\.OnUnload\(\);", body);
+        // base.OnUnload may throw; the local server is still disposed, in its own finally.
+        Assert.Matches(@"try\s*\{\s*base\.OnUnload\(\);\s*\}\s*catch\s*\(Exception ex\)\s*\{[^}]*\}\s*finally\s*\{\s*try\s*\{\s*_localServer\.DisposeAsync", body);
+        // Failures are collected: one is rethrown as-is, several as an AggregateException.
+        Assert.Contains("ExceptionDispatchInfo.Capture(failures[0]).Throw();", body);
+        Assert.Contains("throw new AggregateException(failures);", body);
+    }
+
+    [Fact]
+    public void PlayScene_RenderPerfLog_Has_No_Duplicate_PreDraw_Suffix()
+    {
+        string source = ReadSource("dream", "Client", "Scenes", "PlayScene.cs");
+        Assert.DoesNotContain("preDraw=", source);
+        Assert.Contains("performance.ToHudLines()", source);
     }
 
     [Fact]
