@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Dream.Multiplayer.Diagnostics;
 
 namespace Dream.Multiplayer.Protocol;
@@ -19,8 +20,16 @@ public sealed class SharedEncodedPayload
     [ThreadStatic]
     private static PooledFrameWriter? t_scratch;
 
+    private const int StateNew = 0;
+    private const int StateEncoding = 1;
+    private const int StateDone = 2;
+
     private readonly IProtocolCodec _codec;
-    private readonly Lazy<byte[]> _bytes;
+
+    // Published (volatile) before _state becomes StateDone; null while unencoded or after a fault.
+    private volatile byte[]? _bytes;
+    private Exception? _fault;
+    private int _state;
 
     public SharedEncodedPayload(IProtocolCodec codec, ServerSnapshotMessage message)
     {
@@ -28,15 +37,82 @@ public sealed class SharedEncodedPayload
         ArgumentNullException.ThrowIfNull(message);
         _codec = codec;
         Message = message;
-        _bytes = new Lazy<byte[]>(EncodeOnce, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public ServerSnapshotMessage Message { get; }
 
-    public bool IsEncoded => _bytes.IsValueCreated;
+    public bool IsEncoded => _bytes is not null;
 
-    // Encodes on first use; rethrows the cached exception if that encode failed.
-    public ReadOnlySpan<byte> Bytes => _bytes.Value;
+    // Encodes on first use; rethrows the cached exception (original stack preserved) if that
+    // encode failed.
+    public ReadOnlySpan<byte> Bytes => GetBytes();
+
+    // Once-gate: the caller that wins the CompareExchange encodes; the others spin briefly and
+    // then wait on the instance monitor. No delegate or event is allocated.
+    private byte[] GetBytes()
+    {
+        byte[]? bytes = _bytes;
+        if (bytes is not null)
+        {
+            return bytes;
+        }
+
+        if (Interlocked.CompareExchange(ref _state, StateEncoding, StateNew) == StateNew)
+        {
+            try
+            {
+                _bytes = EncodeOnce();
+            }
+            catch (Exception ex)
+            {
+                _fault = ex;
+            }
+            finally
+            {
+                Volatile.Write(ref _state, StateDone);
+                lock (this)
+                {
+                    Monitor.PulseAll(this);
+                }
+            }
+        }
+        else
+        {
+            WaitUntilDone();
+        }
+
+        return _bytes ?? Rethrow();
+    }
+
+    private void WaitUntilDone()
+    {
+        SpinWait spin = default;
+        while (Volatile.Read(ref _state) != StateDone && !spin.NextSpinWillYield)
+        {
+            spin.SpinOnce();
+        }
+
+        if (Volatile.Read(ref _state) == StateDone)
+        {
+            return;
+        }
+
+        // The completer sets StateDone before taking the lock to pulse, so checking the state
+        // while holding the lock cannot miss the pulse.
+        lock (this)
+        {
+            while (Volatile.Read(ref _state) != StateDone)
+            {
+                Monitor.Wait(this);
+            }
+        }
+    }
+
+    private byte[] Rethrow()
+    {
+        ExceptionDispatchInfo.Throw(_fault!);
+        return null!;
+    }
 
     private byte[] EncodeOnce()
     {

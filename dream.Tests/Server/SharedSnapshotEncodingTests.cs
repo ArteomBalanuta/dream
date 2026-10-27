@@ -31,9 +31,9 @@ public class SharedSnapshotEncodingTests
     private const long AsyncStateMachineBudgetBytes = 0;
 #endif
 
-    // Per tick on top of the snapshot message: the SharedEncodedPayload, its Lazy and the Lazy's
-    // factory delegate (184 B measured in Debug).
-    private const long SharedPayloadBudgetBytes = 256;
+    // Per tick on top of the snapshot message: the SharedEncodedPayload object alone (56 B; it
+    // used to be 184 B with its Lazy and the Lazy's factory delegate).
+    private const long SharedPayloadBudgetBytes = 96;
 
     // ServerConnection reuses its queue nodes, so it allocates nothing per enqueue. The tick
     // thread is still charged roughly 40 B per connection that this test does not attribute to
