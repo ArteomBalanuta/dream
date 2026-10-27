@@ -37,6 +37,7 @@ public class PlayScene : IDisposable
 {
     private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
     private const string RenderPerformanceLogEnvironmentVariable = "DREAM_RENDER_PERF_LOG";
+    private static readonly TimeSpan DiagnosticsLogInterval = TimeSpan.FromSeconds(1);
 
     // Client-local presentation state that should remain scene-owned after the runtime split.
     private readonly Render _render;
@@ -77,6 +78,24 @@ public class PlayScene : IDisposable
     private double _lastSwapBuffersMilliseconds;
     private double _lastHudDrawMilliseconds;
     private PlayerInventorySnapshot? _inventory;
+
+    // Inputs and output of the prediction tick for the current frame. The tick runner calls a
+    // static lambda with this scene as its state, so these are fields rather than captured locals.
+    private PlayerCommandFrame _tickCommandFrame;
+    private PlayerSimulationTuning _tickTuning;
+    private bool _tickPrimaryUseTriggered;
+
+    // The part of Render before the world draw, which the frame snapshot has no field for: GL.Clear,
+    // presentation capture and the remote-player states. Reported in the render-perf log line.
+    private double _lastClearMilliseconds;
+    private double _lastPresentationCaptureMilliseconds;
+    private double _lastRemotePlayerStatesMilliseconds;
+
+    // Diagnostics keys for the remote session, rebuilt only when the session id changes.
+    private string? _diagnosticsKeySessionId;
+    private string _snapshotLogKey = string.Empty;
+    private string _commandLogKey = string.Empty;
+    private string _presenterStateLogKey = string.Empty;
 
     private double RemotePlayerRenderTick => _serverTickClock.RenderTick;
 
@@ -155,38 +174,15 @@ public class PlayScene : IDisposable
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
         // Predict with the server's movement values; a local NoclipSpeed the server does not use
         // makes every snapshot disagree with the prediction.
-        PlayerSimulationTuning tuning = _settings.ToPlayerSimulationTuning().WithAuthoritativeMovement();
-        bool primaryUseTriggered = false;
-        _tickRunner.Advance(args.Time, (tick, fixedDeltaSeconds) =>
-        {
-            PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(
-                commandFrame,
-                out PlayerCommandFrame? freshSourceFrame);
-            if (freshSourceFrame.HasValue)
-            {
-                // One merged command per client tick: the server consumes at most one per tick,
-                // so per-frame sends only cost decoding and lock contention.
-                QueueRemoteCommandFrame(freshSourceFrame.Value);
-            }
+        _tickTuning = _settings.ToPlayerSimulationTuning().WithAuthoritativeMovement();
+        _tickCommandFrame = commandFrame;
+        _tickPrimaryUseTriggered = false;
+        _tickRunner.Advance(
+            args.Time,
+            this,
+            static (scene, tick, fixedDeltaSeconds) => scene.RunPredictionTick(tick, fixedDeltaSeconds));
 
-            // The simulation frame has primary use stripped (the server owns the action), so the
-            // local animation is driven from the held input instead. Before, it never played.
-            bool playPrimaryUse = _runtime.AdvancePredictionTick(
-                tick,
-                fixedDeltaSeconds,
-                simulationCommandFrame,
-                tuning,
-                primaryUseHeld: _lastLocalSimulationCommandFrame?.PrimaryUsePressed ?? false);
-            _predictionReconciler.RecordPrediction(
-                simulationCommandFrame.Sequence,
-                _runtime.Player.GetWorldPosition());
-            if (playPrimaryUse)
-            {
-                primaryUseTriggered = true;
-            }
-        });
-
-        if (primaryUseTriggered)
+        if (_tickPrimaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
         }
@@ -209,33 +205,68 @@ public class PlayScene : IDisposable
         _actionFeedback.Update(delta);
     }
 
+    private void RunPredictionTick(ulong tick, float fixedDeltaSeconds)
+    {
+        PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(
+            _tickCommandFrame,
+            out PlayerCommandFrame? freshSourceFrame);
+        if (freshSourceFrame.HasValue)
+        {
+            // One merged command per client tick: the server consumes at most one per tick,
+            // so per-frame sends only cost decoding and lock contention.
+            QueueRemoteCommandFrame(freshSourceFrame.Value);
+        }
+
+        // The simulation frame has primary use stripped (the server owns the action), so the
+        // local animation is driven from the held input instead. Before, it never played.
+        bool playPrimaryUse = _runtime.AdvancePredictionTick(
+            tick,
+            fixedDeltaSeconds,
+            simulationCommandFrame,
+            _tickTuning,
+            primaryUseHeld: _lastLocalSimulationCommandFrame?.PrimaryUsePressed ?? false);
+        _predictionReconciler.RecordPrediction(
+            simulationCommandFrame.Sequence,
+            _runtime.Player.GetWorldPosition());
+        if (playPrimaryUse)
+        {
+            _tickPrimaryUseTriggered = true;
+        }
+    }
+
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
         // Render primarily consumes scene/runtime state for desktop presentation, even though
         // this path still applies scene-owned runtime requests such as floor rebuilds today.
+        long clearStart = Stopwatch.GetTimestamp();
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        long captureStart = Stopwatch.GetTimestamp();
         WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
             WorldVisibility.MaxRenderDistance,
             (float)_tickRunner.RemainingSeconds,
             _settings.CameraViewMode);
+        long remoteStatesStart = Stopwatch.GetTimestamp();
+        // A live list owned by the presenter; it is only read within this frame.
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             RemotePlayerRenderTick);
 
-        Stopwatch worldDrawStopwatch = Stopwatch.StartNew();
+        long worldDrawStart = Stopwatch.GetTimestamp();
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
-        worldDrawStopwatch.Stop();
-        Stopwatch enemyDrawStopwatch = Stopwatch.StartNew();
+        long enemyDrawStart = Stopwatch.GetTimestamp();
         _render.Enemies.Draw(
             presentation.Camera,
             presentation.ActiveEnemies,
             (float)args.Time,
             _settings.ShowCollisionGeometry);
-        enemyDrawStopwatch.Stop();
+        long enemyDrawEnd = Stopwatch.GetTimestamp();
+        _lastClearMilliseconds = Stopwatch.GetElapsedTime(clearStart, captureStart).TotalMilliseconds;
+        _lastPresentationCaptureMilliseconds = Stopwatch.GetElapsedTime(captureStart, remoteStatesStart).TotalMilliseconds;
+        _lastRemotePlayerStatesMilliseconds = Stopwatch.GetElapsedTime(remoteStatesStart, worldDrawStart).TotalMilliseconds;
 
         double localPlayerDrawMilliseconds = 0d;
         if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
         {
-            Stopwatch localPlayerStopwatch = Stopwatch.StartNew();
+            long localPlayerDrawStart = Stopwatch.GetTimestamp();
             _render.LocalPlayers.Draw(
                 new LocalPlayerPresentationState(
                     _runtime.Player.GetWorldPosition(),
@@ -243,16 +274,15 @@ public class PlayScene : IDisposable
                     _localPlayerWasMoving),
                 presentation.Camera,
                 (float)args.Time);
-            localPlayerStopwatch.Stop();
-            localPlayerDrawMilliseconds = localPlayerStopwatch.Elapsed.TotalMilliseconds;
+            localPlayerDrawMilliseconds = Stopwatch.GetElapsedTime(localPlayerDrawStart).TotalMilliseconds;
         }
 
-        Stopwatch remotePlayerStopwatch = Stopwatch.StartNew();
+        long remotePlayerDrawStart = Stopwatch.GetTimestamp();
         RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(
             presentation.Camera,
             remotePlayerStates,
             (float)args.Time);
-        remotePlayerStopwatch.Stop();
+        double remotePlayerDrawMilliseconds = Stopwatch.GetElapsedTime(remotePlayerDrawStart).TotalMilliseconds;
         LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
 
         DedicatedServerPerformanceSnapshot serverPerformance =
@@ -275,10 +305,10 @@ public class PlayScene : IDisposable
             worldRenderStats.StaticChunkReusedMeshes) with
         {
             TotalFrameMilliseconds = _lastPresentedFrameMilliseconds,
-            WorldDrawMilliseconds = worldDrawStopwatch.Elapsed.TotalMilliseconds,
-            EnemyDrawMilliseconds = enemyDrawStopwatch.Elapsed.TotalMilliseconds,
+            WorldDrawMilliseconds = Stopwatch.GetElapsedTime(worldDrawStart, enemyDrawStart).TotalMilliseconds,
+            EnemyDrawMilliseconds = Stopwatch.GetElapsedTime(enemyDrawStart, enemyDrawEnd).TotalMilliseconds,
             LocalPlayerDrawMilliseconds = localPlayerDrawMilliseconds,
-            RemotePlayerDrawMilliseconds = remotePlayerStopwatch.Elapsed.TotalMilliseconds,
+            RemotePlayerDrawMilliseconds = remotePlayerDrawMilliseconds,
             HudDrawMilliseconds = _lastHudDrawMilliseconds,
             SwapBuffersMilliseconds = _lastSwapBuffersMilliseconds,
             ServerTickMilliseconds = serverPerformance.TickMilliseconds,
@@ -287,31 +317,29 @@ public class PlayScene : IDisposable
         };
         if (_settings.ShowCollisionGeometry)
         {
-            Stopwatch debugDrawStopwatch = Stopwatch.StartNew();
+            long debugDrawStart = Stopwatch.GetTimestamp();
             _render.Debug.DrawCollisionBodies(presentation.MapCollisionBodies, presentation.Camera);
             if (presentation.PlayerCollisionBody != null)
             {
                 _render.DrawCollisionBody(presentation.PlayerCollisionBody, presentation.Camera);
             }
-            debugDrawStopwatch.Stop();
             performance = performance with
             {
-                DebugDrawMilliseconds = debugDrawStopwatch.Elapsed.TotalMilliseconds
+                DebugDrawMilliseconds = Stopwatch.GetElapsedTime(debugDrawStart).TotalMilliseconds
             };
         }
 
         if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
         {
-            Stopwatch viewModelDrawStopwatch = Stopwatch.StartNew();
+            long viewModelDrawStart = Stopwatch.GetTimestamp();
             _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
-            viewModelDrawStopwatch.Stop();
             performance = performance with
             {
-                ViewModelDrawMilliseconds = viewModelDrawStopwatch.Elapsed.TotalMilliseconds
+                ViewModelDrawMilliseconds = Stopwatch.GetElapsedTime(viewModelDrawStart).TotalMilliseconds
             };
         }
 
-        Stopwatch hudStopwatch = Stopwatch.StartNew();
+        long hudDrawStart = Stopwatch.GetTimestamp();
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -326,8 +354,7 @@ public class PlayScene : IDisposable
                 _inventory,
                 ConnectedServerEndpoint,
                 performance);
-        hudStopwatch.Stop();
-        _lastHudDrawMilliseconds = hudStopwatch.Elapsed.TotalMilliseconds;
+        _lastHudDrawMilliseconds = Stopwatch.GetElapsedTime(hudDrawStart).TotalMilliseconds;
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
@@ -365,11 +392,17 @@ public class PlayScene : IDisposable
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
         {
-            NetworkDiagnosticsLog.WriteEvery(
-                $"client.apply.snapshot.{_remoteClient.SessionId}",
-                TimeSpan.FromSeconds(1),
-                "client.apply.snapshot",
-                () => $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(snapshotMessage.Snapshot)}");
+            if (NetworkDiagnosticsLog.IsEnabled)
+            {
+                RefreshDiagnosticsKeys();
+                NetworkDiagnosticsLog.WriteEvery(
+                    _snapshotLogKey,
+                    DiagnosticsLogInterval,
+                    "client.apply.snapshot",
+                    (SessionId: _remoteClient.SessionId, snapshotMessage.Snapshot),
+                    static state => $"local={state.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(state.Snapshot)}");
+            }
+
             RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
             RequestWorldResyncIfOutOfSync(snapshotMessage.Snapshot);
             ClientCorrectionApplier.ApplySnapshotToRuntime(
@@ -387,11 +420,15 @@ public class PlayScene : IDisposable
         }
         else if (message is ServerActionMessage actionMessage)
         {
-            NetworkDiagnosticsLog.Write(
-                "client.apply.action",
-                $"local={_remoteClient.SessionId} resultSession={actionMessage.Result.SessionId} " +
-                $"seq={actionMessage.Result.ActionSequence} accepted={actionMessage.Result.Accepted} " +
-                $"payload={actionMessage.Result.Payload?.GetType().Name ?? "none"}");
+            if (NetworkDiagnosticsLog.IsEnabled)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "client.apply.action",
+                    $"local={_remoteClient.SessionId} resultSession={actionMessage.Result.SessionId} " +
+                    $"seq={actionMessage.Result.ActionSequence} accepted={actionMessage.Result.Accepted} " +
+                    $"payload={actionMessage.Result.Payload?.GetType().Name ?? "none"}");
+            }
+
             _actionSequences.ObserveActionResult(actionMessage.Result);
             bool resultTargetsLocalSession = string.Equals(
                 actionMessage.Result.SessionId,
@@ -509,7 +546,10 @@ public class PlayScene : IDisposable
         Console.WriteLine(
             $"[render-perf] frame={args.Time * 1000d:0.00}ms pos={LastReportedPlayerPosition} " +
             $"focused={windowFocused} settings={_settings.SettingsVisible} inventory={_settings.InventoryVisible} " +
-            string.Join(" | ", performance.ToHudLines()));
+            string.Join(" | ", performance.ToHudLines()) +
+            $" | preDraw={_lastClearMilliseconds + _lastPresentationCaptureMilliseconds + _lastRemotePlayerStatesMilliseconds:0.00}ms " +
+            $"clear={_lastClearMilliseconds:0.00}ms capture={_lastPresentationCaptureMilliseconds:0.00}ms " +
+            $"remoteStates={_lastRemotePlayerStatesMilliseconds:0.00}ms");
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)
@@ -590,19 +630,49 @@ public class PlayScene : IDisposable
             new PlayerSessionId(_remoteClient.SessionId),
             _runtime.Player.Camera.Front);
         _remoteClient.QueueCommandFrame(remoteCommandFrame);
-        NetworkDiagnosticsLog.WriteEvery(
-            $"client.scene.command.{_remoteClient.SessionId}",
-            TimeSpan.FromSeconds(1),
-            "client.scene.command",
-            () => $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sent={_remoteClient.SentCommandCount} " +
-                $"facing={NetworkDiagnosticsLog.FormatVector(remoteCommandFrame.LookIntent.Facing ?? _runtime.Player.Camera.Front)}");
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            RefreshDiagnosticsKeys();
+            NetworkDiagnosticsLog.WriteEvery(
+                _commandLogKey,
+                DiagnosticsLogInterval,
+                "client.scene.command",
+                (Scene: this, Frame: remoteCommandFrame),
+                static state => state.Scene.DescribeQueuedCommand(state.Frame));
+        }
+    }
+
+    private string DescribeQueuedCommand(PlayerCommandFrame remoteCommandFrame)
+    {
+        return $"session={_remoteClient.SessionId} seq={remoteCommandFrame.Sequence} sent={_remoteClient.SentCommandCount} " +
+            $"facing={NetworkDiagnosticsLog.FormatVector(remoteCommandFrame.LookIntent.Facing ?? _runtime.Player.Camera.Front)}";
+    }
+
+    // Diagnostics keys are only needed while diagnostics are on; they are rebuilt only when the
+    // remote session id differs from the one they were built for.
+    private void RefreshDiagnosticsKeys()
+    {
+        string sessionId = _remoteClient.SessionId;
+        if (string.Equals(sessionId, _diagnosticsKeySessionId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _diagnosticsKeySessionId = sessionId;
+        _snapshotLogKey = $"client.apply.snapshot.{sessionId}";
+        _commandLogKey = $"client.scene.command.{sessionId}";
+        _presenterStateLogKey = $"client.presenter.state.{sessionId}";
     }
 
     private void LogPresenterDiagnostics(string source)
     {
-        if (!NetworkDiagnosticsLog.ShouldLogEvery(
-                $"client.presenter.state.{_remoteClient.SessionId}",
-                TimeSpan.FromSeconds(1)))
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        RefreshDiagnosticsKeys();
+        if (!NetworkDiagnosticsLog.ShouldLogEvery(_presenterStateLogKey, DiagnosticsLogInterval))
         {
             return;
         }
@@ -652,9 +722,9 @@ public class PlayScene : IDisposable
         PlayerCommandFrame currentFrame,
         out PlayerCommandFrame? freshSourceFrame)
     {
-        IReadOnlyList<PlayerCommandFrame> pendingFrames =
-            _localSimulationCommandInbox.Drain([currentFrame.SessionId]);
-        freshSourceFrame = pendingFrames.Count > 0 ? pendingFrames[^1] : null;
+        freshSourceFrame = _localSimulationCommandInbox.TryDrain(currentFrame.SessionId, out PlayerCommandFrame pendingFrame)
+            ? pendingFrame
+            : null;
         PlayerCommandFrame simulationSource = freshSourceFrame
             ?? _lastLocalSimulationCommandFrame
             ?? ClearOneShotMoveInputs(currentFrame);

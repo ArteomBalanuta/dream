@@ -7,40 +7,61 @@ using Dream.Simulation.World;
 
 namespace Dream.Client.Presentation;
 
+// Runs on every render frame (BuildRemotePlayerStates, BuildPlayerRoster) and on every snapshot
+// (ApplySnapshot), so steady state allocates nothing: scratch collections are reused and the
+// sorted roster is rebuilt only when the roster changes.
 public sealed class ClientScenePresenter
 {
+    private static readonly TimeSpan DiagnosticsLogInterval = TimeSpan.FromSeconds(1);
+
     private string? _localSessionId;
+    private string _applyLogKey = null!;
     private readonly Dictionary<int, RemotePlayerEntry> _remotePlayers = [];
     private readonly Dictionary<string, PlayerRosterEntry> _playerRoster = new(StringComparer.Ordinal);
 
+    // Reused outputs. Callers get these lists themselves, not copies; see the Build methods.
+    private readonly List<RemotePlayerPresentationState> _remotePlayerStates = [];
+    private readonly List<PlayerRosterEntry> _sortedRoster = [];
+    private readonly Comparison<PlayerRosterEntry> _rosterComparison;
+    private bool _sortedRosterIsStale = true;
+
+    // Reused per-snapshot scratch.
+    private readonly HashSet<int> _observedRemoteActorIds = [];
+    private readonly HashSet<string> _observedPlayerSessions = new(StringComparer.Ordinal);
+    private readonly List<int> _staleRemoteActorIds = [];
+    private readonly List<string> _staleRosterSessions = [];
+
     public ClientScenePresenter(string? localSessionId = null)
     {
-        _localSessionId = localSessionId;
+        _rosterComparison = CompareRosterEntries;
+        SetLocalSessionId(localSessionId);
     }
 
     public void ApplySnapshot(ServerSnapshotEnvelope snapshot)
     {
-        HashSet<int> observedRemoteActorIds = [];
-        HashSet<string> observedPlayerSessions = new(StringComparer.Ordinal);
-        foreach (ActorSnapshot actor in snapshot.Actors)
+        _observedRemoteActorIds.Clear();
+        _observedPlayerSessions.Clear();
+        IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
+        for (int i = 0; i < actors.Count; i++)
         {
+            ActorSnapshot actor = actors[i];
             if (actor.Kind != CreatureKind.Player || string.IsNullOrWhiteSpace(actor.SessionId))
             {
                 continue;
             }
 
-            observedPlayerSessions.Add(actor.SessionId);
+            _observedPlayerSessions.Add(actor.SessionId);
             string displayName = string.IsNullOrWhiteSpace(actor.DisplayName)
                 ? actor.SessionId
                 : actor.DisplayName;
-            _playerRoster[actor.SessionId] = new PlayerRosterEntry(actor.SessionId, actor.ActorId, displayName);
+            SetRosterEntry(new PlayerRosterEntry(actor.SessionId, actor.ActorId, displayName));
 
             if (string.Equals(actor.SessionId, _localSessionId, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            observedRemoteActorIds.Add(actor.ActorId);
+            _observedRemoteActorIds.Add(actor.ActorId);
             RemotePlayerEntry entry = GetOrCreateEntry(actor.ActorId, actor.SessionId);
             entry.DisplayName = displayName;
             entry.CurrentHealth = actor.CurrentHealth;
@@ -57,46 +78,63 @@ public sealed class ClientScenePresenter
                 actor.Facing));
         }
 
-        foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers.ToArray())
+        // Collected first so neither dictionary is modified while it is enumerated; removal keeps
+        // the dictionary's enumeration order, as the old ToArray copies did.
+        _staleRemoteActorIds.Clear();
+        foreach (int actorId in _remotePlayers.Keys)
         {
-            if (!observedRemoteActorIds.Contains(actorId))
+            if (!_observedRemoteActorIds.Contains(actorId))
             {
-                _remotePlayers.Remove(actorId);
-                NetworkDiagnosticsLog.WriteEvery(
-                    $"client.presenter.prune.{actorId}",
-                    TimeSpan.FromSeconds(1),
-                    "client.presenter.prune",
-                    () => $"local={_localSessionId ?? "<none>"} actor={actorId} session={entry.SessionId} snapshotTick={snapshot.ServerTick} " +
-                        NetworkDiagnosticsLog.DescribeSnapshot(snapshot));
+                _staleRemoteActorIds.Add(actorId);
             }
         }
 
-        foreach (string sessionId in _playerRoster.Keys.ToArray())
+        for (int i = 0; i < _staleRemoteActorIds.Count; i++)
+        {
+            int actorId = _staleRemoteActorIds[i];
+            _remotePlayers.Remove(actorId, out RemotePlayerEntry? entry);
+            if (NetworkDiagnosticsLog.IsEnabled)
+            {
+                LogPrunedRemotePlayer(actorId, entry!.SessionId, snapshot);
+            }
+        }
+
+        _staleRosterSessions.Clear();
+        foreach (string sessionId in _playerRoster.Keys)
         {
             if (string.Equals(sessionId, _localSessionId, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            if (!observedPlayerSessions.Contains(sessionId))
+            if (!_observedPlayerSessions.Contains(sessionId))
             {
-                _playerRoster.Remove(sessionId);
+                _staleRosterSessions.Add(sessionId);
             }
         }
 
-        NetworkDiagnosticsLog.WriteEvery(
-            $"client.presenter.apply.{_localSessionId ?? "none"}",
-            TimeSpan.FromSeconds(1),
-            "client.presenter.apply",
-            () => $"local={_localSessionId ?? "<none>"} remoteEntries={_remotePlayers.Count} roster={DescribeRosterSessions()} " +
-                NetworkDiagnosticsLog.DescribeSnapshot(snapshot));
+        for (int i = 0; i < _staleRosterSessions.Count; i++)
+        {
+            _playerRoster.Remove(_staleRosterSessions[i]);
+            _sortedRosterIsStale = true;
+        }
+
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            NetworkDiagnosticsLog.WriteEvery(
+                _applyLogKey,
+                DiagnosticsLogInterval,
+                "client.presenter.apply",
+                (Presenter: this, Snapshot: snapshot),
+                static state => state.Presenter.DescribeApply(state.Snapshot));
+        }
     }
 
     public void ApplyJoinAccepted(JoinAcceptedMessage joinAccepted)
     {
         if (!string.IsNullOrWhiteSpace(joinAccepted.SessionId))
         {
-            _localSessionId = joinAccepted.SessionId;
+            SetLocalSessionId(joinAccepted.SessionId);
         }
 
         // A join starts a new server tick timeline; samples keyed by the old one would never be replaced.
@@ -107,7 +145,7 @@ public sealed class ClientScenePresenter
             string displayName = string.IsNullOrWhiteSpace(entry.DisplayName)
                 ? entry.SessionId
                 : entry.DisplayName;
-            _playerRoster[entry.SessionId] = new PlayerRosterEntry(entry.SessionId, entry.ActorId, displayName);
+            SetRosterEntry(new PlayerRosterEntry(entry.SessionId, entry.ActorId, displayName));
         }
 
         if (joinAccepted.EffectiveInitialActors.Count > 0)
@@ -123,18 +161,34 @@ public sealed class ClientScenePresenter
         }
     }
 
+    // The local player first, then display name (case-insensitive), then session id: the order
+    // of the former OrderByDescending(local).ThenBy(name).ThenBy(session). Session ids are unique
+    // roster keys, so the order is total and the unstable List.Sort gives the same result.
+    //
+    // Returns the presenter's own list, not a copy. It stays valid until the next ApplySnapshot or
+    // ApplyJoinAccepted changes the roster; the HUD reads it within the frame and keeps no reference.
     public IReadOnlyList<PlayerRosterEntry> BuildPlayerRoster()
     {
-        return _playerRoster.Values
-            .OrderByDescending(entry => string.Equals(entry.SessionId, _localSessionId, StringComparison.Ordinal))
-            .ThenBy(entry => entry.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(entry => entry.SessionId, StringComparer.Ordinal)
-            .ToArray();
+        if (_sortedRosterIsStale)
+        {
+            _sortedRoster.Clear();
+            foreach (PlayerRosterEntry entry in _playerRoster.Values)
+            {
+                _sortedRoster.Add(entry);
+            }
+
+            _sortedRoster.Sort(_rosterComparison);
+            _sortedRosterIsStale = false;
+        }
+
+        return _sortedRoster;
     }
 
+    // Returns the presenter's own list, refilled on every call; it is not a copy. The renderers,
+    // the HUD and the diagnostics read it within the frame that built it and keep no reference.
     public IReadOnlyList<RemotePlayerPresentationState> BuildRemotePlayerStates(double renderTick)
     {
-        List<RemotePlayerPresentationState> states = [];
+        _remotePlayerStates.Clear();
         foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers)
         {
             if (!entry.Buffer.TrySample(renderTick, out InterpolatedActorPose pose))
@@ -142,7 +196,7 @@ public sealed class ClientScenePresenter
                 continue;
             }
 
-            states.Add(new RemotePlayerPresentationState(
+            _remotePlayerStates.Add(new RemotePlayerPresentationState(
                 actorId,
                 entry.SessionId,
                 entry.DisplayName,
@@ -153,7 +207,7 @@ public sealed class ClientScenePresenter
                 entry.IsMoving));
         }
 
-        return states;
+        return _remotePlayerStates;
     }
 
     public ClientScenePresenterDebugState CaptureDebugState(double renderTick)
@@ -181,6 +235,39 @@ public sealed class ClientScenePresenter
             sampledRemoteCount);
     }
 
+    private void SetLocalSessionId(string? localSessionId)
+    {
+        _localSessionId = localSessionId;
+        _applyLogKey = $"client.presenter.apply.{_localSessionId ?? "none"}";
+        _sortedRosterIsStale = true;
+    }
+
+    private void SetRosterEntry(PlayerRosterEntry entry)
+    {
+        if (_playerRoster.TryGetValue(entry.SessionId, out PlayerRosterEntry existing) && existing == entry)
+        {
+            return;
+        }
+
+        _playerRoster[entry.SessionId] = entry;
+        _sortedRosterIsStale = true;
+    }
+
+    private int CompareRosterEntries(PlayerRosterEntry left, PlayerRosterEntry right)
+    {
+        bool leftIsLocal = string.Equals(left.SessionId, _localSessionId, StringComparison.Ordinal);
+        bool rightIsLocal = string.Equals(right.SessionId, _localSessionId, StringComparison.Ordinal);
+        if (leftIsLocal != rightIsLocal)
+        {
+            return leftIsLocal ? -1 : 1;
+        }
+
+        int byName = StringComparer.OrdinalIgnoreCase.Compare(left.DisplayName, right.DisplayName);
+        return byName != 0
+            ? byName
+            : StringComparer.Ordinal.Compare(left.SessionId, right.SessionId);
+    }
+
     private RemotePlayerEntry GetOrCreateEntry(int actorId, string sessionId)
     {
         if (_remotePlayers.TryGetValue(actorId, out RemotePlayerEntry? entry))
@@ -191,6 +278,25 @@ public sealed class ClientScenePresenter
         RemotePlayerEntry created = new(sessionId);
         _remotePlayers[actorId] = created;
         return created;
+    }
+
+    private void LogPrunedRemotePlayer(int actorId, string sessionId, ServerSnapshotEnvelope snapshot)
+    {
+        if (!NetworkDiagnosticsLog.ShouldLogEvery($"client.presenter.prune.{actorId}", DiagnosticsLogInterval))
+        {
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write(
+            "client.presenter.prune",
+            $"local={_localSessionId ?? "<none>"} actor={actorId} session={sessionId} snapshotTick={snapshot.ServerTick} " +
+                NetworkDiagnosticsLog.DescribeSnapshot(snapshot));
+    }
+
+    private string DescribeApply(ServerSnapshotEnvelope snapshot)
+    {
+        return $"local={_localSessionId ?? "<none>"} remoteEntries={_remotePlayers.Count} roster={DescribeRosterSessions()} " +
+            NetworkDiagnosticsLog.DescribeSnapshot(snapshot);
     }
 
     private string DescribeRosterSessions()

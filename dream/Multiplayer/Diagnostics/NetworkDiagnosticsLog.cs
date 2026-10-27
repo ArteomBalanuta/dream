@@ -17,7 +17,14 @@ public static class NetworkDiagnosticsLog
     private static readonly NetworkDiagnosticsRateLimiter RateLimiter = new();
     private static bool _announced;
 
-    public static bool IsEnabled => EnabledFlag.Value;
+    // Set only by CaptureOnCurrentThread. It enables diagnostics for one thread and receives that
+    // thread's lines instead of the console and file, so tests can read the exact text without
+    // turning diagnostics on for code running in parallel on other threads.
+    [ThreadStatic]
+    private static Action<string, string>? t_captureSink;
+
+    // Per-frame and per-snapshot callers check this before they build keys or messages.
+    public static bool IsEnabled => t_captureSink != null || EnabledFlag.Value;
 
     public static string LogPath
     {
@@ -76,6 +83,46 @@ public static class NetworkDiagnosticsLog
         }
 
         WriteEnabled(category, messageFactory());
+    }
+
+    // Callers pass a static lambda plus explicit state, so no closure is allocated per call.
+    public static void Write<TState>(string category, TState state, Func<TState, string> messageFactory)
+    {
+        if (!IsEnabled)
+        {
+            return;
+        }
+
+        WriteEnabled(category, messageFactory(state));
+    }
+
+    // Callers pass a static lambda plus explicit state, so no closure is allocated per call. An
+    // interpolated key is still built before this runs, so guard such calls with IsEnabled.
+    public static void WriteEvery<TState>(
+        string key,
+        TimeSpan interval,
+        string category,
+        TState state,
+        Func<TState, string> messageFactory)
+    {
+        if (!ShouldLogEvery(key, interval))
+        {
+            return;
+        }
+
+        WriteEnabled(category, messageFactory(state));
+    }
+
+    // Enables diagnostics on the calling thread only and sends its (category, message) pairs to
+    // the sink instead of the console and the log file, until the returned scope is disposed.
+    // Rate limiting still applies, through the process-wide limiter.
+    public static IDisposable CaptureOnCurrentThread(Action<string, string> sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+
+        CaptureScope scope = new(t_captureSink);
+        t_captureSink = sink;
+        return scope;
     }
 
     public static string DescribeActors(IReadOnlyList<ActorSnapshot> actors)
@@ -137,6 +184,12 @@ public static class NetworkDiagnosticsLog
 
     private static void WriteEnabled(string category, string message)
     {
+        if (t_captureSink is Action<string, string> captureSink)
+        {
+            captureSink(category, message);
+            return;
+        }
+
         string line = $"[{DateTimeOffset.Now:O}] [netdiag] [{category}] [t{Environment.CurrentManagedThreadId}] {message}";
         lock (Sync)
         {
@@ -169,6 +222,22 @@ public static class NetworkDiagnosticsLog
 
         _announced = true;
         Console.WriteLine($"[netdiag] enabled; writing to {LogPath}");
+    }
+
+    private sealed class CaptureScope(Action<string, string>? previousSink) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            t_captureSink = previousSink;
+        }
     }
 
     private static bool IsTruthy(string? value)

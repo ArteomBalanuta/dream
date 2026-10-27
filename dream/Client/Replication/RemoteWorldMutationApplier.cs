@@ -105,9 +105,9 @@ public static class RemoteWorldMutationApplier
         ArgumentNullException.ThrowIfNull(map);
         ArgumentNullException.ThrowIfNull(mutations);
 
-        foreach (WorldMutationDelta mutation in mutations)
+        for (int i = 0; i < mutations.Count; i++)
         {
-            ApplyMutation(map, mutation);
+            ApplyMutation(map, mutations[i]);
         }
     }
 
@@ -143,31 +143,48 @@ public static class RemoteWorldMutationApplier
             WorldStateChecksum.Compute(runtime.Map) != expected;
     }
 
+    // Acknowledges every sequenced delta and returns the ones still to apply, in order. When none
+    // is filtered out (the usual case) it returns the snapshot's own list instead of a copy, so the
+    // result may alias snapshot.WorldMutations; callers only read it. A list is allocated only
+    // when something is filtered.
     private static IReadOnlyList<WorldMutationDelta> TakeUnappliedMutations(
         IClientWorldState runtime,
         ServerSnapshotEnvelope snapshot)
     {
-        List<WorldMutationDelta> unapplied = new(snapshot.WorldMutations.Count);
-        foreach (WorldMutationDelta mutation in snapshot.WorldMutations)
+        IReadOnlyList<WorldMutationDelta> mutations = snapshot.WorldMutations;
+        List<WorldMutationDelta>? unapplied = null;
+        for (int i = 0; i < mutations.Count; i++)
         {
+            WorldMutationDelta mutation = mutations[i];
+
             // Unsequenced deltas predate sequencing and are always applied.
-            if (mutation.Sequence == 0)
+            bool alreadyApplied = false;
+            if (mutation.Sequence != 0)
             {
-                unapplied.Add(mutation);
+                // A full world snapshot already reflects every delta exported alongside it.
+                alreadyApplied = snapshot.World != null ||
+                    mutation.Sequence <= runtime.LastAppliedReplicatedWorldMutationSequence;
+                runtime.AcknowledgeReplicatedWorldMutations(mutation.Sequence);
+            }
+
+            if (alreadyApplied)
+            {
+                if (unapplied == null)
+                {
+                    unapplied = new List<WorldMutationDelta>(mutations.Count);
+                    for (int kept = 0; kept < i; kept++)
+                    {
+                        unapplied.Add(mutations[kept]);
+                    }
+                }
+
                 continue;
             }
 
-            // A full world snapshot already reflects every delta exported alongside it.
-            bool alreadyApplied = snapshot.World != null ||
-                mutation.Sequence <= runtime.LastAppliedReplicatedWorldMutationSequence;
-            runtime.AcknowledgeReplicatedWorldMutations(mutation.Sequence);
-            if (!alreadyApplied)
-            {
-                unapplied.Add(mutation);
-            }
+            unapplied?.Add(mutation);
         }
 
-        return unapplied;
+        return unapplied ?? mutations;
     }
 
     private static void ApplyFullWorldSnapshot(IClientWorldState runtime, WorldSnapshot snapshot)
@@ -302,11 +319,10 @@ public static class RemoteWorldMutationApplier
     // reproduces the server's pieces; the material is the one the caller resolved.
     private static void ApplyFallbackFracture(Map map, GeometryCellKey cell, GeometryMaterialId materialId, string source)
     {
-        NetworkDiagnosticsLog.WriteEvery(
-            "client.world.fracture-fallback",
-            FractureFallbackLogInterval,
-            "client.world.fracture-fallback",
-            () => $"source={source} cell=({cell.X},{cell.Y},{cell.Z}) material={materialId}");
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            LogFallbackFracture(cell, materialId, source);
+        }
 
         // Put the resolved material on the cell before fracturing, so the rubble and its bodies are
         // built once with the right material instead of being rebuilt after the fracture.
@@ -346,13 +362,36 @@ public static class RemoteWorldMutationApplier
         // client already had elsewhere and lost its material.
         if (cube == null)
         {
-            NetworkDiagnosticsLog.Write(
-                "client.world.move-miss",
-                () => $"source=({sourceX},{sourceY},{sourceZ}) target={mutation.TargetCellPosition} seq={mutation.Sequence}");
+            if (NetworkDiagnosticsLog.IsEnabled)
+            {
+                LogMoveMiss(mutation, sourceX, sourceY, sourceZ);
+            }
+
             return;
         }
 
         map.UpdateCubePosition(cube, authoritativeCenter, syncPhysics: true);
+    }
+
+    // The log helpers are separate methods so that their messages, and any closure state, are
+    // built only when diagnostics are on rather than on every mutation.
+    private static void LogMoveMiss(WorldMutationDelta mutation, int sourceX, int sourceY, int sourceZ)
+    {
+        NetworkDiagnosticsLog.Write(
+            "client.world.move-miss",
+            $"source=({sourceX},{sourceY},{sourceZ}) target={mutation.TargetCellPosition} seq={mutation.Sequence}");
+    }
+
+    private static void LogFallbackFracture(GeometryCellKey cell, GeometryMaterialId materialId, string source)
+    {
+        if (!NetworkDiagnosticsLog.ShouldLogEvery("client.world.fracture-fallback", FractureFallbackLogInterval))
+        {
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write(
+            "client.world.fracture-fallback",
+            $"source={source} cell=({cell.X},{cell.Y},{cell.Z}) material={materialId}");
     }
 
     private static Vector3 ToCellCenter(Vector3 cell)
