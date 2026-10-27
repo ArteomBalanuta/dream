@@ -12,7 +12,10 @@ namespace Dream.Simulation.Runtime;
 // cube pushing) so every session is simulated the same way. Earlier secondary sessions were
 // kinematic ghosts: Position += direction * speed, no gravity or collision, and they only
 // moved on ticks where a command arrived.
-public sealed class RemoteSessionPlayerState : IDisposable
+//
+// It is also the session's authoritative player target: its members read live state, so the
+// runtime lists the same instance every tick instead of allocating a delegate-backed wrapper.
+public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisposable
 {
     private readonly PhysicsIntegrator _physics;
     private readonly Player _player;
@@ -72,6 +75,9 @@ public sealed class RemoteSessionPlayerState : IDisposable
     public bool IsAlive => Combatant.Health.IsAlive;
 
     public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionMode.Building;
+
+    // The runtime disposes this state when the session detaches and lists only spawned sessions.
+    bool IAuthoritativePlayerTarget.IsSpawned => !_disposed;
 
     public Player PhysicsPlayer => _player;
 

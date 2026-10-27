@@ -4,7 +4,22 @@ public sealed class PlayerSessionRegistry
 {
     private readonly Dictionary<PlayerSessionId, ConnectedPlayer> _players = new();
 
-    public IReadOnlyCollection<ConnectedPlayer> Players => _players.Values;
+    // The concrete value collection, so a foreach on the tick path uses its struct enumerator
+    // instead of boxing one through IEnumerable. It is still a read-only view.
+    public Dictionary<PlayerSessionId, ConnectedPlayer>.ValueCollection Players => _players.Values;
+
+    public bool HasSpawnedRemotePlayer()
+    {
+        foreach (ConnectedPlayer player in _players.Values)
+        {
+            if (!player.IsLocal && player.IsSpawned)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public ConnectedPlayer Register(
         PlayerSessionId sessionId,

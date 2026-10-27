@@ -40,6 +40,28 @@ public sealed class WorldSessionRuntime : IDisposable
     private static readonly Comparison<RemoteSessionPlayerState> CompareSecondaryBySessionId =
         static (left, right) => string.CompareOrdinal(left.SessionId.Value, right.SessionId.Value);
 
+    // Receive order, then ordinal session id, then action sequence: the order of the stable LINQ
+    // OrderBy/ThenBy chain this replaces. The position in the caller's list breaks full ties the
+    // way that stable sort did.
+    private static readonly Comparison<(QueuedPlayerAction Action, int Index)> CompareQueuedActions =
+        static (left, right) =>
+        {
+            int order = left.Action.ReceiveOrder.CompareTo(right.Action.ReceiveOrder);
+            if (order != 0)
+            {
+                return order;
+            }
+
+            order = string.CompareOrdinal(left.Action.SessionId.Value, right.Action.SessionId.Value);
+            if (order != 0)
+            {
+                return order;
+            }
+
+            order = left.Action.Message.ActionSequence.CompareTo(right.Action.Message.ActionSequence);
+            return order != 0 ? order : left.Index.CompareTo(right.Index);
+        };
+
     private readonly bool _loadVisualAssets;
     private readonly SceneEventHub _events;
     private readonly PhysicsSyncSystem _physicsSync = new();
@@ -49,6 +71,18 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly Dictionary<PlayerSessionId, RemoteSessionPlayerState> _secondaryRemotePlayers = new();
     // _secondaryRemotePlayers' values in ordinal session-id order; rebuilt on attach and detach.
     private RemoteSessionPlayerState[] _orderedSecondaryRemotePlayers = [];
+    // The primary seat's player target, created once per primary session id. Its delegates read
+    // live state; it is dropped on attach, detach and seat changes and rebuilt on next use.
+    private AuthoritativePlayerTarget? _primaryPlayerTarget;
+    // Reused target lists: the tick's spawned and alive players, and every listed player for a snapshot.
+    private readonly List<IAuthoritativePlayerTarget> _tickPlayerTargets = [];
+    private readonly List<IAuthoritativePlayerTarget> _snapshotPlayerTargets = [];
+    // Reused scratch for sorting queued actions and coalescing mutations; never handed out.
+    private readonly List<(QueuedPlayerAction Action, int Index)> _orderedQueuedActions = [];
+    private readonly List<WorldMutationDelta> _coalescedMutations = [];
+    private readonly HashSet<int> _coalescedLaterActors = [];
+    // Last experience-to-next-level answer per player actor id; see EvaluateSnapshotExperienceToNextLevel.
+    private readonly Dictionary<int, (int Level, int Experience, int Required)> _experienceToNextLevelByActor = [];
     private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly List<WorldMutationDelta> _pendingWorldMutations = [];
@@ -160,6 +194,7 @@ public sealed class WorldSessionRuntime : IDisposable
 
     public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
     {
+        _primaryPlayerTarget = null;
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null && !existing.IsLocal)
         {
             existing.UpdateDisplayName(displayName);
@@ -205,6 +240,7 @@ public sealed class WorldSessionRuntime : IDisposable
     private void SeatPrimary(PlayerSessionId sessionId)
     {
         PrimaryRemoteSessionId = sessionId;
+        _primaryPlayerTarget = null;
         Physics.SetPlayerBodyParked(false);
     }
 
@@ -259,6 +295,7 @@ public sealed class WorldSessionRuntime : IDisposable
                 : Player.Combatant);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
+        _primaryPlayerTarget = null;
 
         if (PrimaryRemoteSessionId == sessionId)
         {
@@ -270,6 +307,7 @@ public sealed class WorldSessionRuntime : IDisposable
         else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
         {
             RebuildOrderedSecondaryRemotePlayers();
+            _experienceToNextLevelByActor.Remove(secondary.ActorId);
             secondary.Dispose();
         }
     }
@@ -393,18 +431,19 @@ public sealed class WorldSessionRuntime : IDisposable
 
         if (allowGameplaySimulation)
         {
-            IAuthoritativePlayerTarget[] playerTargets = EnumerateAuthoritativePlayerTargets()
-                .Where(target => target.IsSpawned && target.IsAlive)
-                .ToArray();
-            _enemies.UpdateAll(delta, playerTargets, _events, Map);
+            // Filled once, before the enemies act, so a player killed this tick is still separated.
+            FillAuthoritativePlayerTargets(_tickPlayerTargets, spawnedAndAliveOnly: true);
+            _enemies.UpdateAll(delta, _tickPlayerTargets, _events, Map);
             _enemies.PruneInactive();
             EnsureWolfExists();
-            ResolvePlayerEnemySeparation(playerTargets);
+            ResolvePlayerEnemySeparation(_tickPlayerTargets);
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
-        foreach (PhysicsCubeMoveDelta movedCube in syncResult.MovedCubes)
+        IReadOnlyList<PhysicsCubeMoveDelta> movedCubes = syncResult.MovedCubes;
+        for (int i = 0; i < movedCubes.Count; i++)
         {
+            PhysicsCubeMoveDelta movedCube = movedCubes[i];
             QueueWorldMutation(new WorldMutationDelta(
                 WorldMutationKind.CubeMoved,
                 movedCube.SourceCellPosition,
@@ -438,13 +477,28 @@ public sealed class WorldSessionRuntime : IDisposable
         IReadOnlyList<QueuedPlayerAction> queuedActions)
     {
         CurrentServerTick = serverTick;
+        if (queuedActions.Count == 0)
+        {
+            return Array.Empty<AuthoritativeActionResult>();
+        }
 
-        return queuedActions
-            .OrderBy(action => action.ReceiveOrder)
-            .ThenBy(action => action.SessionId.Value, StringComparer.Ordinal)
-            .ThenBy(action => action.Message.ActionSequence)
-            .Select(action => ProcessAuthoritativeAction(action.Message))
-            .ToArray();
+        _orderedQueuedActions.Clear();
+        for (int i = 0; i < queuedActions.Count; i++)
+        {
+            _orderedQueuedActions.Add((queuedActions[i], i));
+        }
+
+        _orderedQueuedActions.Sort(CompareQueuedActions);
+
+        // The results go back to the caller and on to the clients, so they get a fresh array.
+        AuthoritativeActionResult[] results = new AuthoritativeActionResult[_orderedQueuedActions.Count];
+        for (int i = 0; i < results.Length; i++)
+        {
+            results[i] = ProcessAuthoritativeAction(_orderedQueuedActions[i].Action.Message);
+        }
+
+        _orderedQueuedActions.Clear();
+        return results;
     }
 
     public WorldSessionUpdateResult AdvanceAuthoritativeTick(
@@ -473,13 +527,12 @@ public sealed class WorldSessionRuntime : IDisposable
 
     public bool TryResolveCombatActor(int actorId, out CombatActorHandle actor)
     {
-        foreach (IAuthoritativePlayerTarget playerTarget in EnumerateAuthoritativePlayerTargets())
+        // Scans the listed players directly rather than filling a shared target list, so a call
+        // from an event raised mid-tick cannot disturb the tick's list.
+        if (TryFindListedPlayerTarget(actorId, out IAuthoritativePlayerTarget? playerTarget))
         {
-            if (playerTarget.ActorId == actorId)
-            {
-                actor = playerTarget.Combatant.Actor;
-                return true;
-            }
+            actor = playerTarget!.Combatant.Actor;
+            return true;
         }
 
         if (_enemies.TryGetActorById(actorId, out actor))
@@ -548,7 +601,10 @@ public sealed class WorldSessionRuntime : IDisposable
         WorldSnapshot? worldSnapshot = includeWorldSnapshot
             ? ExportWorldSnapshot()
             : null;
-        WorldMutationDelta[] mutations = CoalesceSameCellMoves(_pendingWorldMutations);
+        WorldMutationDelta[] mutations = CoalesceSameCellMoves(
+            _pendingWorldMutations,
+            _coalescedMutations,
+            _coalescedLaterActors);
 
         ulong? checksum = null;
         if (CurrentServerTick >= _nextWorldChecksumTick)
@@ -564,7 +620,8 @@ public sealed class WorldSessionRuntime : IDisposable
             GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             worldSnapshot,
             mutations,
-            _pendingDamageEvents.ToArray(),
+            // The envelope's collections are wire payloads and stay fresh per snapshot.
+            _pendingDamageEvents.Count == 0 ? Array.Empty<DamageEventDelta>() : _pendingDamageEvents.ToArray(),
             checksum,
             checksum.HasValue ? LastWorldMutationSequence : 0);
 
@@ -589,7 +646,17 @@ public sealed class WorldSessionRuntime : IDisposable
 
     private Dictionary<string, ulong> CaptureAcceptedCommandSequences()
     {
-        Dictionary<string, ulong> acceptedSequences = new();
+        // Part of the envelope, so it stays a fresh dictionary, sized exactly so it never regrows.
+        int acceptedCount = 0;
+        foreach (ConnectedPlayer player in _sessions.Players)
+        {
+            if (player.LastAcceptedCommandSequence.HasValue)
+            {
+                acceptedCount++;
+            }
+        }
+
+        Dictionary<string, ulong> acceptedSequences = new(acceptedCount);
         foreach (ConnectedPlayer player in _sessions.Players)
         {
             if (player.LastAcceptedCommandSequence.HasValue)
@@ -606,8 +673,23 @@ public sealed class WorldSessionRuntime : IDisposable
     // in the batch. Cross-cell moves are kept in order because they change cell occupancy.
     public static WorldMutationDelta[] CoalesceSameCellMoves(IReadOnlyList<WorldMutationDelta> mutations)
     {
-        List<WorldMutationDelta> kept = new(mutations.Count);
-        HashSet<int> laterActors = [];
+        return CoalesceSameCellMoves(mutations, new List<WorldMutationDelta>(mutations.Count), []);
+    }
+
+    // The scratch collections are cleared and reused; only the returned array (the wire payload)
+    // is new, and an empty batch returns Array.Empty.
+    private static WorldMutationDelta[] CoalesceSameCellMoves(
+        IReadOnlyList<WorldMutationDelta> mutations,
+        List<WorldMutationDelta> kept,
+        HashSet<int> laterActors)
+    {
+        if (mutations.Count == 0)
+        {
+            return Array.Empty<WorldMutationDelta>();
+        }
+
+        kept.Clear();
+        laterActors.Clear();
         for (int index = mutations.Count - 1; index >= 0; index--)
         {
             WorldMutationDelta mutation = mutations[index];
@@ -626,15 +708,26 @@ public sealed class WorldSessionRuntime : IDisposable
             kept.Add(mutation);
         }
 
-        kept.Reverse();
-        return kept.ToArray();
+        // kept is newest first; the batch keeps the original order.
+        WorldMutationDelta[] coalesced = new WorldMutationDelta[kept.Count];
+        for (int i = 0; i < coalesced.Length; i++)
+        {
+            coalesced[i] = kept[kept.Count - 1 - i];
+        }
+
+        kept.Clear();
+        laterActors.Clear();
+        return coalesced;
     }
 
     public IReadOnlyList<ActorSnapshot> CaptureActorSnapshots()
     {
-        List<ActorSnapshot> actors = [];
+        FillAuthoritativePlayerTargets(_snapshotPlayerTargets, spawnedAndAliveOnly: false);
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
+        // The list is the snapshot's wire payload, so it is new each time, sized exactly.
+        List<ActorSnapshot> actors = new(_snapshotPlayerTargets.Count + enemies.Count);
 
-        foreach (IAuthoritativePlayerTarget playerTarget in EnumerateAuthoritativePlayerTargets())
+        foreach (IAuthoritativePlayerTarget playerTarget in _snapshotPlayerTargets)
         {
             string displayName = TryResolveDisplayName(playerTarget.SessionId);
             actors.Add(new ActorSnapshot(
@@ -652,13 +745,13 @@ public sealed class WorldSessionRuntime : IDisposable
                 new PlayerProgressionSnapshot(
                     playerTarget.Combatant.Level,
                     playerTarget.Combatant.Experience,
-                    _combatFormulaService.EvaluateExperienceToNextLevel(
-                        playerTarget.Combatant.Level,
-                        playerTarget.Combatant.Experience))));
+                    EvaluateSnapshotExperienceToNextLevel(playerTarget.Combatant))));
         }
 
-        foreach (EnemyActor actor in _enemies.ActiveActors)
+        _snapshotPlayerTargets.Clear();
+        for (int i = 0; i < enemies.Count; i++)
         {
+            EnemyActor actor = enemies[i];
             actors.Add(new ActorSnapshot(
                 actor.Combatant.Actor.Id,
                 CreatureKind.Enemy,
@@ -676,6 +769,26 @@ public sealed class WorldSessionRuntime : IDisposable
         }
 
         return actors;
+    }
+
+    // The formula service builds a variables dictionary per evaluation, and every snapshot asks
+    // again for every player. The service is immutable, so the answer for an actor's unchanged
+    // level and experience is reused.
+    private int EvaluateSnapshotExperienceToNextLevel(PlayerCombatant combatant)
+    {
+        int actorId = combatant.Actor.Id;
+        int level = combatant.Level;
+        int experience = combatant.Experience;
+        if (_experienceToNextLevelByActor.TryGetValue(actorId, out (int Level, int Experience, int Required) cached)
+            && cached.Level == level
+            && cached.Experience == experience)
+        {
+            return cached.Required;
+        }
+
+        int required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        _experienceToNextLevelByActor[actorId] = (level, experience, required);
+        return required;
     }
 
     public WorldSnapshot ExportWorldSnapshot()
@@ -1149,8 +1262,9 @@ public sealed class WorldSessionRuntime : IDisposable
         SpawnInitialWolf();
     }
 
-    private void ResolvePlayerEnemySeparation(IReadOnlyList<IAuthoritativePlayerTarget> playerTargets)
+    private void ResolvePlayerEnemySeparation(List<IAuthoritativePlayerTarget> playerTargets)
     {
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
         foreach (IAuthoritativePlayerTarget playerTarget in playerTargets)
         {
             if (playerTarget.ActorId == Player.Combatant.Actor.Id && Player.IsNoclipEnabled)
@@ -1159,8 +1273,9 @@ public sealed class WorldSessionRuntime : IDisposable
             }
 
             Vector3 resolvedPosition = playerTarget.Position;
-            foreach (EnemyActor actor in _enemies.ActiveActors)
+            for (int i = 0; i < enemies.Count; i++)
             {
+                EnemyActor actor = enemies[i];
                 if (!actor.IsActive)
                 {
                     continue;
@@ -2216,28 +2331,77 @@ public sealed class WorldSessionRuntime : IDisposable
             : sessionId.Value;
     }
 
-    private IEnumerable<IAuthoritativePlayerTarget> EnumerateAuthoritativePlayerTargets()
+    // Lists the players in the order every per-tick consumer depends on (nearest-target ties, the
+    // snapshot's actor order): the primary seat first, unless it is the unoccupied local seat while
+    // a remote player is spawned, then the spawned secondary seats in ordinal session-id order.
+    private void FillAuthoritativePlayerTargets(List<IAuthoritativePlayerTarget> targets, bool spawnedAndAliveOnly)
     {
+        targets.Clear();
         PlayerSessionId primarySessionId = ResolvePrimaryControlledSessionId();
-        if (primarySessionId != LocalPlayerSessionId || !_sessions.Players.Any(player => !player.IsLocal && player.IsSpawned))
+        if (primarySessionId != LocalPlayerSessionId || !_sessions.HasSpawnedRemotePlayer())
         {
-            yield return CreatePrimaryAuthoritativePlayerTarget(primarySessionId);
+            AddTarget(targets, GetPrimaryAuthoritativePlayerTarget(primarySessionId), spawnedAndAliveOnly);
         }
 
         foreach (RemoteSessionPlayerState actor in _orderedSecondaryRemotePlayers)
         {
-            PlayerSessionId sessionId = actor.SessionId;
-            if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player) ||
-                player == null ||
-                !player.IsSpawned)
+            if (IsListedSecondary(actor))
             {
-                continue;
+                AddTarget(targets, actor, spawnedAndAliveOnly);
             }
+        }
 
-            yield return CreateSecondaryAuthoritativePlayerTarget(sessionId, actor);
+        static void AddTarget(List<IAuthoritativePlayerTarget> targets, IAuthoritativePlayerTarget target, bool spawnedAndAliveOnly)
+        {
+            if (!spawnedAndAliveOnly || (target.IsSpawned && target.IsAlive))
+            {
+                targets.Add(target);
+            }
         }
     }
 
+    // The same players FillAuthoritativePlayerTargets lists, searched by actor id without a list.
+    private bool TryFindListedPlayerTarget(int actorId, out IAuthoritativePlayerTarget? playerTarget)
+    {
+        PlayerSessionId primarySessionId = ResolvePrimaryControlledSessionId();
+        if (Player.Combatant.Actor.Id == actorId
+            && (primarySessionId != LocalPlayerSessionId || !_sessions.HasSpawnedRemotePlayer()))
+        {
+            playerTarget = GetPrimaryAuthoritativePlayerTarget(primarySessionId);
+            return true;
+        }
+
+        foreach (RemoteSessionPlayerState actor in _orderedSecondaryRemotePlayers)
+        {
+            if (actor.ActorId == actorId && IsListedSecondary(actor))
+            {
+                playerTarget = actor;
+                return true;
+            }
+        }
+
+        playerTarget = null;
+        return false;
+    }
+
+    private bool IsListedSecondary(RemoteSessionPlayerState actor)
+    {
+        return _sessions.TryGet(actor.SessionId, out ConnectedPlayer? player)
+            && player != null
+            && player.IsSpawned;
+    }
+
+    private AuthoritativePlayerTarget GetPrimaryAuthoritativePlayerTarget(PlayerSessionId sessionId)
+    {
+        if (_primaryPlayerTarget == null || _primaryPlayerTarget.SessionId != sessionId)
+        {
+            _primaryPlayerTarget = CreatePrimaryAuthoritativePlayerTarget(sessionId);
+        }
+
+        return _primaryPlayerTarget;
+    }
+
+    // Created once per primary session id; every delegate reads the seat's live state.
     private AuthoritativePlayerTarget CreatePrimaryAuthoritativePlayerTarget(PlayerSessionId sessionId)
     {
         return new AuthoritativePlayerTarget(
@@ -2249,21 +2413,6 @@ public sealed class WorldSessionRuntime : IDisposable
             () => GetSessionInteractionMode(sessionId),
             Player.SetWorldPosition,
             () => Player.Camera.Position);
-    }
-
-    private static AuthoritativePlayerTarget CreateSecondaryAuthoritativePlayerTarget(
-        PlayerSessionId sessionId,
-        RemoteSessionPlayerState actor)
-    {
-        return new AuthoritativePlayerTarget(
-            sessionId,
-            actor.ActorId,
-            () => actor.Position,
-            () => actor.Facing,
-            actor.Combatant,
-            () => actor.InteractionMode,
-            actor.SetWorldPosition,
-            () => actor.EyePosition);
     }
 
     private bool TryResolveAuthoritativePlayerTarget(
@@ -2284,13 +2433,13 @@ public sealed class WorldSessionRuntime : IDisposable
 
         if (player.ActorId == Player.Combatant.Actor.Id && IsPrimaryControlledSession(sessionId))
         {
-            playerTarget = CreatePrimaryAuthoritativePlayerTarget(sessionId);
+            playerTarget = GetPrimaryAuthoritativePlayerTarget(sessionId);
             return true;
         }
 
         if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? actor))
         {
-            playerTarget = CreateSecondaryAuthoritativePlayerTarget(sessionId, actor);
+            playerTarget = actor;
             return true;
         }
 

@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Enemies;
 
@@ -69,6 +70,22 @@ public sealed class EnemyActor
         Vector3? playerPosition,
         Func<Vector3, Vector3, Vector3>? resolveMovement = null)
     {
+        UpdateCore(deltaTime, playerPosition, map: null, resolveMovement);
+    }
+
+    // The server tick's overload: chase steps are resolved against the map's collision directly,
+    // so no resolver delegate or closure is allocated per enemy per tick. A null map moves freely.
+    public void Update(float deltaTime, Vector3? playerPosition, Map? map)
+    {
+        UpdateCore(deltaTime, playerPosition, map, resolveMovement: null);
+    }
+
+    private void UpdateCore(
+        float deltaTime,
+        Vector3? playerPosition,
+        Map? map,
+        Func<Vector3, Vector3, Vector3>? resolveMovement)
+    {
         Combatant.AdvanceCombat(deltaTime);
 
         if (!Combatant.Health.IsAlive)
@@ -103,7 +120,9 @@ public sealed class EnemyActor
             if (step > 0f && direction != Vector3.Zero)
             {
                 Vector3 desiredDelta = direction * step;
-                Vector3 resolvedDelta = resolveMovement?.Invoke(Position, desiredDelta) ?? desiredDelta;
+                Vector3 resolvedDelta = map != null
+                    ? EnemyMovementCollision.ResolveStep(map, Position, desiredDelta, CollisionRadius, CollisionHeight)
+                    : resolveMovement?.Invoke(Position, desiredDelta) ?? desiredDelta;
                 Position += resolvedDelta;
                 FaceDirection(resolvedDelta);
             }
