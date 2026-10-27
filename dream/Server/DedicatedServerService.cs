@@ -12,6 +12,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
 {
     private static readonly DedicatedServerPerformanceSnapshot UntimedPerformance = new(0d, 0d, 0d, Sampled: true);
 
+    // How long a rejection may take to reach a peer before its connection is closed anyway.
+    private static readonly TimeSpan RejectionSendTimeout = TimeSpan.FromSeconds(1);
+
     private readonly DedicatedServerHost _host;
     private readonly IServerTransport _transport;
     private readonly IProtocolCodec _codec;
@@ -44,6 +47,10 @@ public sealed class DedicatedServerService : IAsyncDisposable
 
     public DedicatedServerPerformanceSnapshot LatestPerformance { get; private set; } =
         DedicatedServerPerformanceSnapshot.Empty;
+
+    // Raised once for each connection closed by an error, after the error is logged. The handler
+    // runs on the connection's receive task and must not block.
+    public event Action<ServerConnectionError>? ConnectionError;
 
     public void Start()
     {
@@ -258,6 +265,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
+    // Started fire-and-forget by AcceptNextClientAsync, so it must never end faulted: every error
+    // is logged once and closes only this connection.
     private async Task RunConnectionLoopAsync(ServerConnection connection, CancellationToken cancellationToken)
     {
         try
@@ -272,17 +281,77 @@ public sealed class DedicatedServerService : IAsyncDisposable
         catch (ObjectDisposedException)
         {
         }
+        catch (ProtocolVersionMismatchException ex)
+        {
+            ReportConnectionError(connection, "protocol-mismatch", ex.Message, ex);
+            await TrySendRejectionAsync(connection, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            ReportConnectionError(connection, "error", $"{ex.GetType().Name}: {ex.Message}", ex);
+        }
         finally
         {
-            if (_connections.TryRemove(connection.ConnectionId, out _))
+            try
             {
-                Volatile.Write(ref _connectionsChanged, 1);
-                _host.ReleaseConnection(connection.ConnectionId);
-                NetworkDiagnosticsLog.Write(
-                    "server.disconnect",
-                    $"connection={connection.ConnectionId} connections={_connections.Count}");
-                await connection.DisposeAsync();
+                if (_connections.TryRemove(connection.ConnectionId, out _))
+                {
+                    Volatile.Write(ref _connectionsChanged, 1);
+                    _host.ReleaseConnection(connection.ConnectionId);
+                    NetworkDiagnosticsLog.Write(
+                        "server.disconnect",
+                        $"connection={connection.ConnectionId} connections={_connections.Count}");
+                    await connection.DisposeAsync();
+                }
             }
+            catch (Exception ex)
+            {
+                ReportConnectionError(connection, "cleanup-error", $"{ex.GetType().Name}: {ex.Message}", ex);
+            }
+        }
+    }
+
+    // A version mismatch is answered with one JoinRejectedMessage in the current envelope before
+    // the close. A peer on another version cannot decode it as a message, but every version reads
+    // the envelope's top-level protocolVersion, the reason is readable in the raw frame, and an
+    // older client's own decode error then names this server's version instead of a bare EOF.
+    // A future client that reads the envelope leniently can show the reason directly.
+    private async ValueTask TrySendRejectionAsync(ServerConnection connection, string reason)
+    {
+        using CancellationTokenSource timeout = new(RejectionSendTimeout);
+        try
+        {
+            await connection.SendJoinRejectedAsync(new JoinRejectedMessage(reason), timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.connection.reject-failed",
+                $"connection={connection.ConnectionId} error={ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // The connection id of a TCP connection is its remote endpoint. The line goes to the network
+    // diagnostics log when it is on and to stderr otherwise, so an operator always sees it once.
+    private void ReportConnectionError(ServerConnection connection, string kind, string reason, Exception exception)
+    {
+        string line = $"connection={connection.ConnectionId} kind={kind} reason={reason}";
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            NetworkDiagnosticsLog.Write("server.connection.error", line);
+        }
+        else
+        {
+            Console.Error.WriteLine($"[server.connection.error] {line}");
+        }
+
+        try
+        {
+            ConnectionError?.Invoke(new ServerConnectionError(connection.ConnectionId, kind, reason, exception));
+        }
+        catch (Exception handlerError)
+        {
+            Console.Error.WriteLine($"[server.connection.error] handler failed: {handlerError.GetType().Name}: {handlerError.Message}");
         }
     }
 
@@ -349,3 +418,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot));
     }
 }
+
+// Why the service closed a connection: kind is "protocol-mismatch", "error" or "cleanup-error";
+// reason is the logged text.
+public sealed record ServerConnectionError(string ConnectionId, string Kind, string Reason, Exception Exception);

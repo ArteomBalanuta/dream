@@ -38,6 +38,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private long _sentCommandCount;
     // Assigned under _sendLock together with the encode, so sequences follow wire order.
     private ulong _nextOutboundSequence = 1;
+    // Completed by the receive loop: with the server's hello when it arrives, with a
+    // ProtocolVersionMismatchException when the server speaks another version, or with null when
+    // the loop ends first. ConnectAsync waits on it briefly.
+    private readonly TaskCompletionSource<ServerHelloMessage?> _serverHello =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // How long ConnectAsync waits for the server's hello before returning the session anyway.
+    public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
 
     public RemoteClientSession(
         ITransportConnection connection,
@@ -59,12 +67,17 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     public bool IsConnected { get; private set; } = true;
 
+    // Why the receive loop stopped, when it stopped for a reason other than the server closing
+    // the connection; for example "Server uses protocol v1; this client uses v2.".
+    public string? DisconnectReason { get; private set; }
+
     public static async ValueTask<RemoteClientSession> ConnectAsync(
         RemoteClientOptions options,
         IClientTransport? transport = null,
         IProtocolCodec? codec = null,
         IMessageFramer? framer = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? serverHelloTimeout = null)
     {
         transport ??= new TcpClientConnector();
         codec ??= new TransportJsonCodec();
@@ -86,10 +99,34 @@ public sealed class RemoteClientSession : IAsyncDisposable
         await session.SendHelloAsync(cancellationToken);
         await session.SendJoinRequestAsync(cancellationToken);
         session.StartBackgroundReceive();
+        await session.AwaitCompatibleServerAsync(serverHelloTimeout ?? DefaultServerHelloTimeout, cancellationToken);
         NetworkDiagnosticsLog.Write(
             "client.connect.ready",
             $"endpoint={options.EndpointLabel} connection={connection.ConnectionId} session={options.SessionId}");
         return session;
+    }
+
+    // Fails the connect when the server speaks another protocol version, so the connection
+    // screen shows that reason instead of a bare disconnect. A server that closes without a
+    // hello, or answers slower than the timeout, still yields the session as before; a mismatch
+    // found later still stops the receive loop and sets DisconnectReason.
+    private async ValueTask AwaitCompatibleServerAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _serverHello.Task.WaitAsync(timeout, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            NetworkDiagnosticsLog.Write(
+                "client.connect.hello-timeout",
+                $"endpoint={Options.EndpointLabel} timeoutMs={timeout.TotalMilliseconds:0}");
+        }
+        catch (Exception ex) when (ex is ProtocolVersionMismatchException or OperationCanceledException)
+        {
+            await DisposeAsync();
+            throw;
+        }
     }
 
     public async ValueTask SendHelloAsync(CancellationToken cancellationToken = default)
@@ -236,10 +273,29 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 continue;
             }
 
-            DecodedProtocolMessage decoded = _codec.Decode(payload);
+            DecodedProtocolMessage decoded;
+            try
+            {
+                decoded = _codec.Decode(payload);
+            }
+            catch (Exception ex) when (ProtocolVersionMismatchException.ReadForeignProtocolVersion(payload) is int serverVersion)
+            {
+                throw ProtocolVersionMismatchException.FromServer(serverVersion, ex);
+            }
+
             IServerToClientMessage serverMessage = decoded.Message as IServerToClientMessage
                 ?? throw new InvalidOperationException(
                     $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
+            if (serverMessage is ServerHelloMessage hello)
+            {
+                if (hello.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)
+                {
+                    throw ProtocolVersionMismatchException.FromServer(hello.ProtocolVersion);
+                }
+
+                _serverHello.TrySetResult(hello);
+            }
+
             _inboundMessages.Enqueue(serverMessage);
             LogInbound(decoded.Envelope, serverMessage);
         }
@@ -374,12 +430,28 @@ public sealed class RemoteClientSession : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ProtocolVersionMismatchException ex)
+        {
+            DisconnectReason = ex.Message;
+            if (_serverHello.TrySetException(ex))
+            {
+                // Mark the fault observed: nobody awaits it once ConnectAsync has returned.
+                _ = _serverHello.Task.Exception;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A malformed frame or a transport error; previously this faulted the loop task and
+            // resurfaced from DisposeAsync.
+            DisconnectReason = $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+        }
         finally
         {
             IsConnected = false;
+            _serverHello.TrySetResult(null);
             NetworkDiagnosticsLog.Write(
                 "client.disconnect",
-                $"endpoint={Options.EndpointLabel} connection={_connection.ConnectionId} session={Options.SessionId}");
+                $"endpoint={Options.EndpointLabel} connection={_connection.ConnectionId} session={Options.SessionId} reason={DisconnectReason ?? "closed"}");
         }
     }
 
