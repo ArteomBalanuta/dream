@@ -22,10 +22,11 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using ImGuiNET;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 public readonly record struct HudFrameResult(
     HudInteractionRequest Request);
 
-public class Render
+public class Render : IDisposable
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
     private readonly ReusableMatrixBuffer _geometryBlockMatrices = new();
@@ -37,7 +38,7 @@ public class Render
     private int _vertexArrayObject;
     private int _vertexBufferObject;
     private readonly StaticMeshBuffer _fallbackCubeBuffer;
-    private Dictionary<string, Shader> _shaders = new();
+    private readonly DisposableRegistry<string, Shader> _shaders = new();
     private Matrix4 _projection;
 
     // Cube vertex data: note that you might want to use indexed drawing.
@@ -102,6 +103,7 @@ public class Render
     private readonly DebugRenderer _debugRenderer;
     private readonly HudRenderer _hudRenderer;
     private readonly ViewModelRenderer _viewModelRenderer;
+    private bool _disposed;
 
     private void InitializeShaders()
     {
@@ -288,7 +290,63 @@ public class Render
         GL.Disable(EnableCap.Blend);
     }
 
-    public void DisposeHUD()
+    // Releases every GL resource and child renderer this Render owns, on the render thread.
+    // Child renderers go first because they draw with the shaders, and the ImGui context is
+    // destroyed last. Each step runs even if an earlier one throws; the failures are rethrown
+    // at the end. The startup menu destroys its own, separate ImGui context.
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        GLUtils.AssertRenderThread("Render disposal");
+
+        List<Exception>? failures = null;
+        RunDisposeStep(_worldRenderer.Dispose, ref failures);
+        RunDisposeStep(_localPlayerRenderer.Dispose, ref failures);
+        RunDisposeStep(_remotePlayerRenderer.Dispose, ref failures);
+        RunDisposeStep(_shaders.DisposeAll, ref failures);
+        RunDisposeStep(DeleteDebugCubeBuffers, ref failures);
+        RunDisposeStep(DisposeHud, ref failures);
+        RunDisposeStep(DestroyImGuiContext, ref failures);
+
+        if (failures == null)
+        {
+            return;
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw new AggregateException(failures);
+    }
+
+    private static void RunDisposeStep(Action step, ref List<Exception>? failures)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+    }
+
+    private void DeleteDebugCubeBuffers()
+    {
+        GL.DeleteBuffer(_vertexBufferObject);
+        GL.DeleteVertexArray(_vertexArrayObject);
+        _vertexBufferObject = 0;
+        _vertexArrayObject = 0;
+    }
+
+    private void DisposeHud()
     {
         _fallbackCubeBuffer.Dispose();
         _staticTerrainTextures.Dispose();
@@ -300,7 +358,25 @@ public class Render
         GL.DeleteBuffer(_indexBuffer);
         GL.DeleteVertexArray(_hudVao);
         GL.DeleteVertexArray(_vertexArray);
+        _fontTexture = 0;
+        _hudVbo = 0;
+        _vertexBuffer = 0;
+        _indexBuffer = 0;
+        _hudVao = 0;
+        _vertexArray = 0;
+    }
+
+    // ImGui.DestroyContext(IntPtr.Zero) would destroy whichever context is current, so a
+    // context that was never created is skipped.
+    private void DestroyImGuiContext()
+    {
+        if (_imGuiContext == IntPtr.Zero)
+        {
+            return;
+        }
+
         ImGui.DestroyContext(_imGuiContext);
+        _imGuiContext = IntPtr.Zero;
     }
 
     private static Vector2i GetSafeViewportSize(Vector2i size)
@@ -392,9 +468,12 @@ public class Render
         return _shaders[name];
     }
 
+    // Builds the new shader before replacing, so a failed compile keeps the previous one. The
+    // replaced shader is disposed only after the new one is stored.
     public void LoadShader(string name, string vertexPath, string fragmentPath)
     {
-        _shaders[name] = new Shader(vertexPath, fragmentPath);
+        Shader shader = new(vertexPath, fragmentPath);
+        _shaders.Replace(name, shader);
     }
 
     // Common method to set transformation uniforms.
@@ -501,7 +580,7 @@ public class Render
 
     private void DrawCubeWireframe(Camera camera, Matrix4 modelMatrix)
     {
-        Shader shader = _shaders.TryGetValue("default", out var s) ? s : _shaders["default"];
+        Shader shader = _shaders.TryGet("default", out var s) ? s : _shaders["default"];
         shader.Use();
         shader.SetVector3("color", new Vector3(1.0f, 1.0f, 1.0f)); // white
         SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
@@ -516,7 +595,7 @@ public class Render
 
     private void DrawCubeTransparent(Camera camera, Matrix4 modelMatrix)
     {
-        Shader shader = _shaders.TryGetValue("default", out var s) ? s : _shaders["default"];
+        Shader shader = _shaders.TryGet("default", out var s) ? s : _shaders["default"];
         shader.Use();
         shader.SetVector3("color", new Vector3(0.5f, 0.7f, 1.0f)); // light blue
         SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
@@ -546,7 +625,7 @@ public class Render
 
     public void DrawSolidCube(Camera camera, Matrix4 modelMatrix, Vector3 color)
     {
-        Shader shader = _shaders.TryGetValue("default", out var found) ? found : _shaders["default"];
+        Shader shader = _shaders.TryGet("default", out var found) ? found : _shaders["default"];
         shader.Use();
         shader.SetVector3("color", color);
         SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
@@ -856,12 +935,12 @@ public class Render
             (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
-        ImGui.Text(status.HealthLabel);
-        ImGui.Text(status.ModeLabel);
-        ImGui.Text(status.DamageLabel);
-        ImGui.Text(status.LevelLabel);
-        ImGui.Text(status.ExperiencePercentLabel);
-        ImGui.Text(status.ExperienceProgressLabel);
+        ImGui.TextUnformatted(status.HealthLabel);
+        ImGui.TextUnformatted(status.ModeLabel);
+        ImGui.TextUnformatted(status.DamageLabel);
+        ImGui.TextUnformatted(status.LevelLabel);
+        ImGui.TextUnformatted(status.ExperiencePercentLabel);
+        ImGui.TextUnformatted(status.ExperienceProgressLabel);
         Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
         if (!string.IsNullOrWhiteSpace(connectionLabel))
         {
@@ -873,7 +952,10 @@ public class Render
         }
         if (!string.IsNullOrWhiteSpace(rejectionMessage))
         {
-            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f), rejectionMessage);
+            // TextColored is a printf format, so the colour is pushed around unformatted text.
+            ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f));
+            ImGui.TextUnformatted(rejectionMessage);
+            ImGui.PopStyleColor();
         }
         HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
         if (settings.ShowPerformanceCounters && performance.HasCounters)
@@ -901,14 +983,14 @@ public class Render
 
             if (!string.IsNullOrWhiteSpace(connectionLabel))
             {
-                ImGui.Text($"Connected Server: {connectionLabel}");
+                HudText.Text(hudText, $"Connected Server: {connectionLabel}");
             }
 
             if (playerRoster.Count > 0 && ImGui.CollapsingHeader("Connected Players", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 foreach (PlayerRosterEntry player in playerRoster)
                 {
-                    ImGui.Text($"{player.DisplayName} [{player.SessionId}]");
+                    HudText.Text(hudText, $"{player.DisplayName} [{player.SessionId}]");
                 }
             }
 
@@ -1029,7 +1111,7 @@ public class Render
                 requestedResolution = new Vector2i(1920, 1080);
             }
 
-            ImGui.Text($"Current: {settings.WindowWidth} x {settings.WindowHeight}");
+            HudText.Text(hudText, $"Current: {settings.WindowWidth} x {settings.WindowHeight}");
             ImGui.End();
         }
 
@@ -1109,7 +1191,7 @@ public class Render
         }
 
         PlayerInventorySnapshot snapshot = inventory.Value;
-        ImGui.Text($"Inventory: {snapshot.PlayerName}");
+        ImGui.TextUnformatted($"Inventory: {snapshot.PlayerName}");
         ImGui.SeparatorText("Equipped Tool");
         DrawInventorySlotButton(snapshot.EquippedSlot, isEquippedPanel: true, ref equipInventorySlotIndex);
 
@@ -1177,17 +1259,20 @@ public class Render
         if (ImGui.IsItemHovered() && occupied)
         {
             ImGui.BeginTooltip();
-            ImGui.Text(item.Value.DisplayName);
+            ImGui.TextUnformatted(item.Value.DisplayName);
             ImGui.Separator();
-            ImGui.TextWrapped(item.Value.Description);
+            // TextWrapped is a printf format; wrapping unformatted text keeps a "%" literal.
+            ImGui.PushTextWrapPos(0f);
+            ImGui.TextUnformatted(item.Value.Description);
+            ImGui.PopTextWrapPos();
             foreach (string detailLine in item.Value.DetailLines)
             {
-                ImGui.Text(detailLine);
+                ImGui.TextUnformatted(detailLine);
             }
 
             if (item.Value.StackCount > 1)
             {
-                ImGui.Text($"Count: {item.Value.StackCount}");
+                ImGui.TextUnformatted($"Count: {item.Value.StackCount}");
             }
 
             ImGui.EndTooltip();

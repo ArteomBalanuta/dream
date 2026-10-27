@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using OpenTK.Mathematics;
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Diagnostics;
@@ -9,7 +10,7 @@ using Dream.Simulation.World;
 namespace Dream.Rendering.Actors;
 
 
-public sealed class RemotePlayerRenderer
+public sealed class RemotePlayerRenderer : IDisposable
 {
     private readonly Render _render;
     private readonly Dictionary<int, AnimatedModel> _playerModels = [];
@@ -131,6 +132,41 @@ public sealed class RemotePlayerRenderer
         _playerModels[actorId] = created;
         NetworkDiagnosticsLog.Write("client.render.remote.model", $"created actor={actorId} cached={_playerModels.Count}");
         return created;
+    }
+
+    // Disposes the per-instance player models that are still cached; pruning already disposed
+    // the others. These models come from ModelAssets.CreatePlayerInstance, so this renderer owns
+    // them. A second call finds the cache empty.
+    public void Dispose()
+    {
+        _activeActorIds.Clear();
+        _clipTracker.RemoveExcept(_activeActorIds);
+
+        List<Exception>? failures = null;
+        foreach (AnimatedModel model in _playerModels.Values)
+        {
+            try
+            {
+                model.Dispose();
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
+        }
+
+        _playerModels.Clear();
+        if (failures == null)
+        {
+            return;
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw new AggregateException(failures);
     }
 
     private void PruneModelEntries(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)

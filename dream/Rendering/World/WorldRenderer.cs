@@ -7,7 +7,7 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.World;
 
-public class WorldRenderer
+public class WorldRenderer : IDisposable
 {
     private readonly Render _render;
     private readonly StaticWorldChunkRenderer _staticChunkRenderer = new();
@@ -17,6 +17,7 @@ public class WorldRenderer
     // frame's visible items, and nothing here or in Render keeps them past the draw calls.
     private readonly List<Cube> _visibleCubes = new();
     private readonly List<GeometryRenderBlockDescriptor> _visibleBlocks = new();
+    private bool _disposed;
 
     public WorldRenderer(Render render)
     {
@@ -116,6 +117,18 @@ public class WorldRenderer
             StaticChunkDrawMilliseconds: staticStats.DrawMilliseconds,
             StaticChunkRebuiltMeshes: staticStats.RebuiltMeshes,
             StaticChunkReusedMeshes: staticStats.ReusedMeshes);
+    }
+
+    // Releases the static chunk meshes. Render calls this on the render thread at teardown.
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _staticChunkRenderer.Dispose();
     }
 
     private void DrawCubeBatches(Camera camera, IReadOnlyList<WorldRenderBatch> batches)

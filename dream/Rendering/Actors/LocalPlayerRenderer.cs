@@ -5,7 +5,7 @@ using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
 
-public sealed class LocalPlayerRenderer
+public sealed class LocalPlayerRenderer : IDisposable
 {
     private const int LocalActorId = 0;
 
@@ -32,6 +32,15 @@ public sealed class LocalPlayerRenderer
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
         model.RenderPrepared(shader, renderState.ModelMatrix, renderState.NodeOverrides);
         model.EndRender();
+    }
+
+    // The player model is a per-instance copy (ModelAssets.CreatePlayerInstance), so this renderer
+    // owns it. Shared ModelAssets models are never disposed here.
+    public void Dispose()
+    {
+        AnimatedModel? model = _model;
+        _model = null;
+        model?.Dispose();
     }
 
     private AnimatedModel GetOrCreateModel()
