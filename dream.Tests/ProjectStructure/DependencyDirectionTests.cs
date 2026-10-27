@@ -38,7 +38,9 @@ public class DependencyDirectionTests
         Path.Combine("dream", "Simulation", "Inventory"),
         Path.Combine("dream", "Simulation", "Physics"),
         Path.Combine("dream", "Simulation", "Runtime"),
-        Path.Combine("dream", "Simulation", "World")
+        Path.Combine("dream", "Simulation", "World"),
+        // Whole tree, so Enemies, Players, Determinism and any new folder stay headless too.
+        Path.Combine("dream", "Simulation")
     };
 
     [Fact]
