@@ -119,12 +119,14 @@ public class WireRoundTripIntegrationTests(ITestOutputHelper output)
         byte[] framed = framer.Frame(encoded);
         FrameReceiveBuffer buffer = new(initialCapacity: framed.Length * 2);
         int decodedCount = 0;
+        int appendedCount = 0;
 
         // System.Text.Json rents scratch buffers from ArrayPool.Shared, which other tests running
         // in parallel can make it trim (Gen2 GC); a re-rent then shows up as a one-off allocation
         // in whichever measurement it lands in. The lowest of three measurements is the steady state.
         long endToEnd = MinOfThree(() => AllocationAssert.MeasureBytesPerIteration(() =>
         {
+            appendedCount++;
             buffer.Append(framed);
             while (buffer.TryReadPayload(framer, out ReadOnlySpan<byte> payload))
             {
@@ -148,7 +150,9 @@ public class WireRoundTripIntegrationTests(ITestOutputHelper output)
         output.WriteLine(
             $"End-to-end deframe+decode, 24-actor snapshot ({framed.Length} B framed): {endToEnd} B/snapshot; " +
             $"decode only {decodeOnly} B; deframe only {deframeOnly} B.");
-        Assert.Equal(55 * 3, decodedCount);
+        // Every appended frame decodes to the snapshot, whatever number of calls the helper makes.
+        Assert.True(appendedCount > 0);
+        Assert.Equal(appendedCount, decodedCount);
         Assert.Equal(0, deframeOnly);
         // Deframing adds nothing over decoding the payload directly (small slack for run-to-run noise).
         Assert.True(endToEnd <= decodeOnly + 64, $"End-to-end {endToEnd} B exceeds decode-only {decodeOnly} B by more than 64 B.");

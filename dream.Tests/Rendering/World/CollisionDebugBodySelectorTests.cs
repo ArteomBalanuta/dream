@@ -68,6 +68,15 @@ public class CollisionDebugBodySelectorTests(ITestOutputHelper output)
             () => GC.KeepAlive(selector.Select(bodies, camera, 64)),
             warmupIterations: 1);
 
+        // The helper warms the code well past one call to keep tiering out of the window. With the
+        // code now warm, a fresh selector must already allocate nothing on its second call.
+        CollisionDebugBodySelector fresh = new();
+        GC.KeepAlive(fresh.Select(bodies, camera, 64));
+        long secondCallBytes = GC.GetAllocatedBytesForCurrentThread();
+        GC.KeepAlive(fresh.Select(bodies, camera, 64));
+        secondCallBytes = GC.GetAllocatedBytesForCurrentThread() - secondCallBytes;
+        Assert.Equal(0, secondCallBytes);
+
         output.WriteLine($"Collision debug selection (200 bodies, max 64): LINQ {before} B/frame, selector {after} B/frame");
     }
 

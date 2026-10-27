@@ -184,10 +184,12 @@ public class FrameReceiveBufferSpanTests
         byte[] stream = BuildStream(framer, FrameCount, payloadLength: 32);
         FrameReceiveBuffer buffer = new(initialCapacity: stream.Length * 2);
         int framesRead = 0;
+        int appends = 0;
         long checksum = 0;
 
         AllocationAssert.AtMost(0, () =>
         {
+            appends++;
             buffer.Append(stream);
             while (buffer.TryReadPayload(framer, out ReadOnlySpan<byte> payload))
             {
@@ -196,7 +198,9 @@ public class FrameReceiveBufferSpanTests
             }
         });
 
-        Assert.Equal(FrameCount * 23, framesRead);
+        // Every append is read back completely, whatever number of calls the helper makes.
+        Assert.True(appends > 0);
+        Assert.Equal(FrameCount * appends, framesRead);
         Assert.True(checksum > 0);
     }
 

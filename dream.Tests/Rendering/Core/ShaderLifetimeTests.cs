@@ -31,14 +31,17 @@ public class ShaderLifetimeTests
         Assert.True(typeof(IDisposable).IsAssignableFrom(typeof(Shader)));
     }
 
+    // The "other thread" side runs on a dedicated thread. A Task.Run lambda could run on the very
+    // thread-pool thread that called Bind() (the test itself may be on a pool thread), which made
+    // IsCurrent true and the assertion fail intermittently.
     [Fact]
-    public async Task IsCurrent_Is_True_On_Bound_Thread_And_False_On_Other_Thread()
+    public void IsCurrent_Is_True_On_Bound_Thread_And_False_On_Other_Thread()
     {
         try
         {
             RenderThreadAffinity.Bind();
             Assert.True(RenderThreadAffinity.IsCurrent);
-            bool other = await Task.Run(() => RenderThreadAffinity.IsCurrent);
+            bool other = RunOnDedicatedThread(() => RenderThreadAffinity.IsCurrent);
             Assert.False(other);
         }
         finally
@@ -48,17 +51,18 @@ public class ShaderLifetimeTests
     }
 
     [Fact]
-    public async Task AssertCurrent_Throws_Off_Thread_In_Debug()
+    public void AssertCurrent_Throws_Off_Thread_In_Debug()
     {
         try
         {
             RenderThreadAffinity.Bind();
             RenderThreadAffinity.AssertCurrent("same thread");
+            Exception? offThread = RunOnDedicatedThread(() => Record.Exception(
+                () => RenderThreadAffinity.AssertCurrent("other thread")));
 #if DEBUG
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => Task.Run(() => RenderThreadAffinity.AssertCurrent("other thread")));
+            Assert.IsType<InvalidOperationException>(offThread);
 #else
-            await Task.Run(() => RenderThreadAffinity.AssertCurrent("other thread"));
+            Assert.Null(offThread);
 #endif
         }
         finally
@@ -73,5 +77,34 @@ public class ShaderLifetimeTests
         RenderThreadAffinity.Unbind();
         RenderThreadAffinity.AssertCurrent("unbound");
         await Task.Run(() => RenderThreadAffinity.AssertCurrent("unbound other thread"));
+    }
+
+    private static T RunOnDedicatedThread<T>(Func<T> func)
+    {
+        T result = default!;
+        Exception? failure = null;
+        Thread thread = new(() =>
+        {
+            try
+            {
+                result = func();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        })
+        {
+            IsBackground = true,
+        };
+        thread.Start();
+        thread.Join();
+        if (failure != null)
+        {
+            throw new InvalidOperationException("Dedicated thread failed.", failure);
+        }
+
+        Assert.NotEqual(Environment.CurrentManagedThreadId, thread.ManagedThreadId);
+        return result;
     }
 }
