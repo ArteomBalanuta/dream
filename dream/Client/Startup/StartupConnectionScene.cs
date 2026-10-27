@@ -20,6 +20,7 @@ public sealed class StartupConnectionScene : IDisposable
     private string _playerName = "dream-client";
     private bool _appliedLocalDefaults;
     private bool _autoConnectAttempted;
+    private bool _disposed;
 
     public StartupConnectionScene(
         Vector2i initialSize,
@@ -116,6 +117,12 @@ public sealed class StartupConnectionScene : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         _renderer.Dispose();
     }
 

@@ -226,7 +226,11 @@ public class HudTextAllocationTests(ITestOutputHelper output)
                 SwapBuffersMilliseconds: 3.2,
                 ServerTickMilliseconds: 4.3,
                 ServerSnapshotMilliseconds: 5.4,
-                ServerBroadcastMilliseconds: 6.5),
+                ServerBroadcastMilliseconds: 6.5,
+                PreDrawMilliseconds: 0.7,
+                PreDrawClearMilliseconds: 0.1,
+                PreDrawCaptureMilliseconds: 0.4,
+                PreDrawRemoteStatesMilliseconds: 0.2),
             FramePerformanceSnapshot.Empty,
             new(
                 RenderExportMilliseconds: 12345.675,

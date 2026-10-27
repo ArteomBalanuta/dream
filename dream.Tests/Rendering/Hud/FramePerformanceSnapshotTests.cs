@@ -42,7 +42,11 @@ public class FramePerformanceSnapshotTests
             SwapBuffersMilliseconds: 3.2,
             ServerTickMilliseconds: 4.3,
             ServerSnapshotMilliseconds: 5.4,
-            ServerBroadcastMilliseconds: 6.5);
+            ServerBroadcastMilliseconds: 6.5,
+            PreDrawMilliseconds: 0.7,
+            PreDrawClearMilliseconds: 0.1,
+            PreDrawCaptureMilliseconds: 0.4,
+            PreDrawRemoteStatesMilliseconds: 0.2);
 
         string[] lines = snapshot.ToHudLines().ToArray();
 
@@ -58,5 +62,6 @@ public class FramePerformanceSnapshotTests
         Assert.Contains("Static Cache: rebuilt 5, reused 6", lines);
         Assert.Contains("Collision Bodies: 900", lines);
         Assert.Contains("Server: tick 4.30 ms, snapshot 5.40 ms, broadcast 6.50 ms", lines);
+        Assert.Contains("Pre-draw: 0.70 ms, clear 0.10 ms, capture 0.40 ms, remote states 0.20 ms", lines);
     }
 }

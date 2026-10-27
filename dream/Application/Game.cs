@@ -108,6 +108,8 @@ public class Game : GameWindow
                     PersistDesktopClientConfig,
                     PlayScene.ResolveLoopbackRemotePlayersEnabled(),
                     _localServer);
+                // The replaced startup scene releases its menu renderer and ImGui context here;
+                // the play scene's Render has already created and made current its own context.
                 _startupScene.Dispose();
                 _startupScene = null;
             }
@@ -160,12 +162,30 @@ public class Game : GameWindow
         _startupScene?.QueueTextInput((uint)e.Unicode);
     }
 
+    // The scenes own GL objects (Render, the shared model cache, the startup menu's ImGui context),
+    // so they are disposed first, on the render thread while the window's GL context is still
+    // current, and before base.OnUnload. The local server goes last, after the play scene has
+    // closed its connection to it. A scene that throws still lets the rest of the teardown run.
     protected override void OnUnload()
     {
-        base.OnUnload();
-        _playScene?.Dispose();
-        _startupScene?.Dispose();
-        _localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        try
+        {
+            try
+            {
+                _playScene?.Dispose();
+                _playScene = null;
+            }
+            finally
+            {
+                _startupScene?.Dispose();
+                _startupScene = null;
+            }
+        }
+        finally
+        {
+            base.OnUnload();
+            _localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
     }
 
     private void PersistConnectionOptions(ClientConnectionOptions options)
