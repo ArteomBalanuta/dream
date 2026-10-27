@@ -5,5 +5,7 @@ public readonly record struct TransportEnvelope(
     string MessageKind,
     ulong Sequence)
 {
-    public const int CurrentProtocolVersion = 1;
+    // Version 2 leaves null properties and derived properties out of payloads. Decode rejects any
+    // other version.
+    public const int CurrentProtocolVersion = 2;
 }

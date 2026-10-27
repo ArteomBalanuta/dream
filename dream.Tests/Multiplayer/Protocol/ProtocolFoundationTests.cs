@@ -376,7 +376,11 @@ public class ProtocolFoundationTests
         TransportJsonCodec codec = new();
         ClientHelloMessage message = new("client-a");
         byte[] payload = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message);
-        string mutatedJson = System.Text.Encoding.UTF8.GetString(payload).Replace("\"protocolVersion\":1", "\"protocolVersion\":999", StringComparison.Ordinal);
+        string mutatedJson = System.Text.Encoding.UTF8.GetString(payload).Replace(
+            $"\"protocolVersion\":{TransportEnvelope.CurrentProtocolVersion}",
+            "\"protocolVersion\":999",
+            StringComparison.Ordinal);
+        Assert.Contains("\"protocolVersion\":999", mutatedJson, StringComparison.Ordinal);
         payload = System.Text.Encoding.UTF8.GetBytes(mutatedJson);
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => codec.Decode(payload));

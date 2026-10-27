@@ -228,19 +228,19 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
         ArrayBufferWriter<byte> buffer = new();
 
         InvalidOperationException version = Assert.Throws<InvalidOperationException>(
-            () => codec.Encode(new TransportEnvelope(2, message.MessageKind, 1), message, buffer));
-        Assert.Equal("Cannot encode protocol version 2. Supported version: 1.", version.Message);
+            () => codec.Encode(new TransportEnvelope(1, message.MessageKind, 1), message, buffer));
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 2.", version.Message);
 
         InvalidOperationException kind = Assert.Throws<InvalidOperationException>(
-            () => codec.Encode(new TransportEnvelope(1, "server.hello", 1), message));
+            () => codec.Encode(new TransportEnvelope(2, "server.hello", 1), message));
         Assert.Equal("Envelope message kind 'server.hello' does not match payload kind 'client.hello'.", kind.Message);
 
         InvalidOperationException envelopeVersion = Assert.Throws<InvalidOperationException>(
             () => codec.WriteEnvelope(new TransportEnvelope(0, message.MessageKind, 1), "{}"u8, buffer));
-        Assert.Equal("Cannot encode protocol version 0. Supported version: 1.", envelopeVersion.Message);
+        Assert.Equal("Cannot encode protocol version 0. Supported version: 2.", envelopeVersion.Message);
 
         Assert.Throws<ArgumentException>(
-            () => codec.WriteEnvelope(new TransportEnvelope(1, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));
+            () => codec.WriteEnvelope(new TransportEnvelope(2, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));
         Assert.Equal(0, buffer.WrittenCount);
     }
 
@@ -502,15 +502,9 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
     }
 
     // The encode path TransportJsonCodec used before the single-pass writer: the payload is
-    // serialized to a JsonElement, wrapped in a WireEnvelope and serialized a second time.
-    private static readonly JsonSerializerOptions LegacyOptions = CreateLegacyOptions();
-
-    private static JsonSerializerOptions CreateLegacyOptions()
-    {
-        JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        options.Converters.Add(new Vector3JsonConverter());
-        return options;
-    }
+    // serialized to a JsonElement, wrapped in a WireEnvelope and serialized a second time. It uses
+    // independently built protocol v2 options, so it is a byte-identity reference for the codec.
+    private static readonly JsonSerializerOptions LegacyOptions = ProtocolWireOptions.V2;
 
     private static byte[] LegacyEncode<TMessage>(TransportEnvelope envelope, TMessage message)
         where TMessage : IProtocolMessage
