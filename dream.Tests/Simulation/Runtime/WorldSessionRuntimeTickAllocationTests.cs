@@ -17,12 +17,15 @@ namespace Dream.Tests.Simulation.Runtime;
 // ProcessQueuedAuthoritativeActions on an empty queue 432, TryResolveCombatActor for a player
 // and the wolf 2824, and a tick plus ExportServerSnapshotEnvelope 4584. After: 30, 30, 0, 0 and
 // 616 (the snapshot's own actor list and accepted-sequence dictionary, 584, plus the tick's 30).
+// MEM-11 removed the last 30 B: the tick is 0 and tick plus export is exactly the wire payload.
 public class WorldSessionRuntimeTickAllocationTests
 {
-    // What is left of the tick is Player.CheckAndLogCollisions (Player.cs, outside MEM-3): every
-    // player runs a Bullet contact test with a new list and callback every 0.5 s, about 47 B per
-    // tick averaged over four players. The minimum round of AllocationAssert reads about 30 B.
-    private const long PlayerCollisionReportBudgetBytes = 64;
+    // Before MEM-11, Player.CheckAndLogCollisions ran a Bullet contact test for every player
+    // every 0.5 s with a new list and native callback (about 47 B per tick over four players;
+    // the minimum AllocationAssert round read 30 B), and the budget was 64 B. The report is
+    // diagnostics-only and now runs only while the diagnostics log is enabled, so an idle or
+    // chasing tick allocates nothing.
+    private const long RuntimeTickBudgetBytes = 0;
 
     // Players are spawned far from the wolf's fixed spawn (5.5, 1, 2.5), out of its aggro range.
     private static readonly Vector3 PlayerStart = new(40f, 1.5f, 40f);
@@ -42,7 +45,7 @@ public class WorldSessionRuntimeTickAllocationTests
     }
 
     [Fact]
-    public void AdvanceAuthoritativeTick_ThreeRemoteSessionsIdleWolf_AllocatesOnlyThePlayerCollisionReports()
+    public void AdvanceAuthoritativeTick_ThreeRemoteSessionsIdleWolf_AllocatesNothing()
     {
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors);
@@ -58,12 +61,12 @@ public class WorldSessionRuntimeTickAllocationTests
         _output.WriteLine($"WorldSessionRuntime.AdvanceAuthoritativeTick, 3 sessions, idle wolf: {bytes} B");
         Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
         Assert.True(
-            bytes <= PlayerCollisionReportBudgetBytes,
-            $"Allocated {bytes} B per tick; budget is {PlayerCollisionReportBudgetBytes} B.");
+            bytes <= RuntimeTickBudgetBytes,
+            $"Allocated {bytes} B per tick; budget is {RuntimeTickBudgetBytes} B.");
     }
 
     [Fact]
-    public void AdvanceAuthoritativeTick_ThreeRemoteSessionsChasingWolf_AllocatesOnlyThePlayerCollisionReports()
+    public void AdvanceAuthoritativeTick_ThreeRemoteSessionsChasingWolf_AllocatesNothing()
     {
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors);
@@ -86,8 +89,8 @@ public class WorldSessionRuntimeTickAllocationTests
         _output.WriteLine($"WorldSessionRuntime.AdvanceAuthoritativeTick, 3 sessions, chasing wolf: {bytes} B");
         Assert.Equal(EnemyBehaviorState.Chasing, wolf.BehaviorState);
         Assert.True(
-            bytes <= PlayerCollisionReportBudgetBytes,
-            $"Allocated {bytes} B per tick; budget is {PlayerCollisionReportBudgetBytes} B.");
+            bytes <= RuntimeTickBudgetBytes,
+            $"Allocated {bytes} B per tick; budget is {RuntimeTickBudgetBytes} B.");
     }
 
     [Fact]
@@ -153,8 +156,8 @@ public class WorldSessionRuntimeTickAllocationTests
         Assert.NotSame(envelope.Actors, runtime.ExportServerSnapshotEnvelope().Actors);
         Assert.True(exportBytes <= payloadBytes, $"Export allocated {exportBytes} B; its wire payload is {payloadBytes} B.");
         Assert.True(
-            tickAndExportBytes <= payloadBytes + PlayerCollisionReportBudgetBytes,
-            $"Tick and export allocated {tickAndExportBytes} B; budget is {payloadBytes + PlayerCollisionReportBudgetBytes} B.");
+            tickAndExportBytes <= payloadBytes + RuntimeTickBudgetBytes,
+            $"Tick and export allocated {tickAndExportBytes} B; budget is {payloadBytes + RuntimeTickBudgetBytes} B.");
     }
 
     // A server tick as the dedicated server runs it with idle clients: every session's command
@@ -198,8 +201,8 @@ public class WorldSessionRuntimeTickAllocationTests
             $"Idle commands, tick and export, 3 sessions: {tickAndExportBytes} B; fresh actor list and dictionary {payloadBytes} B");
         Assert.Equal(3, envelope.LastAcceptedCommandSequences.Count);
         Assert.True(
-            tickAndExportBytes <= payloadBytes + PlayerCollisionReportBudgetBytes,
-            $"Allocated {tickAndExportBytes} B per tick; budget is {payloadBytes + PlayerCollisionReportBudgetBytes} B.");
+            tickAndExportBytes <= payloadBytes + RuntimeTickBudgetBytes,
+            $"Allocated {tickAndExportBytes} B per tick; budget is {payloadBytes + RuntimeTickBudgetBytes} B.");
     }
 
     // What a fresh, exactly sized actor list and accepted-sequence dictionary of this envelope's

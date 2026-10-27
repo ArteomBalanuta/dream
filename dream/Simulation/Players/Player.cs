@@ -2,6 +2,8 @@ using BulletSharp;
 using BulletSharp.Math;
 using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
+using System.Text;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Server.Rules;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Runtime;
@@ -10,7 +12,10 @@ using Dream.Simulation.World;
 namespace Dream.Simulation.Players;
 
 
-public class Player : IReplicatedPlayerTarget
+// Player owns one native-backed contact callback, shares it with its motor's grounded probe and
+// disposes it once in Dispose. It never disposes PhysicsBody: whoever registered the body removes
+// and disposes it (the integrator, or RemoteSessionPlayerState through RemoveSessionPlayerBody).
+public class Player : IReplicatedPlayerTarget, IDisposable
 {
     private readonly PhysicsIntegrator _physics;
     private Map _map;
@@ -18,7 +23,10 @@ public class Player : IReplicatedPlayerTarget
     private readonly PlayerCameraRig _cameraRig;
     private readonly PlayerInteraction _interaction = new();
     private readonly PlayerCombatant _combatant;
+    private readonly PlayerContactCallback _contactCallback;
+    private readonly List<CollisionInfo> _collisionScratch = new();
     private bool _primaryUseTriggered;
+    private bool _disposed;
 
     public RigidBody PhysicsBody { get; }
     public float Speed { get; set; } = 3.0f;
@@ -48,7 +56,8 @@ public class Player : IReplicatedPlayerTarget
 
         _map = map;
         _physics = physics;
-        _motor = new PlayerMotor(_physics);
+        _contactCallback = new PlayerContactCallback(physicsBody);
+        _motor = new PlayerMotor(_physics, _contactCallback);
         _cameraRig = new PlayerCameraRig(position);
         _combatant = new PlayerCombatant(GetWorldPosition, eventHub, combatFormulaService: combatFormulaService);
         PhysicsBody = physicsBody;
@@ -59,6 +68,7 @@ public class Player : IReplicatedPlayerTarget
 
     public void Update(float deltaTime, PlayerSimulationInput input, PlayerSimulationTuning tuning)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         Vector3 currentPosition = _cameraRig.SyncFromBody(
             PhysicsBody,
             tuning.EyeHeightOffset,
@@ -96,8 +106,21 @@ public class Player : IReplicatedPlayerTarget
         _cameraRig.ApplyImmediateLook(mouseSensitivity, lookDelta, allowLook && !_motor.IsFrozen);
     }
 
+    // Returns a new camera. Per-frame callers should keep one Camera and use
+    // CopyPresentationCameraTo instead.
     public Camera CreatePresentationCamera(float leadSeconds)
     {
+        Camera presentationCamera = new(Camera.Position);
+        CopyPresentationCameraTo(presentationCamera, leadSeconds);
+        return presentationCamera;
+    }
+
+    // Allocation-free form of CreatePresentationCamera: copies the player camera into target and
+    // moves it to the eye position predicted leadSeconds ahead from horizontal velocity.
+    public void CopyPresentationCameraTo(Camera target, float leadSeconds)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
         Vector3 currentPosition = GetWorldPosition();
         Vector3 eyeOffset = Camera.Position - currentPosition;
         Vector3 predictedPosition = currentPosition;
@@ -107,20 +130,31 @@ public class Player : IReplicatedPlayerTarget
             predictedPosition += new Vector3(linearVelocity.X, 0f, linearVelocity.Z) * leadSeconds;
         }
 
-        Camera presentationCamera = Camera.Clone();
-        presentationCamera.Position = predictedPosition + eyeOffset;
-        return presentationCamera;
+        Camera.CopyTo(target);
+        target.Position = predictedPosition + eyeOffset;
     }
 
+    // Diagnostics only. The report goes to the log and nothing reads it back, so no gameplay
+    // depends on it. The Bullet contact test therefore runs only while the diagnostics log is
+    // enabled (DREAM_NET_DIAGNOSTICS, or a thread capture in tests). Before MEM-11 every player
+    // ran it every 0.5 s with a new list and a new native callback, and wrote to the console
+    // whenever it touched a cube. When enabled, the callback and list are reused and only the
+    // report text is allocated.
     private void CheckAndLogCollisions()
     {
-        var collisions = new List<CollisionInfo>();
-        var callback = new PlayerContactCallback(PhysicsBody);
-        _physics.World.ContactTest(PhysicsBody, callback);
-
-        foreach (CollisionData collision in callback.Collisions)
+        if (!NetworkDiagnosticsLog.IsEnabled)
         {
-            if (collision.CollisionObject.UserObject is (Cube cube, Vector3 cubePosition))
+            return;
+        }
+
+        _contactCallback.RunContactTest(_physics.World);
+
+        List<CollisionInfo> collisions = _collisionScratch;
+        collisions.Clear();
+        List<CollisionData> contacts = _contactCallback.Collisions;
+        for (int i = 0; i < contacts.Count; i++)
+        {
+            if (contacts[i].CollisionObject.UserObject is (Cube cube, Vector3 cubePosition))
             {
                 collisions.Add(new CollisionInfo
                 {
@@ -131,20 +165,33 @@ public class Player : IReplicatedPlayerTarget
             }
         }
 
-        if (collisions.Count == 0)
+        contacts.Clear();
+        if (collisions.Count > 0)
         {
-            return;
+            NetworkDiagnosticsLog.Write(
+                CollisionReportCategory,
+                collisions,
+                static report => FormatCollisionReport(report));
+            collisions.Clear();
         }
+    }
 
-        Console.WriteLine("\n=== Collision Report ===");
+    public const string CollisionReportCategory = "player.collisions";
+
+    private static string FormatCollisionReport(List<CollisionInfo> collisions)
+    {
+        StringBuilder report = new(64 + (collisions.Count * 160));
+        report.Append("\n=== Collision Report ===\n");
         foreach (CollisionInfo collision in collisions)
         {
             Vector3 gridPosition = WorldToGridPosition(collision.CubeWorldPosition);
-            Console.WriteLine($"Colliding with cube at: [{gridPosition.X}, {gridPosition.Y}, {gridPosition.Z}]");
-            Console.WriteLine($"Cube center: {collision.CubeWorldPosition}");
-            Console.WriteLine($"Player position: {collision.PlayerPosition}");
+            report.Append($"Colliding with cube at: [{gridPosition.X}, {gridPosition.Y}, {gridPosition.Z}]\n");
+            report.Append($"Cube center: {collision.CubeWorldPosition}\n");
+            report.Append($"Player position: {collision.PlayerPosition}\n");
         }
-        Console.WriteLine("========================");
+
+        report.Append("========================");
+        return report.ToString();
     }
 
     public bool ConsumePrimaryUsePressed(PlayerInteractionCommand interaction, float repeatIntervalSeconds, float deltaTime)
@@ -207,6 +254,20 @@ public class Player : IReplicatedPlayerTarget
         _combatant.Health.SetAuthoritativeState(currentHealth, maxHealth);
     }
 
+    // Disposes the contact callback exactly once. The body is not touched (see the class note).
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _collisionScratch.Clear();
+        _contactCallback.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
     private static Vector3 WorldToGridPosition(Vector3 worldPosition)
     {
         return new Vector3(
@@ -228,10 +289,35 @@ public class Player : IReplicatedPlayerTarget
         public Vector3 ContactPoint { get; init; }
     }
 
+    // Native-backed, so create one per player body and reuse it. RunContactTest clears the
+    // previous results first, so a reused callback holds only the latest test's contacts.
     public class PlayerContactCallback : ContactResultCallback
     {
         private readonly RigidBody _playerBody;
         public List<CollisionData> Collisions { get; } = new();
+
+        public RigidBody PlayerBody => _playerBody;
+
+        public bool IsDisposed { get; private set; }
+
+        public void RunContactTest(CollisionWorld world)
+        {
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            Collisions.Clear();
+            world.ContactTest(_playerBody, this);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            IsDisposed = true;
+            Collisions.Clear();
+            base.Dispose(disposing);
+        }
 
         public PlayerContactCallback(RigidBody playerBody)
         {
