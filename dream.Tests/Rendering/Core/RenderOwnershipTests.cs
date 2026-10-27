@@ -123,7 +123,7 @@ public class RenderOwnershipTests
     {
         string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Actors", fileName));
 
-        Assert.Contains("ModelAssets.CreatePlayerInstance()", source);
+        Assert.Contains("ModelAssets.RequestPlayerInstance()", source);
         Assert.DoesNotContain("ModelAssets.Get(", source);
         Assert.DoesNotContain("ModelAssets.DisposeAll", source);
     }

@@ -1,33 +1,83 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 
 namespace Dream.Rendering.Core;
 
 
+// Thread-safe: every member takes one private lock. GetOrAdd runs the factory under that lock,
+// so a key is created at most once even when two threads ask for it together; a slow factory
+// therefore blocks other callers of the same cache. Release callbacks in Clear run outside it.
 public class ResourceCache<T>
 {
-    private readonly Dictionary<string, T> _items = new();
+    private readonly object _sync = new();
+    private readonly Dictionary<string, T> _items = new(StringComparer.Ordinal);
 
-    public IReadOnlyCollection<T> Values => _items.Values;
+    // A snapshot taken under the lock, so enumerating it never races a writer.
+    public IReadOnlyCollection<T> Values
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return [.. _items.Values];
+            }
+        }
+    }
+
+    public int Count
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _items.Count;
+            }
+        }
+    }
 
     public T GetOrAdd(string key, Func<string, T> factory)
     {
-        if (_items.TryGetValue(key, out T? existing))
+        lock (_sync)
         {
-            return existing;
-        }
+            if (_items.TryGetValue(key, out T? existing))
+            {
+                return existing;
+            }
 
-        T created = factory(key);
-        _items[key] = created;
-        return created;
+            T created = factory(key);
+            _items[key] = created;
+            return created;
+        }
+    }
+
+    public bool TryGetValue(string key, [MaybeNullWhen(false)] out T value)
+    {
+        lock (_sync)
+        {
+            return _items.TryGetValue(key, out value);
+        }
+    }
+
+    // Adds the value unless the key is already present; returns false and leaves the cache
+    // unchanged in that case, so the caller still owns the value it passed.
+    public bool TryAdd(string key, T value)
+    {
+        lock (_sync)
+        {
+            return _items.TryAdd(key, value);
+        }
     }
 
     public void Clear(Action<T>? release = null)
     {
-        T[] snapshot = _items.Values.ToArray();
-        _items.Clear();
+        T[] snapshot;
+        lock (_sync)
+        {
+            snapshot = [.. _items.Values];
+            _items.Clear();
+        }
 
         if (release == null)
         {

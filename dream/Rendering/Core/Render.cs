@@ -1391,6 +1391,7 @@ public class Render : IDisposable
         animation.EndRender();
     }
 
+    // Compares the model's source path, so resolving a scale never requests or loads a model.
     private static float ResolveCubeAssetScale(AnimatedModel? animation)
     {
         if (animation == null)
@@ -1398,17 +1399,18 @@ public class Render : IDisposable
             return 1f;
         }
 
-        if (ReferenceEquals(animation, ModelAssets.GrassCube))
+        string sourcePath = animation.SourcePath;
+        if (string.Equals(sourcePath, ModelAssets.GrassCubePath, StringComparison.Ordinal))
         {
             return GrassCubeAssetDefinition.VisualScale;
         }
 
-        if (ReferenceEquals(animation, ModelAssets.DirtCube))
+        if (string.Equals(sourcePath, ModelAssets.DirtCubePath, StringComparison.Ordinal))
         {
             return DirtCubeAssetDefinition.VisualScale;
         }
 
-        if (ReferenceEquals(animation, ModelAssets.StoneCube))
+        if (string.Equals(sourcePath, ModelAssets.StoneCubePath, StringComparison.Ordinal))
         {
             return StoneCubeAssetDefinition.VisualScale;
         }
