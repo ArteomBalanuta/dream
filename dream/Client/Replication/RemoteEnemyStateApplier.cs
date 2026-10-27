@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Rendering.Models;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.World;
@@ -45,9 +44,9 @@ public static class RemoteEnemyStateApplier
                 aggroRange: 10f,
                 attackRange: 1.35f,
                 moveSpeed: 2.8f,
-                preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
-                collisionRadius: WolfAssetDefinition.CollisionRadius,
-                collisionHeight: WolfAssetDefinition.CollisionHeight,
+                preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
+                collisionRadius: WolfDefinition.CollisionRadius,
+                collisionHeight: WolfDefinition.CollisionHeight,
                 displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? "Wolf" : actor.DisplayName);
             enemy.SetAuthoritativeState(actor.Position, actor.Facing, behaviorState);
             registry.Add(enemy);

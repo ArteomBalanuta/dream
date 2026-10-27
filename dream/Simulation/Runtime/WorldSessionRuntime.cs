@@ -1,9 +1,6 @@
 using OpenTK.Mathematics;
-using Dream.Client.Input;
-using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Rendering.Models;
 using Dream.Server.Persistence;
 using Dream.Server.Rules;
 using Dream.Simulation.Combat;
@@ -30,7 +27,7 @@ public readonly record struct WorldSessionUpdateResult(
 // WorldSessionRuntime is the first authoritative simulation seam extracted from PlayScene.
 // It owns runtime truth and stable update order, while the desktop scene remains responsible
 // for client-only input capture, viewmodel presentation, HUD, and rendering.
-public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
+public sealed class WorldSessionRuntime : IDisposable
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
     private readonly bool _loadVisualAssets;
@@ -108,13 +105,6 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
     public Map Map { get; private set; }
 
     public ulong LastWorldMutationSequence { get; private set; }
-
-    public ulong LastAppliedReplicatedWorldMutationSequence { get; private set; }
-
-    public void AcknowledgeReplicatedWorldMutations(ulong sequence)
-    {
-        LastAppliedReplicatedWorldMutationSequence = Math.Max(LastAppliedReplicatedWorldMutationSequence, sequence);
-    }
 
     private Map CreateMap(int floorSize)
     {
@@ -1056,16 +1046,16 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
             maxHealth: 100,
             attackDamage: 12,
             attackIntervalSeconds: 1.05f,
-            anchorHeightOffset: WolfAssetDefinition.CombatAnchorHeight);
+            anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
         EnemyActor wolf = new(
             combatant,
             spawnPosition,
             aggroRange: 10f,
             attackRange: 1.35f,
             moveSpeed: 2.8f,
-            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfAssetDefinition.CollisionRadius,
-            collisionHeight: WolfAssetDefinition.CollisionHeight,
+            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
+            collisionRadius: WolfDefinition.CollisionRadius,
+            collisionHeight: WolfDefinition.CollisionHeight,
             displayName: "Wolf",
             enemyKind: "Wolf",
             level: 1);
@@ -1103,7 +1093,7 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
                 resolvedPosition = EnemyPlayerCollisionResolver.ResolvePlayerPosition(
                     resolvedPosition,
                     actor.Position,
-                    WolfAssetDefinition.PlayerSeparationDistance,
+                    WolfDefinition.PlayerSeparationDistance,
                     -actor.Forward);
             }
 
@@ -1117,7 +1107,7 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
     private PlayerSimulationInput CreatePlayerSimulationInput(PlayerCommandFrame commandFrame)
     {
         return new PlayerSimulationInput(
-            PlayerController.CreateMovementCommand(Player.Camera, Player.IsNoclipEnabled, commandFrame.MoveIntent),
+            PlayerMovementResolver.CreateMovementCommand(Player.Camera, Player.IsNoclipEnabled, commandFrame.MoveIntent),
             new Vector2(commandFrame.LookIntent.YawDelta, commandFrame.LookIntent.PitchDelta),
             AllowGameplayInput: true,
             AllowLook: true);
@@ -1584,7 +1574,7 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
             maxHealth: enemy.Stats.MaxHealth,
             attackDamage: Math.Max(1, enemy.Stats.Strength + 2),
             attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
-            anchorHeightOffset: WolfAssetDefinition.CombatAnchorHeight);
+            anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
         combatant.Health.SetAuthoritativeState(enemy.Stats.CurrentHealth, enemy.Stats.MaxHealth);
 
         EnemyActor actor = new(
@@ -1593,9 +1583,9 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
             aggroRange: 10f,
             attackRange: 1.35f,
             moveSpeed: Math.Max(0f, enemy.Stats.MovementSpeed),
-            preferredStandOffDistance: WolfAssetDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfAssetDefinition.CollisionRadius,
-            collisionHeight: WolfAssetDefinition.CollisionHeight,
+            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
+            collisionRadius: WolfDefinition.CollisionRadius,
+            collisionHeight: WolfDefinition.CollisionHeight,
             displayName: enemy.DisplayName,
             enemyKind: enemy.EnemyKind,
             level: enemy.Stats.Level);

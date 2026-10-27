@@ -1,6 +1,7 @@
 using System.IO;
 using OpenTK.Mathematics;
 using Dream.Assets;
+using Dream.Simulation.Enemies;
 
 namespace Dream.Rendering.Models;
 
@@ -13,11 +14,11 @@ public static class WolfAssetDefinition
     public const string IdleClip = "AnimalArmature|Idle";
     public const string MoveClip = "AnimalArmature|Walk";
     public const string AttackClip = "AnimalArmature|Attack";
-    public const float CombatAnchorHeight = 0.75f;
-    public const float PreferredStandOffDistance = 2.00f;
-    public const float CollisionRadius = 0.30f;
-    public const float CollisionHeight = 0.60f;
-    public const float PlayerSeparationDistance = 0.95f;
+    public const float CombatAnchorHeight = WolfDefinition.CombatAnchorHeight;
+    public const float PreferredStandOffDistance = WolfDefinition.PreferredStandOffDistance;
+    public const float CollisionRadius = WolfDefinition.CollisionRadius;
+    public const float CollisionHeight = WolfDefinition.CollisionHeight;
+    public const float PlayerSeparationDistance = WolfDefinition.PlayerSeparationDistance;
 
     public static Vector3 AuthoredForwardAxis => Vector3.UnitZ;
 

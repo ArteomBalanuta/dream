@@ -36,7 +36,9 @@ public class DependencyDirectionTests
     {
         Path.Combine("dream", "Simulation", "Combat"),
         Path.Combine("dream", "Simulation", "Inventory"),
-        Path.Combine("dream", "Simulation", "Physics")
+        Path.Combine("dream", "Simulation", "Physics"),
+        Path.Combine("dream", "Simulation", "Runtime"),
+        Path.Combine("dream", "Simulation", "World")
     };
 
     [Fact]

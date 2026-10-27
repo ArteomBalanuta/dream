@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Rendering.Models;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Runtime;
 
@@ -20,7 +19,7 @@ public sealed class EnemyCombatant : IDamageable, ICombatAnchorProvider
         int maxHealth = 40,
         int attackDamage = 10,
         float attackIntervalSeconds = 1.1f,
-        float anchorHeightOffset = WolfAssetDefinition.CombatAnchorHeight)
+        float anchorHeightOffset = WolfDefinition.CombatAnchorHeight)
     {
         _positionProvider = positionProvider;
         _eventHub = eventHub;
