@@ -25,7 +25,8 @@ public sealed class FrameReceiveBuffer
         _end += data.Length;
     }
 
-    // Returns true when a complete frame was consumed; payload may be null for an empty frame.
+    // Returns true when a complete frame was consumed. An empty frame yields an empty payload,
+    // which the receive loops skip.
     public bool TryReadFrame(IMessageFramer framer, out byte[]? payload)
     {
         ArgumentNullException.ThrowIfNull(framer);
