@@ -8,27 +8,37 @@ namespace Dream.Simulation.Determinism;
 // Order-independent fingerprint of the authoritative simulation state, for detecting divergence
 // between two runs (two servers with the same seed and input, or a replay against a recording).
 // It covers more than WorldStateChecksum, which is replicated to clients and fingerprints only
-// cell occupancy and material:
-//   - WorldStateChecksum.Compute(map);
-//   - every actor: id, kind, session, position and facing quantized to PositionQuantum, health,
-//     max health, alive flag, and level and experience when the actor has progression;
-//   - every valid rubble piece: cell, piece index, center quantized to PositionQuantum, exact
-//     side length and material;
-//   - the last world mutation sequence.
-// Quantizing positions keeps the checksum stable against float noise below 1e-4 that would not
-// change gameplay, while any real movement changes it.
+// cell occupancy, kind and material. The parts are:
+//   - World: WorldStateChecksum.Compute(map);
+//   - Actors: every actor's id, kind, session, position and facing quantized to PositionQuantum,
+//     current health, max health, alive flag, and, each hashed as absent or present plus value,
+//     interaction mode, combat stats (strength, exact attack speed bits, vitality), progression
+//     (level, experience) and enemy behavior state, plus the actor count. DisplayName is not
+//     covered;
+//   - Rubble: every valid rubble piece's cell, piece index, center quantized to PositionQuantum,
+//     exact side length and material, plus the piece count;
+//   - Cubes: every solid cube in Map.SolidCubes, keyed by its cell, with its position quantized
+//     to PositionQuantum, plus the cube count. This catches a physics-driven cube that moves
+//     within its cell, which WorldStateChecksum cannot see. The key is the cell, not the
+//     replicated actor id, because Map exposes no public cube-to-id lookup; a cell holds at most
+//     one cube, so the key is still unique and stable;
+//   - WorldMutationSequence: the last world mutation sequence.
+// Quantizing positions absorbs most float noise below PositionQuantum, so tiny differences that
+// would not change gameplay usually leave the checksum unchanged. It is not a guarantee: two
+// values that straddle a rounding boundary land in adjacent buckets and hash differently however
+// close they are. Any movement larger than the quantum always changes the checksum.
 //
-// Order independence: each actor and each rubble piece is hashed on its own (its key, the actor
-// id or the cell and piece index, is part of its hash) and the element hashes are added, the
-// same scheme WorldStateChecksum uses. Addition is commutative, so actor and rubble enumeration
+// Order independence: each actor, rubble piece and cube is hashed on its own (its key, the actor
+// id, the cell and piece index, or the cube cell, is part of its hash) and the element hashes
+// are added, the same scheme WorldStateChecksum uses. Addition is commutative, so enumeration
 // order (List, Dictionary) never matters, and no sorting or scratch buffer is needed.
 //
-// Cost: a diagnostic, not a per-frame path. It is O(cells + actors + rubble pieces).
+// Cost: a diagnostic, not a per-frame path. It is O(cells + actors + rubble pieces + cubes).
 // WorldStateChecksum.Compute and the rubble dictionary enumeration through
-// IReadOnlyDictionary allocate a few enumerator objects per call; actor hashing allocates
-// nothing. Compute(WorldSessionRuntime) additionally allocates the runtime's actor snapshot
-// list (CaptureActorSnapshots). Call it per tick in tests and tools, or at a low rate in
-// production.
+// IReadOnlyDictionary allocate a few enumerator objects per call; actor and cube hashing
+// allocate nothing. Compute(WorldSessionRuntime) additionally allocates the runtime's actor
+// snapshot list (CaptureActorSnapshots). Call it per tick in tests and tools, or at a low rate
+// in production.
 public static class SimulationStateChecksum
 {
     // Positions, facings and rubble centers are rounded to multiples of this before hashing.
@@ -37,9 +47,9 @@ public static class SimulationStateChecksum
     private const double InversePositionQuantum = 10000.0;
 
     // The checksum of one state, split by component so a divergence can be attributed.
-    public readonly record struct Parts(ulong World, ulong Actors, ulong Rubble, ulong WorldMutationSequence)
+    public readonly record struct Parts(ulong World, ulong Actors, ulong Rubble, ulong Cubes, ulong WorldMutationSequence)
     {
-        public ulong Combined => Seed.Combine(World, Actors, Rubble, WorldMutationSequence);
+        public ulong Combined => Seed.Combine(World, Actors, Rubble, Cubes, WorldMutationSequence);
     }
 
     public static ulong Compute(WorldSessionRuntime runtime)
@@ -93,10 +103,18 @@ public static class SimulationStateChecksum
             }
         }
 
+        ulong cubeSum = 0;
+        IReadOnlyList<Cube> cubes = map.SolidCubes;
+        for (int index = 0; index < cubes.Count; index++)
+        {
+            cubeSum = unchecked(cubeSum + HashCube(map, cubes[index]));
+        }
+
         return new Parts(
             WorldStateChecksum.Compute(map),
             Seed.Combine(actorSum, (ulong)actors.Count),
             Seed.Combine(rubbleSum, rubbleCount),
+            Seed.Combine(cubeSum, (ulong)cubes.Count),
             lastWorldMutationSequence);
     }
 
@@ -114,9 +132,33 @@ public static class SimulationStateChecksum
             Seed.FromInt(actor.CurrentHealth),
             Seed.FromInt(actor.MaxHealth),
             actor.IsAlive ? 1UL : 0UL);
-        return actor.Progression is { } progression
+        ulong progressionHash = actor.Progression is { } progression
             ? Seed.Combine(health, 1UL, Seed.FromInt(progression.Level), Seed.FromInt(progression.Experience))
             : Seed.Combine(health, 0UL);
+        ulong mode = actor.InteractionMode is { } interactionMode
+            ? Seed.Combine(progressionHash, 1UL, (ulong)interactionMode)
+            : Seed.Combine(progressionHash, 0UL);
+        ulong combat = actor.CombatStats is { } stats
+            ? Seed.Combine(
+                Seed.Combine(mode, 1UL),
+                Seed.FromInt(stats.Strength),
+                BitConverter.SingleToUInt32Bits(stats.AttackSpeed),
+                Seed.FromInt(stats.Vitality))
+            : Seed.Combine(mode, 0UL);
+        return actor.EnemyBehaviorState is { } behavior
+            ? Seed.Combine(combat, 1UL, (ulong)behavior)
+            : Seed.Combine(combat, 0UL);
+    }
+
+    // The hash of one solid cube: its cell (from the map's cube index, or its floored position if
+    // the cube is not indexed) and its quantized position.
+    private static ulong HashCube(Map map, Cube cube)
+    {
+        Vector3 position = cube.Position;
+        ulong key = map.TryGetCellForCube(cube, out GeometryCellKey cell)
+            ? Seed.Combine(1UL, Seed.FromCell(cell.X, cell.Y, cell.Z))
+            : Seed.Combine(0UL, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
+        return Seed.Combine(key, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
     }
 
     private static ulong HashFracturePiece(GeometryCellKey cell, int pieceIndex, GeometryFracturePiece piece, ulong material)
@@ -127,12 +169,16 @@ public static class SimulationStateChecksum
     }
 
     // Rounds to the nearest multiple of PositionQuantum (ties to even). Non-finite values hash by
-    // their bits, tagged so they never collide with a finite quantized value.
+    // their bits, salted and mixed so they land at pseudo-random 64-bit values rather than in the
+    // range a finite quantized value occupies. A collision with a finite value is then only as
+    // likely as any other 64-bit hash collision, not structural.
+    private const ulong NonFiniteSalt = 0x6E6F6E66696E6974UL; // "nonfinit"
+
     private static ulong Quantize(float value)
     {
         if (!float.IsFinite(value))
         {
-            return (1UL << 63) | BitConverter.SingleToUInt32Bits(value);
+            return Seed.Mix(NonFiniteSalt ^ BitConverter.SingleToUInt32Bits(value));
         }
 
         return unchecked((ulong)(long)Math.Round(value * InversePositionQuantum));
