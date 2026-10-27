@@ -89,7 +89,6 @@ public class RemoteEnemyStateApplierTests
 
         EnemyActor actor = Assert.Single(registry.ActiveActors);
         Assert.Same(existing, actor);
-        Assert.Same(existing.VisualState, actor.VisualState);
         Assert.Equal(new Vector3(4f, 0f, 6f), actor.Position);
         Assert.Equal(Vector3.UnitX, actor.Forward);
         Assert.Equal(EnemyBehaviorState.Chasing, actor.BehaviorState);

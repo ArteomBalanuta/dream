@@ -11,6 +11,8 @@ namespace Dream.Rendering.Actors;
 public sealed class EnemyRenderer
 {
     private readonly Render _render;
+    private readonly EnemyVisualStateCache _visualStates = new();
+    private readonly HashSet<int> _currentIds = new();
 
     public EnemyRenderer(Render render)
     {
@@ -19,6 +21,7 @@ public sealed class EnemyRenderer
 
     public void Draw(Camera camera, IReadOnlyList<EnemyActor> actors, float deltaTime, bool showCollisionGeometry)
     {
+        _currentIds.Clear();
         foreach (EnemyActor actor in actors)
         {
             if (!actor.IsActive)
@@ -26,13 +29,16 @@ public sealed class EnemyRenderer
                 continue;
             }
 
+            int actorId = actor.Combatant.Actor.Id;
+            _currentIds.Add(actorId);
+
             EnemyRenderState renderState = EnemyRenderState.CreateWolf(
                 actor.Position,
                 actor.Forward,
                 actor.BehaviorState);
 
             AnimatedModel model = ModelAssets.Get(renderState.ModelPath);
-            actor.VisualState.ApplyClip(model, renderState.ClipName);
+            _visualStates.GetOrAdd(actorId).ApplyClip(model, renderState.ClipName);
             model.Update(deltaTime);
 
             Shader shader = _render.GetShader(renderState.ShaderName);
@@ -48,5 +54,7 @@ public sealed class EnemyRenderer
                 _render.DrawCollisionShape(debugMatrix, camera);
             }
         }
+
+        _visualStates.PruneExcept(_currentIds);
     }
 }

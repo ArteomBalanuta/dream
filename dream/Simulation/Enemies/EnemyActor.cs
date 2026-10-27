@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Rendering.Actors;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -62,8 +61,6 @@ public sealed class EnemyActor
     public int Level { get; }
 
     public EnemyBehaviorState BehaviorState { get; private set; }
-
-    public EnemyVisualState VisualState { get; } = new();
 
     public bool IsActive => Combatant.Health.IsAlive;
 
