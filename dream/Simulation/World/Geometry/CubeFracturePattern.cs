@@ -1,9 +1,13 @@
 using OpenTK.Mathematics;
+using Dream.Simulation.Determinism;
 
 namespace Dream.Simulation.World.Geometry;
 
 public static class CubeFracturePattern
 {
+    // "fracture" in ASCII; keeps rubble seeds apart from other per-cell seeds.
+    private const ulong FractureSalt = 0x6672616374757265UL;
+
     private static readonly Vector2[] BaseAnchors =
     {
         new(-0.32f, -0.32f),
@@ -14,16 +18,18 @@ public static class CubeFracturePattern
         new(0.32f, 0.32f)
     };
 
+    // Without an explicit generator the rubble is a pure function of the cell, so the server and
+    // a client fallback that fracture the same cell produce the same pieces.
     public static IReadOnlyList<GeometryFracturePiece> CreateFirstPassRubble(
         GeometryCellKey cell,
-        Random? random = null)
+        DeterministicRandom? random = null)
     {
-        random ??= Random.Shared;
+        random ??= new DeterministicRandom(CreateSeed(cell));
         Vector3 cellCenter = new(cell.X + 0.5f, cell.Y + 0.5f, cell.Z + 0.5f);
         Vector2[] anchors = BaseAnchors.ToArray();
         Shuffle(anchors, random);
 
-        int pieceCount = random.Next(5, anchors.Length + 1);
+        int pieceCount = random.NextInt(5, anchors.Length + 1);
         GeometryFracturePiece[] pieces = new GeometryFracturePiece[pieceCount];
         for (int index = 0; index < pieces.Length; index++)
         {
@@ -33,7 +39,12 @@ public static class CubeFracturePattern
         return pieces;
     }
 
-    private static GeometryFracturePiece CreatePiece(Vector3 cellCenter, Random random, Vector2 anchor)
+    public static ulong CreateSeed(GeometryCellKey cell)
+    {
+        return Seed.Combine(FractureSalt, Seed.FromCell(cell.X, cell.Y, cell.Z));
+    }
+
+    private static GeometryFracturePiece CreatePiece(Vector3 cellCenter, DeterministicRandom random, Vector2 anchor)
     {
         float sideLength = Lerp(0.16f, 0.23f, random.NextSingle());
         float verticalLift = Lerp(0.00f, 0.18f, random.NextSingle());
@@ -48,11 +59,11 @@ public static class CubeFracturePattern
         return new GeometryFracturePiece(center, sideLength);
     }
 
-    private static void Shuffle<T>(IList<T> items, Random random)
+    private static void Shuffle<T>(IList<T> items, DeterministicRandom random)
     {
         for (int index = items.Count - 1; index > 0; index--)
         {
-            int swapIndex = random.Next(index + 1);
+            int swapIndex = random.NextInt(index + 1);
             (items[index], items[swapIndex]) = (items[swapIndex], items[index]);
         }
     }

@@ -9,6 +9,8 @@ namespace Dream.Client.Replication;
 
 public static class RemoteWorldMutationApplier
 {
+    private static readonly TimeSpan FractureFallbackLogInterval = TimeSpan.FromSeconds(5);
+
     public static void ApplyWorldSnapshot(Map map, WorldSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(map);
@@ -20,7 +22,7 @@ public static class RemoteWorldMutationApplier
         }
 
         IReadOnlyList<PlacedCubeSnapshot> desiredPlacedCubes = ResolvePlacedCubes(snapshot);
-        IReadOnlyList<FracturedCubeSnapshot> desiredFracturedCubes = ResolveFracturedCubes(snapshot);
+        IReadOnlyList<FracturedCubeSnapshot> desiredFracturedCubes = ResolveFracturedCubes(map, snapshot);
         HashSet<(int X, int Y, int Z)> desiredCells = desiredPlacedCubes
             .Select(cube => ToCellKey(cube.CellPosition))
             .ToHashSet();
@@ -91,12 +93,7 @@ public static class RemoteWorldMutationApplier
                 continue;
             }
 
-            if (map.TryGetCubeAtCell(x, y, z) == null)
-            {
-                map.TryAddCube(new Vector3(x, y, z));
-            }
-
-            map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
+            ApplyFallbackFracture(map, new GeometryCellKey(x, y, z), fracturedCube.MaterialId, "snapshot");
         }
 
         map.RestoreGeneratedStartupCells(
@@ -230,8 +227,9 @@ public static class RemoteWorldMutationApplier
                 break;
 
             case WorldMutationKind.CubeFractured:
-                if (mutation.FracturePieces is { Count: > 0 } pieces &&
-                    mutation.MaterialId.HasValue)
+                GeometryCellKey fracturedCell = new(x, y, z);
+                GeometryMaterialId fracturedMaterial = mutation.MaterialId ?? ResolveExistingMaterial(map, fracturedCell);
+                if (mutation.FracturePieces is { Count: > 0 } pieces)
                 {
                     // The cube in that cell is the one that fractured; rubble no longer replaces it
                     // implicitly because rubble does not occupy cells.
@@ -241,19 +239,14 @@ public static class RemoteWorldMutationApplier
                     }
 
                     map.RestoreFracturePieces(
-                        new GeometryCellKey(x, y, z),
-                        mutation.MaterialId.Value,
+                        fracturedCell,
+                        fracturedMaterial,
                         pieces,
                         withPhysics: true);
                     break;
                 }
 
-                if (map.TryGetCubeAtCell(x, y, z) == null)
-                {
-                    map.TryAddCube(new Vector3(x, y, z));
-                }
-
-                map.FractureCubeIntoPieces(new GeometryCellKey(x, y, z));
+                ApplyFallbackFracture(map, fracturedCell, fracturedMaterial, $"mutation seq={mutation.Sequence}");
                 break;
 
             case WorldMutationKind.CubeMoved:
@@ -277,19 +270,59 @@ public static class RemoteWorldMutationApplier
             .ToArray();
     }
 
-    private static IReadOnlyList<FracturedCubeSnapshot> ResolveFracturedCubes(WorldSnapshot snapshot)
+    private static IReadOnlyList<FracturedCubeSnapshot> ResolveFracturedCubes(Map map, WorldSnapshot snapshot)
     {
         if (snapshot.FracturedCubes is { Count: > 0 } fracturedCubes)
         {
             return fracturedCubes;
         }
 
+        // Legacy snapshots list fractured cells without a material; keep whatever the client
+        // already knows about the cell.
         return (snapshot.FracturedCubeCells ?? Array.Empty<Vector3>())
-            .Select(cell => new FracturedCubeSnapshot(
-                cell,
-                GeometryMaterialId.Grass,
-                Array.Empty<GeometryFracturePiece>()))
+            .Select(cell =>
+            {
+                (int x, int y, int z) = ToCellKey(cell);
+                return new FracturedCubeSnapshot(
+                    cell,
+                    ResolveExistingMaterial(map, new GeometryCellKey(x, y, z)),
+                    Array.Empty<GeometryFracturePiece>());
+            })
             .ToArray();
+    }
+
+    private static GeometryMaterialId ResolveExistingMaterial(Map map, GeometryCellKey cell)
+    {
+        return map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z)?.Definition.MaterialId ??
+            map.TryGetRubbleAtCell(cell)?.Definition.MaterialId ??
+            GeometryMaterialId.Grass;
+    }
+
+    // The server sent a fracture without its pieces. Rubble is seeded by cell, so fracturing locally
+    // reproduces the server's pieces; the material is the one the caller resolved.
+    private static void ApplyFallbackFracture(Map map, GeometryCellKey cell, GeometryMaterialId materialId, string source)
+    {
+        NetworkDiagnosticsLog.WriteEvery(
+            "client.world.fracture-fallback",
+            FractureFallbackLogInterval,
+            "client.world.fracture-fallback",
+            () => $"source={source} cell=({cell.X},{cell.Y},{cell.Z}) material={materialId}");
+
+        if (map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z) == null)
+        {
+            map.TryAddCube(new Vector3(cell.X, cell.Y, cell.Z), materialId: materialId);
+        }
+
+        if (!map.FractureCubeIntoPieces(cell))
+        {
+            return;
+        }
+
+        if (map.TryGetRubbleAtCell(cell) is { FracturePieces: { } pieces } rubble &&
+            rubble.Definition.MaterialId != materialId)
+        {
+            map.RestoreFracturePieces(cell, materialId, pieces, withPhysics: true);
+        }
     }
 
     private static void ApplyCubeMovedMutation(Map map, WorldMutationDelta mutation, int sourceX, int sourceY, int sourceZ)

@@ -1,3 +1,4 @@
+using Dream.Simulation.Determinism;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
@@ -166,12 +167,12 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
-    public void CubeFracturePattern_UsesRandomizedCentersForEachFractureEvent()
+    public void CubeFracturePattern_UsesDifferentCentersForDifferentExplicitSeeds()
     {
         GeometryCellKey cell = new(3, 1, 3);
 
-        IReadOnlyList<GeometryFracturePiece> first = CubeFracturePattern.CreateFirstPassRubble(cell, new Random(101));
-        IReadOnlyList<GeometryFracturePiece> second = CubeFracturePattern.CreateFirstPassRubble(cell, new Random(202));
+        IReadOnlyList<GeometryFracturePiece> first = CubeFracturePattern.CreateFirstPassRubble(cell, new DeterministicRandom(101));
+        IReadOnlyList<GeometryFracturePiece> second = CubeFracturePattern.CreateFirstPassRubble(cell, new DeterministicRandom(202));
 
         Assert.NotEqual(
             first.Select(piece => piece.Center).ToArray(),
@@ -369,7 +370,7 @@ public class MapGeometryFacadeTests
     }
 
     [Fact]
-    public void FractureCubeIntoPieces_RandomizesEachDestructionEvent()
+    public void FractureCubeIntoPieces_ProducesSameRubbleForSameCellOnEveryMap()
     {
         Map first = new Map(width: 8, height: 8, depth: 8, loadVisualAssets: false);
         first.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false);
@@ -382,7 +383,7 @@ public class MapGeometryFacadeTests
         GeometryRenderExport firstExport = first.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
         GeometryRenderExport secondExport = second.CaptureGeometryRenderExport(new Vector3(3.5f, 1.5f, 3.5f), 4f);
 
-        Assert.NotEqual(
+        Assert.Equal(
             firstExport.DynamicBlocks
                 .OrderBy(block => block.Center.X)
                 .ThenBy(block => block.Center.Y)
