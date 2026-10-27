@@ -886,7 +886,7 @@ public class Render
                 }
                 else
                 {
-                    ImGui.Text(performance.FormatHudLine(lineIndex));
+                    ImGui.TextUnformatted(performance.FormatHudLine(lineIndex));
                 }
             }
         }
