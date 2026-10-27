@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BulletSharp;
 using BulletSharp.Math;
 using OpenTK.Mathematics;
@@ -16,6 +17,9 @@ public class WorldPhysicsBinder
     private readonly Dictionary<GeometryCellKey, List<RigidBody>> _geometryCellBodies = new();
     private readonly List<RigidBody> _mergedStaticCollisionBodies = new();
     private readonly Dictionary<GeometryCellKey, List<RigidBody>> _rubbleBodies = new();
+    // Empty cell body lists left behind when a moving cube leaves its last cell; reused when a
+    // moving cube enters a cell with no list, so per-move reindexing allocates nothing.
+    private readonly Stack<List<RigidBody>> _spareCellBodyLists = new();
     private RigidBody? _floorBody;
 
     // Replicated cube bodies belong to a client mirror map: full cubes are moved only by
@@ -135,33 +139,42 @@ public class WorldPhysicsBinder
         ArgumentNullException.ThrowIfNull(cube);
 
         if (oldCellKey == newCellKey ||
-            !_geometryCellBodies.TryGetValue(oldCellKey, out List<RigidBody>? oldBodies))
+            !_geometryCellBodies.TryGetValue(oldCellKey, out List<RigidBody>? oldBodies) ||
+            IndexOfCompatibilityCubeBody(oldBodies, cube) < 0)
         {
             return;
-        }
-
-        List<RigidBody> movedBodies = oldBodies
-            .Where(body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
-                ReferenceEquals(cubeBody.Item1, cube))
-            .ToList();
-        if (movedBodies.Count == 0)
-        {
-            return;
-        }
-
-        oldBodies.RemoveAll(movedBodies.Contains);
-        if (oldBodies.Count == 0)
-        {
-            _geometryCellBodies.Remove(oldCellKey);
         }
 
         if (!_geometryCellBodies.TryGetValue(newCellKey, out List<RigidBody>? newBodies))
         {
-            newBodies = [];
+            newBodies = RentCellBodyList();
             _geometryCellBodies[newCellKey] = newBodies;
         }
 
-        newBodies.AddRange(movedBodies);
+        // Compacts the old list in place and appends the cube's bodies to the new one, keeping
+        // both lists' relative order exactly as the former Where/RemoveAll/AddRange did.
+        int kept = 0;
+        for (int i = 0; i < oldBodies.Count; i++)
+        {
+            RigidBody body = oldBodies[i];
+            if (IsCompatibilityCubeBody(body, cube))
+            {
+                newBodies.Add(body);
+            }
+            else
+            {
+                oldBodies[kept++] = body;
+            }
+        }
+
+        oldBodies.RemoveRange(kept, oldBodies.Count - kept);
+        if (oldBodies.Count == 0)
+        {
+            // An emptied cell leaves the index so "has bodies" checks still see no entry; its
+            // list is recycled for the next cell a moving cube enters.
+            _geometryCellBodies.Remove(oldCellKey);
+            _spareCellBodyLists.Push(oldBodies);
+        }
     }
 
     // Moves a compatibility cube's existing body to an authoritative center instead of
@@ -180,19 +193,21 @@ public class WorldPhysicsBinder
             return false;
         }
 
-        RigidBody? body = oldBodies.Find(candidate =>
-            candidate.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
-            ReferenceEquals(cubeBody.Item1, cube));
-        if (body == null)
+        int index = IndexOfCompatibilityCubeBody(oldBodies, cube);
+        if (index < 0)
         {
             return false;
         }
 
+        RigidBody body = oldBodies[index];
+
         Matrix transform = Matrix.Translation(center.ToBullet());
         body.WorldTransform = transform;
         body.MotionState?.SetWorldTransform(ref transform);
-        body.UserObject = (cube, center);
-        if (!body.CollisionFlags.HasFlag(CollisionFlags.KinematicObject))
+        SetCompatibilityCubeCenter(body, cube, center);
+
+        // A bitwise test rather than Enum.HasFlag, which boxes both enums in unoptimized builds.
+        if ((body.CollisionFlags & CollisionFlags.KinematicObject) == 0)
         {
             body.LinearVelocity = BulletSharp.Math.Vector3.Zero;
             body.AngularVelocity = BulletSharp.Math.Vector3.Zero;
@@ -201,6 +216,46 @@ public class WorldPhysicsBinder
         body.Activate(true);
         ReindexCompatibilityCubeBody(cube, oldCellKey, newCellKey);
         return true;
+    }
+
+    private static int IndexOfCompatibilityCubeBody(List<RigidBody> bodies, Cube cube)
+    {
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            if (IsCompatibilityCubeBody(bodies[i], cube))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsCompatibilityCubeBody(RigidBody body, Cube cube)
+    {
+        return body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
+            ReferenceEquals(cubeBody.Item1, cube);
+    }
+
+    // Assigning a (Cube, Vector3) tuple to UserObject boxes it on every move. Every body gets its
+    // own box when it is created (AddGeometryBody, AddCubeBody, PhysicsSyncSystem), and every
+    // reader pattern-matches it into a copy, so the body's existing box is updated in place: the
+    // stored type and value are exactly what a fresh assignment would give.
+    private static void SetCompatibilityCubeCenter(RigidBody body, Cube cube, Vector3 center)
+    {
+        object? userObject = body.UserObject;
+        if (userObject is ValueTuple<Cube, Vector3> stored && ReferenceEquals(stored.Item1, cube))
+        {
+            Unsafe.Unbox<ValueTuple<Cube, Vector3>>(userObject).Item2 = center;
+            return;
+        }
+
+        body.UserObject = (cube, center);
+    }
+
+    private List<RigidBody> RentCellBodyList()
+    {
+        return _spareCellBodyLists.TryPop(out List<RigidBody>? list) ? list : [];
     }
 
     private void RemoveBodies(IEnumerable<RigidBody> bodies)

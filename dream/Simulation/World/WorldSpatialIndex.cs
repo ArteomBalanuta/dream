@@ -9,13 +9,16 @@ public class WorldSpatialIndex
     private const int SectorSize = 16;
     private readonly Dictionary<(int X, int Z), List<Cube>> _sectors = new();
     private readonly Dictionary<Cube, (int X, int Z)> _cubeSectors = new();
+    // Lists of sectors that emptied, reused for the next new sector so a lone cube crossing a
+    // sector boundary does not allocate.
+    private readonly Stack<List<Cube>> _spareSectorLists = new();
 
     public void Add(Cube cube)
     {
         (int x, int z) = GetSectorKey(cube.Position);
         if (!_sectors.TryGetValue((x, z), out List<Cube>? cubes))
         {
-            cubes = new List<Cube>();
+            cubes = RentSectorList();
             _sectors[(x, z)] = cubes;
         }
 
@@ -39,7 +42,7 @@ public class WorldSpatialIndex
         bool removed = cubes.Remove(cube);
         if (removed && cubes.Count == 0)
         {
-            _sectors.Remove(sector);
+            ReleaseSector(sector, cubes);
         }
 
         if (removed)
@@ -60,7 +63,7 @@ public class WorldSpatialIndex
                 previousCubes.Remove(cube);
                 if (previousCubes.Count == 0)
                 {
-                    _sectors.Remove(previousSector);
+                    ReleaseSector(previousSector, previousCubes);
                 }
             }
         }
@@ -69,7 +72,7 @@ public class WorldSpatialIndex
         {
             if (!_sectors.TryGetValue(newSector, out List<Cube>? currentCubes))
             {
-                currentCubes = new List<Cube>();
+                currentCubes = RentSectorList();
                 _sectors[newSector] = currentCubes;
             }
 
@@ -102,6 +105,18 @@ public class WorldSpatialIndex
                 }
             }
         }
+    }
+
+    private List<Cube> RentSectorList()
+    {
+        return _spareSectorLists.TryPop(out List<Cube>? cubes) ? cubes : new List<Cube>();
+    }
+
+    // An emptied sector leaves the dictionary, so GetNearby never visits it.
+    private void ReleaseSector((int X, int Z) sector, List<Cube> cubes)
+    {
+        _sectors.Remove(sector);
+        _spareSectorLists.Push(cubes);
     }
 
     private static (int X, int Z) GetSectorKey(Vector3 position)
