@@ -39,6 +39,7 @@ public class Game : GameWindow
         Title = GameWindowTitleBuilder.BaseTitle
     })
     {
+        GLUtils.BindRenderThread();
         _windowTitle = new ChangedTextSink(text => Title = text);
         ViewModelRigSettings viewModelRig = ViewModelRigTextConfig.LoadOrCreate(
             AssetPaths.Config("viewmodel-rig.txt"));

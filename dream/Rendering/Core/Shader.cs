@@ -7,57 +7,81 @@ using OpenTK.Mathematics;
 using System;
 using System.IO;
 
-public class Shader
+public sealed class Shader : IDisposable
 {
     public int Handle { get; private set; }
-    private bool _disposed = false;
     private readonly Dictionary<string, int> _uniformLocations = new();
 
     public Shader(string vertexPath, string fragmentPath)
     {
+        GLUtils.AssertRenderThread("Shader creation");
+
         // Load sources from file.
         string vertexSource = File.ReadAllText(vertexPath);
         string fragmentSource = File.ReadAllText(fragmentPath);
 
-        // Compile shaders.
-        int vertexShader = GL.CreateShader(ShaderType.VertexShader);
-        GL.ShaderSource(vertexShader, vertexSource);
-        GL.CompileShader(vertexShader);
-        GL.GetShader(vertexShader, ShaderParameter.CompileStatus, out int vStatus);
-        if (vStatus == (int)All.False)
+        int vertexShader = 0;
+        int fragmentShader = 0;
+        int program = 0;
+        bool linked = false;
+        try
         {
-            string infoLog = GL.GetShaderInfoLog(vertexShader);
-            throw new Exception($"Vertex shader compilation failed: {infoLog}");
+            // Compile shaders.
+            vertexShader = GL.CreateShader(ShaderType.VertexShader);
+            GL.ShaderSource(vertexShader, vertexSource);
+            GL.CompileShader(vertexShader);
+            GL.GetShader(vertexShader, ShaderParameter.CompileStatus, out int vStatus);
+            if (vStatus == (int)All.False)
+            {
+                string infoLog = GL.GetShaderInfoLog(vertexShader);
+                throw new Exception($"Vertex shader compilation failed: {infoLog}");
+            }
+
+            fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
+            GL.ShaderSource(fragmentShader, fragmentSource);
+            GL.CompileShader(fragmentShader);
+            GL.GetShader(fragmentShader, ShaderParameter.CompileStatus, out int fStatus);
+            if (fStatus == (int)All.False)
+            {
+                string infoLog = GL.GetShaderInfoLog(fragmentShader);
+                throw new Exception($"Fragment shader compilation failed: {infoLog}");
+            }
+
+            // Link shaders into a program.
+            program = GL.CreateProgram();
+            GL.AttachShader(program, vertexShader);
+            GL.AttachShader(program, fragmentShader);
+            GL.LinkProgram(program);
+            GL.GetProgram(program, GetProgramParameterName.LinkStatus, out int linkStatus);
+            if (linkStatus == (int)All.False)
+            {
+                string infoLog = GL.GetProgramInfoLog(program);
+                throw new Exception($"Shader program linking failed: {infoLog}");
+            }
+
+            GL.DetachShader(program, vertexShader);
+            GL.DetachShader(program, fragmentShader);
+            linked = true;
+        }
+        finally
+        {
+            if (vertexShader != 0)
+            {
+                GL.DeleteShader(vertexShader);
+            }
+
+            if (fragmentShader != 0)
+            {
+                GL.DeleteShader(fragmentShader);
+            }
+
+            if (!linked && program != 0)
+            {
+                GL.DeleteProgram(program);
+            }
         }
 
-        int fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
-        GL.ShaderSource(fragmentShader, fragmentSource);
-        GL.CompileShader(fragmentShader);
-        GL.GetShader(fragmentShader, ShaderParameter.CompileStatus, out int fStatus);
-        if (fStatus == (int)All.False)
-        {
-            string infoLog = GL.GetShaderInfoLog(fragmentShader);
-            throw new Exception($"Fragment shader compilation failed: {infoLog}");
-        }
-
-        // Link shaders into a program.
-        Handle = GL.CreateProgram();
-        GL.AttachShader(Handle, vertexShader);
-        GL.AttachShader(Handle, fragmentShader);
-        GL.LinkProgram(Handle);
-        GL.GetProgram(Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
-        if (linkStatus == (int)All.False)
-        {
-            string infoLog = GL.GetProgramInfoLog(Handle);
-            throw new Exception($"Shader program linking failed: {infoLog}");
-        }
-
-        // Cleanup.
-        GL.DetachShader(Handle, vertexShader);
-        GL.DetachShader(Handle, fragmentShader);
-        GL.DeleteShader(vertexShader);
-        GL.DeleteShader(fragmentShader);
-
+        Handle = program;
         GLUtils.CheckGLError("Shader creation");
     }
 
@@ -120,21 +144,17 @@ public class Shader
     #endregion
 
     #region Resource Management
-    protected virtual void Dispose(bool disposing)
-    {
-        if (!_disposed)
-        {
-            GL.DeleteProgram(Handle);
-            _disposed = true;
-        }
-    }
-
     public void Dispose()
     {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
+        if (Handle == 0)
+        {
+            return;
+        }
 
-    ~Shader() => Dispose(false);
+        GLUtils.AssertRenderThread("Shader disposal");
+        GL.DeleteProgram(Handle);
+        Handle = 0;
+        _uniformLocations.Clear();
+    }
     #endregion
 }
