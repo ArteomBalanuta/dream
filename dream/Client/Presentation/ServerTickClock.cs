@@ -2,8 +2,14 @@ using Dream.Simulation.Runtime;
 
 namespace Dream.Client.Presentation;
 
-// Estimates the server's current tick on the client. Remote players render at
+// Estimates the server's current tick on the client. Remote players render near
 // EstimatedTick - InterpolationDelayTicks, so they stay between two received snapshots.
+//
+// RenderTick follows that target without ever stepping back: a late snapshot pulls the estimate
+// back and widens the delay at the same moment, which used to jump remote players backwards.
+// Instead of moving its position, RenderTick slews its advance rate (between 0x and 2x real time)
+// toward the target, so it holds or slows while the target is behind and catches up when it is
+// ahead. Only Reset and snaps move it discontinuously.
 public sealed class ServerTickClock
 {
     public const double DefaultInterpolationDelayTicks = 6d;
@@ -20,6 +26,10 @@ public sealed class ServerTickClock
     private const double DelaySafetyTicks = 1d;
     private const double InitialIntervalTicks = 2d;
     private const double InitialJitterTicks = 1.5d;
+    // Fraction of the render error closed per elapsed tick of real time (time constant 4 ticks).
+    private const double RenderRateGain = 0.25d;
+    private const double MinRenderRate = 0d;
+    private const double MaxRenderRate = 2d;
 
     private double _estimatedTick;
     private ulong _newestObservedTick;
@@ -27,6 +37,7 @@ public sealed class ServerTickClock
     private bool _hasObservation;
     private double _snapshotIntervalTicks = InitialIntervalTicks;
     private double _jitterTicks = InitialJitterTicks;
+    private double _renderTick;
 
     public bool HasEstimate => _hasEstimate;
 
@@ -37,6 +48,11 @@ public sealed class ServerTickClock
     public double JitterTicks => _jitterTicks;
 
     public double SnapshotIntervalTicks => _snapshotIntervalTicks;
+
+    // Monotonic tick remote players are rendered at; see the class comment.
+    public double RenderTick => _renderTick;
+
+    private double RenderTargetTick => _estimatedTick - InterpolationDelayTicks;
 
     public double InterpolationDelayTicks => Math.Clamp(
         _snapshotIntervalTicks + (JitterDelayScale * _jitterTicks) + DelaySafetyTicks,
@@ -51,6 +67,7 @@ public sealed class ServerTickClock
         _hasObservation = true;
         _snapshotIntervalTicks = InitialIntervalTicks;
         _jitterTicks = InitialJitterTicks;
+        _renderTick = RenderTargetTick;
     }
 
     public void Advance(double elapsedSeconds)
@@ -60,7 +77,23 @@ public sealed class ServerTickClock
             return;
         }
 
-        _estimatedTick += elapsedSeconds * SimulationClock.AuthoritativeTicksPerSecond;
+        double elapsedTicks = elapsedSeconds * SimulationClock.AuthoritativeTicksPerSecond;
+        double error = RenderTargetTick - _renderTick;
+        _estimatedTick += elapsedTicks;
+
+        double target = RenderTargetTick;
+        if (error + elapsedTicks > SnapThresholdTicks)
+        {
+            // Far behind (for example after a long stall): catching up gradually would only
+            // fast-forward through stale motion, so jump forward.
+            _renderTick = target;
+            return;
+        }
+
+        double rate = Math.Clamp(1d + (error * RenderRateGain), MinRenderRate, MaxRenderRate);
+        double next = _renderTick + (elapsedTicks * rate);
+        // Stop at the target instead of crossing it on a long frame, and never move backwards.
+        _renderTick = Math.Min(next, Math.Max(_renderTick, target));
     }
 
     public void Observe(ulong snapshotTick)
@@ -109,5 +142,6 @@ public sealed class ServerTickClock
         _newestObservedTick = tick;
         _hasEstimate = true;
         _hasObservation = true;
+        _renderTick = RenderTargetTick;
     }
 }

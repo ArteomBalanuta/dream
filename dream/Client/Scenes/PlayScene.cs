@@ -78,8 +78,7 @@ public class PlayScene : IDisposable
     private double _lastHudDrawMilliseconds;
     private PlayerInventorySnapshot? _inventory;
 
-    private double RemotePlayerRenderTick =>
-        _serverTickClock.EstimatedTick - _serverTickClock.InterpolationDelayTicks;
+    private double RemotePlayerRenderTick => _serverTickClock.RenderTick;
 
     public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
 
