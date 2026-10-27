@@ -21,9 +21,23 @@ public sealed class TransportJsonCodec : IProtocolCodec
         }
     };
 
+    // The hand-written converters (WIRE-10) cover the hot types: the client command and the
+    // per-actor snapshot entry. They are registered here rather than with [JsonConverter] on the
+    // types, so the reflection serializer stays available as an independent byte-identity
+    // reference for them, and they write exactly what these options' reflection contracts wrote.
     static TransportJsonCodec()
     {
         SerializerOptions.Converters.Add(new Vector3JsonConverter());
+        SerializerOptions.Converters.Add(new PlayerCommandMessageJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerCommandFrameJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerSessionIdJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerModeSwitchIntentJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerMoveIntentJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerLookIntentJsonConverter());
+        SerializerOptions.Converters.Add(new ActorSnapshotJsonConverter());
+        SerializerOptions.Converters.Add(new ActorSnapshotListJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerCombatStatsSnapshotJsonConverter());
+        SerializerOptions.Converters.Add(new PlayerProgressionSnapshotJsonConverter());
     }
 
     // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on
