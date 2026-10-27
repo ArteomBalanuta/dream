@@ -16,50 +16,64 @@ public readonly record struct WorldGeometryRenderBatch(
 
 public static class WorldRenderBatchPlanner
 {
-    public static List<WorldRenderBatch> CreateBatches(GeometryRenderExport export)
+    public static List<WorldRenderBatch> CreateBatches(
+        GeometryRenderExport export,
+        Func<GeometryMaterialId, AnimatedModel?>? modelResolver = null)
     {
-        return CreateBatches(export.DynamicCompatibilityCubes);
+        return CreateBatches(export.DynamicCompatibilityCubes, modelResolver);
     }
 
-    public static List<WorldGeometryRenderBatch> CreateGeometryBlockBatches(IEnumerable<GeometryRenderBlockDescriptor> blocks)
+    public static List<WorldGeometryRenderBatch> CreateGeometryBlockBatches(
+        IEnumerable<GeometryRenderBlockDescriptor> blocks,
+        Func<GeometryMaterialId, AnimatedModel?>? modelResolver = null)
     {
-        var grouped = new Dictionary<(AnimatedModel? Animation, string ShaderName), List<GeometryRenderBlockDescriptor>>();
+        Func<GeometryMaterialId, AnimatedModel?> resolve = modelResolver ?? CubeMaterialModelCatalog.Resolve;
+        var batchIndices = new Dictionary<(GeometryMaterialId MaterialId, string ShaderName), int>();
+        var batches = new List<WorldGeometryRenderBatch>();
+        var members = new List<List<GeometryRenderBlockDescriptor>>();
 
         foreach (GeometryRenderBlockDescriptor block in blocks)
         {
-            var key = (block.Animation, block.ShaderName);
-            if (!grouped.TryGetValue(key, out List<GeometryRenderBlockDescriptor>? batch))
+            var key = (block.MaterialId, block.ShaderName);
+            if (!batchIndices.TryGetValue(key, out int index))
             {
-                batch = new List<GeometryRenderBlockDescriptor>();
-                grouped[key] = batch;
+                index = batches.Count;
+                batchIndices[key] = index;
+                var batchBlocks = new List<GeometryRenderBlockDescriptor>();
+                members.Add(batchBlocks);
+                batches.Add(new WorldGeometryRenderBatch(resolve(block.MaterialId), block.ShaderName, batchBlocks));
             }
 
-            batch.Add(block);
+            members[index].Add(block);
         }
 
-        return grouped
-            .Select(pair => new WorldGeometryRenderBatch(pair.Key.Animation, pair.Key.ShaderName, pair.Value))
-            .ToList();
+        return batches;
     }
 
-    public static List<WorldRenderBatch> CreateBatches(IEnumerable<Cube> cubes)
+    public static List<WorldRenderBatch> CreateBatches(
+        IEnumerable<Cube> cubes,
+        Func<GeometryMaterialId, AnimatedModel?>? modelResolver = null)
     {
-        var grouped = new Dictionary<(AnimatedModel? Animation, string ShaderName), List<Cube>>();
+        Func<GeometryMaterialId, AnimatedModel?> resolve = modelResolver ?? CubeMaterialModelCatalog.Resolve;
+        var batchIndices = new Dictionary<(GeometryMaterialId MaterialId, string ShaderName), int>();
+        var batches = new List<WorldRenderBatch>();
+        var members = new List<List<Cube>>();
 
         foreach (Cube cube in cubes)
         {
-            var key = (cube.Animation, cube.ShaderName);
-            if (!grouped.TryGetValue(key, out List<Cube>? batch))
+            var key = (cube.MaterialId, cube.ShaderName);
+            if (!batchIndices.TryGetValue(key, out int index))
             {
-                batch = new List<Cube>();
-                grouped[key] = batch;
+                index = batches.Count;
+                batchIndices[key] = index;
+                var batchCubes = new List<Cube>();
+                members.Add(batchCubes);
+                batches.Add(new WorldRenderBatch(resolve(cube.MaterialId), cube.ShaderName, batchCubes));
             }
 
-            batch.Add(cube);
+            members[index].Add(cube);
         }
 
-        return grouped
-            .Select(pair => new WorldRenderBatch(pair.Key.Animation, pair.Key.ShaderName, pair.Value))
-            .ToList();
+        return batches;
     }
 }

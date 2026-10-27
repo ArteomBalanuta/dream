@@ -93,7 +93,6 @@ public class WorldVisibilityTests
             new Vector3(2.75f, 0f, -1.2f),
             1f,
             GeometryMaterialId.Grass,
-            null,
             "default");
 
         bool visible = WorldVisibility.IsGeometryBlockVisible(cameraPosition, cameraFront, block);
@@ -111,7 +110,6 @@ public class WorldVisibilityTests
             new Vector3(2.75f, 0f, -1.2f),
             WorldMicroGrid.MicroCellSize,
             GeometryMaterialId.Stone,
-            null,
             "default",
             SizeOverride: new Vector3(3f, WorldMicroGrid.MicroCellSize, 3f));
 

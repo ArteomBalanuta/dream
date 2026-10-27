@@ -122,7 +122,6 @@ public class StaticWorldChunkMeshBuilderTests
         Cube cube = new(isEmpty: false, isSolid: true)
         {
             Position = new Vector3(0.5f, 0.5f, 0.5f),
-            Animation = null!,
             ShaderName = "default"
         };
         GeometryRenderBlockDescriptor block = new(
@@ -130,7 +129,6 @@ public class StaticWorldChunkMeshBuilderTests
             new Vector3(1.5f, 0.5f, 0.5f),
             1f,
             GeometryMaterialId.Stone,
-            Animation: null,
             ShaderName: "cube");
         GeometryRenderExport export = new(
             DirtyCells: [],
@@ -151,7 +149,6 @@ public class StaticWorldChunkMeshBuilderTests
         Cube cube = new(isEmpty: false, isSolid: true)
         {
             Position = new Vector3(2.5f, 0.5f, 3.5f),
-            Animation = null!,
             ShaderName = "default"
         };
         GeometryCellRecord sandCell = new(

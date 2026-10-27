@@ -411,13 +411,14 @@ public class Render
 
     public void DrawCube(Camera camera, Cube cube)
     {
-        float assetScale = ResolveCubeAssetScale(cube.Animation);
+        AnimatedModel? model = CubeMaterialModelCatalog.Resolve(cube.MaterialId);
+        float assetScale = ResolveCubeAssetScale(model);
         Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
 
         // Use the cube's pre-calculated center position directly
-        if (cube.Animation != null)
+        if (model != null)
         {
-            cube.Animation.Render(_shaders[cube.ShaderName],
+            model.Render(_shaders[cube.ShaderName],
                                 camera.GetViewMatrix(),
                                 _projection,
                                 modelMatrix);
@@ -430,12 +431,13 @@ public class Render
 
     public void DrawGeometryBlock(Camera camera, GeometryRenderBlockDescriptor block)
     {
-        float assetScale = ResolveCubeAssetScale(block.Animation);
+        AnimatedModel? model = CubeMaterialModelCatalog.Resolve(block.MaterialId);
+        float assetScale = ResolveCubeAssetScale(model);
         Matrix4 modelMatrix = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.VisualSize, assetScale);
 
-        if (block.Animation != null)
+        if (model != null)
         {
-            block.Animation.Render(_shaders[block.ShaderName],
+            model.Render(_shaders[block.ShaderName],
                 camera.GetViewMatrix(),
                 _projection,
                 modelMatrix);
@@ -478,7 +480,7 @@ public class Render
         for (int i = 0; i < blocks.Count; i++)
         {
             GeometryRenderBlockDescriptor block = blocks[i];
-            float assetScale = ResolveCubeAssetScale(block.Animation);
+            float assetScale = ResolveCubeAssetScale(CubeMaterialModelCatalog.Resolve(block.MaterialId));
             modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(
                 block.Center,
                 block.VisualSize,
@@ -1260,7 +1262,7 @@ public class Render
         for (int i = 0; i < cubes.Count; i++)
         {
             Cube cube = cubes[i];
-            float assetScale = ResolveCubeAssetScale(cube.Animation);
+            float assetScale = ResolveCubeAssetScale(CubeMaterialModelCatalog.Resolve(cube.MaterialId));
             modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
         }
 

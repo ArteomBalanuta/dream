@@ -1,4 +1,3 @@
-using Dream.Rendering.Models;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.World;
@@ -18,7 +17,6 @@ public class Cube
     public bool IsEmpty { get; set; } = true;
     public bool IsSolid { get; set; } = false;
     public bool IsFire { get; set; } = false;
-    public AnimatedModel Animation { get; set; }
     public string ShaderName { get; set; } = "default";
 
     public Cube(bool isEmpty = true, bool isSolid = false)

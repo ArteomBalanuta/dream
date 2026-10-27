@@ -1,7 +1,5 @@
 using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
-using Dream.Rendering.Core;
-using Dream.Rendering.Models;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.World;
@@ -12,11 +10,9 @@ public class WorldGenerator
     private const int DefaultSubdivisionResolution = 10;
     private const int SculptureSubdivisionResolution = WorldMicroGrid.MicroCellsPerWorldCell;
     private const int DefaultSpawnClearRadius = 4;
-    private readonly bool _loadVisualAssets;
 
     public WorldGenerator(bool loadVisualAssets)
     {
-        _loadVisualAssets = loadVisualAssets;
     }
 
     public GeometryCellRecord CreateGeometryCell(Vector3 cellPosition, bool isFloor)
@@ -88,7 +84,6 @@ public class WorldGenerator
             MaterialId = geometryCell.Definition.MaterialId,
             IsEmpty = false,
             IsSolid = true,
-            Animation = ResolveAnimation(geometryCell.Definition.MaterialId),
             ShaderName = "cube"
         };
     }
@@ -106,7 +101,6 @@ public class WorldGenerator
             center,
             sideLength,
             geometryCell.Definition.MaterialId,
-            ResolveAnimation(geometryCell.Definition.MaterialId),
             "cube",
             subcellKey,
             visualFillScale,
@@ -454,22 +448,6 @@ public class WorldGenerator
         }
 
         return Math.Max(1, maxHeight - (distance / 2));
-    }
-
-    private AnimatedModel? ResolveAnimation(GeometryMaterialId materialId)
-    {
-        if (!_loadVisualAssets)
-        {
-            return null;
-        }
-
-        return materialId switch
-        {
-            GeometryMaterialId.Dirt => ModelAssets.DirtCube,
-            GeometryMaterialId.Stone => ModelAssets.StoneCube,
-            GeometryMaterialId.Grass => ModelAssets.GrassCube,
-            _ => null
-        };
     }
 
     private static int Hash(int x, int z)
