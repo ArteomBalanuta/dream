@@ -320,7 +320,8 @@ public static class RemoteWorldMutationApplier
 
         if (localCube == null)
         {
-            map.TryAddCube(new Vector3(cell.X, cell.Y, cell.Z), materialId: materialId);
+            // No physics: the fracture below removes this cube at once, so its body would be thrown away.
+            map.TryAddCube(new Vector3(cell.X, cell.Y, cell.Z), withPhysics: false, materialId: materialId);
         }
 
         map.FractureCubeIntoPieces(cell);
