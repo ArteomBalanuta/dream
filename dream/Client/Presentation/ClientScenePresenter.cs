@@ -18,7 +18,7 @@ public sealed class ClientScenePresenter
         _localSessionId = localSessionId;
     }
 
-    public void ApplySnapshot(ServerSnapshotEnvelope snapshot, double receivedAtSeconds)
+    public void ApplySnapshot(ServerSnapshotEnvelope snapshot)
     {
         HashSet<int> observedRemoteActorIds = [];
         HashSet<string> observedPlayerSessions = new(StringComparer.Ordinal);
@@ -54,8 +54,7 @@ public sealed class ClientScenePresenter
                 actor.SessionId,
                 snapshot.ServerTick,
                 actor.Position,
-                actor.Facing,
-                receivedAtSeconds));
+                actor.Facing));
         }
 
         foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers.ToArray())
@@ -100,6 +99,9 @@ public sealed class ClientScenePresenter
             _localSessionId = joinAccepted.SessionId;
         }
 
+        // A join starts a new server tick timeline; samples keyed by the old one would never be replaced.
+        _remotePlayers.Clear();
+
         foreach (PlayerRosterEntry entry in joinAccepted.EffectiveRoster)
         {
             string displayName = string.IsNullOrWhiteSpace(entry.DisplayName)
@@ -117,8 +119,7 @@ public sealed class ClientScenePresenter
                 PlayerInteractionMode.Building,
                 null,
                 Array.Empty<WorldMutationDelta>(),
-                Array.Empty<DamageEventDelta>()),
-                receivedAtSeconds: 0d);
+                Array.Empty<DamageEventDelta>()));
         }
     }
 
@@ -131,12 +132,12 @@ public sealed class ClientScenePresenter
             .ToArray();
     }
 
-    public IReadOnlyList<RemotePlayerPresentationState> BuildRemotePlayerStates(double renderTimeSeconds)
+    public IReadOnlyList<RemotePlayerPresentationState> BuildRemotePlayerStates(double renderTick)
     {
         List<RemotePlayerPresentationState> states = [];
         foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers)
         {
-            if (!entry.Buffer.TrySample(renderTimeSeconds, out InterpolatedActorPose pose))
+            if (!entry.Buffer.TrySample(renderTick, out InterpolatedActorPose pose))
             {
                 continue;
             }
@@ -155,14 +156,14 @@ public sealed class ClientScenePresenter
         return states;
     }
 
-    public ClientScenePresenterDebugState CaptureDebugState(double renderTimeSeconds)
+    public ClientScenePresenterDebugState CaptureDebugState(double renderTick)
     {
         List<string> remoteSessions = [];
         int sampledRemoteCount = 0;
         foreach ((int actorId, RemotePlayerEntry entry) in _remotePlayers)
         {
             remoteSessions.Add($"{entry.SessionId}#{actorId}/{entry.DisplayName}/alive={entry.IsAlive}");
-            if (entry.Buffer.TrySample(renderTimeSeconds, out _))
+            if (entry.Buffer.TrySample(renderTick, out _))
             {
                 sampledRemoteCount++;
             }

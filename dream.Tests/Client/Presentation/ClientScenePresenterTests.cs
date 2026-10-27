@@ -12,22 +12,6 @@ using Dream.Simulation.World;
 namespace Dream.Tests.Client.Presentation;
 
 
-public class RemotePlayerInterpolationBufferTests
-{
-    [Fact]
-    public void Sample_InterpolatesBetweenAuthoritativeRemoteSnapshots()
-    {
-        RemotePlayerInterpolationBuffer buffer = new();
-        buffer.AddSample(new RemotePlayerSnapshotSample(10, "remote-1", 1, new Vector3(0f, 0f, 0f), Vector3.UnitZ, 1.0));
-        buffer.AddSample(new RemotePlayerSnapshotSample(10, "remote-1", 2, new Vector3(10f, 0f, 0f), Vector3.UnitZ, 2.0));
-
-        Assert.True(buffer.TrySample(1.5, out InterpolatedActorPose pose));
-        Assert.Equal(5f, pose.Position.X, 4);
-        Assert.Equal(0f, pose.Position.Y, 4);
-        Assert.Equal(0f, pose.Position.Z, 4);
-    }
-}
-
 public class ClientScenePresenterTests
 {
     [Fact]
@@ -87,10 +71,10 @@ public class ClientScenePresenterTests
             Array.Empty<WorldMutationDelta>(),
             Array.Empty<DamageEventDelta>());
 
-        presenter.ApplySnapshot(snapshot, receivedAtSeconds: 1.0);
-        presenter.ApplySnapshot(snapshot, receivedAtSeconds: 2.0);
+        presenter.ApplySnapshot(snapshot);
+        presenter.ApplySnapshot(snapshot);
 
-        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(renderTimeSeconds: 1.5));
+        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(renderTick: 1.5));
         Assert.Equal("session-a", remote.SessionId);
         Assert.Equal("Host Player", remote.DisplayName);
     }
@@ -118,7 +102,7 @@ public class ClientScenePresenterTests
             ]));
 
         RemotePlayerPresentationState remote = Assert.Single(
-            presenter.BuildRemotePlayerStates(renderTimeSeconds: 0));
+            presenter.BuildRemotePlayerStates(renderTick: 12d - ServerTickClock.DefaultInterpolationDelayTicks));
         Assert.Equal("session-a", remote.SessionId);
         Assert.Equal("Host Player", remote.DisplayName);
         Assert.Equal(5f, remote.Pose.Position.X, 3);
@@ -139,8 +123,7 @@ public class ClientScenePresenterTests
                 PlayerInteractionMode.Building,
                 null,
                 Array.Empty<WorldMutationDelta>(),
-                Array.Empty<DamageEventDelta>()),
-            receivedAtSeconds: 1.0);
+                Array.Empty<DamageEventDelta>()));
         presenter.ApplySnapshot(
             new ServerSnapshotEnvelope(
                 2,
@@ -152,10 +135,9 @@ public class ClientScenePresenterTests
                 PlayerInteractionMode.Building,
                 null,
                 Array.Empty<WorldMutationDelta>(),
-                Array.Empty<DamageEventDelta>()),
-            receivedAtSeconds: 2.0);
+                Array.Empty<DamageEventDelta>()));
 
-        IReadOnlyList<RemotePlayerPresentationState> states = presenter.BuildRemotePlayerStates(renderTimeSeconds: 1.5);
+        IReadOnlyList<RemotePlayerPresentationState> states = presenter.BuildRemotePlayerStates(renderTick: 1.5);
 
         RemotePlayerPresentationState remote = Assert.Single(states);
         Assert.Equal(2, remote.ActorId);
@@ -194,12 +176,57 @@ public class ClientScenePresenterTests
                 PlayerInteractionMode.Building,
                 null,
                 Array.Empty<WorldMutationDelta>(),
-                Array.Empty<DamageEventDelta>()),
-            receivedAtSeconds: 2.0);
+                Array.Empty<DamageEventDelta>()));
 
         PlayerRosterEntry remote = Assert.Single(
             presenter.BuildPlayerRoster(),
             entry => entry.SessionId == "session-b");
         Assert.Equal("Player B", remote.DisplayName);
+    }
+
+    [Fact]
+    public void ApplySnapshot_SameFrameBurst_InterpolatesByServerTick()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "local-player");
+        presenter.ApplySnapshot(CreateRemoteSnapshot(20, new Vector3(0f, 0f, 0f)));
+        presenter.ApplySnapshot(CreateRemoteSnapshot(21, new Vector3(2f, 0f, 0f)));
+        presenter.ApplySnapshot(CreateRemoteSnapshot(22, new Vector3(4f, 0f, 0f)));
+
+        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(renderTick: 20.5));
+        Assert.Equal(1f, remote.Pose.Position.X, 4);
+        Assert.Equal(1, presenter.CaptureDebugState(renderTick: 20.5).SampledRemoteCount);
+    }
+
+    [Fact]
+    public void ApplyJoinAccepted_StartsNewTickTimelineForRemotePlayers()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "local-player");
+        presenter.ApplySnapshot(CreateRemoteSnapshot(5000, new Vector3(9f, 0f, 0f)));
+
+        presenter.ApplyJoinAccepted(new JoinAcceptedMessage(
+            "local-player",
+            1,
+            3,
+            InitialWorld: null,
+            Roster: [new PlayerRosterEntry("remote-1", 2, "Remote One")]));
+        presenter.ApplySnapshot(CreateRemoteSnapshot(4, new Vector3(1f, 0f, 0f)));
+
+        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(renderTick: 4));
+        Assert.Equal(1f, remote.Pose.Position.X, 4);
+    }
+
+    private static ServerSnapshotEnvelope CreateRemoteSnapshot(ulong serverTick, Vector3 remotePosition)
+    {
+        return new ServerSnapshotEnvelope(
+            serverTick,
+            new Dictionary<string, ulong>(),
+            [
+                new ActorSnapshot(1, CreatureKind.Player, "local-player", new Vector3(1f, 0f, 1f), -Vector3.UnitZ, 100, 100, true),
+                new ActorSnapshot(2, CreatureKind.Player, "remote-1", remotePosition, -Vector3.UnitZ, 100, 100, true, null, null, "Remote One")
+            ],
+            PlayerInteractionMode.Building,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
     }
 }
