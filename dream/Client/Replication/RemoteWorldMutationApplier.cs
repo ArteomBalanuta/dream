@@ -308,21 +308,22 @@ public static class RemoteWorldMutationApplier
             "client.world.fracture-fallback",
             () => $"source={source} cell=({cell.X},{cell.Y},{cell.Z}) material={materialId}");
 
-        if (map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z) == null)
+        // Put the resolved material on the cell before fracturing, so the rubble and its bodies are
+        // built once with the right material instead of being rebuilt after the fracture.
+        Cube? localCube = map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z);
+        if (localCube != null &&
+            map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z)?.Definition.MaterialId != materialId &&
+            map.RemoveCube(localCube))
+        {
+            localCube = null;
+        }
+
+        if (localCube == null)
         {
             map.TryAddCube(new Vector3(cell.X, cell.Y, cell.Z), materialId: materialId);
         }
 
-        if (!map.FractureCubeIntoPieces(cell))
-        {
-            return;
-        }
-
-        if (map.TryGetRubbleAtCell(cell) is { FracturePieces: { } pieces } rubble &&
-            rubble.Definition.MaterialId != materialId)
-        {
-            map.RestoreFracturePieces(cell, materialId, pieces, withPhysics: true);
-        }
+        map.FractureCubeIntoPieces(cell);
     }
 
     private static void ApplyCubeMovedMutation(Map map, WorldMutationDelta mutation, int sourceX, int sourceY, int sourceZ)
