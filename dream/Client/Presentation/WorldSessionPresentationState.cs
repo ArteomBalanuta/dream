@@ -6,7 +6,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
-namespace Dream.Simulation.Runtime;
+namespace Dream.Client.Presentation;
 
 
 public sealed record WorldSessionPresentationState(

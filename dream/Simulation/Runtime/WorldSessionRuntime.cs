@@ -1,13 +1,8 @@
 using OpenTK.Mathematics;
-using System.Diagnostics;
-using Dream.Application;
 using Dream.Client.Input;
-using Dream.Client.Presentation;
 using Dream.Client.Replication;
-using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
 using Dream.Server.Persistence;
 using Dream.Server.Rules;
@@ -64,7 +59,6 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
-    private double _lastPhysicsStepMilliseconds;
     private int _nextRemoteActorId = 2;
     private long _nextItemInstanceId = 1;
 
@@ -344,10 +338,7 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
             secondary.Simulate(delta, playerTuning);
         }
 
-        Stopwatch physicsStopwatch = Stopwatch.StartNew();
         Physics.StepSimulationFixed(delta);
-        physicsStopwatch.Stop();
-        _lastPhysicsStepMilliseconds = physicsStopwatch.Elapsed.TotalMilliseconds;
         if (!Physics.IsPlayerBodyParked)
         {
             Player.SyncCameraFromBody(playerTuning);
@@ -432,50 +423,6 @@ public sealed class WorldSessionRuntime : IDisposable, IClientWorldState
             _lastAppliedCommandFrame,
             playerTuning,
             allowGameplaySimulation);
-    }
-
-    public WorldSessionPresentationState CapturePresentationState(
-        float maxRenderDistance,
-        float presentationLeadSeconds = 0f,
-        CameraViewMode cameraViewMode = CameraViewMode.FirstPerson)
-    {
-        Camera firstPersonCamera = Player.CreatePresentationCamera(presentationLeadSeconds);
-        Camera presentationCamera = ThirdPersonCameraRig.Resolve(
-            firstPersonCamera,
-            Player.GetWorldPosition(),
-            cameraViewMode);
-
-        Stopwatch renderExportStopwatch = Stopwatch.StartNew();
-        GeometryRenderExport visibleWorld = Map.CapturePresentationGeometryRenderExport(
-            presentationCamera.Position,
-            maxRenderDistance);
-        renderExportStopwatch.Stop();
-
-        return WorldSessionPresentationState.Create(
-            presentationCamera,
-            visibleWorld,
-            _enemies.ActiveActors,
-            Physics.MapCubeBodies,
-            Player.PhysicsBody,
-            Player.Combatant.Health,
-            GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
-            Player.Combatant.DerivedStats,
-            Player.Combatant.Stats,
-            Player.Combatant.Level,
-            Player.Combatant.Experience,
-            _combatFormulaService.EvaluateExperienceToNextLevel(
-                Player.Combatant.Level,
-                Player.Combatant.Experience),
-            new FramePerformanceSnapshot(
-                renderExportStopwatch.Elapsed.TotalMilliseconds,
-                _lastPhysicsStepMilliseconds,
-                visibleWorld.CompatibilityCubes.Count + visibleWorld.DynamicCompatibilityCubes.Count,
-                visibleWorld.Blocks.Count + visibleWorld.DynamicBlocks.Count,
-                0,
-                0,
-                0,
-                0,
-                Physics.MapCubeBodies.Count));
     }
 
     public bool TryResolveCombatActor(int actorId, out CombatActorHandle actor)

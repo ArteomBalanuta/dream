@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Client.Presentation;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -8,7 +9,7 @@ using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Dream.Rendering.Hud;
 
-namespace Dream.Tests.Simulation.Runtime;
+namespace Dream.Tests.Client.Presentation;
 
 
 public class WorldSessionPresentationStateTests
