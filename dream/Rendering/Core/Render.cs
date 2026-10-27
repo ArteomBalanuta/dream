@@ -31,6 +31,8 @@ public class Render
     private readonly ReusableMatrixBuffer _geometryBlockMatrices = new();
     private readonly ReusableMatrixBuffer _animatedCubeMatrices = new();
     private readonly StaticTerrainTextureCache _staticTerrainTextures = new();
+    private readonly List<WorldActorLabelState> _worldActorLabels = new();
+    private readonly ActorHealthLabelCache _actorHealthLabels = new();
 
     private int _vertexArrayObject;
     private int _vertexBufferObject;
@@ -39,7 +41,7 @@ public class Render
     private Matrix4 _projection;
 
     // Cube vertex data: note that you might want to use indexed drawing.
-    private readonly float[] _cubeVertices = {
+    private static readonly float[] CubeVertices = {
     // Front face
     -0.5f, -0.5f,  0.5f,  // Bottom-left
      0.5f, -0.5f,  0.5f,  // Bottom-right
@@ -76,6 +78,9 @@ public class Render
      0.5f, -0.5f, -0.5f,  // Top-right
     -0.5f, -0.5f, -0.5f   // Top-left
     };
+
+    // One four-vertex triangle fan per face, built once instead of on every draw.
+    private static readonly (int First, int Count)[] CubeFaceDrawRanges = CreateCubeFaceDrawRanges(CubeVertices.Length / 3);
 
     private int _hudVao;
     private int _hudVbo;
@@ -349,7 +354,7 @@ public class Render
 
         GL.BindVertexArray(_vertexArrayObject);
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
-        GL.BufferData(BufferTarget.ArrayBuffer, _cubeVertices.Length * sizeof(float), _cubeVertices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer, CubeVertices.Length * sizeof(float), CubeVertices, BufferUsageHint.StaticDraw);
 
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), 0);
         GL.EnableVertexAttribArray(0);
@@ -553,7 +558,7 @@ public class Render
 
     private void DrawCubeFaceFans()
     {
-        foreach ((int first, int count) in CreateCubeFaceDrawRanges(_cubeVertices.Length / 3))
+        foreach ((int first, int count) in CubeFaceDrawRanges)
         {
             GL.DrawArrays(PrimitiveType.TriangleFan, first, count);
         }
@@ -680,8 +685,10 @@ public class Render
         IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
         IReadOnlyList<EnemyActor> activeEnemies)
     {
-        IReadOnlyList<WorldActorLabelState> labels =
-            [.. ActorWorldLabelBuilder.CreateRemotePlayerLabels(remotePlayers), .. ActorWorldLabelBuilder.CreateEnemyLabels(activeEnemies)];
+        List<WorldActorLabelState> labels = _worldActorLabels;
+        labels.Clear();
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels);
+        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels);
         if (labels.Count == 0)
         {
             return;
@@ -855,24 +862,32 @@ public class Render
         ImGui.Text(status.LevelLabel);
         ImGui.Text(status.ExperiencePercentLabel);
         ImGui.Text(status.ExperienceProgressLabel);
+        Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
         if (!string.IsNullOrWhiteSpace(connectionLabel))
         {
-            ImGui.Text($"Server: {connectionLabel}");
+            HudText.Text(hudText, $"Server: {connectionLabel}");
         }
         if (playerRoster.Count > 0)
         {
-            ImGui.Text($"Players: {playerRoster.Count}");
+            HudText.Text(hudText, $"Players: {playerRoster.Count}");
         }
         if (!string.IsNullOrWhiteSpace(rejectionMessage))
         {
             ImGui.TextColored(new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f), rejectionMessage);
         }
-        ImGui.Text($"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
+        HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
         if (settings.ShowPerformanceCounters && performance.HasCounters)
         {
-            foreach (string line in performance.ToHudLines())
+            for (int lineIndex = 0; lineIndex < FramePerformanceSnapshot.HudLineCount; lineIndex++)
             {
-                ImGui.Text(line);
+                if (performance.TryFormatHudLine(lineIndex, hudText, out int lineBytes))
+                {
+                    HudText.TextUnformatted(hudText[..lineBytes]);
+                }
+                else
+                {
+                    ImGui.Text(performance.FormatHudLine(lineIndex));
+                }
             }
         }
         ImGui.Text("Press Esc for settings");
@@ -1104,7 +1119,7 @@ public class Render
             for (int column = 0; column < snapshot.Columns; column++)
             {
                 int slotIndex = (row * snapshot.Columns) + column;
-                InventorySlotSnapshot slot = snapshot.Slots.FirstOrDefault(candidate => candidate.SlotIndex == slotIndex);
+                InventorySlotSnapshot slot = FindInventorySlot(snapshot.Slots, slotIndex);
                 DrawInventorySlotButton(slot, isEquippedPanel: false, ref equipInventorySlotIndex);
                 if (column < snapshot.Columns - 1)
                 {
@@ -1114,6 +1129,19 @@ public class Render
         }
 
         ImGui.End();
+    }
+
+    private static InventorySlotSnapshot FindInventorySlot(IReadOnlyList<InventorySlotSnapshot> slots, int slotIndex)
+    {
+        for (int index = 0; index < slots.Count; index++)
+        {
+            if (slots[index].SlotIndex == slotIndex)
+            {
+                return slots[index];
+            }
+        }
+
+        return default;
     }
 
     private static void DrawInventorySlotButton(

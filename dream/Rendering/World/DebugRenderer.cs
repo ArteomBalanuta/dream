@@ -13,6 +13,7 @@ public class DebugRenderer
 {
     public const int MaxCollisionBodiesPerFrame = 1024;
     private readonly Render _render;
+    private readonly CollisionDebugBodySelector _collisionBodySelector = new();
 
     public DebugRenderer(Render render)
     {
@@ -21,9 +22,10 @@ public class DebugRenderer
 
     public void DrawCollisionBodies(IEnumerable<RigidBody> bodies, Camera camera)
     {
-        foreach (RigidBody body in SelectCollisionBodiesForDebug(bodies, camera))
+        IReadOnlyList<RigidBody> selected = _collisionBodySelector.Select(bodies, camera);
+        for (int index = 0; index < selected.Count; index++)
         {
-            _render.DrawCollisionBody(body, camera);
+            _render.DrawCollisionBody(selected[index], camera);
         }
     }
 
@@ -37,24 +39,7 @@ public class DebugRenderer
             return Array.Empty<RigidBody>();
         }
 
-        List<(RigidBody Body, float DistanceSquared)> visibleBodies = [];
-        foreach (RigidBody body in bodies)
-        {
-            if (!ShouldDrawCollisionBody(body) ||
-                !TryResolveDebugPosition(body, out Vector3 position) ||
-                !WorldVisibility.IsPositionVisible(camera.Position, camera.Front, position))
-            {
-                continue;
-            }
-
-            visibleBodies.Add((body, (position - camera.Position).LengthSquared));
-        }
-
-        return visibleBodies
-            .OrderBy(entry => entry.DistanceSquared)
-            .Take(maxBodies)
-            .Select(entry => entry.Body)
-            .ToArray();
+        return [.. new CollisionDebugBodySelector().Select(bodies, camera, maxBodies)];
     }
 
     public static bool ShouldDrawCollisionBody(RigidBody body)
@@ -64,7 +49,7 @@ public class DebugRenderer
             body.UserObject is GeometryDynamicBodyReference;
     }
 
-    private static bool TryResolveDebugPosition(RigidBody body, out Vector3 position)
+    internal static bool TryResolveDebugPosition(RigidBody body, out Vector3 position)
     {
         if (body.MotionState != null)
         {
@@ -86,4 +71,72 @@ public class DebugRenderer
                 return false;
         }
     }
+}
+
+// Picks the nearest visible collision bodies for debug drawing into buffers it reuses, so a
+// frame allocates nothing once the buffers have grown. The result is the same as a stable
+// OrderBy on distance followed by Take: ties keep their input order. The returned list is
+// reused by the next Select call.
+public sealed class CollisionDebugBodySelector
+{
+    private static readonly Comparison<Candidate> ByDistanceThenInputOrder = static (left, right) =>
+    {
+        int byDistance = left.DistanceSquared.CompareTo(right.DistanceSquared);
+        return byDistance != 0 ? byDistance : left.InputOrder.CompareTo(right.InputOrder);
+    };
+
+    private readonly List<Candidate> _candidates = [];
+    private readonly List<RigidBody> _selected = [];
+
+    public IReadOnlyList<RigidBody> Select(
+        IEnumerable<RigidBody> bodies,
+        Camera camera,
+        int maxBodies = DebugRenderer.MaxCollisionBodiesPerFrame)
+    {
+        _candidates.Clear();
+        _selected.Clear();
+        if (maxBodies <= 0)
+        {
+            return _selected;
+        }
+
+        if (bodies is IReadOnlyList<RigidBody> bodyList)
+        {
+            for (int index = 0; index < bodyList.Count; index++)
+            {
+                AddCandidate(bodyList[index], camera);
+            }
+        }
+        else
+        {
+            foreach (RigidBody body in bodies)
+            {
+                AddCandidate(body, camera);
+            }
+        }
+
+        _candidates.Sort(ByDistanceThenInputOrder);
+        int count = Math.Min(maxBodies, _candidates.Count);
+        for (int index = 0; index < count; index++)
+        {
+            _selected.Add(_candidates[index].Body);
+        }
+
+        _candidates.Clear();
+        return _selected;
+    }
+
+    private void AddCandidate(RigidBody body, Camera camera)
+    {
+        if (!DebugRenderer.ShouldDrawCollisionBody(body) ||
+            !DebugRenderer.TryResolveDebugPosition(body, out Vector3 position) ||
+            !WorldVisibility.IsPositionVisible(camera.Position, camera.Front, position))
+        {
+            return;
+        }
+
+        _candidates.Add(new Candidate(body, (position - camera.Position).LengthSquared, _candidates.Count));
+    }
+
+    private readonly record struct Candidate(RigidBody Body, float DistanceSquared, int InputOrder);
 }
