@@ -30,7 +30,9 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
     private const int EnemyActorId = 4300;
     // Several hits from two attackers, so the kill depends on every roll.
     private const int EnemyMaxHealth = 400;
-    private const string PrimarySession = "session-host";
+    // Ordinally first, so it also takes the primary seat when same-tick joins are applied in
+    // canonical order.
+    private const string PrimarySession = "session-a";
     private const string SessionB = "session-b";
     private const string SessionC = "session-c";
 
@@ -55,19 +57,27 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
         AssertScriptExercisedEverything(outcome);
     }
 
-    // The secondaries join in the opposite order on the second server. Every per-tick iteration
-    // is canonical now (NET-6), but a secondary's spawn point is still its join index:
-    // WorldSessionRuntime.CreateSecondaryPlayer (WorldSessionRuntime.cs:222) passes
-    // _secondaryRemotePlayers.Count to ResolveSecondaryRemoteSpawnPosition (line 2154), whose lane
-    // offset is 2 + index. session-b spawns at x+2 on one server and x+3 on the other, so the
-    // state differs from tick 0. Secondary actor ids are also allocated in join order
-    // (AllocateRemoteActorId, line 2149), which is why players are keyed by session id here.
-    [Fact(Skip = "Join-order dependent spawn: WorldSessionRuntime.CreateSecondaryPlayer (WorldSessionRuntime.cs:222) spawns a secondary at lane 2 + its join index (ResolveSecondaryRemoteSpawnPosition, WorldSessionRuntime.cs:2154), so the same sessions joining in a different order start at different positions.")]
-    public void SameSeed_SecondariesJoinInDifferentOrders_TwoServers_StayIdenticalEveryTick()
+    // The same three joins reach both servers before the same tick, in different arrival orders
+    // (and over different connection ids). With joins deferred to the tick boundary
+    // (DedicatedServerHost deferJoinsToTick), every join that arrived since the previous tick is
+    // applied in ordinal session-id order, so the primary seat, the secondary actor ids and the
+    // spawn lanes match, and the two servers stay identical every tick, including the join tick.
+    //
+    // Out of scope for this claim: joins that land in DIFFERENT ticks on the two servers (say
+    // session-c one tick later on the second server). That is a different input history, not a
+    // reordering of the same one: the seat, actor ids and spawn lanes legitimately depend on who
+    // was already present, so those servers are expected to differ.
+    [Theory]
+    [InlineData(SessionC, SessionB, PrimarySession)]
+    [InlineData(SessionB, PrimarySession, SessionC)]
+    public void SameSeed_SameTickJoinsInDifferentArrivalOrders_TwoServers_StayIdenticalEveryTick(string firstArrival, string secondArrival, string thirdArrival)
     {
-        using ScriptedServer first = new(Seed, [PrimarySession, SessionB, SessionC], reverseCommandDelivery: false);
-        using ScriptedServer second = new(Seed, [PrimarySession, SessionC, SessionB], reverseCommandDelivery: true);
+        string[] secondArrivalOrder = [firstArrival, secondArrival, thirdArrival];
+        using ScriptedServer first = new(Seed, [PrimarySession, SessionB, SessionC], reverseCommandDelivery: false, deferJoinsToTick: true);
+        using ScriptedServer second = new(Seed, secondArrivalOrder, reverseCommandDelivery: true, deferJoinsToTick: true);
 
+        Assert.Equal(first.Hash(), second.Hash());
+        Assert.Equal(first.DescribeSeats(), second.DescribeSeats());
         RunLockstep(first, second, out int firstDivergence, out ScriptOutcome outcome);
 
         Assert.True(firstDivergence < 0, $"The servers diverged at tick {firstDivergence}: {first.LastDiff(second)}");
@@ -204,8 +214,10 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
         private int _playerDamageTaken;
         private int _currentTick;
         private string _lastHash = string.Empty;
+        // Deferred joins are applied by a tick of their own, so script tick t runs as server tick t + 1.
+        private readonly ulong _tickOffset;
 
-        public ScriptedServer(ulong seed, string[] joinOrder, bool reverseCommandDelivery)
+        public ScriptedServer(ulong seed, string[] joinOrder, bool reverseCommandDelivery, bool deferJoinsToTick = false)
         {
             _runtime = new WorldSessionRuntime(
                 FloorSize,
@@ -221,7 +233,7 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
                     new PlayerActionHandler()
                 ],
                 Array.Empty<IClientMessageHandler>());
-            _host = new DedicatedServerHost(new RuntimeAuthoritativeSessionHost(_runtime), router);
+            _host = new DedicatedServerHost(new RuntimeAuthoritativeSessionHost(_runtime), router, deferJoinsToTick);
             _reverseCommandDelivery = reverseCommandDelivery;
 
             // Connection ids differ between the servers too, so ConcurrentDictionary order does.
@@ -232,7 +244,27 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
                 IReadOnlyList<IServerToClientMessage> replies = _host.HandleClientMessage(
                     connection,
                     new ClientJoinRequestMessage(joinOrder[i], $"Name {joinOrder[i]}"));
-                Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies));
+                if (deferJoinsToTick)
+                {
+                    Assert.Empty(replies);
+                }
+                else
+                {
+                    Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies));
+                }
+            }
+
+            if (deferJoinsToTick)
+            {
+                // The join tick: no commands yet, the clients have not been accepted.
+                Assert.Equal(1, AdvanceOneTick());
+                _tickOffset = 1;
+                List<PendingConnectionReply> joinReplies = [];
+                _host.DrainPendingJoinRepliesInto(joinReplies);
+                Assert.Equal(joinOrder.Length, joinReplies.Count);
+                Assert.All(joinReplies, reply => Assert.IsType<JoinAcceptedMessage>(reply.Message));
+                _host.DrainPendingActionResults();
+                _ = _host.CreateSnapshotMessage();
             }
 
             Assert.Equal(PrimarySession, _runtime.PrimaryRemoteSessionId?.Value);
@@ -312,14 +344,8 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
                     new PlayerActionMessage(new PlayerSessionId(session), sequence, payload));
             }
 
-            int executed = _host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
-            if (executed == 0)
-            {
-                executed = _host.AdvanceTime(SimulationClock.FixedDeltaSeconds * 0.01);
-            }
-
-            Assert.Equal(1, executed);
-            Assert.Equal((ulong)tick, _runtime.CurrentServerTick);
+            Assert.Equal(1, AdvanceOneTick());
+            Assert.Equal((ulong)tick + _tickOffset, _runtime.CurrentServerTick);
             _host.DrainPendingActionResults();
             // Deltas are exported every tick, like the service does for joined connections.
             _ = _host.CreateSnapshotMessage();
@@ -337,6 +363,28 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
 
             _playerDamageTaken += Math.Max(0, healthBefore - PlayerHealthTotal());
             _lastHash = ComputeHash();
+        }
+
+        // Seat and actor id per session, which the hash leaves out (players are keyed by session).
+        public string DescribeSeats()
+        {
+            return $"primary={_runtime.PrimaryRemoteSessionId?.Value} " + string.Join(
+                ' ',
+                _runtime.CaptureActorSnapshots()
+                    .Where(actor => actor.Kind == CreatureKind.Player)
+                    .Select(actor => $"{actor.SessionId}#{actor.ActorId}")
+                    .Order(StringComparer.Ordinal));
+        }
+
+        private int AdvanceOneTick()
+        {
+            int executed = _host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
+            if (executed == 0)
+            {
+                executed = _host.AdvanceTime(SimulationClock.FixedDeltaSeconds * 0.01);
+            }
+
+            return executed;
         }
 
         public string Hash() => _lastHash.Length == 0 ? _lastHash = ComputeHash() : _lastHash;
