@@ -1,4 +1,4 @@
-namespace Dream.Rendering.Hud;
+namespace Dream.Simulation.Combat;
 
 public enum FloatingCombatTextKind
 {

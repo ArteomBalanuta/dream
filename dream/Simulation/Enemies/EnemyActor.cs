@@ -1,6 +1,5 @@
 using OpenTK.Mathematics;
 using Dream.Rendering.Actors;
-using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;

@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;

@@ -1,4 +1,4 @@
-using Dream.Rendering.Hud;
+using Dream.Simulation.Combat;
 
 namespace Dream.Simulation.Players;
 

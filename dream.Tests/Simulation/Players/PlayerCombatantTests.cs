@@ -1,6 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
-using Dream.Rendering.Hud;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 

@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Simulation.Combat;
 
 namespace Dream.Rendering.Hud;
 
