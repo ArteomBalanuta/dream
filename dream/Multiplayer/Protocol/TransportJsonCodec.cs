@@ -1,19 +1,53 @@
 using System.Buffers;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Dream.Multiplayer.Protocol;
 
 
 public sealed class TransportJsonCodec : IProtocolCodec
 {
+    // Protocol v2: null properties are left out (a missing property decodes to the same default
+    // as an explicit null), and properties derived from others are never written.
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver
+        {
+            Modifiers = { RemoveDerivedProperties }
+        }
     };
 
     static TransportJsonCodec()
     {
         SerializerOptions.Converters.Add(new Vector3JsonConverter());
+    }
+
+    // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on
+    // IProtocolMessage does not reach the concrete records' own MessageKind properties.
+    // EffectiveRoster and EffectiveInitialActors only replace a null Roster or InitialActors
+    // with an empty list. None has a constructor parameter, so decoding never read them.
+    private static void RemoveDerivedProperties(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Kind != JsonTypeInfoKind.Object || !typeof(IProtocolMessage).IsAssignableFrom(typeInfo.Type))
+        {
+            return;
+        }
+
+        bool isJoinAccepted = typeInfo.Type == typeof(JoinAcceptedMessage);
+        for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
+        {
+            string? memberName = (typeInfo.Properties[i].AttributeProvider as MemberInfo)?.Name;
+            if (memberName == nameof(IProtocolMessage.MessageKind)
+                || (isJoinAccepted
+                    && memberName is nameof(JoinAcceptedMessage.EffectiveRoster) or nameof(JoinAcceptedMessage.EffectiveInitialActors)))
+            {
+                typeInfo.Properties.RemoveAt(i);
+            }
+        }
     }
 
     // Matches the writer JsonSerializer.SerializeToUtf8Bytes builds from SerializerOptions, so the
