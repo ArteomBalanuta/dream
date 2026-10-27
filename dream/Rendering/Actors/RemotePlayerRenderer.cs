@@ -13,7 +13,7 @@ namespace Dream.Rendering.Actors;
 public sealed class RemotePlayerRenderer : IDisposable
 {
     private readonly Render _render;
-    private readonly Dictionary<int, AnimatedModel> _playerModels = [];
+    private readonly Dictionary<int, AsyncResourceHandle<AnimatedModel>> _playerModels = [];
     private readonly PlayerAnimationClipTracker _clipTracker = new();
     private readonly HashSet<int> _activeActorIds = [];
     private readonly List<int> _staleActorIds = [];
@@ -33,7 +33,15 @@ public sealed class RemotePlayerRenderer : IDisposable
         {
             RemotePlayerPresentationState remotePlayer = _visiblePlayers[i];
             PlayerRenderState renderState = PlayerRenderState.CreateRemote(remotePlayer);
-            AnimatedModel model = GetOrCreateModel(remotePlayer.ActorId);
+            // The actor's model is requested in PruneModelEntries and loads in the background.
+            // Until it is uploaded the actor is skipped (its name label is drawn by the HUD), and
+            // no clip is recorded, so the current clip is applied on the first drawn frame.
+            if (!_playerModels.TryGetValue(remotePlayer.ActorId, out AsyncResourceHandle<AnimatedModel>? handle) ||
+                !handle.TryGet(out AnimatedModel? model))
+            {
+                continue;
+            }
+
             _clipTracker.TryApplyClip(remotePlayer.ActorId, renderState.ClipName, model);
             model.Update(deltaTime);
 
@@ -121,28 +129,54 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
     }
 
-    private AnimatedModel GetOrCreateModel(int actorId)
+    // Disposes and removes the cached entries of actors that are no longer active. Returns how
+    // many were removed. For a model handle that is still decoding, disposing discards the
+    // request, so a model for an actor that left is never uploaded.
+    public static int PruneStaleEntries<THandle>(
+        Dictionary<int, THandle> cachedModels,
+        IReadOnlySet<int> activeActorIds,
+        List<int> staleActorIds)
+        where THandle : IDisposable
     {
-        if (_playerModels.TryGetValue(actorId, out AnimatedModel? model))
+        CollectStaleActorIds(cachedModels, activeActorIds, staleActorIds);
+        for (int i = 0; i < staleActorIds.Count; i++)
         {
-            return model;
+            int actorId = staleActorIds[i];
+            THandle handle = cachedModels[actorId];
+            cachedModels.Remove(actorId);
+            handle.Dispose();
         }
 
-        AnimatedModel created = ModelAssets.CreatePlayerInstance();
-        _playerModels[actorId] = created;
-        NetworkDiagnosticsLog.Write("client.render.remote.model", $"created actor={actorId} cached={_playerModels.Count}");
-        return created;
+        return staleActorIds.Count;
     }
 
-    // Disposes the per-instance player models that are still cached; pruning already disposed
-    // the others. These models come from ModelAssets.CreatePlayerInstance, so this renderer owns
-    // them. A second call finds the cache empty.
+    // Requests a per-instance model (ModelAssets.RequestPlayerInstance()) for every active actor
+    // that has none, visible or not, so a player walking into view is usually already loaded.
+    private void RequestMissingModels(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    {
+        for (int i = 0; i < remotePlayers.Count; i++)
+        {
+            int actorId = remotePlayers[i].ActorId;
+            if (_playerModels.ContainsKey(actorId))
+            {
+                continue;
+            }
+
+            _playerModels[actorId] = ModelAssets.RequestPlayerInstance();
+            NetworkDiagnosticsLog.Write("client.render.remote.model", $"requested actor={actorId} cached={_playerModels.Count}");
+        }
+    }
+
+    // Disposes the per-instance model handles that are still cached; pruning already disposed
+    // the others. The handles come from ModelAssets.RequestPlayerInstance(), so this renderer owns
+    // them; disposing a handle releases its model or discards its pending decode. A second call
+    // finds the cache empty, and a handle the model cache's teardown already released is a no-op.
     public void Dispose()
     {
         _activeActorIds.Clear();
 
         List<Exception>? failures = null;
-        foreach (AnimatedModel model in _playerModels.Values)
+        foreach (AsyncResourceHandle<AnimatedModel> model in _playerModels.Values)
         {
             try
             {
@@ -182,13 +216,12 @@ public sealed class RemotePlayerRenderer : IDisposable
         CollectActiveActorIds(remotePlayers, _activeActorIds);
         _clipTracker.RemoveExcept(_activeActorIds);
 
-        CollectStaleActorIds(_playerModels, _activeActorIds, _staleActorIds);
+        PruneStaleEntries(_playerModels, _activeActorIds, _staleActorIds);
         for (int i = 0; i < _staleActorIds.Count; i++)
         {
-            int actorId = _staleActorIds[i];
-            _playerModels[actorId].Dispose();
-            _playerModels.Remove(actorId);
-            NetworkDiagnosticsLog.Write("client.render.remote.model", $"pruned actor={actorId} cached={_playerModels.Count}");
+            NetworkDiagnosticsLog.Write("client.render.remote.model", $"pruned actor={_staleActorIds[i]} cached={_playerModels.Count}");
         }
+
+        RequestMissingModels(remotePlayers);
     }
 }

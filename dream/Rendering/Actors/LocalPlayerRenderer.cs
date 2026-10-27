@@ -11,20 +11,28 @@ public sealed class LocalPlayerRenderer : IDisposable
 
     private readonly Render _render;
     private readonly PlayerAnimationClipTracker _clipTracker = new();
-    private AnimatedModel? _model;
+    private AsyncResourceHandle<AnimatedModel>? _model;
 
     public LocalPlayerRenderer(Render render)
     {
         _render = render;
+        // Requested up front so the model is usually ready by the time third person is first shown.
+        _model = ModelAssets.RequestPlayerInstance();
     }
 
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime)
     {
+        // The per-instance model loads in the background; skip the draw until it is uploaded.
+        // The clip is applied (and recorded) only once the model exists.
+        if (_model == null || !_model.TryGet(out AnimatedModel? model))
+        {
+            return;
+        }
+
         PlayerRenderState renderState = PlayerRenderState.CreateLocal(
             localPlayer.Position,
             localPlayer.Facing,
             localPlayer.IsMoving);
-        AnimatedModel model = GetOrCreateModel();
         _clipTracker.TryApplyClip(LocalActorId, renderState.ClipName, model);
         model.Update(deltaTime);
 
@@ -34,18 +42,13 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.EndRender();
     }
 
-    // The player model is a per-instance copy (ModelAssets.CreatePlayerInstance), so this renderer
-    // owns it. Shared ModelAssets models are never disposed here.
+    // The player model handle is a per-instance request (ModelAssets.RequestPlayerInstance()), so
+    // this renderer owns it: disposing it releases the uploaded model or discards a pending decode.
+    // Shared ModelAssets models are never disposed here.
     public void Dispose()
     {
-        AnimatedModel? model = _model;
+        AsyncResourceHandle<AnimatedModel>? model = _model;
         _model = null;
         model?.Dispose();
-    }
-
-    private AnimatedModel GetOrCreateModel()
-    {
-        _model ??= ModelAssets.CreatePlayerInstance();
-        return _model;
     }
 }

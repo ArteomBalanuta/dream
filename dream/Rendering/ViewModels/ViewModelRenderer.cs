@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Dream.Rendering.Core;
@@ -47,14 +48,21 @@ public class ViewModelRenderer
         DrawSlot(frameState.Value.HeldItem);
     }
 
-    private bool UpdateSlot(ViewModelSlotState slotState, float deltaTime)
+    // A model that is still loading reports "not finished", so a Use request simply waits: the
+    // controller keeps the slot in Use, the one-shot plays once the model is ready, and the slot
+    // then finishes and returns to Idle as usual.
+    private static bool UpdateSlot(ViewModelSlotState slotState, float deltaTime)
     {
-        return ResolveModel(slotState).Update(deltaTime);
+        return TryResolveModel(slotState, out AnimatedModel? model) && model.Update(deltaTime);
     }
 
     private void DrawSlot(ViewModelSlotState slotState)
     {
-        AnimatedModel model = ResolveModel(slotState);
+        if (!TryResolveModel(slotState, out AnimatedModel? model))
+        {
+            return;
+        }
+
         Vector2i viewportSize = _render.ViewportSize;
         ViewModelResolvedPose pose = slotState.ResolvedPose;
         Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(
@@ -98,8 +106,8 @@ public class ViewModelRenderer
         model.PlayLoop(clipName);
     }
 
-    private static AnimatedModel ResolveModel(ViewModelSlotState slotState)
+    private static bool TryResolveModel(ViewModelSlotState slotState, [NotNullWhen(true)] out AnimatedModel? model)
     {
-        return ModelAssets.Get(slotState.Definition.ModelPath);
+        return ModelAssets.TryGet(slotState.Definition.ModelPath, out model);
     }
 }

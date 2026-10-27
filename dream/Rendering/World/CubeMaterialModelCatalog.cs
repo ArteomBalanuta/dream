@@ -6,14 +6,18 @@ namespace Dream.Rendering.World;
 
 public static class CubeMaterialModelCatalog
 {
+    // Null for an unmapped material, and also while a mapped model is still loading (or failed),
+    // so the caller draws the untextured fallback cube until the model is ready. Never blocks.
     public static AnimatedModel? Resolve(GeometryMaterialId materialId)
     {
-        return materialId switch
+        string? path = materialId switch
         {
-            GeometryMaterialId.Dirt => ModelAssets.DirtCube,
-            GeometryMaterialId.Stone => ModelAssets.StoneCube,
-            GeometryMaterialId.Grass => ModelAssets.GrassCube,
+            GeometryMaterialId.Dirt => ModelAssets.DirtCubePath,
+            GeometryMaterialId.Stone => ModelAssets.StoneCubePath,
+            GeometryMaterialId.Grass => ModelAssets.GrassCubePath,
             _ => null
         };
+
+        return path != null && ModelAssets.TryGet(path, out AnimatedModel? model) ? model : null;
     }
 }

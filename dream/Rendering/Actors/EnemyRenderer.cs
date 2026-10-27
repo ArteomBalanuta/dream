@@ -37,14 +37,18 @@ public sealed class EnemyRenderer
                 actor.Forward,
                 actor.BehaviorState);
 
-            AnimatedModel model = ModelAssets.Get(renderState.ModelPath);
-            _visualStates.GetOrAdd(actorId).ApplyClip(model, renderState.ClipName);
-            model.Update(deltaTime);
+            // The shared wolf model loads in the background; until it is ready the enemy is not
+            // drawn and no clip is recorded, so the clip is applied on the first drawn frame.
+            if (ModelAssets.TryGet(renderState.ModelPath, out AnimatedModel? model))
+            {
+                _visualStates.GetOrAdd(actorId).ApplyClip(model, renderState.ClipName);
+                model.Update(deltaTime);
 
-            Shader shader = _render.GetShader(renderState.ShaderName);
-            model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-            model.RenderPrepared(shader, renderState.ModelMatrix);
-            model.EndRender();
+                Shader shader = _render.GetShader(renderState.ShaderName);
+                model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
+                model.RenderPrepared(shader, renderState.ModelMatrix);
+                model.EndRender();
+            }
 
             if (showCollisionGeometry)
             {

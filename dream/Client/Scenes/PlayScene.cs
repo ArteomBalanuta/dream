@@ -39,6 +39,8 @@ public class PlayScene : IDisposable
     private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
     private const string RenderPerformanceLogEnvironmentVariable = "DREAM_RENDER_PERF_LOG";
     private static readonly TimeSpan DiagnosticsLogInterval = TimeSpan.FromSeconds(1);
+    // Model uploads per frame. Each is one model's GL buffers and textures.
+    private const int ModelUploadsPerFrame = 2;
 
     // Client-local presentation state that should remain scene-owned after the runtime split.
     private readonly Render _render;
@@ -141,6 +143,7 @@ public class PlayScene : IDisposable
 
         _scenePresenter = new ClientScenePresenter(_remoteClient.SessionId);
         _render = new Render(_settings);
+        PreloadModels();
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
         _diagnostics = new MultiplayerDiagnostics();
@@ -148,6 +151,24 @@ public class PlayScene : IDisposable
         NetworkDiagnosticsLog.Write(
             "client.scene.start",
             $"remote=True endpoint={ConnectedServerEndpoint} localPresenterSession={_remoteClient.SessionId}");
+    }
+
+    // Starts the background decodes of the shared models the scene draws, so they are usually
+    // ready within the first frames. The player model is not preloaded here: players draw
+    // per-instance models, which LocalPlayerRenderer and RemotePlayerRenderer request themselves,
+    // so a shared player model would be uploaded and never drawn.
+    private static void PreloadModels()
+    {
+        ModelAssets.Preload(
+            ModelAssets.WolfPath,
+            ModelAssets.GrassCubePath,
+            ModelAssets.DirtCubePath,
+            ModelAssets.StoneCubePath);
+        IReadOnlyList<ViewModelDefinition> viewModels = ViewModelAssets.BuiltInDefinitions;
+        for (int i = 0; i < viewModels.Count; i++)
+        {
+            ModelAssets.Preload(viewModels[i].ModelPath);
+        }
     }
 
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
@@ -240,6 +261,9 @@ public class PlayScene : IDisposable
     {
         // Render primarily consumes scene/runtime state for desktop presentation, even though
         // this path still applies scene-owned runtime requests such as floor rebuilds today.
+        // Uploads a few background-decoded models before anything draws this frame; draws only
+        // poll the model cache, so a model never loads synchronously inside a draw call.
+        ModelAssets.PumpUploads(ModelUploadsPerFrame);
         long clearStart = Stopwatch.GetTimestamp();
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         long captureStart = Stopwatch.GetTimestamp();
