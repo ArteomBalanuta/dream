@@ -67,7 +67,7 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
                     }
 
                     // Midway through the requesters' work, the render thread disposes the loader.
-                    if (!disposed && Volatile.Read(ref completedOperations) >= Requesters * OperationsPerRequester / 2)
+                    if (!disposed && Volatile.Read(ref completedOperations) > Requesters * OperationsPerRequester / 2)
                     {
                         loader.Dispose();
                         fakes.LoaderDisposed = true;
@@ -80,7 +80,12 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
 
                     if (elapsed.Elapsed > Bound)
                     {
-                        throw new TimeoutException("render thread ran past the bound");
+                        throw new TimeoutException(
+                            $"render thread ran past the bound at frame {frames}: uploads {fakes.Uploaded.Count}, upload calls {fakes.UploadCalls}, " +
+                            $"pending {loader.PendingCount}, uploadable {loader.UploadableCount}, decodes {fakes.DecodesByKey.Count}, " +
+                            $"in flight {Volatile.Read(ref fakes.DecodesInFlight)}, ops {Volatile.Read(ref completedOperations)}, " +
+                            $"requesters done {Volatile.Read(ref requestersDone)}, disposed {disposed}, pool threads {ThreadPool.ThreadCount}, " +
+                            $"pool queue {ThreadPool.PendingWorkItemCount}");
                     }
 
                     Thread.Sleep(0);
@@ -119,6 +124,45 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
                 {
                     for (int op = 0; op < OperationsPerRequester; op++)
                     {
+                        if (op == OperationsPerRequester / 2)
+                        {
+                            // The loader is disposed just after half of all operations are done.
+                            // Under a loaded machine the requesters can get there before the render
+                            // thread uploaded anything, so each requests one handle for a key that
+                            // never faults and waits (bounded) until it is ready (or the loader was
+                            // already disposed by a requester that got past this point first), then
+                            // disposes one of its ready handles.
+                            int number;
+                            do
+                            {
+                                number = Interlocked.Increment(ref instanceKeySource);
+                            }
+                            while (Fakes.DecodeFaultsFor(number) || Fakes.UploadFaultsFor(number));
+
+                            AsyncResourceHandle<FakeResource> gate = loader.RequestInstance($"inst-{number}");
+                            mine.Add(gate);
+                            allHandles.Add(gate);
+                            if (!SpinWait.SpinUntil(
+                                    () => gate.State is AsyncResourceState.Ready or AsyncResourceState.Disposed ||
+                                        Volatile.Read(ref failures[Requesters]) != null,
+                                    Bound))
+                            {
+                                throw new TimeoutException(
+                                    $"no handle became ready before the dispose point (uploads {fakes.Uploaded.Count}, upload calls {fakes.UploadCalls}, " +
+                                    $"pending {loader.PendingCount}, uploadable {loader.UploadableCount}, decodes {fakes.DecodesByKey.Count}, " +
+                                    $"in flight {Volatile.Read(ref fakes.DecodesInFlight)}).");
+                            }
+
+                            int ready = mine.FindIndex(handle => handle.State == AsyncResourceState.Ready);
+                            if (ready >= 0)
+                            {
+                                AsyncResourceHandle<FakeResource> readyHandle = mine[ready];
+                                mine.RemoveAt(ready);
+                                Interlocked.Increment(ref disposedReady);
+                                readyHandle.Dispose();
+                            }
+                        }
+
                         string sharedKey = $"shared-{random.Next(SharedKeys)}";
                         switch (random.Next(8))
                         {
@@ -221,7 +265,9 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
 
         foreach (Thread requester in requesters)
         {
-            Assert.True(requester.Join(Bound), "A requester did not finish: deadlock.");
+            Assert.True(
+                requester.Join(Bound),
+                $"A requester did not finish: deadlock. Failures so far: {string.Join(" | ", failures.Where(failure => failure != null))}");
         }
 
         Assert.True(render.Join(Bound), "The render thread did not finish: deadlock.");
@@ -336,7 +382,7 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
                     Thread.Sleep(delay - 1);
                 }
 
-                if (KeyNumber(key) % 7 == 3)
+                if (DecodeFaultsFor(KeyNumber(key)))
                 {
                     throw new InvalidDataException($"decode:{key}");
                 }
@@ -363,7 +409,7 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
             }
 
             UploadsByDecode.AddOrUpdate(data.DecodeId, 1, (_, count) => count + 1);
-            if (KeyNumber(data.Key) % 11 == 6)
+            if (UploadFaultsFor(KeyNumber(data.Key)))
             {
                 Interlocked.Increment(ref _uploadFaults);
                 throw new InvalidOperationException($"upload:{data.Key}");
@@ -383,6 +429,10 @@ public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
 
             Reports.Add(exception.Message);
         }
+
+        public static bool DecodeFaultsFor(int keyNumber) => keyNumber % 7 == 3;
+
+        public static bool UploadFaultsFor(int keyNumber) => keyNumber % 11 == 6;
 
         private static int KeyNumber(string key)
         {
