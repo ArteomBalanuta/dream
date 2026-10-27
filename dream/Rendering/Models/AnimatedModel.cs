@@ -6,17 +6,13 @@ namespace Dream.Rendering.Models;
 
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SharpGLTF.Schema2;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
-using Image = SixLabors.ImageSharp.Image;
 using PrimitiveType = OpenTK.Graphics.OpenGL4.PrimitiveType;
 using Vector2 = OpenTK.Mathematics.Vector2;
 using Vector3 = OpenTK.Mathematics.Vector3;
@@ -24,9 +20,7 @@ using Vector4 = OpenTK.Mathematics.Vector4;
 
 public class AnimatedModel : IDisposable
 {
-    private static readonly bool EnableDiagnostics =
-        string.Equals(Environment.GetEnvironmentVariable("DREAM_MODEL_DIAGNOSTICS"), "1", StringComparison.Ordinal);
-    private const int MaxSupportedJoints = 64;
+    private const int MaxSupportedJoints = AnimatedModelData.MaxSupportedJoints;
     // Matches `uniform mat4 jointMatrices[64]` in cubeVertex.glsl. Built once so skinning
     // never formats uniform names per draw.
     private static readonly string[] JointMatrixUniformNames = CreateJointMatrixUniformNames();
@@ -38,29 +32,15 @@ public class AnimatedModel : IDisposable
         public int VBO;
         public int EBO;
         public int IndexCount;
-        public Material Material;
+        public int MaterialIndex;
         public PrimitiveType PrimitiveType;
         public bool UsesSkinning;
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Vertex
-    {
-        public Vector3 Position;
-        public Vector3 Normal;
-        public Vector3 Tangent;
-        public Vector2 TexCoord0;
-        public Vector4 Joints;
-        public Vector4 Weights;
-
-        public const int Size = (3 + 3 + 3 + 2 + 4 + 4) * sizeof(float);
-    }
     #endregion
 
-    private readonly ModelRoot _model;
-    private readonly Dictionary<Material, MaterialData> _materials = new();
+    private readonly MaterialData?[] _materials;
     private readonly Dictionary<Mesh, List<MeshBuffers>> _meshPrimitives = new();
-    private readonly Dictionary<string, Animation> _animations = new();
+    private readonly IReadOnlyDictionary<string, Animation> _animations;
     private readonly List<int> _textures = new();
     private bool _disposed;
     private readonly ReusableMatrixBuffer _instanceSourceMatrices = new();
@@ -68,31 +48,50 @@ public class AnimatedModel : IDisposable
     private int _instanceModelBuffer;
     private AnimationPlaybackState _playback = AnimationPlaybackState.Stopped;
     private string? _idleClipName;
-    private SkinningData? _skinning;
-    private AnimatedModelPose _pose = null!;
+    private readonly AnimatedModelSkinJoint[]? _skinJoints;
+    private readonly AnimatedModelPose _pose;
     private List<MeshBuffers>?[] _renderablePrimitives = [];
 
     public AnimatedModel(string filePath)
+        : this(AnimatedModelData.Load(filePath))
     {
-        _model = ModelRoot.Load(filePath);
-        Initialize();
     }
+
+    // Uploads already-decoded data. Render thread only; the data object must not be reused
+    // for another model (see AnimatedModelData).
+    public AnimatedModel(AnimatedModelData data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        GLUtils.AssertRenderThread("AnimatedModel upload");
+        data.MarkConsumed();
+
+        SourcePath = data.SourcePath;
+        _animations = data.Animations;
+        _skinJoints = data.SkinJoints?.ToArray();
+        _pose = data.Pose;
+        _materials = new MaterialData?[data.Materials.Count];
+
+        try
+        {
+            UploadMaterials(data);
+            UploadMeshes(data);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+
+        LoadRenderablePrimitives();
+    }
+
+    public string SourcePath { get; }
 
     public static string GetJointMatrixUniformName(int jointIndex) => JointMatrixUniformNames[jointIndex];
 
     #region Initialization
-    private void Initialize()
+    private void LoadRenderablePrimitives()
     {
-        LoadMaterials();
-        LoadSkinning();
-        LoadMeshes();
-        LoadAnimations();
-        LoadPose();
-    }
-
-    private void LoadPose()
-    {
-        _pose = new AnimatedModelPose(_model);
         _renderablePrimitives = new List<MeshBuffers>?[_pose.RenderableNodeCount];
         for (int i = 0; i < _renderablePrimitives.Length; i++)
         {
@@ -114,82 +113,25 @@ public class AnimatedModel : IDisposable
         return names;
     }
 
-    private void LoadSkinning()
+    private void UploadMaterials(AnimatedModelData data)
     {
-        if (_model.LogicalSkins.Count == 0)
+        for (int i = 0; i < data.Materials.Count; i++)
         {
-            return;
-        }
-
-        Skin skin = _model.LogicalSkins[0];
-        if (skin.JointsCount > MaxSupportedJoints)
-        {
-            Log($"Skipping skinning for '{skin.Name ?? "<unnamed>"}' because it uses {skin.JointsCount} joints and the current limit is {MaxSupportedJoints}.");
-            return;
-        }
-
-        SkinJoint[] joints = new SkinJoint[skin.JointsCount];
-        for (int i = 0; i < skin.JointsCount; i++)
-        {
-            (Node Joint, System.Numerics.Matrix4x4 InverseBindMatrix) = skin.GetJoint(i);
-            joints[i] = new SkinJoint(Joint.LogicalIndex, InverseBindMatrix.ToOpenTK());
-        }
-
-        _skinning = new SkinningData(joints);
-    }
-    private void LoadMaterials()
-    {
-        foreach (var material in _model.LogicalMaterials)
-        {
+            AnimatedModelMaterialData source = data.Materials[i];
             var materialData = new MaterialData
             {
-                AlphaMode = material.Alpha,
-                AlphaCutoff = material.AlphaCutoff,
-                BaseColorFactor = GetMaterialColor(material, "BaseColor", Vector4.One)
+                AlphaMode = source.AlphaMode,
+                AlphaCutoff = source.AlphaCutoff,
+                BaseColorFactor = source.BaseColorFactor,
+                MetallicFactor = source.MetallicFactor,
+                RoughnessFactor = source.RoughnessFactor,
+                EmissiveFactor = source.EmissiveFactor,
+                BaseColorTexture = UploadTexture(source.BaseColorTexture),
+                NormalTexture = UploadTexture(source.NormalTexture),
+                MetallicRoughnessTexture = UploadTexture(source.MetallicRoughnessTexture),
+                EmissiveTexture = UploadTexture(source.EmissiveTexture),
+                OcclusionTexture = UploadTexture(source.OcclusionTexture)
             };
-
-            // Handle MetallicRoughness parameters
-            var metallicRoughness = material.FindChannel("MetallicRoughness");
-            if (metallicRoughness.HasValue)
-            {
-                // Default values according to glTF spec
-                float metallic = 1.0f;
-                float roughness = 1.0f;
-
-                // Search through parameters list
-                foreach (var param in metallicRoughness.Value.Parameters)
-                {
-                    if (param.Name == "MetallicFactor")
-                    {
-                        metallic = metallicRoughness.Value.GetFactor("MetallicFactor");
-                    }
-                    else if (param.Name == "RoughnessFactor")
-                    {
-                        roughness = metallicRoughness.Value.GetFactor("RoughnessFactor");
-                    }
-                }
-
-                materialData.MetallicFactor = metallic;
-                materialData.RoughnessFactor = roughness;
-            }
-            else
-            {
-                materialData.MetallicFactor = 0.0f;
-                materialData.RoughnessFactor = 1.0f;
-            }
-
-            // Handle Emissive
-            var emissive = material.FindChannel("Emissive");
-            materialData.EmissiveFactor = emissive.HasValue
-                ? emissive.Value.Color.ToOpenTK().Xyz
-                : Vector3.Zero;
-
-            // Load textures
-            materialData.BaseColorTexture = LoadTexture(material, "BaseColor");
-            materialData.NormalTexture = LoadTexture(material, "Normal");
-            materialData.MetallicRoughnessTexture = LoadTexture(material, "MetallicRoughness");
-            materialData.EmissiveTexture = LoadTexture(material, "Emissive");
-            materialData.OcclusionTexture = LoadTexture(material, "Occlusion");
 
             // Set texture presence flags
             materialData.HasBaseColorTexture = materialData.BaseColorTexture != -1;
@@ -198,177 +140,45 @@ public class AnimatedModel : IDisposable
             materialData.HasEmissiveTexture = materialData.EmissiveTexture != -1;
             materialData.HasOcclusionTexture = materialData.OcclusionTexture != -1;
 
-            // Log material properties
-            Log($"Material '{material.Name}':");
-            Log($"  BaseColorFactor: {materialData.BaseColorFactor}");
-            Log($"  EmissiveFactor: {materialData.EmissiveFactor}");
-            Log($"  MetallicFactor: {materialData.MetallicFactor}");
-            Log($"  RoughnessFactor: {materialData.RoughnessFactor}");
-            Log($"  AlphaMode: {materialData.AlphaMode}, AlphaCutoff: {materialData.AlphaCutoff}");
-            Log($"  Has BaseColorTexture: {materialData.HasBaseColorTexture}");
-            Log($"  Has NormalTexture: {materialData.HasNormalTexture}");
-            Log($"  Has MetallicRoughnessTexture: {materialData.HasMetallicRoughnessTexture}");
-            Log($"  Has EmissiveTexture: {materialData.HasEmissiveTexture}");
-            Log($"  Has OcclusionTexture: {materialData.HasOcclusionTexture}");
-
-
-            _materials.Add(material, materialData);
+            _materials[i] = materialData;
         }
     }
 
-    private OpenTK.Mathematics.Vector4 GetMaterialColor(Material material, string channelName, OpenTK.Mathematics.Vector4 defaultValue)
+    private int UploadTexture(DecodedTexture? texture)
     {
-        // Attempt to find the specified channel.
-        var channelOpt = material.FindChannel(channelName);
-        if (!channelOpt.HasValue)
-        {
-            return defaultValue;
-        }
-
-        try
-        {
-            // channelOpt.Value.Color returns a System.Numerics.Vector4.
-            System.Numerics.Vector4 sysColor = channelOpt.Value.Color;
-            // Convert to OpenTK.Mathematics.Vector4 by copying the components.
-            return new OpenTK.Mathematics.Vector4(sysColor.X, sysColor.Y, sysColor.Z, sysColor.W);
-        }
-        catch (InvalidOperationException)
-        {
-            return defaultValue;
-        }
-    }
-
-
-
-    private float GetMaterialParameter(Material material, string channelName, string parameterName, float defaultValue)
-    {
-        var channel = material.FindChannel(channelName);
-        if (!channel.HasValue) return defaultValue;
-
-        // Use the MaterialChannel's GetFactor method to retrieve a float parameter.
-        // For example, by convention: MetallicFactor is stored in channel.Factor.X and RoughnessFactor in channel.Factor.Y.
-        try
-        {
-            return channel.Value.GetFactor(parameterName);
-        }
-        catch
-        {
-            return defaultValue;
-        }
-    }
-
-    private int LoadTexture(Material material, string channelName)
-    {
-        var channelOpt = material.FindChannel(channelName);
-        if (!channelOpt.HasValue || channelOpt.Value.Texture == null)
+        if (texture == null)
         {
             // No texture available on this channel.
             return -1;
         }
 
-        // Get the primary image from the channel.
-        var image = channelOpt.Value.Texture.PrimaryImage;
-        if (image == null)
-        {
-            return -1;
-        }
-
-        // Create an OpenGL texture.
-        int handle = GL.GenTexture();
-        GL.BindTexture(TextureTarget.Texture2D, handle);
-
-        // Load image data from the image's content stream.
-        using (var stream = new MemoryStream(image.Content.Content.ToArray()))
-        using (var img = Image.Load<Rgba32>(stream))
-        {
-            // Flip the image vertically to match OpenGL coordinate system.
-            img.Mutate(x => x.Flip(FlipMode.Vertical));
-
-            // Allocate a buffer and copy pixel data.
-            byte[] pixelData = new byte[4 * img.Width * img.Height];
-            img.CopyPixelDataTo(pixelData);
-
-            // Upload the texture data to OpenGL.
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
-                img.Width, img.Height, 0, PixelFormat.Rgba,
-                PixelType.UnsignedByte, pixelData);
-
-            // Set texture filtering and generate mipmaps.
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
-                (int)TextureMinFilter.LinearMipmapLinear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
-                (int)TextureMagFilter.Linear);
-            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-        }
-
-        // Optionally add the texture handle to a collection to manage its lifetime.
+        int handle = TextureDecoder.UploadTexture2D(texture, generateMipmaps: true);
         _textures.Add(handle);
-
         return handle;
     }
 
-
-    private void LoadMeshes()
+    private void UploadMeshes(AnimatedModelData data)
     {
-        Log("Loading Meshes...");
-        foreach (var mesh in _model.LogicalMeshes)
+        foreach (var mesh in data.Model.LogicalMeshes)
         {
-            Log($"Mesh '{mesh.Name}' with {mesh.Primitives.Count} primitives:");
-            var primitives = new List<MeshBuffers>();
-
-            foreach (var primitive in mesh.Primitives)
-            {
-                var vertices = ProcessVertices(primitive);
-                var indices = primitive.GetIndices().Select(i => (uint)i).ToArray();
-                var buffers = CreateBuffers(vertices, indices, primitive);
-
-                Log($"  Primitive with {indices.Length} indices, material '{primitive.Material?.Name ?? "None"}'");
-
-                primitives.Add(buffers);
-            }
-
+            IReadOnlyList<AnimatedModelPrimitiveData> sourcePrimitives = data.MeshPrimitives[mesh.LogicalIndex];
+            var primitives = new List<MeshBuffers>(sourcePrimitives.Count);
+            // Registered before the uploads so a failed upload still disposes the buffers made so far.
             _meshPrimitives.Add(mesh, primitives);
-        }
-    }
 
-    private Vertex[] ProcessVertices(MeshPrimitive primitive)
-    {
-        var positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
-        var normals = primitive.GetVertexAccessor("NORMAL")?.AsVector3Array();
-        var tangents = primitive.GetVertexAccessor("TANGENT")?.AsVector4Array();
-        var texCoords0 = primitive.GetVertexAccessor("TEXCOORD_0")?.AsVector2Array();
-        var joints = primitive.GetVertexAccessor("JOINTS_0")?.AsVector4Array();
-        var weights = primitive.GetVertexAccessor("WEIGHTS_0")?.AsVector4Array();
-
-        var vertices = Enumerable.Range(0, positions.Count).Select(i =>
-        {
-            // Convert the texture coordinate and flip the V component:
-            Vector2 uv = texCoords0 != null ? texCoords0[i].ToOpenTK() : Vector2.Zero;
-            uv.Y = 1 - uv.Y;  // Flip V
-
-            return new Vertex
+            foreach (AnimatedModelPrimitiveData primitive in sourcePrimitives)
             {
-                Position = positions[i].ToOpenTK(),
-                Normal = normals?[i].ToOpenTK() ?? Vector3.Zero,
-                Tangent = tangents?[i].ToOpenTKTan() ?? Vector3.Zero,
-                TexCoord0 = uv,
-                Joints = joints?[i].ToOpenTK() ?? Vector4.Zero,
-                Weights = weights?[i].ToOpenTK() ?? Vector4.Zero
-            };
-        }).ToArray();
-
-        // Log the normals for the first few vertices.
-        for (int i = 0; i < Math.Min(5, vertices.Length); i++)
-        {
-            Log($"Vertex {i} normal: {vertices[i].Normal}");
+                primitives.Add(CreateBuffers(primitive));
+            }
         }
-
-        return vertices;
     }
 
-
-    private MeshBuffers CreateBuffers(Vertex[] vertices, uint[] indices, MeshPrimitive primitive)
+    private static MeshBuffers CreateBuffers(AnimatedModelPrimitiveData primitive)
     {
+        AnimatedModelData.Vertex[] vertices = primitive.Vertices;
+        uint[] indices = primitive.Indices;
+        const int vertexSize = AnimatedModelData.Vertex.Size;
+
         var vao = GL.GenVertexArray();
         var vbo = GL.GenBuffer();
         var ebo = GL.GenBuffer();
@@ -377,26 +187,26 @@ public class AnimatedModel : IDisposable
 
         // Vertex Buffer
         GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * Vertex.Size, vertices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * vertexSize, vertices, BufferUsageHint.StaticDraw);
 
         // Attributes
         GL.EnableVertexAttribArray(0); // Position
-        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vertex.Size, 0);
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, vertexSize, 0);
 
         GL.EnableVertexAttribArray(1); // Normal
-        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, Vertex.Size, 3 * sizeof(float));
+        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, vertexSize, 3 * sizeof(float));
 
         GL.EnableVertexAttribArray(2); // Tangent
-        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, Vertex.Size, 6 * sizeof(float));
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, vertexSize, 6 * sizeof(float));
 
         GL.EnableVertexAttribArray(3); // TexCoord0
-        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, Vertex.Size, 9 * sizeof(float));
+        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, vertexSize, 9 * sizeof(float));
 
         GL.EnableVertexAttribArray(4); // Joints
-        GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, Vertex.Size, 11 * sizeof(float));
+        GL.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, vertexSize, 11 * sizeof(float));
 
         GL.EnableVertexAttribArray(5); // Weights
-        GL.VertexAttribPointer(5, 4, VertexAttribPointerType.Float, false, Vertex.Size, 15 * sizeof(float));
+        GL.VertexAttribPointer(5, 4, VertexAttribPointerType.Float, false, vertexSize, 15 * sizeof(float));
 
         // Element Buffer
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, ebo);
@@ -410,25 +220,14 @@ public class AnimatedModel : IDisposable
             VBO = vbo,
             EBO = ebo,
             IndexCount = indices.Length,
-            Material = primitive.Material,
-            PrimitiveType = GetPrimitiveType(primitive.DrawPrimitiveType),
-            UsesSkinning =
-                primitive.GetVertexAccessor("JOINTS_0") != null &&
-                primitive.GetVertexAccessor("WEIGHTS_0") != null
+            MaterialIndex = primitive.MaterialIndex,
+            PrimitiveType = GetPrimitiveType(primitive.PrimitiveType),
+            UsesSkinning = primitive.UsesSkinning
         };
     }
     #endregion
 
     #region Animation
-    private void LoadAnimations()
-    {
-        Log("Loading Animations...");
-        foreach (var animation in _model.LogicalAnimations)
-        {
-            Log($"Animation '{animation.Name}' with duration {animation.Duration} seconds");
-            _animations.Add(animation.Name, animation);
-        }
-    }
 
     public bool Update(float deltaTime)
     {
@@ -591,7 +390,7 @@ public class AnimatedModel : IDisposable
             shader.SetMatrix4("model", modelMatrix);
             ApplySkinning(shader, primitive, meshWorldMatrix);
 
-            if (_materials.TryGetValue(primitive.Material, out var material))
+            if (TryGetMaterial(primitive.MaterialIndex, out MaterialData? material))
             {
                 SetMaterialProperties(shader, material);
             }
@@ -615,7 +414,7 @@ public class AnimatedModel : IDisposable
             shader.SetMatrix4("model", Matrix4.Identity);
             ApplySkinning(shader, primitive, meshWorldMatrix);
 
-            if (_materials.TryGetValue(primitive.Material, out MaterialData? material))
+            if (TryGetMaterial(primitive.MaterialIndex, out MaterialData? material))
             {
                 SetMaterialProperties(shader, material);
             }
@@ -662,7 +461,7 @@ public class AnimatedModel : IDisposable
 
     private void ApplySkinning(Shader shader, MeshBuffers primitive, Matrix4 meshWorldMatrix)
     {
-        if (!primitive.UsesSkinning || _skinning == null)
+        if (!primitive.UsesSkinning || _skinJoints == null)
         {
             shader.SetBool("useSkinning", false);
             return;
@@ -670,9 +469,9 @@ public class AnimatedModel : IDisposable
 
         shader.SetBool("useSkinning", true);
         ReadOnlySpan<int> jointLocations = shader.GetUniformLocations(JointMatrixUniformNames);
-        for (int i = 0; i < _skinning.Joints.Length; i++)
+        for (int i = 0; i < _skinJoints.Length; i++)
         {
-            SkinJoint joint = _skinning.Joints[i];
+            AnimatedModelSkinJoint joint = _skinJoints[i];
             Matrix4 jointMatrix = AnimatedModelTransformComposer.ComposeSkinJointMatrix(
                 meshWorldMatrix,
                 _pose.GetNodeWorldMatrix(joint.NodeIndex).ToOpenTK(),
@@ -733,7 +532,15 @@ public class AnimatedModel : IDisposable
     #endregion
 
     #region Helper Methods
-    private PrimitiveType GetPrimitiveType(SharpGLTF.Schema2.PrimitiveType type) => type switch
+    private bool TryGetMaterial(int materialIndex, [NotNullWhen(true)] out MaterialData? material)
+    {
+        material = materialIndex >= 0 && materialIndex < _materials.Length
+            ? _materials[materialIndex]
+            : null;
+        return material != null;
+    }
+
+    private static PrimitiveType GetPrimitiveType(SharpGLTF.Schema2.PrimitiveType type) => type switch
     {
         SharpGLTF.Schema2.PrimitiveType.POINTS => PrimitiveType.Points,
         SharpGLTF.Schema2.PrimitiveType.LINES => PrimitiveType.Lines,
@@ -805,14 +612,6 @@ public class AnimatedModel : IDisposable
         _idleClipName = null;
     }
 
-    private static void Log(string message)
-    {
-        if (EnableDiagnostics)
-        {
-            Console.WriteLine(message);
-        }
-    }
-
     private class MaterialData
     {
         public Vector4 BaseColorFactor;
@@ -833,18 +632,6 @@ public class AnimatedModel : IDisposable
         public bool HasMetallicRoughnessTexture;
         public bool HasEmissiveTexture;
         public bool HasOcclusionTexture;
-    }
-
-    private readonly record struct SkinJoint(int NodeIndex, Matrix4 InverseBindMatrix);
-
-    private sealed class SkinningData
-    {
-        public SkinningData(SkinJoint[] joints)
-        {
-            Joints = joints;
-        }
-
-        public SkinJoint[] Joints { get; }
     }
     #endregion
 }
