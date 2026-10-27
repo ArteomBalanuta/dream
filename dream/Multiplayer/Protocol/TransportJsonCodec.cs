@@ -45,13 +45,77 @@ public sealed class TransportJsonCodec : IProtocolCodec
 
     public DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload)
     {
-        WireEnvelope wireEnvelope = JsonSerializer.Deserialize<WireEnvelope>(payload, SerializerOptions)
-            ?? throw new InvalidOperationException("Failed to deserialize transport envelope.");
+        Utf8JsonReader reader = new(payload);
+        if (!reader.Read())
+        {
+            throw new JsonException("Transport envelope is empty.");
+        }
+
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            throw new InvalidOperationException("Failed to deserialize transport envelope.");
+        }
+
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException($"Transport envelope must be a JSON object, found {reader.TokenType}.");
+        }
+
+        int protocolVersion = 0;
+        string? messageKind = null;
+        ulong sequence = 0;
+        bool hasPayload = false;
+        Utf8JsonReader payloadReader = default;
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            if (reader.ValueTextEquals("protocolVersion"u8))
+            {
+                reader.Read();
+                if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out protocolVersion))
+                {
+                    throw new JsonException("Envelope protocolVersion must be a 32-bit integer.");
+                }
+            }
+            else if (reader.ValueTextEquals("messageKind"u8))
+            {
+                reader.Read();
+                messageKind = reader.TokenType switch
+                {
+                    JsonTokenType.String => reader.GetString(),
+                    JsonTokenType.Null => null,
+                    _ => throw new JsonException("Envelope messageKind must be a string.")
+                };
+            }
+            else if (reader.ValueTextEquals("sequence"u8))
+            {
+                reader.Read();
+                if (reader.TokenType != JsonTokenType.Number || !reader.TryGetUInt64(out sequence))
+                {
+                    throw new JsonException("Envelope sequence must be an unsigned 64-bit integer.");
+                }
+            }
+            else if (reader.ValueTextEquals("payload"u8))
+            {
+                payloadReader = reader;
+                hasPayload = true;
+                reader.Skip();
+            }
+            else
+            {
+                reader.Skip();
+            }
+        }
+
+        if (reader.TokenType != JsonTokenType.EndObject || reader.Read())
+        {
+            throw new JsonException("Transport envelope must be a single JSON object.");
+        }
 
         TransportEnvelope envelope = new(
-            wireEnvelope.ProtocolVersion,
-            wireEnvelope.MessageKind ?? throw new InvalidOperationException("Envelope message kind is required."),
-            wireEnvelope.Sequence);
+            protocolVersion,
+            messageKind ?? throw new InvalidOperationException("Envelope message kind is required."),
+            sequence);
 
         if (envelope.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)
         {
@@ -60,27 +124,34 @@ public sealed class TransportJsonCodec : IProtocolCodec
                 $"Supported version: {TransportEnvelope.CurrentProtocolVersion}.");
         }
 
-        IProtocolMessage message = wireEnvelope.MessageKind switch
+        IProtocolMessage message = messageKind switch
         {
-            "client.hello" => DeserializeMessage<ClientHelloMessage>(wireEnvelope.Payload),
-            "client.join-request" => DeserializeMessage<ClientJoinRequestMessage>(wireEnvelope.Payload),
-            "player.command" => DeserializeMessage<PlayerCommandMessage>(wireEnvelope.Payload),
-            "player.action" => DeserializeMessage<PlayerActionMessage>(wireEnvelope.Payload),
-            "client.world-resync" => DeserializeMessage<ClientWorldResyncRequestMessage>(wireEnvelope.Payload),
-            "server.hello" => DeserializeMessage<ServerHelloMessage>(wireEnvelope.Payload),
-            "server.join-accepted" => DeserializeMessage<JoinAcceptedMessage>(wireEnvelope.Payload),
-            "server.join-rejected" => DeserializeMessage<JoinRejectedMessage>(wireEnvelope.Payload),
-            "server.snapshot" => DeserializeMessage<ServerSnapshotMessage>(wireEnvelope.Payload),
-            "server.action" => DeserializeMessage<ServerActionMessage>(wireEnvelope.Payload),
-            _ => throw new InvalidOperationException($"Unknown protocol message kind '{wireEnvelope.MessageKind}'.")
+            "client.hello" => DeserializeMessage<ClientHelloMessage>(ref payloadReader, hasPayload),
+            "client.join-request" => DeserializeMessage<ClientJoinRequestMessage>(ref payloadReader, hasPayload),
+            "player.command" => DeserializeMessage<PlayerCommandMessage>(ref payloadReader, hasPayload),
+            "player.action" => DeserializeMessage<PlayerActionMessage>(ref payloadReader, hasPayload),
+            "client.world-resync" => DeserializeMessage<ClientWorldResyncRequestMessage>(ref payloadReader, hasPayload),
+            "server.hello" => DeserializeMessage<ServerHelloMessage>(ref payloadReader, hasPayload),
+            "server.join-accepted" => DeserializeMessage<JoinAcceptedMessage>(ref payloadReader, hasPayload),
+            "server.join-rejected" => DeserializeMessage<JoinRejectedMessage>(ref payloadReader, hasPayload),
+            "server.snapshot" => DeserializeMessage<ServerSnapshotMessage>(ref payloadReader, hasPayload),
+            "server.action" => DeserializeMessage<ServerActionMessage>(ref payloadReader, hasPayload),
+            _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
         return new DecodedProtocolMessage(envelope, message);
     }
 
-    private static TMessage DeserializeMessage<TMessage>(JsonElement payload)
+    // payloadReader is a checkpoint positioned on the "payload" property name; a missing payload
+    // throws the same parameterless InvalidOperationException an undefined JsonElement used to.
+    private static TMessage DeserializeMessage<TMessage>(ref Utf8JsonReader payloadReader, bool hasPayload)
     {
-        TMessage? message = payload.Deserialize<TMessage>(SerializerOptions);
+        if (!hasPayload)
+        {
+            throw new InvalidOperationException();
+        }
+
+        TMessage? message = JsonSerializer.Deserialize<TMessage>(ref payloadReader, SerializerOptions);
         return message ?? throw new InvalidOperationException($"Failed to deserialize message '{typeof(TMessage).Name}'.");
     }
 
