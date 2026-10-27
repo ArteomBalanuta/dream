@@ -342,12 +342,14 @@ public class Map
         bool rebuildPhysics = syncPhysics && _physicsBinder != null && !bodyMoved;
 
         _geometryCells.Remove(oldKey);
-        _renderBlocksByCell.Remove(oldKey);
-        _collisionBodiesByCell.Remove(oldKey);
+        _renderBlocksByCell.Remove(oldKey, out IReadOnlyList<GeometryRenderBlockDescriptor>? movedRenderBlocks);
+        _collisionBodiesByCell.Remove(oldKey, out IReadOnlyList<GeometryCollisionBodyDescriptor>? movedCollisionBodies);
         _staticPhysicsCells.Remove(oldKey);
         Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
         RebuildGeometryCellArtifacts(oldKey, syncPhysics: rebuildPhysics);
 
+        // The record is keyed by cell, so a cell change allocates a new one. The old cell's
+        // descriptor lists move with it and are rewritten in place for the new cell.
         GeometryCellRecord movedCell = new(
             newKey,
             oldCell.Definition,
@@ -360,6 +362,16 @@ public class Map
         if (!syncPhysics)
         {
             _physicsBinder?.ReindexCompatibilityCubeBody(cube, oldKey, newKey);
+        }
+
+        if (movedRenderBlocks != null)
+        {
+            _renderBlocksByCell.TryAdd(newKey, movedRenderBlocks);
+        }
+
+        if (movedCollisionBodies != null)
+        {
+            _collisionBodiesByCell.TryAdd(newKey, movedCollisionBodies);
         }
 
         RebuildGeometryCellArtifacts(newKey, syncPhysics: rebuildPhysics);
@@ -376,7 +388,7 @@ public class Map
         GeometryCellKey cell,
         IReadOnlyList<(int PieceIndex, Vector3 Center)> updates)
     {
-        return UpdateFracturePiecePositions(cell, updates, out _);
+        return UpdateFracturePiecePositionsCore(cell, updates, acceptedPieceIndices: null);
     }
 
     public bool UpdateFracturePiecePositions(
@@ -384,53 +396,91 @@ public class Map
         IReadOnlyList<(int PieceIndex, Vector3 Center)> updates,
         out HashSet<int> acceptedPieceIndices)
     {
+        acceptedPieceIndices = [];
+        return UpdateFracturePiecePositionsCore(cell, updates, acceptedPieceIndices);
+    }
+
+    // Per-tick form: clears acceptedPieceIndices and fills it with the accepted piece indices, so
+    // the caller can reuse one set across calls.
+    public bool UpdateFracturePiecePositions(
+        GeometryCellKey cell,
+        IReadOnlyList<(int PieceIndex, Vector3 Center)> updates,
+        HashSet<int> acceptedPieceIndices)
+    {
+        ArgumentNullException.ThrowIfNull(acceptedPieceIndices);
+        acceptedPieceIndices.Clear();
+        return UpdateFracturePiecePositionsCore(cell, updates, acceptedPieceIndices);
+    }
+
+    // Resting pieces (every center unchanged) cost nothing. A moved piece copies the piece list
+    // once per call, because the record's list is published through RubbleCells and is never
+    // mutated in place; the render and collision descriptors are then rewritten in place.
+    private bool UpdateFracturePiecePositionsCore(
+        GeometryCellKey cell,
+        IReadOnlyList<(int PieceIndex, Vector3 Center)> updates,
+        HashSet<int>? acceptedPieceIndices)
+    {
         if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? record) ||
-            record.FracturePieces == null ||
+            record.FracturePieces is not IReadOnlyList<GeometryFracturePiece> currentPieces ||
             updates.Count == 0)
         {
-            acceptedPieceIndices = [];
             return false;
         }
 
-        acceptedPieceIndices = [];
-        GeometryFracturePiece[] pieces = record.FracturePieces.ToArray();
-        bool changed = false;
-        foreach ((int pieceIndex, Vector3 center) in updates)
+        GeometryFracturePiece[]? movedPieces = null;
+        bool anyAccepted = false;
+        // Indexed loop: enumerating through the interface would box the list's enumerator.
+        for (int i = 0; i < updates.Count; i++)
         {
-            if (pieceIndex < 0 || pieceIndex >= pieces.Length)
+            (int pieceIndex, Vector3 center) = updates[i];
+            if (pieceIndex < 0 || pieceIndex >= currentPieces.Count)
             {
                 continue;
             }
 
-            GeometryFracturePiece movedPiece = pieces[pieceIndex] with { Center = center };
+            // A later update of the same piece compares against the earlier one, as before.
+            GeometryFracturePiece piece = movedPieces != null ? movedPieces[pieceIndex] : currentPieces[pieceIndex];
+            GeometryFracturePiece movedPiece = piece with { Center = center };
             if (!movedPiece.IsValid())
             {
                 continue;
             }
 
-            acceptedPieceIndices.Add(pieceIndex);
-            if (pieces[pieceIndex].Center == center)
+            anyAccepted = true;
+            acceptedPieceIndices?.Add(pieceIndex);
+            if (piece.Center == center)
             {
                 continue;
             }
 
-            pieces[pieceIndex] = movedPiece;
-            changed = true;
+            movedPieces ??= CopyPieces(currentPieces);
+            movedPieces[pieceIndex] = movedPiece;
         }
 
-        if (acceptedPieceIndices.Count == 0)
+        if (!anyAccepted)
         {
             return false;
         }
 
-        if (!changed)
+        if (movedPieces == null)
         {
             return true;
         }
 
-        record.SetFracturePieces(pieces);
+        record.SetFracturePieces(movedPieces);
         RebuildRubbleArtifacts(cell, syncPhysics: false);
         return true;
+    }
+
+    private static GeometryFracturePiece[] CopyPieces(IReadOnlyList<GeometryFracturePiece> pieces)
+    {
+        GeometryFracturePiece[] copy = new GeometryFracturePiece[pieces.Count];
+        for (int i = 0; i < copy.Length; i++)
+        {
+            copy[i] = pieces[i];
+        }
+
+        return copy;
     }
 
     public GeometryCellRecord? TryGetGeometryCellAtCell(int x, int y, int z)
@@ -587,8 +637,10 @@ public class Map
             return;
         }
 
-        _rubbleRenderBlocks[cell] = BuildRenderBlocks(rubble);
-        IReadOnlyList<GeometryCollisionBodyDescriptor> bodies = BuildCollisionBodies(rubble);
+        _rubbleRenderBlocks.TryGetValue(cell, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousBlocks);
+        _rubbleCollisionBodies.TryGetValue(cell, out IReadOnlyList<GeometryCollisionBodyDescriptor>? previousBodies);
+        _rubbleRenderBlocks[cell] = BuildRenderBlocks(rubble, previousBlocks);
+        IReadOnlyList<GeometryCollisionBodyDescriptor> bodies = BuildCollisionBodies(rubble, previousBodies);
         _rubbleCollisionBodies[cell] = bodies;
         if (syncPhysics)
         {
@@ -1324,8 +1376,10 @@ public class Map
             return;
         }
 
-        IReadOnlyList<GeometryRenderBlockDescriptor> renderBlocks = BuildRenderBlocks(geometryCell);
-        IReadOnlyList<GeometryCollisionBodyDescriptor> collisionBodies = BuildCollisionBodies(geometryCell);
+        _renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousRenderBlocks);
+        _collisionBodiesByCell.TryGetValue(key, out IReadOnlyList<GeometryCollisionBodyDescriptor>? previousCollisionBodies);
+        IReadOnlyList<GeometryRenderBlockDescriptor> renderBlocks = BuildRenderBlocks(geometryCell, previousRenderBlocks);
+        IReadOnlyList<GeometryCollisionBodyDescriptor> collisionBodies = BuildCollisionBodies(geometryCell, previousCollisionBodies);
 
         _renderBlocksByCell[key] = renderBlocks;
         _collisionBodiesByCell[key] = collisionBodies;
@@ -1347,23 +1401,41 @@ public class Map
             syncPhysics);
     }
 
-    private IReadOnlyList<GeometryRenderBlockDescriptor> BuildRenderBlocks(GeometryCellRecord record)
+    // previous is the cell's current descriptor list. Descriptor lists are owned by the map and
+    // every export copies them, so the fracture and coarse-cube paths, which run on every
+    // physics sync of a moving piece or cube, rewrite a previous array of the right length in
+    // place instead of allocating a new one.
+    private IReadOnlyList<GeometryRenderBlockDescriptor> BuildRenderBlocks(
+        GeometryCellRecord record,
+        IReadOnlyList<GeometryRenderBlockDescriptor>? previous)
     {
-        if (record.FracturePieces is { Count: > 0 })
+        if (record.FracturePieces is { Count: > 0 } pieces)
         {
-            return record.FracturePieces
-                .Where(GeometryFracturePiece.IsValid)
-                .Select(piece => _generator.CreateRenderBlockDescriptor(
+            GeometryRenderBlockDescriptor[] blocks = ReuseOrAllocate(previous, CountValidPieces(pieces));
+            int next = 0;
+            for (int index = 0; index < pieces.Count; index++)
+            {
+                GeometryFracturePiece piece = pieces[index];
+                if (!piece.IsValid())
+                {
+                    continue;
+                }
+
+                blocks[next++] = _generator.CreateRenderBlockDescriptor(
                     record,
                     piece.Center,
-                    piece.SideLength))
-                .ToArray();
+                    piece.SideLength);
+            }
+
+            return blocks;
         }
 
         if (ShouldUseCoarseCompatibilityRender(record))
         {
             Vector3 center = new(record.Key.X + 0.5f, record.Key.Y + 0.5f, record.Key.Z + 0.5f);
-            return [_generator.CreateRenderBlockDescriptor(record, center, 1f)];
+            GeometryRenderBlockDescriptor[] blocks = ReuseOrAllocate(previous, 1);
+            blocks[0] = _generator.CreateRenderBlockDescriptor(record, center, 1f);
+            return blocks;
         }
 
         if (ShouldUseMergedSubcellRender(record))
@@ -1371,6 +1443,13 @@ public class Map
             return BuildMergedSubcellRenderBlocks(record);
         }
 
+        return BuildSubcellRenderBlocks(record);
+    }
+
+    // Kept apart from BuildRenderBlocks: the lambda's closure over record would otherwise be
+    // allocated on entry to BuildRenderBlocks, on every rebuild of a coarse cube cell too.
+    private IReadOnlyList<GeometryRenderBlockDescriptor> BuildSubcellRenderBlocks(GeometryCellRecord record)
+    {
         return EnumerateSolidSubcells(record)
             .Select(entry => _generator.CreateRenderBlockDescriptor(
                 record,
@@ -1381,7 +1460,10 @@ public class Map
             .ToArray();
     }
 
-    private IReadOnlyList<GeometryCollisionBodyDescriptor> BuildCollisionBodies(GeometryCellRecord record)
+    // Same in-place reuse of previous as BuildRenderBlocks.
+    private IReadOnlyList<GeometryCollisionBodyDescriptor> BuildCollisionBodies(
+        GeometryCellRecord record,
+        IReadOnlyList<GeometryCollisionBodyDescriptor>? previous)
     {
         if (record.Key.Y == 0)
         {
@@ -1389,24 +1471,25 @@ public class Map
         }
 
         bool isStatic = _staticPhysicsCells.Contains(record.Key);
-        if (record.FracturePieces is { Count: > 0 })
+        if (record.FracturePieces is { Count: > 0 } pieces)
         {
-            List<GeometryCollisionBodyDescriptor> fractureBodies = [];
-            for (int index = 0; index < record.FracturePieces.Count; index++)
+            GeometryCollisionBodyDescriptor[] fractureBodies = ReuseOrAllocate(previous, CountValidPieces(pieces));
+            int next = 0;
+            for (int index = 0; index < pieces.Count; index++)
             {
-                GeometryFracturePiece piece = record.FracturePieces[index];
+                GeometryFracturePiece piece = pieces[index];
                 if (!piece.IsValid())
                 {
                     continue;
                 }
 
-                fractureBodies.Add(new GeometryCollisionBodyDescriptor(
+                fractureBodies[next++] = new GeometryCollisionBodyDescriptor(
                     GeometryCollisionBodyKind.Subcell,
                     piece.Center,
                     new Vector3(piece.SideLength * 0.5f),
                     IsStatic: false,
                     CellKey: record.Key,
-                    FracturePieceIndex: index));
+                    FracturePieceIndex: index);
             }
 
             return fractureBodies;
@@ -1420,19 +1503,44 @@ public class Map
                 return Array.Empty<GeometryCollisionBodyDescriptor>();
             }
 
-            return
-            [
-                new GeometryCollisionBodyDescriptor(
-                    GeometryCollisionBodyKind.Cell,
-                    cube.Position,
-                    new Vector3(0.5f, 0.5f, 0.5f),
-                    isStatic,
-                    CellKey: record.Key,
-                    CompatibilityCube: cube)
-            ];
+            GeometryCollisionBodyDescriptor[] bodies = ReuseOrAllocate(previous, 1);
+            bodies[0] = new GeometryCollisionBodyDescriptor(
+                GeometryCollisionBodyKind.Cell,
+                cube.Position,
+                new Vector3(0.5f, 0.5f, 0.5f),
+                isStatic,
+                CellKey: record.Key,
+                CompatibilityCube: cube);
+            return bodies;
         }
 
         return BuildMergedSubcellCollisionBodies(record, isStatic);
+    }
+
+    private static T[] ReuseOrAllocate<T>(IReadOnlyList<T>? previous, int length)
+    {
+        if (length == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        return previous is T[] reusable && reusable.Length == length
+            ? reusable
+            : new T[length];
+    }
+
+    private static int CountValidPieces(IReadOnlyList<GeometryFracturePiece> pieces)
+    {
+        int count = 0;
+        for (int index = 0; index < pieces.Count; index++)
+        {
+            if (pieces[index].IsValid())
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     // Call after the cell's state has changed. Static dirtiness is tracked against what the cell

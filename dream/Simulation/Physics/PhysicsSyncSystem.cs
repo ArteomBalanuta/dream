@@ -32,6 +32,7 @@ public class PhysicsSyncSystem
     private readonly List<GeometryCellKey> _fractureCellOrder = [];
     private readonly Stack<List<PendingFracturePieceSync>> _fractureSyncListPool = new();
     private readonly List<(int PieceIndex, Vector3 Center)> _fracturePieceUpdates = [];
+    private readonly HashSet<int> _acceptedPieceIndices = [];
     private readonly HashSet<RigidBody> _liveBodies = [];
     private readonly List<RigidBody> _staleStreakBodies = [];
 
@@ -188,11 +189,11 @@ public class PhysicsSyncSystem
             bool accepted = map.UpdateFracturePiecePositions(
                 cell,
                 _fracturePieceUpdates,
-                out HashSet<int> acceptedPieceIndices);
+                _acceptedPieceIndices);
             for (int i = 0; i < cellSyncs.Count; i++)
             {
                 PendingFracturePieceSync pendingSync = cellSyncs[i];
-                if (accepted && acceptedPieceIndices.Contains(pendingSync.PieceIndex))
+                if (accepted && _acceptedPieceIndices.Contains(pendingSync.PieceIndex))
                 {
                     if (!AreBitEqual(pendingSync.PreviousCenter, pendingSync.Center))
                     {
@@ -215,6 +216,7 @@ public class PhysicsSyncSystem
         _fractureSyncsByCell.Clear();
         _fractureCellOrder.Clear();
         _fracturePieceUpdates.Clear();
+        _acceptedPieceIndices.Clear();
     }
 
     // Debug builds verify the map's parallel indexes after any tick that moved a cube, so a
