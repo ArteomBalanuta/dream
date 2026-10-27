@@ -1,7 +1,7 @@
 # Static Render Export Caching
 
 Purpose: Stop rebuilding the whole world render export and re-hashing it on every client frame.
-Status: Implemented on `worktree-agent-a1b7ca0763909b347` (5fd40d0); awaiting integration
+Status: Completed. Integrated on `integrate/engine-iteration` through `iteration/engine-base`.
 Scope: `Map` presentation export, `GeometryRenderExport`, `StaticWorldChunkRenderer` export signature, tests.
 
 ## Why This Gap

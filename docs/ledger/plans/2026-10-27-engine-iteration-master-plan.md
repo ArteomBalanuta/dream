@@ -1,7 +1,7 @@
 # Engine Iteration Master Plan: Hot Paths, GL Ownership, Determinism, Decoupling, Wire
 
 Purpose: Split one iteration of foundation work into many independent tasks that implementers can run in parallel waves.
-Status: Wave 1 in progress
+Status: Wave 1 integrated and verified on `integrate/engine-iteration` (see `docs/ledger/work-log/2026-10-27-engine-iteration-wave-1.md`). Waves 2–6 are planned.
 Scope: Voxel meshing and render export, GL resource ownership and threading, the deterministic authoritative simulation, simulation/presentation decoupling, the wire protocol and server I/O.
 
 ## How This Plan Was Made
@@ -77,6 +77,7 @@ Scope: Voxel meshing and render export, GL resource ownership and threading, the
   - DEC-8: `loadVisualAssets` removal and a whole-Simulation dependency assertion.
   - GFX-8: async model cache.
 - **Wave 6:** NET-4: enemy interpolation.
+- **Added after wave 1:** a render frame cap or VSync. The perf run showed the uncapped loop at about 1,300 FPS starving a second local client. This needs a decision from the user.
 - **Deferred, design-gated:**
   - NET-5: buffered command stream and protocol bump.
   - WIRE-7: delta actors.
