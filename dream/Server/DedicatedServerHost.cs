@@ -6,6 +6,10 @@ using Dream.Simulation.Runtime;
 
 namespace Dream.Server;
 
+// A reply produced for a connection outside HandleClientMessage, such as a deferred join's
+// JoinAccepted or JoinRejected.
+public readonly record struct PendingConnectionReply(string ConnectionId, IServerToClientMessage Message);
+
 public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
 {
     private static readonly PlayerSimulationTuning DefaultServerTuning = PlayerSimulationTuning.AuthoritativeDefault;
@@ -14,6 +18,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // process, so joined sessions are put in ordinal session-id order before they drive the tick.
     private static readonly Comparison<PlayerSessionId> CompareSessionIdsOrdinal =
         static (left, right) => string.CompareOrdinal(left.Value, right.Value);
+
+    // Joins applied at a tick boundary go in ordinal requested-session-id order, then connection id.
+    private static readonly Comparison<PendingJoin> ComparePendingJoinsOrdinal =
+        static (left, right) =>
+        {
+            int bySession = string.CompareOrdinal(left.Request.RequestedSessionId, right.Request.RequestedSessionId);
+            return bySession != 0 ? bySession : string.CompareOrdinal(left.ConnectionId, right.ConnectionId);
+        };
 
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
@@ -25,6 +37,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
+    private readonly ConcurrentQueue<PendingConnectionReply> _pendingJoinReplies = new();
+    private readonly bool _deferJoinsToTick;
+    // Join requests received since the last tick, touched only under _authoritySync.
+    private readonly List<PendingJoin> _pendingJoins = [];
     private readonly object _authoritySync = new();
 
     // Tick scratch, touched only under _authoritySync. The context list mirrors _connections and
@@ -40,8 +56,25 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public DedicatedServerHost(
         IAuthoritativeSessionHost? authority,
         IProtocolRouter router)
+        : this(authority, router, deferJoinsToTick: false)
+    {
+    }
+
+    // With deferJoinsToTick, a join request is not applied when it arrives: it waits for the next
+    // tick and every join that arrived since the previous tick is applied at the start of that tick
+    // in ordinal session-id order. The runtime's join-order state (primary seat, secondary actor
+    // ids and spawn lanes) then depends only on which sessions joined in which tick, not on their
+    // arrival order. HandleClientMessage returns no reply for a deferred join; the JoinAccepted or
+    // JoinRejected comes from DrainPendingJoinRepliesInto after the tick, and the caller must
+    // deliver it. Off by default: DedicatedServerService delivers only the replies that
+    // HandleClientMessage returns.
+    public DedicatedServerHost(
+        IAuthoritativeSessionHost? authority,
+        IProtocolRouter router,
+        bool deferJoinsToTick)
     {
         _authority = authority;
+        _deferJoinsToTick = deferJoinsToTick;
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
         _checkpointWrites = Runtime?.CheckpointWriter is { } checkpointWriter
@@ -50,6 +83,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     }
 
     public BackgroundCheckpointWriter? CheckpointWrites => _checkpointWrites;
+
+    public bool DefersJoinsToTick => _deferJoinsToTick;
 
     // How long until the tick runner's next fixed tick is due.
     public double SecondsUntilNextTick =>
@@ -94,6 +129,12 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ServerRoutingContext context = GetOrCreateConnectionContext(connectionId);
         lock (_authoritySync)
         {
+            if (_deferJoinsToTick && message is ClientJoinRequestMessage joinRequest)
+            {
+                _pendingJoins.Add(new PendingJoin(connectionId, joinRequest));
+                return Array.Empty<IServerToClientMessage>();
+            }
+
             context.ClearOutboundMessages();
             _router.RouteServerInbound(context, message);
             return context.OutboundMessages.ToArray();
@@ -144,6 +185,19 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
         {
             destination.Add(actionResult);
+        }
+    }
+
+    // Replaces the destination's contents with the replies to joins applied at tick boundaries,
+    // in the order the joins were applied. Empty unless the host defers joins to the tick.
+    public void DrainPendingJoinRepliesInto(List<PendingConnectionReply> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        destination.Clear();
+        while (_pendingJoinReplies.TryDequeue(out PendingConnectionReply reply))
+        {
+            destination.Add(reply);
         }
     }
 
@@ -211,6 +265,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     public void ReleaseConnection(string connectionId)
     {
+        if (_deferJoinsToTick)
+        {
+            lock (_authoritySync)
+            {
+                _pendingJoins.RemoveAll(join => string.Equals(join.ConnectionId, connectionId, StringComparison.Ordinal));
+            }
+        }
+
         if (_connectionClaims.TryRemove(connectionId, out string? sessionId))
         {
             if (_sessionClaims.TryGetValue(sessionId, out string? ownerConnection)
@@ -271,6 +333,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
+        ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);
         _actionQueue.DrainInto(_joinedSessionIds, _tickActions);
@@ -303,6 +366,43 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
         }
     }
+
+    // Same-tick joins in canonical order. A join whose connection was dropped is skipped. With no
+    // pending join this returns before touching anything, so steady-state ticks do not allocate.
+    private void ApplyPendingJoins()
+    {
+        if (_pendingJoins.Count == 0)
+        {
+            return;
+        }
+
+        if (_pendingJoins.Count > 1)
+        {
+            _pendingJoins.Sort(ComparePendingJoinsOrdinal);
+        }
+
+        for (int i = 0; i < _pendingJoins.Count; i++)
+        {
+            PendingJoin join = _pendingJoins[i];
+            if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
+            {
+                continue;
+            }
+
+            context.ClearOutboundMessages();
+            _router.RouteServerInbound(context, join.Request);
+            for (int replyIndex = 0; replyIndex < context.OutboundMessages.Count; replyIndex++)
+            {
+                _pendingJoinReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
+            }
+
+            context.ClearOutboundMessages();
+        }
+
+        _pendingJoins.Clear();
+    }
+
+    private readonly record struct PendingJoin(string ConnectionId, ClientJoinRequestMessage Request);
 
     // Connections are added and removed off the tick thread. Enumerating the ConcurrentDictionary
     // is safe during those changes, and a change made mid-enumeration sets the flag again for the

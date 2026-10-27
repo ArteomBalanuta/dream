@@ -165,25 +165,45 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             Runtime.AdvanceSecondaryRemoteSession(_orderedSecondaryCommands[i], deltaTime, playerTuning);
         }
 
+        // The primary seat's primary use is deferred, not resolved inline before everyone else's,
+        // so the session that joined first (and holds the seat) does not win every same-tick race.
         Runtime.AdvanceAuthoritativeTick(
             serverTick,
             deltaTime,
             commandFrame,
             playerTuning,
-            allowGameplaySimulation);
+            allowGameplaySimulation,
+            deferPrimarySeatUse: true);
 
+        // One ordinal pass over every seat's primary use: the primary seat's (if it triggered,
+        // after its attack-interval gate) merged into the already sorted secondary frames.
+        bool primarySeatUsePending = Runtime.TryTakeDeferredPrimarySeatUse(out PlayerCommandFrame primarySeatUseFrame);
         List<AuthoritativeActionResult>? synthesizedCommandActions = null;
-        for (int i = 0; i < _orderedSecondaryCommands.Count; i++)
+        int secondaryIndex = 0;
+        while (primarySeatUsePending || secondaryIndex < _orderedSecondaryCommands.Count)
         {
-            PlayerCommandFrame secondaryCommand = _orderedSecondaryCommands[i];
-            if (secondaryCommand.PrimaryUsePressed)
+            PlayerCommandFrame useCommand;
+            if (primarySeatUsePending
+                && (secondaryIndex >= _orderedSecondaryCommands.Count
+                    || CompareBySessionIdThenSequence(primarySeatUseFrame, _orderedSecondaryCommands[secondaryIndex]) <= 0))
             {
-                PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(secondaryCommand);
-                if (actionMessage != null)
+                useCommand = primarySeatUseFrame;
+                primarySeatUsePending = false;
+            }
+            else
+            {
+                useCommand = _orderedSecondaryCommands[secondaryIndex++];
+                if (!useCommand.PrimaryUsePressed)
                 {
-                    synthesizedCommandActions ??= [];
-                    synthesizedCommandActions.Add(Runtime.ProcessAuthoritativeAction(actionMessage));
+                    continue;
                 }
+            }
+
+            PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(useCommand);
+            if (actionMessage != null)
+            {
+                synthesizedCommandActions ??= [];
+                synthesizedCommandActions.Add(Runtime.ProcessAuthoritativeAction(actionMessage));
             }
         }
 

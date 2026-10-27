@@ -68,6 +68,10 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
+    // A primary-seat primary use that triggered this tick but was left for the caller to resolve
+    // in its ordinal pass with every other seat (see AdvanceAuthoritativeTick's deferPrimarySeatUse).
+    private bool _hasDeferredPrimarySeatUse;
+    private PlayerCommandFrame _deferredPrimarySeatUseFrame;
     private int _nextRemoteActorId = 2;
     private long _nextItemInstanceId = 1;
 
@@ -311,15 +315,29 @@ public sealed class WorldSessionRuntime : IDisposable
             context.DeltaTime,
             context.CommandFrame,
             context.PlayerTuning,
-            context.AllowGameplaySimulation);
+            context.AllowGameplaySimulation,
+            deferPrimarySeatUse: false);
+    }
+
+    // The primary seat's command frame whose primary use triggered in the last tick advanced with
+    // deferPrimarySeatUse, once. The caller resolves it with TryCreateCommandPrimaryUseActionMessage
+    // and ProcessAuthoritativeAction in the same ordinal session-id pass as the secondary seats.
+    public bool TryTakeDeferredPrimarySeatUse(out PlayerCommandFrame commandFrame)
+    {
+        commandFrame = _deferredPrimarySeatUseFrame;
+        bool taken = _hasDeferredPrimarySeatUse;
+        _hasDeferredPrimarySeatUse = false;
+        return taken;
     }
 
     private WorldSessionUpdateResult UpdateAcceptedCommand(
         float delta,
         PlayerCommandFrame commandFrame,
         PlayerSimulationTuning playerTuning,
-        bool allowGameplaySimulation)
+        bool allowGameplaySimulation,
+        bool deferPrimarySeatUse)
     {
+        _hasDeferredPrimarySeatUse = false;
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
         ApplyInteractionModeSelection(commandFrame.SessionId, interaction);
@@ -332,7 +350,14 @@ public sealed class WorldSessionRuntime : IDisposable
             Player.Combatant.DerivedStats.AttackIntervalSeconds,
             delta);
 
-        if (primaryUseTriggered)
+        if (primaryUseTriggered && deferPrimarySeatUse)
+        {
+            // Resolved by the caller after the tick, ordered with the secondary seats, so holding
+            // the primary seat (joining first) no longer wins every same-tick race.
+            _deferredPrimarySeatUseFrame = commandFrame;
+            _hasDeferredPrimarySeatUse = true;
+        }
+        else if (primaryUseTriggered)
         {
             PlayerActionMessage? actionMessage = TryCreateCommandPrimaryUseActionMessage(commandFrame);
             if (actionMessage != null)
@@ -396,14 +421,16 @@ public sealed class WorldSessionRuntime : IDisposable
         float deltaTime,
         PlayerCommandFrame commandFrame,
         PlayerSimulationTuning playerTuning,
-        bool allowGameplaySimulation = true)
+        bool allowGameplaySimulation = true,
+        bool deferPrimarySeatUse = false)
     {
         return AdvanceAuthoritativeTick(
             serverTick,
             deltaTime,
             (PlayerCommandFrame?)commandFrame,
             playerTuning,
-            allowGameplaySimulation);
+            allowGameplaySimulation,
+            deferPrimarySeatUse);
     }
 
     public IReadOnlyList<AuthoritativeActionResult> ProcessQueuedAuthoritativeActions(
@@ -425,7 +452,8 @@ public sealed class WorldSessionRuntime : IDisposable
         float deltaTime,
         PlayerCommandFrame? commandFrame,
         PlayerSimulationTuning playerTuning,
-        bool allowGameplaySimulation = true)
+        bool allowGameplaySimulation = true,
+        bool deferPrimarySeatUse = false)
     {
         CurrentServerTick = serverTick;
 
@@ -439,7 +467,8 @@ public sealed class WorldSessionRuntime : IDisposable
             deltaTime,
             _lastAppliedCommandFrame,
             playerTuning,
-            allowGameplaySimulation);
+            allowGameplaySimulation,
+            deferPrimarySeatUse);
     }
 
     public bool TryResolveCombatActor(int actorId, out CombatActorHandle actor)
