@@ -102,8 +102,9 @@ public sealed class Shader : IDisposable
     }
 
     // Resolves a table of uniform names once per program. The table is keyed by the array
-    // instance, so callers pass a static array and get the same int[] back on every call.
-    public int[] GetUniformLocations(string[] uniformNames)
+    // instance, so callers pass a static array and get the same cached table back on every call.
+    // The table is shared, so it is handed out read-only.
+    public ReadOnlySpan<int> GetUniformLocations(string[] uniformNames)
     {
         ArgumentNullException.ThrowIfNull(uniformNames);
         if (_uniformLocationTables.TryGetValue(uniformNames, out int[]? existing))

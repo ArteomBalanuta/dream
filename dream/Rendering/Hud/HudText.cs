@@ -26,7 +26,8 @@ public static class HudText
             return;
         }
 
-        ImGui.Text(text.ToStringAndClear());
+        // ImGui.Text treats its argument as a printf format, so a "%" in the text would be misread.
+        ImGui.TextUnformatted(text.ToStringAndClear());
     }
 
     // Formats into the destination only. Returns false when the destination is too small; the

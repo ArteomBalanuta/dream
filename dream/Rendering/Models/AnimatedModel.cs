@@ -669,7 +669,7 @@ public class AnimatedModel : IDisposable
         }
 
         shader.SetBool("useSkinning", true);
-        int[] jointLocations = shader.GetUniformLocations(JointMatrixUniformNames);
+        ReadOnlySpan<int> jointLocations = shader.GetUniformLocations(JointMatrixUniformNames);
         for (int i = 0; i < _skinning.Joints.Length; i++)
         {
             SkinJoint joint = _skinning.Joints[i];

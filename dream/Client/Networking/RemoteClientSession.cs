@@ -28,8 +28,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly SemaphoreSlim _outboundSignal = new(0, int.MaxValue);
     private readonly object _sendLoopSync = new();
     private Task? _sendLoopTask;
-    // One reusable pooled buffer for every outbound frame; only touched while _sendLock is held.
+    // One reusable pooled buffer for every outbound frame; only touched while _sendLock is held,
+    // including its Dispose in DisposeAsync.
     private readonly PooledFrameWriter _frameWriter = new();
+    // 0 until DisposeAsync starts, then 1. Checked by senders before and after taking _sendLock.
+    private int _disposeState;
     private readonly string _commandLogKey;
     private readonly string _slowCommandLogKey;
     private long _sentCommandCount;
@@ -192,6 +195,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+            // DisposeAsync started between the loop's wait and its send; not a transport error.
+        }
         catch (Exception ex)
         {
             IsConnected = false;
@@ -245,6 +252,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+        {
+            return;
+        }
+
         _shutdown.Cancel();
         if (_sendLoopTask != null)
         {
@@ -268,20 +280,39 @@ public sealed class RemoteClientSession : IAsyncDisposable
             }
         }
 
-        // The send loop has exited, so no encode or send still holds the pooled frame buffer.
-        _frameWriter.Dispose();
+        // The send loop has exited, but a direct Send*Async call (SendHelloAsync and friends) does
+        // not run on it and may still be writing the pooled frame buffer to the transport. Take
+        // _sendLock so the buffer goes back to ArrayPool<byte>.Shared only after that send ends.
+        // Senders that get the lock after this see _disposeState and throw ObjectDisposedException
+        // instead of encoding into the returned buffer.
+        await _sendLock.WaitAsync();
+        try
+        {
+            _frameWriter.Dispose();
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+
+        // _sendLock is deliberately not disposed: a sender still queued on WaitAsync would never be
+        // woken by a disposed SemaphoreSlim. It owns no unmanaged handle unless AvailableWaitHandle
+        // is read, which this class never does.
         _shutdown.Dispose();
-        _sendLock.Dispose();
         await _connection.DisposeAsync();
     }
 
     private async ValueTask SendMessageAsync(IClientToServerMessage message, CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
         Stopwatch? stopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         int frameLength;
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
+            // Disposal may have started while this call waited for the lock; the frame writer is
+            // then gone (or about to be), so fail cleanly rather than touch its buffer.
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
             ReadOnlyMemory<byte> frame = EncodeClientFrame(message);
             frameLength = frame.Length;
             // frame aliases _frameWriter's pooled buffer. Passing it to the transport is safe only
