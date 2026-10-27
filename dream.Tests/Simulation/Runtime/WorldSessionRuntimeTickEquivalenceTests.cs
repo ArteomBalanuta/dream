@@ -98,8 +98,7 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
         WorldSessionRuntime runtime = new(
             FloorSize,
             new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         RuntimeAuthoritativeSessionHost host = new(runtime);
         // Joined out of ordinal order: session-b takes the primary seat.
         host.JoinSession(PrimarySession, "Player B");

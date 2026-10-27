@@ -99,7 +99,7 @@ public class PlayerInteractionEdgeTests
     [Fact]
     public void AddCube_ReturnsAcceptedPlacementState()
     {
-        Map map = new(loadVisualAssets: false, width: 4, height: 4, depth: 4);
+        Map map = new(width: 4, height: 4, depth: 4);
 
         Assert.True(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));
         Assert.False(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));

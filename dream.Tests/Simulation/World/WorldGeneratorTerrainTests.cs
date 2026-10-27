@@ -12,7 +12,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Uses_More_Than_One_Terrain_Material()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryMaterialId[] materials = map.GeometryCells.Values
             .Where(cell => cell.Key.Y == 0)
@@ -30,7 +30,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Uses_Imported_Terrain_Texture_Materials()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryMaterialId[] materials = map.GeometryCells.Values
             .Where(cell => cell.Key.Y == 0)
@@ -47,7 +47,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_RenderExtraction_Preserves_Imported_Floor_Materials()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
         GeometryRenderExport export = map.CaptureGeometryRenderExport(
             new Vector3(28f, 2f, 28f),
             WorldVisibility.MaxRenderDistance);
@@ -67,7 +67,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Adds_Raised_Landmark_Cells_Above_Floor_Level()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryCellRecord[] raisedCells = map.GeometryCells.Values
             .Where(cell => cell.Key.Y > 0)
@@ -80,7 +80,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Creates_Visible_Spawn_Approach_Path_And_Nearby_Landmark()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryCellRecord spawnPathCell = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(5, 0, 8));
         GeometryCellRecord nearbyLandmark = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(10, 1, 8));
@@ -92,7 +92,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Places_A_Raised_Adjacent_Landmass_Next_To_Spawn_Platform()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryCellRecord bridgeStart = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(7, 1, 5));
         GeometryCellRecord bridgeMid = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(8, 1, 5));
@@ -113,7 +113,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Uses_Subcells_For_Authored_Pyramid_And_Rounded_Forms()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryCellRecord pyramidBase = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(18, 1, 16));
         GeometryCellRecord pyramidPeak = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(18, 4, 16));
@@ -131,7 +131,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Uses_Finer_Denser_Subcell_Sculpture_Clusters()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), radius: 18f);
         GeometryRenderBlockDescriptor[] sculptedBlocks = export.Blocks
@@ -155,7 +155,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Projects_Sculpture_Microcells_From_GlobalCoordinates()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport export = map.CaptureGeometryRenderExport(new Vector3(18.5f, 2f, 16.5f), radius: 8f);
         GeometryRenderBlockDescriptor[] boundaryBlocks = export.Blocks
@@ -176,7 +176,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Bounds_Rendered_GlobalMicroGrid_Sculpture_Blocks()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
         int sculptedRenderBlocks = renderExport.Blocks.Count(block => block.CellKey.Y > 0);
@@ -187,7 +187,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Merges_Rendered_GlobalMicroGrid_Sculpture_Cuboids()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
         GeometryRenderBlockDescriptor[] mergedSculptureBlocks = renderExport.Blocks
@@ -203,7 +203,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Merges_Rendered_GlobalMicroGrid_Sculptures_Across_Cell_Boundaries()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(24f, 2f, 16f), WorldVisibility.MaxRenderDistance);
 
@@ -215,7 +215,7 @@ public class WorldGeneratorTerrainTests
     [Fact]
     public void StartupWorld_Captures_GlobalMergedSculpture_Block_When_Bounds_Overlap_Radius()
     {
-        Map map = new(width: 56, height: 8, depth: 56, loadVisualAssets: false, generateStartupTerrain: true);
+        Map map = new(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
 
         GeometryRenderExport renderExport = map.CaptureGeometryRenderExport(new Vector3(14.25f, 1.05f, 12.25f), radius: 0.5f);
 

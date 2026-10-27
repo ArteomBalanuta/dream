@@ -16,7 +16,7 @@ public class PlayerMotorTests
     public void Update_WhenDisablingNoclipWhileInsideFloor_SnapsBodyBackAboveFloor()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(physics, width: 10, depth: 10);
         PhysicsFactory factory = new();
         RigidBody body = factory.CreatePlayerBody(new BulletSharp.Math.Vector3(5f, 1.5f, 5f));
         physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);

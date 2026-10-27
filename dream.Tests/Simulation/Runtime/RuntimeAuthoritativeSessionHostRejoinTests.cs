@@ -98,7 +98,7 @@ public class RuntimeAuthoritativeSessionHostRejoinTests
 
     private static RuntimeAuthoritativeSessionHost CreateHost()
     {
-        WorldSessionRuntime runtime = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        WorldSessionRuntime runtime = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         runtime.Enemies.Clear();
         return new RuntimeAuthoritativeSessionHost(runtime);
     }

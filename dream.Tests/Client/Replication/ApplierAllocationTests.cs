@@ -104,7 +104,7 @@ public class ApplierAllocationTests
     [Fact]
     public void ApplyWorldMutations_ResolvingCubeMoves_AllocatesNoMoreThanTheMapUpdates()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Cube first = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: false));
         Cube second = Assert.IsType<Cube>(map.TryAddCube(new Vector3(5f, 2f, 3f), withPhysics: false));
         map.AssignReplicatedCubeId(first, 10);
@@ -198,6 +198,6 @@ public class ApplierAllocationTests
 
     private static ClientWorldSession CreateClient()
     {
-        return new ClientWorldSession(12, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        return new ClientWorldSession(12, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
     }
 }

@@ -148,7 +148,7 @@ public class MultiClientLoopbackSmokeTests
                 new RemoteClientOptions("127.0.0.1", port, session, session, "smoke-test"));
             return new ClientUnderTest(
                 remote,
-                new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false));
+                new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub()));
         }
 
         public void Drain()

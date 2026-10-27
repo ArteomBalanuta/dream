@@ -698,7 +698,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         // Applies every received message, in order, into a client world like PlayScene does.
         public ClientWorldReplay Replay(int floorSize)
         {
-            using ClientWorldSession world = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+            using ClientWorldSession world = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             int verified = 0;
             int mismatches = 0;
             int mutations = 0;

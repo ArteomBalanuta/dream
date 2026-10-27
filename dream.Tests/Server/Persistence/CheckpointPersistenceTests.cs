@@ -158,7 +158,6 @@ public sealed class CheckpointPersistenceTests
             10,
             new Vector3(5f, 1.5f, 5f),
             new SceneEventHub(),
-            loadVisualAssets: false,
             playerProfiles: new SqlitePlayerProfileRepository(database.Schema),
             worldPersistence: new SqliteWorldPersistenceRepository(database.Schema),
             checkpointWriter: writer);

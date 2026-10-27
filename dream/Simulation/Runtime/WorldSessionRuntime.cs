@@ -62,7 +62,6 @@ public sealed class WorldSessionRuntime : IDisposable
             return order != 0 ? order : left.Index.CompareTo(right.Index);
         };
 
-    private readonly bool _loadVisualAssets;
     private readonly SceneEventHub _events;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private readonly WorldObjectRegistry _worldObjects;
@@ -113,7 +112,6 @@ public sealed class WorldSessionRuntime : IDisposable
         int floorSize,
         Vector3 playerStartPosition,
         SceneEventHub events,
-        bool loadVisualAssets = true,
         IPlayerProfileRepository? playerProfiles = null,
         IWorldPersistenceRepository? worldPersistence = null,
         CombatFormulaService? combatFormulaService = null,
@@ -124,7 +122,6 @@ public sealed class WorldSessionRuntime : IDisposable
         SimulationSeed = simulationSeed;
         _writes = persistenceWrites ??
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
-        _loadVisualAssets = loadVisualAssets;
         _events = events;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
@@ -162,7 +159,6 @@ public sealed class WorldSessionRuntime : IDisposable
     {
         return new Map(
             Physics,
-            loadVisualAssets: _loadVisualAssets,
             generateStartupTerrain: true,
             width: floorSize,
             depth: floorSize);

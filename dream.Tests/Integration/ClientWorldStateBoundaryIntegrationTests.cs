@@ -57,7 +57,7 @@ public class ClientWorldStateBoundaryIntegrationTests
         Assert.True(server.IsReady, server.ErrorMessage);
         int floorSize = host!.Runtime!.Map.Width;
 
-        using ClientWorldSession clientWorld = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+        using ClientWorldSession clientWorld = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         // Every applier below sees only the client-side interface.
         IClientWorldState world = clientWorld;
         int placedBefore = clientWorld.Map.SolidCubes.Count(cube => cube.Position.Y > 1f);

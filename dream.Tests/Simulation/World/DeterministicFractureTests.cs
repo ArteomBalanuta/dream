@@ -48,11 +48,11 @@ public class DeterministicFractureTests
     {
         GeometryCellKey cell = new(3, 1, 3);
         using PhysicsIntegrator serverPhysics = new();
-        Map server = new(serverPhysics, loadVisualAssets: false, width: 10, depth: 10);
+        Map server = new(serverPhysics, width: 10, depth: 10);
         Assert.True(server.AddCube(new Vector3(3f, 1f, 3f), materialId: GeometryMaterialId.Stone));
         Assert.True(server.FractureCubeIntoPieces(cell));
 
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
         RemoteWorldMutationApplier.ApplyWorldMutations(
             client,
@@ -70,11 +70,11 @@ public class DeterministicFractureTests
     public void PiecelessFallbackWithoutLocalCube_UsesMutationMaterialAndServerPieces()
     {
         GeometryCellKey cell = new(4, 2, 5);
-        Map server = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map server = new(width: 10, depth: 10);
         Assert.True(server.AddCube(new Vector3(4f, 2f, 5f), withPhysics: false, materialId: GeometryMaterialId.Sand));
         Assert.True(server.FractureCubeIntoPieces(cell));
 
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         RemoteWorldMutationApplier.ApplyWorldMutations(
             client,
             [new WorldMutationDelta(WorldMutationKind.CubeFractured, new Vector3(4f, 2f, 5f), MaterialId: GeometryMaterialId.Sand)]);
@@ -88,7 +88,7 @@ public class DeterministicFractureTests
     public void PiecelessFallback_MutationMaterialOverridesLocalCubeMaterial()
     {
         GeometryCellKey cell = new(3, 1, 3);
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Grass));
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
@@ -109,7 +109,7 @@ public class DeterministicFractureTests
             new(new Vector3(3.2f, 1.1f, 3.2f), 0.2f),
             new(new Vector3(3.7f, 1.1f, 3.7f), 0.18f)
         ];
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
@@ -126,11 +126,11 @@ public class DeterministicFractureTests
     public void LegacySnapshotFracturedCell_KeepsLocalCubeMaterialAndServerPieces()
     {
         GeometryCellKey cell = new(3, 1, 3);
-        Map server = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map server = new(width: 10, depth: 10);
         Assert.True(server.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
         Assert.True(server.FractureCubeIntoPieces(cell));
 
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
         WorldSnapshot snapshot = new(
             Width: 10,

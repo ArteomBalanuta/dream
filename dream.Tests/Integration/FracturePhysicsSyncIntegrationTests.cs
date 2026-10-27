@@ -26,8 +26,8 @@ public class FracturePhysicsSyncIntegrationTests(ITestOutputHelper output)
     {
         using PhysicsIntegrator serverPhysics = new();
         using PhysicsIntegrator clientPhysics = new();
-        Map server = new(serverPhysics, loadVisualAssets: false, width: MapSize, depth: MapSize);
-        Map client = new(clientPhysics, loadVisualAssets: false, width: MapSize, depth: MapSize);
+        Map server = new(serverPhysics, width: MapSize, depth: MapSize);
+        Map client = new(clientPhysics, width: MapSize, depth: MapSize);
         GeometryMaterialId[] materials = [GeometryMaterialId.Stone, GeometryMaterialId.Dirt, GeometryMaterialId.Sand];
 
         // A surviving dynamic cube next to the rubble keeps the cube sync path busy as well.
@@ -121,7 +121,7 @@ public class FracturePhysicsSyncIntegrationTests(ITestOutputHelper output)
     public void PiecelessFractureOnPhysicsClient_ThenSyncTicks_KeepsRubbleBodiesBoundToTheirPieces()
     {
         using PhysicsIntegrator clientPhysics = new();
-        Map client = new(clientPhysics, loadVisualAssets: false, width: MapSize, depth: MapSize);
+        Map client = new(clientPhysics, width: MapSize, depth: MapSize);
         GeometryCellKey cell = FracturedCells[0];
         Assert.True(client.AddCube(new Vector3(cell.X, cell.Y, cell.Z), withPhysics: true, materialId: GeometryMaterialId.Stone));
         RemoteWorldMutationApplier.ApplyWorldMutations(

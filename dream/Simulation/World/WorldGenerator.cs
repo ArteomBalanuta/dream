@@ -11,7 +11,7 @@ public class WorldGenerator
     private const int SculptureSubdivisionResolution = WorldMicroGrid.MicroCellsPerWorldCell;
     private const int DefaultSpawnClearRadius = 4;
 
-    public WorldGenerator(bool loadVisualAssets)
+    public WorldGenerator()
     {
     }
 

@@ -101,7 +101,7 @@ public class NetworkDiagnosticsLogCaptureTests
     [Fact]
     public void CubeMoveMiss_LogsTheOldText()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         WorldMutationDelta mutation = WorldMutationDelta.Moved(new Vector3(3f, 2f, 3f), new Vector3(4.5f, 2.5f, 3.5f))
             with { Sequence = 42, ActorId = 77 };
 
@@ -120,7 +120,7 @@ public class NetworkDiagnosticsLogCaptureTests
     [Fact]
     public void FallbackFracture_LogsTheOldText()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Assert.NotNull(map.TryAddCube(new Vector3(3f, 2f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
         WorldMutationDelta mutation = new(
             WorldMutationKind.CubeFractured,

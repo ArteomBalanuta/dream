@@ -16,7 +16,7 @@ public class CubeBodyReuseTests
     public void UpdateCubePosition_SameCell_KeepsBodyInstanceAtNewCenter()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f)));
         BulletSharp.RigidBody bodyBefore = FindCubeBody(physics, cube);
         int bodyCount = physics.MapCubeBodies.Count;
@@ -34,7 +34,7 @@ public class CubeBodyReuseTests
     public void UpdateCubePosition_CrossCell_KeepsBodyAndReindexesItUnderNewCell()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f)));
         BulletSharp.RigidBody bodyBefore = FindCubeBody(physics, cube);
         int bodyCount = physics.MapCubeBodies.Count;
@@ -56,7 +56,7 @@ public class CubeBodyReuseTests
     public void UpdateCubePosition_CubeWithoutBody_FallsBackToCreatingOne()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false));
         Assert.DoesNotContain(physics.MapCubeBodies, body => IsCubeBody(body, cube));
 
@@ -72,8 +72,7 @@ public class CubeBodyReuseTests
         using ClientWorldSession mirror = new(
             12,
             new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
         RemoteWorldMutationApplier.ApplyWorldMutations(
             mirror.Map,
             [new WorldMutationDelta(WorldMutationKind.CubePlaced, new Vector3(8f, 1f, 2f))]);

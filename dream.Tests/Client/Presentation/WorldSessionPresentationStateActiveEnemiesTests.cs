@@ -91,8 +91,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         using ClientWorldSession session = new(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
 
         AllocationAssert.AtMost(
             776,

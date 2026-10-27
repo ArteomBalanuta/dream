@@ -40,7 +40,7 @@ public class WorldPhysicsBinderTests
     public void UpdateCubePosition_WithPhysicsSync_RebuildsSameCellCompatibilityBodyAtExactCenter()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: true));
         Assert.Single(physics.DynamicMapCubeBodies);
 
@@ -59,7 +59,7 @@ public class WorldPhysicsBinderTests
     public void UpdateCubePosition_WithDeferredPhysicsSync_KeepsMovedCubeBodyWhenOldCellIsReused()
     {
         using PhysicsIntegrator physics = new();
-        Map map = new(physics, loadVisualAssets: false, width: 8, depth: 8);
+        Map map = new(physics, width: 8, depth: 8);
         Cube movedCube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: true));
 
         map.UpdateCubePosition(movedCube, new Vector3(4.2f, 1.5f, 3.5f), syncPhysics: false);

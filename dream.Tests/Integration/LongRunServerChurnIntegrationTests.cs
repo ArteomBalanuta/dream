@@ -278,7 +278,6 @@ public class LongRunServerChurnIntegrationTests(ITestOutputHelper output)
                 FloorSize,
                 new Vector3(5f, 1.5f, 5f),
                 _events,
-                loadVisualAssets: false,
                 simulationSeed: seed);
             ProtocolRouter router = new(
                 [

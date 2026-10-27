@@ -19,12 +19,12 @@ public class FallbackFractureMaterialTests
     public void MaterialMismatch_MatchesDirectFractureOfResolvedMaterial()
     {
         using PhysicsIntegrator referencePhysics = new();
-        Map reference = new(referencePhysics, loadVisualAssets: false, width: 10, depth: 10);
+        Map reference = new(referencePhysics, width: 10, depth: 10);
         Assert.True(reference.AddCube(new Vector3(3f, 1f, 3f), materialId: GeometryMaterialId.Rock));
         Assert.True(reference.FractureCubeIntoPieces(Cell));
 
         using PhysicsIntegrator clientPhysics = new();
-        Map client = new(clientPhysics, loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(clientPhysics, width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), materialId: GeometryMaterialId.Grass));
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
@@ -46,7 +46,7 @@ public class FallbackFractureMaterialTests
     [Fact]
     public void MaterialMatch_KeepsLocalCubeUntilFracture()
     {
-        Map client = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map client = new(width: 10, depth: 10);
         Assert.True(client.AddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Stone));
 
         RemoteWorldMutationApplier.ApplyWorldMutations(

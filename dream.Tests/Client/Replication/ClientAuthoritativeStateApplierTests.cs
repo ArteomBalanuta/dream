@@ -48,7 +48,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_ReconcilesPlacedCubes()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         map.TryAddCube(new Vector3(8f, 1f, 8f), withPhysics: false);
 
         WorldSnapshot snapshot = new(
@@ -70,7 +70,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_Preserves_PlacedCube_Material()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Vector3 cell = new(2f, 1f, 2f);
         WorldSnapshot snapshot = new(
             10,
@@ -95,7 +95,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesWorldMutations()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false);
 
         WorldMutationDelta[] mutations =
@@ -113,7 +113,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_Preserves_PlacedCube_Material()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
 
         RemoteWorldMutationApplier.ApplyWorldMutations(
             map,
@@ -150,7 +150,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesAuthoritativeCubeMovedMutation()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false));
         Vector3 authoritativeCenter = new(5.2f, 1.5f, 4.65f);
 
@@ -166,7 +166,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_ReconcilesFracturedCubeCells()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         map.TryAddCube(new Vector3(8f, 1f, 8f), withPhysics: false);
 
         WorldSnapshot snapshot = new(
@@ -191,7 +191,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldSnapshot_UsesAuthoritativeFracturePieces()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         GeometryFracturePiece[] pieces =
         [
             new(new Vector3(3.2f, 1.2f, 3.2f), 0.2f),
@@ -225,7 +225,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_AppliesCubeFractureMutation()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false);
 
         WorldMutationDelta[] mutations =
@@ -247,7 +247,7 @@ public class ClientAuthoritativeStateApplierTests
     [Fact]
     public void RemoteWorldMutationApplier_ApplyWorldMutations_UsesAuthoritativeFracturePieces()
     {
-        Map map = new(loadVisualAssets: false, width: 10, depth: 10);
+        Map map = new(width: 10, depth: 10);
         map.TryAddCube(new Vector3(4f, 1f, 4f), withPhysics: false);
         GeometryFracturePiece[] pieces =
         [
@@ -843,8 +843,7 @@ public class ClientAuthoritativeStateApplierTests
         return new ClientWorldSession(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
-            new SceneEventHub(),
-            loadVisualAssets: false);
+            new SceneEventHub());
     }
 
     // The map shape WorldSessionRuntime builds: startup terrain and locally simulated cube bodies.
@@ -852,7 +851,6 @@ public class ClientAuthoritativeStateApplierTests
     {
         return new Map(
             physics,
-            loadVisualAssets: false,
             generateStartupTerrain: true,
             width: 10,
             depth: 10);

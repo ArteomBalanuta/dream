@@ -80,7 +80,7 @@ public class SessionRejoinIntegrationTests
 
         public Server()
         {
-            Runtime = new WorldSessionRuntime(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), loadVisualAssets: false);
+            Runtime = new WorldSessionRuntime(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             // No wolf: the players must not be pushed or killed.
             Runtime.Enemies.Clear();
             ProtocolRouter router = new(
