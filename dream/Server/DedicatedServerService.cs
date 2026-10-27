@@ -26,6 +26,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private readonly List<ServerConnection> _connectionList = [];
     private readonly List<ServerConnection> _joinedConnections = [];
     private readonly List<AuthoritativeActionResult> _pendingActionResults = [];
+    private readonly List<PendingConnectionReply> _pendingJoinReplies = [];
     private int _connectionsChanged = 1;
     private bool _started;
 
@@ -101,6 +102,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         Stopwatch? advanceStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
         advanceStopwatch?.Stop();
+        DeliverPendingJoinReplies();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
             if (executedTicks > 0)
@@ -243,6 +245,25 @@ public sealed class DedicatedServerService : IAsyncDisposable
             cancellationToken,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
+    }
+
+    // A host that defers joins applies them at the start of a tick and leaves the JoinAccepted or
+    // JoinRejected to be sent here. They are queued before this tick's snapshot, so a client hears
+    // its join reply first. A reply for a connection that has since closed is dropped.
+    private void DeliverPendingJoinReplies()
+    {
+        List<PendingConnectionReply> replies = _pendingJoinReplies;
+        _host.DrainPendingJoinRepliesInto(replies);
+        for (int i = 0; i < replies.Count; i++)
+        {
+            PendingConnectionReply reply = replies[i];
+            if (_connections.TryGetValue(reply.ConnectionId, out ServerConnection? connection))
+            {
+                connection.Enqueue(reply.Message);
+            }
+        }
+
+        replies.Clear();
     }
 
     private async ValueTask DropFaultedConnectionsAsync()

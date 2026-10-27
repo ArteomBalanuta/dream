@@ -19,7 +19,15 @@ public static class ServerBootstrap
 
     public static DedicatedServerHost CreateAuthoritativeHost()
     {
-        return DedicatedServerHost.CreateRuntimeAttached(CreatePersistenceBundle());
+        return CreateAuthoritativeHost(CreatePersistenceBundle());
+    }
+
+    // The host the dedicated and integrated servers run. Joins are applied at the next tick in
+    // canonical order, so same-tick joiners get the same seats, actor ids and spawns whatever
+    // order their requests arrived in; DedicatedServerService delivers the replies.
+    public static DedicatedServerHost CreateAuthoritativeHost(ServerPersistenceBundle? persistence)
+    {
+        return DedicatedServerHost.CreateRuntimeAttached(persistence, deferJoinsToTick: true);
     }
 
     public static int RunServerMode()
