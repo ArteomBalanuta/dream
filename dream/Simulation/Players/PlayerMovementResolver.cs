@@ -49,4 +49,44 @@ public static class PlayerMovementResolver
 
         return (direction, verticalDirection);
     }
+
+    public static MovementCommand CreateMovementCommand(
+        Camera camera,
+        bool noclipEnabled,
+        PlayerMoveIntent intent)
+    {
+        (Vector3 movementDirection, float verticalDirection) = ResolveMovementIntent(camera, noclipEnabled, intent);
+
+        return new MovementCommand(
+            movementDirection,
+            verticalDirection,
+            intent.JumpPressed,
+            intent.FreezePressed,
+            intent.ToggleNoclipPressed);
+    }
+
+    internal static Vector3 FlattenToWorldPlane(Vector3 direction)
+    {
+        Vector3 flattened = new(direction.X, 0f, direction.Z);
+        return flattened == Vector3.Zero ? Vector3.Zero : flattened.Normalized();
+    }
+
+    private static (Vector3 Direction, float VerticalDirection) ResolveMovementIntent(
+        Camera camera,
+        bool noclipEnabled,
+        PlayerMoveIntent intent)
+    {
+        Vector3 forward = noclipEnabled
+            ? camera.Front.Normalized()
+            : FlattenToWorldPlane(camera.Front);
+        Vector3 right = FlattenToWorldPlane(camera.Right);
+        Vector3 movementDirection = (forward * intent.ForwardAxis) + (right * intent.StrafeAxis);
+        if (movementDirection != Vector3.Zero)
+        {
+            movementDirection = movementDirection.Normalized();
+        }
+
+        float verticalDirection = noclipEnabled ? intent.VerticalAxis : 0f;
+        return (movementDirection, verticalDirection);
+    }
 }

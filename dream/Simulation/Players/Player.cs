@@ -1,11 +1,7 @@
 using BulletSharp;
 using BulletSharp.Math;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 using Vector3 = OpenTK.Mathematics.Vector3;
-using Dream.Client.Input;
-using Dream.Client.Replication;
 using Dream.Server.Rules;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Runtime;
@@ -18,7 +14,6 @@ public class Player : IReplicatedPlayerTarget
 {
     private readonly PhysicsIntegrator _physics;
     private Map _map;
-    private readonly PlayerController _controller = new();
     private readonly PlayerMotor _motor;
     private readonly PlayerCameraRig _cameraRig;
     private readonly PlayerInteraction _interaction = new();
@@ -150,14 +145,6 @@ public class Player : IReplicatedPlayerTarget
             Console.WriteLine($"Player position: {collision.PlayerPosition}");
         }
         Console.WriteLine("========================");
-    }
-
-    public PlayerInteractionCommand CaptureInteractionCommand(
-        KeyboardState keyboardState,
-        MouseState mouseState,
-        bool allowInput)
-    {
-        return _controller.CaptureInteraction(keyboardState, mouseState, allowInput);
     }
 
     public bool ConsumePrimaryUsePressed(PlayerInteractionCommand interaction, float repeatIntervalSeconds, float deltaTime)

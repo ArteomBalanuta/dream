@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Client.Input;
 using Dream.Multiplayer.Sessions;
 using Dream.Server.Rules;
 using Dream.Simulation.Physics;
@@ -110,7 +109,7 @@ public sealed class RemoteSessionPlayerState : IDisposable
         _player.Update(
             deltaTime,
             new PlayerSimulationInput(
-                PlayerController.CreateMovementCommand(_player.Camera, _player.IsNoclipEnabled, command.MoveIntent),
+                PlayerMovementResolver.CreateMovementCommand(_player.Camera, _player.IsNoclipEnabled, command.MoveIntent),
                 lookDelta,
                 AllowGameplayInput: true,
                 AllowLook: true),
