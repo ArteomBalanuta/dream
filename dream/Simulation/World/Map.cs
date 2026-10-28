@@ -74,6 +74,13 @@ public partial class Map
     // Changes whenever static render content may have changed; see GeometryRenderExport.StaticContentVersion.
     public long StaticContentVersion { get; private set; } = Interlocked.Increment(ref _staticContentVersionSource);
 
+    // A headless map (the authoritative server's) builds and keeps no render artifacts: no render
+    // block descriptors per cell or per rubble cell, no merged static sculpture render blocks, no
+    // render-dirty or static/dynamic render cell sets, and StaticContentVersion never changes.
+    // Geometry records, collision descriptors, physics bodies, replicated ids and the world
+    // checksum are maintained exactly as on a rendering map. The render exports throw on it.
+    public bool IsHeadless { get; }
+
     // Rubble records (FracturePieces set), keyed by origin cell.
     public IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> RubbleCells => _rubbleCells;
 
@@ -90,9 +97,11 @@ public partial class Map
         int width = 25,
         int height = 8,
         int depth = 25,
-        bool replicatedCubeBodies = false)
+        bool replicatedCubeBodies = false,
+        bool headless = false)
     {
         _physics = physics;
+        IsHeadless = headless;
         _grid = new WorldGrid(width, height, depth);
         _generator = new WorldGenerator();
         _generateStartupTerrain = generateStartupTerrain;

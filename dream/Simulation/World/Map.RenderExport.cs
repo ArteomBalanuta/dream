@@ -11,6 +11,7 @@ public partial class Map
     // Test oracle: radius-limited reference export that CapturePresentationGeometryRenderExport is checked against.
     public GeometryRenderExport CaptureGeometryRenderExport(Vector3 position, float radius)
     {
+        ThrowIfHeadless();
         return CaptureGeometryRenderExport(
             GetRenderCandidateCubes(position, radius),
             includeStaticCube: cube => IsCubeWithinRadius(cube, position, radius),
@@ -22,6 +23,7 @@ public partial class Map
     // Test oracle: unfiltered reference export over every solid cube.
     public GeometryRenderExport CaptureFullGeometryRenderExport()
     {
+        ThrowIfHeadless();
         return CaptureGeometryRenderExport(
             _solidCubes,
             includeStaticCube: _ => true,
@@ -35,6 +37,7 @@ public partial class Map
     // StaticContentVersion; only dynamic cells and rubble are visited each frame.
     public GeometryRenderExport CapturePresentationGeometryRenderExport(Vector3 position, float radius)
     {
+        ThrowIfHeadless();
         if (_cachedStaticRenderVersion != StaticContentVersion)
         {
             RebuildStaticPresentationCache();
@@ -140,6 +143,14 @@ public partial class Map
         _cachedStaticCompatibilityCubes = compatibilityCubes.ToArray();
         _cachedStaticRenderBlocks = blocks.ToArray();
         _cachedStaticRenderVersion = StaticContentVersion;
+    }
+
+    private void ThrowIfHeadless()
+    {
+        if (IsHeadless)
+        {
+            throw new InvalidOperationException("A headless map keeps no render artifacts; render exports need a map created with headless: false.");
+        }
     }
 
     private static void AddBlocksWithinRadius(

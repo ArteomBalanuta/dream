@@ -515,7 +515,9 @@ public class RuntimeAuthoritativeSessionHostTests
             new Vector3(5f, 1.5f, 5f),
             events,
             playerProfiles: playerProfiles,
-            worldPersistence: worldPersistence);
+            worldPersistence: worldPersistence,
+            // The server runtime's map is headless by default; this test reads its render export.
+            headlessMap: false);
 
         GeometryRenderExport export = runtime.Map.CaptureGeometryRenderExport(new Vector3(4.5f, 1.5f, 4.5f), 4f);
         GeometryRenderBlockDescriptor block = Assert.Single(export.DynamicBlocks, block => block.CellKey == cell);

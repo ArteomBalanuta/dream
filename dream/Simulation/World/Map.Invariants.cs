@@ -65,6 +65,12 @@ public partial class Map
             }
         }
 
+        ulong fullChecksum = WorldStateChecksum.ComputeFull(this);
+        if (WorldChecksum != fullChecksum)
+        {
+            violations.Add($"running world checksum {WorldChecksum} differs from the full walk {fullChecksum}");
+        }
+
         foreach ((int id, Cube cube) in _cubesByReplicatedId)
         {
             if (!_replicatedIdsByCube.TryGetValue(cube, out int reverse) || reverse != id)
