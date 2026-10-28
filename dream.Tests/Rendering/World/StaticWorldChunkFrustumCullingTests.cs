@@ -237,19 +237,30 @@ public class StaticWorldChunkFrustumCullingTests
             Live.Remove(key);
         }
 
-        public bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh)
+        public bool Contains(StaticWorldChunkMeshKey key)
         {
-            if (!Live.ContainsKey(mesh.Key))
-            {
-                return false;
-            }
+            return Live.ContainsKey(key);
+        }
 
+        public void BeginPass(Render render, Camera camera)
+        {
+        }
+
+        public void BindMaterial(Render render, int materialSlot)
+        {
+        }
+
+        public void Draw(Render render, in StaticWorldChunkMeshInfo mesh)
+        {
+            Assert.True(Live.ContainsKey(mesh.Key));
             if (RecordDraws)
             {
                 Drawn.Add(mesh);
             }
+        }
 
-            return true;
+        public void EndPass(Render render)
+        {
         }
 
         public void Clear()

@@ -15,7 +15,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     // GPU bytes uploaded per frame. One mesh is always uploaded per frame, even when it alone is
     // larger, so a batch always makes progress.
     public const long UploadByteBudgetPerFrame = 2L * 1024 * 1024;
-    private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMeshInfo> _meshes = new();
+    // Mesh metadata plus the material slot resolved once when the mesh was uploaded.
+    private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkDrawEntry> _meshes = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, int> _signatures = new();
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
@@ -23,6 +24,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     // Distinct chunks drawn this frame; cleared each Draw, so the visible-chunk stat counts chunks
     // rather than (chunk, material) meshes without allocating.
     private readonly HashSet<StaticWorldChunkKey> _drawnChunks = new();
+    // The visible meshes of this frame and their sort keys (material slot << 32 | visible index).
+    // Both arrays are reused across frames and only grow, so a steady-state Draw allocates nothing.
+    private StaticWorldChunkMeshInfo[] _visibleMeshes = [];
+    private long[] _drawOrder = [];
     private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
     private StaticWorldChunkBuildRequest? _activeBuildRequest;
     private StaticWorldChunkBuildRequest? _queuedBuildRequest;
@@ -190,8 +195,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         int frustumCulledMeshes = 0;
         Vector3 cameraPosition = camera.Position;
         Vector3 cameraFront = camera.Front;
-        foreach (StaticWorldChunkMeshInfo mesh in _meshes.Values)
+        EnsureDrawCapacity(_meshes.Count);
+        foreach (StaticWorldChunkDrawEntry entry in _meshes.Values)
         {
+            StaticWorldChunkMeshInfo mesh = entry.Info;
             // Meshes without faces have no GPU buffer.
             if (mesh.ExposedFaceCount <= 0)
             {
@@ -210,17 +217,20 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 continue;
             }
 
-            if (!_meshStore.Draw(render, camera, mesh))
+            if (!_meshStore.Contains(mesh.Key))
             {
                 continue;
             }
 
+            _visibleMeshes[visibleMeshes] = mesh;
+            _drawOrder[visibleMeshes] = ((long)entry.MaterialSlot << 32) | (uint)visibleMeshes;
             _drawnChunks.Add(mesh.Key.ChunkKey);
             visibleMeshes++;
             visibleFaces += mesh.ExposedFaceCount;
             visibleTriangles += mesh.TriangleCount;
         }
 
+        int materialBinds = DrawSortedByMaterial(render, camera, visibleMeshes);
         int visibleChunks = _drawnChunks.Count;
 
         double drawMilliseconds = ElapsedMilliseconds(ref timestamp);
@@ -238,7 +248,55 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             syncStats.RebuiltMeshes,
             syncStats.ReusedMeshes,
             distanceCulledMeshes,
-            frustumCulledMeshes);
+            frustumCulledMeshes,
+            materialBinds);
+    }
+
+    // Sorts the visible meshes by material slot (material id, then role) and draws them in one
+    // pass: each slot is bound once, then all of its meshes are drawn. The sort key carries the
+    // visible index in its low bits, so meshes of one slot keep their culling order. Returns the
+    // number of material binds, which equals the number of distinct slots drawn.
+    private int DrawSortedByMaterial(Render render, Camera camera, int count)
+    {
+        if (count == 0)
+        {
+            return 0;
+        }
+
+        Span<long> order = _drawOrder.AsSpan(0, count);
+        order.Sort();
+
+        int materialBinds = 0;
+        int boundSlot = -1;
+        _meshStore.BeginPass(render, camera);
+        for (int i = 0; i < order.Length; i++)
+        {
+            long key = order[i];
+            int slot = (int)(key >> 32);
+            if (slot != boundSlot)
+            {
+                _meshStore.BindMaterial(render, slot);
+                boundSlot = slot;
+                materialBinds++;
+            }
+
+            _meshStore.Draw(render, in _visibleMeshes[(int)(uint)key]);
+        }
+
+        _meshStore.EndPass(render);
+        return materialBinds;
+    }
+
+    private void EnsureDrawCapacity(int meshCount)
+    {
+        if (_drawOrder.Length >= meshCount)
+        {
+            return;
+        }
+
+        int capacity = Math.Max(meshCount, Math.Max(16, _drawOrder.Length * 2));
+        _visibleMeshes = new StaticWorldChunkMeshInfo[capacity];
+        _drawOrder = new long[capacity];
     }
 
     private static double ElapsedMilliseconds(ref long timestamp)
@@ -464,7 +522,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private void ReplaceMesh(StaticWorldChunkBuildOutput output)
     {
         // Only metadata is kept; the vertex and index lists go to the GPU and are then dropped.
-        _meshes[output.Key] = output.Mesh.ToInfo();
+        // The material slot is resolved here, once per upload, so Draw never touches the catalog.
+        _meshes[output.Key] = new StaticWorldChunkDrawEntry(
+            output.Mesh.ToInfo(),
+            StaticTerrainMaterialCatalog.ResolveSlot(output.Key.MaterialId, output.Key.MaterialRole));
         _signatures[output.Key] = output.Signature;
 
         if (output.Mesh.ExposedFaceCount > 0)
@@ -670,7 +731,13 @@ public readonly record struct StaticWorldChunkRenderStats(
     int RebuiltMeshes = 0,
     int ReusedMeshes = 0,
     int DistanceCulledMeshes = 0,
-    int FrustumCulledMeshes = 0);
+    int FrustumCulledMeshes = 0,
+    int MaterialBinds = 0);
+
+// A static mesh's metadata and the terrain material slot resolved when it was uploaded.
+internal readonly record struct StaticWorldChunkDrawEntry(
+    StaticWorldChunkMeshInfo Info,
+    int MaterialSlot);
 
 public readonly record struct StaticWorldChunkSyncStats(
     int RebuiltMeshes,
@@ -678,6 +745,10 @@ public readonly record struct StaticWorldChunkSyncStats(
 
 // Owns the GPU side of the static chunk meshes. The default store keeps one StaticMeshBuffer per
 // mesh key and refills it in place on rebuild; tests substitute a store that needs no GL context.
+//
+// A frame's draws form one batched pass: BeginPass, then for each material slot in ascending
+// order one BindMaterial followed by Draw for each of that slot's meshes, then EndPass. A frame
+// with no visible mesh makes none of these calls.
 internal interface IStaticWorldChunkMeshStore
 {
     // Creates the key's buffer, or replaces the contents of the existing one.
@@ -685,8 +756,17 @@ internal interface IStaticWorldChunkMeshStore
 
     void Remove(StaticWorldChunkMeshKey key);
 
-    // Returns false when the key has no buffer.
-    bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh);
+    // True when the key has a buffer to draw.
+    bool Contains(StaticWorldChunkMeshKey key);
+
+    void BeginPass(Render render, Camera camera);
+
+    void BindMaterial(Render render, int materialSlot);
+
+    // Draws a mesh the culling loop found in the store, with the material bound last.
+    void Draw(Render render, in StaticWorldChunkMeshInfo mesh);
+
+    void EndPass(Render render);
 
     void Clear();
 }
@@ -714,15 +794,32 @@ internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
         }
     }
 
-    public bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh)
+    public bool Contains(StaticWorldChunkMeshKey key)
     {
-        if (!_buffers.TryGetValue(mesh.Key, out StaticMeshBuffer? buffer))
-        {
-            return false;
-        }
+        return _buffers.ContainsKey(key);
+    }
 
-        render.DrawStaticMesh(camera, buffer, mesh.MaterialId, mesh.MaterialRole);
-        return true;
+    public void BeginPass(Render render, Camera camera)
+    {
+        render.BeginStaticTerrainPass(camera);
+    }
+
+    public void BindMaterial(Render render, int materialSlot)
+    {
+        render.BindStaticTerrainMaterial(materialSlot);
+    }
+
+    public void Draw(Render render, in StaticWorldChunkMeshInfo mesh)
+    {
+        if (_buffers.TryGetValue(mesh.Key, out StaticMeshBuffer? buffer))
+        {
+            buffer.DrawBatched();
+        }
+    }
+
+    public void EndPass(Render render)
+    {
+        Render.EndStaticTerrainPass();
     }
 
     public void Clear()
