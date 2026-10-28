@@ -1479,6 +1479,10 @@ public sealed class WorldSessionRuntime : IDisposable
     // Tests turn it off to model a crash: the process dies without the shutdown flush.
     internal bool WriteCheckpointOnDispose { get; set; } = true;
 
+    // With a background queue the final checkpoint is queued as a read behind the immediate
+    // writes, so it runs after them without a barrier wait on this thread, and under the queue's
+    // one shutdown drain deadline: on a locked database it is dropped with them when the deadline
+    // passes instead of adding its own barrier timeout and busy_timeout before the drain starts.
     private void WriteFinalCheckpoint()
     {
         if (!WriteCheckpointOnDispose || _worldPersistence == null || _checkpointWriter == null ||
@@ -1490,32 +1494,58 @@ public sealed class WorldSessionRuntime : IDisposable
         try
         {
             PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint(full: true);
-            if (checkpoint != null)
+            if (checkpoint == null)
             {
-                WaitForImmediateWrites(checkpoint);
-                _checkpointWriter.Write(checkpoint);
+                return;
             }
+
+            IPersistenceCheckpointWriter writer = _checkpointWriter;
+            if (_writes is { IsBackground: true } writes)
+            {
+                writes.BeginShutdownDrain();
+                if (writes.EnqueueRead(() => WriteFinalCheckpoint(writer, checkpoint)))
+                {
+                    return;
+                }
+            }
+
+            writer.Write(checkpoint);
         }
         catch (Exception ex)
         {
-            Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write(
-                "server.checkpoint.final-error",
-                $"{ex.GetType().Name}: {ex.Message}");
+            LogFinalCheckpointError(ex);
         }
+    }
+
+    private static void WriteFinalCheckpoint(IPersistenceCheckpointWriter writer, PersistenceCheckpoint checkpoint)
+    {
+        try
+        {
+            writer.Write(checkpoint);
+        }
+        catch (Exception ex)
+        {
+            LogFinalCheckpointError(ex);
+        }
+    }
+
+    private static void LogFinalCheckpointError(Exception ex)
+    {
+        Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write(
+            "server.checkpoint.final-error",
+            $"{ex.GetType().Name}: {ex.Message}");
     }
 
     private static void WaitForImmediateWrites(PersistenceCheckpoint checkpoint)
     {
         try
         {
-            checkpoint.ImmediateWritesCommitted?.Wait(BackgroundCheckpointWriterWaitTimeout);
+            checkpoint.ImmediateWritesCommitted?.Wait(Dream.Server.BackgroundCheckpointWriter.ImmediateWritesWaitTimeout);
         }
         catch (AggregateException)
         {
         }
     }
-
-    private static readonly TimeSpan BackgroundCheckpointWriterWaitTimeout = TimeSpan.FromSeconds(10);
 
     // Completes when every immediate write queued so far has committed (a read queued behind them).
     // Null when the queue runs writes inline (they have already committed) or is closed.

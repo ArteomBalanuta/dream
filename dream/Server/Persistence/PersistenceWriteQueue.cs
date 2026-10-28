@@ -54,6 +54,10 @@ public sealed class PersistenceWriteQueue : IDisposable
     private long _committedGroups;
     private long _lockRetries;
     private int _pendingCount;
+    // Environment.TickCount64 (ms) at which the shutdown drain ends; 0 until BeginShutdownDrain.
+    private long _drainDeadlineMilliseconds;
+    // Mirrors _lockEpisode for other threads (IsLocked).
+    private volatile bool _locked;
     // Worker-thread state for the current lock episode (database locked until a group runs again).
     private bool _lockEpisode;
     private TimeSpan _lockRetryDelay = InitialLockRetryDelay;
@@ -111,6 +115,47 @@ public sealed class PersistenceWriteQueue : IDisposable
     // so the server tick reads it without taking the writer's lock.
     public int PendingCount => Volatile.Read(ref _pendingCount);
 
+    // True while the worker is in a lock episode: a group's transaction could not start because
+    // another connection held the write lock past busy_timeout, and no group has run since. A
+    // barrier read queued behind the held-back writes cannot complete until the lock is released.
+    public bool IsLocked => _locked;
+
+    // How long Dispose drains before it drops what is still queued, measured from
+    // BeginShutdownDrain (or from Dispose, when nothing started the drain earlier).
+    public TimeSpan DisposeDrainDeadline => _disposeDrainDeadline;
+
+    // True once BeginShutdownDrain (or Dispose) started the drain deadline.
+    public bool IsShutdownDrainStarted => Interlocked.Read(ref _drainDeadlineMilliseconds) != 0;
+
+    // Starts the shutdown drain deadline (idempotent; the first call wins). Everything shutdown
+    // waits on before Dispose (the background checkpoint writer's barrier wait, the final
+    // checkpoint) shares this one deadline with Dispose's drain, so their waits add no time on top
+    // of it: on a locked database the whole shutdown is bounded by DisposeDrainDeadline plus the
+    // busy_timeout of the attempt in flight, instead of each stage waiting out its own timeout.
+    public void BeginShutdownDrain()
+    {
+        long now = Environment.TickCount64;
+        long deadline = now + (long)Math.Min(_disposeDrainDeadline.TotalMilliseconds, long.MaxValue / 4);
+        Interlocked.CompareExchange(ref _drainDeadlineMilliseconds, Math.Max(1, deadline), 0);
+    }
+
+    // Time left until the shutdown drain deadline: DisposeDrainDeadline before the drain started,
+    // never negative.
+    public TimeSpan RemainingDrainTime
+    {
+        get
+        {
+            long deadline = Interlocked.Read(ref _drainDeadlineMilliseconds);
+            if (deadline == 0)
+            {
+                return _disposeDrainDeadline;
+            }
+
+            long remaining = deadline - Environment.TickCount64;
+            return remaining <= 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(remaining);
+        }
+    }
+
     // False (and counted as failed) when the queue is already disposed.
     public bool Enqueue(Action write)
     {
@@ -118,7 +163,8 @@ public sealed class PersistenceWriteQueue : IDisposable
         return Enqueue(new QueuedWrite(write, CountsAsWrite: true));
     }
 
-    // Runs a read on the worker, after every write enqueued before it has committed, outside any
+    // Runs a read on the worker, after every write enqueued before it has run (committed, or failed
+    // and counted in FailedWrites; a lock only delays them, see RequeueAndBackOff), outside any
     // transaction, so it sees their committed rows and never a group's uncommitted ones (the
     // join-time profile prefetch). It is not counted as a write, and it must handle its own
     // failures; an exception is only logged. Inline mode runs it immediately. False when the queue
@@ -161,9 +207,12 @@ public sealed class PersistenceWriteQueue : IDisposable
     // short; when the database stays locked (every write waits busy_timeout), the drain deadline
     // cancels the worker instead: what is still queued is dropped, counted as failed and logged,
     // and Dispose returns only after the worker has stopped, so nothing writes after it returns.
+    // The drain deadline runs from BeginShutdownDrain when the owner started it earlier, so the
+    // waits before Dispose and the drain share one deadline.
     public void Dispose()
     {
         Task worker;
+        BeginShutdownDrain();
         lock (_sync)
         {
             if (_closed && !_running)
@@ -181,7 +230,7 @@ public sealed class PersistenceWriteQueue : IDisposable
             worker = _worker;
         }
 
-        if (WaitQuietly(worker, _disposeDrainDeadline))
+        if (WaitQuietly(worker, RemainingDrainTime))
         {
             return;
         }
@@ -369,6 +418,7 @@ public sealed class PersistenceWriteQueue : IDisposable
         if (!_lockEpisode)
         {
             _lockEpisode = true;
+            _locked = true;
             NetworkDiagnosticsLog.Write(
                 "server.persistence.locked",
                 $"database locked; retrying writes={requeue.Count} with backoff up to {MaxLockRetryDelay.TotalSeconds:0.#}s: {_lockCause?.GetType().Name}: {_lockCause?.Message}");
@@ -407,6 +457,7 @@ public sealed class PersistenceWriteQueue : IDisposable
         }
 
         _lockEpisode = false;
+        _locked = false;
         _lockRetryDelay = InitialLockRetryDelay;
         _lockCause = null;
         NetworkDiagnosticsLog.Write("server.persistence.locked", $"database unlocked; lockRetries={LockRetries}");

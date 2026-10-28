@@ -12,9 +12,21 @@ namespace Dream.Server;
 // write is kept and merged under the next checkpoint, so its changes are not lost either.
 public sealed class BackgroundCheckpointWriter : IDisposable
 {
+    // How long a write waits for its checkpoint's immediate-writes barrier before going ahead
+    // anyway (the queue is closed, or stuck). At shutdown the wait is also bounded by the write
+    // queue's drain deadline; see WaitForImmediateWrites.
     public static readonly TimeSpan ImmediateWritesWaitTimeout = TimeSpan.FromSeconds(10);
 
+    // Poll interval for a barrier wait that can be cut short by shutdown (a lock episode or the
+    // drain deadline). Only a write whose barrier is still pending polls.
+    private const int BarrierPollMilliseconds = 50;
+
     private readonly IPersistenceCheckpointWriter _writer;
+    // The runtime's immediate-write queue, whose barrier reads the checkpoints carry. Null: the
+    // barrier wait is bounded only by ImmediateWritesWaitTimeout.
+    private readonly PersistenceWriteQueue? _immediateWrites;
+    private volatile bool _disposing;
+    private long _deferredAtShutdown;
     private readonly object _sync = new();
     private PersistenceCheckpoint? _pending;
     // The last failed checkpoint (merged with any later failures), written again under the next
@@ -38,9 +50,20 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     private long _timedWrites;
 
     public BackgroundCheckpointWriter(IPersistenceCheckpointWriter writer)
+        : this(writer, immediateWrites: null)
+    {
+    }
+
+    public BackgroundCheckpointWriter(IPersistenceCheckpointWriter writer, PersistenceWriteQueue? immediateWrites)
     {
         _writer = writer ?? throw new ArgumentNullException(nameof(writer));
+        _immediateWrites = immediateWrites;
     }
+
+    // Checkpoints Dispose left unwritten because their barrier could not complete before the
+    // shutdown drain deadline (the database was locked). The runtime's final full checkpoint,
+    // queued behind the same immediate writes, covers them.
+    public long DeferredAtShutdownCheckpoints => Interlocked.Read(ref _deferredAtShutdown);
 
     public long CompletedWrites => Interlocked.Read(ref _completedWrites);
 
@@ -141,8 +164,13 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     // Writes the pending checkpoint before returning, so no checkpoint lands in the database after
     // the host that captured it is disposed (see PersistenceWriteQueue.Dispose). The runtime's own
     // Dispose then writes a final full checkpoint, which covers a failed write still held here.
+    // Dispose starts the write queue's shutdown drain deadline: a barrier wait that cannot finish
+    // within it (a locked database) gives up and leaves the checkpoint to the final one, instead of
+    // waiting its own ImmediateWritesWaitTimeout on top of the queue's drain.
     public void Dispose()
     {
+        _immediateWrites?.BeginShutdownDrain();
+        _disposing = true;
         while (true)
         {
             Task worker;
@@ -176,7 +204,20 @@ public sealed class BackgroundCheckpointWriter : IDisposable
                 }
             }
 
-            WaitForImmediateWrites(next);
+            if (!WaitForImmediateWrites(next))
+            {
+                Interlocked.Increment(ref _deferredAtShutdown);
+                NetworkDiagnosticsLog.Write(
+                    "server.checkpoint.deferred",
+                    $"immediate writes still pending at shutdown (locked={_immediateWrites?.IsLocked}); left to the final checkpoint rows={next.RowCount}");
+                lock (_sync)
+                {
+                    _failed = _failed == null ? next : PersistenceCheckpoint.Merge(_failed, next);
+                }
+
+                continue;
+            }
+
             long started = Stopwatch.GetTimestamp();
             try
             {
@@ -213,21 +254,45 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     }
 
     // A checkpoint updates rows that immediate writes queued before its capture insert, so the
-    // write waits (bounded) until those have committed. A closed write queue never completes the
-    // barrier; the write then goes ahead after the timeout.
-    private static void WaitForImmediateWrites(PersistenceCheckpoint checkpoint)
+    // write waits (bounded) until those have run (ImmediateWritesCommitted completes once they ran,
+    // committed or failed). A closed write queue never completes the barrier; the write then goes
+    // ahead after ImmediateWritesWaitTimeout (true). False only during Dispose, when the write
+    // queue is in a lock episode or its shutdown drain deadline has passed: the barrier cannot
+    // complete in time, and the caller defers the checkpoint to the final one.
+    private bool WaitForImmediateWrites(PersistenceCheckpoint checkpoint)
     {
         if (checkpoint.ImmediateWritesCommitted is not { IsCompleted: false } barrier)
         {
-            return;
+            return true;
         }
 
+        long deadline = Environment.TickCount64 + (long)ImmediateWritesWaitTimeout.TotalMilliseconds;
         try
         {
-            barrier.Wait(ImmediateWritesWaitTimeout);
+            while (true)
+            {
+                if (_disposing && _immediateWrites is { } queue &&
+                    (queue.IsLocked || queue.RemainingDrainTime <= TimeSpan.Zero))
+                {
+                    return false;
+                }
+
+                long remaining = deadline - Environment.TickCount64;
+                if (remaining <= 0)
+                {
+                    return true;
+                }
+
+                int slice = (int)(_immediateWrites == null ? remaining : Math.Min(remaining, BarrierPollMilliseconds));
+                if (barrier.Wait(slice))
+                {
+                    return true;
+                }
+            }
         }
         catch (AggregateException)
         {
+            return true;
         }
     }
 

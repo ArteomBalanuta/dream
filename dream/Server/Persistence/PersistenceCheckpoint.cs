@@ -32,9 +32,13 @@ public sealed record PersistenceCheckpoint(
     // Fracture groups (by source cube id) whose rubble is gone since the previous capture.
     public IReadOnlyList<int> RemovedFractureSourceCubeIds { get; init; } = [];
 
-    // Completes once every immediate write queued before the capture has committed (see
-    // PersistenceWriteQueue.EnqueueRead). The writer waits for it, so a checkpoint update never
-    // reaches the database ahead of the insert of a row it updates. Null: nothing to wait for.
+    // Completes once every immediate write queued before the capture has RUN, whether it committed
+    // or failed (see PersistenceWriteQueue.EnqueueRead): it is an ordering barrier, not a success
+    // signal. The writer waits for it, so a checkpoint update never reaches the database ahead of
+    // the insert of a row it updates. It never completes when the queue drops it (closed, or the
+    // shutdown drain deadline passed); waiters are bounded by
+    // BackgroundCheckpointWriter.ImmediateWritesWaitTimeout and, at shutdown, by the queue's drain
+    // deadline. Null: nothing to wait for.
     public Task? ImmediateWritesCommitted { get; init; }
 
     // Rows a writer updates for this checkpoint (tombstones excluded).

@@ -95,7 +95,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
         _checkpointWrites = Runtime?.CheckpointWriter is { } checkpointWriter
-            ? new BackgroundCheckpointWriter(checkpointWriter)
+            ? new BackgroundCheckpointWriter(checkpointWriter, Runtime.PersistenceWrites)
             : null;
     }
 

@@ -18,10 +18,12 @@ The next planned follow-on work for this startup seam is captured in:
 Inside the `Game` constructor:
 
 - `GameSettings` is created first
-- one integrated loopback authoritative server is started for desktop mode
+- an on-demand handle for the integrated loopback authoritative server is created (`OnDemandLocalServerHandle`); the server itself starts only when the startup scene first uses it (Use Local Server, or `DREAM_AUTO_CONNECT`)
 - a startup connection scene is created next and becomes the primary desktop entry path
 - `PlayScene` is created only after a successful client connection
 - `PlayScene` now requires that connected `RemoteClientSession`, so normal desktop gameplay is also a protocol client of the authoritative server instead of a direct local-authority runtime path
+
+When the play session ends on its own (NETR-2: a lost connection, the 8 s server-silence watchdog, a rejected or timed-out join), `PlayScene.SessionEndReason` becomes non-null and `Game` returns to the connection screen instead of leaving a dead scene running. After that frame's update it clears the play scene, swaps in a fresh on-demand local server handle, and calls `PlaySessionEndTransition.TearDown`. That disposes the play scene (GL resources first, on the render thread) and the old local server handle (stopping the integrated server if it was started), each exactly once. Teardown failures are logged, not thrown. The new connection scene keeps the endpoint and player name, shows "Session ended: <reason>", and does not auto-connect again. The liveness timeouts are listed in `docs/configuration.md`, Connection liveness.
 
 ## Namespace And Source Boundaries
 
@@ -122,7 +124,7 @@ That host-side foundation now also has its first live transport loop:
 1. `TcpServerTransport` accepts a socket connection
 2. `DedicatedServerService` wraps it in `ServerConnection` and starts a per-connection receive loop
 3. `ServerConnection` deframes and decodes client protocol messages, routes them through `DedicatedServerHost`, and frames outbound replies
-4. `DedicatedServerService` advances the authoritative host independently on the fixed tick loop and broadcasts `ServerSnapshotMessage` frames only to connections that have completed join
+4. `DedicatedServerService` advances the authoritative host independently on the fixed tick loop and broadcasts `ServerSnapshotMessage` frames only to connections that have completed join, once every `SnapshotIntervalTicks` ticks (default 2, so 32 Hz; see `docs/configuration.md`)
 
 The current protocol behavior is intentionally conservative: a raw TCP connection may handshake with `client.hello`, but snapshot broadcast waits until the connection has joined a session. `server.join-accepted` now also carries initial actor snapshots for the already-joined shared world, so a late-joining client can render existing players immediately instead of waiting for the next broadcast tick.
 
@@ -314,6 +316,28 @@ When the floor size changes at runtime, `PlayScene` applies the HUD setting chan
 - `Player.SetWorldPosition()` resets the player transform and clears stale velocities after the rebuild
 
 The player and dynamic map cubes are linked through Bullet rigid bodies. During updates, Bullet is treated as the authoritative source of dynamic physical positions, and `PhysicsSyncSystem` copies those world-space origins back into the rendering-side `Cube` objects.
+
+### Resting cubes are frozen (`CubeRestFreezer`, PHYS-2)
+
+Bullet puts a simulation island to sleep only when none of its bodies is active. Touching placed cubes overlap in the broadphase, so a floor of placed cubes is one island. Player bodies never deactivate, so a player touching that island kept every cube in it solving every tick (wave 8: about 2,250 of 2,400 bodies in Smoke8, about 9.7 ms per tick).
+
+`PhysicsIntegrator` runs `CubeRestFreezer` before each step:
+
+- **Freeze.** A placed unit cube whose own velocity has stayed under Bullet's sleeping thresholds for `FreezeAfterRestSeconds` (0.5 s) gets mass 0 (a static object) and its velocities zeroed. Static objects never join an island, so a frozen cube costs nothing.
+- **Wake on push.** A frozen cube wakes when a mover (an awake cube, or a player moving faster than `WakeSpeed`, 0.1 m/s) moves into its side. The push passes on, so a pushed row or stack wakes in the same tick.
+- **Wake on ride.** A frozen cube resting on top of a mover wakes. Cubes a mover stands on stay frozen, so walking on or landing on a floor of cubes wakes nothing.
+- **Wake on support removal.** Every frozen cube touching a map body that is removed (a broken or moved cube, a rebuilt cell) wakes, so nothing is left floating.
+- **Wake on `Activate`.** A frozen body that other code activates (`Activate(true)` after a teleport or reset) wakes, so existing callers keep their meaning.
+
+Fracture rubble is never frozen. `DREAM_CUBE_REST_FREEZE=0` turns freezing off (`docs/configuration.md`). The measured effect is in `docs/performance-and-optimizations.md`.
+
+### libbulletc profiler guard (`BulletProfilerGuard`)
+
+The native `libbulletc` that BulletSharp 0.11.1 bundles is built with Bullet's quickprof profiler (`BT_PROFILE`). Every profiled Bullet call picks a per-thread profile tree with `btGetCurrentThreadIndex()`. That index comes from a process-wide counter that wraps after 63 threads. In a long-running server or a parallel test run, more than 63 threads call into Bullet, so two live threads end up sharing one index and one tree. Their interleaved start and stop calls walk the tree to a null node, and the next call faults with `0xC0000005`, which managed code cannot catch. The two threads can be using unrelated worlds. The wave 9 crash dump showed `DedicatedServerHost.Dispose` and a client test faulting at the same instruction.
+
+The library exports no switch for the profiler. So before the first `PhysicsIntegrator` creates a world, `BulletProfilerGuard.EnsureApplied()` patches `btGetCurrentThreadIndex` in memory to return 64 (`BT_MAX_THREAD_COUNT`). For that value quickprof returns at once, so profiling is off. Bullet's multithreaded pools, which dream does not use, fall back to their no-slot path. The function is found by an exact byte pattern, and the patch is applied only on a single match.
+
+Scope: Windows x64 with the bundled `libbulletc` only. Any other platform, a missing library, or a different build is reported as `Unsupported` and left alone. `DREAM_BULLET_PROFILER_GUARD=0` finds the function but skips the patch, to reproduce the crash. The cleaner alternative is a `libbulletc` built without `BT_PROFILE` (or with a thread-safe index), shipped in place of the bundled one. That would remove the patch, but dream would then build and ship its own native Bullet for every platform.
 
 ## Rendering Model
 

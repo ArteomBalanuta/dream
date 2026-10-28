@@ -45,6 +45,7 @@ public static class TestScheduling
         "Dream.Tests.Integration.Wave8CommandStallCorrectionLoopbackTests",
         "Dream.Tests.Integration.Wave8IdleTimeoutClientStallLoopbackTests",
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
+        "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Integration.ClientCommandStallLoopbackTests",
         "Dream.Tests.Simulation.Runtime.BufferedInboxStallReplayTests",
         "Dream.Tests.Simulation.Runtime.WorldSessionRuntimeTickAllocationTests",
@@ -85,6 +86,7 @@ public static class TestScheduling
         "Dream.Tests.Integration.Wave8CommandStallCorrectionLoopbackTests",
         "Dream.Tests.Integration.Wave8IdleTimeoutClientStallLoopbackTests",
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
+        "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Integration.ClientCommandStallLoopbackTests",
     };
 
@@ -108,6 +110,7 @@ public static class TestScheduling
         "Dream.Tests.Integration.Wave7LateJoinFractureResyncLoopbackTests",
         "Dream.Tests.Simulation.Runtime.Wave7StarvationReconciliationTests",
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
+        "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Client.Replication.ClientJoinAcceptedSubcellApplierTests",
         "Dream.Tests.Integration.CoalesceOverflowResyncLoopbackTests",
         "Dream.Tests.Integration.PresentationExportAliasingIntegrationTests",
@@ -141,10 +144,13 @@ public static class TestScheduling
         "Dream.Tests.Integration.ProtocolV2VersionRejectionLoopbackIntegrationTests",
     ];
 
+    // The class a collection runs, from its display name: xUnit 2 names a class's default collection
+    // "Test collection for <full class name>", and Split names its collections the same way plus the
+    // test case. Null for a named collection ([Collection]). This depends on a display string, so an
+    // xUnit upgrade that renamed it would make every lookup null and silently drop RealTimeClasses
+    // and LongestFirst; TestSchedulingTests discovers real test cases to catch that.
     internal static string? ClassOf(ITestCollection collection)
     {
-        // Default collections are named "Test collection for <full class name>"; split ones carry
-        // their class name the same way plus the test case.
         const string Prefix = "Test collection for ";
         string name = collection.DisplayName;
         if (!name.StartsWith(Prefix, StringComparison.Ordinal))
@@ -171,7 +177,7 @@ public static class TestScheduling
         protected override async void RunTestCases(IEnumerable<IXunitTestCase> testCases, IMessageSink executionMessageSink, ITestFrameworkExecutionOptions executionOptions)
         {
             List<IXunitTestCase> cases = testCases.ToList();
-            Split(cases);
+            Split(cases, message => DiagnosticMessageSink.OnMessage(new DiagnosticMessage(message)));
             using AssemblyRunner runner = new(TestAssembly, cases, DiagnosticMessageSink, executionMessageSink, executionOptions);
             await runner.RunAsync();
         }
@@ -231,11 +237,30 @@ public static class TestScheduling
 
     // How many gated collections run at once. About one per core: the CPU-bound collections then
     // do not oversubscribe the machine, so the real-time ones always find a core. More slots do not
-    // finish the CPU work sooner. DREAM_TEST_MAX_COLLECTIONS overrides it for experiments.
+    // finish the CPU work sooner. DREAM_TEST_MAX_COLLECTIONS overrides it for experiments, clamped
+    // to the thread pool minimum TestAssemblyInitializer sets (ProcessorCount * ThreadsPerCore):
+    // more slots than pool threads would bring back the injection delay the gate exists to avoid.
     internal static int MaxRunningCollections { get; } =
-        int.TryParse(Environment.GetEnvironmentVariable("DREAM_TEST_MAX_COLLECTIONS"), out int configured) && configured > 0
-            ? configured
-            : Math.Max(4, Environment.ProcessorCount * 3 / 4);
+        ResolveMaxRunningCollections(Environment.GetEnvironmentVariable("DREAM_TEST_MAX_COLLECTIONS"), Environment.ProcessorCount);
+
+    internal static int ResolveMaxRunningCollections(string? configured, int processorCount)
+    {
+        int poolMinimum = Math.Max(1, processorCount * TestAssemblyInitializer.ThreadsPerCore);
+        int fallback = Math.Min(poolMinimum, Math.Max(4, processorCount * 3 / 4));
+        if (!int.TryParse(configured, out int value) || value <= 0)
+        {
+            return fallback;
+        }
+
+        if (value > poolMinimum)
+        {
+            Console.Error.WriteLine(
+                $"[TestScheduling] DREAM_TEST_MAX_COLLECTIONS={value} is above the thread pool minimum {poolMinimum} (ProcessorCount * {TestAssemblyInitializer.ThreadsPerCore}); using {poolMinimum}.");
+            return poolMinimum;
+        }
+
+        return value;
+    }
 
     // A counting gate whose waiters are admitted lowest priority value first.
     internal sealed class OrderedGate(int slots)
@@ -278,7 +303,46 @@ public static class TestScheduling
     // Moves every test case of a SplitClasses class into a collection of its own. Only the
     // collection changes: the class, method, arguments and unique ID (which does not include the
     // collection) stay, so runners map results back to the same tests.
-    internal static void Split(IEnumerable<IXunitTestCase> testCases)
+    //
+    // The move sets TestMethodTestCase.TestMethod through reflection (its setter is not public).
+    // If an xUnit upgrade removes or changes it, Split reports why through diagnostic and returns
+    // false with no case moved: the suite then runs unsplit (slower, still correct) instead of
+    // failing every run. Returns true when the split applied.
+    internal static bool Split(IEnumerable<IXunitTestCase> testCases, Action<string>? diagnostic = null)
+    {
+        PropertyInfo? property = typeof(TestMethodTestCase).GetProperty(nameof(TestMethodTestCase.TestMethod));
+        if (property?.SetMethod == null)
+        {
+            ReportSplitDisabled(diagnostic, "TestMethodTestCase.TestMethod has no setter");
+            return false;
+        }
+
+        List<(IXunitTestCase TestCase, ITestMethod Own)> moves = [];
+        try
+        {
+            CollectSplits(testCases, moves);
+            for (int i = 0; i < moves.Count; i++)
+            {
+                property.SetValue(moves[i].TestCase, moves[i].Own);
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportSplitDisabled(diagnostic, $"{ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void ReportSplitDisabled(Action<string>? diagnostic, string reason)
+    {
+        string message = $"[TestScheduling] Splitting SplitClasses is disabled, the suite runs unsplit (slower): {reason}. Check TestScheduling.Split against the xUnit version.";
+        Console.Error.WriteLine(message);
+        diagnostic?.Invoke(message);
+    }
+
+    private static void CollectSplits(IEnumerable<IXunitTestCase> testCases, List<(IXunitTestCase TestCase, ITestMethod Own)> moves)
     {
         foreach (IXunitTestCase testCase in testCases)
         {
@@ -294,14 +358,8 @@ public static class TestScheduling
             string name = $"{original.DisplayName} {testCase.DisplayName}";
             TestCollection collection = new(original.TestAssembly, collectionDefinition: null, name);
             TestMethod own = new(new TestClass(collection, testClass.Class), testMethod.Method);
-            SetTestMethod(testCase, own);
+            moves.Add((testCase, own));
         }
-    }
-
-    private static void SetTestMethod(IXunitTestCase testCase, ITestMethod testMethod)
-    {
-        PropertyInfo property = typeof(TestMethodTestCase).GetProperty(nameof(TestMethodTestCase.TestMethod))!;
-        property.SetValue(testCase, testMethod);
     }
 
     public sealed class LongestFirstOrderer : ITestCollectionOrderer
