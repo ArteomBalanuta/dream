@@ -194,6 +194,13 @@ public sealed class ServerConnection : IAsyncDisposable
         return Interlocked.Exchange(ref _overflowResyncPending, 0) != 0;
     }
 
+    // Puts back a flag taken by TryTakeOverflowResync whose resync the host refused (its
+    // per-connection cooldown), so the next tick asks again instead of losing it.
+    public void RearmOverflowResync()
+    {
+        Volatile.Write(ref _overflowResyncPending, 1);
+    }
+
     public void EnqueueSnapshot(ServerSnapshotMessage snapshotMessage)
     {
         ArgumentNullException.ThrowIfNull(snapshotMessage);

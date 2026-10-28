@@ -519,6 +519,24 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
+    // The host's answer to an overflow resync request (DedicatedServerHost.RequestWorldResyncIfConnected).
+    // A refused request (the cooldown) is re-armed on a connection that is still live, so a later
+    // tick retries it; nothing is re-armed for a faulted or removed connection. Returns whether it
+    // re-armed.
+    internal bool HandleOverflowResyncResult(ServerConnection connection, bool accepted)
+    {
+        if (accepted ||
+            connection.IsFaulted ||
+            !_connections.TryGetValue(connection.ConnectionId, out ServerConnection? live) ||
+            !ReferenceEquals(live, connection))
+        {
+            return false;
+        }
+
+        connection.RearmOverflowResync();
+        return true;
+    }
+
     // Started by AcceptNextClientAsync and tracked in _connectionLoops; it must never end
     // faulted: every error is logged once and closes only this connection.
     private async Task RunConnectionLoopAsync(ServerConnection connection, CancellationToken cancellationToken)
