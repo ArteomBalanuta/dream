@@ -1,300 +1,72 @@
+using Dream.Server.Persistence.Repositories;
+using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
-using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
 
-// Writes a whole checkpoint on one connection inside one transaction, reusing one prepared
-// command per table. The per-row repository methods each open a connection and autocommit,
-// which stalled the server tick for about 0.5 s every checkpoint.
+// Writes a whole checkpoint in one owned transaction (IWorldStore.BeginOwnedTransaction: one
+// connection, IMMEDIATE, never enlisted in a SqliteWriteBatch, since the final checkpoint runs as a
+// write-queue read). Each table's SQL lives in its repository's *.Checkpoint.cs partial, which
+// prepares one command per table and sets its parameters per row. Per-row repository calls would
+// each open a connection and autocommit, which stalled the server tick for about 0.5 s every
+// checkpoint.
+//
+// Player world state and the profile vitals are also written by the leave path (through the write
+// queue), so those rows carry their capture time: a world-state row only replaces a stored row
+// that is strictly older, and vitals are skipped once the stored world state is newer than their
+// capture (see SqlitePlayerWorldStateRepository.CheckpointUpsert and
+// SqlitePlayerProfileRepository.CheckpointUpdateVitals). Enemy, cube and rubble rows are
+// update-only and stamped with the write time.
 public sealed class SqlitePersistenceCheckpointWriter : IPersistenceCheckpointWriter
 {
-    private readonly SqliteSchemaBootstrapper _schema;
+    private readonly IWorldStore _store;
 
     public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema)
     {
-        _schema = schema ?? throw new ArgumentNullException(nameof(schema));
+        ArgumentNullException.ThrowIfNull(schema);
+        _store = new SqliteWorldStore(schema);
     }
 
     public void Write(PersistenceCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
 
-        string updatedUtc = SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow);
-        using SqliteConnection connection = _schema.CreateOpenConnection();
-        using SqliteTransaction transaction = connection.BeginTransaction();
-
-        WritePlayerVitals(connection, transaction, checkpoint.PlayerVitals, updatedUtc);
-        WritePlayerWorldStates(connection, transaction, checkpoint.PlayerWorldStates, updatedUtc);
-        WriteEnemies(connection, transaction, checkpoint.Enemies, updatedUtc);
-        WritePlacedCubes(connection, transaction, checkpoint.PlacedCubes, updatedUtc);
-        WriteFracturePieces(connection, transaction, checkpoint.FracturePieces, updatedUtc);
-        WriteWorldTime(connection, transaction, checkpoint.WorldTimeTicks);
-
-        transaction.Commit();
-    }
-
-    // The world clock rides in the same transaction as the rows it was captured with, so a
-    // restored world never pairs one checkpoint's rows with another's time. Upsert is safe:
-    // only the checkpoint writes this key.
-    private static void WriteWorldTime(SqliteConnection connection, SqliteTransaction transaction, long? worldTimeTicks)
-    {
-        if (worldTimeTicks is not { } ticks)
+        // Nothing to write: open no connection and take no write lock.
+        if (checkpoint.RowCount == 0 && checkpoint.WorldTimeTicks is null)
         {
             return;
         }
 
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            INSERT INTO world_metadata (key, value) VALUES ($key, $value)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value;
-            """);
-        command.Parameters.AddWithValue("$key", SqliteWorldMetadataRepository.WorldTimeTicksKey);
-        command.Parameters.AddWithValue("$value", SqliteWorldMetadataRepository.FormatWorldTimeTicks(ticks));
-        command.ExecuteNonQuery();
+        string writeUtc = SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow);
+        using SqliteSession session = _store.BeginOwnedTransaction();
+
+        SqlitePlayerProfileRepository.CheckpointUpdateVitals(session, checkpoint.PlayerVitals, writeUtc);
+        SqlitePlayerWorldStateRepository.CheckpointUpsert(session, checkpoint.PlayerWorldStates);
+        SqliteEnemyRepository.CheckpointUpdate(session, checkpoint.Enemies, writeUtc);
+        SqlitePlacedObjectRepository.CheckpointUpdate(session, checkpoint.PlacedCubes, writeUtc);
+        SqliteRubbleRepository.CheckpointUpdate(session, checkpoint.FracturePieces, writeUtc);
+        SqliteWorldMetadataRepository.WriteWorldTime(session, checkpoint.WorldTimeTicks);
+
+        session.Commit();
     }
+}
 
-    private static void WritePlayerVitals(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<PlayerCheckpointVitals> vitals,
-        string updatedUtc)
+// SqliteSchemaBootstrapper.FormatUtc of per-row capture times, formatting each distinct time once:
+// the rows of one capture share its time, so a checkpoint costs one string per capture rather than
+// one per row. A local, mutable helper; use it as a local variable.
+internal struct CheckpointUtcText
+{
+    private DateTime _utc;
+    private string? _text;
+
+    public string Format(DateTime utc)
     {
-        if (vitals.Count == 0)
+        if (_text == null || utc != _utc || utc.Kind != _utc.Kind)
         {
-            return;
+            _text = SqliteSchemaBootstrapper.FormatUtc(utc);
+            _utc = utc;
         }
 
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            UPDATE player_profiles SET
-                interaction_mode = $interactionMode,
-                current_hp = $currentHp,
-                max_hp = $maxHp,
-                updated_utc = $updatedUtc
-            WHERE player_name = $playerName;
-            """);
-        SqliteParameter playerName = command.Parameters.Add("$playerName", SqliteType.Text);
-        SqliteParameter interactionMode = command.Parameters.Add("$interactionMode", SqliteType.Text);
-        SqliteParameter currentHp = command.Parameters.Add("$currentHp", SqliteType.Integer);
-        SqliteParameter maxHp = command.Parameters.Add("$maxHp", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", updatedUtc);
-
-        foreach (PlayerCheckpointVitals entry in vitals)
-        {
-            playerName.Value = entry.PlayerName.Trim();
-            interactionMode.Value = entry.InteractionMode.ToString();
-            currentHp.Value = entry.CurrentHealth;
-            maxHp.Value = entry.MaxHealth;
-            command.ExecuteNonQuery();
-        }
-    }
-
-    private static void WritePlayerWorldStates(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<PersistedPlayerWorldState> states,
-        string updatedUtc)
-    {
-        if (states.Count == 0)
-        {
-            return;
-        }
-
-        // Upsert is safe here: only the checkpoint writes player_world_state.
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            INSERT INTO player_world_state (
-                player_name, position_x, position_y, position_z,
-                facing_x, facing_y, facing_z, current_hp, current_energy, updated_utc)
-            SELECT
-                $playerName, $positionX, $positionY, $positionZ,
-                $facingX, $facingY, $facingZ, $currentHp, $currentEnergy, $updatedUtc
-            WHERE EXISTS (SELECT 1 FROM player_profiles WHERE player_name = $playerName)
-            ON CONFLICT(player_name) DO UPDATE SET
-                position_x = excluded.position_x,
-                position_y = excluded.position_y,
-                position_z = excluded.position_z,
-                facing_x = excluded.facing_x,
-                facing_y = excluded.facing_y,
-                facing_z = excluded.facing_z,
-                current_hp = excluded.current_hp,
-                current_energy = excluded.current_energy,
-                updated_utc = excluded.updated_utc;
-            """);
-        SqliteParameter playerName = command.Parameters.Add("$playerName", SqliteType.Text);
-        SqliteParameter positionX = command.Parameters.Add("$positionX", SqliteType.Real);
-        SqliteParameter positionY = command.Parameters.Add("$positionY", SqliteType.Real);
-        SqliteParameter positionZ = command.Parameters.Add("$positionZ", SqliteType.Real);
-        SqliteParameter facingX = command.Parameters.Add("$facingX", SqliteType.Real);
-        SqliteParameter facingY = command.Parameters.Add("$facingY", SqliteType.Real);
-        SqliteParameter facingZ = command.Parameters.Add("$facingZ", SqliteType.Real);
-        SqliteParameter currentHp = command.Parameters.Add("$currentHp", SqliteType.Integer);
-        SqliteParameter currentEnergy = command.Parameters.Add("$currentEnergy", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", updatedUtc);
-
-        foreach (PersistedPlayerWorldState state in states)
-        {
-            playerName.Value = state.PlayerName.Trim();
-            positionX.Value = state.Position.X;
-            positionY.Value = state.Position.Y;
-            positionZ.Value = state.Position.Z;
-            facingX.Value = state.Facing.X;
-            facingY.Value = state.Facing.Y;
-            facingZ.Value = state.Facing.Z;
-            currentHp.Value = state.CurrentHealth;
-            currentEnergy.Value = state.CurrentEnergy;
-            command.ExecuteNonQuery();
-        }
-    }
-
-    private static void WriteEnemies(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<PersistedEnemyInstance> enemies,
-        string updatedUtc)
-    {
-        if (enemies.Count == 0)
-        {
-            return;
-        }
-
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            UPDATE enemy_instances SET
-                position_x = $positionX,
-                position_y = $positionY,
-                position_z = $positionZ,
-                facing_x = $facingX,
-                facing_y = $facingY,
-                facing_z = $facingZ,
-                current_hp = $currentHp,
-                max_hp = $maxHp,
-                level = $level,
-                updated_utc = $updatedUtc
-            WHERE enemy_id = $enemyId;
-            """);
-        SqliteParameter enemyId = command.Parameters.Add("$enemyId", SqliteType.Integer);
-        SqliteParameter positionX = command.Parameters.Add("$positionX", SqliteType.Real);
-        SqliteParameter positionY = command.Parameters.Add("$positionY", SqliteType.Real);
-        SqliteParameter positionZ = command.Parameters.Add("$positionZ", SqliteType.Real);
-        SqliteParameter facingX = command.Parameters.Add("$facingX", SqliteType.Real);
-        SqliteParameter facingY = command.Parameters.Add("$facingY", SqliteType.Real);
-        SqliteParameter facingZ = command.Parameters.Add("$facingZ", SqliteType.Real);
-        SqliteParameter currentHp = command.Parameters.Add("$currentHp", SqliteType.Integer);
-        SqliteParameter maxHp = command.Parameters.Add("$maxHp", SqliteType.Integer);
-        SqliteParameter level = command.Parameters.Add("$level", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", updatedUtc);
-
-        foreach (PersistedEnemyInstance enemy in enemies)
-        {
-            enemyId.Value = enemy.EnemyId;
-            positionX.Value = enemy.Position.X;
-            positionY.Value = enemy.Position.Y;
-            positionZ.Value = enemy.Position.Z;
-            facingX.Value = enemy.Facing.X;
-            facingY.Value = enemy.Facing.Y;
-            facingZ.Value = enemy.Facing.Z;
-            currentHp.Value = enemy.Stats.CurrentHealth;
-            maxHp.Value = enemy.Stats.MaxHealth;
-            level.Value = enemy.Stats.Level;
-            command.ExecuteNonQuery();
-        }
-    }
-
-    private static void WritePlacedCubes(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<PersistedPlacedCube> cubes,
-        string updatedUtc)
-    {
-        if (cubes.Count == 0)
-        {
-            return;
-        }
-
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            UPDATE placed_cube_instances SET
-                cell_x = $cellX,
-                cell_y = $cellY,
-                cell_z = $cellZ,
-                center_x = $centerX,
-                center_y = $centerY,
-                center_z = $centerZ,
-                material_id = $materialId,
-                current_health = $currentHealth,
-                max_health = $maxHealth,
-                updated_utc = $updatedUtc
-            WHERE cube_id = $cubeId;
-            """);
-        SqliteParameter cubeId = command.Parameters.Add("$cubeId", SqliteType.Integer);
-        SqliteParameter cellX = command.Parameters.Add("$cellX", SqliteType.Real);
-        SqliteParameter cellY = command.Parameters.Add("$cellY", SqliteType.Real);
-        SqliteParameter cellZ = command.Parameters.Add("$cellZ", SqliteType.Real);
-        SqliteParameter centerX = command.Parameters.Add("$centerX", SqliteType.Real);
-        SqliteParameter centerY = command.Parameters.Add("$centerY", SqliteType.Real);
-        SqliteParameter centerZ = command.Parameters.Add("$centerZ", SqliteType.Real);
-        SqliteParameter materialId = command.Parameters.Add("$materialId", SqliteType.Text);
-        SqliteParameter currentHealth = command.Parameters.Add("$currentHealth", SqliteType.Integer);
-        SqliteParameter maxHealth = command.Parameters.Add("$maxHealth", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", updatedUtc);
-
-        foreach (PersistedPlacedCube cube in cubes)
-        {
-            cubeId.Value = cube.CubeId;
-            cellX.Value = cube.CellPosition.X;
-            cellY.Value = cube.CellPosition.Y;
-            cellZ.Value = cube.CellPosition.Z;
-            centerX.Value = cube.CenterPosition.HasValue ? cube.CenterPosition.Value.X : DBNull.Value;
-            centerY.Value = cube.CenterPosition.HasValue ? cube.CenterPosition.Value.Y : DBNull.Value;
-            centerZ.Value = cube.CenterPosition.HasValue ? cube.CenterPosition.Value.Z : DBNull.Value;
-            materialId.Value = cube.MaterialId.ToString();
-            currentHealth.Value = cube.CurrentHealth;
-            maxHealth.Value = cube.MaxHealth;
-            command.ExecuteNonQuery();
-        }
-    }
-
-    private static void WriteFracturePieces(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<PersistedCubeFracturePiece> pieces,
-        string updatedUtc)
-    {
-        if (pieces.Count == 0)
-        {
-            return;
-        }
-
-        using SqliteCommand command = CreateCommand(connection, transaction, """
-            UPDATE cube_fracture_pieces SET
-                center_x = $centerX,
-                center_y = $centerY,
-                center_z = $centerZ,
-                side_length = $sideLength,
-                updated_utc = $updatedUtc
-            WHERE source_cube_id = $sourceCubeId AND piece_index = $pieceIndex;
-            """);
-        SqliteParameter sourceCubeId = command.Parameters.Add("$sourceCubeId", SqliteType.Integer);
-        SqliteParameter pieceIndex = command.Parameters.Add("$pieceIndex", SqliteType.Integer);
-        SqliteParameter centerX = command.Parameters.Add("$centerX", SqliteType.Real);
-        SqliteParameter centerY = command.Parameters.Add("$centerY", SqliteType.Real);
-        SqliteParameter centerZ = command.Parameters.Add("$centerZ", SqliteType.Real);
-        SqliteParameter sideLength = command.Parameters.Add("$sideLength", SqliteType.Real);
-        command.Parameters.AddWithValue("$updatedUtc", updatedUtc);
-
-        foreach (PersistedCubeFracturePiece piece in pieces)
-        {
-            sourceCubeId.Value = piece.SourceCubeId;
-            pieceIndex.Value = piece.PieceIndex;
-            centerX.Value = piece.Center.X;
-            centerY.Value = piece.Center.Y;
-            centerZ.Value = piece.Center.Z;
-            sideLength.Value = piece.SideLength;
-            command.ExecuteNonQuery();
-        }
-    }
-
-    private static SqliteCommand CreateCommand(SqliteConnection connection, SqliteTransaction transaction, string sql)
-    {
-        SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-        return command;
+        return _text;
     }
 }

@@ -346,11 +346,16 @@ internal sealed partial class RuntimePersistenceBridge
                 _departedWorldStates.Remove(player.DisplayName);
             }
 
+            // Both rows carry the capture time, which guards them against a leave that runs after
+            // this capture but is saved before the checkpoint is written (see PlayerCheckpointVitals).
             playerVitals.Add(new PlayerCheckpointVitals(
                 player.DisplayName,
                 _host.GetSessionInteractionMode(player.SessionId),
                 currentHealth,
-                maxHealth));
+                maxHealth)
+            {
+                CapturedUtc = now
+            });
             states.Add(new PersistedPlayerWorldState(
                 player.DisplayName,
                 position,

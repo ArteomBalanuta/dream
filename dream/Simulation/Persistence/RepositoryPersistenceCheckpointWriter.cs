@@ -1,7 +1,8 @@
 namespace Dream.Simulation.Persistence;
 
 // Fallback writer for repositories without a shared SQLite connection (for example in-memory
-// test repositories). It follows the same update-only rules through the repository interfaces.
+// test repositories). It follows the same update-only rules and the same capture-time guard on
+// player rows through the repository interfaces.
 public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpointWriter
 {
     private readonly IPlayerProfileRepository? _playerProfiles;
@@ -28,6 +29,16 @@ public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpoi
                     continue;
                 }
 
+                // The capture-time guard (see IPersistenceCheckpointWriter): a world state stored
+                // after the capture means the player left after it, so the profile the leave saved
+                // stands. Default CapturedUtc is unguarded.
+                if (vitals.CapturedUtc != default &&
+                    _world.TryGetPlayerWorldState(vitals.PlayerName) is { } left &&
+                    left.UpdatedUtc > vitals.CapturedUtc)
+                {
+                    continue;
+                }
+
                 _playerProfiles.Save(profile with
                 {
                     InteractionMode = vitals.InteractionMode,
@@ -42,6 +53,12 @@ public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpoi
 
         foreach (PersistedPlayerWorldState state in checkpoint.PlayerWorldStates)
         {
+            // A stored state saved at or after this capture (a leave) is newer: keep it.
+            if (_world.TryGetPlayerWorldState(state.PlayerName) is { } stored && stored.UpdatedUtc >= state.UpdatedUtc)
+            {
+                continue;
+            }
+
             _world.SavePlayerWorldState(state);
         }
 

@@ -225,4 +225,12 @@ public readonly record struct PlayerCheckpointVitals(
     string PlayerName,
     PlayerInteractionMode InteractionMode,
     int CurrentHealth,
-    int MaxHealth);
+    int MaxHealth)
+{
+    // When the vitals were captured (on the tick thread). A writer skips them when the player's
+    // stored world state is strictly newer (the player left after this capture), so a checkpoint
+    // captured before a leave never overwrites the profile the leave saved; see
+    // IPersistenceCheckpointWriter. Merge keeps whole rows, so each row keeps its own time. The
+    // default value means unguarded: the writer always overwrites, as before the guard.
+    public DateTime CapturedUtc { get; init; }
+}
