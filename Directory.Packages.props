@@ -10,6 +10,8 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageVersion Include="OpenTK" Version="4.9.4" />
     <PackageVersion Include="OpenTK.Windowing.Desktop" Version="4.9.4" />
+    <!-- Pinned above the Microsoft.Data.Sqlite default (2.1.10) to clear GHSA-2m69-gcr7-jv3q in SQLitePCLRaw.lib.e_sqlite3. -->
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="SharpGLTF.Core" Version="1.0.6" />
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageVersion Include="xunit" Version="2.9.3" />

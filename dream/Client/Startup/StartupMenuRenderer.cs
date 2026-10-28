@@ -3,6 +3,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Dream.Assets;
 using Dream.Client.Input;
@@ -20,6 +21,7 @@ public sealed class StartupMenuRenderer : IDisposable
     private int _fontTexture;
     private Shader _shaderObj;
     private int _shader;
+    private int _projMtxLocation;
     private int _vertexArray;
     private int _vertexBuffer;
     private int _indexBuffer;
@@ -134,6 +136,7 @@ public sealed class StartupMenuRenderer : IDisposable
         ImGui.DestroyContext(_imGuiContext);
     }
 
+    [MemberNotNull(nameof(_shaderObj))]
     private void InitializeImGui()
     {
         _imGuiContext = ImGui.CreateContext();
@@ -154,22 +157,46 @@ public sealed class StartupMenuRenderer : IDisposable
     {
         ImGui.GetIO().Fonts.GetTexDataAsRGBA32(out IntPtr pixels, out int width, out int height, out _);
         _fontTexture = GL.GenTexture();
+        GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture2D, _fontTexture);
-        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, width, height, 0, PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
+        // GetTexDataAsRGBA32 returns R,G,B,A bytes.
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
         ImGui.GetIO().Fonts.SetTexID((IntPtr)_fontTexture);
     }
 
+    // Uniform locations, the sampler unit and the vertex layout are fixed, so they are set up
+    // once here instead of on every frame and every command list.
+    [MemberNotNull(nameof(_shaderObj))]
     private void CreateImGuiResources()
     {
         _shaderObj = new Shader(
             AssetPaths.Shader("hudVertexText.glsl"),
             AssetPaths.Shader("hudFragmentText.glsl"));
         _shader = _shaderObj.Handle;
+        _projMtxLocation = GL.GetUniformLocation(_shader, "ProjMtx");
+        int textureLocation = GL.GetUniformLocation(_shader, "Texture");
+        GL.UseProgram(_shader);
+        GL.Uniform1(textureLocation, 0);
+        GL.UseProgram(0);
+
         _vertexArray = GL.GenVertexArray();
         _vertexBuffer = GL.GenBuffer();
         _indexBuffer = GL.GenBuffer();
+
+        int stride = Unsafe.SizeOf<ImDrawVert>();
+        GL.BindVertexArray(_vertexArray);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBuffer);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, _indexBuffer);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, stride, 0);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, 8);
+        GL.EnableVertexAttribArray(2);
+        GL.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, stride, 16);
+        GL.BindVertexArray(0);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
     }
 
     private void BeginFrame(
@@ -227,6 +254,8 @@ public sealed class StartupMenuRenderer : IDisposable
         io.AddKeyEvent(key, isDown);
     }
 
+    // Draws ImGui with its own blend, cull, depth and scissor state on texture unit 0, then
+    // restores the state it found.
     private void RenderImGuiDrawData(ImDrawDataPtr drawData)
     {
         if (drawData.CmdListsCount == 0)
@@ -234,23 +263,28 @@ public sealed class StartupMenuRenderer : IDisposable
             return;
         }
 
+        ImGuiGlStateSnapshot previousState = ImGuiGlStateSnapshot.Capture();
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.Disable(EnableCap.CullFace);
         GL.Disable(EnableCap.DepthTest);
+        GL.Enable(EnableCap.ScissorTest);
+        GL.ActiveTexture(TextureUnit.Texture0);
 
-        var io = ImGui.GetIO();
+        System.Numerics.Vector2 displayPos = drawData.DisplayPos;
+        System.Numerics.Vector2 displaySize = drawData.DisplaySize;
+        System.Numerics.Vector2 framebufferScale = drawData.FramebufferScale;
+        int framebufferHeight = (int)(displaySize.Y * framebufferScale.Y);
         Matrix4 mvp = Matrix4.CreateOrthographicOffCenter(
-            0f,
-            io.DisplaySize.X,
-            io.DisplaySize.Y,
-            0f,
+            displayPos.X,
+            displayPos.X + displaySize.X,
+            displayPos.Y + displaySize.Y,
+            displayPos.Y,
             -1f,
             1f);
 
         GL.UseProgram(_shader);
-        GL.UniformMatrix4(GL.GetUniformLocation(_shader, "ProjMtx"), false, ref mvp);
-        GL.Uniform1(GL.GetUniformLocation(_shader, "Texture"), 0);
+        GL.UniformMatrix4(_projMtxLocation, false, ref mvp);
         GL.BindVertexArray(_vertexArray);
 
         for (int n = 0; n < drawData.CmdListsCount; n++)
@@ -261,13 +295,6 @@ public sealed class StartupMenuRenderer : IDisposable
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _indexBuffer);
             GL.BufferData(BufferTarget.ElementArrayBuffer, cmdList.IdxBuffer.Size * sizeof(ushort), cmdList.IdxBuffer.Data, BufferUsageHint.StreamDraw);
 
-            GL.EnableVertexAttribArray(0);
-            GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, Unsafe.SizeOf<ImDrawVert>(), 0);
-            GL.EnableVertexAttribArray(1);
-            GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, Unsafe.SizeOf<ImDrawVert>(), 8);
-            GL.EnableVertexAttribArray(2);
-            GL.VertexAttribPointer(2, 4, VertexAttribPointerType.UnsignedByte, true, Unsafe.SizeOf<ImDrawVert>(), 16);
-
             for (int cmdIndex = 0; cmdIndex < cmdList.CmdBuffer.Size; cmdIndex++)
             {
                 var command = cmdList.CmdBuffer[cmdIndex];
@@ -276,12 +303,18 @@ public sealed class StartupMenuRenderer : IDisposable
                     continue;
                 }
 
+                if (!ImGuiScissorRect.TryFromClipRect(
+                    command.ClipRect,
+                    displayPos,
+                    framebufferScale,
+                    framebufferHeight,
+                    out ImGuiScissorRect scissor))
+                {
+                    continue;
+                }
+
                 GL.BindTexture(TextureTarget.Texture2D, (int)command.TextureId);
-                GL.Scissor(
-                    (int)command.ClipRect.X,
-                    (int)(io.DisplaySize.Y - command.ClipRect.W),
-                    (int)(command.ClipRect.Z - command.ClipRect.X),
-                    (int)(command.ClipRect.W - command.ClipRect.Y));
+                GL.Scissor(scissor.X, scissor.Y, scissor.Width, scissor.Height);
 
                 GL.DrawElements(
                     PrimitiveType.Triangles,
@@ -291,9 +324,8 @@ public sealed class StartupMenuRenderer : IDisposable
             }
         }
 
-        GL.BindVertexArray(0);
-        GL.UseProgram(0);
-        GL.Disable(EnableCap.Blend);
+        GL.Disable(EnableCap.ScissorTest);
+        previousState.Restore();
     }
 
     private static Vector2i GetSafeViewportSize(Vector2i size)
