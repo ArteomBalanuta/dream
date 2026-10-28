@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Enemies;
@@ -80,6 +81,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private readonly HashSet<PlayerSessionId> _unrestoredPlayerSessions = [];
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
+    private readonly AuthoritativeCombatResolver _combatResolver;
     private PlayerCommandFrame _lastAppliedCommandFrame;
     // Ticks since the primary seat last accepted a command; see MaxCommandRepeatTicks.
     private int _primaryTicksSinceCommand;
@@ -128,6 +130,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
         _worldObjects = new WorldObjectRegistry();
         _enemies = new EnemyRegistry();
+        _combatResolver = CreateCombatResolver();
         SubscribeReplicationExports();
 
         RestorePersistedWorldState();
@@ -176,7 +179,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     public ulong CurrentServerTick { get; private set; }
 
-    // Root of every seeded simulation roll; see ResolveSeededAttack.
+    // Root of every seeded simulation roll; see AuthoritativeCombatResolver.ResolveSeededAttack.
     public ulong SimulationSeed { get; }
 
     public void RebuildMapForFloorSize(int floorSize)
