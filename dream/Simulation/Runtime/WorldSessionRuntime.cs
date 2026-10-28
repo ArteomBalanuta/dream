@@ -900,10 +900,17 @@ public sealed class WorldSessionRuntime : IDisposable
         return acceptedSequences;
     }
 
+    // The repeat debt a session's command inbox carries from before its current starved run
+    // (BufferedPlayerCommandInbox.GetCarriedRepeatDebtTicks), set once by the host that drains
+    // that inbox into this runtime; null (no inbox debt) for hosts that feed commands directly.
+    public Func<PlayerSessionId, int>? CarriedRepeatDebtTicks { get; set; }
+
     // The ticks this seat simulated after the tick that consumed its acknowledged command (W9-2):
     // starved ticks that repeated that command, then idled (MaxCommandRepeatTicks). The seat's
-    // counter is reset to 0 by the accepting tick and counts that tick too, hence the - 1. A session
-    // with no accepted command has no ack to measure from, so it reports 0.
+    // counter is reset to 0 by the accepting tick and counts that tick too, hence the - 1. Added to
+    // them, the inbox's carried repeat debt: after a starved run the backlog's newest tick is never
+    // skipped, so the seat stays that many repeated ticks ahead of its ack until later frames are
+    // skipped. A session with no accepted command has no ack to measure from, so it reports 0.
     private int CaptureStarvedTicks(PlayerSessionId sessionId)
     {
         if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player)
@@ -915,7 +922,8 @@ public sealed class WorldSessionRuntime : IDisposable
         int ticksSinceCommand = _secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? secondary)
             ? secondary.TicksSinceLastCommand
             : _primaryTicksSinceCommand;
-        return Math.Max(0, ticksSinceCommand - 1);
+        int carriedDebt = CarriedRepeatDebtTicks?.Invoke(sessionId) ?? 0;
+        return Math.Max(0, ticksSinceCommand - 1) + Math.Max(0, carriedDebt);
     }
 
     // A resting or jostled cube emits a same-cell CubeMoved every tick. Such a move only changes

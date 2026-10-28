@@ -266,7 +266,7 @@ public class PlayScene : IDisposable, ISessionEndSource
             simulationCommandFrame,
             _tickTuning,
             primaryUseHeld: command.PrimaryUsePressed);
-        _predictionReconciler.RecordPrediction(tick, _runtime.Player.GetWorldPosition());
+        _predictionReconciler.RecordPrediction(tick, _runtime.Player.GetWorldPosition(), command.MoveIntent);
         if (playPrimaryUse)
         {
             _tickPrimaryUseTriggered = true;

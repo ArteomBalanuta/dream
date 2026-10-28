@@ -304,7 +304,7 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
                 ClientSimulationCommandPolicy.PrepareForLocalSimulation(command, useRemoteAuthority: true),
                 PlayerSimulationTuning.AuthoritativeDefault,
                 primaryUseHeld: command.PrimaryUsePressed);
-            _reconciler.RecordPrediction(command.Sequence, _world.Player.GetWorldPosition());
+            _reconciler.RecordPrediction(command.Sequence, _world.Player.GetWorldPosition(), command.MoveIntent);
         }
 
         public void Drain()

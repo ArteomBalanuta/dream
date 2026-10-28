@@ -94,7 +94,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         _deferJoinsToTick = deferJoinsToTick;
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
-        _checkpointWrites = Runtime?.CheckpointWriter is { } checkpointWriter
+        if (Runtime is { } runtime)
+        {
+            // Snapshots count the inbox's carried repeat debt in StarvedTicks (W9-2).
+            runtime.CarriedRepeatDebtTicks = _commandInbox.GetCarriedRepeatDebtTicks;
+        }
+
+        _checkpointWrites =Runtime?.CheckpointWriter is { } checkpointWriter
             ? new BackgroundCheckpointWriter(checkpointWriter, Runtime.PersistenceWrites)
             : null;
     }
