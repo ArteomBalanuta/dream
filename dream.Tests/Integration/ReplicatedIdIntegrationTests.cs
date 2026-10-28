@@ -5,7 +5,7 @@ using Dream.Client.Replication;
 using Dream.Client.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
