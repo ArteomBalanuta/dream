@@ -26,9 +26,9 @@ public static class WorldSeeder
 {
     public const string OwnerPlayerName = "load-seeder";
 
-    // Seeded cube ids start here, above the runtime's cube (1000+) and enemy (2000+) id ranges,
-    // so a seeded world never collides with ids the run allocates (see the round-2 open item on
-    // overlapping placed-cube and enemy id ranges).
+    // Seeded cube ids start here, clear of the ids a run allocates. The id is inside today's
+    // enemy range (ReplicatedActorIdRanges), like a legacy cube id: the restore reserves it in the
+    // enemy counter, so later enemy spawns skip past the seeded cubes.
     public const int FirstSeededCubeId = 100_000;
 
     // Players spawn near (5, 5); leave that corner clear so nobody spawns inside a stack.

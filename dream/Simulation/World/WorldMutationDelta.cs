@@ -9,7 +9,10 @@ public enum WorldMutationKind
     CubePlaced,
     CubeDestroyed,
     CubeFractured,
-    CubeMoved
+    CubeMoved,
+    // A cube the client already has (generated terrain) got a replicated id on the server, for
+    // example on its first hit. Carries the cube's cell and the id (ActorId); changes no geometry.
+    CubeIdentified
 }
 
 public readonly record struct WorldMutationDelta(
@@ -41,6 +44,14 @@ public readonly record struct WorldMutationDelta(
             cellPosition,
             MaterialId: materialId,
             FracturePieces: fracturePieces.ToArray());
+    }
+
+    public static WorldMutationDelta Identified(Vector3 cellPosition, int actorId)
+    {
+        return new WorldMutationDelta(
+            WorldMutationKind.CubeIdentified,
+            cellPosition,
+            ActorId: actorId);
     }
 
     private static Vector3 ToCellPosition(Vector3 position)

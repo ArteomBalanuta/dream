@@ -35,8 +35,9 @@ public sealed class WorldSessionRuntime : IDisposable
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
 
-    // Actor id of the first enemy a fresh world spawns; each later spawn takes the next id.
-    public const int FirstEnemyActorId = 2000;
+    // Actor id of the first enemy a fresh world spawns; each later spawn takes the next id. Enemy
+    // ids stay inside their own range, disjoint from cube ids (ReplicatedActorIdRanges).
+    public const int FirstEnemyActorId = ReplicatedActorIdRanges.FirstEnemyId;
 
     // Seed used when the host supplies none. Every attack roll derives from this seed plus the
     // tick, session, action sequence and target, so a fixed default keeps runs reproducible.
@@ -136,6 +137,8 @@ public sealed class WorldSessionRuntime : IDisposable
     // spawn. Part of simulation state: same-seed servers with the same history allocate the same
     // ids. Persisted enemies advance it past their ids when the world is restored.
     private int _nextEnemyActorId = FirstEnemyActorId;
+    // Set while a cube registration must not export a CubeIdentified delta (see OnCubeIdAssigned).
+    private bool _suppressCubeIdExports;
     private long _nextItemInstanceId = 1;
 
     public WorldSessionRuntime(
@@ -179,6 +182,8 @@ public sealed class WorldSessionRuntime : IDisposable
         SubscribeReplicationExports();
 
         RestorePersistedWorldState();
+        // After the restore: the world a client joins already carries the restored cubes' ids.
+        _worldObjects.CubeIdAssigned = OnCubeIdAssigned;
     }
 
     public Map Map { get; private set; }
@@ -769,7 +774,16 @@ public sealed class WorldSessionRuntime : IDisposable
 
         var rebuiltMap = CreateMap(floorSize);
         previousMap.CopyPlacedCubesTo(rebuiltMap);
-        _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
+        // Re-keys the same ids on the rebuilt map; nothing new for clients to learn.
+        _suppressCubeIdExports = true;
+        try
+        {
+            _worldObjects.RestoreCubeSnapshot(rebuiltMap, worldObjectSnapshot);
+        }
+        finally
+        {
+            _suppressCubeIdExports = false;
+        }
 
         Map = rebuiltMap;
         Player.BindMap(rebuiltMap);
@@ -951,7 +965,8 @@ public sealed class WorldSessionRuntime : IDisposable
         for (int index = mutations.Count - 1; index >= 0; index--)
         {
             WorldMutationDelta mutation = mutations[index];
-            if (mutation.ActorId is int actorId)
+            // A CubeIdentified carries no position, so it never supersedes a move.
+            if (mutation.ActorId is int actorId && mutation.Kind != WorldMutationKind.CubeIdentified)
             {
                 bool sameCellMove = mutation.Kind == WorldMutationKind.CubeMoved &&
                     mutation.TargetCellPosition == mutation.CellPosition;
@@ -1991,7 +2006,19 @@ public sealed class WorldSessionRuntime : IDisposable
     // id is never held by a live or persisted enemy.
     private int AllocateEnemyActorId()
     {
-        return _nextEnemyActorId++;
+        int actorId = _nextEnemyActorId;
+        _nextEnemyActorId = ReplicatedActorIdRanges.NextEnemyId(actorId);
+        return actorId;
+    }
+
+    // Keeps later enemy spawns past an id in the enemy range that is already taken: a persisted
+    // enemy, or a legacy cube saved before the id ranges were partitioned.
+    private void ReserveEnemyActorId(int actorId)
+    {
+        if (ReplicatedActorIdRanges.IsEnemyId(actorId))
+        {
+            _nextEnemyActorId = Math.Max(_nextEnemyActorId, ReplicatedActorIdRanges.NextEnemyId(actorId));
+        }
     }
 
     private void EnsureWolfExists()
@@ -2107,11 +2134,21 @@ public sealed class WorldSessionRuntime : IDisposable
         }
 
         string ownerPlayerName = TryResolveDisplayName(message.SessionId);
-        WorldObjectRecord record = _worldObjects.RegisterCube(
-            placedCube,
-            Map,
-            actorId: null,
-            ownerPlayerName: ownerPlayerName);
+        // The CubePlaced delta below carries the new id, so no CubeIdentified is exported for it.
+        WorldObjectRecord record;
+        _suppressCubeIdExports = true;
+        try
+        {
+            record = _worldObjects.RegisterCube(
+                placedCube,
+                Map,
+                actorId: null,
+                ownerPlayerName: ownerPlayerName);
+        }
+        finally
+        {
+            _suppressCubeIdExports = false;
+        }
         PersistPlacedCube(record, placementMaterial);
         Vector3 placedCell = ToCellPosition(placedCube.Position);
         _events.Publish(new CubePlacedEvent(placedCube, placedCell, placementMaterial));
@@ -2189,6 +2226,23 @@ public sealed class WorldSessionRuntime : IDisposable
             Accepted: false,
             Payload: null,
             Rejection: new RejectedUseDelta(reason));
+    }
+
+    // A cube got a replicated id outside a placement: most often a generated terrain cube on its
+    // first hit, which clients only knew by cell. The delta carries the id in the same sequenced
+    // stream as the hit's other world deltas (and before a fracture or destroy of that cube), so
+    // the client keys its cube by the id before the next world checksum is compared.
+    private void OnCubeIdAssigned(Map map, Cube cube, int actorId)
+    {
+        if (_suppressCubeIdExports || !ReferenceEquals(map, Map))
+        {
+            return;
+        }
+
+        Vector3 cellPosition = map.TryGetCellForCube(cube, out GeometryCellKey cell)
+            ? new Vector3(cell.X, cell.Y, cell.Z)
+            : ToCellPosition(cube.Position);
+        QueueWorldMutation(WorldMutationDelta.Identified(cellPosition, actorId));
     }
 
     // Sequences let clients skip deltas already folded into the join-time world snapshot.
@@ -2467,6 +2521,11 @@ public sealed class WorldSessionRuntime : IDisposable
         {
             _persistedCubes[persistedCube.CubeId] = persistedCube;
             _knownProfileNames.Add(persistedCube.OwnerPlayerName);
+            // The id counters are derived from the persisted ids (there is no stored counter): a
+            // cube id is reserved even when its cell is now occupied and the cube is skipped,
+            // because its row still exists. A legacy cube id in the enemy range is reserved there.
+            _worldObjects.ReserveActorId(persistedCube.CubeId);
+            ReserveEnemyActorId(persistedCube.CubeId);
             Cube? cube = Map.TryAddCube(
                 persistedCube.CellPosition,
                 materialId: persistedCube.MaterialId);
@@ -2499,11 +2558,27 @@ public sealed class WorldSessionRuntime : IDisposable
         }
 
         _enemies.Clear();
+        // A restored world never hands a later spawn an id it already persisted. Every persisted
+        // id is reserved before any enemy is re-identified below, so a new id skips them all.
         foreach (PersistedEnemyInstance enemy in enemies)
         {
-            _enemies.Add(CreatePersistedEnemy(enemy));
-            // A restored world never hands a later spawn an id it already persisted.
-            _nextEnemyActorId = Math.Max(_nextEnemyActorId, enemy.EnemyId + 1);
+            ReserveEnemyActorId(enemy.EnemyId);
+        }
+
+        foreach (PersistedEnemyInstance enemy in enemies)
+        {
+            PersistedEnemyInstance restored = enemy;
+            if (_persistedCubes.ContainsKey(enemy.EnemyId))
+            {
+                // A world saved before the id ranges were partitioned can hold an enemy and a
+                // placed cube under one id. The cube keeps it; the enemy is re-identified in the
+                // enemy range and its row moved to the new id.
+                restored = enemy with { EnemyId = AllocateEnemyActorId() };
+                DeletePersistedEnemy(enemy.EnemyId);
+                EnqueueWorldWrite(world => world.SaveEnemyInstance(restored));
+            }
+
+            _enemies.Add(CreatePersistedEnemy(restored));
         }
     }
 
@@ -2698,6 +2773,9 @@ public sealed class WorldSessionRuntime : IDisposable
             .LoadCubeFracturePieces()
             .GroupBy(piece => piece.SourceCubeId))
         {
+            // The fractured cube's row is gone, but its id still keys these pieces: a placed cube
+            // that later reused it would delete them (PersistPlacedCube clears its id's pieces).
+            _worldObjects.ReserveActorId(group.Key);
             PersistedCubeFracturePiece[] pieces = group
                 .OrderBy(piece => piece.PieceIndex)
                 .ToArray();

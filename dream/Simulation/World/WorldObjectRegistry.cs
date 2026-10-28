@@ -10,7 +10,8 @@ public sealed class WorldObjectRegistry
 {
     private readonly Dictionary<object, WorldObjectRecord> _records = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Cube, DetachedCubeRecord> _detachedCubeRecords = new(ReferenceEqualityComparer.Instance);
-    private int _nextActorId = 1000;
+    // Next world-object actor id to hand out; never in the enemy range (ReplicatedActorIdRanges).
+    private int _nextActorId = ReplicatedActorIdRanges.FirstWorldObjectId;
     // Persistence checkpoint change tracking (off until EnableCheckpointTracking; clients never
     // turn it on): cubes registered (placed, restored, rebound, re-identified) or damaged since the
     // last ClearCheckpointChanges, and the actor ids of cube records removed since then and not
@@ -20,6 +21,25 @@ public sealed class WorldObjectRegistry
     private Action<WorldObjectRecord>? _recordDamaged;
 
     public bool IsCheckpointTrackingEnabled => _checkpointDirtyCubes != null;
+
+    // The id the next registration without an explicit id takes.
+    public int NextActorId => _nextActorId;
+
+    // Raised when RegisterCube keys a cube to a replicated id the map did not already hold for it
+    // (a terrain cube's first hit, a rebind, an identity repair). The server turns it into a
+    // CubeIdentified delta, so clients key the cube (and its checksum) by the same id.
+    public Action<Map, Cube, int>? CubeIdAssigned { get; set; }
+
+    // Keeps later allocations past a world-object id that is already taken (a persisted cube or
+    // fracture group). Ids outside the world-object ranges are ignored: the allocator never
+    // reaches them.
+    public void ReserveActorId(int actorId)
+    {
+        if (ReplicatedActorIdRanges.IsWorldObjectId(actorId))
+        {
+            _nextActorId = Math.Max(_nextActorId, ReplicatedActorIdRanges.NextWorldObjectId(actorId));
+        }
+    }
 
     public void EnableCheckpointTracking()
     {
@@ -100,8 +120,8 @@ public sealed class WorldObjectRegistry
             _detachedCubeRecords.Remove(cube);
         }
 
-        int resolvedActorId = actorId ?? _nextActorId++;
-        _nextActorId = Math.Max(_nextActorId, resolvedActorId + 1);
+        int resolvedActorId = actorId ?? _nextActorId;
+        ReserveActorId(resolvedActorId);
 
         WorldObjectRecord record = new(
             sourceObject,
@@ -140,7 +160,14 @@ public sealed class WorldObjectRegistry
         // snapshot restore after a map rebuild) keys the map's replicated id to the actor id the
         // server replicates for this cube, so the authoritative map resolves and checksums cubes
         // by the same identity a client map receives. Map.RemoveCube drops the id again.
-        map.AssignReplicatedCubeId(cube, record.Actor.Id);
+        int replicatedId = record.Actor.Id;
+        bool changed = !map.TryGetReplicatedId(cube, out int previousId) || previousId != replicatedId;
+        map.AssignReplicatedCubeId(cube, replicatedId);
+        if (changed)
+        {
+            CubeIdAssigned?.Invoke(map, cube, replicatedId);
+        }
+
         return record;
     }
 
