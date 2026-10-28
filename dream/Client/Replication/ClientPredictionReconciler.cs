@@ -1,4 +1,6 @@
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using OpenTK.Mathematics;
 
@@ -51,6 +53,29 @@ public readonly record struct ClientReconciliationResult(
 // on the server position alone and the unacknowledged samples are rebased there: replaying a walk
 // that the server stopped (at an obstacle the client walked through) would put the player into or
 // past the obstacle again, and every later snapshot would pull it back.
+//
+// Starved snapshots (W9-2): a snapshot whose StarvedTicks is k holds the server's position k ticks
+// after the ack, simulated with the acknowledged command repeated (then idle past
+// BufferedPlayerCommandInbox.ServerRepeatTicks), not with the client's own commands for those
+// ticks. The client's sample k ticks after the ack stands for that state only when its commands
+// for those ticks are what the server simulated: the ack's movement axes (or idle once the client
+// stopped: idling earlier than the server only diverges for good, which a correction now fixes as
+// well as one later), with no one-shot press. Each sample records its command's movement for that
+// check. Otherwise (the player started walking, turned or jumped during the starve) the server
+// will replay those commands after its starved ticks, so the comparison is with what the server
+// did: the samples while the commands still matched, then the ack's step repeated. Comparing with
+// the client's sample there pulled the player back and the replay pushed it forward again.
+//
+// StarvedTicks also counts the repeat debt the server's inbox still holds after a backlog
+// started arriving (repeated ticks simulated ahead of the ack that it will skip later, see
+// WorldSessionRuntime's CaptureStarvedTicks; idle debt is left out, as it did not move the player
+// across the floor). Known limits: debt the inbox drops unspent (a ring's worth of pops without a
+// starve) was a real lead, corrected once when it stops being reported; idle debt's vertical
+// movement (a fall) is not counted. The extrapolated step is the ack
+// tick's displacement (or the newest matching sample's), with gravity applied to its vertical part
+// per tick while the player is airborne: it does not see a landing, a wall, or a jump the server
+// had not simulated, and it is zero when the sample before the ack is missing. The motor stops
+// horizontal movement at once on an idle tick, so the idle part needs no deceleration.
 public sealed class ClientPredictionReconciler
 {
     public const float DefaultDeadbandDistance = 0.05f;
@@ -58,8 +83,21 @@ public sealed class ClientPredictionReconciler
     public const float DefaultSmoothingSeconds = 0.1f;
     public const float DefaultReplayDiscardDistance = 2f * DefaultSnapDistance;
     private const int MaxHistory = 256;
+    // The player body's gravity (the physics world's, PhysicsIntegrator; PlayerMotor restores
+    // 9.81 after a freeze or noclip toggle), as the change of a tick's vertical displacement.
+    private const float GravityAcceleration = 9.8f;
+    private const float GravityStepPerTick =
+        GravityAcceleration * SimulationClock.FixedDeltaSeconds * SimulationClock.FixedDeltaSeconds;
 
-    private readonly List<(ulong Sequence, Vector3 Position)> _history = [];
+    // One prediction tick: its command sequence, the intended position after it, and the movement
+    // of the command it simulated (HasMove false when the caller did not give it, in which case the
+    // sample is assumed to match the server's repeated command, as before W9 fix loop 2).
+    private readonly record struct Sample(ulong Sequence, Vector3 Position, PlayerMoveIntent Move, bool HasMove)
+    {
+        public Sample WithPosition(Vector3 position) => this with { Position = position };
+    }
+
+    private readonly List<Sample> _history = [];
     private readonly float _deadbandDistance;
     private readonly float _snapDistance;
     private readonly float _smoothingSeconds;
@@ -93,15 +131,29 @@ public sealed class ClientPredictionReconciler
     public int HistoryCount => _history.Count;
 
     // Call after each local simulation tick with the command sequence that tick used and the
-    // player's simulated position.
+    // player's simulated position. Without the command's movement, the sample is assumed to match
+    // what a starved server repeats.
     public void RecordPrediction(ulong commandSequence, Vector3 simulatedPosition)
+    {
+        Record(new Sample(commandSequence, simulatedPosition, default, HasMove: false));
+    }
+
+    // With the movement of the command the tick simulated (as sent to the server), so a starved
+    // snapshot is only compared with this sample when the server simulated the same movement.
+    public void RecordPrediction(ulong commandSequence, Vector3 simulatedPosition, PlayerMoveIntent move)
+    {
+        Record(new Sample(commandSequence, simulatedPosition, move, HasMove: true));
+    }
+
+    private void Record(Sample sample)
     {
         // Record where the player will be once pending smoothing is applied, so samples taken
         // mid-blend compare against the corrected path.
-        Vector3 intendedPosition = simulatedPosition + _pendingOffset;
+        sample = sample.WithPosition(sample.Position + _pendingOffset);
+        ulong commandSequence = sample.Sequence;
         if (_history.Count > 0 && _history[^1].Sequence == commandSequence)
         {
-            _history[^1] = (commandSequence, intendedPosition);
+            _history[^1] = sample;
             return;
         }
 
@@ -110,7 +162,7 @@ public sealed class ClientPredictionReconciler
             return;
         }
 
-        _history.Add((commandSequence, intendedPosition));
+        _history.Add(sample);
         if (_history.Count > MaxHistory)
         {
             _history.RemoveAt(0);
@@ -173,7 +225,7 @@ public sealed class ClientPredictionReconciler
                 // acks say where they went, assume they did not move.
                 for (int index = 1; index < _history.Count; index++)
                 {
-                    _history[index] = (_history[index].Sequence, serverPosition);
+                    _history[index] = _history[index].WithPosition(serverPosition);
                 }
 
                 DiscardedReplays++;
@@ -219,7 +271,7 @@ public sealed class ClientPredictionReconciler
     {
         for (int index = 0; index < _history.Count; index++)
         {
-            _history[index] = (_history[index].Sequence, _history[index].Position + error);
+            _history[index] = _history[index].WithPosition(_history[index].Position + error);
         }
     }
 
@@ -253,37 +305,103 @@ public sealed class ClientPredictionReconciler
         return new ClientReconciliationResult(ClientReconciliationKind.Snap, Vector3.Zero, serverPosition);
     }
 
-    // The prediction to compare a snapshot with: the acknowledged sample, or with starved ticks the
-    // sample that many ticks later. The server simulated those ticks with the acknowledged command
-    // repeated (then idle, BufferedPlayerCommandInbox.ServerRepeatTicks), and the inbox skips the
-    // client's next commands as already simulated when they match it, so the client's own samples
-    // for those ticks are what the server's state stands for. Ticks the client has not predicted
-    // yet are extrapolated from the newest sample with the acknowledged tick's displacement (its
-    // vertical part only once the repeat window has passed and the server idles).
+    // The prediction to compare a snapshot with: the acknowledged sample, or with starved ticks what
+    // the server simulated in them, the acknowledged command repeated (then idle,
+    // BufferedPlayerCommandInbox.ServerRepeatTicks). The client's sample that many ticks later is
+    // that state when its commands for those ticks match (see the class comment). Otherwise, and
+    // for ticks the client has not predicted yet, the newest sample whose commands still exactly
+    // match is extrapolated with its tick's displacement (its vertical part only once the repeat
+    // window has passed and the server idles), gravity applied while airborne. No allocation.
     private Vector3 PredictAfterStarvedTicks(int acknowledgedIndex, ulong acknowledgedSequence, int starvedTicks)
     {
-        Vector3 acknowledged = _history[acknowledgedIndex].Position;
+        Sample acknowledged = _history[acknowledgedIndex];
         if (starvedTicks <= 0)
         {
-            return acknowledged;
+            return acknowledged.Position;
         }
 
         ulong target = acknowledgedSequence + (ulong)starvedTicks;
-        int index = FindLatestSampleAtOrBefore(target);
-        (ulong sequence, Vector3 position) = _history[index];
-        if (sequence == target)
+        const ulong RepeatTicks = (ulong)BufferedPlayerCommandInbox.ServerRepeatTicks;
+        // Newest sample whose commands since the ack are exactly what the server simulated.
+        int exactIndex = acknowledgedIndex;
+        bool exact = true;
+        // Newest sample whose commands since the ack are the ack's movement, then idle.
+        int matchingIndex = acknowledgedIndex;
+        bool matching = true;
+        bool clientIdled = false;
+        for (int index = acknowledgedIndex + 1; index < _history.Count && (exact || matching); index++)
         {
-            return position;
+            Sample sample = _history[index];
+            if (sample.Sequence > target || sample.Sequence != _history[index - 1].Sequence + 1)
+            {
+                break;
+            }
+
+            if (!sample.HasMove || !acknowledged.HasMove)
+            {
+                // A caller that records no movement: assumed to be what the server repeated.
+                exactIndex = exact ? index : exactIndex;
+                matchingIndex = matching ? index : matchingIndex;
+                continue;
+            }
+
+            bool serverRepeats = sample.Sequence - acknowledgedSequence <= RepeatTicks;
+            bool oneShot = sample.Move.JumpPressed || sample.Move.FreezePressed || sample.Move.ToggleNoclipPressed;
+            bool sameAsAck = BufferedPlayerCommandInbox.HasSameMovement(sample.Move, acknowledged.Move);
+            bool idle = BufferedPlayerCommandInbox.HasSameMovement(sample.Move, PlayerMoveIntent.None);
+            exact &= !oneShot && (serverRepeats ? sameAsAck : idle);
+            if (exact)
+            {
+                exactIndex = index;
+            }
+
+            if (matching)
+            {
+                if (oneShot)
+                {
+                    matching = false;
+                }
+                else if (sameAsAck && serverRepeats && !clientIdled)
+                {
+                    matchingIndex = index;
+                }
+                else if (idle)
+                {
+                    clientIdled = true;
+                    matchingIndex = index;
+                }
+                else
+                {
+                    matching = false;
+                }
+            }
         }
 
-        Vector3 step = acknowledgedIndex > 0 && _history[acknowledgedIndex - 1].Sequence + 1 == _history[acknowledgedIndex].Sequence
-            ? acknowledged - _history[acknowledgedIndex - 1].Position
-            : Vector3.Zero;
-        for (ulong repeat = Math.Max(sequence, acknowledgedSequence) - acknowledgedSequence + 1; repeat <= (ulong)starvedTicks; repeat++)
+        if (matching && _history[matchingIndex].Sequence == target)
         {
-            position += repeat <= (ulong)BufferedPlayerCommandInbox.ServerRepeatTicks
-                ? step
-                : new Vector3(0f, step.Y, 0f);
+            return _history[matchingIndex].Position;
+        }
+
+        Sample from = _history[exactIndex];
+        Vector3 step = exactIndex > 0 && _history[exactIndex - 1].Sequence + 1 == from.Sequence
+            ? from.Position - _history[exactIndex - 1].Position
+            : Vector3.Zero;
+        // Falling or jumping (not flying in noclip, whose vertical axis moves it at a set speed):
+        // each further tick's vertical displacement changes by gravity, as the motor's body does.
+        bool airborne = MathF.Abs(step.Y) > 0.5f * GravityStepPerTick
+            && (!acknowledged.HasMove || acknowledged.Move.VerticalAxis == 0f);
+        Vector3 position = from.Position;
+        float stepY = step.Y;
+        for (ulong repeat = Math.Max(from.Sequence, acknowledgedSequence) - acknowledgedSequence + 1; repeat <= (ulong)starvedTicks; repeat++)
+        {
+            if (airborne)
+            {
+                stepY -= GravityStepPerTick;
+            }
+
+            position += repeat <= RepeatTicks
+                ? new Vector3(step.X, stepY, step.Z)
+                : new Vector3(0f, stepY, 0f);
         }
 
         return position;

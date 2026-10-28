@@ -239,6 +239,25 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
+    // Repeat debt the session carries from before its current starved run: ticks the runtime has
+    // simulated past the session's acknowledged command with the repeated command, which the inbox
+    // will skip as already simulated (W9-2; WorldSessionRuntime adds them to the snapshot's
+    // StarvedTicks). Idle debt is left out: those ticks did not move the player across the floor,
+    // and counting them would hide where the repeated run ended (a client compares the first
+    // ServerRepeatTicks of a starved count with repeats). The debt of the run in progress is left
+    // out too, since the runtime counts those ticks itself. Only debt a skip has started spending
+    // counts: that shows a backlog of the stall's ticks is arriving. Untouched debt (a client that
+    // dropped the stalled ticks and resumed one frame per tick, as after a frame stall) is never
+    // spent; reporting it would only hold its correction back until the debt expires and then
+    // apply it at once. No allocation.
+    public int GetCarriedRepeatDebtTicks(PlayerSessionId sessionId)
+    {
+        lock (_sync)
+        {
+            return _rings.TryGetValue(sessionId, out SessionRing? ring) ? ring.CarriedRepeatDebt : 0;
+        }
+    }
+
     // Whether the session is treated as a render-rate sender whose arrivals are coalesced.
     public bool IsFastSender(PlayerSessionId sessionId)
     {
@@ -317,6 +336,8 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         private int _repeatDebt;
         private int _idleDebt;
         private PlayerMoveIntent _repeatedMove;
+        // A skip has spent some of the current skip debt (see GetCarriedRepeatDebtTicks).
+        private bool _debtSkipped;
         // A frame whose sequence jumped (the client folded ticks during a stall) arrived since the
         // current skip debt started: the client-side stall that makes the boundary tolerance apply.
         private bool _sawSequenceJump;
@@ -337,6 +358,13 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
 
         public int SkipDebt => _repeatDebt + _idleDebt;
 
+        // The first MaxCommandRepeatTicks ticks of the starved run in progress each added a tick
+        // of repeat debt (a run that repeated other axes dropped the older repeat debt first), so
+        // the rest was carried.
+        public int CarriedRepeatDebt => _debtSkipped
+            ? Math.Max(0, _repeatDebt - Math.Min(_starvedTicks, WorldSessionRuntime.MaxCommandRepeatTicks))
+            : 0;
+
         public bool IsFastSender => _fastSender;
 
         public void Reset()
@@ -353,6 +381,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             _repeatDebt = 0;
             _idleDebt = 0;
             _repeatedMove = default;
+            _debtSkipped = false;
             _sawSequenceJump = false;
             _popsWithoutStarve = 0;
             Array.Clear(_rateTimestamps);
@@ -463,6 +492,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             {
                 // A new stall: only a sequence jump that arrives after it shows a client stall.
                 _sawSequenceJump = false;
+                _debtSkipped = false;
             }
 
             _popsWithoutStarve = 0;
@@ -512,6 +542,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
                 }
 
                 SkipOldestTick();
+                _debtSkipped = true;
                 if (_repeatDebt > 0)
                 {
                     _repeatDebt--;
@@ -533,6 +564,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         {
             _repeatDebt = 0;
             _idleDebt = 0;
+            _debtSkipped = false;
             _sawSequenceJump = false;
             _popsWithoutStarve = 0;
         }
