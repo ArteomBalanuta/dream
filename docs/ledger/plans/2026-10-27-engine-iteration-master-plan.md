@@ -1,7 +1,7 @@
 # Engine Iteration Master Plan: Hot Paths, GL Ownership, Determinism, Decoupling, Wire
 
 Purpose: Split one iteration of foundation work into many independent tasks that implementers can run in parallel waves.
-Status: Waves 1–4 integrated and verified on `integrate/engine-iteration` (see the wave work-logs). Waves 5–6 run in continuous mode.
+Status: Waves 1–5 integrated and verified on `integrate/engine-iteration` (see the wave work-logs). Wave 6 is in progress (continuous mode).
 Scope: Voxel meshing and render export, GL resource ownership and threading, the deterministic authoritative simulation, simulation/presentation decoupling, the wire protocol and server I/O.
 
 ## How This Plan Was Made
@@ -106,4 +106,13 @@ The integrator creates `integrate/engine-iteration` from `iteration/engine-base`
   - **NET-8:** a per-server simulation seed, persisted.
   - **GFX-9:** each enemy gets its own model instance, so clips differ per wolf.
   - **NET-9:** add a public lookup from a cube to its replicated id, and key the checksum by that id.
+
+## Wave 6 (revised after wave 5)
+
+- **NET-4:** interpolate remote enemies on the tick timeline. It also owns `EnemyRenderer` this wave.
+- **NET-8:** per-server simulation seed, persisted with the world.
+- **NET-9:** a public lookup from cube to replicated id, with the checksum keyed by that id.
+- **WIRE-11:** a hand-written converter for `ServerSnapshotMessage`, to remove the remaining 824 B per snapshot encode.
+- **TEST-1:** isolate the timing-sensitive tests (`TickPacerTests`, `MultiClientLoopbackSmokeTests`) from parallel load.
+- **Deferred to wave 7:** GFX-9, a model instance per enemy. It shares `EnemyRenderer` with NET-4.
 
