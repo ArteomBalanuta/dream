@@ -169,6 +169,7 @@ public class ServerTickMetricsTests
                 metrics.RecordAdvance(1, elapsed, elapsed / 2, elapsed / 3, capturedCheckpoint: tick % 320 == 0);
                 metrics.RecordDroppedTicks(tick / 1000);
                 metrics.RecordWriteQueueDepth((int)(tick % 5));
+                metrics.RecordAdvance(1, elapsed, elapsed / 2, elapsed / 3, capturedCheckpoint: false, tick / 1000, (int)(tick % 7));
             },
             iterations: 1000);
         long captureBytes = AllocationAssert.AtMost(0, () => metrics.Capture(resetWindow: true));
@@ -195,6 +196,57 @@ public class ServerTickMetricsTests
         Assert.Equal(0, metrics.Connections);
         Assert.True(service.LatestPerformance.HasCounters);
         Assert.Same(service.LatestPerformance, service.LatestPerformance);
+    }
+
+    [Fact]
+    public void Metrics_CombinedRecordAdvance_SetsDroppedTicksAndQueueDepthWithTheAdvance()
+    {
+        ServerTickMetrics metrics = new();
+        long oneMs = Stopwatch.Frequency / 1000;
+
+        metrics.RecordAdvance(2, 2 * oneMs, 0, 0, capturedCheckpoint: false, totalDroppedTicks: 9, writeQueueDepth: 4);
+        metrics.RecordAdvance(1, oneMs, 0, 0, capturedCheckpoint: true, totalDroppedTicks: 11, writeQueueDepth: 1);
+        // No write queue: the depth stays as it was.
+        metrics.RecordAdvance(0, oneMs, 0, 0, capturedCheckpoint: false, totalDroppedTicks: 11, writeQueueDepth: -1);
+
+        ServerTickMetricsSnapshot snapshot = metrics.Capture();
+        Assert.Equal(3, snapshot.Version);
+        Assert.Equal(2, snapshot.TickedAdvances);
+        Assert.Equal(3, snapshot.SimulatedTicks);
+        Assert.Equal(11, snapshot.DroppedTicks);
+        Assert.Equal(1, snapshot.CheckpointCaptureTicks);
+        Assert.Equal(1, snapshot.WriteQueueDepth);
+        Assert.Equal(4, snapshot.MaxWriteQueueDepth);
+    }
+
+    // S2: the service reads dropped ticks from the host's own tick runner, so an advance that did
+    // not go through the service, or a tick that threw, cannot make the metric drift.
+    [Fact]
+    public async Task Service_DroppedTicks_FollowTheHost_WhenTheHostIsAdvancedDirectly()
+    {
+        DedicatedServerHost host = new(new IdleAuthority(), CreateRouter());
+        await using DedicatedServerService service = new(host, new IdleServerTransport(), new TransportJsonCodec(), new LengthPrefixedMessageFramer());
+
+        host.AdvanceTime(1d);
+        await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        long expected = SimulationClock.AuthoritativeTicksPerSecond - SimulationClock.DefaultMaxTicksPerAdvance;
+        Assert.Equal(expected, host.DroppedTicks);
+        Assert.Equal(expected, service.CaptureMetrics().Tick.DroppedTicks);
+    }
+
+    [Fact]
+    public async Task Service_DroppedTicks_FollowTheHost_AfterATickThrows()
+    {
+        ThrowOnceAuthority authority = new();
+        DedicatedServerHost host = new(authority, CreateRouter());
+        await using DedicatedServerService service = new(host, new IdleServerTransport(), new TransportJsonCodec(), new LengthPrefixedMessageFramer());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await service.AdvanceOnceAsync(1d));
+        await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+
+        Assert.True(host.DroppedTicks > 0);
+        Assert.Equal(host.DroppedTicks, service.CaptureMetrics().Tick.DroppedTicks);
     }
 
     [Fact]
@@ -295,6 +347,37 @@ public class ServerTickMetricsTests
             PlayerSimulationTuning playerTuning,
             bool allowGameplaySimulation = true)
         {
+            return Array.Empty<AuthoritativeActionResult>();
+        }
+    }
+
+    private sealed class ThrowOnceAuthority : ITickDrivenAuthoritativeSessionHost
+    {
+        private readonly IdleAuthority _inner = new();
+        private bool _thrown;
+
+        public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName) =>
+            _inner.JoinSession(requestedSessionId, displayName);
+
+        public AuthoritativeActionResult ProcessAction(PlayerActionMessage message) => _inner.ProcessAction(message);
+
+        public ServerSnapshotEnvelope ExportSnapshot(bool includeWorldSnapshot = false) =>
+            _inner.ExportSnapshot(includeWorldSnapshot);
+
+        public IReadOnlyList<AuthoritativeActionResult> AdvanceTick(
+            ulong serverTick,
+            float deltaTime,
+            IReadOnlyList<PlayerCommandFrame> commandFrames,
+            IReadOnlyList<QueuedPlayerAction> queuedActions,
+            PlayerSimulationTuning playerTuning,
+            bool allowGameplaySimulation = true)
+        {
+            if (!_thrown)
+            {
+                _thrown = true;
+                throw new InvalidOperationException("tick failed");
+            }
+
             return Array.Empty<AuthoritativeActionResult>();
         }
     }

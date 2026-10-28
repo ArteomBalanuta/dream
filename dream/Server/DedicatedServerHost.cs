@@ -93,6 +93,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public double SecondsUntilNextTick =>
         TickPacer.SecondsUntilNextTick(_tickRunner.RemainingSeconds, SimulationClock.FixedDeltaSeconds);
 
+    // Ticks the host's clock skipped after a stall, read from the tick runner itself. Read it on
+    // the thread that calls AdvanceTime.
+    public long DroppedTicks => _tickRunner.DroppedTicks;
+
+    // Test seam: runs inside ReleaseConnection, under the tick lock, after the released session's
+    // claim is confirmed and before its queued actions are purged.
+    internal Action<string>? ReleasingSessionForTest { get; set; }
+
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
     public static DedicatedServerHost CreateDefault()
@@ -150,7 +158,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // test), bypassing the player.action allow-list that keeps clients from sending build and
     // combat use directly. The next tick drains it once the session is joined and validates it
     // like a command-synthesized action. False when the session's pending-action cap is full.
-    public bool TryEnqueueServerAction(PlayerActionMessage message)
+    internal bool TryEnqueueServerAction(PlayerActionMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
         return _actionQueue.TryEnqueue(message, out _);
@@ -280,38 +288,44 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         return false;
     }
 
+    // Releasing a connection runs entirely under the tick lock, where every claim is taken (joins
+    // are routed under it, deferred or not). The departed session's queued actions are purged and
+    // its runtime seat released before its claim is dropped, so a reconnect that reuses the
+    // session id cannot claim it in between and then lose its fresh actions or its new seat.
     public void ReleaseConnection(string connectionId)
     {
-        if (_deferJoinsToTick)
+        lock (_authoritySync)
         {
-            lock (_authoritySync)
+            if (_deferJoinsToTick)
             {
                 _pendingJoins.RemoveAll(join => string.Equals(join.ConnectionId, connectionId, StringComparison.Ordinal));
             }
-        }
 
-        if (_connectionClaims.TryRemove(connectionId, out string? sessionId))
-        {
-            if (_sessionClaims.TryGetValue(sessionId, out string? ownerConnection)
-                && string.Equals(ownerConnection, connectionId, StringComparison.Ordinal))
+            if (_connectionClaims.TryGetValue(connectionId, out string? sessionId))
             {
-                _sessionClaims.TryRemove(sessionId, out _);
-                // The departed session's queued actions would otherwise wait forever.
-                _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
-            }
-
-            if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
-            {
-                lock (_authoritySync)
+                // Claims are written in pairs, so the owner is this connection; the check keeps a
+                // stray release from touching a session another connection holds.
+                if (_sessionClaims.TryGetValue(sessionId, out string? ownerConnection)
+                    && string.Equals(ownerConnection, connectionId, StringComparison.Ordinal))
                 {
-                    runtimeAuthority.ReleaseSession(sessionId);
-                }
-            }
-        }
+                    ReleasingSessionForTest?.Invoke(sessionId);
+                    // The departed session's queued actions would otherwise wait forever.
+                    _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
+                    if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
+                    {
+                        runtimeAuthority.ReleaseSession(sessionId);
+                    }
 
-        if (_connections.TryRemove(connectionId, out _))
-        {
-            Volatile.Write(ref _connectionsChanged, 1);
+                    _sessionClaims.TryRemove(sessionId, out _);
+                }
+
+                _connectionClaims.TryRemove(connectionId, out _);
+            }
+
+            if (_connections.TryRemove(connectionId, out _))
+            {
+                Volatile.Write(ref _connectionsChanged, 1);
+            }
         }
     }
 

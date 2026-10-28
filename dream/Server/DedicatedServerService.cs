@@ -30,11 +30,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private int _connectionsChanged = 1;
     private bool _started;
 
-    // Always-on tick metrics. The dropped-tick mirror is a SimulationClock fed the same elapsed
-    // times as the host's tick runner (which only this service advances), so its DroppedTicks
-    // equals the runner's without reaching into the host.
+    // Always-on tick metrics. Dropped ticks are read from the host's tick runner after each advance.
     private readonly ServerTickMetrics _metrics = new();
-    private readonly SimulationClock _droppedTickMirror = new();
     private readonly BackgroundCheckpointWriter? _checkpointWrites;
     private readonly PersistenceWriteQueue? _persistenceWrites;
     // Counters of connections already removed, so service totals survive disconnects.
@@ -43,6 +40,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private long _closedBytesReceived;
     private long _closedFramesReceived;
     private long _closedCoalescedSnapshots;
+    // Held while a connection is removed and its counters retired, and while CaptureMetrics sums.
+    private readonly object _connectionTotalsSync = new();
     private readonly object _performanceSync = new();
     private DedicatedServerPerformanceSnapshot _latestPerformance = DedicatedServerPerformanceSnapshot.Empty;
     private long _latestPerformanceVersion;
@@ -93,27 +92,35 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public ServerMetricsSnapshot CaptureMetrics(bool resetWindow = false)
     {
         ServerTickMetricsSnapshot tick = _metrics.Capture(resetWindow);
-        long bytesSent = Interlocked.Read(ref _closedBytesSent);
-        long framesSent = Interlocked.Read(ref _closedFramesSent);
-        long bytesReceived = Interlocked.Read(ref _closedBytesReceived);
-        long framesReceived = Interlocked.Read(ref _closedFramesReceived);
-        long coalesced = Interlocked.Read(ref _closedCoalescedSnapshots);
+        long bytesSent;
+        long framesSent;
+        long bytesReceived;
+        long framesReceived;
+        long coalesced;
         int connections = 0;
         int joined = 0;
-        foreach (KeyValuePair<string, ServerConnection> entry in _connections)
+        lock (_connectionTotalsSync)
         {
-            ServerConnection connection = entry.Value;
-            connections++;
-            if (_host.IsConnectionJoined(connection.ConnectionId))
+            bytesSent = Interlocked.Read(ref _closedBytesSent);
+            framesSent = Interlocked.Read(ref _closedFramesSent);
+            bytesReceived = Interlocked.Read(ref _closedBytesReceived);
+            framesReceived = Interlocked.Read(ref _closedFramesReceived);
+            coalesced = Interlocked.Read(ref _closedCoalescedSnapshots);
+            foreach (KeyValuePair<string, ServerConnection> entry in _connections)
             {
-                joined++;
-            }
+                ServerConnection connection = entry.Value;
+                connections++;
+                if (_host.IsConnectionJoined(connection.ConnectionId))
+                {
+                    joined++;
+                }
 
-            bytesSent += connection.BytesSent;
-            framesSent += connection.FramesSent;
-            bytesReceived += connection.BytesReceived;
-            framesReceived += connection.FramesReceived;
-            coalesced += connection.CoalescedSnapshots;
+                bytesSent += connection.BytesSent;
+                framesSent += connection.FramesSent;
+                bytesReceived += connection.BytesReceived;
+                framesReceived += connection.FramesReceived;
+                coalesced += connection.CoalescedSnapshots;
+            }
         }
 
         return new ServerMetricsSnapshot(
@@ -197,7 +204,6 @@ public sealed class DedicatedServerService : IAsyncDisposable
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
         long advanceTicks = ServerTickMetrics.Timestamp() - advanceStart;
         bool capturedCheckpoint = (_checkpointWrites?.EnqueuedCheckpoints ?? 0) != checkpointsBefore;
-        _droppedTickMirror.QueueElapsed(elapsedSeconds);
         DeliverPendingJoinReplies();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
@@ -372,14 +378,12 @@ public sealed class DedicatedServerService : IAsyncDisposable
         for (int i = 0; i < _connectionList.Count; i++)
         {
             ServerConnection connection = _connectionList[i];
-            if (!connection.IsFaulted || !_connections.TryRemove(connection.ConnectionId, out _))
+            if (!connection.IsFaulted || !TryRemoveConnection(connection))
             {
                 continue;
             }
 
-            Volatile.Write(ref _connectionsChanged, 1);
             _host.ReleaseConnection(connection.ConnectionId);
-            RetireConnectionCounters(connection);
             NetworkDiagnosticsLog.Write(
                 "server.disconnect",
                 $"connection={connection.ConnectionId} reason=faulted connections={_connections.Count}");
@@ -416,11 +420,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             try
             {
-                if (_connections.TryRemove(connection.ConnectionId, out _))
+                if (TryRemoveConnection(connection))
                 {
-                    Volatile.Write(ref _connectionsChanged, 1);
                     _host.ReleaseConnection(connection.ConnectionId);
-                    RetireConnectionCounters(connection);
                     NetworkDiagnosticsLog.Write(
                         "server.disconnect",
                         $"connection={connection.ConnectionId} connections={_connections.Count}");
@@ -501,12 +503,34 @@ public sealed class DedicatedServerService : IAsyncDisposable
         long broadcastTicks,
         bool capturedCheckpoint)
     {
-        _metrics.RecordAdvance(executedTicks, advanceTicks, snapshotTicks, broadcastTicks, capturedCheckpoint);
-        _metrics.RecordDroppedTicks(_droppedTickMirror.DroppedTicks);
-        if (_persistenceWrites != null)
+        // On the tick thread, after AdvanceTime: the runner's own total, so nothing can drift.
+        _metrics.RecordAdvance(
+            executedTicks,
+            advanceTicks,
+            snapshotTicks,
+            broadcastTicks,
+            capturedCheckpoint,
+            _host.DroppedTicks,
+            _persistenceWrites?.PendingCount ?? -1);
+    }
+
+    // Removes a connection and moves its traffic into the closed totals in one step under
+    // _connectionTotalsSync, which CaptureMetrics also holds, so a capture sees the connection
+    // either live or retired, never in neither. False when it was already removed.
+    private bool TryRemoveConnection(ServerConnection connection)
+    {
+        lock (_connectionTotalsSync)
         {
-            _metrics.RecordWriteQueueDepth(_persistenceWrites.PendingCount);
+            if (!_connections.TryRemove(connection.ConnectionId, out _))
+            {
+                return false;
+            }
+
+            RetireConnectionCounters(connection);
         }
+
+        Volatile.Write(ref _connectionsChanged, 1);
+        return true;
     }
 
     // Keeps a removed connection's traffic in the service totals.

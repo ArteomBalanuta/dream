@@ -237,36 +237,68 @@ public sealed class ServerTickMetrics
         long broadcastTicks,
         bool capturedCheckpoint)
     {
+        lock (_sync)
+        {
+            RecordAdvanceLocked(executedTicks, advanceTicks, snapshotTicks, broadcastTicks, capturedCheckpoint);
+        }
+    }
+
+    // RecordAdvance plus the dropped-tick total and the persistence write-queue depth, under one
+    // lock acquisition. Pass a negative writeQueueDepth when there is no write queue.
+    public void RecordAdvance(
+        int executedTicks,
+        long advanceTicks,
+        long snapshotTicks,
+        long broadcastTicks,
+        bool capturedCheckpoint,
+        long totalDroppedTicks,
+        int writeQueueDepth)
+    {
+        lock (_sync)
+        {
+            RecordAdvanceLocked(executedTicks, advanceTicks, snapshotTicks, broadcastTicks, capturedCheckpoint);
+            _droppedTicks = totalDroppedTicks;
+            if (writeQueueDepth >= 0)
+            {
+                RecordWriteQueueDepthLocked(writeQueueDepth);
+            }
+        }
+    }
+
+    private void RecordAdvanceLocked(
+        int executedTicks,
+        long advanceTicks,
+        long snapshotTicks,
+        long broadcastTicks,
+        bool capturedCheckpoint)
+    {
         double advanceMs = ToMilliseconds(advanceTicks);
         double snapshotMs = ToMilliseconds(snapshotTicks);
         double broadcastMs = ToMilliseconds(broadcastTicks);
-        lock (_sync)
+        _lastAdvanceMs = advanceMs;
+        _lastSnapshotMs = snapshotMs;
+        _lastBroadcastMs = broadcastMs;
+        if (executedTicks > 0)
         {
-            _lastAdvanceMs = advanceMs;
-            _lastSnapshotMs = snapshotMs;
-            _lastBroadcastMs = broadcastMs;
-            if (executedTicks > 0)
-            {
-                double totalMs = advanceMs + snapshotMs + broadcastMs;
-                _tick.Record(totalMs);
-                _tickWindow.Record(totalMs);
-                _advancePerTick.Record(advanceMs / executedTicks);
-                _tickedAdvances++;
-                _simulatedTicks += executedTicks;
-                _maxAdvanceMs = Math.Max(_maxAdvanceMs, advanceMs);
-                _maxSnapshotMs = Math.Max(_maxSnapshotMs, snapshotMs);
-                _maxBroadcastMs = Math.Max(_maxBroadcastMs, broadcastMs);
-            }
-
-            if (capturedCheckpoint)
-            {
-                _checkpointCaptureTicks++;
-                _lastCheckpointCaptureTickMs = advanceMs;
-                _maxCheckpointCaptureTickMs = Math.Max(_maxCheckpointCaptureTickMs, advanceMs);
-            }
-
-            _version++;
+            double totalMs = advanceMs + snapshotMs + broadcastMs;
+            _tick.Record(totalMs);
+            _tickWindow.Record(totalMs);
+            _advancePerTick.Record(advanceMs / executedTicks);
+            _tickedAdvances++;
+            _simulatedTicks += executedTicks;
+            _maxAdvanceMs = Math.Max(_maxAdvanceMs, advanceMs);
+            _maxSnapshotMs = Math.Max(_maxSnapshotMs, snapshotMs);
+            _maxBroadcastMs = Math.Max(_maxBroadcastMs, broadcastMs);
         }
+
+        if (capturedCheckpoint)
+        {
+            _checkpointCaptureTicks++;
+            _lastCheckpointCaptureTickMs = advanceMs;
+            _maxCheckpointCaptureTickMs = Math.Max(_maxCheckpointCaptureTickMs, advanceMs);
+        }
+
+        _version++;
     }
 
     public void RecordDroppedTicks(long totalDroppedTicks)
@@ -281,9 +313,14 @@ public sealed class ServerTickMetrics
     {
         lock (_sync)
         {
-            _writeQueueDepth = depth;
-            _maxWriteQueueDepth = Math.Max(_maxWriteQueueDepth, depth);
+            RecordWriteQueueDepthLocked(depth);
         }
+    }
+
+    private void RecordWriteQueueDepthLocked(int depth)
+    {
+        _writeQueueDepth = depth;
+        _maxWriteQueueDepth = Math.Max(_maxWriteQueueDepth, depth);
     }
 
     public void GetLastPhases(out double advanceMs, out double snapshotMs, out double broadcastMs)

@@ -204,6 +204,12 @@ public class ProtocolWiringTests
             return queuedAction;
         }
 
+        public bool TryEnqueue(PlayerActionMessage message, out QueuedPlayerAction queued)
+        {
+            queued = Enqueue(message);
+            return true;
+        }
+
         public IReadOnlyList<QueuedPlayerAction> Drain(IEnumerable<PlayerSessionId> joinedSessionIds)
         {
             return [];

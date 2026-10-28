@@ -9,7 +9,7 @@ using Dream.Tests.Integration;
 namespace Dream.Tests.Server;
 
 // NETR-6: a world resync no longer exports the whole world on the receive thread under the tick
-// lock. WorldResyncRequestHandler only marks the connection (at most once per 2 s), and
+// lock. WorldResyncRequestHandler only marks the connection (at most once per 1.5 s), and
 // DedicatedServerHost serves it after its next tick through the pending-reply drain.
 public class WorldResyncDeferralTests
 {
@@ -39,7 +39,7 @@ public class WorldResyncDeferralTests
     }
 
     [Fact]
-    public void TwoRequests100MsApart_ProduceOneExport_AndTheCooldownEndsAfterTwoSeconds()
+    public void TwoRequests100MsApart_ProduceOneExport_AndTheCooldownEndsAfterOnePointFiveSeconds()
     {
         ManualTimeProvider clock = new();
         using DedicatedServerHost host = CreateHost(clock);
@@ -55,8 +55,8 @@ public class WorldResyncDeferralTests
 
         Assert.Single(DrainReplies(host));
 
-        // Still inside the 2 s window (1.9 s after the accepted request): dropped.
-        clock.Advance(TimeSpan.FromMilliseconds(1800));
+        // Still inside the 1.5 s window (1.4 s after the accepted request): dropped.
+        clock.Advance(TimeSpan.FromMilliseconds(1300));
         host.HandleClientMessage(Connection, new ClientWorldResyncRequestMessage(3));
         host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
         Assert.Empty(DrainReplies(host));
@@ -107,10 +107,39 @@ public class WorldResyncDeferralTests
 
         Assert.True(context.TryRequestWorldResync(nowTimestamp: 1_000, timestampFrequency: 1_000));
         Assert.True(context.WorldResyncPending);
-        Assert.False(context.TryRequestWorldResync(nowTimestamp: 2_999, timestampFrequency: 1_000));
+        Assert.False(context.TryRequestWorldResync(nowTimestamp: 2_499, timestampFrequency: 1_000));
         Assert.True(context.TryTakeWorldResyncRequest());
         Assert.False(context.TryTakeWorldResyncRequest());
-        Assert.True(context.TryRequestWorldResync(nowTimestamp: 3_000, timestampFrequency: 1_000));
+        Assert.True(context.TryRequestWorldResync(nowTimestamp: 2_500, timestampFrequency: 1_000));
+    }
+
+    // The client retries every 2 s on its own clock. Jitter can make a retry reach the server a
+    // little under 2 s after the last accepted one; the shorter server cooldown must still serve it.
+    [Fact]
+    public void ClientRetriesEveryTwoSeconds_WithJitter_AreNeverDropped()
+    {
+        ServerRoutingContext context = new("connection");
+        long frequency = TimeSpan.TicksPerSecond;
+        long now = 1_000_000;
+        TimeSpan[] gaps =
+        [
+            TimeSpan.FromMilliseconds(2000),
+            TimeSpan.FromMilliseconds(1700),
+            TimeSpan.FromMilliseconds(2300),
+            TimeSpan.FromMilliseconds(1600),
+            TimeSpan.FromMilliseconds(1950)
+        ];
+
+        Assert.True(context.TryRequestWorldResync(now, frequency));
+        Assert.True(context.TryTakeWorldResyncRequest());
+        foreach (TimeSpan gap in gaps)
+        {
+            now += gap.Ticks;
+            Assert.True(context.TryRequestWorldResync(now, frequency), $"retry {gap.TotalMilliseconds} ms after the last one was dropped");
+            Assert.True(context.TryTakeWorldResyncRequest());
+        }
+
+        Assert.True(ServerRoutingContext.WorldResyncCooldown < TimeSpan.FromSeconds(2));
     }
 
     [Fact]
