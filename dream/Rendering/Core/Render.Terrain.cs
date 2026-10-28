@@ -8,7 +8,7 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Core;
 
-public partial class Render
+public partial class Render : IWorldInstanceDrawTarget
 {
     public void DrawCube(Camera camera, Cube cube)
     {
@@ -95,35 +95,55 @@ public partial class Render
         StaticMeshBuffer.EndBatchedDraws();
     }
 
-    public void DrawGeometryBlockBatch(
+    // IWorldInstanceDrawTarget: one instanced draw per primitive of the model for a whole batch
+    // of cubes or blocks that share its material. The batch drawer filled the matrices (asset
+    // scale included) into its reused array; AnimatedModel uploads them once per node.
+    public void DrawModelInstances(
         Camera camera,
         AnimatedModel animation,
         string shaderName,
-        IReadOnlyList<GeometryRenderBlockDescriptor> blocks)
+        Matrix4[] modelMatrices,
+        int count)
     {
-        if (blocks.Count == 0)
+        if (count == 0)
         {
             return;
         }
 
         Shader shader = GetShader(shaderName);
-        Matrix4 view = camera.GetViewMatrix();
-        Matrix4[] modelMatrices = _geometryBlockMatrices.Rent(blocks.Count);
-        // A batch shares one material, and its animation is that material's resolved model.
-        float assetScale = ResolveCubeAssetScale(animation);
-        for (int i = 0; i < blocks.Count; i++)
-        {
-            GeometryRenderBlockDescriptor block = blocks[i];
-            modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(
-                block.Center,
-                block.VisualSize,
-                assetScale);
-        }
-
-        animation.BeginRender(shader, view, _projection);
-        animation.RenderPreparedInstanced(shader, modelMatrices, blocks.Count);
+        animation.BeginRender(shader, camera.GetViewMatrix(), _projection);
+        animation.RenderPreparedInstanced(shader, modelMatrices, count);
         animation.EndRender();
     }
+
+    // IWorldInstanceDrawTarget: every model-less cube or block of one material in a single
+    // instanced draw of the fallback cube mesh, with the same program, material and cull state
+    // as the single-cube fallback. The shader derives each instance's normal matrix from its
+    // instanceModel (cofactor), the instanced counterpart of the CPU normalMatrix.
+    public void DrawFallbackInstances(
+        Camera camera,
+        GeometryMaterialId materialId,
+        InstanceMatrixBuffer instances,
+        Matrix4[] modelMatrices,
+        int count)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId);
+        BindTerrainMaterial(camera, Matrix4.Identity, material, instanced: true);
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(TriangleFace.Back);
+        instances.Upload(modelMatrices, count);
+        _fallbackCubeBuffer.DrawInstanced(instances, count);
+        // Leave the program the way every non-instanced user of it expects.
+        GetShader("cube").SetBool("useInstancing", false);
+    }
+
+    // The asset scale for a batch's model, for callers outside Render that build its matrices.
+    public static float ResolveCubeVisualScale(AnimatedModel? animation) => ResolveCubeAssetScale(animation);
 
     private void DrawTerrainCubeFallback(
         Camera camera,
@@ -131,25 +151,32 @@ public partial class Render
         GeometryMaterialId materialId)
     {
         StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId);
-        BindTerrainMaterial(camera, modelMatrix, material);
+        BindTerrainMaterial(camera, modelMatrix, material, instanced: false);
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(TriangleFace.Back);
         _fallbackCubeBuffer.Draw();
     }
 
+    // Instanced draws take their model (and normal) matrix from the instance attribute, so
+    // `model` and `normalMatrix` are only uploaded for a single cube.
     private void BindTerrainMaterial(
         Camera camera,
         Matrix4 modelMatrix,
-        StaticTerrainMaterial material)
+        StaticTerrainMaterial material,
+        bool instanced)
     {
         Shader shader = GetShader("cube");
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.Use();
-        shader.SetModelMatrix(modelMatrix);
+        if (!instanced)
+        {
+            shader.SetModelMatrix(modelMatrix);
+        }
+
         shader.SetMatrix4("view", camera.GetViewMatrix());
         shader.SetMatrix4("projection", _projection);
         shader.SetBool("useSkinning", false);
-        shader.SetBool("useInstancing", false);
+        shader.SetBool("useInstancing", instanced);
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
@@ -164,29 +191,6 @@ public partial class Render
         }
 
         GL.Enable(EnableCap.DepthTest);
-    }
-
-    public void DrawAnimatedCubeBatch(Camera camera, AnimatedModel animation, string shaderName, IReadOnlyList<Cube> cubes)
-    {
-        if (cubes.Count == 0)
-        {
-            return;
-        }
-
-        Shader shader = GetShader(shaderName);
-        Matrix4 view = camera.GetViewMatrix();
-        Matrix4[] modelMatrices = _animatedCubeMatrices.Rent(cubes.Count);
-        // A batch shares one material, and its animation is that material's resolved model.
-        float assetScale = ResolveCubeAssetScale(animation);
-        for (int i = 0; i < cubes.Count; i++)
-        {
-            Cube cube = cubes[i];
-            modelMatrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
-        }
-
-        animation.BeginRender(shader, view, _projection);
-        animation.RenderPreparedInstanced(shader, modelMatrices, cubes.Count);
-        animation.EndRender();
     }
 
     // Compares the model's source path, so resolving a scale never requests or loads a model.

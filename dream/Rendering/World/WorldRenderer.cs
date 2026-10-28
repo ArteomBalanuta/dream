@@ -1,5 +1,6 @@
 using Dream.Client.Presentation;
 using Dream.Rendering.Core;
+using Dream.Rendering.Models;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -13,6 +14,7 @@ public class WorldRenderer : IDisposable
     private readonly Render _render;
     private readonly StaticWorldChunkRenderer _staticChunkRenderer = new();
     private readonly WorldRenderBatchPlanner _batchPlanner = new();
+    private readonly WorldInstanceBatchDrawer _instanceDrawer = new();
 
     // Reused every frame and cleared before use. They and the planner's batches only hold this
     // frame's visible items, and nothing here or in Render keeps them past the draw calls.
@@ -131,21 +133,7 @@ public class WorldRenderer : IDisposable
         }
 
         IReadOnlyList<WorldGeometryRenderBatch> dynamicBlockBatches = _batchPlanner.PlanGeometryBlockBatches(_visibleBlocks);
-        for (int batchIndex = 0; batchIndex < dynamicBlockBatches.Count; batchIndex++)
-        {
-            WorldGeometryRenderBatch batch = dynamicBlockBatches[batchIndex];
-            if (batch.Animation != null)
-            {
-                _render.DrawGeometryBlockBatch(camera, batch.Animation, batch.ShaderName, batch.Blocks);
-                continue;
-            }
-
-            IReadOnlyList<GeometryRenderBlockDescriptor> blocks = batch.Blocks;
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                _render.DrawGeometryBlock(camera, blocks[i]);
-            }
-        }
+        _instanceDrawer.DrawGeometryBlockBatches(_render, camera, dynamicBlockBatches);
 
         return new WorldRenderStats(
             VisibleCompatibilityCubes: _visibleCubes.Count,
@@ -174,28 +162,139 @@ public class WorldRenderer : IDisposable
         }
 
         _disposed = true;
-        _staticChunkRenderer.Dispose();
+        try
+        {
+            _staticChunkRenderer.Dispose();
+        }
+        finally
+        {
+            _instanceDrawer.Dispose();
+        }
     }
 
     private void DrawCubeBatches(Camera camera, IReadOnlyList<WorldRenderBatch> batches)
     {
-        for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
-        {
-            WorldRenderBatch batch = batches[batchIndex];
-            if (batch.Animation != null)
-            {
-                _render.DrawAnimatedCubeBatch(camera, batch.Animation, batch.ShaderName, batch.Cubes);
-                continue;
-            }
-
-            IReadOnlyList<Cube> cubes = batch.Cubes;
-            for (int i = 0; i < cubes.Count; i++)
-            {
-                _render.DrawCube(camera, cubes[i]);
-            }
-        }
+        _instanceDrawer.DrawCubeBatches(_render, camera, batches);
     }
 
     // Remote players intentionally stay out of the world-geometry renderer so
     // replicated actor ownership does not drift back into the cube/world path.
+}
+
+// What the instanced batch drawer needs from the renderer: one call per batch, each issuing the
+// batch's instanced draw(s). Render implements it on the render thread; tests substitute a
+// recording target, since there is no GL context there.
+public interface IWorldInstanceDrawTarget
+{
+    // A batch whose material resolved to a model: one instanced draw per primitive of the model.
+    void DrawModelInstances(Camera camera, AnimatedModel animation, string shaderName, Matrix4[] modelMatrices, int count);
+
+    // A batch without a model: one instanced draw of the fallback cube for the whole batch. The
+    // target uploads the matrices into `instances` before drawing.
+    void DrawFallbackInstances(
+        Camera camera,
+        GeometryMaterialId materialId,
+        InstanceMatrixBuffer instances,
+        Matrix4[] modelMatrices,
+        int count);
+}
+
+// Turns the planner's per-material batches into one instanced draw call per batch (per model
+// primitive for model batches), for dynamic cubes and dynamic blocks (rubble) alike. The model
+// matrices of each batch are written into one reused array, and model-less batches share one
+// persistent InstanceMatrixBuffer, so a frame with as many instances as an earlier one allocates
+// nothing. Each batch is drawn before the next one is filled, so one array serves all of them.
+public sealed class WorldInstanceBatchDrawer : IDisposable
+{
+    private readonly ReusableMatrixBuffer _matrices = new();
+    private readonly InstanceMatrixBuffer _fallbackInstances = new();
+
+    public int MatrixCapacity => _matrices.Capacity;
+
+    public InstanceMatrixBuffer FallbackInstances => _fallbackInstances;
+
+    // Returns the number of batches drawn (one instanced submission each).
+    public int DrawCubeBatches(IWorldInstanceDrawTarget target, Camera camera, IReadOnlyList<WorldRenderBatch> batches)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        int drawn = 0;
+        for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+        {
+            WorldRenderBatch batch = batches[batchIndex];
+            IReadOnlyList<Cube> cubes = batch.Cubes;
+            if (cubes.Count == 0)
+            {
+                continue;
+            }
+
+            Matrix4[] matrices = _matrices.Rent(cubes.Count);
+            // A batch shares one material, and its animation is that material's resolved model.
+            float assetScale = Render.ResolveCubeVisualScale(batch.Animation);
+            for (int i = 0; i < cubes.Count; i++)
+            {
+                Cube cube = cubes[i];
+                matrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(cube.Position, cube.Side, assetScale);
+            }
+
+            Submit(target, camera, batch.Animation, batch.ShaderName, cubes[0].MaterialId, matrices, cubes.Count);
+            drawn++;
+        }
+
+        return drawn;
+    }
+
+    public int DrawGeometryBlockBatches(
+        IWorldInstanceDrawTarget target,
+        Camera camera,
+        IReadOnlyList<WorldGeometryRenderBatch> batches)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        int drawn = 0;
+        for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+        {
+            WorldGeometryRenderBatch batch = batches[batchIndex];
+            IReadOnlyList<GeometryRenderBlockDescriptor> blocks = batch.Blocks;
+            if (blocks.Count == 0)
+            {
+                continue;
+            }
+
+            Matrix4[] matrices = _matrices.Rent(blocks.Count);
+            float assetScale = Render.ResolveCubeVisualScale(batch.Animation);
+            for (int i = 0; i < blocks.Count; i++)
+            {
+                GeometryRenderBlockDescriptor block = blocks[i];
+                matrices[i] = CubeTransforms.CreateCenteredVisualModelMatrix(block.Center, block.VisualSize, assetScale);
+            }
+
+            Submit(target, camera, batch.Animation, batch.ShaderName, blocks[0].MaterialId, matrices, blocks.Count);
+            drawn++;
+        }
+
+        return drawn;
+    }
+
+    public void Dispose()
+    {
+        _fallbackInstances.Dispose();
+    }
+
+    private void Submit(
+        IWorldInstanceDrawTarget target,
+        Camera camera,
+        AnimatedModel? animation,
+        string shaderName,
+        GeometryMaterialId materialId,
+        Matrix4[] matrices,
+        int count)
+    {
+        if (animation != null)
+        {
+            target.DrawModelInstances(camera, animation, shaderName, matrices, count);
+        }
+        else
+        {
+            target.DrawFallbackInstances(camera, materialId, _fallbackInstances, matrices, count);
+        }
+    }
 }
