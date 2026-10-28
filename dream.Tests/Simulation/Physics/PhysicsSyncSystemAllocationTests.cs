@@ -39,12 +39,68 @@ public class PhysicsSyncSystemAllocationTests
 
         SettleWorld(physics);
         PhysicsSyncSystem sync = new();
-        List<RigidBody> bodies = physics.DynamicMapCubeBodies;
+        IReadOnlyList<RigidBody> bodies = physics.DynamicMapCubeBodies;
         Assert.True(bodies.Count >= 40);
 
         long bytes = AllocationAssert.AtMost(0, () => sync.SyncDynamicMapBodies(map, bodies));
 
         _output.WriteLine($"resting cubes: bodies={bodies.Count} bytesPerSync={bytes}");
+    }
+
+    // SCALE-5: the body set path skips sleeping bodies, so the test above may process few of them.
+    // These keep bodies in play: all awake on the set path (activity tracking included), half
+    // asleep (half skipped), and a plain list (every body, no tracking).
+    [Fact]
+    public void SyncDynamicMapBodies_RestingCubesAllAwake_OnTheSetAndOnAList_DoesNotAllocate()
+    {
+        using PhysicsIntegrator physics = new();
+        Map map = new(physics, width: 16, depth: 16);
+        for (int x = 1; x < 15; x += 2)
+        {
+            for (int z = 1; z < 15; z += 2)
+            {
+                map.AddCube(new TkVector3(x, 1f, z), withPhysics: true);
+            }
+        }
+
+        SettleWorld(physics);
+        PhysicsSyncSystem setSync = new();
+        long setBytes = AllocationAssert.AtMost(0, () =>
+        {
+            foreach (RigidBody body in physics.DynamicMapCubeBodies)
+            {
+                body.Activate(true);
+            }
+
+            setSync.SyncDynamicMapBodies(map, physics.DynamicMapCubeBodies);
+        });
+        Assert.Equal(physics.DynamicMapCubeBodies.Count, setSync.LastSyncedBodyCount);
+
+        // Half asleep: the set path skips that half and syncs the rest.
+        int index = 0;
+        long revisitBytes = AllocationAssert.AtMost(0, () =>
+        {
+            foreach (RigidBody body in physics.DynamicMapCubeBodies)
+            {
+                if ((index++ & 1) == 0)
+                {
+                    body.ForceActivationState(ActivationState.IslandSleeping);
+                }
+                else
+                {
+                    body.Activate(true);
+                }
+            }
+
+            setSync.SyncDynamicMapBodies(map, physics.DynamicMapCubeBodies);
+        });
+
+        List<RigidBody> list = physics.DynamicMapCubeBodies.ToList();
+        PhysicsSyncSystem listSync = new();
+        long listBytes = AllocationAssert.AtMost(0, () => listSync.SyncDynamicMapBodies(map, list));
+        Assert.Equal(list.Count, listSync.LastSyncedBodyCount);
+
+        _output.WriteLine($"all awake: set={setBytes} B revisit={revisitBytes} B list={listBytes} B per sync, bodies={list.Count}");
     }
 
     [Fact]
@@ -68,7 +124,7 @@ public class PhysicsSyncSystemAllocationTests
 
         SettleWorld(physics);
         PhysicsSyncSystem sync = new();
-        List<RigidBody> bodies = physics.DynamicMapCubeBodies;
+        IReadOnlyList<RigidBody> bodies = physics.DynamicMapCubeBodies;
         sync.SyncDynamicMapBodies(map, bodies);
 
         // Map.UpdateFracturePiecePositions with a reused accepted-index set costs nothing for

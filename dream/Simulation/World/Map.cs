@@ -18,7 +18,9 @@ public class Map
     private readonly bool _generateStartupTerrain;
     private readonly WorldPhysicsBinder? _physicsBinder;
     private readonly PhysicsIntegrator? _physics;
-    private readonly List<Cube> _solidCubes = new();
+    // Insertion-ordered with O(1) Remove: its order is the checksum and export order, as with the
+    // List it replaced, but a removal no longer scans and shifts every solid cube.
+    private readonly InsertionOrderedSet<Cube> _solidCubes = new();
     private readonly Dictionary<GeometryCellKey, GeometryCellRecord> _geometryCells = new();
     private readonly Dictionary<GeometryCellKey, IReadOnlyList<GeometryRenderBlockDescriptor>> _renderBlocksByCell = new();
     private readonly Dictionary<GeometryCellKey, IReadOnlyList<GeometryCollisionBodyDescriptor>> _collisionBodiesByCell = new();

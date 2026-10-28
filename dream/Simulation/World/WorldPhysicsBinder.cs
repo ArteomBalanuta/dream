@@ -20,6 +20,19 @@ public class WorldPhysicsBinder
     // Empty cell body lists left behind when a moving cube leaves its last cell; reused when a
     // moving cube enters a cell with no list, so per-move reindexing allocates nothing.
     private readonly Stack<List<RigidBody>> _spareCellBodyLists = new();
+
+    // Reverse indexes, so removing one cube's bodies costs O(its bodies) instead of a scan of every
+    // map body and every cell list. _bodiesByCube lists each cube's bodies in creation order, which
+    // is their order in PhysicsIntegrator.MapCubeBodies. _cellOfBody says which _geometryCellBodies
+    // list holds a body; _mergedStaticCubeBodies holds the merged static bodies that belong to a cube.
+    private readonly Dictionary<Cube, List<RigidBody>> _bodiesByCube = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<RigidBody, Cube> _cubeOfBody = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<RigidBody, GeometryCellKey> _cellOfBody = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<RigidBody> _mergedStaticCubeBodies = new(ReferenceEqualityComparer.Instance);
+    private readonly Stack<List<RigidBody>> _spareCubeBodyLists = new();
+    private readonly List<RigidBody> _removalScratch = [];
+    private readonly HashSet<RigidBody> _removalSetScratch = new(ReferenceEqualityComparer.Instance);
+    private readonly List<GeometryCellKey> _removalCellScratch = [];
     private RigidBody? _floorBody;
 
     // Replicated cube bodies belong to a client mirror map: full cubes are moved only by
@@ -75,7 +88,9 @@ public class WorldPhysicsBinder
                 continue;
             }
 
-            bodies.Add(AddGeometryBody(descriptor));
+            RigidBody body = AddGeometryBody(descriptor);
+            bodies.Add(body);
+            _cellOfBody[body] = cellKey;
         }
 
         if (bodies.Count > 0)
@@ -118,7 +133,12 @@ public class WorldPhysicsBinder
                 continue;
             }
 
-            _mergedStaticCollisionBodies.Add(AddGeometryBody(descriptor));
+            RigidBody body = AddGeometryBody(descriptor);
+            _mergedStaticCollisionBodies.Add(body);
+            if (_cubeOfBody.ContainsKey(body))
+            {
+                _mergedStaticCubeBodies.Add(body);
+            }
         }
     }
 
@@ -160,6 +180,7 @@ public class WorldPhysicsBinder
             if (IsCompatibilityCubeBody(body, cube))
             {
                 newBodies.Add(body);
+                _cellOfBody[body] = newCellKey;
             }
             else
             {
@@ -258,16 +279,52 @@ public class WorldPhysicsBinder
         return _spareCellBodyLists.TryPop(out List<RigidBody>? list) ? list : [];
     }
 
-    private void RemoveBodies(IEnumerable<RigidBody> bodies)
+    private void RemoveBodies(List<RigidBody> bodies)
     {
-        foreach (RigidBody body in bodies)
+        for (int i = 0; i < bodies.Count; i++)
         {
-            _physics.World.RemoveRigidBody(body);
-            _physics.MapCubeBodies.Remove(body);
-            _physics.DynamicMapCubeBodies.Remove(body);
-            body.MotionState?.Dispose();
-            body.CollisionShape?.Dispose();
-            body.Dispose();
+            RemoveBody(bodies[i]);
+        }
+    }
+
+    private void RemoveBody(RigidBody body)
+    {
+        _physics.RemoveMapBodyFromWorld(body);
+        _physics.MapCubeBodies.Remove(body);
+        _physics.DynamicMapCubeBodies.Remove(body);
+        ForgetBody(body);
+        body.MotionState?.Dispose();
+        body.CollisionShape?.Dispose();
+        body.Dispose();
+    }
+
+    private void IndexCubeBody(Cube cube, RigidBody body)
+    {
+        if (!_bodiesByCube.TryGetValue(cube, out List<RigidBody>? cubeBodies))
+        {
+            cubeBodies = _spareCubeBodyLists.TryPop(out List<RigidBody>? spare) ? spare : [];
+            _bodiesByCube.Add(cube, cubeBodies);
+        }
+
+        cubeBodies.Add(body);
+        _cubeOfBody[body] = cube;
+    }
+
+    private void ForgetBody(RigidBody body)
+    {
+        _cellOfBody.Remove(body);
+        _mergedStaticCubeBodies.Remove(body);
+        if (!_cubeOfBody.Remove(body, out Cube? cube) ||
+            !_bodiesByCube.TryGetValue(cube, out List<RigidBody>? cubeBodies))
+        {
+            return;
+        }
+
+        cubeBodies.Remove(body);
+        if (cubeBodies.Count == 0)
+        {
+            _bodiesByCube.Remove(cube);
+            _spareCubeBodyLists.Push(cubeBodies);
         }
     }
 
@@ -290,7 +347,7 @@ public class WorldPhysicsBinder
             AngularFactor = BulletSharp.Math.Vector3.Zero
         };
 
-        _physics.World.AddRigidBody(body);
+        _physics.AddMapBodyToWorld(body);
         _physics.MapCubeBodies.Add(body);
         _floorBody = body;
     }
@@ -325,8 +382,9 @@ public class WorldPhysicsBinder
             ConfigureReplicatedBody(body);
         }
 
-        _physics.World.AddRigidBody(body);
+        _physics.AddMapBodyToWorld(body);
         _physics.MapCubeBodies.Add(body);
+        IndexCubeBody(cube, body);
         if (!isStatic && !isReplicated)
         {
             ConfigureDynamicBody(body, new Vector3(0.5f));
@@ -387,10 +445,15 @@ public class WorldPhysicsBinder
         }
         else
         {
-            _physics.World.AddRigidBody(body);
+            _physics.AddMapBodyToWorld(body);
         }
 
         _physics.MapCubeBodies.Add(body);
+        if (descriptor.CompatibilityCube != null)
+        {
+            IndexCubeBody(descriptor.CompatibilityCube, body);
+        }
+
         if (isSimulated)
         {
             _physics.DynamicMapCubeBodies.Add(body);
@@ -406,49 +469,83 @@ public class WorldPhysicsBinder
             return false;
         }
 
-        _physics.World.RemoveRigidBody(body);
-        _physics.MapCubeBodies.Remove(body);
-        _physics.DynamicMapCubeBodies.Remove(body);
         _cubeBodies.Remove(cube);
-        body.MotionState?.Dispose();
-        body.CollisionShape?.Dispose();
-        body.Dispose();
+        RemoveBody(body);
         return true;
     }
 
+    // Removes every map body whose user object belongs to the cube, in MapCubeBodies order, and
+    // drops them from the cell and merged indexes: O(the cube's bodies + the cell lists they were
+    // in), where it used to scan every map body and every cell list.
     public int RemoveCompatibilityCubeBodies(Cube cube)
     {
         ArgumentNullException.ThrowIfNull(cube);
 
-        RigidBody[] bodies = _physics.MapCubeBodies
-            .Where(body => body.UserObject is ValueTuple<Cube, Vector3> cubeBody &&
-                ReferenceEquals(cubeBody.Item1, cube))
-            .ToArray();
-        if (bodies.Length == 0)
+        if (!_bodiesByCube.TryGetValue(cube, out List<RigidBody>? cubeBodies))
         {
             return 0;
         }
 
-        HashSet<RigidBody> bodySet = bodies.ToHashSet();
-        RemoveBodies(bodies);
-        List<GeometryCellKey> emptyCells = [];
-        foreach ((GeometryCellKey cellKey, List<RigidBody> cellBodies) in _geometryCellBodies)
+        List<RigidBody> bodies = _removalScratch;
+        bodies.Clear();
+        for (int i = 0; i < cubeBodies.Count; i++)
         {
-            cellBodies.RemoveAll(bodySet.Contains);
-            if (cellBodies.Count == 0)
+            RigidBody body = cubeBodies[i];
+            // A body the integrator already dropped (ResetMapBodies) is not a map body any more.
+            if (_physics.MapCubeBodies.Contains(body) && IsCompatibilityCubeBody(body, cube))
             {
-                emptyCells.Add(cellKey);
+                bodies.Add(body);
             }
         }
 
-        foreach (GeometryCellKey cellKey in emptyCells)
+        if (bodies.Count == 0)
         {
-            _geometryCellBodies.Remove(cellKey);
+            return 0;
         }
 
-        _mergedStaticCollisionBodies.RemoveAll(bodySet.Contains);
+        HashSet<RigidBody> bodySet = _removalSetScratch;
+        List<GeometryCellKey> cells = _removalCellScratch;
+        bool anyMerged = false;
+        bodySet.Clear();
+        cells.Clear();
+        for (int i = 0; i < bodies.Count; i++)
+        {
+            RigidBody body = bodies[i];
+            bodySet.Add(body);
+            if (_cellOfBody.TryGetValue(body, out GeometryCellKey cellKey) && !cells.Contains(cellKey))
+            {
+                cells.Add(cellKey);
+            }
+
+            anyMerged |= _mergedStaticCubeBodies.Contains(body);
+        }
+
+        int removedCount = bodies.Count;
+        RemoveBodies(bodies);
+        for (int i = 0; i < cells.Count; i++)
+        {
+            if (!_geometryCellBodies.TryGetValue(cells[i], out List<RigidBody>? cellBodies))
+            {
+                continue;
+            }
+
+            cellBodies.RemoveAll(bodySet.Contains);
+            if (cellBodies.Count == 0)
+            {
+                _geometryCellBodies.Remove(cells[i]);
+            }
+        }
+
+        if (anyMerged)
+        {
+            _mergedStaticCollisionBodies.RemoveAll(bodySet.Contains);
+        }
+
         _cubeBodies.Remove(cube);
-        return bodies.Length;
+        bodies.Clear();
+        bodySet.Clear();
+        cells.Clear();
+        return removedCount;
     }
 
     private static void ConfigureReplicatedBody(RigidBody body)

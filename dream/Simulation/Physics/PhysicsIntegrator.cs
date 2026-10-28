@@ -18,8 +18,10 @@ public class PhysicsIntegrator : IDisposable
     public DiscreteDynamicsWorld World { get; }
     public RigidBody? PlayerBody { get; private set; }
     public RigidBody? FallingCubeBody { get; }
-    public List<RigidBody> MapCubeBodies { get; } = new();
-    public List<RigidBody> DynamicMapCubeBodies { get; } = new();
+    // Insertion-ordered sets: they iterate exactly like the Lists they replaced (bodies are synced
+    // and removed from Bullet in this order), but Remove and Contains are O(1) instead of O(N).
+    public InsertionOrderedSet<RigidBody> MapCubeBodies { get; } = new();
+    public InsertionOrderedSet<RigidBody> DynamicMapCubeBodies { get; } = new();
 
     // Fracture rubble is simulated per client and never replicated, so players do not collide
     // with it on either side; otherwise local rubble would make prediction diverge from the server.
@@ -30,7 +32,20 @@ public class PhysicsIntegrator : IDisposable
 
     public void AddDebrisBody(RigidBody body)
     {
-        World.AddRigidBody(body, DebrisCollisionGroup, DebrisCollisionMask);
+        _addDebrisBodyToWorld(body);
+    }
+
+    // Map bodies enter and leave the world through these, so a harness integrator (the internal
+    // constructor) can stand in for Bullet. Production calls are exactly World.AddRigidBody and
+    // World.RemoveRigidBody.
+    internal void AddMapBodyToWorld(RigidBody body)
+    {
+        _addRigidBodyToWorld(body);
+    }
+
+    internal void RemoveMapBodyFromWorld(RigidBody body)
+    {
+        _removeRigidBodyFromWorld(body);
     }
 
     // Bodies of additional server-side session players (every session beyond the primary seat).
@@ -48,6 +63,7 @@ public class PhysicsIntegrator : IDisposable
     private PhysicsBodyOwnership? _playerBodyOwnership;
     private readonly Action<RigidBody> _addRigidBodyToWorld;
     private readonly Action<RigidBody> _addPlayerBodyToWorld;
+    private readonly Action<RigidBody> _addDebrisBodyToWorld;
     private readonly Action<RigidBody> _removeRigidBodyFromWorld;
     private readonly Action<RigidBody> _disposeRigidBody;
 
@@ -117,6 +133,7 @@ public class PhysicsIntegrator : IDisposable
         World.DispatchInfo.UseContinuous = true;
         _addRigidBodyToWorld = World.AddRigidBody;
         _addPlayerBodyToWorld = body => World.AddRigidBody(body, PlayerCollisionGroup, PlayerCollisionMask);
+        _addDebrisBodyToWorld = body => World.AddRigidBody(body, DebrisCollisionGroup, DebrisCollisionMask);
         _removeRigidBodyFromWorld = World.RemoveRigidBody;
         _disposeRigidBody = DisposeBody;
     }
@@ -137,6 +154,7 @@ public class PhysicsIntegrator : IDisposable
         _solver = null!;
         _addRigidBodyToWorld = addRigidBodyToWorld;
         _addPlayerBodyToWorld = addRigidBodyToWorld;
+        _addDebrisBodyToWorld = addRigidBodyToWorld;
         _removeRigidBodyFromWorld = removeRigidBodyFromWorld;
         _disposeRigidBody = disposeRigidBody;
         // No native world here, so there is nothing to delete or to track.
