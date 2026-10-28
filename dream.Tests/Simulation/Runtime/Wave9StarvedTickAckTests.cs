@@ -24,6 +24,10 @@ namespace Dream.Tests.Simulation.Runtime;
 // speed after a send or network stall (0.000 m at 64 Hz), 0.11-0.57 m pairs in the hitchy loop once
 // the player is falling (the wave-8 harness walks off the world edge), up to speed x k for an
 // interval or a catch-up advance holding k starved ticks.
+//
+// Fixed (wave 9 fix loop 1): each player actor carries StarvedTicks, the ticks simulated since its
+// ack, and the reconciler compares with its prediction that many ticks after the ack. The
+// measurement above still holds for a caller that leaves starvedTicks out.
 public class Wave9StarvedTickAckTests
 {
     private const string Session = "w9-starved";

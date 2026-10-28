@@ -41,6 +41,14 @@ namespace Dream.Tests.Integration;
 // client's send queue never grows and only the ack lag (ClientCommandTickStream's second trigger,
 // wired here as PlayScene wires it) can tell the client the server is idling it. And steady play
 // over a constant 200 ms uplink delay, which must never trigger the idle mirror.
+//
+// Wave 9 fix loop 1 (W9-5): the facing probe had ranked a walk off the world edge as open and the
+// client walked along its camera's default -Z, so the steady and hitchy runs measured a free fall
+// (7.1 m total correction in a flaky run). With the walk on the floor and W9-2 (starved ticks
+// compared like with like), max correction / mean per ack, 3 runs each, 64 Hz vs 32 Hz snapshots:
+// send stall 0.000 / 0.000 both; frame stall 0.37-0.84 m vs 0.84 m; network stall 0.000 both;
+// steady 200 ms 0.56-0.65 m (mean 0.0021-0.0024) vs 0.56-0.65 m (0.0042-0.0066); hitchy 0.46 m
+// (0.0017) vs 0.46 m (0.0033). No snaps. The max is the join settle at ack ~40 in every run.
 public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 {
     private const int WalkTicksBeforeStall = 32;
