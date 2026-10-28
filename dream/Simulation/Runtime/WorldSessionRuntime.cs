@@ -113,6 +113,9 @@ public sealed class WorldSessionRuntime : IDisposable
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
     // on receive threads, consumed on the tick.
     private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
+    // Players whose join failed before their saved state was restored (RestorePersistedPlayerState);
+    // their in-memory stats are defaults, so PersistPlayerProfile must not save them over the row.
+    private readonly HashSet<string> _unrestoredPlayerNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
@@ -342,14 +345,18 @@ public sealed class WorldSessionRuntime : IDisposable
     }
 
     // Starts loading a joining player's persisted profile and world state on the persistence
-    // worker, so the join itself (applied on the tick) does no database I/O. Called from the
-    // connection's receive thread when the join request arrives; thread-safe. The read is queued
-    // behind every write already queued, so it sees this player's latest saved state, and a newer
-    // prefetch for the same name replaces an older one. Null when the runtime has no profiles.
+    // worker, so the join itself (applied on the tick) does no database I/O. Called by the host
+    // when the join request arrives (it does not wait for the load); thread-safe. The read is
+    // queued behind every write already queued and runs after they commit, so it sees this
+    // player's latest saved state, and a newer prefetch for the same name replaces an older one.
+    // The load is read-only (TryGet): a join request that is never applied creates no profile row;
+    // RestorePersistedPlayerState creates it when the join is applied. Null when the runtime has
+    // no profiles; a prefetch that cannot be queued (the queue is closed) completes as failed.
     public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
-        // A join request read while the server shuts down must not restart the drained write queue.
+        // A join request read while the server shuts down must not restart the drained write queue
+        // (the queue itself also refuses work once it is disposed).
         if (_playerProfiles == null || Volatile.Read(ref _disposed))
         {
             return null;
@@ -363,7 +370,7 @@ public sealed class WorldSessionRuntime : IDisposable
         {
             try
             {
-                PersistedPlayerProfile profile = profiles.GetOrCreate(playerName);
+                PersistedPlayerProfile? profile = profiles.TryGet(playerName);
                 prefetch.Complete(profile, world?.TryGetPlayerWorldState(playerName));
             }
             catch (Exception ex)
@@ -377,7 +384,10 @@ public sealed class WorldSessionRuntime : IDisposable
 
         if (_writes != null)
         {
-            _writes.EnqueueRead(Load);
+            if (!_writes.EnqueueRead(Load))
+            {
+                prefetch.Fail(new ObjectDisposedException(nameof(PersistenceWriteQueue), "The persistence queue is closed."));
+            }
         }
         else
         {
@@ -387,28 +397,41 @@ public sealed class WorldSessionRuntime : IDisposable
         return prefetch;
     }
 
-    // Tick side of the join prefetch: true when RestorePersistedPlayerState for this name can run
-    // without touching the database (no profiles, or the prefetch finished). With startIfMissing a
-    // join that has no prefetch (another connection's join consumed it, or the request bypassed the
-    // receive path) starts one and reports false, so the caller defers the join.
-    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing)
+    // Tick side of the join prefetch. Ready when RestorePersistedPlayerState for this name can run
+    // without touching the database (no profiles, or the prefetch loaded); Pending while it runs;
+    // Failed when it failed; Missing when there is none (another join consumed it, or it was
+    // discarded). Reads only memory.
+    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName)
     {
         if (_playerProfiles == null)
         {
-            return true;
+            return PersistedPlayerLoadState.Ready;
         }
 
-        if (_playerPrefetches.TryGetValue(playerName, out PersistedPlayerPrefetch? prefetch))
+        if (!_playerPrefetches.TryGetValue(playerName, out PersistedPlayerPrefetch? prefetch))
         {
-            return prefetch.IsCompleted;
+            return PersistedPlayerLoadState.Missing;
         }
 
-        if (startIfMissing)
+        if (!prefetch.IsCompleted)
+        {
+            return PersistedPlayerLoadState.Pending;
+        }
+
+        return prefetch.IsLoaded ? PersistedPlayerLoadState.Ready : PersistedPlayerLoadState.Failed;
+    }
+
+    // True when the name's state is Ready. With startIfMissing a name with no prefetch starts one
+    // and reports false, so the caller defers the join.
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing)
+    {
+        PersistedPlayerLoadState state = GetPersistedPlayerLoadState(playerName);
+        if (state == PersistedPlayerLoadState.Missing && startIfMissing)
         {
             BeginPersistedPlayerPrefetch(playerName);
         }
 
-        return false;
+        return state == PersistedPlayerLoadState.Ready;
     }
 
     // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
@@ -427,25 +450,51 @@ public sealed class WorldSessionRuntime : IDisposable
         PersistedPlayerProfile profile;
         PersistedPlayerWorldState? worldState;
         if (_playerPrefetches.TryRemove(playerName, out PersistedPlayerPrefetch? prefetch)
-            && prefetch.TryGetResult(out PersistedPlayerProfile prefetched, out PersistedPlayerWorldState? prefetchedWorld))
+            && prefetch.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
         {
             // Every profile save this runtime queues goes through SaveProfile, which caches it, so a
             // cached profile is at least as new as the row the prefetch read. That covers a save
             // queued after the prefetch: a reconnect whose old connection is released (and its
             // profile saved) after the new connection asked to join.
-            profile = _profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached) ? cached : prefetched;
+            if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached))
+            {
+                profile = cached;
+            }
+            else if (prefetched is { } loaded)
+            {
+                profile = loaded;
+            }
+            else
+            {
+                // A new player: the read-only prefetch found no row and the join is now applied, so
+                // the row is created here, on the write queue rather than the tick.
+                profile = PersistedPlayerProfile.CreateDefault(playerName, DateTime.UtcNow);
+                SaveProfile(playerName, profile);
+            }
+
             worldState = prefetchedWorld;
         }
         else
         {
-            // No finished prefetch: a direct JoinSession caller (tools and tests), or a prefetch that
-            // failed or outlived the host's deferral bound. Read synchronously after the queued writes.
+            // No loaded prefetch: a direct JoinSession caller (tools, tests, single player). The
+            // dedicated host never routes a join before its prefetch loaded, so this never runs on
+            // the server tick. Read synchronously after the queued writes. If they do not drain in
+            // time the rows may be stale, so the join fails instead (JoinRequestHandler rejects it),
+            // and the half-joined player's default stats are not saved over the row on release.
             NetworkDiagnosticsLog.Write("server.persistence.join-sync-read", $"player={playerName}");
-            _writes?.Flush(TimeSpan.FromSeconds(5));
+            if (_writes != null && !_writes.Flush(TimeSpan.FromSeconds(5)))
+            {
+                _unrestoredPlayerNames.Add(playerName);
+                NetworkDiagnosticsLog.Write("server.persistence.join-sync-read-timeout", $"player={playerName}");
+                throw new InvalidOperationException(
+                    $"Saved data for player '{playerName}' is still being written; retry the join.");
+            }
+
             profile = _playerProfiles.GetOrCreate(playerName);
             worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
         }
 
+        _unrestoredPlayerNames.Remove(playerName);
         CacheProfile(playerName, profile);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
@@ -2018,7 +2067,8 @@ public sealed class WorldSessionRuntime : IDisposable
         if (_playerProfiles == null
             || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
             || player == null
-            || player.IsLocal)
+            || player.IsLocal
+            || _unrestoredPlayerNames.Contains(player.DisplayName))
         {
             return;
         }

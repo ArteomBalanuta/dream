@@ -25,30 +25,84 @@ namespace Dream.Tests.Server;
 // btCollisionWorld's object array (AV) or a removal from a freed world (heap corruption: the
 // "Internal CLR error 0x80131506" seen earlier).
 //
-// The test blocks a release inside the host (ReleasingSessionForTest) and shows that the shutdown
-// sequence every caller uses completes while that release is still in flight.
+// The service-level test blocks a release inside the host (ReleasingSessionForTest) and checks that
+// the shutdown sequence every caller uses (service.DisposeAsync, then host.Dispose) does not finish
+// while that release is still in flight. DedicatedServerHost.Dispose takes the tick lock and sets a
+// disposed flag under it, so this holds on its own: Dispose waits for the in-flight release, and a
+// release, message or tick that comes later leaves the runtime alone. (The service may also await
+// its connection loops before DisposeAsync returns; either way the sequence waits.)
 public class Wave8ShutdownReleaseRaceTests
 {
     private static readonly TimeSpan Completion = TimeSpan.FromSeconds(20);
 
     [Fact]
-    public async Task ServiceShutdown_CurrentlyReturnsWhileAConnectionReleaseIsStillTouchingTheRuntime()
+    public async Task ServiceShutdown_WaitsForInFlightReleases()
     {
         ShutdownProbe probe = await RunShutdownWithBlockedReleaseAsync();
         Assert.True(probe.ReleaseStarted, "the client disconnect never reached ReleaseConnection");
-        Assert.True(probe.ShutdownCompletedWhileReleaseBlocked,
-            "RunAsync + DisposeAsync waited for the in-flight release (the race is fixed: enable the target test)");
+        Assert.False(probe.ShutdownCompletedWhileReleaseBlocked,
+            "service.DisposeAsync + host.Dispose finished while a release was still touching the runtime");
     }
 
-    [Fact(Skip = "bug: shutdown race. DedicatedServerService does not await its connection loops (RunConnectionLoopAsync is " +
-                 "fire-and-forget) and DedicatedServerHost.Dispose takes no lock, so host.Dispose races a late ReleaseConnection " +
-                 "that removes a Bullet body: AV in btDynamicsWorld_removeRigidBody (Smoke8 run 2/5). Target: DisposeAsync " +
-                 "returns only after every connection loop (and its release) has finished.")]
-    public async Task ServiceShutdown_TargetWaitsForInFlightReleases()
+    // The host on its own, without a service or transport: Dispose waits for a release that is
+    // inside the runtime, and every entry point called after Dispose is a no-op for the runtime.
+    [Fact]
+    public void HostDispose_WaitsForAnInFlightRelease_AndLaterCallsLeaveTheRuntimeAlone()
     {
-        ShutdownProbe probe = await RunShutdownWithBlockedReleaseAsync();
-        Assert.True(probe.ReleaseStarted);
-        Assert.False(probe.ShutdownCompletedWhileReleaseBlocked);
+        DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
+        using ManualResetEventSlim releaseEntered = new();
+        using ManualResetEventSlim releaseGate = new();
+        List<string> releasedSessions = [];
+        try
+        {
+            Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+                host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", "A"))));
+            Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+                host.HandleClientMessage("connection-b", new ClientJoinRequestMessage("session-b", "B"))));
+            host.ReleasingSessionForTest = session =>
+            {
+                lock (releasedSessions)
+                {
+                    releasedSessions.Add(session);
+                }
+
+                if (session == "session-a")
+                {
+                    releaseEntered.Set();
+                    releaseGate.Wait(Completion);
+                }
+            };
+
+            Task release = Task.Run(() => host.ReleaseConnection("connection-a"));
+            Assert.True(releaseEntered.Wait(Completion), "the release never reached the runtime");
+            Task dispose = Task.Run(host.Dispose);
+            Assert.False(dispose.Wait(TimeSpan.FromMilliseconds(500)), "Dispose ran while a release was inside the runtime");
+            releaseGate.Set();
+            Assert.True(release.Wait(Completion));
+            Assert.True(dispose.Wait(Completion));
+
+            // Late arrivals: a connection loop's release, a message, a tick, a resync, a snapshot.
+            host.ReleaseConnection("connection-b");
+            Assert.Empty(host.HandleClientMessage("connection-c", new ClientJoinRequestMessage("session-c", "C")));
+            Assert.Equal(0, host.AdvanceTime(1d));
+            Assert.False(host.RequestWorldResyncIfConnected("connection-b"));
+            host.DiscardUndeliveredSnapshotDeltas();
+            Assert.Throws<ObjectDisposedException>(() => host.CreateSnapshotMessage());
+            host.Dispose();
+
+            lock (releasedSessions)
+            {
+                Assert.Equal(["session-a"], releasedSessions);
+            }
+
+            Assert.Equal(0, host.ConnectionCount);
+        }
+        finally
+        {
+            releaseGate.Set();
+            host.ReleasingSessionForTest = null;
+            host.Dispose();
+        }
     }
 
     // Deterministic interleaving of what the load run hit by chance: the server reads the peer's
@@ -105,12 +159,17 @@ public class Wave8ShutdownReleaseRaceTests
             }
 
             // 3. The rest of every caller's shutdown: service.DisposeAsync(), then host.Dispose().
-            Task disposeService = service.DisposeAsync().AsTask();
-            Task finished = await Task.WhenAny(disposeService, Task.Delay(TimeSpan.FromSeconds(2)));
-            bool completedWhileBlocked = ReferenceEquals(finished, disposeService) && !releaseGate.IsSet;
+            Task shutdownRest = Task.Run(async () =>
+            {
+                await service.DisposeAsync();
+                serviceDisposed = true;
+                host.Dispose();
+            });
+            Task finished = await Task.WhenAny(shutdownRest, Task.Delay(TimeSpan.FromSeconds(2)));
+            bool completedWhileBlocked = ReferenceEquals(finished, shutdownRest) && !releaseGate.IsSet;
             releaseGate.Set();
-            await disposeService.WaitAsync(Completion);
-            serviceDisposed = true;
+            await shutdownRest.WaitAsync(Completion);
+            Assert.Equal(0, host.ConnectionCount);
             return new ShutdownProbe(true, completedWhileBlocked);
         }
         finally

@@ -1,12 +1,27 @@
 namespace Dream.Server.Persistence;
 
+// Where a joining player's persisted-state load stands (WorldSessionRuntime.GetPersistedPlayerLoadState).
+public enum PersistedPlayerLoadState
+{
+    // Loaded (or the runtime has no profiles): the join can be applied without database I/O.
+    Ready,
+    // Still queued or running on the persistence worker.
+    Pending,
+    // The load failed (or could not be queued).
+    Failed,
+    // No load exists for this name.
+    Missing
+}
+
 // A joining player's persisted profile and world state, loaded on the persistence worker before the
-// join is applied on the tick (see WorldSessionRuntime.BeginPersistedPlayerPrefetch). Completed
-// once by the worker; read by the receive thread (Wait) and the tick (IsCompleted, TryGetResult).
+// join is applied on the tick (see WorldSessionRuntime.BeginPersistedPlayerPrefetch). The load is
+// read-only: a player with no saved profile completes with no profile, and the row is created only
+// when the join is applied. Completed once by the worker; read by the tick (IsCompleted, Error,
+// TryGetLoadResult).
 public sealed class PersistedPlayerPrefetch
 {
     private readonly ManualResetEventSlim _done = new(initialState: false);
-    private PersistedPlayerProfile _profile;
+    private PersistedPlayerProfile? _profile;
     private PersistedPlayerWorldState? _worldState;
     private Exception? _error;
 
@@ -19,6 +34,9 @@ public sealed class PersistedPlayerPrefetch
 
     public bool IsCompleted => _done.IsSet;
 
+    // Finished without an error: its result can be applied.
+    public bool IsLoaded => _done.IsSet && _error == null;
+
     public Exception? Error => _done.IsSet ? _error : null;
 
     // Blocks until the load finished or the timeout passed; true when it finished (or failed).
@@ -27,11 +45,13 @@ public sealed class PersistedPlayerPrefetch
         return _done.Wait(timeout);
     }
 
-    public bool TryGetResult(out PersistedPlayerProfile profile, out PersistedPlayerWorldState? worldState)
+    // The loaded state, when the load finished without an error; the profile is null when the
+    // player has no saved profile yet.
+    public bool TryGetLoadResult(out PersistedPlayerProfile? profile, out PersistedPlayerWorldState? worldState)
     {
         if (!_done.IsSet || _error != null)
         {
-            profile = default;
+            profile = null;
             worldState = null;
             return false;
         }
@@ -41,9 +61,23 @@ public sealed class PersistedPlayerPrefetch
         return true;
     }
 
-    // First result wins: a write group whose commit failed replays its reads, and the tick may
-    // already be reading the first result.
-    internal void Complete(PersistedPlayerProfile profile, PersistedPlayerWorldState? worldState)
+    // The loaded state, when the load finished without an error and found a saved profile.
+    public bool TryGetResult(out PersistedPlayerProfile profile, out PersistedPlayerWorldState? worldState)
+    {
+        if (!TryGetLoadResult(out PersistedPlayerProfile? loaded, out worldState) || loaded == null)
+        {
+            profile = default;
+            worldState = null;
+            return false;
+        }
+
+        profile = loaded.Value;
+        return true;
+    }
+
+    // First result wins. Reads run outside the write queue's transactions (see
+    // PersistenceWriteQueue.EnqueueRead), so a completed result only ever holds committed rows.
+    internal void Complete(PersistedPlayerProfile? profile, PersistedPlayerWorldState? worldState)
     {
         if (_done.IsSet)
         {

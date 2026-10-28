@@ -20,24 +20,7 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
             return existing.Value;
         }
 
-        DateTime now = DateTime.UtcNow;
-        PersistedPlayerProfile created = new(
-            playerName.Trim(),
-            playerName.Trim(),
-            PlayerInteractionMode.Building,
-            new PersistedCreatureStats(
-                CurrentHealth: 100,
-                MaxHealth: 100,
-                Strength: 10,
-                Agility: 10,
-                Vitality: 10,
-                Energy: 10,
-                MovementSpeed: 6f,
-                AttackSpeed: 2f,
-                Level: 1,
-                Experience: 0),
-            now,
-            now);
+        PersistedPlayerProfile created = PersistedPlayerProfile.CreateDefault(playerName, DateTime.UtcNow);
         Save(created);
         return created;
     }

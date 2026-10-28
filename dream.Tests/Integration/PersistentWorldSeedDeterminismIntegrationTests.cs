@@ -318,6 +318,10 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
                 Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}")));
             }
 
+            // The host defers a join until its player's saved state is loaded on the persistence
+            // worker; let the loads finish first so every join applies on the first tick.
+            Assert.True(Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
+
             // Joins are applied by a tick of their own; script tick t runs as server tick t + 1.
             Assert.Equal(1, AdvanceOneTick());
             List<PendingConnectionReply> joinReplies = [];
