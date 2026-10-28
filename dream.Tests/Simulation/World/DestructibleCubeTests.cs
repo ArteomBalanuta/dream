@@ -19,7 +19,7 @@ public class MapRemovalTests
         Assert.True(removed);
         Assert.Null(map.Cubes[3, 1, 3]);
         Assert.DoesNotContain(cube, map.SolidCubes);
-        Assert.DoesNotContain(cube, map.GetNearbySolidCubes(new Vector3(3f, 1f, 3f), 8f));
+        Assert.DoesNotContain(cube, map.GetRenderCandidateCubes(new Vector3(3f, 1f, 3f), 8f));
     }
 
     [Fact]

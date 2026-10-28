@@ -734,11 +734,7 @@ public class Map
         return restoredCount;
     }
 
-    public GeometryChunkSnapshot CaptureGeometryChunkSnapshot()
-    {
-        return new GeometryChunkSnapshot(_geometryCells.Values.ToArray());
-    }
-
+    // Test oracle: radius-limited reference export that CapturePresentationGeometryRenderExport is checked against.
     public GeometryRenderExport CaptureGeometryRenderExport(Vector3 position, float radius)
     {
         return CaptureGeometryRenderExport(
@@ -749,6 +745,7 @@ public class Map
             includeDynamicBlock: block => IsGeometryBlockWithinRadius(block, position, radius));
     }
 
+    // Test oracle: unfiltered reference export over every solid cube.
     public GeometryRenderExport CaptureFullGeometryRenderExport()
     {
         return CaptureGeometryRenderExport(
@@ -1263,11 +1260,6 @@ public class Map
         }
 
         return violations;
-    }
-
-    public IEnumerable<Cube> GetNearbySolidCubes(Vector3 position, float radius)
-    {
-        return GetRenderCandidateCubes(position, radius);
     }
 
     public IEnumerable<Cube> GetRenderCandidateCubes(Vector3 position, float radius)
