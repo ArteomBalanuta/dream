@@ -111,7 +111,10 @@ public sealed class Wave12InventoryLoopbackTests(ITestOutputHelper output)
                 // 1.5 snapshots, ~1 KB, per churned player. Wave 13 traced the "unattributed"
                 // ~1.4 KB per departed player of wave 12 to exactly this list (a heap walk from
                 // every static root and the rig found no other growth), so keep only the last.
-                anchor.Received.RemoveRange(0, anchor.Received.Count - 1);
+                if (anchor.Received.Count > 1)
+                {
+                    anchor.Received.RemoveRange(0, anchor.Received.Count - 1);
+                }
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
