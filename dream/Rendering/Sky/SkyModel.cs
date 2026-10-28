@@ -15,9 +15,15 @@ public static class SkyModel
     private const float LightFadeBelow = -0.04f;
     private const float LightFadeAbove = 0.06f;
 
-    // The sun at noon: ReferenceNoon's direction. East is the horizontal unit vector perpendicular to it,
-    // so the great circle through east, noon and west rises at 06:00 and sets at 18:00.
-    private static readonly Vector3 NoonSun = FrameLighting.ReferenceNoon.SunDirection.Xyz;
+    // A disc fades in from fully below the horizon over this much elevation (sin of altitude). With the
+    // 60 degree noon sun the bodies cross the horizon about twice as fast as in T1, so the band is wider
+    // than the discs themselves to keep the fade smooth (no step above 0.01 per 1/10000 of a day).
+    private const float DiscFadeBand = 0.1f;
+
+    // The sun at noon: SkyModelKeyframes.NoonSunDirection (about 60 degrees high on ReferenceNoon's azimuth).
+    // East is the horizontal unit vector perpendicular to it, so the great circle through east, noon and
+    // west rises at 06:00 and sets at 18:00.
+    private static readonly Vector3 NoonSun = SkyModelKeyframes.NoonSunDirection;
     private static readonly Vector3 East = Vector3.Normalize(new Vector3(-NoonSun.Z, 0f, NoonSun.X));
 
     public static SkyState Evaluate(float timeOfDay01) => Evaluate(timeOfDay01, SkyModelSettings.Default);
@@ -57,17 +63,17 @@ public static class SkyModel
             ZenithColor = k.Zenith,
             HorizonColor = k.Horizon,
             SunDirection = sun,
-            SunDiscColor = k.SunDisc * SmoothStep(-SunDiscAngularRadius, SunDiscAngularRadius, sun.Y),
+            SunDiscColor = k.SunDisc * SmoothStep(-SunDiscAngularRadius, -SunDiscAngularRadius + DiscFadeBand, sun.Y),
             SunDiscAngularRadius = SunDiscAngularRadius,
             MoonDirection = moon,
-            MoonDiscColor = SkyModelKeyframes.MoonDisc * SmoothStep(-MoonDiscAngularRadius, MoonDiscAngularRadius, moon.Y),
+            MoonDiscColor = SkyModelKeyframes.MoonDisc * SmoothStep(-MoonDiscAngularRadius, -MoonDiscAngularRadius + DiscFadeBand, moon.Y),
             MoonDiscAngularRadius = MoonDiscAngularRadius,
             StarVisibility = k.Stars,
             TimeOfDay01 = t,
         };
     }
 
-    // Unit vector toward the sun. 06:00 = east horizon, 12:00 = ReferenceNoon.SunDirection exactly,
+    // Unit vector toward the sun. 06:00 = east horizon, 12:00 = SkyModelKeyframes.NoonSunDirection exactly,
     // 18:00 = west horizon, 00:00 = -noon (the moon is then exactly where the noon sun is).
     public static Vector3 SunDirectionAt(float timeOfDay01)
     {

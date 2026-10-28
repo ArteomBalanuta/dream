@@ -11,7 +11,9 @@ using Xunit;
 namespace Dream.Tests.Rendering.Lighting;
 
 // Wave T1c: the FrameLighting uniform block, its CPU mirror, the shader include mechanism, and the
-// promise that ReferenceNoon looks like the old hard-coded point lights at spawn.
+// promise that ReferenceNoon looks like the old hard-coded point lights at spawn. Since T2d the
+// day/night noon (SkyModelKeyframes.Noon) has a higher sun and is no longer ReferenceNoon; these noon
+// tests feed ReferenceNoon directly, so they still prove the shaders reproduce the legacy look.
 public class FrameLightingContractTests
 {
     private static readonly string[] WorldFragmentShaders = ["cubeFragment.glsl", "enemyFragment.glsl"];
@@ -316,8 +318,9 @@ public class FrameLightingContractTests
         Assert.Equal(0.4f, viewModel.MoonDirection.W);
         Assert.Equal(1f, viewModel.MoonDirection.Xyz.Length, 5);
         Assert.Equal(new Vector4(0f, 0f, 0f, 16f), viewModel.CameraPosition);
-        Assert.Equal(new Vector4(0.08f, 0.08f, 0.2f, 0f), viewModel.AmbientSky);
-        Assert.Equal(new Vector4(0.08f, 0.08f, 0.08f, 0f), viewModel.AmbientGround);
+        float floor = FrameLightingBuffer.ViewModelAmbientFloor;
+        Assert.Equal(new Vector4(floor, floor, 0.2f, 0f), viewModel.AmbientSky);
+        Assert.Equal(new Vector4(floor, floor, floor, 0f), viewModel.AmbientGround);
         Assert.Equal(night.FogColor, viewModel.FogColor);
         Assert.Equal(night.Params, viewModel.Params);
     }

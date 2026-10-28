@@ -8,7 +8,7 @@ namespace Dream.Tests.Rendering.Lighting;
 
 // Wave T1 tester, rendering without GL: SkyModel -> FrameLighting -> FrameLightingBuffer.ForWorld /
 // ForViewModel over a whole day, and the cube and enemy shaders mirrored on the CPU, so the merged
-// pipeline gives sane uniforms, a dark night and an unchanged noon.
+// pipeline gives sane uniforms, a dark night and the T2d noon (SkyModelKeyframes.Noon).
 public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
 {
     private const int Samples = 24 * 60;
@@ -25,6 +25,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
     private static readonly Vector3 Grass = new(0.36f, 0.62f, 0.28f);
 
     [Theory]
+    [InlineData(0.07f)]
     [InlineData(0.15f)]
     [InlineData(0f)]
     [InlineData(1f)]
@@ -78,15 +79,16 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         }
     }
 
-    // The cube shader on the CPU at spawn, averaged over the six faces: midnight terrain is at most
-    // about 20% of noon's luminance, noon is the old look, and luminance moves smoothly over the day.
+    // The cube shader on the CPU at spawn, averaged over the six faces: midnight terrain is 5-8% of
+    // noon's luminance (T2d: a dark night; T1 was 13%), noon is SkyModelKeyframes.Noon (T2d replaced the
+    // legacy ReferenceNoon on purpose, see SkyModelTests), and luminance moves smoothly over the day.
     [Fact]
-    public void TerrainLuminance_IsDarkAtMidnight_AndUnchangedAtNoon()
+    public void TerrainLuminance_IsDarkAtMidnight_AndNoonIsTheNoonKeyframe()
     {
         Vector3 fragPos = new(5f, 0.5f, 5f);
         float noon = TerrainLuminance(SkyModel.Evaluate(0.5f).Lighting, fragPos);
         float midnight = TerrainLuminance(SkyModel.Evaluate(0f).Lighting, fragPos);
-        float reference = TerrainLuminance(FrameLightingBuffer.ForWorld(FrameLighting.ReferenceNoon, Eye), fragPos);
+        float reference = TerrainLuminance(FrameLightingBuffer.ForWorld(SkyModelKeyframes.Noon, Eye), fragPos);
 
         float min = float.MaxValue;
         float max = 0f;
@@ -106,8 +108,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
 
         output.WriteLine($"terrain luminance: noon {noon:F4}, midnight {midnight:F4} ({midnight / noon:P1}), day min {min:F4}, max {max:F4}, largest 1-min step {largestStep:F4}");
         Assert.Equal(reference, noon, 4);
-        Assert.True(midnight <= 0.2f * noon, $"midnight {midnight} is more than 20% of noon {noon}");
-        Assert.True(midnight > 0.02f * noon, $"midnight {midnight} is black (noon {noon}): silhouettes should remain");
+        Assert.InRange(midnight / noon, 0.05f, 0.08f);
         Assert.True(max <= noon * 1.25f, $"some time of day is much brighter ({max}) than noon ({noon})");
         Assert.True(largestStep <= 0.02f * noon, $"luminance jumps by {largestStep} in one minute");
     }
@@ -137,6 +138,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
     // wolf or player at midnight is at most 1.3x the terrain's (and not darker than it), while at noon
     // the day ambient scale keeps today's brighter-than-terrain look.
     [Theory]
+    [InlineData(0.07f)]
     [InlineData(0.15f)]
     [InlineData(0.05f)]
     [InlineData(0.4f)]
@@ -175,6 +177,55 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
                 Luminance(lit) >= Luminance(hand) * FrameLightingBuffer.ViewModelAmbientFloor * viewModel.Params.X * 0.99f,
                 $"view model face {normal} is {lit}");
         }
+    }
+
+    // T2d: at 00:00 a held torch 2 m from an up-facing ground cell lights it to at least 40% of noon's
+    // up-facing light. The torch is the plan's T2b catalog value, (1.0, 0.62, 0.32) x 1.6 with radius 8,
+    // held 1.3 m above the ground (the third-person anchor height), so the ground point is 2 m away and
+    // 1.52 m to the side. The light is the CPU mirror of dreamPointLights (pointLights.glsl).
+    [Fact]
+    public void TorchAtTwoMetres_AtMidnight_GivesAtLeast40PercentOfNoonUpFacingLight()
+    {
+        Vector3 torchColor = new Vector3(1.0f, 0.62f, 0.32f) * 1.6f;
+        const float TorchRadius = 8f;
+        Vector3 ground = new(5f, 0.5f, 5f);
+        float horizontal = MathF.Sqrt(2f * 2f - 1.3f * 1.3f);
+        Vector3 torch = ground + new Vector3(horizontal, 1.3f, 0f);
+        Assert.Equal(2f, Vector3.Distance(torch, ground), 4);
+
+        FrameLighting noon = SkyModel.Evaluate(0.5f).Lighting;
+        FrameLighting midnight = SkyModel.Evaluate(0f).Lighting;
+        float noonUp = Luminance(Ambient(in noon, Vector3.UnitY) + Direct(in noon, Vector3.UnitY)) * noon.Params.X;
+        float nightUp = Luminance(Ambient(in midnight, Vector3.UnitY) + Direct(in midnight, Vector3.UnitY)) * midnight.Params.X;
+        float torchUp = Luminance(PointLight(Vector3.UnitY, ground, torch, TorchRadius, torchColor)) * midnight.Params.X;
+
+        output.WriteLine($"up-facing: noon {noonUp:F4}, midnight {nightUp:F4} ({nightUp / noonUp:P1}), torch at 2 m {torchUp:F4} ({torchUp / noonUp:P1}), torch + night {(torchUp + nightUp) / noonUp:P1}");
+        Assert.True(torchUp >= 0.4f * noonUp, $"torch at 2 m gives {torchUp}, under 40% of noon {noonUp}");
+
+        // The mirror itself: full strength at the light, nothing at or past the radius.
+        Assert.Equal(torchColor, PointLight(Vector3.UnitY, torch - new Vector3(0f, 0.02f, 0f), torch, TorchRadius, torchColor), new Vector3Comparer(1e-3f));
+        Assert.Equal(Vector3.Zero, PointLight(Vector3.UnitY, torch - new Vector3(0f, TorchRadius + 0.01f, 0f), torch, TorchRadius, torchColor));
+    }
+
+    // CPU mirror of dreamPointLights in pointLights.glsl for one light: windowed (1 - d^2/r^2)^2 falloff
+    // and a 0.25 wrap on the Lambert term.
+    private static Vector3 PointLight(Vector3 normal, Vector3 fragPos, Vector3 position, float radius, Vector3 color)
+    {
+        Vector3 n = Vector3.Normalize(normal);
+        Vector3 toLight = position - fragPos;
+        float d2 = Vector3.Dot(toLight, toLight);
+        float f = Math.Clamp(1f - d2 / (radius * radius), 0f, 1f);
+        f *= f;
+        float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
+        return color * (f * (0.25f + 0.75f * lambert));
+    }
+
+    private sealed class Vector3Comparer(float tolerance) : IEqualityComparer<Vector3>
+    {
+        public bool Equals(Vector3 a, Vector3 b) =>
+            MathF.Abs(a.X - b.X) <= tolerance && MathF.Abs(a.Y - b.Y) <= tolerance && MathF.Abs(a.Z - b.Z) <= tolerance;
+
+        public int GetHashCode(Vector3 v) => 0;
     }
 
     private static float TerrainLuminance(FrameLighting lighting, Vector3 fragPos)

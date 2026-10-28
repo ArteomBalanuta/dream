@@ -16,7 +16,9 @@ namespace Dream.Rendering.Lighting;
 // except while ViewModelRenderer draws.
 public sealed class FrameLightingBuffer : IDisposable
 {
-    public const float ViewModelAmbientFloor = 0.08f;
+    // Sits a little under the dark-night up-facing light at the default night brightness (about 0.064
+    // luma), so the hands read without glowing against the terrain; a held torch lights them anyway.
+    public const float ViewModelAmbientFloor = 0.05f;
 
     private int _handle;
 
