@@ -57,6 +57,16 @@ public sealed record LoadScenario(
         Duration: TimeSpan.FromSeconds(20),
         LoadActionMix.Default);
 
+    // Smoke8's bots on a light world: the tick is cheap enough that the loop runs one tick per
+    // iteration, so the snapshot interval (NETR-7) decides the snapshot rate. In Smoke8 the loop
+    // already runs two ticks per iteration and sends 32 snapshots a second at any interval.
+    public static LoadScenario Light8 { get; } = Smoke8 with
+    {
+        Name = "Light8",
+        Cubes = 200,
+        RubbleCells = 20
+    };
+
     public static LoadScenario Players32 { get; } = Smoke8 with
     {
         Name = "Players32",
