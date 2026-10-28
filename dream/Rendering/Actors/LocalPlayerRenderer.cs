@@ -12,19 +12,25 @@ public sealed class LocalPlayerRenderer : IDisposable
     private readonly Render _render;
     private readonly PlayerAnimationClipTracker _clipTracker = new();
     private AsyncResourceHandle<AnimatedModel>? _model;
+    private bool _disposed;
 
     public LocalPlayerRenderer(Render render)
     {
         _render = render;
-        // Requested up front so the model is usually ready by the time third person is first shown.
-        _model = ModelAssets.RequestPlayerInstance();
     }
 
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime)
     {
-        // The per-instance model loads in the background; skip the draw until it is uploaded.
-        // The clip is applied (and recorded) only once the model exists.
-        if (_model == null || !_model.TryGet(out AnimatedModel? model))
+        if (_disposed)
+        {
+            return;
+        }
+
+        // Draw runs only when third person is shown, so the per-instance model is requested on
+        // the first such draw and kept afterwards. It loads in the background; skip the draw
+        // until it is uploaded. The clip is applied (and recorded) only once the model exists.
+        _model ??= ModelAssets.RequestPlayerInstance();
+        if (!_model.TryGet(out AnimatedModel? model))
         {
             return;
         }
@@ -42,11 +48,12 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.EndRender();
     }
 
-    // The player model handle is a per-instance request (ModelAssets.RequestPlayerInstance()), so
-    // this renderer owns it: disposing it releases the uploaded model or discards a pending decode.
+    // The player model handle is a per-instance request, so this renderer owns it: disposing it
+    // releases the uploaded model or discards a pending decode. Draw never requests after Dispose.
     // Shared ModelAssets models are never disposed here.
     public void Dispose()
     {
+        _disposed = true;
         AsyncResourceHandle<AnimatedModel>? model = _model;
         _model = null;
         model?.Dispose();
