@@ -135,6 +135,26 @@ public class WaveT2BuildMaterialTests
         Assert.Equal(1, runtime.BuildMaterialSelectionCount);
     }
 
+    // A reconnect under the same session id reuses its ConnectedPlayer, so the selection used to
+    // survive while the reconnected client's HUD showed Auto. The leave now drops it.
+    [Fact]
+    public void Selection_IsDroppedOnLeave_SoAReconnectStartsFromAuto()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession(SessionA, "Player A");
+        Assert.True(host.ProcessAction(Select(SessionA, 1, GeometryMaterialId.Lamp)).Accepted);
+        Assert.Equal(1, runtime.BuildMaterialSelectionCount);
+
+        host.ReleaseSession(SessionA);
+
+        Assert.Equal(0, runtime.BuildMaterialSelectionCount);
+        host.JoinSession(SessionA, "Player A");
+        Assert.Null(runtime.ResolveSelectedBuildMaterial(new PlayerSessionId(SessionA)));
+        Assert.True(host.ProcessAction(Build(SessionA, 1, LampCell)).Accepted);
+        Assert.NotEqual(GeometryMaterialId.Lamp, runtime.Map.TryGetCubeAtCell(7, 1, 7)!.MaterialId);
+    }
+
     [Fact]
     public void StaleSelectionSequence_IsRejected()
     {

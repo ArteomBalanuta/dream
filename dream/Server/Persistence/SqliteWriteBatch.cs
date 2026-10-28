@@ -4,7 +4,8 @@ using Dream.Simulation.Persistence;
 
 namespace Dream.Server.Persistence;
 
-// A connection handed out by SqliteSchemaBootstrapper.OpenConnection. Disposing it closes the
+// A connection handed out by SqliteSchemaBootstrapper.OpenConnection, which only tests and tools use
+// now (repositories take SqliteSession from IWorldStore.OpenSession). Disposing it closes the
 // connection only when the lease opened it; a connection enlisted in a SqliteWriteBatch stays open
 // for the batch's next write.
 public readonly struct SqliteConnectionLease : IDisposable
@@ -32,8 +33,8 @@ public readonly struct SqliteConnectionLease : IDisposable
 // repository call on that thread runs on one open connection per database inside one write
 // transaction, and each queued write runs inside its own savepoint: a failing write is rolled back
 // to its savepoint without undoing the writes before or after it, and the whole group costs one
-// commit (one WAL sync point) instead of one autocommit per write. Repository code is unchanged
-// apart from taking its connection through SqliteSchemaBootstrapper.OpenConnection.
+// commit (one WAL sync point) instead of one autocommit per write. Repositories need no batch
+// awareness: IWorldStore.OpenSession enlists their sessions through TryEnlist.
 //
 // Not thread-safe: one worker thread owns a batch, and the ambient slot is per thread.
 internal sealed class SqliteWriteBatch : IPersistenceWriteBatch

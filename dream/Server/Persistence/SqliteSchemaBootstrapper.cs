@@ -9,9 +9,19 @@ public sealed class SqliteSchemaBootstrapper
     private readonly string _connectionString;
     private readonly string _databasePath;
     private readonly string _schemaScriptPath;
+    private readonly bool _schemaScriptIsBaselineWithoutMigrations;
 
     public SqliteSchemaBootstrapper(string databasePath, string schemaScriptPath)
+        : this(databasePath, schemaScriptPath, schemaScriptIsBaselineWithoutMigrations: false)
     {
+    }
+
+    // Tests only: schemaScriptIsBaselineWithoutMigrations lets a schema script with no migrations
+    // directory next to it (a test's hand-written schema in a temp folder) be its own single baseline
+    // migration. Production never sets it, so a missing directory fails startup.
+    internal SqliteSchemaBootstrapper(string databasePath, string schemaScriptPath, bool schemaScriptIsBaselineWithoutMigrations)
+    {
+        _schemaScriptIsBaselineWithoutMigrations = schemaScriptIsBaselineWithoutMigrations;
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath) ?? ".");
         _databasePath = databasePath;
         _connectionString = new SqliteConnectionStringBuilder
@@ -46,21 +56,27 @@ public sealed class SqliteSchemaBootstrapper
 
     // Puts the database in WAL mode, then applies the pending migrations from MigrationsDirectory.
     // Throws SchemaTooNewException, before anything is written, when a newer build already migrated
-    // the file.
+    // the file, and DirectoryNotFoundException, before the database is opened, when
+    // MigrationsDirectory is missing (a broken install).
     public SchemaMigrationResult EnsureSchema(Action<string>? log = null)
     {
         return EnsureSchema(new SqliteSchemaMigrator(LoadMigrations()), log);
     }
 
-    // The shipped config/player-profiles.init.sql always has config/migrations next to it. A schema
-    // script without that directory (a test's hand-written schema in a temp folder) is its own single
-    // baseline migration, which reproduces what the pre-migration bootstrapper did with it.
+    // The shipped config/player-profiles.init.sql always has config/migrations next to it; without
+    // it the schema is unknown, so startup fails rather than guessing. Only the test constructor's
+    // flag lets a schema script without that directory be its own single baseline migration, which
+    // reproduces what the pre-migration bootstrapper did with it.
     private IReadOnlyList<ISchemaMigration> LoadMigrations()
     {
         string directory = MigrationsDirectory;
-        return Directory.Exists(directory)
-            ? SchemaMigrations.LoadFromDirectory(directory)
-            : [new BaselineMigration("baseline", File.ReadAllText(_schemaScriptPath))];
+        if (!Directory.Exists(directory) && _schemaScriptIsBaselineWithoutMigrations)
+        {
+            return [new BaselineMigration("baseline", File.ReadAllText(_schemaScriptPath))];
+        }
+
+        // Throws DirectoryNotFoundException for a missing directory.
+        return SchemaMigrations.LoadFromDirectory(directory);
     }
 
     public SchemaMigrationResult EnsureSchema(ISchemaMigrator migrator, Action<string>? log = null)
@@ -96,9 +112,11 @@ public sealed class SqliteSchemaBootstrapper
         return connection;
     }
 
-    // The connection a repository call runs on. Inside a SqliteWriteBatch (the write queue's worker
-    // groups its writes into one transaction) it is the batch's open connection, which the lease
-    // does not close; anywhere else it is a new connection the lease closes.
+    // A connection with SqliteWorldStore.OpenSession's enlistment rule, for tests and tools that
+    // need a raw connection: inside a SqliteWriteBatch (the write queue's worker groups its writes
+    // into one transaction) it is the batch's open connection, which the lease does not close;
+    // anywhere else it is a new connection the lease closes. The repositories no longer use it; they
+    // open sessions through IWorldStore.
     public SqliteConnectionLease OpenConnection()
     {
         SqliteConnection? enlisted = SqliteWriteBatch.TryEnlist(this);

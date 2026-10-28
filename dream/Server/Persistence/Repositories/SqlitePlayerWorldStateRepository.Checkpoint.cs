@@ -11,8 +11,9 @@ public sealed partial class SqlitePlayerWorldStateRepository
     // Insert-if-profile-exists upsert, guarded by capture time: each row carries the time it was
     // captured (PersistedPlayerWorldState.UpdatedUtc), and the update branch only replaces a stored
     // row that is strictly older. The leave path (RuntimePersistenceBridge.PersistPlayerWorldState)
-    // also writes this table, through the write queue, stamping its worker time, which is never
-    // earlier than a capture taken on the tick thread before the leave. So a checkpoint captured
+    // also writes this table, through the write queue, stamped with the leave's time (taken on the
+    // tick thread when the session detaches), which is never earlier than a capture taken on the
+    // tick thread before the leave. So a checkpoint captured
     // before a leave but written after it no longer overwrites what the leave saved.
     // FormatUtc is fixed-width ("O", UTC), so comparing the text compares the times. A legacy
     // strftime value (3 fractional digits, then 'Z') compares as newer than any 7-digit value within

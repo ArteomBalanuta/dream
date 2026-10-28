@@ -74,7 +74,10 @@ public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
                 reader.GetInt32(8),
                 reader.GetUtc(9)));
 
-    // updated_utc is the write time, not state.UpdatedUtc (as before the split).
+    // updated_utc is state.UpdatedUtc, the time the state was captured (the leave's time, or the
+    // checkpoint's capture time through RepositoryPersistenceCheckpointWriter), so the checkpoint
+    // guards compare capture times and not how late the write queue ran. A default UpdatedUtc is
+    // stamped with the write time.
     public void SavePlayerWorldState(PersistedPlayerWorldState state) =>
         Execute(UpsertSql, state, static (command, s) =>
         {
@@ -83,6 +86,6 @@ public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
             command.BindVector3("$facingX", "$facingY", "$facingZ", s.Facing);
             command.BindInt64("$currentHp", s.CurrentHealth);
             command.BindInt64("$currentEnergy", s.CurrentEnergy);
-            command.BindUtc("$updatedUtc", DateTime.UtcNow);
+            command.BindUtc("$updatedUtc", s.UpdatedUtc == default ? DateTime.UtcNow : s.UpdatedUtc);
         });
 }

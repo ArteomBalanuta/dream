@@ -64,6 +64,7 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
             {
                 ISchemaMigration migration = _migrations[i];
                 migration.Apply(connection, transaction);
+                ThrowIfTransactionEnded(connection, transaction, migration);
                 using SqliteCommand record = connection.CreateCommand();
                 record.Transaction = transaction;
                 record.CommandText =
@@ -81,6 +82,37 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
             ? $"Database schema created at version {to}."
             : $"Database schema migrated from version {from} to {to}.");
         return new SchemaMigrationResult(from, to, backupPath);
+    }
+
+    // SchemaMigrations.LoadFromDirectory rejects transaction control only at the start of a line, so
+    // a script such as "...; COMMIT;" on one line (or a hand-written ISchemaMigration) can still end
+    // the migrator's transaction. What ran before that point is then committed and cannot be undone;
+    // the remaining migrations must not run in autocommit, and no version is recorded for this one.
+    // The backup taken before the transaction is the way back. SQLite's autocommit flag is set
+    // exactly when no transaction is open.
+    private static void ThrowIfTransactionEnded(SqliteConnection connection, SqliteTransaction transaction, ISchemaMigration migration)
+    {
+        if (SQLitePCL.raw.sqlite3_get_autocommit(connection.Handle) == 0)
+        {
+            return;
+        }
+
+        // After a COMMIT, SqliteTransaction.Dispose still issues ROLLBACK, which would fail with "no
+        // transaction is active" and hide this error; an empty transaction gives it something to roll
+        // back. After a ROLLBACK the transaction knows it is over and refuses the command; Dispose
+        // then issues nothing.
+        try
+        {
+            Execute(connection, transaction, "BEGIN;");
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        throw new InvalidOperationException(
+            $"Schema migration {migration.Version:D4} ('{migration.Name}'): migration {migration.Version:D4} ended the transaction. " +
+            "Migration scripts must not COMMIT, ROLLBACK or END TRANSACTION; whatever it ran before that point is committed, " +
+            "so restore the backup taken before the migration if the database is now inconsistent.");
     }
 
     private static bool HasUserTables(SqliteConnection connection)

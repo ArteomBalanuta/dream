@@ -13,9 +13,11 @@ public sealed partial class SqlitePlayerProfileRepository
     //
     // The guard (PlayerCheckpointVitals.CapturedUtc set): the vitals are skipped when the player's
     // player_world_state row is strictly newer than the capture. Only the leave
-    // (RuntimePersistenceBridge.PersistPlayerWorldState, through the write queue, stamped with its
-    // worker time) and checkpoints (stamped with their capture time) write that row, so a newer row
-    // means the player left after this capture, and the profile the leave saved must stand.
+    // (RuntimePersistenceBridge.PersistPlayerWorldState, through the write queue, stamped with the
+    // leave's tick-thread time) and checkpoints (stamped with their capture time) write that row, so
+    // a newer row means the player left after this capture, and the profile the leave saved must
+    // stand. That needs the leave to queue its world state BEFORE its profile
+    // (WorldSessionRuntime.DetachRemoteSession): a checkpoint written between the two then skips.
     //
     // Why not the profile's own updated_utc: every immediate profile save (XP, level, stats) also
     // stamps its worker time, so a save queued before a capture but run after it would make the

@@ -206,8 +206,25 @@ public sealed class SchemaMigrationTests
             SchemaMigrations.LoadFromDirectory(Path.Combine(database.RootDirectory, "missing")));
     }
 
+    // Production: a schema script without a migrations directory next to it is a broken install, and
+    // startup fails before the database is created.
     [Fact]
-    public void SchemaScriptWithoutAMigrationsDirectory_IsItsOwnBaseline()
+    public void SchemaScriptWithoutAMigrationsDirectory_FailsStartup()
+    {
+        using MigrationTestDatabase database = new();
+        string scriptPath = Path.Combine(database.RootDirectory, "schema.sql");
+        File.WriteAllText(scriptPath, "CREATE TABLE IF NOT EXISTS player_profiles (player_name TEXT NOT NULL PRIMARY KEY);");
+        SqliteSchemaBootstrapper schema = new(database.DatabasePath, scriptPath);
+
+        DirectoryNotFoundException error = Assert.Throws<DirectoryNotFoundException>(() => schema.EnsureSchema());
+
+        Assert.Contains(schema.MigrationsDirectory, error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(database.DatabasePath));
+    }
+
+    // Tests only (the internal constructor's flag): the script is its own single baseline.
+    [Fact]
+    public void SchemaScriptWithoutAMigrationsDirectory_IsItsOwnBaseline_WhenATestOptsIn()
     {
         using MigrationTestDatabase database = new();
         string scriptPath = Path.Combine(database.RootDirectory, "schema.sql");
@@ -215,7 +232,7 @@ public sealed class SchemaMigrationTests
             CREATE TABLE IF NOT EXISTS player_profiles (player_name TEXT NOT NULL PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS placed_cube_instances (cube_id INTEGER NOT NULL PRIMARY KEY);
             """);
-        SqliteSchemaBootstrapper schema = new(database.DatabasePath, scriptPath);
+        SqliteSchemaBootstrapper schema = new(database.DatabasePath, scriptPath, schemaScriptIsBaselineWithoutMigrations: true);
 
         SchemaMigrationResult result = schema.EnsureSchema();
 
@@ -225,6 +242,31 @@ public sealed class SchemaMigrationTests
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'world_metadata';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('player_profiles') WHERE name = 'experience';"));
         Assert.Equal(3L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('placed_cube_instances') WHERE name LIKE 'center_%';"));
+    }
+
+    // "...; COMMIT;" on one line passes the script check (it only looks at statement starts), so the
+    // migrator checks after each migration that its transaction is still open.
+    [Theory]
+    [InlineData("CREATE TABLE ended_by_two (id INTEGER PRIMARY KEY); COMMIT;")]
+    [InlineData("CREATE TABLE ended_by_two (id INTEGER PRIMARY KEY); END TRANSACTION;")]
+    [InlineData("CREATE TABLE ended_by_two (id INTEGER PRIMARY KEY); ROLLBACK;")]
+    public void MigrationThatEndsTheTransaction_Throws_AndRecordsNoVersion(string script)
+    {
+        using MigrationTestDatabase database = new();
+        database.Schema.EnsureSchema();
+        string directory = Path.Combine(database.RootDirectory, "migrations");
+        Directory.CreateDirectory(directory);
+        File.Copy(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0001_baseline.sql"), Path.Combine(directory, "0001_baseline.sql"));
+        File.WriteAllText(Path.Combine(directory, "0002_ends_the_transaction.sql"), script);
+        SqliteSchemaMigrator migrator = new(SchemaMigrations.LoadFromDirectory(directory));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
+
+        Assert.Contains("migration 0002 ended the transaction", error.Message, StringComparison.Ordinal);
+        MigrationTestDatabase.ReleasePooledConnections();
+        using SqliteConnection connection = database.Open();
+        Assert.Equal([(1L, "baseline")], VersionRows(connection));
+        Assert.Single(database.Backups());
     }
 
     [Fact]
