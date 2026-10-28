@@ -116,9 +116,14 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
             $"Camera path: {oldCameraPathBytes} B before, {newCameraPathBytes} B after; " +
             $"CapturePresentationState: {captureBytes} B (previous budget 776 B)");
         Assert.InRange(oldCameraPathBytes - newCameraPathBytes, 32, 80);
+        // GPU-5 added seven GPU/counter fields (3 doubles, a long, 3 ints) to the
+        // FramePerformanceSnapshot inside the one presentation-state allocation: +48 B, not a new
+        // allocation. See WorldSessionPresentationStateActiveEnemiesTests.
+        const int Gpu5SnapshotGrowthBytes = 48;
+        long budget = 776 + Gpu5SnapshotGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
-            captureBytes <= 776 - (oldCameraPathBytes - newCameraPathBytes),
-            $"CapturePresentationState allocated {captureBytes} B; expected at most {776 - (oldCameraPathBytes - newCameraPathBytes)} B.");
+            captureBytes <= budget,
+            $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");
     }
 
     // ThirdPersonCameraRig.Resolve as it was before ResolveInto: Clone, then the chase offset.

@@ -89,6 +89,9 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // presentation state, so the same single state allocation is now 32 B larger (776 B).
         // Wave-5 fix A reuses a scratch first-person camera in ClientWorldSession, removing one
         // Camera allocation per capture (776 B -> 696 B).
+        // GPU-5 added seven fields to FramePerformanceSnapshot (GPU world/actors/HUD ms as doubles,
+        // GL_PRIMITIVES_GENERATED as a long, and draw/program/uniform counts as ints): 44 B, padded
+        // to 48 B in the same single state allocation (696 B -> 744 B).
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -96,7 +99,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            696,
+            744,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 
