@@ -70,6 +70,12 @@ public partial class Render
     }
 
     private bool _wasFocused = true;
+
+    // The world transfer in progress, for the HUD's "receiving world" line. The scene sets it
+    // every frame before the HUD pass (a plain struct field, so nothing per frame grows the
+    // presentation or performance snapshots); WorldTransferHudState.None hides the line.
+    public WorldTransferHudState WorldTransferHud { get; set; }
+
     public HudFrameResult DrawHUD(
         FrameEventArgs args,
         bool windowFocused,
@@ -100,6 +106,7 @@ public partial class Render
             connectionLabel,
             playerRoster,
             performance,
+            WorldTransferHud,
             inventory);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());

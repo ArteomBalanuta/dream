@@ -83,6 +83,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly Action<IServerToClientMessage> _deliverInbound;
     private long _worldTransfersCompleted;
     private long _worldTransferStartedTimestamp;
+    // Payload bytes of the transfer in progress (its carrier and chunks; held messages are not
+    // counted). Written by the receive loop, read by the HUD through TryGetWorldTransferProgress.
+    private long _worldTransferBytes;
 
     // How long ConnectAsync waits for the server's hello before returning the session anyway.
     public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
@@ -167,6 +170,28 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     // True while a world transfer is being received; its carrier and later messages are held.
     public bool IsReceivingWorld => _worldTransfers.Current != null;
+
+    // The transfer in progress, for the HUD's "receiving world" line: payload bytes of its carrier
+    // and chunks so far, chunks received, and the time since its carrier arrived (on the session's
+    // TimeProvider). The chunk count of the whole transfer is only known at its final chunk, so
+    // there is no total. False when no transfer is in progress. Safe to call from the render
+    // thread while the receive loop runs (the values may be a frame stale); allocates nothing.
+    public bool TryGetWorldTransferProgress(out long bytesReceived, out int chunksReceived, out TimeSpan elapsed)
+    {
+        WorldTransferReceiver? current = _worldTransfers.Current;
+        if (current == null)
+        {
+            bytesReceived = 0;
+            chunksReceived = 0;
+            elapsed = TimeSpan.Zero;
+            return false;
+        }
+
+        bytesReceived = Interlocked.Read(ref _worldTransferBytes);
+        chunksReceived = current.ChunksReceived;
+        elapsed = _timeProvider.GetElapsedTime(current.StartedTimestamp);
+        return true;
+    }
 
     public static async ValueTask<RemoteClientSession> ConnectAsync(
         RemoteClientOptions options,
@@ -545,6 +570,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 continue;
             }
 
+            int payloadBytes = payload.Length;
             DecodedProtocolMessage decoded;
             try
             {
@@ -583,8 +609,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
             WorldTransferReceiver? completed = _worldTransfers.Accept(serverMessage, _deliverInbound);
+            if (serverMessage is WorldChunkMessage)
+            {
+                Interlocked.Add(ref _worldTransferBytes, payloadBytes);
+            }
+
             if (!wasReceivingWorld && _worldTransfers.Current is WorldTransferReceiver started)
             {
+                // A new transfer: its carrier is the first of its bytes.
+                Interlocked.Exchange(ref _worldTransferBytes, payloadBytes);
                 _worldTransferStartedTimestamp = Stopwatch.GetTimestamp();
                 if (NetworkDiagnosticsLog.IsEnabled)
                 {

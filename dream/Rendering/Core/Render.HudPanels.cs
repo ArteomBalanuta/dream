@@ -18,6 +18,7 @@ public partial class Render
         string? connectionLabel,
         IReadOnlyList<PlayerRosterEntry> playerRoster,
         FramePerformanceSnapshot performance,
+        WorldTransferHudState worldTransfer,
         PlayerInventorySnapshot? inventory)
     {
         float? fieldOfViewDegrees = null;
@@ -44,13 +45,14 @@ public partial class Render
             (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
             ImGuiWindowFlags.NoFocusOnAppearing );
 
+        Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
+        DrawWorldTransferIndicator(worldTransfer, hudText);
         ImGui.TextUnformatted(status.HealthLabel);
         ImGui.TextUnformatted(status.ModeLabel);
         ImGui.TextUnformatted(status.DamageLabel);
         ImGui.TextUnformatted(status.LevelLabel);
         ImGui.TextUnformatted(status.ExperiencePercentLabel);
         ImGui.TextUnformatted(status.ExperienceProgressLabel);
-        Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
         if (!string.IsNullOrWhiteSpace(connectionLabel))
         {
             HudText.Text(hudText, $"Server: {connectionLabel}");
@@ -244,6 +246,30 @@ public partial class Render
             vitality,
             floatingCombatText,
             equipInventorySlotIndex);
+    }
+
+    // The "receiving world" line at the top of the HUD panel while a world transfer has run past
+    // WorldTransferHudState.ShowThreshold. It is plain text in the non-interactive HUD window, so
+    // it blocks nothing; it formats into the caller's stack buffer, so it allocates nothing.
+    private static void DrawWorldTransferIndicator(WorldTransferHudState worldTransfer, Span<byte> hudText)
+    {
+        if (!worldTransfer.IsVisible)
+        {
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.82f, 0.3f, 1f));
+        if (worldTransfer.TryFormat(hudText, out int lineBytes))
+        {
+            HudText.TextUnformatted(hudText[..lineBytes]);
+        }
+        else
+        {
+            ImGui.TextUnformatted(worldTransfer.Format());
+        }
+
+        ImGui.TextUnformatted(WorldTransferHudState.DetailLine);
+        ImGui.PopStyleColor();
     }
 
     private static void DrawInventoryOverlay(
