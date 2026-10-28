@@ -43,8 +43,21 @@ public sealed class TcpClientTransport : ITransportConnection
         return _stream.ReadAsync(buffer, cancellationToken);
     }
 
+    // Sends a FIN before the close, so the peer's pending read usually ends as a normal close
+    // instead of a reset. Windows still resets a socket closed with bytes unread, which
+    // DedicatedServerService classifies as a normal disconnect (IsPeerReset).
     public ValueTask DisposeAsync()
     {
+        try
+        {
+            // Null once the client was disposed (a second DisposeAsync).
+            _client.Client?.Shutdown(SocketShutdown.Send);
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Already closed, reset or never connected: nothing to tell the peer.
+        }
+
         _stream.Dispose();
         _client.Dispose();
         return ValueTask.CompletedTask;

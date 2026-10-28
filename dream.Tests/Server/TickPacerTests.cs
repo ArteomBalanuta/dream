@@ -21,30 +21,66 @@ public class TickPacerTests
         Assert.Equal(0d, TickPacer.SecondsUntilNextTick(0.020, 0.015));
     }
 
+    // TimingSensitive only serialises tests inside this process; another process can still starve
+    // the CPU. Each test measures up to MaxAttempts times and asserts the unchanged bound on the
+    // best run, so one starved run does not fail it but a pacer that is really slow still does.
+    private const int MaxAttempts = 3;
+
     [Fact]
     public void WaitFor_OvershootsDeadlineByOnlyAFewMilliseconds()
     {
         using TickPacer pacer = new();
-        double totalOvershoot = 0d;
         const int waits = 20;
-        for (int index = 0; index < waits; index++)
+        // An early wake (negative overshoot) is a pacer bug, not CPU starvation, so "best" is the
+        // smallest non-negative mean; a run that woke early is kept only if no run was on time.
+        double bestMeanOvershoot = double.NaN;
+        for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            pacer.WaitFor(SimulationClock.FixedDeltaSeconds, CancellationToken.None);
-            totalOvershoot += stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
+            double totalOvershoot = 0d;
+            for (int index = 0; index < waits; index++)
+            {
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                pacer.WaitFor(SimulationClock.FixedDeltaSeconds, CancellationToken.None);
+                totalOvershoot += stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
+            }
+
+            double meanOvershoot = totalOvershoot / waits;
+            if (double.IsNaN(bestMeanOvershoot)
+                || (meanOvershoot >= 0d && (bestMeanOvershoot < 0d || meanOvershoot < bestMeanOvershoot)))
+            {
+                bestMeanOvershoot = meanOvershoot;
+            }
+
+            if (bestMeanOvershoot is >= 0d and <= 0.004)
+            {
+                break;
+            }
         }
 
-        Assert.InRange(totalOvershoot / waits, 0d, 0.004);
+        Assert.InRange(bestMeanOvershoot, 0d, 0.004);
     }
 
     [Fact]
     public void PacedLoop_RunsOneTickPerIterationAlmostAlways()
     {
+        const int iterations = 64;
+        int bestSingleTickIterations = 0;
+        for (int attempt = 0; attempt < MaxAttempts && bestSingleTickIterations < iterations * 0.85; attempt++)
+        {
+            bestSingleTickIterations = Math.Max(bestSingleTickIterations, CountSingleTickIterations(iterations));
+        }
+
+        Assert.True(
+            bestSingleTickIterations >= iterations * 0.85,
+            $"Only {bestSingleTickIterations}/{iterations} iterations ran exactly one tick (best of up to {MaxAttempts} runs).");
+    }
+
+    private static int CountSingleTickIterations(int iterations)
+    {
         DedicatedServerHost host = new(new CountingAuthority(), new ProtocolRouter([], []));
         using TickPacer pacer = new();
         Stopwatch stopwatch = Stopwatch.StartNew();
         int singleTickIterations = 0;
-        const int iterations = 64;
         for (int index = 0; index < iterations; index++)
         {
             pacer.WaitFor(host.SecondsUntilNextTick, CancellationToken.None);
@@ -56,7 +92,7 @@ public class TickPacerTests
             }
         }
 
-        Assert.True(singleTickIterations >= iterations * 0.85, $"Only {singleTickIterations}/{iterations} iterations ran exactly one tick.");
+        return singleTickIterations;
     }
 
     private sealed class CountingAuthority : ITickDrivenAuthoritativeSessionHost

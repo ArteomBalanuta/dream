@@ -49,12 +49,24 @@ public class Wave9SessionLifecycleLoopbackTests
             timeProvider: clock).AsTask();
         using System.Net.Sockets.Socket serverSide = await accept.WaitAsync(Deadline);
         DateTime deadline = DateTime.UtcNow + Deadline;
+        // The hello timeout runs on the session's (manual) clock. Advance just past it, never
+        // toward JoinTimeout: the clock only moves while ConnectAsync has not returned, and in
+        // total at most the hello timeout plus one step, however slowly the continuation runs.
+        TimeSpan step = TimeSpan.FromMilliseconds(500);
+        TimeSpan advanced = TimeSpan.Zero;
         while (!connect.IsCompleted)
         {
             Assert.True(DateTime.UtcNow < deadline, "ConnectAsync never returned");
-            clock.Advance(TimeSpan.FromMilliseconds(500));
+            if (advanced <= RemoteClientSession.DefaultServerHelloTimeout)
+            {
+                clock.Advance(step);
+                advanced += step;
+            }
+
             await Task.Delay(20);
         }
+
+        Assert.True(advanced < RemoteClientSession.JoinTimeout, $"advanced {advanced}");
 
         RemoteClientSession session = await connect;
         try
