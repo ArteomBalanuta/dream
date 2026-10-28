@@ -6,8 +6,9 @@ using Dream.Server.Persistence;
 
 namespace Dream.Tests.Server.Persistence;
 
-// Wave 8 fix loop: a disposed queue refuses work, a locked database fails a group fast instead of
-// waiting busy_timeout per write, and Dispose is bounded without letting a write land after it.
+// Wave 8 fix loop: a disposed queue refuses work, and Dispose is bounded without letting a write
+// land after it. A locked database is covered by PersistenceWriteQueueLockRetryTests: outside
+// dispose its writes are retried, not dropped.
 public sealed class PersistenceWriteQueueShutdownTests(ITestOutputHelper output)
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
@@ -53,46 +54,6 @@ public sealed class PersistenceWriteQueueShutdownTests(ITestOutputHelper output)
         Assert.True(prefetch.IsCompleted);
         Assert.IsType<ObjectDisposedException>(prefetch.Error);
         Assert.Equal(PersistedPlayerLoadState.Failed, runtime.GetPersistedPlayerLoadState("late"));
-    }
-
-    // Another connection holds the write lock past busy_timeout (5 s). The group's first write
-    // cannot start its transaction; the rest of the group fails at once instead of each waiting
-    // another 5 s (ten writes used to take ~50 s).
-    [Fact]
-    public void LockedDatabase_FailsTheRestOfTheGroupAfterOneBusyTimeout()
-    {
-        using PersistenceTestDatabase database = new();
-        SqlitePlayerProfileRepository profiles = new(database.Schema);
-        using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        using ManualResetEventSlim gate = new(initialState: false);
-        writes.Enqueue(() => gate.Wait(Deadline));
-        for (int i = 0; i < 10; i++)
-        {
-            PersistedPlayerProfile profile = PersistenceGroupCommitTests.Profile($"locked-{i}", experience: i);
-            writes.Enqueue(() => profiles.Save(profile));
-        }
-
-        Stopwatch elapsed;
-        using (SqliteConnection holder = database.Schema.CreateOpenConnection())
-        using (SqliteTransaction writeLock = holder.BeginTransaction(deferred: false))
-        {
-            elapsed = Stopwatch.StartNew();
-            gate.Set();
-            Assert.True(writes.Flush(Deadline));
-            elapsed.Stop();
-            writeLock.Rollback();
-        }
-
-        output.WriteLine($"10 writes against a locked database failed in {elapsed.Elapsed.TotalMilliseconds:0} ms, failed={writes.FailedWrites}");
-        Assert.Equal(10, writes.FailedWrites);
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(15), $"{elapsed.Elapsed.TotalMilliseconds:0} ms");
-        Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'locked-%';"));
-
-        // The queue recovers once the lock is gone.
-        Assert.True(writes.Enqueue(() => profiles.Save(PersistenceGroupCommitTests.Profile("after-lock", experience: 1))));
-        Assert.True(writes.Flush(Deadline));
-        Assert.NotNull(profiles.TryGet("after-lock"));
-        SqliteConnection.ClearAllPools();
     }
 
     // The worker is stuck in a slow write past the drain deadline. Dispose drops what is still
