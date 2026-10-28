@@ -503,14 +503,21 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // A lagging connection's merged deltas passed the cap and were dropped. Ask for a full world
     // through the same path a client's checksum-mismatch request takes (WorldResyncRequestHandler
     // marks it, the host serves it after the next tick, subject to the per-connection cooldown);
-    // if the cooldown refuses it, the client's own checksum check requests one later.
+    // if the cooldown refuses it, the flag is re-armed and the next tick asks again. Only an
+    // accepted resync is counted. The refused path runs every tick until the cooldown passes, so
+    // it must not allocate.
     private void RequestOverflowResync(ServerConnection connection)
     {
-        _metrics.RecordCoalesceOverflowResync();
         try
         {
             // Never recreates a context for a connection the host already released.
-            _host.RequestWorldResyncIfConnected(connection.ConnectionId);
+            bool accepted = _host.RequestWorldResyncIfConnected(connection.ConnectionId);
+            if (accepted)
+            {
+                _metrics.RecordCoalesceOverflowResync();
+            }
+
+            HandleOverflowResyncResult(connection, accepted);
         }
         catch (Exception ex)
         {

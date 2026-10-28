@@ -290,6 +290,49 @@ public class DedicatedServerTickAllocationTests
         }
     }
 
+    // A coalesce overflow whose resync the host's cooldown refuses is re-armed and asked again on
+    // every tick until the cooldown passes, so that path (host request, service re-arm, next take)
+    // must not allocate.
+    [Fact]
+    public async Task OverflowResync_RefusedByTheCooldown_RearmsWithoutAllocating()
+    {
+        DedicatedServerHost host = ServerConnectionTestFixtures.CreateHost(new ServerConnectionTestFixtures.MutatingAuthority());
+        await using DedicatedServerService service = new(
+            host,
+            new ServerConnectionTestFixtures.NoopServerTransport(),
+            new TransportJsonCodec(),
+            new LengthPrefixedMessageFramer(),
+            ServerConnectionTestFixtures.WithoutLiveness);
+        ServerConnection connection = new(
+            new ServerConnectionTestFixtures.GatedTransport("overflow"),
+            host,
+            new TransportJsonCodec(),
+            new LengthPrefixedMessageFramer(),
+            ServerConnectionTestFixtures.WithoutLiveness);
+        service.AttachConnection(connection);
+        host.HandleClientMessage("overflow", new ClientJoinRequestMessage("session-a", "player-a"));
+
+        // Accept one resync and serve it, so the next request falls inside the cooldown.
+        Assert.True(host.RequestWorldResyncIfConnected("overflow"));
+        await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+        bool refused = !host.RequestWorldResyncIfConnected("overflow");
+        Assert.True(service.HandleOverflowResyncResult(connection, accepted: false));
+        Assert.True(connection.TryTakeOverflowResync());
+
+        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        {
+            bool accepted = host.RequestWorldResyncIfConnected("overflow");
+            service.HandleOverflowResyncResult(connection, accepted);
+            connection.TryTakeOverflowResync();
+        });
+
+        _output.WriteLine($"refused overflow resync + re-arm: {bytes} B (refused before measuring: {refused})");
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            Assert.Equal(0, bytes);
+        }
+    }
+
     [Fact]
     public void RuntimeHost_AdvanceTick_AddsLittleOverRuntimeTick()
     {

@@ -32,8 +32,13 @@ public sealed class WorldResyncRequestHandler : IServerMessageHandler
         }
 
         bool accepted = context.TryRequestWorldResync(_timeProvider.GetTimestamp(), _timeProvider.TimestampFrequency);
-        NetworkDiagnosticsLog.Write(
-            "server.world.resync",
-            $"connection={context.ConnectionId} clientChecksum={request.ClientChecksum} accepted={accepted}");
+        // Guarded: the server's overflow resync re-asks every tick while the cooldown refuses, and
+        // the interpolated message would allocate even with diagnostics off.
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.world.resync",
+                $"connection={context.ConnectionId} clientChecksum={request.ClientChecksum} accepted={accepted}");
+        }
     }
 }

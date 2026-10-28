@@ -216,6 +216,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // through WorldResyncRequestHandler like a client's, so the same cooldown applies. True when a
     // resync is now pending for the connection; false when the connection is unknown or not
     // joined, or the cooldown refused it (the caller may retry later).
+    // Shared by every overflow resync request: the record is immutable, and the service re-asks
+    // every tick while the cooldown refuses, so this path must not allocate.
+    private static readonly ClientWorldResyncRequestMessage OverflowResyncRequest = new(ClientChecksum: 0);
+
     public bool RequestWorldResyncIfConnected(string connectionId)
     {
         lock (_authoritySync)
@@ -226,7 +230,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
 
             context.ClearOutboundMessages();
-            _router.RouteServerInbound(context, new ClientWorldResyncRequestMessage(ClientChecksum: 0));
+            _router.RouteServerInbound(context, OverflowResyncRequest);
             context.ClearOutboundMessages();
             return context.WorldResyncPending;
         }
