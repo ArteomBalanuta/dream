@@ -91,9 +91,9 @@ public class Wave7StaticChunkIncrementalPlanTests
     }
 
     // Under an edit on every frame, with builds that take longer than one frame, every completed
-    // batch is already superseded by the queued request. DrainCompletedBuild then drops the batch
-    // and starts the queued one, so no batch is ever uploaded while the edits continue.
-    [Fact(Skip = "bug: StaticWorldChunkRenderer.DrainCompletedBuild drops every superseded batch, so continuous static edits starve uploads (wave 7 tester report)")]
+    // batch is already superseded by the queued request. DrainCompletedBuild used to drop such a
+    // batch and start the queued one, so no batch was ever uploaded while the edits continued.
+    [Fact]
     public void ContinuousEdits_WithBuildsSlowerThanAFrame_StillUploadSomething()
     {
         GeometryRenderExport export = CaptureStartupExport();

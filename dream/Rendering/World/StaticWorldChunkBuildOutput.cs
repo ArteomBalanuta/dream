@@ -8,8 +8,9 @@ public sealed record StaticWorldChunkBuildOutput(
     StaticWorldChunkMesh Mesh);
 
 // Carries everything the worker needs to plan and build: the static cells extracted on the render
-// thread (plain values, no Cube references) and a copy of the mesh signatures applied so far.
-// The worker never reads Cube objects or the renderer's live signature cache.
+// thread (plain values, no Cube references) and a copy of the mesh signatures the renderer will
+// hold once its pending upload batch is applied, which the renderer fills in when the build
+// starts. The worker never reads Cube objects or the renderer's live signature cache.
 public sealed record StaticWorldChunkBuildRequest(
     int ExportSignature,
     IReadOnlySet<StaticWorldChunkKey> DirtyChunks,
@@ -27,8 +28,8 @@ public sealed record StaticWorldChunkBuildRequest(
 
     // A newer request replaces an older unbuilt one, but must keep the older one's dirty chunks:
     // a chunk that became empty has no build input, and only its dirty flag removes the stale mesh.
-    // Cells and the signature snapshot come from the newer request, which already reflects every
-    // change since the cache.
+    // Cells come from the newer request, which already reflects every change since the older one;
+    // the renderer takes the signature snapshot when the merged request starts.
     public static StaticWorldChunkBuildRequest MergeSuperseded(
         StaticWorldChunkBuildRequest older,
         StaticWorldChunkBuildRequest newer)
