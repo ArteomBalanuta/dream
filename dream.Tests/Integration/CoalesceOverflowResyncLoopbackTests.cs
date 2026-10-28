@@ -16,6 +16,12 @@ namespace Dream.Tests.Integration;
 // instead; once the client reads again it converges on the server's world.
 public class CoalesceOverflowResyncLoopbackTests(ITestOutputHelper output)
 {
+    // Ticks in a row with the slow connection's write blocked (no frame completed while frames
+    // wait behind it) before builds start. Builds made while the socket still absorbed whole
+    // frames went out one per frame and never piled up behind the cap, which made the overflow
+    // depend on how fast the kernel buffers filled (a run once ended "never overflowed").
+    private const int StalledTicksBeforeBuilds = 32;
+
     [Fact]
     public async Task SlowReader_PastTheCoalesceCap_GetsAWorldResync_AndConverges()
     {
@@ -46,14 +52,34 @@ public class CoalesceOverflowResyncLoopbackTests(ITestOutputHelper output)
 
             int builds = 0;
             int ticksAfterOverflow = 0;
+            long lastFramesSent = -1;
+            int stalledTicks = 0;
             for (int tick = 0; ticksAfterOverflow < 8; tick++)
             {
-                Assert.True(tick < 6000, $"The slow connection never overflowed (coalesced {slowConnection.CoalescedSnapshots}).");
+                Assert.True(
+                    tick < 6000,
+                    $"The slow connection never overflowed (coalesced {slowConnection.CoalescedSnapshots}, " +
+                    $"builds {builds}, stalled ticks {stalledTicks}).");
                 await primary.SendCommandAsync(walking: false);
+
+                // The writer is blocked once its socket write stops completing while snapshots
+                // queue (and merge) behind it. Only then does every build land in the one merged
+                // entry, so the second build passes the cap of one for certain.
+                long framesSent = slowConnection.FramesSent;
+                if (framesSent == lastFramesSent && slowConnection.PendingOutboundCount > 0)
+                {
+                    stalledTicks++;
+                }
+                else
+                {
+                    stalledTicks = 0;
+                    lastFramesSent = framesSent;
+                }
+
                 if (tick % 5 == 0 &&
                     builds < BuildCells.Length &&
                     slowConnection.OverflowResyncs == 0 &&
-                    (builds == 0 || slowConnection.CoalescedSnapshots > 0))
+                    stalledTicks >= StalledTicksBeforeBuilds)
                 {
                     Assert.True(host.TryEnqueueServerAction(new PlayerActionMessage(
                         new Dream.Multiplayer.Sessions.PlayerSessionId(PrimarySession),

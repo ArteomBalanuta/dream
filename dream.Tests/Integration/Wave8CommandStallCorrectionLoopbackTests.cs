@@ -437,8 +437,10 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 await gate.Task.WaitAsync(cancellationToken);
             }
 
+            // An empty frame is the session's keepalive; it carries no message.
             if (_framer.TryDeframe(payload.Span, out byte[]? message, out _) &&
-                _codec.Decode(message!).Message is PlayerCommandMessage command)
+                message!.Length > 0 &&
+                _codec.Decode(message).Message is PlayerCommandMessage command)
             {
                 lock (_sentCommands)
                 {

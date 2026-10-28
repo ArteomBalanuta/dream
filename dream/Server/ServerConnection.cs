@@ -37,6 +37,9 @@ public sealed class ServerConnection : IAsyncDisposable
     private readonly long _sendStallTimestampTicks;
     private long _lastInboundTimestamp;
     private long _sendStartedTimestamp;
+    // The current write's extra stall allowance for its size (frame bytes over
+    // SendStallMinimumBytesPerSecond), in timestamp ticks; written before _sendInFlight is set.
+    private long _sendStallAllowanceTicks;
     private int _sendInFlight;
 
     // Ordered outbound queue drained by one writer task per connection. The tick loop only
@@ -150,16 +153,21 @@ public sealed class ServerConnection : IAsyncDisposable
 
         long now = _timeProvider.GetTimestamp();
         ServerConnectionCloseReason reason = ServerConnectionCloseReason.None;
+        long sendStallLimitTicks = 0;
         if (_idleTimeoutTimestampTicks > 0 &&
             now - Volatile.Read(ref _lastInboundTimestamp) > _idleTimeoutTimestampTicks)
         {
             reason = ServerConnectionCloseReason.IdleTimeout;
         }
-        else if (_sendStallTimestampTicks > 0 &&
-            Volatile.Read(ref _sendInFlight) != 0 &&
-            now - Volatile.Read(ref _sendStartedTimestamp) > _sendStallTimestampTicks)
+        else if (_sendStallTimestampTicks > 0 && Volatile.Read(ref _sendInFlight) != 0)
         {
-            reason = ServerConnectionCloseReason.SendStall;
+            // A large frame gets extra time in proportion to its size, so a slow link still
+            // making progress on a full world resync is not cut off.
+            sendStallLimitTicks = SaturatingAdd(_sendStallTimestampTicks, Volatile.Read(ref _sendStallAllowanceTicks));
+            if (now - Volatile.Read(ref _sendStartedTimestamp) > sendStallLimitTicks)
+            {
+                reason = ServerConnectionCloseReason.SendStall;
+            }
         }
 
         if (reason == ServerConnectionCloseReason.None)
@@ -172,7 +180,7 @@ public sealed class ServerConnection : IAsyncDisposable
             Fault(
                 reason == ServerConnectionCloseReason.IdleTimeout
                     ? $"no inbound frame for {_options.IdleTimeout.TotalSeconds:0.###} s"
-                    : $"socket write stalled for {_options.SendStallTimeout.TotalSeconds:0.###} s",
+                    : $"socket write stalled for {sendStallLimitTicks / (double)_timeProvider.TimestampFrequency:0.###} s",
                 reason);
         }
 
@@ -324,11 +332,38 @@ public sealed class ServerConnection : IAsyncDisposable
         await DisposeTransportAsync();
     }
 
+    // Closes the socket without waiting for the writer, which aborts a pending receive or send.
+    // The service calls it at shutdown so every connection loop ends promptly; DisposeAsync
+    // still releases the rest. Idempotent.
+    public ValueTask CloseTransportAsync()
+    {
+        return DisposeTransportAsync();
+    }
+
     private ValueTask DisposeTransportAsync()
     {
         return Interlocked.Exchange(ref _transportDisposeState, 1) == 0
             ? _transport.DisposeAsync()
             : ValueTask.CompletedTask;
+    }
+
+    private static long SaturatingAdd(long left, long right)
+    {
+        long sum = left + right;
+        return sum < left ? long.MaxValue : sum;
+    }
+
+    // The extra stall allowance for writing frameLength bytes at the slowest accepted rate.
+    private long SendStallAllowanceTicks(int frameLength)
+    {
+        int bytesPerSecond = _options.SendStallMinimumBytesPerSecond;
+        if (bytesPerSecond <= 0)
+        {
+            return 0;
+        }
+
+        double ticks = (double)frameLength / bytesPerSecond * _timeProvider.TimestampFrequency;
+        return ticks >= long.MaxValue ? long.MaxValue : (long)ticks;
     }
 
     private static long ToTimestampTicks(TimeSpan timeout, TimeProvider timeProvider)
@@ -582,8 +617,9 @@ public sealed class ServerConnection : IAsyncDisposable
             // frame aliases _frameWriter's pooled buffer. Passing it to the transport is safe only
             // because the send is awaited here, inside _sendLock, before the next encode reuses the
             // buffer; transports must not keep the memory after SendAsync completes.
-            // Bracketed for CheckLiveness: a write in flight for longer than SendStallTimeout
-            // faults the connection.
+            // Bracketed for CheckLiveness: a write in flight for longer than SendStallTimeout plus
+            // its size allowance faults the connection.
+            Volatile.Write(ref _sendStallAllowanceTicks, SendStallAllowanceTicks(frameLength));
             Volatile.Write(ref _sendStartedTimestamp, _timeProvider.GetTimestamp());
             Volatile.Write(ref _sendInFlight, 1);
             try

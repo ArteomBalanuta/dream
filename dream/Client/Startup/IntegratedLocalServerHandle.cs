@@ -8,6 +8,18 @@ namespace Dream.Client.Startup;
 
 public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 {
+    // The integrated server runs in the player's own process and listens on loopback only, so
+    // its one expected client cannot be "lost" the way a remote peer can: a window drag, a long
+    // GC or a debugger break pauses the whole process, server tick included, and the liveness
+    // clocks would see that pause as a dead client. The idle and send-stall checks are off; the
+    // client's process exit still closes the socket, and the outbound backlog cap still bounds
+    // memory.
+    public static ServerConnectionOptions DefaultConnectionOptions { get; } = new()
+    {
+        IdleTimeout = TimeSpan.Zero,
+        SendStallTimeout = TimeSpan.Zero
+    };
+
     private readonly DedicatedServerHost? _host;
     private readonly DedicatedServerService? _service;
     private readonly CancellationTokenSource? _shutdown;
@@ -42,9 +54,11 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 
     public static ValueTask<IntegratedLocalServerHandle> StartAsync(
         int preferredPort = 0,
-        Func<DedicatedServerHost>? hostFactory = null)
+        Func<DedicatedServerHost>? hostFactory = null,
+        ServerConnectionOptions? connectionOptions = null)
     {
         hostFactory ??= ServerBootstrap.CreateAuthoritativeHost;
+        connectionOptions ??= DefaultConnectionOptions;
         DedicatedServerHost? host = null;
         try
         {
@@ -54,7 +68,8 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 host,
                 transport,
                 new TransportJsonCodec(),
-                new LengthPrefixedMessageFramer());
+                new LengthPrefixedMessageFramer(),
+                connectionOptions);
             service.Start();
 
             CancellationTokenSource shutdown = new();
@@ -91,6 +106,8 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             _shutdown.Cancel();
         }
 
+        // RunAsync returns only after every connection loop has released its seat, and
+        // DisposeAsync waits for any loop still running, so the host is disposed last.
         if (_runTask != null)
         {
             try

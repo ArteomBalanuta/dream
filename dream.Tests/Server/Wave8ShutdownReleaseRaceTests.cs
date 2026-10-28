@@ -25,30 +25,23 @@ namespace Dream.Tests.Server;
 // btCollisionWorld's object array (AV) or a removal from a freed world (heap corruption: the
 // "Internal CLR error 0x80131506" seen earlier).
 //
-// The test blocks a release inside the host (ReleasingSessionForTest) and shows that the shutdown
-// sequence every caller uses completes while that release is still in flight.
+// The test blocks a release inside the host (ReleasingSessionForTest) and checks that the shutdown
+// sequence every caller uses does not complete while that release is still in flight.
+//
+// Fixed in the wave 8 fix loop: the service tracks every connection loop; RunAsync and DisposeAsync
+// close the loops' transports and await them (bounded by
+// DedicatedServerService.ConnectionLoopShutdownTimeout) before returning. The tester's
+// "CurrentlyReturnsWhile..." test, which pinned the bug, was replaced by enabling the target.
 public class Wave8ShutdownReleaseRaceTests
 {
     private static readonly TimeSpan Completion = TimeSpan.FromSeconds(20);
 
     [Fact]
-    public async Task ServiceShutdown_CurrentlyReturnsWhileAConnectionReleaseIsStillTouchingTheRuntime()
-    {
-        ShutdownProbe probe = await RunShutdownWithBlockedReleaseAsync();
-        Assert.True(probe.ReleaseStarted, "the client disconnect never reached ReleaseConnection");
-        Assert.True(probe.ShutdownCompletedWhileReleaseBlocked,
-            "RunAsync + DisposeAsync waited for the in-flight release (the race is fixed: enable the target test)");
-    }
-
-    [Fact(Skip = "bug: shutdown race. DedicatedServerService does not await its connection loops (RunConnectionLoopAsync is " +
-                 "fire-and-forget) and DedicatedServerHost.Dispose takes no lock, so host.Dispose races a late ReleaseConnection " +
-                 "that removes a Bullet body: AV in btDynamicsWorld_removeRigidBody (Smoke8 run 2/5). Target: DisposeAsync " +
-                 "returns only after every connection loop (and its release) has finished.")]
     public async Task ServiceShutdown_TargetWaitsForInFlightReleases()
     {
         ShutdownProbe probe = await RunShutdownWithBlockedReleaseAsync();
-        Assert.True(probe.ReleaseStarted);
-        Assert.False(probe.ShutdownCompletedWhileReleaseBlocked);
+        Assert.True(probe.ReleaseStarted, "the client disconnect never reached ReleaseConnection");
+        Assert.False(probe.ShutdownCompletedWhileReleaseBlocked, "DisposeAsync returned while a release was still in flight");
     }
 
     // Deterministic interleaving of what the load run hit by chance: the server reads the peer's

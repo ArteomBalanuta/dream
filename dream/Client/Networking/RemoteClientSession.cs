@@ -36,9 +36,17 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private int _disposeState;
     private readonly string _commandLogKey;
     private readonly string _slowCommandLogKey;
+    private readonly string _keepaliveLogKey;
     private long _sentCommandCount;
     // Assigned under _sendLock together with the encode, so sequences follow wire order.
     private ulong _nextOutboundSequence = 1;
+    // Stopwatch timestamp of the last frame handed to the transport (any kind, keepalives too).
+    private long _lastSendTimestamp = Stopwatch.GetTimestamp();
+    // Set by the keepalive task; the send loop takes it and writes an empty frame if nothing else
+    // went out meanwhile.
+    private int _keepaliveDue;
+    private long _sentKeepaliveCount;
+    private Task? _keepaliveTask;
     // Completed by the receive loop: with the server's hello when it arrives, with a
     // ProtocolVersionMismatchException when the server speaks another version, or with null when
     // the loop ends first. ConnectAsync waits on it briefly.
@@ -47,6 +55,16 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     // How long ConnectAsync waits for the server's hello before returning the session anyway.
     public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
+
+    // Commands go out only from prediction ticks on the game loop, so a frozen loop (a window
+    // drag, a long GC, a debugger break) sends nothing and the server's idle timeout
+    // (ServerConnectionOptions.IdleTimeout, 10 s) would close the connection. Once the background
+    // receive starts, a keepalive task checks twice per interval and, when no frame has gone out
+    // for KeepaliveInterval, has the send loop write one empty frame (a zero length prefix). The
+    // server counts any complete frame as liveness and skips empty ones, so this needs no new
+    // message kind and no protocol version change. A dead process sends nothing and is still
+    // closed by the server.
+    public static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(1);
 
     public RemoteClientSession(
         ITransportConnection connection,
@@ -60,6 +78,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         Options = options;
         _commandLogKey = $"client.tx.command.{options.SessionId}";
         _slowCommandLogKey = $"client.tx.command.slow.{options.SessionId}";
+        _keepaliveLogKey = $"client.tx.keepalive.{options.SessionId}";
     }
 
     public RemoteClientOptions Options { get; }
@@ -68,8 +87,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     public bool IsConnected { get; private set; } = true;
 
-    // Why the receive loop stopped, when it stopped for a reason other than the server closing
-    // the connection; for example "Server uses protocol v1; this client uses v2.".
+    // Why the connection stopped, when it stopped other than by this session's own disposal; for
+    // example "Server uses protocol v1; this client uses v2.", or "Connection lost: ..." when the
+    // server closed the socket (an idle or stall close) or a send failed. Null while connected.
     public string? DisconnectReason { get; private set; }
 
     public static async ValueTask<RemoteClientSession> ConnectAsync(
@@ -154,6 +174,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     public long SentCommandCount => Interlocked.Read(ref _sentCommandCount);
 
+    // Empty keepalive frames written because nothing else was sent for KeepaliveInterval.
+    public long SentKeepaliveCount => Interlocked.Read(ref _sentKeepaliveCount);
+
     // Commands queued but not yet handed to the transport.
     public int PendingCommandCount => _pendingCommands.Count;
 
@@ -235,6 +258,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
                         await SendMessageAsync(new PlayerCommandMessage(command), cancellationToken);
                         Interlocked.Increment(ref _sentCommandCount);
                     }
+
+                    // Anything just sent above already proved liveness.
+                    if (Interlocked.Exchange(ref _keepaliveDue, 0) != 0 &&
+                        Stopwatch.GetElapsedTime(Volatile.Read(ref _lastSendTimestamp)) >= KeepaliveInterval)
+                    {
+                        await SendKeepaliveAsync(cancellationToken);
+                    }
                 }
                 finally
                 {
@@ -252,6 +282,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         catch (Exception ex)
         {
             IsConnected = false;
+            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
             NetworkDiagnosticsLog.Write(
                 "client.send.error",
                 $"endpoint={Options.EndpointLabel} session={Options.SessionId} error={ex.GetType().Name}: {ex.Message}");
@@ -314,9 +345,51 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
     }
 
+    // Also starts the keepalive task, so a connected session stays alive while its owner's loop
+    // is frozen.
     public void StartBackgroundReceive()
     {
         _receiveLoopTask ??= Task.Run(() => ReceiveLoopAsync(_shutdown.Token));
+        _keepaliveTask ??= Task.Run(() => KeepaliveLoopAsync(_shutdown.Token));
+    }
+
+    // Runs off the render thread. PeriodicTimer waits allocate nothing after the first.
+    // Keepalives start only once the server's hello has shown it speaks this protocol version,
+    // whose servers skip empty frames; a peer that never says hello gets none.
+    private async Task KeepaliveLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            ServerHelloMessage? hello;
+            try
+            {
+                hello = await _serverHello.Task.WaitAsync(cancellationToken);
+            }
+            catch (ProtocolVersionMismatchException)
+            {
+                return;
+            }
+
+            if (hello == null)
+            {
+                return;
+            }
+
+            using PeriodicTimer timer = new(KeepaliveInterval / 2);
+            while (IsConnected && await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (Stopwatch.GetElapsedTime(Volatile.Read(ref _lastSendTimestamp)) < KeepaliveInterval)
+                {
+                    continue;
+                }
+
+                Volatile.Write(ref _keepaliveDue, 1);
+                SignalSendLoop();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -327,6 +400,18 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
 
         _shutdown.Cancel();
+        // First, so it cannot start a send loop after the one below has been awaited.
+        if (_keepaliveTask != null)
+        {
+            try
+            {
+                await _keepaliveTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
         if (_sendLoopTask != null)
         {
             try
@@ -388,6 +473,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             // because the send is awaited here, inside _sendLock, before the next encode reuses the
             // buffer; transports must not keep the memory after SendAsync completes.
             await _connection.SendAsync(frame, cancellationToken);
+            Volatile.Write(ref _lastSendTimestamp, Stopwatch.GetTimestamp());
         }
         finally
         {
@@ -396,6 +482,35 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
 
         LogOutbound(message, frameLength, stopwatch?.Elapsed.TotalMilliseconds ?? 0d);
+    }
+
+    // One empty frame: no envelope and no sequence number, so it cannot disturb the server's
+    // ordering checks. Runs on the send loop only.
+    private async ValueTask SendKeepaliveAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
+            _frameWriter.BeginFrame(_framer);
+            ReadOnlyMemory<byte> frame = _frameWriter.CompleteFrame(_framer);
+            await _connection.SendAsync(frame, cancellationToken);
+            Volatile.Write(ref _lastSendTimestamp, Stopwatch.GetTimestamp());
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+
+        long count = Interlocked.Increment(ref _sentKeepaliveCount);
+        if (NetworkDiagnosticsLog.IsEnabled &&
+            NetworkDiagnosticsLog.ShouldLogEvery(_keepaliveLogKey, TimeSpan.FromSeconds(5)))
+        {
+            NetworkDiagnosticsLog.Write(
+                "client.tx.keepalive",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} count={count}");
+        }
     }
 
     // Caller holds _sendLock.
@@ -438,6 +553,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             while (await ProcessInboundOnceAsync(cancellationToken))
             {
+            }
+
+            // The server closed the socket: an idle, send-stall or backlog close, a kick or a
+            // server shutdown. None of these is announced by a message.
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                DisconnectReason ??= "Connection lost: the server closed the connection.";
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

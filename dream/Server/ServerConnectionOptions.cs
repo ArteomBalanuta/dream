@@ -11,9 +11,16 @@ public sealed record ServerConnectionOptions
     // client is never near it; it catches peers that vanished without a TCP close.
     public TimeSpan IdleTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    // Closes a connection whose current socket write has not completed for this long. The
-    // transport reports no partial progress, so one frame must finish inside it.
+    // Closes a connection whose current socket write has not completed for this long plus the
+    // frame's transfer allowance (see SendStallMinimumBytesPerSecond). The transport reports no
+    // partial progress, so one frame must finish inside that limit.
     public TimeSpan SendStallTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    // The slowest link a frame write is still allowed to run at: each write's stall limit is
+    // SendStallTimeout plus frameBytes / this rate, so a slow but live client receiving a large
+    // frame (a full world resync) is not mistaken for a stalled one. Zero or less gives every
+    // frame the flat SendStallTimeout.
+    public int SendStallMinimumBytesPerSecond { get; init; } = 256 * 1024;
 
     // A lagging client's unsent snapshots merge into one. When the merged world mutations or
     // damage events pass these caps, the pending deltas are dropped and the server serves the
