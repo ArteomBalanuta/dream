@@ -32,7 +32,17 @@ public static class ToolCatalog
                 "Utility tool for traversal loadouts and world inspection passes.",
                 "held.tool.lantern",
                 ["Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed"],
-                new ToolStatModifier(StrengthBonus: 1, AttackSpeedBonus: 0.10f))
+                new ToolStatModifier(StrengthBonus: 1, AttackSpeedBonus: 0.10f),
+                HeldLightKind.Lantern),
+            // Wave T2: the first item that lights the night. No stat bonus.
+            ["tool.torch"] = new(
+                "tool.torch",
+                "Torch",
+                "A burning torch that lights the ground around you after dark.",
+                "held.tool.torch",
+                ["Role: Light", "Light: warm, radius 8"],
+                default,
+                HeldLightKind.Torch)
         };
 
     public static IReadOnlyList<string> StarterItemKinds { get; } =
@@ -40,7 +50,10 @@ public static class ToolCatalog
         "tool.builder-hammer",
         "tool.field-blade",
         "tool.stone-maul",
-        "tool.survey-lantern"
+        "tool.survey-lantern",
+        // Last, so the first starter item (the hammer) stays the one equipped. Players whose
+        // backpack predates it receive it through PlayerInventoryService's starter top-up.
+        "tool.torch"
     ];
 
     public static ToolDefinition Resolve(string itemKind)

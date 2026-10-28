@@ -121,8 +121,10 @@ internal sealed class PlayerInventoryService
     }
 
     // Makes sure the player's inventory is loaded and usable: loads it if no join did, equips the
-    // first occupied backpack slot when nothing is equipped, and seeds the starter inventory into an
-    // empty one. False when the inventory could not be loaded yet (see TryLoadSynchronously).
+    // first occupied backpack slot when nothing is equipped, seeds the starter inventory into an
+    // empty one and tops a non-empty one up with the starter kinds it lacks (see
+    // TopUpStarterInventory). False when the inventory could not be loaded yet (see
+    // TryLoadSynchronously).
     public bool Ensure(string playerName)
     {
         if (!TryLoadSynchronously(playerName))
@@ -144,6 +146,7 @@ internal sealed class PlayerInventoryService
                 PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, firstOccupiedSlot.Value);
             }
 
+            TopUpStarterInventory(playerName, slots);
             return true;
         }
 
@@ -369,25 +372,8 @@ internal sealed class PlayerInventoryService
         long? firstItemInstanceId = null;
         foreach (string itemKind in ToolCatalog.StarterItemKinds)
         {
-            ToolDefinition definition = ToolCatalog.Resolve(itemKind);
-            long itemInstanceId = _nextItemInstanceId++;
+            long itemInstanceId = GrantItem(playerName, slots, itemKind, slotIndex);
             firstItemInstanceId ??= itemInstanceId;
-            PersistedItemInstance item = new(
-                itemInstanceId,
-                definition.ItemKind,
-                definition.DisplayName,
-                definition.VisualId,
-                playerName,
-                WorldPosition: null,
-                State: "Inventory",
-                StackCount: 1,
-                CreatedUtc: DateTime.UtcNow,
-                UpdatedUtc: DateTime.UtcNow);
-            _itemInstances[item.ItemInstanceId] = item;
-            slots[slotIndex] = itemInstanceId;
-            NoteWriteQueued(playerName);
-            EnqueueWorldWrite(world => world.SaveItemInstance(item));
-            PersistSlot(playerName, slotIndex, itemInstanceId);
             slotIndex++;
         }
 
@@ -396,6 +382,86 @@ internal sealed class PlayerInventoryService
             slots[InventoryConstants.EquippedSlotIndex] = firstItemInstanceId.Value;
             PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, firstItemInstanceId.Value);
         }
+    }
+
+    // Grants each starter kind that no backpack item has into the lowest free backpack slot, with
+    // the same writes as the starter seeding, so a player whose inventory predates a new starter
+    // item (wave T2's torch) receives it. Idempotent: a kind already held is skipped, so a second
+    // call writes nothing. A full backpack receives nothing, and the equipped slot never changes.
+    private void TopUpStarterInventory(string playerName, Dictionary<int, long> slots)
+    {
+        IReadOnlyList<string> starterKinds = ToolCatalog.StarterItemKinds;
+        for (int kindIndex = 0; kindIndex < starterKinds.Count; kindIndex++)
+        {
+            string itemKind = starterKinds[kindIndex];
+            if (BackpackHoldsKind(slots, itemKind))
+            {
+                continue;
+            }
+
+            int freeSlot = FindLowestFreeBackpackSlot(slots);
+            if (freeSlot < 0)
+            {
+                return;
+            }
+
+            GrantItem(playerName, slots, itemKind, freeSlot);
+            NetworkDiagnosticsLog.Write(
+                "server.inventory.starter-top-up",
+                $"player={playerName} kind={itemKind} slot={freeSlot}");
+        }
+    }
+
+    private bool BackpackHoldsKind(Dictionary<int, long> slots, string itemKind)
+    {
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            if (slots.TryGetValue(slotIndex, out long itemInstanceId)
+                && _itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item)
+                && string.Equals(item.ItemKind, itemKind, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int FindLowestFreeBackpackSlot(Dictionary<int, long> slots)
+    {
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            if (!slots.ContainsKey(slotIndex))
+            {
+                return slotIndex;
+            }
+        }
+
+        return -1;
+    }
+
+    // Creates a new item of the kind in the backpack slot and queues its item and slot writes.
+    private long GrantItem(string playerName, Dictionary<int, long> slots, string itemKind, int slotIndex)
+    {
+        ToolDefinition definition = ToolCatalog.Resolve(itemKind);
+        long itemInstanceId = _nextItemInstanceId++;
+        PersistedItemInstance item = new(
+            itemInstanceId,
+            definition.ItemKind,
+            definition.DisplayName,
+            definition.VisualId,
+            playerName,
+            WorldPosition: null,
+            State: "Inventory",
+            StackCount: 1,
+            CreatedUtc: DateTime.UtcNow,
+            UpdatedUtc: DateTime.UtcNow);
+        _itemInstances[item.ItemInstanceId] = item;
+        slots[slotIndex] = itemInstanceId;
+        NoteWriteQueued(playerName);
+        EnqueueWorldWrite(world => world.SaveItemInstance(item));
+        PersistSlot(playerName, slotIndex, itemInstanceId);
+        return itemInstanceId;
     }
 
     private InventoryItemSnapshot? TryResolveItem(Dictionary<int, long> slots, int slotIndex)

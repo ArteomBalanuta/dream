@@ -191,10 +191,13 @@ public partial class PlayScene
         _inventory = inventory;
         string heldItemId;
         ToolStatModifier modifier = default;
+        HeldLightKind heldLight = HeldLightKind.None;
         if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
         {
             heldItemId = equippedItem.VisualId;
-            modifier = ToolCatalog.Resolve(equippedItem.ItemKind).StatModifier;
+            ToolDefinition definition = ToolCatalog.Resolve(equippedItem.ItemKind);
+            modifier = definition.StatModifier;
+            heldLight = definition.HeldLight;
         }
         else
         {
@@ -203,5 +206,7 @@ public partial class PlayScene
 
         _runtime.Player.Combatant.ApplyEquippedToolModifier(modifier);
         _viewModelController.SetHeldItem(heldItemId);
+        // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
+        _localHeldLight = heldLight;
     }
 }
