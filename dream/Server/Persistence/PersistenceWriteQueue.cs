@@ -34,6 +34,18 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     public long FailedWrites => Interlocked.Read(ref _failedWrites);
 
+    // Writes queued but not yet started (always 0 in inline mode).
+    public int PendingCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _pending.Count;
+            }
+        }
+    }
+
     public void Enqueue(Action write)
     {
         ArgumentNullException.ThrowIfNull(write);

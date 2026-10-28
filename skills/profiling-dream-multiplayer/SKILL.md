@@ -49,6 +49,19 @@ Key facts to report:
 - top slow timings with categories
 - likely bottleneck and next verification step
 
+## Headless Load Harness
+
+For server-only scalability numbers (no windows, no GPU), use the load tests in `dream.Tests/Load`. They seed a temp SQLite world, start `DedicatedServerService` on loopback, connect bots over the real `RemoteClientSession`, and write `artifacts/load/<scenario>.json` plus a `.md` summary.
+
+```bash
+MSYS_NO_PATHCONV=1 dotnet build dream/dream.csproj -c Release
+DREAM_LOAD_TEST=1 MSYS_NO_PATHCONV=1 dotnet test dream.Tests/dream.Tests.csproj -c Release "/p:BaseOutputPath=<absolute repo path>/artifacts/verify-bin/" --filter "FullyQualifiedName~ServerLoadTests.Smoke8"
+```
+
+- Scenarios: `Smoke8`, `Players32`, `World10k`, `Soak` (30 minutes). `DREAM_LOAD_DURATION_SECONDS` shortens any of them.
+- Use Release; Debug numbers are several times worse. Other heavy processes on the machine skew the tick figures, so compare runs taken under the same conditions.
+- The tick figures come from `DedicatedServerService.CaptureMetrics()` (always on, no `DREAM_NET_DIAGNOSTICS` needed): tick-loop iteration p50/p95/p99/max, advance per simulated tick, dropped ticks, checkpoint capture and write times, write-queue depth, and bytes and frames per connection.
+
 ## Guardrails
 
 - Do not claim a fix from one window title; compare logs from server and all clients.
