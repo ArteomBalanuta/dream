@@ -20,6 +20,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
     private readonly IStaticWorldChunkMeshStore _meshStore;
+    // Distinct chunks drawn this frame; cleared each Draw, so the visible-chunk stat counts chunks
+    // rather than (chunk, material) meshes without allocating.
+    private readonly HashSet<StaticWorldChunkKey> _drawnChunks = new();
     private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
     private StaticWorldChunkBuildRequest? _activeBuildRequest;
     private StaticWorldChunkBuildRequest? _queuedBuildRequest;
@@ -123,7 +126,27 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             bounds.Size.Length * 0.5f);
     }
 
+    // True when the mesh bounds pass both the distance cull and the view frustum.
+    public static bool IsChunkVisible(
+        Vector3 cameraPosition,
+        Vector3 cameraFront,
+        in ViewFrustum frustum,
+        StaticWorldChunkBounds bounds)
+    {
+        return IsChunkVisible(cameraPosition, cameraFront, bounds) &&
+            frustum.IntersectsAabb(bounds.Min, bounds.Max);
+    }
+
+    // The frustum comes from the camera view and the projection the static mesh draw uses.
     public StaticWorldChunkRenderStats Draw(Render render, Camera camera, GeometryRenderExport export)
+    {
+        ArgumentNullException.ThrowIfNull(render);
+        ArgumentNullException.ThrowIfNull(camera);
+        ViewFrustum frustum = ViewFrustum.FromViewAndProjection(camera.GetViewMatrix(), render.ProjectionMatrix);
+        return Draw(render, camera, frustum, export);
+    }
+
+    public StaticWorldChunkRenderStats Draw(Render render, Camera camera, in ViewFrustum frustum, GeometryRenderExport export)
     {
         DrainCompletedBuild();
         // Stopwatch timestamps rather than a Stopwatch instance: an unchanged frame allocates nothing.
@@ -159,16 +182,31 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         StaticWorldChunkSyncStats syncStats = ApplyPendingUploads();
         double syncMilliseconds = ElapsedMilliseconds(ref timestamp);
 
-        int visibleChunks = 0;
+        _drawnChunks.Clear();
         int visibleMeshes = 0;
         int visibleFaces = 0;
         int visibleTriangles = 0;
+        int distanceCulledMeshes = 0;
+        int frustumCulledMeshes = 0;
+        Vector3 cameraPosition = camera.Position;
+        Vector3 cameraFront = camera.Front;
         foreach (StaticWorldChunkMeshInfo mesh in _meshes.Values)
         {
             // Meshes without faces have no GPU buffer.
-            if (mesh.ExposedFaceCount <= 0 ||
-                !IsChunkVisible(camera.Position, camera.Front, mesh.Bounds))
+            if (mesh.ExposedFaceCount <= 0)
             {
+                continue;
+            }
+
+            if (!IsChunkVisible(cameraPosition, cameraFront, mesh.Bounds))
+            {
+                distanceCulledMeshes++;
+                continue;
+            }
+
+            if (!frustum.IntersectsAabb(mesh.Bounds.Min, mesh.Bounds.Max))
+            {
+                frustumCulledMeshes++;
                 continue;
             }
 
@@ -177,11 +215,13 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 continue;
             }
 
-            visibleChunks++;
+            _drawnChunks.Add(mesh.Key.ChunkKey);
             visibleMeshes++;
             visibleFaces += mesh.ExposedFaceCount;
             visibleTriangles += mesh.TriangleCount;
         }
+
+        int visibleChunks = _drawnChunks.Count;
 
         double drawMilliseconds = ElapsedMilliseconds(ref timestamp);
 
@@ -196,7 +236,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             syncMilliseconds,
             drawMilliseconds,
             syncStats.RebuiltMeshes,
-            syncStats.ReusedMeshes);
+            syncStats.ReusedMeshes,
+            distanceCulledMeshes,
+            frustumCulledMeshes);
     }
 
     private static double ElapsedMilliseconds(ref long timestamp)
@@ -612,6 +654,9 @@ internal sealed class StaticWorldChunkUploadBatch
     }
 }
 
+// VisibleChunks counts distinct chunks with at least one mesh drawn; MeshCount counts the
+// (chunk, material) meshes drawn after the distance and frustum culls. The culled counts cover
+// meshes with faces that one of the culls skipped this frame.
 public readonly record struct StaticWorldChunkRenderStats(
     int VisibleChunks,
     int MeshCount,
@@ -623,7 +668,9 @@ public readonly record struct StaticWorldChunkRenderStats(
     double SyncMilliseconds = 0d,
     double DrawMilliseconds = 0d,
     int RebuiltMeshes = 0,
-    int ReusedMeshes = 0);
+    int ReusedMeshes = 0,
+    int DistanceCulledMeshes = 0,
+    int FrustumCulledMeshes = 0);
 
 public readonly record struct StaticWorldChunkSyncStats(
     int RebuiltMeshes,
