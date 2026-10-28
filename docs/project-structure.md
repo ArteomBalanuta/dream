@@ -12,9 +12,9 @@
 
 ## Solution And Project Files
 
-- `dream/dream.sln`: Visual Studio solution file
+- `dream/dream.sln`: Visual Studio solution file. It lists only the `dream` project, not `dream.Tests`; build and test each project by path.
 - `dream/dream.csproj`: .NET project file with package references and build settings
-- `dream.Tests/dream.Tests.csproj`: test project for focused regression coverage around gameplay and runtime seams
+- `dream.Tests/dream.Tests.csproj`: test project (`net10.0`, workstation concurrent GC) for regression coverage around gameplay, protocol, server, persistence and rendering helpers; `xunit.runner.json` configures parallel execution
 - `dream.Tests/dream.Tests.csproj` also copies the game's Bullet native runtime files into the test output so runtime-backed multiplayer tests can execute under `dotnet test`
 
 ## Source Layout
@@ -24,11 +24,13 @@ Production code uses the `Dream` root namespace and folder-matched file-scoped n
 - `dream/Application/`: process startup, OpenTK window shell, settings, runtime state, and title helpers
 - `dream/Client/Startup/`: boot-time connection scene, connection form state, local integrated server handle, and connection coordinator
 - `dream/Client/Scenes/`: desktop gameplay scene composition
+- `dream/Client/World/`: `ClientWorldSession`, the client's replicated world (map, predicted player, replicated enemies) that replaced the server runtime on the client
 - `dream/Client/Input/`: desktop input capture, text input queueing, and one-shot/resume filters
 - `dream/Client/Networking/`: remote client session, client connector, and client transport adapter seams
 - `dream/Client/Replication/`: client-side application of authoritative snapshots, corrections, action results, world mutations, and enemy state
 - `dream/Client/Presentation/`: client-owned remote/local player presentation DTOs, interpolation buffers, and third-person camera rig
-- `dream/Server/`: server-mode bootstrap, dedicated host/service loop, per-connection pump, and tick-driven host contract
+- `dream/Server/`: server-mode bootstrap, dedicated host/service loop, per-connection pump and liveness options, join throttle, tick pacing and metrics, and the background checkpoint writer
+- `dream/Server/Persistence/`: the SQLite implementations of the persistence ports (repositories, schema bootstrapper, write batch, checkpoint writer, persistence bundle)
 - `dream/Multiplayer/Protocol/`: protocol message contracts, action/result payloads, routing, JSON codec, and length-prefixed framing
 - `dream/Multiplayer/Transport/`: TCP transport implementations and transport connection abstractions
 - `dream/Multiplayer/Sessions/`: player session identity, joined-player registry, roster entries, and command inboxes
@@ -38,10 +40,14 @@ Production code uses the `Dream` root namespace and folder-matched file-scoped n
 - `dream/Simulation/Players/`: player facade, camera, movement, interaction, command intents, combatant, and stat models
 - `dream/Simulation/Enemies/`: enemy actors, registry, movement/collision helpers, combat adapter, and wolf spawn policy
 - `dream/Simulation/Combat/`: shared combat identity, health, damage receipts/events, and hit resolution
-- `dream/Simulation/Physics/`: Bullet integration, physics body factories, sync, and Bullet/OpenTK conversion extensions
-- `dream/Rendering/Core/`: OpenGL render facade, shaders, resource cache, and model asset cache
+- `dream/Simulation/Physics/`: Bullet integration, physics body factories, sync, `CubeRestFreezer`, `BulletProfilerGuard`, and Bullet/OpenTK conversion extensions
+- `dream/Simulation/Rules/` (`Dream.Simulation.Rules`): combat-formula service, formula sets and the whitelisted expression engine
+- `dream/Simulation/Persistence/` (`Dream.Simulation.Persistence`): persistence ports (repository interfaces), `Persisted*` records, `PersistenceCheckpoint`, `PersistenceWriteQueue`
+- `dream/Simulation/Inventory/`: inventory snapshots and the tool catalog
+- `dream/Simulation/Determinism/`: deterministic random and the simulation-state checksum
+- `dream/Rendering/Core/`: OpenGL render facade, shaders (with alpha MASK variants), `ViewFrustum`, resource and model caches, async model loading, `GpuFrameTimer` and `RenderCounters`
 - `dream/Rendering/Models/`: glTF model loading, animation playback, skinning/model transform helpers, and model asset definitions
-- `dream/Rendering/World/`: world rendering, cube transforms, batch planning, and collision debug rendering
+- `dream/Rendering/World/`: world rendering, static chunk extraction, meshing and batched terrain rendering, cube transforms, batch planning, and collision debug rendering
 - `dream/Rendering/Actors/`: world-space actor renderers, actor labels, wolf animation state, and player model render state
 - `dream/Rendering/Hud/`: HUD rendering, settings request DTOs, floating combat text, and authoritative action feedback
 - `dream/Rendering/ViewModels/`: first-person viewmodel catalog, rig settings, pose resolution, controller, and renderer
@@ -49,7 +55,7 @@ Production code uses the `Dream` root namespace and folder-matched file-scoped n
 - `dream/Configuration/`: text config load/save models
 - `dream/Utilities/`: small generic helpers with no richer subsystem ownership
 
-The test project mirrors the production folders under the `Dream.Tests` namespace. Structural tests in `dream.Tests/ProjectStructure/` guard against returning to a flat source root and protect the most important server/protocol dependency directions.
+The test project mirrors the production folders under the `Dream.Tests` namespace, plus `Integration/` (loopback and cross-subsystem tests) and `Load/` (opt-in load and measurement tests, `DREAM_LOAD_TEST=1`). Structural tests in `dream.Tests/ProjectStructure/` guard against returning to a flat source root and protect the most important server/protocol dependency directions.
 
 ## Shader Files
 
@@ -59,6 +65,7 @@ Shader files live under `dream/shaders/`:
 - `fragmentShader.glsl`
 - `cubeVertex.glsl`
 - `cubeFragment.glsl`
+- `enemyFragment.glsl`
 - `hudVertex.glsl`
 - `hudFragment.glsl`
 - `hudVertexText.glsl`

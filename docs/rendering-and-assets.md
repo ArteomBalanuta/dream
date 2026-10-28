@@ -30,7 +30,8 @@ That ordering keeps enemy actors in the same depth-tested world layer as cubes, 
 The current shader dictionary is populated with:
 
 - `default`: built from `vertexShader.glsl` and `fragmentShader.glsl`
-- `cube`: built from `cubeVertex.glsl` and `cubeFragment.glsl`
+- `cube`: built from `cubeVertex.glsl` and `cubeFragment.glsl`, with an alpha MASK variant (`Render.LoadWorldShader`)
+- `enemy`: built from `cubeVertex.glsl` and `enemyFragment.glsl`, with an alpha MASK variant (`Render.cs:282`)
 
 Separate shader objects are also created for:
 
@@ -43,17 +44,11 @@ Runtime shader file paths are provided through `AssetPaths.cs`.
 
 ## Cube Rendering Paths
 
-`Render.DrawCube()` builds a model matrix from:
-
-- The cube position
-- The cube side length
-- A translation offset of `(-0.5, -0.5, -0.5)` to align the geometry
-
-It then chooses one of two paths:
+`Render.DrawCube()` builds a centered visual model matrix (`CubeTransforms.CreateCenteredVisualModelMatrix`) from the cube position, side length and the model's asset scale, then resolves the model from `Cube.MaterialId` through `CubeMaterialModelCatalog.Resolve`. It chooses one of two paths:
 
 ### Model-backed cube rendering
 
-If `Cube.Animation` is set, rendering is delegated to `AnimatedModel.Render()`. In the current code shape, this shared model-backed path is used broadly by solid cubes that reference the cached `GrassCube` model, including but not limited to the textured floor cubes.
+If a model resolves (grass, dirt and stone have glTF cube models), rendering is delegated to `AnimatedModel.Render()` with the cube's `ShaderName` program. The model is a shared cached asset, not one instance per cube.
 
 The current floor model is now reused through a shared model asset entry instead of being loaded separately for every floor cube.
 The world render loop now iterates the active `Map.SolidCubes` collection rather than scanning every cell in the backing world array each frame.
@@ -77,14 +72,18 @@ Generated chunk UVs are face-direction aware. Top and bottom faces tile across `
 
 For the broader optimization inventory and guardrails around this path, see [Performance And Optimizations](performance-and-optimizations.md).
 
-### Simple cube rendering
+### Terrain fallback cube rendering
 
-If `Cube.Animation` is not set, the renderer:
+If no model resolves for the material, `Render.DrawTerrainCubeFallback` draws a textured unit-cube mesh for that material (see the fallback paragraph under World Geometry Direction). The older transparent cube with a white wireframe overlay and the `Cube.Animation` property no longer exist.
 
-- Draws a transparent solid cube
-- Draws a white wireframe overlay
+### Static terrain pass, culling and MASK variants
 
-Both of these use the shared cube VAO and the `default` shader.
+- The static chunk renderer draws all chunk meshes in one batched pass (`Render.BeginStaticTerrainPass`, `BindStaticTerrainMaterial` per material slot, `EndStaticTerrainPass`), so the program, view, projection and material constants are set once per pass.
+- World geometry is culled against the camera `ViewFrustum` (`Rendering/Core/ViewFrustum.cs`) in `WorldRenderer.IsCubeInView` / `IsGeometryBlockInView` and per chunk in `StaticWorldChunkRenderer`.
+- World shader programs are loaded with `Render.LoadWorldShader`, which also compiles a MASK variant (`WORLD_ALPHA_MASK`, `Shader.AlphaMaskDefine`). `AnimatedModel` uses it only for glTF `MASK` materials, with the material's alpha cutoff. The OPAQUE programs contain no `discard`.
+- `GpuFrameTimer` (GPU time for the world, actors and HUD sections) and `RenderCounters` (draw calls, program binds, uniform uploads) feed the `GPU:` line of the settings-panel performance counters.
+
+See [Performance And Optimizations](performance-and-optimizations.md) for the guardrails.
 
 ## Enemy Rendering Path
 

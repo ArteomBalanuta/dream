@@ -6,29 +6,33 @@
 
 ## Runtime Flow
 
-The program starts in `Program.Main()`, which creates a `Game` instance and calls `Run()`. `Game` inherits from `GameWindow`, so OpenTK drives the frame lifecycle through update and render callbacks.
+The program starts in `Program.Main()`. With no argument it creates a `Game` instance and calls `Run()`; with `--server` it runs the headless dedicated server (`ServerBootstrap.RunServerMode()`, TCP port 5057). `Game` inherits from `GameWindow`, so OpenTK drives the frame lifecycle through update and render callbacks.
 
-On each update frame, the project:
+The desktop client is a protocol client of an authoritative server. It opens on a connection screen, connects either to an integrated loopback server (started on demand) or to a remote host, and only then creates `PlayScene`. The server owns the world, physics, combat and persistence; it ticks at 64 Hz and sends snapshots at 32 Hz by default.
 
-- Advances the Bullet physics world
-- Updates player movement and camera state from keyboard and mouse input
-- Updates scene-local combat and enemy behavior
-- Tries to place a cube or attack a target when the left mouse button is pressed
-- Copies physics body positions back into cube instances for rendering
+On each update frame, the client:
 
-On each render frame, the project:
+- Captures keyboard and mouse input into a `PlayerCommandFrame` and sends it to the server
+- Predicts the local player in its `ClientWorldSession` (physics step and rubble settling) and reconciles that prediction with the server's acknowledged position
+- Applies authoritative snapshots, world mutations and enemy state received from the server
+- Interpolates remote players and enemies for presentation
+
+On each render frame, the client:
 
 - Clears the color and depth buffers
-- Iterates over solid cubes in the map
-- Draws the first enemy actor through the animated world-model path
-- Draws each cube through the rendering subsystem
-- Draws the HUD crosshair and ImGui overlay
+- Draws static terrain through the batched chunk renderer and the live dynamic cubes through the model/shader batch path, both frustum-culled
+- Draws enemies, the local player model (third person) and remote players through the animated-model path
+- Draws the first-person viewmodel pass, then the HUD crosshair and ImGui overlay
 - Swaps buffers and updates the FPS counter
+
+If the session ends (lost connection, server silence, rejected join) the client returns to the connection screen with the reason.
 
 ## Main Systems
 
-- `Game`: owns the main window, frame loop, and top-level orchestration
-- `PhysicsIntegrator`: creates and steps the Bullet physics world
+- `Game`: owns the main window, frame loop, scene switching, and top-level orchestration
+- `PlayScene`, `ClientWorldSession`: the desktop gameplay scene and the client's replicated world
+- `WorldSessionRuntime`, `DedicatedServerHost`, `DedicatedServerService`: the authoritative server runtime and its host and network loop
+- `PhysicsIntegrator`: creates and steps the Bullet physics world (on the server, and for client prediction)
 - `Map`: stores the 3D cube grid and populates the floor
 - `Player`: converts input into physics impulses and camera movement
 - `EnemyActor` and `EnemyCombatant`: own first-pass enemy movement, health, attack cadence, and combat participation

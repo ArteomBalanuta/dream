@@ -5,11 +5,7 @@
 - `.NET 10 SDK`
 - Windows desktop environment with OpenGL support
 
-Run the commands in this guide from the repository root:
-
-```powershell
-G:\workspace\projects\dream
-```
+Run the commands in this guide from the repository root (the folder that holds `global.json`, `dream\` and `dream.Tests\`). `dream\dream.sln` lists only the `dream` project; build and test the projects by path, as below.
 
 ## Build
 
@@ -35,6 +31,14 @@ Use:
 dotnet run --project dream\dream.csproj
 ```
 
+To run the dedicated server instead of the desktop client:
+
+```powershell
+dotnet run --project dream\dream.csproj -- --server
+```
+
+It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 3 and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
+
 The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, and font files are loaded from the runtime output layout rather than from machine-specific absolute paths.
 
 ## Default Runtime Behavior
@@ -46,7 +50,7 @@ On startup, the game currently:
 - starts with a `70` degree field of view
 - builds the HUD crosshair from the live viewport instead of from fixed HUD pixel coordinates
 - scales the HUD crosshair with window size while keeping it centered on the active viewport
-- starts with a `25 x 25` floor that can be resized at runtime from the settings menu
+- starts with a `56 x 56` floor (`WorldDefaults.StartupFloorSize`) that can be resized at runtime from the settings menu
 - loads the default first-person hands and held-item blockout viewmodels from `dream/animations/viewmodels/`
 
 ### Default controls
@@ -55,7 +59,8 @@ On startup, the game currently:
 - Mouse movement: look around
 - `Space`: jump
 - `C`: toggle first-person / third-person camera
-- Left mouse button: place a cube
+- `1` / `2`: select building / combat mode
+- Left mouse button: the active mode's primary action (place a cube, or attack)
 - `F`: toggle frozen movement
 - `Esc`: open or close the settings menu
 
@@ -107,11 +112,23 @@ Use:
 dotnet test dream.Tests\dream.Tests.csproj
 ```
 
-This validates the shared asset-path and shared resource-cache behavior currently covered by the test project.
-It also covers the shared `GameSettings` defaults and resolution update behavior.
-It now also covers floor-size staging, apply behavior, and floor-size bounds.
-It also covers the viewmodel catalog, runtime controller, and named clip playback helpers added for the first-person foundation.
-For the HUD crosshair follow-up, the focused verification command used so far is `dotnet test dream.Tests\dream.Tests.csproj --filter HudLayoutTests --nologo`, which passed with `6` tests.
+The suite covers the simulation, protocol and transport, server, persistence, client replication, rendering helpers and project-structure rules (`dream.Tests/ProjectStructure`). Filter with `--filter`, for example `--filter FullyQualifiedName~HudLayoutTests`.
+
+### Testing
+
+- **A running `dream.exe` locks `dream\bin`** and fails the build's copy step. Do not kill a game you are playing; build and test into another folder with an absolute path inside the repo (repo-relative tests find the repo root from the output folder):
+
+  ```powershell
+  dotnet test dream.Tests\dream.Tests.csproj "/p:BaseOutputPath=<repo>\artifacts\verify-bin\"
+  ```
+
+  From Git Bash, prefix the command with `MSYS_NO_PATHCONV=1` so `/p:` is not rewritten as a path.
+- **Native Bullet files.** `dream.Tests.csproj` copies `libbulletc*` and `BulletSharp.dll.config` from `dream\bin\<Configuration>\net10.0` into the test output (`CopyDreamNativeRuntime`). When you override `BaseOutputPath`, first build `dream` in that configuration without the override (`dotnet build dream\dream.csproj -c Release` for Release tests) so that folder exists.
+- **Scheduling (ARCH-1/1b).** `xunit.runner.json` selects the aggressive parallel algorithm with unlimited threads. `TestAssemblyInitializer` raises the thread-pool minimum to `ProcessorCount * 4` so blocked tests cannot starve the work they wait for. `TestScheduling` caps how many collections run at once (`DREAM_TEST_MAX_COLLECTIONS`, see `docs/configuration.md`), splits slow real-time classes into one collection per test, and starts the longest collections first.
+- **`TimingSensitive` collection** (`TimingSensitiveCollection`). Tests whose assertions are about the wall clock itself (the tick pacer, the 250 ms mesh-build budget, checkpoint persistence, the load tests) and the physics leak-tracking teardown test run alone, after the parallel phase. Everything else, including the loopback and stress tests, runs in the parallel pool and waits on progress with a generous safety deadline instead of on elapsed time. Keep new tests out of this collection unless they truly measure the clock.
+- **GC mode.** The test host runs workstation concurrent GC (`ServerGarbageCollection=false`, `ConcurrentGarbageCollection=true` in `dream.Tests.csproj`), the same as production, so GC counts and tick percentiles from the load harness mean something.
+- **Load and measurement tests** (`dream.Tests/Load`) are skipped unless `DREAM_LOAD_TEST=1`. They start a real server on loopback and write `artifacts/load/<scenario>.json` and a `.md` summary. Use Release. See `skills/profiling-dream-multiplayer/SKILL.md` and the variables in `docs/configuration.md`.
+- **Performance harness.** `skills/profiling-dream-multiplayer/scripts/launch-and-summarize.ps1` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. `-NoStopExisting` keeps it from stopping running `dream` processes, and `-Exe <path>` launches a `dream.exe` from another output folder (pair it with `-SkipBuild`).
 
 ## Known Warnings
 

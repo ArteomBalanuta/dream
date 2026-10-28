@@ -37,6 +37,14 @@ Startup now performs explicit mode selection. Running with no extra arguments st
 
 Desktop startup now opens a primary multiplayer connection screen instead of dropping straight into gameplay. The desktop shell also starts one integrated loopback server automatically and uses that as the default local target. The older environment-variable path still works as a development prefill source through `DREAM_SERVER_HOST`, `DREAM_SERVER_PORT`, `DREAM_CLIENT_SESSION_ID`, and `DREAM_CLIENT_NAME`.
 
+## Current State
+
+- Targets `net10.0` (`global.json` pins the SDK). Multiplayer protocol version is 3 (`TransportEnvelope.CurrentProtocolVersion`); join and resync worlds travel as chunked transfers.
+- Server: 64 Hz simulation, 32 Hz snapshots by default (`DREAM_SNAPSHOT_INTERVAL_TICKS`), frame limits of 64 KB client to server and 8 MB server to client, SQLite persistence in WAL mode with group-committed writes and incremental checkpoints.
+- Client: connection screen first; a session that ends (lost connection, 8 s server-silence watchdog, rejected or timed-out join) returns to it with the reason. Keepalive, join retries and the 45 s join timeout are listed in [docs/configuration.md](docs/configuration.md), Connection liveness.
+- Tests: `dotnet test dream.Tests\dream.Tests.csproj`; see [docs/build-and-run.md](docs/build-and-run.md), Testing, for the output-folder rule when a game is running, the opt-in load tests (`DREAM_LOAD_TEST=1`) and the performance harness.
+- Every `DREAM_*` environment variable the code reads is documented in [docs/configuration.md](docs/configuration.md).
+
 The HUD crosshair is now viewport-driven, so it is rebuilt from the live window size instead of from baked pixel coordinates.
 
 ## Current Controls
@@ -72,7 +80,7 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 ## Runtime Notes
 
 - Source code now uses the `Dream` root namespace and folder-matched namespaces for application, client, server, multiplayer, simulation, rendering, assets, configuration, and utilities. The project remains one executable `.csproj` while these boundaries settle.
-- `Game` now acts as the OpenTK window shell, while `PlayScene` owns the desktop client path and composes the extracted authoritative runtime.
+- `Game` acts as the OpenTK window shell. `PlayScene` owns the desktop client path and composes a `ClientWorldSession` (`Dream.Client.World`): the replicated map, the locally predicted player and the replicated enemies. The authoritative `WorldSessionRuntime` lives on the server side only.
 - `Game` now starts on a dedicated startup connection scene, auto-starts an integrated loopback server in desktop mode, and only constructs `PlayScene` after a successful multiplayer connection.
 - `Program` now validates startup arguments explicitly, defaults to the desktop path, and routes `--server` into `ServerBootstrap` instead of silently falling through.
 - `StartupConnectionScene`, `StartupMenuRenderer`, `NetworkSessionCoordinator`, and `IntegratedLocalServerHandle` now provide the first product-facing multiplayer boot flow and local-host lifecycle instead of relying on environment variables as the primary connect path.
@@ -80,13 +88,13 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - The title bar is updated with the current FPS count.
 - The application grabs the mouse cursor on startup.
 - `PlayScene` now keeps client-local presentation work, while `WorldSessionRuntime` owns authoritative desktop-session state such as `Map`, `PhysicsIntegrator`, `Player`, combat/build resolution, wolf upkeep, and floor rebuild behavior.
-- `WorldSessionRuntime` now also owns a first `PlayerSessionRegistry`, and the local player path uses an explicit `PlayerSessionId` instead of an implicit one-player input shortcut.
-- `PlayScene` now translates raw desktop input into small simulation-facing command/tuning records before advancing the runtime.
+- `WorldSessionRuntime` (server side) owns the `PlayerSessionRegistry`; every joined session gets its own server-side physics player.
+- `PlayScene` translates raw desktop input into small simulation-facing command records and mirrors them to the server
 - `PlayScene` now captures one `PlayerCommandFrame` per local update and routes it into the authoritative runtime with monotonic sequence numbers.
 - Phase 4 now adds a first protocol contract seam: versioned transport envelopes, typed client/server message families, JSON codec plus length-prefixed framing helpers, focused routers/handlers, and typed action/result payload contracts for primary-use style gameplay messages.
 - `PlayScene` now owns a small `ClientProtocolSession` seam for future replicated-state intake instead of turning the scene itself into a protocol router.
 - `PlayScene` now also owns a first `ClientScenePresenter` seam and remote-player interpolation foundation so authoritative remote player snapshots can be buffered separately from local camera/HUD/viewmodel state.
-- Remote players now render through a dedicated `RemotePlayerRenderer` world-space path as simple interpolated cube markers instead of being mixed into local first-person or HUD systems.
+- Remote players render through a dedicated `RemotePlayerRenderer` world-space path as interpolated Kenney blocky character models instead of being mixed into local first-person or HUD systems.
 - Player actor snapshots can now also carry per-actor interaction mode, which gives the multiplayer model a cleaner path toward per-player authoritative build/combat ownership instead of one shared mode fact forever.
 - Authoritative primary-use actions now also flow through explicit `AuthoritativeActionResult` contracts, and the server action handler returns clean `ServerActionMessage` rejections when a session is not joined or no authoritative runtime is attached.
 - `DedicatedServerHost`, `DedicatedServerService`, `ServerBootstrap`, `ServerConnection`, `TcpServerTransport`, and `TcpClientTransport` now form the first live multiplayer host stack: the server can listen on TCP, decode framed protocol messages, route them into the authoritative host, and broadcast snapshots to joined connections without constructing render assets.
@@ -94,14 +102,12 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - `RemoteClientSession`, `RemoteClientOptions`, and `TcpClientConnector` now form the first live desktop-client transport seam: the client can connect to a configured TCP server, send `client.hello` and join automatically, mirror local command frames onto the wire, and drain inbound authoritative messages into the existing client protocol/presenter path.
 - `ClientCorrectionApplier` and `RemoteWorldMutationApplier` now give remote mode a first authoritative intake path for the local player and world cubes: authoritative snapshots can now reposition the local player, sync facing/health, apply authoritative interaction mode, reconcile full world snapshots, and apply incremental cube mutations into the client runtime.
 - `RemoteEnemyStateApplier` now mirrors authoritative enemy actor snapshots into the client runtime, and remote mode now suppresses local enemy simulation plus local movement, look, and primary-use authority while connected so the server’s shared-world state stops competing with client-local guesses.
-- The current live server stack now allows many remote sessions to join and appear in authoritative player snapshots. The first remote session still owns the full authoritative `Player` actor, while additional joined sessions currently run as lightweight kinematic remote actors for movement/look replication and their own authoritative requested mode only.
 - Authoritative action processing now resolves a per-session action context before validating one-shot gameplay actions, so additional joined sessions can already own authoritative build placement and first-pass authoritative combat resolution through their own replicated mode state.
 - Joined remote-session combat no longer trusts client-provided aim rays directly; the server now resolves first-pass combat aim from authoritative actor position/facing for that session context.
 - Remote `server.action` messages now flow into a first `ClientAuthoritativeActionApplier` seam so accepted authoritative world mutations and combat results can update local remote-mode state and feedback immediately instead of remaining dead protocol data until the next snapshot.
 - Rejected `server.action` messages can now also apply immediate local player correction and publish an explicit rejection event, giving the client a first real rollback/UX hook instead of relying only on later snapshot convergence.
 - The client now also turns those surfaced rejection events into short-lived HUD feedback and records bounded action/snapshot diagnostics with session id, sequence, and server tick metadata for remote-authority debugging.
-- The current desktop remote-client path still keeps the in-process runtime alive for local camera/HUD/viewmodel continuity, so this phase is transport attachment plus stronger authoritative mirroring, not yet full local-runtime replacement or complete reconciliation.
-- The desktop host now advances authoritative gameplay through a fixed 64 Hz `ServerTickRunner`/`SimulationClock` seam instead of stepping the runtime directly from render-frame delta.
+- The server advances authoritative gameplay through a fixed 64 Hz `ServerTickRunner`/`SimulationClock` (`SimulationClock.AuthoritativeTicksPerSecond`); actor snapshots go out every second tick, so 32 Hz by default.
 - `PlayScene.Render()` now consumes a runtime-provided `WorldSessionPresentationState` snapshot instead of digging through runtime internals field by field.
 - The scene now spawns one first-pass wolf enemy that chases the player, attacks in melee range, and can be killed in combat mode.
 - If no active wolf enemies remain during gameplay, the scene respawns the default wolf.
@@ -125,7 +131,6 @@ When the settings menu is open, gameplay movement and cube placement are paused 
 - A debug collision overlay can render red wireframes for cube and player collision bodies from Bullet transforms.
 - Focused low-harness regression tests now cover `PlayerController`, `PlayerInteraction`, `PlayerMotor`, and `PhysicsIntegrator` ownership behavior.
 - Session registry and command-frame seams now also have focused low-harness coverage for monotonic command acceptance and local command-frame capture behavior.
-- Fixed-tick scheduling now has focused low-harness coverage, while end-to-end snapshot export over the server transport path still remains pending because the long-running accept loop and remote session spawning are not implemented yet.
 - A runtime-presentation snapshot seam now also has focused test coverage so the client presenter can consume authoritative HUD/world state without owning it directly.
 - Protocol codec, framing, routing, and client/server bootstrap seams now also have focused low-harness coverage.
 - Remote-player interpolation and dedicated renderer selection now also have focused low-harness coverage.

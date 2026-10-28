@@ -15,10 +15,16 @@ powershell -ExecutionPolicy Bypass -File .\skills\profiling-dream-multiplayer\sc
 
 Use `-SkipBuild` only after a successful build in the same checkout. Use `-KeepRunning` when manual visual inspection is needed after metrics are collected.
 
+Other script options (`scripts/launch-and-summarize.ps1`):
+
+- `-NoStopExisting`: do not stop running `dream` processes before launching. Without it the script runs `Get-Process dream | Stop-Process -Force`, which also kills a game you are playing. Pass it whenever other `dream.exe` processes may be running.
+- `-Exe <path>`: launch this `dream.exe` instead of the default `dream\bin\Debug\net10.0\dream.exe` (for example a Release build, or one from a worktree or `artifacts/verify-bin`). The file must exist. The script builds `dream\dream.csproj` into its default folder unless `-SkipBuild` is given, so pair `-Exe` with `-SkipBuild`.
+- `-Port`: sets `DREAM_SERVER_PORT` for the clients only. The dedicated server always listens on `ServerBootstrap.DefaultPort` (5057) and does not read the variable, so any other `-Port` makes the clients miss the server (the script warns).
+
 ## Workflow
 
 1. Read `README.md`, `docs/configuration.md`, and `docs/performance-and-optimizations.md`.
-2. Stop stale `dream.exe` processes before building unless intentionally attaching to an active run.
+2. Stop stale `dream.exe` processes you own before building (the script does it unless `-NoStopExisting` is given), unless intentionally attaching to an active run.
 3. Launch with `DREAM_AUTO_CONNECT=1`, `DREAM_RENDER_PERF_LOG=1`, and `DREAM_NET_DIAGNOSTICS=1`.
 4. Capture one dedicated server and at least two clients when diagnosing multiplayer visibility.
 5. Inspect both directions:
@@ -58,6 +64,8 @@ MSYS_NO_PATHCONV=1 dotnet build dream/dream.csproj -c Release
 DREAM_LOAD_TEST=1 MSYS_NO_PATHCONV=1 dotnet test dream.Tests/dream.Tests.csproj -c Release "/p:BaseOutputPath=<absolute repo path>/artifacts/verify-bin/" --filter "FullyQualifiedName~ServerLoadTests.Smoke8"
 ```
 
+- Why the Release build comes first: `dream.Tests.csproj` has a `CopyDreamNativeRuntime` target that copies `libbulletc*` and `BulletSharp.dll.config` from `dream\bin\<Configuration>\net10.0` into the test output. The `/p:BaseOutputPath=...` override moves the test run's own outputs (including the referenced `dream` project) to the override folder, so the separate `dotnet build dream/dream.csproj -c Release` without an override is what fills `dream\bin\Release\net10.0` for that copy. If that folder is empty, the copy finds nothing.
+- The override must be an absolute path inside the repo, because repo-relative tests find the repo root from their output folder.
 - GC mode: the test host runs workstation concurrent GC, the same as production (`dream.csproj` sets no GC options; `dream.Tests.csproj` sets `ServerGarbageCollection=false` on purpose). Every report states it: the `.md` header prints `GC mode: workstation concurrent (matches production)` and the JSON has `environment.serverGc`. If a report says SERVER GC (for example `DOTNET_gcServer=1` is set in the shell), its GC counts, managed memory and tick percentiles do not represent production; rerun with `DOTNET_gcServer=0`.
 - Scenarios: `Smoke8`, `Players32`, `World10k`, `Soak` (30 minutes). `DREAM_LOAD_DURATION_SECONDS` shortens any of them.
 - Use Release; Debug numbers are several times worse. Other heavy processes on the machine skew the tick figures, so compare runs taken under the same conditions.

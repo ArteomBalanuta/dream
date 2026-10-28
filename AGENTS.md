@@ -4,7 +4,7 @@ This file is for future Codex/LLM agents working in this repository. It defines 
 
 ## Project Snapshot
 
-- `dream` is a C# `.NET 8` desktop project.
+- `dream` is a C# `.NET 10` (`net10.0`, SDK pinned in `global.json`) desktop project with a dedicated-server mode (`--server`).
 - It uses OpenTK for windowing and OpenGL rendering.
 - It uses BulletSharp for physics.
 - It uses ImGui.NET for HUD/UI overlay rendering.
@@ -52,7 +52,8 @@ For small changes (one or two files), skip the architect and use a single implem
 
 ## Repo-Specific Constraints
 
-- Some shader and model assets are referenced through hardcoded absolute Windows paths in the current source.
+- Runtime assets (shaders, models, fonts, config) resolve from the application output folder through `AssetPaths` (`AppContext.BaseDirectory`); no source file hardcodes an absolute Windows path. Keep it that way.
+- `dream/dream.sln` lists only the `dream` project, not `dream.Tests`. Build and test the projects by path, as in Verification.
 - `dotnet build dream\dream.csproj` currently succeeds with warnings; do not describe the build as warning-free.
 - Documentation and ledger updates are part of the work when they are needed to keep project knowledge accurate.
 - Do not silently rewrite historical ledger records unless the task explicitly requires it.
@@ -70,7 +71,7 @@ For small changes (one or two files), skip the architect and use a single implem
 - For C# project changes, run `dotnet build dream\dream.csproj` and `dotnet test dream.Tests\dream.Tests.csproj`.
 - From Git Bash, prefix those commands with `MSYS_NO_PATHCONV=1` so `/p:` switches are not rewritten as paths.
 - A running `dream.exe` locks `dream\bin` and fails the build's copy step. Do not kill a user's game process. Build and test with `/p:BaseOutputPath=artifacts/verify-bin/` instead. The output must stay inside the repo, because repo-relative tests find the root from their output folder.
-- For multiplayer or performance changes, the harness in `skills/profiling-dream-multiplayer` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. Pass `-NoStopExisting` so it does not stop running `dream.exe` processes.
+- For multiplayer or performance changes, the harness in `skills/profiling-dream-multiplayer` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. Pass `-NoStopExisting` so it does not stop running `dream.exe` processes, and `-SkipBuild -Exe <path to a dream.exe built elsewhere>` to profile a build from another output folder. The headless load tests (`DREAM_LOAD_TEST=1`) are described in the same skill.
 - For documentation-only changes, verify file paths, links, and referenced names.
 - Report exactly what you verified.
 
