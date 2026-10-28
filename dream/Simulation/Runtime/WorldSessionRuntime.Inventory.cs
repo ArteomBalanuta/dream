@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Persistence;
@@ -9,6 +10,11 @@ namespace Dream.Simulation.Runtime;
 // equipped-tool combat stats.
 public sealed partial class WorldSessionRuntime
 {
+    // Loaded inventories only: a player's inventory is loaded when it joins (with the join
+    // prefetch, see RestorePersistedPlayerState) and evicted with its profile once it has departed
+    // (EvictCachedProfile), so these hold the active players' and the recently departed players'
+    // inventories, not every inventory in the database. A name is a key of
+    // _inventorySlotsByPlayer exactly when its inventory is loaded (possibly empty).
     private readonly Dictionary<long, PersistedItemInstance> _itemInstances = [];
     private readonly Dictionary<string, Dictionary<int, long>> _inventorySlotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
 
@@ -21,7 +27,11 @@ public sealed partial class WorldSessionRuntime
             return null;
         }
 
-        EnsurePlayerInventory(player.DisplayName);
+        if (!EnsurePlayerInventory(player.DisplayName))
+        {
+            return null;
+        }
+
         RefreshAuthoritativePlayerCombatStats(sessionId);
         return BuildInventorySnapshot(player.DisplayName);
     }
@@ -36,7 +46,11 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Inventory equip rejected because the slot index is out of range.");
         }
 
-        EnsurePlayerInventory(player.DisplayName);
+        if (!EnsurePlayerInventory(player.DisplayName))
+        {
+            return CreateRejectedActionResult(message, "Inventory equip rejected because the inventory is still loading.");
+        }
+
         if (!_inventorySlotsByPlayer.TryGetValue(player.DisplayName, out Dictionary<int, long>? slots)
             || !slots.TryGetValue(intent.SlotIndex, out long itemInstanceId)
             || !_itemInstances.ContainsKey(itemInstanceId))
@@ -56,6 +70,8 @@ public sealed partial class WorldSessionRuntime
             Payload: new InventoryChangedResult(BuildInventorySnapshot(player.DisplayName)));
     }
 
+    // Startup loads no inventory, only the item id counter: new ids start above every persisted id,
+    // including those of inventories that are never loaded this run.
     private void RestorePersistedInventoryState()
     {
         if (_worldPersistence == null)
@@ -63,20 +79,89 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        foreach (PersistedItemInstance item in _worldPersistence.LoadItemInstances())
+        _nextItemInstanceId = Math.Max(_nextItemInstanceId, _worldPersistence.GetMaxItemInstanceId() + 1);
+    }
+
+    // Installs a player's loaded inventory unless one is already loaded for the name: a loaded
+    // inventory is at least as new as any row a load read, because every change to it queues its
+    // write when it happens and an evicted inventory's loaded prefetch is dropped (EvictCachedProfile).
+    private void ApplyLoadedInventory(string playerName, PersistedPlayerInventory? inventory)
+    {
+        if (inventory == null || _inventorySlotsByPlayer.ContainsKey(playerName))
+        {
+            return;
+        }
+
+        Dictionary<int, long> slots = GetOrCreateInventorySlots(playerName);
+        foreach (PersistedItemInstance item in inventory.Items)
         {
             _itemInstances[item.ItemInstanceId] = item;
             _nextItemInstanceId = Math.Max(_nextItemInstanceId, item.ItemInstanceId + 1);
         }
 
-        foreach (PersistedInventorySlot slot in _worldPersistence.LoadInventorySlots())
+        foreach (PersistedInventorySlot slot in inventory.Slots)
         {
-            GetOrCreateInventorySlots(slot.PlayerName)[slot.SlotIndex] = slot.ItemInstanceId;
+            slots[slot.SlotIndex] = slot.ItemInstanceId;
+            _nextItemInstanceId = Math.Max(_nextItemInstanceId, slot.ItemInstanceId + 1);
         }
     }
 
-    private void EnsurePlayerInventory(string playerName)
+    // Loads a player's inventory that no join loaded (a direct caller of a runtime without profiles,
+    // such as a tool or test): the queued writes are flushed first so the read is current. False
+    // when they did not drain in time; the inventory then stays unloaded, so no starter inventory
+    // is seeded over rows still being written.
+    private bool TryLoadInventorySynchronously(string playerName)
     {
+        if (_inventorySlotsByPlayer.ContainsKey(playerName))
+        {
+            return true;
+        }
+
+        if (_worldPersistence == null)
+        {
+            return true;
+        }
+
+        NetworkDiagnosticsLog.Write("server.persistence.inventory-sync-read", $"player={playerName}");
+        if (_writes != null && !_writes.Flush(TimeSpan.FromSeconds(5)))
+        {
+            NetworkDiagnosticsLog.Write("server.persistence.inventory-sync-read-timeout", $"player={playerName}");
+            return false;
+        }
+
+        ApplyLoadedInventory(playerName, _worldPersistence.LoadPlayerInventory(playerName));
+        return true;
+    }
+
+    // Drops a departed player's loaded inventory (EvictCachedProfile). Nothing is lost: its
+    // changes were queued as they happened.
+    private void EvictPlayerInventory(string playerName)
+    {
+        if (!_inventorySlotsByPlayer.Remove(playerName, out Dictionary<int, long>? slots))
+        {
+            return;
+        }
+
+        foreach (long itemInstanceId in slots.Values)
+        {
+            _itemInstances.Remove(itemInstanceId);
+        }
+    }
+
+    internal int LoadedInventoryCount => _inventorySlotsByPlayer.Count;
+
+    internal int LoadedItemInstanceCount => _itemInstances.Count;
+
+    internal long NextItemInstanceId => _nextItemInstanceId;
+
+    // False when the inventory could not be loaded yet (see TryLoadInventorySynchronously).
+    private bool EnsurePlayerInventory(string playerName)
+    {
+        if (!TryLoadInventorySynchronously(playerName))
+        {
+            return false;
+        }
+
         Dictionary<int, long> slots = GetOrCreateInventorySlots(playerName);
         bool hasBackpackContent = slots.Keys.Any(slotIndex => slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount);
         if (hasBackpackContent)
@@ -91,10 +176,11 @@ public sealed partial class WorldSessionRuntime
                 PersistInventorySlot(playerName, InventoryConstants.EquippedSlotIndex, firstOccupiedSlot.Value);
             }
 
-            return;
+            return true;
         }
 
         SeedStarterInventory(playerName, slots);
+        return true;
     }
 
     private void RefreshAuthoritativePlayerCombatStats(PlayerSessionId sessionId)

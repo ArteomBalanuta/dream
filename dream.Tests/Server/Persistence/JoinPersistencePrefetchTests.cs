@@ -526,6 +526,10 @@ public sealed class JoinPersistencePrefetchTests
 
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Call(nameof(LoadInventorySlots), inner.LoadInventorySlots);
 
+        public PersistedPlayerInventory LoadPlayerInventory(string playerName) => Call(nameof(LoadPlayerInventory), () => inner.LoadPlayerInventory(playerName));
+
+        public long GetMaxItemInstanceId() => Call(nameof(GetMaxItemInstanceId), inner.GetMaxItemInstanceId);
+
         public void SaveInventorySlot(PersistedInventorySlot slot) => Call(nameof(SaveInventorySlot), () => inner.SaveInventorySlot(slot));
 
         public void DeleteInventorySlots(string playerName) => Call(nameof(DeleteInventorySlots), () => inner.DeleteInventorySlots(playerName));

@@ -18,7 +18,7 @@ public sealed partial class WorldSessionRuntime
     // on receive threads, consumed on the tick.
     private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
 
-    // Starts loading a joining player's persisted profile and world state on the persistence
+    // Starts loading a joining player's persisted profile, world state and inventory on the persistence
     // worker, so the join itself (applied on the tick) does no database I/O. Called by the host
     // when the join request arrives (it does not wait for the load); thread-safe. The read is
     // queued behind every write already queued and runs after they commit, so it sees this
@@ -45,7 +45,10 @@ public sealed partial class WorldSessionRuntime
             try
             {
                 PersistedPlayerProfile? profile = profiles.TryGet(playerName);
-                prefetch.Complete(profile, world?.TryGetPlayerWorldState(playerName));
+                prefetch.Complete(
+                    profile,
+                    world?.TryGetPlayerWorldState(playerName),
+                    world?.LoadPlayerInventory(playerName));
             }
             catch (Exception ex)
             {
@@ -123,6 +126,7 @@ public sealed partial class WorldSessionRuntime
 
         PersistedPlayerProfile profile;
         PersistedPlayerWorldState? worldState;
+        PersistedPlayerInventory? inventory = null;
         if (_playerPrefetches.TryRemove(playerName, out PersistedPlayerPrefetch? prefetch)
             && prefetch.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
         {
@@ -147,6 +151,7 @@ public sealed partial class WorldSessionRuntime
             }
 
             worldState = prefetchedWorld;
+            prefetch.TryGetInventory(out inventory);
         }
         else
         {
@@ -166,12 +171,17 @@ public sealed partial class WorldSessionRuntime
 
             profile = _playerProfiles.GetOrCreate(playerName);
             worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
+            if (!_inventorySlotsByPlayer.ContainsKey(profile.PlayerName))
+            {
+                inventory = _worldPersistence?.LoadPlayerInventory(profile.PlayerName);
+            }
         }
 
         _unrestoredPlayerSessions.Remove(sessionId);
         MarkProfileActive(playerName);
         CacheProfile(playerName, profile);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
+        ApplyLoadedInventory(profile.PlayerName, inventory);
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
     }
@@ -232,7 +242,7 @@ public sealed partial class WorldSessionRuntime
         foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
         {
             _persistedCubes[persistedCube.CubeId] = persistedCube;
-            _knownProfileNames.Add(persistedCube.OwnerPlayerName);
+            _cubeOwnerNames.Add(persistedCube.OwnerPlayerName);
             // The id counters are derived from the persisted ids (there is no stored counter): a
             // cube id is reserved even when its cell is now occupied and the cube is skipped,
             // because its row still exists. A legacy cube id in the enemy range is reserved there.
@@ -386,6 +396,7 @@ public sealed partial class WorldSessionRuntime
             DateTime.UtcNow,
             cube.Position);
         _persistedCubes[cubeId] = persisted;
+        _cubeOwnerNames.Add(ownerPlayerName);
         EnqueueWorldWrite(world =>
         {
             world.DeleteCubeFracturePieces(cubeId);
@@ -493,6 +504,10 @@ public sealed partial class WorldSessionRuntime
         }
     }
 
+    // Also evicts the name's inventory and its _knownProfileNames entry: inventory is written
+    // through (every change queues its write when it happens, see PersistInventorySlot), so nothing
+    // is pending only in memory, and a later join reads the queued writes back through its prefetch
+    // (ordered behind them) or the synchronous fallback (which flushes them first).
     private void EvictCachedProfile(string playerName)
     {
         if (_profileCache.Remove(playerName, out PersistedPlayerProfile profile)
@@ -501,12 +516,28 @@ public sealed partial class WorldSessionRuntime
         {
             // CacheProfile also stores the profile under the repository's own name for it.
             _profileCache.Remove(profile.PlayerName);
+            EvictDepartedPlayerState(profile.PlayerName);
         }
+
+        EvictDepartedPlayerState(playerName);
 
         // A prefetch already loaded for this name may predate the save the cache held; with the
         // cache entry gone a join would apply it, so drop it and let the join load afresh.
         _playerPrefetches.TryRemove(playerName, out _);
     }
+
+    private void EvictDepartedPlayerState(string playerName)
+    {
+        _knownProfileNames.Remove(playerName);
+        EvictPlayerInventory(playerName);
+    }
+
+    // Names that own a persisted cube (restored or placed this run). IsValidPersistenceOwnerName
+    // accepts them without a repository read; unlike _knownProfileNames (cached profile names,
+    // evicted with the profile LRU) this grows only with cube placements, not with every join.
+    private readonly HashSet<string> _cubeOwnerNames = new(StringComparer.OrdinalIgnoreCase);
+
+    internal int KnownProfileNameCount => _knownProfileNames.Count;
 
     private bool IsProfileNameActive(string playerName)
     {
@@ -740,15 +771,18 @@ public sealed partial class WorldSessionRuntime
             return false;
         }
 
-        if (_playerProfiles == null || _knownProfileNames.Contains(ownerPlayerName))
+        if (_playerProfiles == null
+            || _knownProfileNames.Contains(ownerPlayerName)
+            || _cubeOwnerNames.Contains(ownerPlayerName))
         {
             return true;
         }
 
-        // Rare: an owner who neither joined nor owns a restored cube. Cache a positive answer.
+        // Rare: a cube owner whose profile is not cached and who owns no persisted cube. Cache a
+        // positive answer with the cube owners (this is only asked about cube records' owners).
         if (_playerProfiles.TryGet(ownerPlayerName) != null)
         {
-            _knownProfileNames.Add(ownerPlayerName);
+            _cubeOwnerNames.Add(ownerPlayerName);
             return true;
         }
 

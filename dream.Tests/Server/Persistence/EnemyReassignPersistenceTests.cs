@@ -196,6 +196,10 @@ public sealed class EnemyReassignPersistenceTests
 
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => inner.LoadInventorySlots();
 
+        public PersistedPlayerInventory LoadPlayerInventory(string playerName) => inner.LoadPlayerInventory(playerName);
+
+        public long GetMaxItemInstanceId() => inner.GetMaxItemInstanceId();
+
         public void SaveInventorySlot(PersistedInventorySlot slot) => inner.SaveInventorySlot(slot);
 
         public void DeleteInventorySlots(string playerName) => inner.DeleteInventorySlots(playerName);
