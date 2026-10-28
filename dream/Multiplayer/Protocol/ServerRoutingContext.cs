@@ -41,6 +41,9 @@ public sealed class ServerRoutingContext
     // inbound frame seen from this connection. The host marks it for every routed message (receive
     // thread, under the tick lock); the service also reports the transport's frame count, which
     // includes the client's empty keepalive frames, through ObserveInboundFrameCount (tick thread).
+    // A keepalive is therefore stamped with the observation's time, not its arrival time: up to a
+    // tick late, which only makes the connection look more alive. The host bounds silence by its
+    // last observation sweep, so a tick stall does not age this value (DedicatedServerHost).
     private long _lastInboundTimestamp;
     private long _observedInboundFrameCount;
 
@@ -62,6 +65,57 @@ public sealed class ServerRoutingContext
 
         MarkInbound(timestamp);
         return true;
+    }
+
+    // Join throttle (NETR-8). After a join from this connection is rejected because its session id
+    // or player name is held by a live connection, further joins from it are dropped unanswered
+    // (answering each would turn join spam into reply spam) until the throttle interval passes.
+    // The interval starts at JoinThrottleInitialInterval and doubles on every further live-holder
+    // rejection up to JoinThrottleMaxInterval; an accepted join resets it. A legitimate client
+    // never meets it: it ends its session on such a rejection and comes back on a new connection.
+    // Everything here runs under the host's tick lock.
+    public static readonly TimeSpan JoinThrottleInitialInterval = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan JoinThrottleMaxInterval = TimeSpan.FromSeconds(10);
+
+    private long _joinThrottleUntilTimestamp;
+    private long _joinThrottleIntervalTicks;
+
+    // Set by the claim registry while it handles this connection's join, when a live connection
+    // holds the requested session id or player name. The host reads and clears it after the join.
+    public bool JoinConflictsWithLiveHolder { get; set; }
+
+    // Joins dropped by the current throttle interval.
+    public int DroppedJoinAttempts { get; private set; }
+
+    public bool IsJoinThrottled(long nowTimestamp)
+    {
+        return _joinThrottleIntervalTicks != 0 && nowTimestamp < _joinThrottleUntilTimestamp;
+    }
+
+    // Counts a dropped join and returns how many the current interval has dropped so far.
+    public int RecordDroppedJoinAttempt()
+    {
+        return ++DroppedJoinAttempts;
+    }
+
+    // Starts the next throttle interval (doubled, capped) and returns its length in timestamp ticks.
+    public long ThrottleJoins(long nowTimestamp, long timestampFrequency)
+    {
+        long initialTicks = (long)(JoinThrottleInitialInterval.TotalSeconds * timestampFrequency);
+        long maxTicks = (long)(JoinThrottleMaxInterval.TotalSeconds * timestampFrequency);
+        _joinThrottleIntervalTicks = _joinThrottleIntervalTicks == 0
+            ? initialTicks
+            : Math.Min(_joinThrottleIntervalTicks * 2, maxTicks);
+        _joinThrottleUntilTimestamp = nowTimestamp + _joinThrottleIntervalTicks;
+        DroppedJoinAttempts = 0;
+        return _joinThrottleIntervalTicks;
+    }
+
+    public void ResetJoinThrottle()
+    {
+        _joinThrottleIntervalTicks = 0;
+        _joinThrottleUntilTimestamp = 0;
+        DroppedJoinAttempts = 0;
     }
 
     // A connection gets at most one world resync per cooldown; requests inside it are dropped. It
