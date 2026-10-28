@@ -17,11 +17,12 @@ namespace Dream.Simulation.Determinism;
 //     covered;
 //   - Rubble: every valid rubble piece's cell, piece index, center quantized to PositionQuantum,
 //     exact side length and material, plus the piece count;
-//   - Cubes: every solid cube in Map.SolidCubes, keyed by its cell, with its position quantized
-//     to PositionQuantum, plus the cube count. This catches a physics-driven cube that moves
-//     within its cell, which WorldStateChecksum cannot see. The key is the cell, not the
-//     replicated actor id, because Map exposes no public cube-to-id lookup; a cell holds at most
-//     one cube, so the key is still unique and stable;
+//   - Cubes: every solid cube in Map.SolidCubes, keyed by its replicated id when it has one
+//     (Map.TryGetReplicatedId) and by its cell otherwise, with its position quantized to
+//     PositionQuantum, plus the cube count. This catches a physics-driven cube that moves
+//     within its cell, and two servers that gave the same cube different replicated ids, which
+//     WorldStateChecksum cannot see. The id and cell keys use distinct salts so they cannot
+//     collide; a cell holds at most one cube and an id maps to one cube, so each key is unique;
 //   - WorldMutationSequence: the last world mutation sequence.
 // Quantizing positions absorbs most float noise below PositionQuantum, so tiny differences that
 // would not change gameplay usually leave the checksum unchanged. It is not a guarantee: two
@@ -29,7 +30,7 @@ namespace Dream.Simulation.Determinism;
 // close they are. Any movement larger than the quantum always changes the checksum.
 //
 // Order independence: each actor, rubble piece and cube is hashed on its own (its key, the actor
-// id, the cell and piece index, or the cube cell, is part of its hash) and the element hashes
+// id, the cell and piece index, or the cube id or cell, is part of its hash) and the element hashes
 // are added, the same scheme WorldStateChecksum uses. Addition is commutative, so enumeration
 // order (List, Dictionary) never matters, and no sorting or scratch buffer is needed.
 //
@@ -150,14 +151,30 @@ public static class SimulationStateChecksum
             : Seed.Combine(combat, 0UL);
     }
 
-    // The hash of one solid cube: its cell (from the map's cube index, or its floored position if
-    // the cube is not indexed) and its quantized position.
+    // Key kinds are salted so a replicated-id key, a cell key and a position key can never collide.
+    private const ulong CubeIdSalt = 0x637562652D696421UL; // "cube-id!"
+    private const ulong CubeCellSalt = 0x637562652D63656CUL; // "cube-cel"
+    private const ulong CubeUnindexedSalt = 0x637562652D6E6F78UL; // "cube-nox"
+
+    // The hash of one solid cube: its replicated id when it has one, else its cell (from the map's
+    // cube index), else its quantized position; plus its quantized position.
     private static ulong HashCube(Map map, Cube cube)
     {
         Vector3 position = cube.Position;
-        ulong key = map.TryGetCellForCube(cube, out GeometryCellKey cell)
-            ? Seed.Combine(1UL, Seed.FromCell(cell.X, cell.Y, cell.Z))
-            : Seed.Combine(0UL, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
+        ulong key;
+        if (map.TryGetReplicatedId(cube, out int replicatedId))
+        {
+            key = Seed.Combine(CubeIdSalt, Seed.FromInt(replicatedId));
+        }
+        else if (map.TryGetCellForCube(cube, out GeometryCellKey cell))
+        {
+            key = Seed.Combine(CubeCellSalt, Seed.FromCell(cell.X, cell.Y, cell.Z));
+        }
+        else
+        {
+            key = Seed.Combine(CubeUnindexedSalt, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
+        }
+
         return Seed.Combine(key, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
     }
 

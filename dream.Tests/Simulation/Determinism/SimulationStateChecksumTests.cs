@@ -23,8 +23,12 @@ public class SimulationStateChecksumTests
     // Mismatched versions of the checksum across a server and a recording are then expected.
     // History: re-pinned when the Cubes part (solid cube cell and in-cell position) was added and
     // HashActor began hashing InteractionMode, CombatStats and EnemyBehaviorState; the fixture
-    // actors gained those fields so the golden value pins them too.
-    private const ulong GoldenChecksum = 10650874071440684154UL;
+    // actors gained those fields so the golden value pins them too. Re-pinned again when the cube
+    // key became the replicated id (salted) with the cell as a distinct-salt fallback, so two
+    // servers that gave a cube different replicated ids are told apart; this fixture has no
+    // replicated ids, so it pins the cell fallback, and GoldenChecksumWithReplicatedIds pins the id key.
+    private const ulong GoldenChecksum = 13719175460474241594UL;
+    private const ulong GoldenChecksumWithReplicatedIds = 17210230012609153782UL;
 
     [Fact]
     public void IdenticalState_GivesIdenticalChecksum()
@@ -312,6 +316,90 @@ public class SimulationStateChecksumTests
     public void Checksum_OfTheFixedScenario_MatchesTheGoldenValue()
     {
         Assert.Equal(GoldenChecksum, SimulationStateChecksum.Compute(BuildMap(), BuildActors(), MutationSequence));
+    }
+
+    [Fact]
+    public void Checksum_OfTheFixedScenarioWithReplicatedCubeIds_MatchesTheGoldenValue()
+    {
+        Map map = BuildMap();
+        map.AssignReplicatedCubeId(map.TryGetCubeAtCell(2, 1, 2)!, 900);
+
+        Assert.Equal(GoldenChecksumWithReplicatedIds, SimulationStateChecksum.Compute(map, BuildActors(), MutationSequence));
+    }
+
+    [Fact]
+    public void TryGetReplicatedId_ReturnsTheIdForReplicatedCubesAndFalseForOthers_WithoutAllocating()
+    {
+        Map map = new(width: 8, height: 4, depth: 8);
+        Assert.True(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));
+        Assert.True(map.AddCube(new Vector3(5f, 1f, 5f), withPhysics: false));
+        Cube replicated = map.TryGetCubeAtCell(1, 1, 1)!;
+        Cube plain = map.TryGetCubeAtCell(5, 1, 5)!;
+        map.AssignReplicatedCubeId(replicated, 321);
+
+        Assert.True(map.TryGetReplicatedId(replicated, out int id));
+        Assert.Equal(321, id);
+        Assert.False(map.TryGetReplicatedId(plain, out int none));
+        Assert.Equal(0, none);
+
+        for (int warm = 0; warm < 3; warm++)
+        {
+            map.TryGetReplicatedId(replicated, out _);
+            map.TryGetReplicatedId(plain, out _);
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int call = 0; call < 1000; call++)
+        {
+            map.TryGetReplicatedId(replicated, out _);
+            map.TryGetReplicatedId(plain, out _);
+        }
+
+        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+    }
+
+    [Fact]
+    public void Checksum_DistinguishesSwappedReplicatedIdsOnIdenticalCellsAndPositions()
+    {
+        Map first = new(width: 8, height: 4, depth: 8);
+        Map second = new(width: 8, height: 4, depth: 8);
+        foreach (Map map in new[] { first, second })
+        {
+            Assert.True(map.AddCube(new Vector3(1f, 1f, 1f), withPhysics: false));
+            Assert.True(map.AddCube(new Vector3(5f, 1f, 5f), withPhysics: false));
+        }
+
+        first.AssignReplicatedCubeId(first.TryGetCubeAtCell(1, 1, 1)!, 10);
+        first.AssignReplicatedCubeId(first.TryGetCubeAtCell(5, 1, 5)!, 11);
+        second.AssignReplicatedCubeId(second.TryGetCubeAtCell(1, 1, 1)!, 11);
+        second.AssignReplicatedCubeId(second.TryGetCubeAtCell(5, 1, 5)!, 10);
+
+        SimulationStateChecksum.Parts a = SimulationStateChecksum.ComputeParts(first, BuildActors(), MutationSequence);
+        SimulationStateChecksum.Parts b = SimulationStateChecksum.ComputeParts(second, BuildActors(), MutationSequence);
+
+        Assert.NotEqual(a.Cubes, b.Cubes);
+        Assert.Equal(a with { Cubes = b.Cubes }, b);
+    }
+
+    [Fact]
+    public void Checksum_UsesTheCellFallbackForACubeWithoutAnId_AndIdKeyDiffersFromCellKey()
+    {
+        Map plain = BuildMap();
+        Map withId = BuildMap();
+        withId.AssignReplicatedCubeId(withId.TryGetCubeAtCell(2, 1, 2)!, 5);
+
+        SimulationStateChecksum.Parts plainParts = SimulationStateChecksum.ComputeParts(plain, BuildActors(), MutationSequence);
+        Assert.Equal(plainParts, SimulationStateChecksum.ComputeParts(BuildMap(), BuildActors(), MutationSequence));
+        Assert.NotEqual(plainParts.Cubes, SimulationStateChecksum.ComputeParts(withId, BuildActors(), MutationSequence).Cubes);
+
+        // Moving an id-less cube to another cell still changes the Cubes part (cell is the key).
+        Map moved = new(width: 8, height: 4, depth: 8);
+        Assert.True(moved.AddCube(new Vector3(3f, 1f, 2f), withPhysics: false));
+        Map original = new(width: 8, height: 4, depth: 8);
+        Assert.True(original.AddCube(new Vector3(2f, 1f, 2f), withPhysics: false));
+        Assert.NotEqual(
+            SimulationStateChecksum.ComputeParts(original, BuildActors(), MutationSequence).Cubes,
+            SimulationStateChecksum.ComputeParts(moved, BuildActors(), MutationSequence).Cubes);
     }
 
     [Fact]
