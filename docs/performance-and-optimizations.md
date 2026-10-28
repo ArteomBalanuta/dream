@@ -8,6 +8,8 @@ This document is the current index of optimization techniques supported by the e
 
 World rendering applies lightweight visibility checks before drawing world geometry. The older compatibility-cube path filters render candidates with `WorldVisibility` before batching, and the static chunk path keeps chunk visibility bounds-aware so large chunks do not disappear when the camera moves through or beside them.
 
+Both paths now also cull against the camera's six-plane `ViewFrustum` (`Rendering/Core/ViewFrustum.cs`, built from the view and projection matrices): `WorldRenderer.IsCubeInView` and `IsGeometryBlockInView` apply the distance and direction gate and then `ViewFrustum.IntersectsBox`, and `StaticWorldChunkRenderer` tests each chunk's bounds with `IntersectsAabb`. A degenerate matrix (for example before the window size is known) yields a frustum that accepts everything, so culling can never hide the world.
+
 Guardrail: camera movement must not change authoritative world state. Visibility checks should affect presentation only.
 
 ### Spatial Candidate Queries
@@ -84,6 +86,18 @@ Guardrail: dynamic cubes and fracture pieces are drawn from `DynamicCompatibilit
 
 `Map.UpdateCubePosition(..., syncPhysics: true)` moves a compatibility cube's existing Bullet body in place through `WorldPhysicsBinder.TryMoveCompatibilityCubeBody`, and reindexes it when the cube crosses cells. It falls back to a full cell rebuild only when the cube has no indexed body, or when a static cube leaves its cell and has to become dynamic. Replicated `CubeMoved` deltas arrive every server tick per moving cube, so the client must not dispose and reallocate a shape, a motion state and a body for each one.
 
+### Batched Static Terrain Pass
+
+`StaticWorldChunkRenderer` draws all static meshes in one pass (`Render.BeginStaticTerrainPass` ... `EndStaticTerrainPass`). Meshes are in world space, so the `cube` program, the view and projection matrices and the material constants are set once, and only the base colour and texture change per material slot (`BindStaticTerrainMaterial`). Each mesh sees the same uniform values as when it was drawn alone, but the program binds and uniform uploads drop to once per pass; `RenderCounters` shows the effect.
+
+Guardrail: keep per-mesh state out of the pass. Anything that varies per mesh must be part of the material slot, not a uniform re-uploaded per draw.
+
+### Alpha MASK Program Variants
+
+`Render.LoadWorldShader` compiles each world program twice: OPAQUE, and a MASK variant with `WORLD_ALPHA_MASK` defined. `AnimatedModel` binds the variant only for glTF `MASK` materials, with the material's alpha cutoff (`Shader.SetAlphaCutoff`). Terrain and every other opaque material use the OPAQUE program.
+
+Guardrail: do not put a `discard` in an OPAQUE program. A fragment shader that can discard loses early depth testing even when it never discards, which measured about double the GPU actors time.
+
 ### Worker Mesh Build With Render-Thread Upload
 
 Static chunk CPU mesh generation now runs on a background worker, while OpenGL buffer creation and replacement stay on the render thread. The renderer stages finished worker results and uploads only a bounded number of chunk meshes per frame, keeping stale buffers alive until the replacement batch completes.
@@ -140,6 +154,14 @@ Guardrail: this is a performance tradeoff for static startup geometry only; do n
 
 Guardrail: freeze only unit placed cubes, and keep every wake rule. A frozen cube that missed a wake would float in the air or block a push.
 
+### Partial-Cell Supports
+
+Dynamic cubes treat every occupied cell as full, so an occupied partial static cell (a sculpture cell or a carved cell) also gets a full-cell static support box that only dynamic map cubes collide with (`WorldPhysicsBinder.SyncCellSupportBody`). Without it a cube resting above a partial cell fell into it, had the transition rejected, and was reset by `PhysicsSyncSystem` every few ticks, which kept its contact island awake. See `docs/architecture.md`, World Geometry Foundation.
+
+### Native Profiler Guard
+
+`BulletProfilerGuard.EnsureApplied()` patches libbulletc's `btGetCurrentThreadIndex` so Bullet's quickprof never shares a per-thread profile tree between threads (the cause of a `0xC0000005` crash in long-running servers and parallel tests). See `docs/architecture.md`, libbulletc profiler guard.
+
 ### Merged Floor Collider
 
 The base floor is rendered as solid cubes but represented physically by one merged static floor collider. This keeps floor collision cheap while preserving the voxel-style visual surface.
@@ -150,7 +172,7 @@ Guardrail: floor rendering and floor collision can differ internally, but their 
 
 ### Fixed Authoritative Tick
 
-The desktop host advances authoritative gameplay through `ServerTickRunner` and `SimulationClock` at a fixed `64 Hz` tick rate. Render-frame delta no longer directly owns authoritative simulation cadence.
+The server (dedicated, or the desktop's integrated one) advances authoritative gameplay through `ServerTickRunner` and `SimulationClock` at a fixed `64 Hz` tick rate (`SimulationClock.AuthoritativeTicksPerSecond`). Render-frame delta no longer owns authoritative simulation cadence. Actor snapshots are encoded and broadcast every `SnapshotIntervalTicks` ticks (default 2, so 32 Hz; `DREAM_SNAPSHOT_INTERVAL_TICKS`, see `docs/configuration.md`).
 
 Guardrail: client presentation, camera, and input feel should remain render-frame responsive; fixed tick should not quantize camera motion.
 
@@ -202,7 +224,7 @@ Guardrail: avoid synchronous socket reads or long protocol processing directly i
 
 ### Optional Performance Counters
 
-The settings panel can show performance counters for total host frame time, present (`SwapBuffers`) time, render export time, physics time, actor draw slices (enemy, local player, remote players), HUD/ImGui time from the previous frame, visible/exported world descriptors, render batches, collision-body count, static chunk metrics such as visible chunks, mesh count, exposed faces, and triangle count, plus the latest integrated local-server sample for authoritative tick, snapshot, and broadcast time.
+The settings panel can show performance counters for total host frame time, present (`SwapBuffers`) time, render export time, physics time, actor draw slices (enemy, local player, remote players), HUD/ImGui time from the previous frame, visible/exported world descriptors, render batches, collision-body count, static chunk metrics such as visible chunks, mesh count, exposed faces, and triangle count, plus the latest integrated local-server sample for authoritative tick, snapshot, and broadcast time. A `GPU:` line shows GPU time for the world, actor and HUD sections (`GpuFrameTimer` timer queries, read back 2 or more frames late without stalling, so it describes an older frame than the CPU lines), the primitives generated, and the previous frame's draw calls, program binds and uniform uploads (`RenderCounters`).
 
 Guardrail: when diagnosing performance, prefer these counters and targeted tests over guessing from FPS alone.
 

@@ -32,6 +32,7 @@ The current NuGet package references are:
 
 - `BulletSharp` `0.11.1`
 - `ImGui.NET` `1.91.6.1`
+- `Microsoft.Data.Sqlite` `9.0.7` and `SQLitePCLRaw.bundle_e_sqlite3` `2.1.12` (server persistence)
 - `OpenTK` `4.9.4`
 - `OpenTK.Windowing.Desktop` `4.9.4`
 - `SharpGLTF.Core` `1.0.6`
@@ -177,6 +178,33 @@ Set `DREAM_MAX_FPS` to override the `max_fps` frame cap for one run without writ
 Set `DREAM_RENDER_PERF_LOG=1` to print one render-performance line per second while in gameplay. The log includes render-export time, physics time, static chunk signature/extract/plan/sync/draw timings, static chunk cache reuse, visible chunk/triangle counts, and collision-body count.
 
 Set `DREAM_NET_DIAGNOSTICS=1` to enable rate-limited multiplayer visibility and timing diagnostics. The log prints to the console and appends to `logs/network-diagnostics.log` under the application output folder by default. Set `DREAM_NET_DIAGNOSTICS_PATH` to write the diagnostics file somewhere else. This is intended for multi-client debugging: it records connect/join facts, session and actor snapshots, snapshot send/receive timing, client presenter state, remote-player draw counts, and slow command-send warnings.
+
+## Client Connection And Diagnostics Variables
+
+These are read by the desktop client (`RemoteClientOptions`, `PlayScene`) and by a few diagnostics switches. Unset means the default behaviour.
+
+| Variable | Read in | Effect |
+| --- | --- | --- |
+| `DREAM_SERVER_HOST` | `RemoteClientOptions.TryResolveFromEnvironment` (called from `Game`) | Host the startup form is prefilled with; `DREAM_AUTO_CONNECT` then connects to it instead of the integrated local server. When it is unset or blank the other client variables are not read. |
+| `DREAM_SERVER_PORT` | same | Port for the prefill (default `ServerBootstrap.DefaultPort`, 5057); a non-integer value throws at startup. It is client-only: the dedicated server always listens on 5057 and does not read it. |
+| `DREAM_CLIENT_NAME` | same | Player name for the prefill. Default `dream-client`. |
+| `DREAM_CLIENT_SESSION_ID` | same | Parsed, but `Game` forwards only host, port and name, so the desktop client still joins with a fresh `client-<guid>` (`ClientConnectionOptions`). |
+| `DREAM_LOOPBACK_REMOTE_PLAYERS` | `PlayScene.ResolveLoopbackRemotePlayersEnabled` | `1` or `true` feeds fake remote-player snapshots into the presenter for local render checks. |
+| `DREAM_MODEL_DIAGNOSTICS` | `AnimatedModelData` | `1` prints glTF vertex, material and skinning diagnostics to the console while models load. |
+| `DREAM_PHYSICS_LEAK_TRACKING` | `PhysicsIntegrator.TrackLeaks` | `1` records a stack trace for each `PhysicsIntegrator` construction so a leaked owner can be found. Off by default because it is costly. |
+
+## Test And Load Harness Variables
+
+Read only by `dream.Tests` (see `docs/build-and-run.md`, Testing):
+
+| Variable | Read in | Effect |
+| --- | --- | --- |
+| `DREAM_LOAD_TEST` | `LoadFactAttribute` | `1` enables the load, measurement and soak tests (`dream.Tests/Load`). Without it they are skipped, so the default suite stays fast. They write `artifacts/load/<scenario>.json` and a `.md` summary. |
+| `DREAM_LOAD_DURATION_SECONDS` | `LoadScenario.DurationOverrideEnvironmentVariable` | Overrides every scenario's duration, in seconds. |
+| `DREAM_W9_RUNS` | `Wave9NetworkMeasurementTests` | Repetitions per cell of the stall table (default 3). |
+| `DREAM_W9_SCENARIOS` | `Wave9NetworkMeasurementTests` | Comma-separated stall scenarios to run (default `SendStall,FrameStall,NetworkStall,Steady200Ms,Hitchy`). |
+
+`DREAM_BULLET_PROFILER_STRESS_SECONDS` and `DREAM_TEST_MAX_COLLECTIONS` are test-only too and are described under Physics and Test Scheduling below.
 
 ## Network Frame Limits And Snapshot Rate
 

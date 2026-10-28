@@ -232,6 +232,26 @@ Key/value metadata about the persisted world. It is created additively by `Sqlit
 
 Today it holds one row: `simulation_seed`, the world's simulation seed stored as a decimal unsigned 64-bit number. `SqliteWorldMetadataRepository` inserts it once with `INSERT OR IGNORE` and a non-numeric value is treated as a startup error.
 
+## player_profile_change_log
+
+Append-only history of profile stat and mode changes (`change_kind`, previous and new `interaction_mode`, `strength`, `attack_speed` and `vitality`, `changed_utc`), keyed by `player_name` with `ON DELETE CASCADE`. The table and its index are created by the init script, but no code or trigger writes to it today, so it stays empty.
+
+## Connection Settings, WAL And Write Path
+
+`SqliteSchemaBootstrapper` (`dream/Server/Persistence/SqliteSchemaBootstrapper.cs`) configures every connection:
+
+- `EnsureSchema` runs `PRAGMA journal_mode=WAL`, which is stored in the database file. Every later connection opens in WAL mode, so readers do not block the writer.
+- Each connection sets `synchronous=NORMAL`, `busy_timeout=5000` and `journal_size_limit=67108864`. `NORMAL` syncs at WAL checkpoints instead of on every commit: a process crash cannot corrupt the database, but a power loss or OS crash can lose the last few commits. That trade-off is accepted for game state. The `-wal` file is truncated back to 64 MB after a checkpoint.
+- The connection string sets `DefaultTimeout = 5`, so a statement on a locked database waits about 5 s rather than the 30 s default.
+
+Writes reach SQLite in three ways, all off the tick thread on the dedicated server:
+
+- **Immediate writes** go through `PersistenceWriteQueue` (`Dream.Simulation.Persistence`). One worker takes every write queued so far (up to `MaxWritesPerGroup`, 256) and runs them in one `SqliteWriteBatch` transaction with a savepoint per write (group commit): a failing write rolls back to its savepoint and the rest commit. Reads end a group. When the database is locked past `busy_timeout`, the unrun writes go back to the head of the queue and the worker backs off from 100 ms to 2 s.
+- **Checkpoints** are captured under the authority lock every 5 s, mostly as incremental deltas (a full sweep every 12th capture and after a map rebuild), and written by `BackgroundCheckpointWriter` through `SqlitePersistenceCheckpointWriter`.
+- **Shutdown** shares one drain deadline, `PersistenceWriteQueue.DefaultDisposeDrainDeadline` (30 s), for the queue and the final full checkpoint.
+
+The details and measurements are in `docs/performance-and-optimizations.md`, Checkpoint Persistence Off The Tick.
+
 ## Current Inventory Convention
 
 The gameplay inventory slice uses:

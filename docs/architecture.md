@@ -25,6 +25,21 @@ Inside the `Game` constructor:
 
 When the play session ends on its own (NETR-2: a lost connection, the 8 s server-silence watchdog, a rejected or timed-out join), `PlayScene.SessionEndReason` becomes non-null and `Game` returns to the connection screen instead of leaving a dead scene running. After that frame's update it clears the play scene, swaps in a fresh on-demand local server handle, and calls `PlaySessionEndTransition.TearDown`. That disposes the play scene (GL resources first, on the render thread) and the old local server handle (stopping the integrated server if it was started), each exactly once. Teardown failures are logged, not thrown. The new connection scene keeps the endpoint and player name, shows "Session ended: <reason>", and does not auto-connect again. The liveness timeouts are listed in `docs/configuration.md`, Connection liveness.
 
+### Client session lifecycle (protocol version 3)
+
+`RemoteClientSession` (`dream/Client/Networking/RemoteClientSession.cs`) speaks protocol version `TransportEnvelope.CurrentProtocolVersion` = 3 (`TransportEnvelope.cs:11`); a peer on another version is refused with `ProtocolVersionMismatchException`. Its timers, all listed with the server-side ones in `docs/configuration.md`, Connection liveness:
+
+- Keepalive: when no frame has gone out for `KeepaliveInterval` (1 s, `RemoteClientSession.cs:98`), the send loop writes one empty frame, so a frozen game loop does not look dead to the server (server idle timeout 10 s, `ServerConnectionOptions.cs:12`).
+- Server-silence watchdog: `ServerSilenceTimeout` (8 s, line 117) ends a joined session that receives no inbound bytes, with `ServerSilenceDisconnectReason`.
+- Join: a join the server could not load in time is answered with a retryable `JoinRejected` and the client resends on the same connection after `JoinRetryBaseDelay` (1 s) doubling, up to `MaxJoinRetries` (3, line 107). Any other rejection, a rejected last retry, or no `JoinAccepted` within `JoinTimeout` (45 s, line 109) ends the session with a reason.
+- A world transfer is bounded by `WorldTransferLimits` (30 s without a chunk, 300 s in total).
+
+Any of these ends the session with a `DisconnectReason`, which `PlayScene.SessionEndReason` surfaces. `Game` then returns to the connection screen (see Startup Flow above).
+
+### Persistence write path
+
+Persistence is hidden behind the ports in `Dream.Simulation.Persistence`; the SQLite implementation is `Dream.Server.Persistence`. The database runs in WAL mode (`SqliteSchemaBootstrapper.EnsureSchema`). Immediate writes go through `PersistenceWriteQueue`, whose worker commits them in groups of up to 256 per transaction (`PersistenceWriteQueue.MaxWritesPerGroup`). Every 5 s (`DedicatedServerHost.cs:931-933`) the host captures a `PersistenceCheckpoint` under the authority lock, mostly incremental (a full sweep every 12th capture, `WorldSessionRuntime.DefaultFullCheckpointInterval`), and `BackgroundCheckpointWriter` writes it off the tick thread. Shutdown drains the queue and writes a final full checkpoint under one 30 s deadline (`PersistenceWriteQueue.DefaultDisposeDrainDeadline`). The schema and details are in `docs/server-persistence-ddl.md` and `docs/performance-and-optimizations.md`.
+
 ## Namespace And Source Boundaries
 
 Production code uses the `Dream` root namespace with folder-matched file-scoped namespaces. The current migration keeps one executable project first, while making ownership readable from source paths:
@@ -74,8 +89,8 @@ A client that lost its connection (crash, network drop) often rejoins before the
 - `RemotePlayerRenderer` now owns world-space remote-player drawing and stays a sibling of `EnemyRenderer` rather than stretching `WorldRenderer` into an all-actor renderer prematurely.
 - `WorldSessionRuntime` is the first extracted authoritative runtime seam. It owns simulation-facing state and order for the current desktop session: `Map`, `PhysicsIntegrator`, `Player`, `PhysicsSyncSystem`, `WorldObjectRegistry`, `EnemyRegistry`, `PlayerSessionRegistry`, accepted interaction mode, combat/build resolution, wolf lifecycle upkeep, and floor rebuild/player re-clamp behavior.
 - `RemoteSessionPlayerState` now provides a lightweight authoritative actor seam for additional joined remote sessions that do not yet own the full Bullet-backed `Player` path.
-- `ServerTickRunner` and `SimulationClock` now provide the first explicit 64 Hz authoritative scheduling seam around that runtime for local transition use.
-- `DedicatedServerHost` is now the first headless composition root for protocol-side server work. It owns protocol routing plus a first command-inbox and fixed-tick advancement seam for runtime-backed hosts, but it intentionally does not claim a complete remote-session stack yet.
+- `ServerTickRunner` and `SimulationClock` (`SimulationClock.AuthoritativeTicksPerSecond` = 64) provide the explicit 64 Hz authoritative scheduling seam around that runtime. The dedicated and integrated servers use it; the desktop client keeps a clock only for its prediction ticks.
+- `DedicatedServerHost` is the headless composition root for protocol-side server work. It owns protocol routing, the per-session command inboxes, fixed-tick advancement of the runtime-backed host, the stale-session takeover and join throttle, and the 5 s persistence checkpoint cadence.
 - `DedicatedServerHost` now drains a batched set of joined-session command frames per authoritative tick instead of only one primary-session command.
 - `DedicatedServerService` now owns the long-running server loop: transport startup, client acceptance, connection lifetime tasks, 64 Hz tick advancement, and joined-session snapshot broadcast.
 - `ServerConnection` now owns framed protocol intake and reply encoding for one transport connection, which keeps socket read/write details out of `DedicatedServerHost`.
@@ -99,8 +114,6 @@ A client that lost its connection (crash, network drop) often rejoins before the
 - `Shader` is a low-level helper used by `Render` and `AnimatedModel`.
 - `AnimatedModel` owns glTF mesh, material, texture, and draw buffer data for model-backed rendering, including named clip playback with loop and one-shot semantics plus a bounded first-pass skinning path for skinned assets.
 
-## Update Loop
-
 ## World Geometry Foundation
 
 The runtime now has a first geometry-storage subsystem under `Dream.Simulation.World.Geometry`.
@@ -119,6 +132,8 @@ Current roles:
 
 `WorldGenerator` now also owns deterministic startup-world authorship instead of only single-cell cube defaults. The initial map is seeded as a larger terrain layout with mixed `Grass`, `Dirt`, and `Stone` material zones plus a few low raised landmark mounds and authored subcell sculptures such as a mini-cube pyramid, rounded boulder, and low rubble clusters, while later player-built cubes still use the simple direct authored-cell path.
 
+## Update Loop
+
 `Game.OnUpdateFrame()` now delegates either startup-scene or gameplay-scene work depending on whether the desktop client has connected yet.
 
 When gameplay is active, `PlayScene.Update()` splits client capture from authoritative runtime advancement:
@@ -132,9 +147,7 @@ When gameplay is active, `PlayScene.Update()` splits client capture from authori
 
 That extracted runtime order is the first authoritative session boundary for later host splitting. `PlayScene` still captures local desktop input and still owns client-only presentation consequences, but it no longer owns the simulation sequence directly.
 
-The current Phase 2 seam still intentionally leaves some one-player assumptions in place: the desktop path still has one locally composed `Player`, one registered player body, and no transport or remote-player path yet. What changed is that the local player now flows through an explicit `PlayerSessionRegistry`, `PlayerSessionId`, and `PlayerCommandFrame` path instead of an implicit one-player input shortcut.
-
-Phase 3 adds the first authoritative tick and replication-export foundation on top of that session seam. The current desktop host still drives the runtime in-process, but it now does so through `ServerTickRunner` at a fixed 64 Hz simulation cadence instead of directly coupling authoritative advancement to render-frame delta.
+History note (Phase 2 and 3): the local player flows through an explicit `PlayerSessionRegistry`, `PlayerSessionId` and `PlayerCommandFrame` path, and authoritative advancement runs through `ServerTickRunner` at a fixed 64 Hz instead of render-frame delta. That runtime now lives on the server side only. The desktop client has a `ClientWorldSession` (see below) and reaches the world over the protocol, so the "one local Player, no transport" shape of those phases no longer applies.
 
 Phase 4 adds the first explicit protocol contract layer on top of that: versioned transport envelopes, typed client/server message families, focused routing handlers, and explicit action/result payload contracts for one-shot primary-use style gameplay interactions.
 
@@ -222,15 +235,13 @@ Networking and timing:
 
 That keeps the client usable while reducing the biggest "local runtime fights the server" problems. Later work must still reconcile rollback, combat feedback ownership, gameplay-affecting settings such as floor-size edits, and the remaining local-only presentation/runtime assumptions more aggressively.
 
-The runtime still has an intentional split in player authority depth:
+Player authority on the server (see "Every joined session gets the same server-side player" above):
 
-- the local desktop path or first remote-controlled session still owns the full Bullet-backed `Player` actor path
-- additional joined remote sessions currently use lightweight kinematic `RemoteSessionPlayerState` actors for movement/look snapshot replication plus their own requested interaction mode state
-- authoritative one-shot action handling now first resolves a per-session action context so build placement and first-pass combat can validate against the acting session's own replicated mode state
+- the first session holds the runtime's primary `Player` seat; later sessions hold a `RemoteSessionPlayerState` that wraps its own physics `Player` and body, so all of them have gravity, jump and collision
+- authoritative one-shot action handling first resolves a per-session action context so build placement and first-pass combat can validate against the acting session's own replicated mode state
 - joined remote-session combat now also normalizes aim from authoritative actor state instead of trusting arbitrary client-provided combat rays directly
 - remote client action results now also flow through a focused `ClientAuthoritativeActionApplier` seam so accepted authoritative world mutation/combat outcomes can trigger immediate local correction and combat feedback before the next snapshot arrives
 - that same applier now handles rejected authoritative action results too: correction deltas can immediately reposition/reface the local replicated player, rejection facts surface as explicit scene events, and the scene now consumes them through a short-lived HUD feedback seam plus bounded multiplayer diagnostics recording
-- deeper combat/world-interaction ownership is still not fully multi-actor yet because the primary controlled player path remains the only full Bullet-backed player body/camera stack
 
 The first Phase 5 groundwork now sits above that protocol seam: `ClientScenePresenter` buffers authoritative remote-player samples and produces interpolated remote presentation state without changing local authoritative simulation ownership.
 
@@ -265,7 +276,7 @@ Inside `PlayScene.Render()`:
 - `HudRenderer` submits HUD/settings UI and returns runtime requests
 - runtime floor rebuild behavior is applied when requested
 
-`PlayScene` now assembles world-render candidates through a map-side floor-and-placed split: nearby floor tiles are queried directly from local bounds, while nearby placed cubes come from the spatial index. `WorldRenderer` then applies a lightweight visibility filter and groups surviving cubes into shared model/shader batches when possible. Together, those passes reduce candidate iteration cost, final draw count pressure, and repeated per-cube animated-model setup without requiring a full chunk renderer yet.
+Static terrain goes through `StaticWorldChunkRenderer`: chunk meshes with hidden faces removed, built on a worker thread and uploaded on the render thread, drawn in one batched pass (`Render.BeginStaticTerrainPass`, `BindStaticTerrainMaterial`, `EndStaticTerrainPass`: one program bind and one set of transforms per pass, only the material changes per slot). Chunks are culled against the camera `ViewFrustum` (`StaticWorldChunkRenderer.cs:144`). The live path (dynamic cubes, fracture pieces) is filtered by `WorldRenderer.IsCubeInView` / `IsGeometryBlockInView`, which apply the distance and direction gate of `WorldVisibility` and then the frustum, and then groups survivors into shared model/shader batches. `PlayScene` assembles candidates through a map-side floor-and-placed split: nearby floor tiles from local bounds, nearby placed cubes from the spatial index.
 
 The HUD now returns interaction requests upward to the scene layer, while `PlayScene` owns the client-side settings consequences of those requests and forwards authoritative floor-rebuild work into `WorldSessionRuntime`.
 
@@ -310,10 +321,12 @@ That keeps `PlayScene.Render()` presentation-oriented. Floor-size rebuild reques
 
 The first-person subsystem is intentionally threaded through both `PlayScene.Update()` and `PlayScene.Render()` rather than hidden inside `Render`. `PlayScene` owns when the viewmodel update step runs, when the draw pass runs, and what frame state each receives, while `Render` remains the shared low-level renderer host that exposes focused collaborators instead of absorbing feature-specific first-person rules.
 
-`Render.DrawCube()` chooses between two rendering paths:
+`Render.DrawCube()` resolves the cube's model from its `MaterialId` through `CubeMaterialModelCatalog.Resolve` (grass, dirt and stone have glTF cube models):
 
-- If `Cube.Animation` is present, the cube is rendered through `AnimatedModel.Render()`
-- Otherwise, the cube is drawn as a transparent cube plus a wireframe overlay
+- If a model resolves, the cube is rendered through `AnimatedModel.Render()` with the cube's `ShaderName` program
+- Otherwise it goes through `Render.DrawTerrainCubeFallback`, a textured unit-cube mesh for the material (`TerrainFallbackCubeMesh`)
+
+There is no `Cube.Animation` property and no transparent-cube-plus-wireframe path any more.
 
 The HUD path currently includes:
 - A crosshair built from simple line geometry
@@ -383,6 +396,10 @@ Scope: Windows x64 with the bundled `libbulletc` only. Any other platform, a mis
 - A dedicated `ViewModelRenderer` collaborator for camera-relative first-person presentation
 
 Projection is rebuilt from the live window size and configured field of view. The HUD crosshair is also rebuilt from live viewport data.
+
+World programs are loaded with `Render.LoadWorldShader`, which compiles each program twice: the OPAQUE program and a MASK variant with `WORLD_ALPHA_MASK` defined (`Shader.AlphaMaskDefine`). `AnimatedModel` switches to the variant only for glTF `MASK` materials (`AnimatedModel.UsesAlphaMaskProgram`). The discard lives only in the MASK variant because a fragment shader that can discard loses early depth testing even when it never discards.
+
+Frame diagnostics: `GpuFrameTimer` brackets the world, actors and HUD sections of a frame with GL timer queries (plus a primitives-generated query) in a ring of 4 slots and reads them back at least 2 frames later without stalling, so GPU times describe an older frame than the CPU times beside them. `RenderCounters` counts draw calls, program binds and uniform uploads per frame on the render thread. Both feed `FramePerformanceSnapshot` (`PlayScene.cs:377-382`), whose `GPU:` line appears in the settings-panel performance counters (`FramePerformanceSnapshot.cs:128`).
 
 `ViewModelRenderer` owns the first-person pass behavior:
 
