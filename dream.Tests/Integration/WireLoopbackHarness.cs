@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
@@ -205,6 +206,7 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
     private readonly TransportJsonCodec _codec = new();
     private readonly LengthPrefixedMessageFramer _framer = new();
     private readonly List<WireFrame> _frames = [];
+    private readonly ActorStateCache _actorStates = new();
     private readonly MemoryStream _raw = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ManualResetEventSlim _readGate = new(initialState: true);
@@ -230,6 +232,17 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
     public ulong SentActionSequence => Volatile.Read(ref _actionSequence);
 
     public Exception? ReadFault { get; private set; }
+
+    // SCALE-2: delta frames whose base this client did not hold, and actors it withheld as stale.
+    // The server sends a keyframe whenever a connection lacks the base, so both stay 0. Read once
+    // the read loop has settled.
+    public long ActorChainBreaks => _actorStates.ChainBreaks;
+
+    public long StaleActorsWithheld => _actorStates.StaleActorsWithheld;
+
+    public long ActorKeyframesApplied => _actorStates.KeyframesApplied;
+
+    public long ActorDeltaFramesApplied => _actorStates.DeltaFramesApplied;
 
     public IReadOnlyList<WireFrame> Frames
     {
@@ -379,6 +392,12 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
                 {
                     offset += consumed;
                     DecodedProtocolMessage decoded = _codec.Decode(payload);
+                    // Like RemoteClientSession, rebuild full actors from delta frames in wire order.
+                    if (decoded.Message is ServerSnapshotMessage snapshot)
+                    {
+                        decoded = decoded with { Message = _actorStates.Apply(snapshot) };
+                    }
+
                     WireFrame frame = new(payload!, decoded, ExtractPayloadJson(payload!));
                     lock (_frames)
                     {

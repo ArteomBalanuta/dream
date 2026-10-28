@@ -30,6 +30,7 @@ public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelpe
         TransportJsonCodec sharedCodec = new();
         ServerSnapshotMessage[] snapshots = new ServerSnapshotMessage[Snapshots];
         byte[][] expected = new byte[Snapshots][];
+        byte[][] expectedShared = new byte[Snapshots][];
         for (int i = 0; i < Snapshots; i++)
         {
             ServerSnapshotEnvelope snapshot = ServerSnapshotSamples.RandomSnapshot(
@@ -48,6 +49,8 @@ public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelpe
 
             snapshots[i] = new ServerSnapshotMessage(snapshot);
             expected[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V3);
+            // SCALE-2: the shared payload is the broadcast body, without the sequence map.
+            expectedShared[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i] with { SharedBody = true }, ProtocolWireOptions.V3);
         }
 
         string?[] failures = new string?[Threads];
@@ -80,7 +83,7 @@ public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelpe
                         start.SignalAndWait();
                         foreach (int i in Enumerable.Range(0, Snapshots).OrderBy(_ => order.Next()))
                         {
-                            Expect(shared[i].Bytes.SequenceEqual(expected[i]), $"snapshot {i}: shared payload differs from the reference");
+                            Expect(shared[i].Bytes.SequenceEqual(expectedShared[i]), $"snapshot {i}: shared payload differs from the reference");
                             Interlocked.Increment(ref sharedReads);
 
                             scratch.Clear();

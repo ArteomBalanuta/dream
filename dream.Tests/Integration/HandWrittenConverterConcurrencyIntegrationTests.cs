@@ -48,6 +48,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         TransportJsonCodec sharedCodec = new();
         ServerSnapshotMessage[] snapshots = new ServerSnapshotMessage[Snapshots];
         byte[][] expectedSnapshotPayloads = new byte[Snapshots][];
+        byte[][] expectedSharedPayloads = new byte[Snapshots][];
         byte[][] expectedSnapshotFrames = new byte[Snapshots][];
         TransportEnvelope[] snapshotEnvelopes = new TransportEnvelope[Snapshots];
         SharedEncodedPayload[] sharedPayloads = new SharedEncodedPayload[Snapshots];
@@ -58,6 +59,8 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             snapshots[i] = new ServerSnapshotMessage(SnapshotWith((ulong)(1000 + i), RandomActors(random, actorCount)));
             snapshotEnvelopes[i] = new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, snapshots[i].MessageKind, (ulong)(i + 1));
             expectedSnapshotPayloads[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V3);
+            // SCALE-2: the shared payload is the broadcast body, without the sequence map.
+            expectedSharedPayloads[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i] with { SharedBody = true }, ProtocolWireOptions.V3);
             ArrayBufferWriter<byte> frame = new();
             sharedCodec.WriteEnvelope(snapshotEnvelopes[i], expectedSnapshotPayloads[i], frame);
             expectedSnapshotFrames[i] = frame.WrittenSpan.ToArray();
@@ -106,7 +109,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
                             Expect(scratch.WrittenSpan.SequenceEqual(expectedSnapshotPayloads[i]), $"snapshot {i}: payload encode differs from the reference");
 
                             ReadOnlySpan<byte> shared = sharedPayloads[i].Bytes;
-                            Expect(shared.SequenceEqual(expectedSnapshotPayloads[i]), $"snapshot {i}: shared payload differs from the reference");
+                            Expect(shared.SequenceEqual(expectedSharedPayloads[i]), $"snapshot {i}: shared payload differs from the reference");
                             Interlocked.Add(ref encodes, 3);
 
                             DecodedProtocolMessage decoded = codec.Decode(expectedSnapshotFrames[i]);

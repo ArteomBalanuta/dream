@@ -25,6 +25,14 @@ public sealed class ServerConnection : IAsyncDisposable
     // Assigned under _sendLock together with the encode, so sequences follow wire order. Public
     // Send*Async calls and the writer task both go through that lock.
     private ulong _nextOutboundSequence = 1;
+    // SCALE-2: the actor frame (ActorDeltaContext.Sequence) of the last snapshot this connection
+    // put on the wire, or 0 when that snapshot carried no frame (a resync, a test-built envelope)
+    // or none was sent yet. TCP delivers in order, so it is exactly the frame the client holds: a
+    // delta frame whose base is anything else goes out as its keyframe twin instead. That covers a
+    // join between keyframes, merged (coalesced) snapshots, a resync in between and a dropped
+    // oversized delta, without the client ever having to ask. Under _sendLock, like the sequence.
+    private ulong _lastActorFrameSequence;
+    private long _actorKeyframesForced;
     // 0 until DisposeAsync starts, then 1. Checked by senders before and after taking _sendLock.
     private int _disposeState;
     private readonly string _snapshotTxLogKey;
@@ -208,6 +216,10 @@ public sealed class ServerConnection : IAsyncDisposable
     // Snapshots the writer sent without their deltas because the encoded frame passed the
     // framer's write cap.
     public long OversizedSnapshotFrames => Interlocked.Read(ref _oversizedSnapshotFrames);
+
+    // Snapshots sent as their actor frame's keyframe twin because this connection did not hold the
+    // frame's delta base (first snapshot after a join, merged snapshots, a resync in between).
+    public long ActorKeyframesForced => Interlocked.Read(ref _actorKeyframesForced);
 
     // Called by the service once per advance, on its tick thread. Faults the connection when no
     // complete frame arrived within IdleTimeout, or the current socket write has been running for
@@ -899,10 +911,19 @@ public sealed class ServerConnection : IAsyncDisposable
         }
 
         _frameWriter.BeginFrame(_framer);
+        // The actor frame the client holds once this frame is written (see _lastActorFrameSequence).
+        ulong sentActorFrame = _lastActorFrameSequence;
         if (sharedPayload != null)
         {
             // The first writer to get here encodes the snapshot for every connection sharing it.
-            _codec.WriteEnvelope(envelope, sharedPayload.Bytes, _frameWriter);
+            // The body is the same for everyone; only this connection's own accepted command
+            // sequence goes into its envelope header (SCALE-2), so a broadcast costs O(players)
+            // instead of every connection carrying every session's sequence.
+            ServerSnapshotEnvelope shared = sharedPayload.Message.Snapshot;
+            bool keyframe = NeedsActorKeyframe(shared);
+            envelope = envelope with { Ack = ResolveAck(shared) };
+            _codec.WriteEnvelope(envelope, keyframe ? sharedPayload.KeyframeBytes : sharedPayload.Bytes, _frameWriter);
+            sentActorFrame = shared.ActorDelta?.Sequence ?? 0;
         }
         else
         {
@@ -918,7 +939,10 @@ public sealed class ServerConnection : IAsyncDisposable
                     _codec.Encode(envelope, joinRejected, _frameWriter);
                     break;
                 case ServerSnapshotMessage snapshot:
-                    _codec.Encode(envelope, snapshot, _frameWriter);
+                    // Encoded for this connection alone (merged, a resync, or sent directly): its
+                    // actors go as a keyframe unless the client holds the frame's base.
+                    _codec.Encode(envelope, WithActorKeyframeIfNeeded(snapshot), _frameWriter);
+                    sentActorFrame = snapshot.Snapshot.ActorDelta?.Sequence ?? 0;
                     break;
                 case ServerActionMessage action:
                     _codec.Encode(envelope, action, _frameWriter);
@@ -940,7 +964,9 @@ public sealed class ServerConnection : IAsyncDisposable
         {
             int oversizedBytes = _frameWriter.WrittenCount - _framer.HeaderLength;
             _frameWriter.BeginFrame(_framer);
-            _codec.Encode(envelope, WithoutDeltas(oversized), _frameWriter);
+            // Encoded for this connection alone, with the full sequence map and no header ack.
+            _codec.Encode(envelope with { Ack = null }, WithActorKeyframeIfNeeded(WithoutDeltas(oversized)), _frameWriter);
+            sentActorFrame = oversized.Snapshot.ActorDelta?.Sequence ?? 0;
             Interlocked.Increment(ref _oversizedSnapshotFrames);
             FlagOverflowResync();
             NetworkDiagnosticsLog.Write(
@@ -951,7 +977,45 @@ public sealed class ServerConnection : IAsyncDisposable
 
         ReadOnlyMemory<byte> frame = _frameWriter.CompleteFrame(_framer);
         _nextOutboundSequence++;
+        // A send that fails after this faults the connection, so nothing later relies on it.
+        _lastActorFrameSequence = sentActorFrame;
         return frame;
+    }
+
+    // Caller holds _sendLock. True when snapshot's actors are a delta against a frame this
+    // connection's client does not hold.
+    private bool NeedsActorKeyframe(in ServerSnapshotEnvelope snapshot)
+    {
+        if (snapshot.ActorDelta is not { IsKeyframe: false } delta || delta.BaseSequence == _lastActorFrameSequence)
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref _actorKeyframesForced);
+        return true;
+    }
+
+    // Caller holds _sendLock. Allocates only on the forced-keyframe path.
+    private ServerSnapshotMessage WithActorKeyframeIfNeeded(ServerSnapshotMessage message)
+    {
+        return NeedsActorKeyframe(message.Snapshot)
+            ? message with { Snapshot = message.Snapshot with { ActorDelta = message.Snapshot.ActorDelta!.Value.Keyframe } }
+            : message;
+    }
+
+    // This connection's own accepted command sequence, read from the snapshot's full map by the
+    // session this connection joined as. Lock-free lookups; allocates nothing.
+    private TransportAck ResolveAck(in ServerSnapshotEnvelope snapshot)
+    {
+        if (_host.TryGetConnectionContext(ConnectionId, out ServerRoutingContext? context)
+            && context?.LastJoinRequest?.RequestedSessionId is string sessionId
+            && snapshot.LastAcceptedCommandSequences is IReadOnlyDictionary<string, ulong> sequences
+            && sequences.TryGetValue(sessionId, out ulong sequence))
+        {
+            return new TransportAck(sessionId, sequence);
+        }
+
+        return new TransportAck(null, 0);
     }
 
     private void LogInbound(TransportEnvelope envelope, IClientToServerMessage message)

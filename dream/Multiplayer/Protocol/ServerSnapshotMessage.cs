@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Dream.Simulation.World;
 
 namespace Dream.Multiplayer.Protocol;
@@ -8,4 +9,13 @@ namespace Dream.Multiplayer.Protocol;
 public sealed record ServerSnapshotMessage(ServerSnapshotEnvelope Snapshot, int? WorldTransferId = null) : IServerToClientMessage
 {
     public string MessageKind => "server.snapshot";
+
+    // SCALE-2. The payload is the broadcast body shared by every connection: it leaves out
+    // lastAcceptedCommandSequences, and each connection's own accepted command sequence travels
+    // in its transport envelope header instead (TransportEnvelope.Ack), so a broadcast to P
+    // players no longer writes P sequences to each of them. Set on the shared encode
+    // (SharedEncodedPayload) and on a decoded snapshot whose envelope carried the ack, so a
+    // re-encode reproduces the payload. Never on the wire as itself.
+    [JsonIgnore]
+    public bool SharedBody { get; init; }
 }

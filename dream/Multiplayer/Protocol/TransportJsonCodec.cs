@@ -178,7 +178,72 @@ public sealed class TransportJsonCodec : IProtocolCodec
         writer.WriteNumber("protocolVersion"u8, envelope.ProtocolVersion);
         writer.WriteString("messageKind"u8, envelope.MessageKind);
         writer.WriteNumber("sequence"u8, envelope.Sequence);
+        if (envelope.Ack is TransportAck ack)
+        {
+            // SCALE-2: {"<session>":n}, or {} when the session has nothing accepted yet.
+            writer.WritePropertyName("ack"u8);
+            writer.WriteStartObject();
+            if (ack.SessionId is string sessionId)
+            {
+                writer.WriteNumber(sessionId, ack.Sequence);
+            }
+
+            writer.WriteEndObject();
+        }
+
         writer.WritePropertyName("payload"u8);
+    }
+
+    // The header ack, read like the snapshot's own lastAcceptedCommandSequences map: at most one
+    // entry is expected, and a repeated key keeps its last value.
+    private static TransportAck ReadAck(ref Utf8JsonReader reader)
+    {
+        reader.Read();
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException("Envelope ack must be a JSON object.");
+        }
+
+        string? sessionId = null;
+        ulong sequence = 0;
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            sessionId = reader.GetString();
+            reader.Read();
+            if (reader.TokenType != JsonTokenType.Number || !reader.TryGetUInt64(out sequence))
+            {
+                throw new JsonException("Envelope ack sequence must be an unsigned 64-bit integer.");
+            }
+        }
+
+        if (reader.TokenType != JsonTokenType.EndObject)
+        {
+            throw new JsonException("Envelope ack must be a JSON object of sequences.");
+        }
+
+        return new TransportAck(sessionId, sequence);
+    }
+
+    // A shared snapshot body carries no sequence map of its own; the receiving connection's ack
+    // from the header becomes it, so every consumer still reads LastAcceptedCommandSequences.
+    private static IProtocolMessage ApplyAck(IProtocolMessage message, TransportAck? ack)
+    {
+        if (ack is not TransportAck value || message is not ServerSnapshotMessage snapshot)
+        {
+            return message;
+        }
+
+        Dictionary<string, ulong> sequences = new(value.SessionId is null ? 0 : 1, StringComparer.Ordinal);
+        if (value.SessionId is string sessionId)
+        {
+            sequences[sessionId] = value.Sequence;
+        }
+
+        return snapshot with
+        {
+            SharedBody = true,
+            Snapshot = snapshot.Snapshot with { LastAcceptedCommandSequences = sequences }
+        };
     }
 
     // A PooledFrameWriter carries a cached Utf8JsonWriter, so steady-state encodes into it allocate
@@ -237,6 +302,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
         int protocolVersion = 0;
         string? messageKind = null;
         ulong sequence = 0;
+        TransportAck? ack = null;
         bool hasPayload = false;
         Utf8JsonReader payloadReader = default;
 
@@ -268,6 +334,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
                     throw new JsonException("Envelope sequence must be an unsigned 64-bit integer.");
                 }
             }
+            else if (reader.ValueTextEquals("ack"u8))
+            {
+                ack = ReadAck(ref reader);
+            }
             else if (reader.ValueTextEquals("payload"u8))
             {
                 payloadReader = reader;
@@ -288,7 +358,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
         TransportEnvelope envelope = new(
             protocolVersion,
             messageKind ?? throw new InvalidOperationException("Envelope message kind is required."),
-            sequence);
+            sequence)
+        {
+            Ack = ack
+        };
 
         if (envelope.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)
         {
@@ -319,7 +392,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
             _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
-        return new DecodedProtocolMessage(envelope, message);
+        return new DecodedProtocolMessage(envelope, ApplyAck(message, ack));
     }
 
     // The known kinds decode to their shared literals instead of a new string per message

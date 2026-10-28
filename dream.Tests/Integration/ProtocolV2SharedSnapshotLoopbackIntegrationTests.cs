@@ -116,19 +116,35 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             .Order()
             .ToArray();
         Assert.True(sharedTicks.Length >= Ticks - 5, $"Only {sharedTicks.Length} ticks reached every client.");
+        // SCALE-2: the one exception is a connection's first snapshot after its join, which goes
+        // out as the payload's keyframe twin (the connection holds no delta base yet); its actors
+        // still match.
         int differingEnvelopes = 0;
+        int keyframeTwins = 0;
         foreach (ulong tick in sharedTicks)
         {
             Frame reference = snapshotsByTick[0][tick];
             for (int c = 1; c < clients.Length; c++)
             {
                 Frame other = snapshotsByTick[c][tick];
-                Assert.True(
-                    reference.PayloadJson.AsSpan().SequenceEqual(other.PayloadJson),
-                    $"tick {tick}: {clients[c].SessionId}'s payload differs from {clients[0].SessionId}'s.");
                 differingEnvelopes += reference.Decoded.Envelope.Sequence != other.Decoded.Envelope.Sequence ? 1 : 0;
+                if (reference.PayloadJson.AsSpan().SequenceEqual(other.PayloadJson))
+                {
+                    continue;
+                }
+
+                ServerSnapshotEnvelope referenceSnapshot = ((ServerSnapshotMessage)reference.Decoded.Message).Snapshot;
+                ServerSnapshotEnvelope otherSnapshot = ((ServerSnapshotMessage)other.Decoded.Message).Snapshot;
+                Assert.True(
+                    referenceSnapshot.ActorFrame?.IsKeyframe != otherSnapshot.ActorFrame?.IsKeyframe,
+                    $"tick {tick}: {clients[c].SessionId}'s payload differs from {clients[0].SessionId}'s.");
+                Assert.Equal(referenceSnapshot.ActorFrame!.Sequence, otherSnapshot.ActorFrame!.Sequence);
+                Assert.Equal(referenceSnapshot.Actors, otherSnapshot.Actors);
+                keyframeTwins++;
             }
         }
+
+        Assert.True(keyframeTwins <= clients.Length - 1, $"{keyframeTwins} keyframe twins; at most one per later join expected.");
 
         // The joins happened at different points, so the per-connection sequences really differ.
         Assert.True(differingEnvelopes > 0, "Every connection used the same envelope sequences.");
@@ -185,8 +201,19 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             Assert.DoesNotContain(":null", payload, StringComparison.Ordinal);
             Assert.DoesNotContain("effectiveRoster", payload, StringComparison.Ordinal);
             Assert.DoesNotContain("effectiveInitialActors", payload, StringComparison.Ordinal);
+            // SCALE-2: a shared snapshot payload has the connection's own accepted command sequence
+            // in the envelope header, and no sequence map of its own.
+            string ack = frame.Decoded.Envelope.Ack is TransportAck header
+                ? (header.SessionId is string session ? $"\"ack\":{{\"{session}\":{header.Sequence}}}," : "\"ack\":{},")
+                : string.Empty;
+            if (frame.Decoded.Message is ServerSnapshotMessage { SharedBody: true })
+            {
+                Assert.NotNull(frame.Decoded.Envelope.Ack);
+                Assert.DoesNotContain("lastAcceptedCommandSequences", payload, StringComparison.Ordinal);
+            }
+
             string expectedPrefix =
-                $"{{\"protocolVersion\":3,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},\"payload\":";
+                $"{{\"protocolVersion\":3,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},{ack}\"payload\":";
             Assert.Equal(expectedPrefix, Encoding.UTF8.GetString(frame.Payload, 0, frame.PayloadOffset));
             Assert.Equal((byte)'}', frame.Payload[^1]);
             Assert.Equal(frame.Payload.Length - 1, frame.PayloadOffset + frame.PayloadJson.Length);
@@ -356,6 +383,8 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         private readonly TransportJsonCodec _codec = new();
         private readonly LengthPrefixedMessageFramer _framer = new();
         private readonly List<Frame> _frames = [];
+        // Rebuilds full actors from delta frames in wire order, as RemoteClientSession does.
+        private readonly ActorStateCache _actorStates = new();
         private readonly CancellationTokenSource _shutdown = new();
         private readonly ManualResetEventSlim _readGate = new(initialState: true);
         private readonly Task _readLoop;
@@ -540,6 +569,11 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
                     {
                         offset += consumed;
                         DecodedProtocolMessage decoded = _codec.Decode(payload);
+                        if (decoded.Message is ServerSnapshotMessage snapshot)
+                        {
+                            decoded = decoded with { Message = _actorStates.Apply(snapshot) };
+                        }
+
                         (int payloadOffset, byte[] payloadJson) = SplitPayload(payload!);
                         lock (_frames)
                         {

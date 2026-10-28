@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
@@ -19,6 +20,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly byte[] _receiveChunk = new byte[16 * 1024];
     private readonly FrameReceiveBuffer _receiveBuffer = new();
     private readonly ConcurrentQueue<IServerToClientMessage> _inboundMessages = new();
+    // SCALE-2: rebuilds full actors from delta-coded snapshots as they are decoded, in wire order,
+    // so every consumer of the inbound queue sees full actors. Receive loop only.
+    private readonly ActorStateCache _actorStates = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private Task? _receiveLoopTask;
@@ -161,6 +165,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // a test that waits for the count can move a manual clock without racing the frame's handling.
     // A frame whose handling ended the session is not counted.
     internal long InboundFrameCount => Interlocked.Read(ref _inboundFrameCount);
+
+    // Read only while the receive loop is idle (tests).
+    internal ActorStateCache ActorStates => _actorStates;
 
     // Chunked world transfers (joins and resyncs) completed and delivered.
     public long WorldTransfersCompleted => Interlocked.Read(ref _worldTransfersCompleted);
@@ -558,6 +565,12 @@ public sealed class RemoteClientSession : IAsyncDisposable
             IServerToClientMessage serverMessage = decoded.Message as IServerToClientMessage
                 ?? throw new InvalidOperationException(
                     $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
+            if (serverMessage is ServerSnapshotMessage snapshotMessage)
+            {
+                // Before any holding (a world transfer), so frames apply in the order they came.
+                serverMessage = _actorStates.Apply(snapshotMessage);
+            }
+
             if (serverMessage is ServerHelloMessage hello)
             {
                 if (hello.ProtocolVersion != TransportEnvelope.CurrentProtocolVersion)

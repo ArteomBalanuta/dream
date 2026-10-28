@@ -151,6 +151,11 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
             foreach (WireLoopbackClient client in everyClient)
             {
                 Assert.Null(client.ReadFault);
+                // Joins between keyframes, a leave and rejoin and a resync: the server sent each
+                // client a keyframe whenever it lacked a delta's base (SCALE-2).
+                Assert.Equal(0, client.ActorChainBreaks);
+                Assert.Equal(0, client.StaleActorsWithheld);
+                Assert.True(client.ActorDeltaFramesApplied > client.ActorKeyframesApplied, $"{client.SessionId}: {client.ActorDeltaFramesApplied} delta frames, {client.ActorKeyframesApplied} keyframes");
                 foreach (WireFrame frame in client.Frames)
                 {
                     IProtocolMessage message = frame.Decoded.Message;
