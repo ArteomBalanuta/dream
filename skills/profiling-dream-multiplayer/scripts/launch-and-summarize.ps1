@@ -4,7 +4,10 @@ param(
     [int]$Port = 5057,
     [switch]$SkipBuild,
     [switch]$KeepRunning,
-    [switch]$NoStopExisting
+    [switch]$NoStopExisting,
+    # dream.exe to launch; defaults to this checkout's dream\bin\Debug\net10.0\dream.exe. Pass a build
+    # from another output path (Release, a worktree's artifacts) with -SkipBuild.
+    [string]$Exe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -99,7 +102,12 @@ function Get-MaxOrZero($Values) {
 }
 
 $repoRoot = Get-RepoRoot
-$exe = Join-Path $repoRoot 'dream\bin\Debug\net10.0\dream.exe'
+$exe = if ([string]::IsNullOrWhiteSpace($Exe)) {
+    Join-Path $repoRoot 'dream\bin\Debug\net10.0\dream.exe'
+}
+else {
+    (Resolve-Path $Exe).Path
+}
 $project = Join-Path $repoRoot 'dream\dream.csproj'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $logDir = Join-Path $repoRoot "logs\perf-run-$stamp"
@@ -108,6 +116,7 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Write-Section 'Setup'
 Write-Output "Repo: $repoRoot"
 Write-Output "Logs: $logDir"
+Write-Output "Exe: $exe"
 Write-Output "Clients: $ClientCount"
 Write-Output "DurationSeconds: $DurationSeconds"
 Write-Output "Port: $Port"
