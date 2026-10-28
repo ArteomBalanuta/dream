@@ -21,8 +21,8 @@ public sealed class TransportJsonCodec : IProtocolCodec
         }
     };
 
-    // The hand-written converters (WIRE-10) cover the hot types: the client command and the
-    // per-actor snapshot entry. They are registered here rather than with [JsonConverter] on the
+    // The hand-written converters (WIRE-10, WIRE-11) cover the hot types: the client command and
+    // the server snapshot with its actors, world mutations and damage events. They are registered here rather than with [JsonConverter] on the
     // types, so the reflection serializer stays available as an independent byte-identity
     // reference for them, and they write exactly what these options' reflection contracts wrote.
     static TransportJsonCodec()
@@ -38,6 +38,13 @@ public sealed class TransportJsonCodec : IProtocolCodec
         SerializerOptions.Converters.Add(new ActorSnapshotListJsonConverter());
         SerializerOptions.Converters.Add(new PlayerCombatStatsSnapshotJsonConverter());
         SerializerOptions.Converters.Add(new PlayerProgressionSnapshotJsonConverter());
+
+        // WIRE-11: the rest of the server snapshot, so a snapshot encode no longer reaches the
+        // reflection serializer (except for the full world, sent only on join and resync).
+        SerializerOptions.Converters.Add(new ServerSnapshotMessageJsonConverter());
+        SerializerOptions.Converters.Add(new ServerSnapshotEnvelopeJsonConverter());
+        SerializerOptions.Converters.Add(new WorldMutationDeltaJsonConverter());
+        SerializerOptions.Converters.Add(new DamageEventDeltaJsonConverter());
     }
 
     // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on
@@ -225,7 +232,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
                 reader.Read();
                 messageKind = reader.TokenType switch
                 {
-                    JsonTokenType.String => reader.GetString(),
+                    JsonTokenType.String => ReadMessageKind(ref reader),
                     JsonTokenType.Null => null,
                     _ => throw new JsonException("Envelope messageKind must be a string.")
                 };
@@ -283,6 +290,29 @@ public sealed class TransportJsonCodec : IProtocolCodec
         };
 
         return new DecodedProtocolMessage(envelope, message);
+    }
+
+    // The known kinds decode to their shared literals instead of a new string per message
+    // (WIRE-11); ValueTextEquals compares the unescaped value, so an escaped spelling still matches.
+    private static readonly string[] KnownMessageKinds =
+    [
+        "server.snapshot", "player.command", "server.action", "player.action", "client.hello",
+        "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected"
+    ];
+
+    private static readonly byte[][] KnownMessageKindsUtf8 = Array.ConvertAll(KnownMessageKinds, System.Text.Encoding.UTF8.GetBytes);
+
+    private static string? ReadMessageKind(ref Utf8JsonReader reader)
+    {
+        for (int i = 0; i < KnownMessageKindsUtf8.Length; i++)
+        {
+            if (reader.ValueTextEquals(KnownMessageKindsUtf8[i]))
+            {
+                return KnownMessageKinds[i];
+            }
+        }
+
+        return reader.GetString();
     }
 
     // payloadReader is a checkpoint positioned on the "payload" property name; a missing payload
