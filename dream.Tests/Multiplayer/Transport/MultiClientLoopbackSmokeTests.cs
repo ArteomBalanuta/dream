@@ -19,7 +19,9 @@ namespace Dream.Tests.Multiplayer.Transport;
 // connection outbound queues, pacing) and two real client sessions (background writers),
 // applying snapshots into ClientWorldSession like PlayScene does. It checks the architecture
 // review fixes working together rather than unit by unit.
-[Collection(TimingSensitiveCollection.Name)]
+//
+// It runs in the parallel pool: every phase follows the server tick and the replicated state, not
+// the wall clock, and the only time limit is the 30 s safety deadline (ARCH-1b).
 public class MultiClientLoopbackSmokeTests
 {
     // 0.6 s of walking at 60 ticks per second.

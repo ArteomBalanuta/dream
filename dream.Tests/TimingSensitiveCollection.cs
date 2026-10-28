@@ -7,13 +7,14 @@ namespace Dream.Tests;
 // collection (xUnit runs it after the parallel ones).
 //
 // Keep it to tests that truly measure the clock: TickPacerTests (pacing overshoot),
-// MultiClientLoopbackSmokeTests (a real-time server tick loop and two clients),
 // StaticWorldChunkMeshBuilderPerformanceTests (a 250 ms build budget), CheckpointPersistenceTests
 // and ServerLoadTests (opt-in via DREAM_LOAD_TEST; they measure tick percentiles, so they must not
-// share the machine with other tests). Every other loopback and stress test runs in the parallel
-// pool and waits on progress (a received frame, a drained queue, a signalled decode) with a
-// generous safety deadline instead of on elapsed time; see TestAssemblyInitializer for the
-// thread-pool minimum they rely on.
+// share the machine with other tests). PhysicsIntegratorTeardownTests is here for another reason:
+// it switches on the process-wide physics leak tracker and forces full collections. Every other
+// loopback and stress test, MultiClientLoopbackSmokeTests included, runs in the parallel pool and
+// waits on progress (a received frame, a drained queue, a signalled decode) with a generous safety
+// deadline instead of on elapsed time; see TestAssemblyInitializer for the thread-pool minimum
+// and TestScheduling for how the parallel phase is scheduled.
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class TimingSensitiveCollection
 {
