@@ -271,6 +271,16 @@ public static class RemoteWorldMutationApplier
                 ApplyCubeMovedMutation(map, mutation, x, y, z);
                 break;
 
+            case WorldMutationKind.CubeIdentified:
+                // The server keyed the cube in this cell to a replicated id (a terrain cube's first
+                // hit); key the client's cube the same way so both checksum it by id. A cell with
+                // no cube is a divergence the world checksum and resync already handle.
+                if (mutation.ActorId is int identifiedId && map.TryGetCubeAtCell(x, y, z) is Cube identifiedCube)
+                {
+                    map.AssignReplicatedCubeId(identifiedCube, identifiedId);
+                }
+                break;
+
             default:
                 throw new InvalidOperationException($"Unsupported world mutation kind '{mutation.Kind}'.");
         }
