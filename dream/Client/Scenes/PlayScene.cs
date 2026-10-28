@@ -274,6 +274,10 @@ public class PlayScene : IDisposable
         ModelAssets.PumpUploads(ModelUploadsPerFrame);
         long clearStart = Stopwatch.GetTimestamp();
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        // The world pass sets its own state rather than inheriting whatever the last pass (the
+        // HUD's ImGui restore, or the startup menu) left: opaque, depth-tested geometry.
+        GL.Disable(EnableCap.Blend);
+        GL.Enable(EnableCap.DepthTest);
         long captureStart = Stopwatch.GetTimestamp();
         WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
             WorldVisibility.MaxRenderDistance,

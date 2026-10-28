@@ -48,9 +48,26 @@ public static class GLUtils
 
     public static void AssertRenderThread(string context) => RenderThreadAffinity.AssertCurrent(context);
 
-    // Drains the GL error flags and reports each one through RenderFaultLog.Shared.
+    // Set by any check that drains GL_OUT_OF_MEMORY or GL_CONTEXT_LOST and never cleared in the
+    // game. A caller that drops the result (Shader creation, say) would otherwise drain the flag
+    // before the frame-end check could see it. GL runs on the render thread only, so the latch is
+    // thread-static, like RenderCounters, and tests on other threads never see each other's.
+    [ThreadStatic] private static bool s_fatalErrorLatched;
+
+    public static bool FatalErrorLatched => s_fatalErrorLatched;
+
+    // Drains the GL error flags and reports each one through RenderFaultLog.Shared. Returns Fatal
+    // when a fatal error was seen by this or any earlier check on this thread, so the frame-end
+    // check in Game sees a fatal error another caller drained.
     public static GLFaultKind CheckGLError(string context) =>
-        CheckGLError(context, s_getError, RenderFaultLog.Shared);
+        WithFatalLatch(CheckGLError(context, s_getError, RenderFaultLog.Shared));
+
+    // Raises a check's result to Fatal once a fatal error has been latched.
+    public static GLFaultKind WithFatalLatch(GLFaultKind kind) =>
+        s_fatalErrorLatched ? GLFaultKind.Fatal : kind;
+
+    // Test seam: starts this thread over with no fatal error latched.
+    internal static void ResetFatalErrorLatch() => s_fatalErrorLatched = false;
 
     public static GLFaultKind CheckGLError(string context, Func<ErrorCode> getError, IRenderFaultSink sink)
     {
@@ -72,6 +89,11 @@ public static class GLUtils
             {
                 worst = kind;
             }
+        }
+
+        if (worst == GLFaultKind.Fatal)
+        {
+            s_fatalErrorLatched = true;
         }
 
         return worst;

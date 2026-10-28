@@ -395,6 +395,7 @@ public class AnimatedModel : IDisposable
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
                 DrawElementsType.UnsignedInt, 0);
+            RenderCounters.CountDraw();
         }
     }
 
@@ -421,6 +422,8 @@ public class AnimatedModel : IDisposable
                 DrawElementsType.UnsignedInt,
                 IntPtr.Zero,
                 count);
+            // One instanced call counts as one draw.
+            RenderCounters.CountDraw();
         }
     }
 

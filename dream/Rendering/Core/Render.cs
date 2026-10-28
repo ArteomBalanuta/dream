@@ -16,7 +16,7 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.Core;
 
-﻿using OpenTK.Graphics.OpenGL4;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
@@ -60,8 +60,8 @@ public readonly record struct ImGuiScissorRect(int X, int Y, int Width, int Heig
 }
 
 // The GL state an ImGui pass changes, captured before the pass and restored after it, so the
-// HUD does not leak blend, cull, depth, scissor, texture-unit or program state into the next
-// frame's world passes.
+// HUD does not leak blend, cull, depth, scissor (flag and box), texture-unit, program,
+// vertex-array or array-buffer state into the next frame's world passes.
 internal readonly struct ImGuiGlStateSnapshot
 {
     private readonly bool _blend;
@@ -76,6 +76,11 @@ internal readonly struct ImGuiGlStateSnapshot
     private readonly int _texture2DOnUnit0;
     private readonly int _program;
     private readonly int _vertexArray;
+    private readonly int _arrayBuffer;
+    private readonly int _scissorX;
+    private readonly int _scissorY;
+    private readonly int _scissorWidth;
+    private readonly int _scissorHeight;
 
     private ImGuiGlStateSnapshot(
         bool blend,
@@ -89,7 +94,12 @@ internal readonly struct ImGuiGlStateSnapshot
         int activeTexture,
         int texture2DOnUnit0,
         int program,
-        int vertexArray)
+        int vertexArray,
+        int arrayBuffer,
+        int scissorX,
+        int scissorY,
+        int scissorWidth,
+        int scissorHeight)
     {
         _blend = blend;
         _cullFace = cullFace;
@@ -103,6 +113,11 @@ internal readonly struct ImGuiGlStateSnapshot
         _texture2DOnUnit0 = texture2DOnUnit0;
         _program = program;
         _vertexArray = vertexArray;
+        _arrayBuffer = arrayBuffer;
+        _scissorX = scissorX;
+        _scissorY = scissorY;
+        _scissorWidth = scissorWidth;
+        _scissorHeight = scissorHeight;
     }
 
     // Leaves texture unit 0 active, which is the unit the ImGui pass samples from.
@@ -110,6 +125,16 @@ internal readonly struct ImGuiGlStateSnapshot
     {
         int activeTexture = GL.GetInteger(GetPName.ActiveTexture);
         GL.ActiveTexture(TextureUnit.Texture0);
+        // GL_SCISSOR_BOX is four ints; it is read into the stack so a capture allocates nothing.
+        Span<int> scissorBox = stackalloc int[4];
+        unsafe
+        {
+            fixed (int* box = scissorBox)
+            {
+                GL.GetInteger(GetPName.ScissorBox, box);
+            }
+        }
+
         return new ImGuiGlStateSnapshot(
             GL.IsEnabled(EnableCap.Blend),
             GL.IsEnabled(EnableCap.CullFace),
@@ -122,7 +147,12 @@ internal readonly struct ImGuiGlStateSnapshot
             activeTexture,
             GL.GetInteger(GetPName.TextureBinding2D),
             GL.GetInteger(GetPName.CurrentProgram),
-            GL.GetInteger(GetPName.VertexArrayBinding));
+            GL.GetInteger(GetPName.VertexArrayBinding),
+            GL.GetInteger(GetPName.ArrayBufferBinding),
+            scissorBox[0],
+            scissorBox[1],
+            scissorBox[2],
+            scissorBox[3]);
     }
 
     public void Restore()
@@ -131,6 +161,7 @@ internal readonly struct ImGuiGlStateSnapshot
         SetEnabled(EnableCap.CullFace, _cullFace);
         SetEnabled(EnableCap.DepthTest, _depthTest);
         SetEnabled(EnableCap.ScissorTest, _scissorTest);
+        GL.Scissor(_scissorX, _scissorY, _scissorWidth, _scissorHeight);
         GL.BlendFuncSeparate(
             (BlendingFactorSrc)_blendSrcRgb,
             (BlendingFactorDest)_blendDstRgb,
@@ -138,6 +169,8 @@ internal readonly struct ImGuiGlStateSnapshot
             (BlendingFactorDest)_blendDstAlpha);
         GL.UseProgram(_program);
         GL.BindVertexArray(_vertexArray);
+        // GL_ARRAY_BUFFER is not part of VAO state, so it is restored separately.
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _arrayBuffer);
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture2D, _texture2DOnUnit0);
         GL.ActiveTexture((TextureUnit)_activeTexture);
@@ -438,10 +471,10 @@ public class Render : IDisposable
                     (int)pcmd.ElemCount,
                     DrawElementsType.UnsignedShort,
                     (int)pcmd.IdxOffset * sizeof(ushort));
+                RenderCounters.CountDraw();
             }
         }
 
-        GL.Disable(EnableCap.ScissorTest);
         previousState.Restore();
     }
 
@@ -576,9 +609,9 @@ public class Render : IDisposable
         _debugRenderer = new DebugRenderer(this);
         _hudRenderer = new HudRenderer(this);
         _viewModelRenderer = new ViewModelRenderer(this);
+        // No global blend state: each pass sets what it needs. The world pass turns blending off
+        // and depth testing on at its start, and the HUD and ImGui passes enable blending themselves.
         GL.Enable(EnableCap.DepthTest);
-        GL.Enable(EnableCap.Blend);
-        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
         InitializeShaders();
 
@@ -788,6 +821,7 @@ public class Render : IDisposable
         foreach ((int first, int count) in CubeFaceDrawRanges)
         {
             GL.DrawArrays(PrimitiveType.TriangleFan, first, count);
+            RenderCounters.CountDraw();
         }
     }
 
@@ -1019,6 +1053,7 @@ public class Render : IDisposable
 
         GL.BindVertexArray(_hudVao);
         GL.DrawArrays(PrimitiveType.Lines, 0, 8);
+        RenderCounters.CountDraw();
         GL.BindVertexArray(0);
     }
 

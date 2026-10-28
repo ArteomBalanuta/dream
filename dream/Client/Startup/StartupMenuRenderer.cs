@@ -321,10 +321,10 @@ public sealed class StartupMenuRenderer : IDisposable
                     (int)command.ElemCount,
                     DrawElementsType.UnsignedShort,
                     (int)command.IdxOffset * sizeof(ushort));
+                RenderCounters.CountDraw();
             }
         }
 
-        GL.Disable(EnableCap.ScissorTest);
         previousState.Restore();
     }
 

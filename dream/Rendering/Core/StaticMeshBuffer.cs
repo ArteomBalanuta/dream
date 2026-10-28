@@ -91,6 +91,7 @@ public sealed class StaticMeshBuffer : IDisposable
 
         GL.BindVertexArray(_vertexArrayObject);
         GL.DrawElements(PrimitiveType.Triangles, _indexCount, DrawElementsType.UnsignedInt, 0);
+        RenderCounters.CountDraw();
         GL.BindVertexArray(0);
     }
 
