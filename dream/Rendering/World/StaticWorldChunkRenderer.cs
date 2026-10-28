@@ -12,14 +12,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     public const string BuildFaultSource = "static-chunk-build";
     public const int BuildFaultBaseBackoffFrames = 15;
     public const int BuildFaultMaxBackoffFrames = 480;
-    private const int MaxMeshUploadsPerFrame = 8;
-    // Only used when the export is unchanged, where dirty chunks are neither planned nor scheduled.
-    private static readonly HashSet<StaticWorldChunkKey> UnchangedExportDirtyChunks = [];
-    private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
-    private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMesh> _meshes = new();
+    // GPU bytes uploaded per frame. One mesh is always uploaded per frame, even when it alone is
+    // larger, so a batch always makes progress.
+    public const long UploadByteBudgetPerFrame = 2L * 1024 * 1024;
+    private readonly Dictionary<StaticWorldChunkMeshKey, StaticWorldChunkMeshInfo> _meshes = new();
     private readonly Dictionary<StaticWorldChunkMeshKey, int> _signatures = new();
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
+    private readonly IStaticWorldChunkMeshStore _meshStore;
     private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
     private StaticWorldChunkBuildRequest? _activeBuildRequest;
     private StaticWorldChunkBuildRequest? _queuedBuildRequest;
@@ -36,18 +36,27 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     public StaticWorldChunkRenderer(
         Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>>? startBuildTask = null,
-        IRenderFaultSink? faultSink = null)
+        IRenderFaultSink? faultSink = null,
+        IStaticWorldChunkMeshStore? meshStore = null)
     {
         _startBuildTask = startBuildTask ?? StartDefaultBuildTask;
         _faultSink = faultSink ?? RenderFaultLog.Shared;
+        _meshStore = meshStore ?? new GlStaticWorldChunkMeshStore();
     }
 
+    // Runs on the build worker: plans from the request's cell snapshot and signature copy, then
+    // builds the meshes. Touches no Cube and no renderer state.
     public static StaticWorldChunkBuildBatch BuildBatch(StaticWorldChunkBuildRequest request)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        IReadOnlyList<StaticWorldChunkBuildInput> inputs = PlanBuildInputs(
+            request.Cells,
+            request.CachedSignatures,
+            request.DirtyChunks);
         return new StaticWorldChunkBuildBatch(
             request.ExportSignature,
             request.DirtyChunks,
-            BuildOutputs(request.Inputs));
+            BuildOutputs(inputs));
     }
 
     public static IReadOnlyList<StaticWorldChunkBuildOutput> BuildOutputs(IReadOnlyList<StaticWorldChunkBuildInput> inputs)
@@ -81,43 +90,18 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         IReadOnlyDictionary<StaticWorldChunkMeshKey, int> cachedSignatures,
         IReadOnlySet<StaticWorldChunkKey> dirtyChunks)
     {
-        Dictionary<StaticWorldChunkKey, StaticVoxelRenderCell[]> cellsByChunk = cells
-            .GroupBy(cell => StaticWorldChunkKey.FromWorldPosition(cell.Center))
-            .ToDictionary(group => group.Key, group => group.ToArray());
-        List<StaticWorldChunkBuildInput> inputs = new();
-
-        foreach ((StaticWorldChunkKey chunkKey, StaticVoxelRenderCell[] chunkCells) in cellsByChunk)
-        {
-            StaticVoxelRenderCell[] occluderCells = CollectNeighborOccluders(chunkKey, cellsByChunk);
-            foreach (IGrouping<GeometryMaterialId, StaticVoxelRenderCell> materialGroup in chunkCells.GroupBy(cell => cell.MaterialId))
-            {
-                StaticVoxelRenderCell[] materialCells = materialGroup.ToArray();
-                foreach (StaticTerrainMaterialRole role in StaticTerrainMaterialCatalog.ResolveRoles(materialGroup.Key))
-                {
-                    StaticWorldChunkMeshKey meshKey = new(chunkKey, materialGroup.Key, role);
-                    int signature = CalculateInputSignature(meshKey, materialCells, occluderCells);
-                    if (!dirtyChunks.Contains(chunkKey) &&
-                        cachedSignatures.TryGetValue(meshKey, out int cachedSignature) &&
-                        cachedSignature == signature)
-                    {
-                        continue;
-                    }
-
-                    inputs.Add(new StaticWorldChunkBuildInput(
-                        meshKey,
-                        materialCells,
-                        occluderCells,
-                        signature));
-                }
-            }
-        }
-
-        return inputs;
+        return StaticWorldChunkPlanner.Plan(cells, cachedSignatures, dirtyChunks);
     }
 
     public static bool IsChunkVisible(Vector3 cameraPosition, Vector3 cameraFront, StaticWorldChunkMesh mesh)
     {
-        if (DistanceSquaredToBounds(cameraPosition, mesh.Bounds) <=
+        ArgumentNullException.ThrowIfNull(mesh);
+        return IsChunkVisible(cameraPosition, cameraFront, mesh.Bounds);
+    }
+
+    public static bool IsChunkVisible(Vector3 cameraPosition, Vector3 cameraFront, StaticWorldChunkBounds bounds)
+    {
+        if (DistanceSquaredToBounds(cameraPosition, bounds) <=
             WorldVisibility.MaxRenderDistance * WorldVisibility.MaxRenderDistance)
         {
             return true;
@@ -126,81 +110,72 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         return WorldVisibility.IsPositionVisible(
             cameraPosition,
             cameraFront,
-            mesh.Bounds.Center,
-            mesh.Bounds.Size.Length * 0.5f);
+            bounds.Center,
+            bounds.Size.Length * 0.5f);
     }
 
     public StaticWorldChunkRenderStats Draw(Render render, Camera camera, GeometryRenderExport export)
     {
         DrainCompletedBuild();
-        Stopwatch stopwatch = Stopwatch.StartNew();
+        // Stopwatch timestamps rather than a Stopwatch instance: an unchanged frame allocates nothing.
+        long timestamp = Stopwatch.GetTimestamp();
         int exportSignature = CalculateExportSignature(export);
-        stopwatch.Stop();
-        double signatureMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+        double signatureMilliseconds = ElapsedMilliseconds(ref timestamp);
 
-        stopwatch.Restart();
         bool exportUnchanged = _hasAppliedExport && exportSignature == _lastAppliedExportSignature;
-        IReadOnlyList<StaticVoxelRenderCell> cells = exportUnchanged
-            ? []
-            : StaticWorldChunkExtractor.ExtractCells(export);
-        stopwatch.Stop();
-        double extractMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
-
-        stopwatch.Restart();
-        HashSet<StaticWorldChunkKey> dirtyChunks = exportUnchanged
-            ? UnchangedExportDirtyChunks
-            : CollectDirtyChunks(export);
-        IReadOnlyList<StaticWorldChunkBuildInput> inputs = exportUnchanged
-            ? []
-            : PlanBuildInputs(cells, _signatures, dirtyChunks);
-        stopwatch.Stop();
-        double planMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
-
-        stopwatch.Restart();
+        // The render thread only collects the dirty chunks here. Planning (chunk grouping, face
+        // occlusion lookups and mesh signatures) runs on the build worker inside BuildBatch.
+        HashSet<StaticWorldChunkKey>? dirtyChunks = exportUnchanged ? null : CollectDirtyChunks(export);
         bool buildBackoffActive = ConsumeBuildBackoffFrame();
         // An equal signature means the scheduled request already carries these dirty chunks.
-        if (!exportUnchanged && exportSignature != _lastScheduledExportSignature)
+        bool scheduleChange = dirtyChunks != null && exportSignature != _lastScheduledExportSignature;
+        double planMilliseconds = ElapsedMilliseconds(ref timestamp);
+
+        double extractMilliseconds = 0d;
+        if (scheduleChange && buildBackoffActive)
         {
-            if (buildBackoffActive)
-            {
-                // The map drains its static dirty cells on every capture, so a backoff frame keeps
-                // them (already unioned with the old retry set) for the request scheduled after it.
-                _retryDirtyChunks = dirtyChunks;
-            }
-            else
-            {
-                ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks, inputs));
-            }
+            // The map drains its static dirty cells on every capture, so a backoff frame keeps
+            // them (already unioned with the old retry set) for the request scheduled after it.
+            _retryDirtyChunks = dirtyChunks;
+        }
+        else if (scheduleChange)
+        {
+            // ExtractCells reads the mutable Cube positions, so it stays on the render thread; the
+            // worker gets plain cell values and a copy of the applied signatures.
+            IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
+            Dictionary<StaticWorldChunkMeshKey, int> signatureSnapshot = new(_signatures);
+            extractMilliseconds = ElapsedMilliseconds(ref timestamp);
+            ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells, signatureSnapshot));
         }
 
         StaticWorldChunkSyncStats syncStats = ApplyPendingUploads();
-        stopwatch.Stop();
-        double syncMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+        double syncMilliseconds = ElapsedMilliseconds(ref timestamp);
 
         int visibleChunks = 0;
         int visibleMeshes = 0;
         int visibleFaces = 0;
         int visibleTriangles = 0;
-        stopwatch.Restart();
-        foreach (StaticWorldChunkMesh mesh in _meshes.Values)
+        foreach (StaticWorldChunkMeshInfo mesh in _meshes.Values)
         {
-            if (!IsChunkVisible(camera.Position, camera.Front, mesh))
+            // Meshes without faces have no GPU buffer.
+            if (mesh.ExposedFaceCount <= 0 ||
+                !IsChunkVisible(camera.Position, camera.Front, mesh.Bounds))
             {
                 continue;
             }
 
-            if (!_buffers.TryGetValue(new StaticWorldChunkMeshKey(mesh.Key, mesh.MaterialId, mesh.MaterialRole), out StaticMeshBuffer? buffer))
+            if (!_meshStore.Draw(render, camera, mesh))
             {
                 continue;
             }
 
-            render.DrawStaticMesh(camera, buffer, mesh.MaterialId, mesh.MaterialRole);
             visibleChunks++;
             visibleMeshes++;
             visibleFaces += mesh.ExposedFaceCount;
             visibleTriangles += mesh.TriangleCount;
         }
-        stopwatch.Stop();
+
+        double drawMilliseconds = ElapsedMilliseconds(ref timestamp);
 
         return new StaticWorldChunkRenderStats(
             visibleChunks,
@@ -211,9 +186,17 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             extractMilliseconds,
             planMilliseconds,
             syncMilliseconds,
-            stopwatch.Elapsed.TotalMilliseconds,
+            drawMilliseconds,
             syncStats.RebuiltMeshes,
             syncStats.ReusedMeshes);
+    }
+
+    private static double ElapsedMilliseconds(ref long timestamp)
+    {
+        long now = Stopwatch.GetTimestamp();
+        double elapsed = Stopwatch.GetElapsedTime(timestamp, now).TotalMilliseconds;
+        timestamp = now;
+        return elapsed;
     }
 
     public void Dispose()
@@ -235,12 +218,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     private void ClearBuffers()
     {
-        foreach (StaticMeshBuffer buffer in _buffers.Values)
-        {
-            buffer.Dispose();
-        }
-
-        _buffers.Clear();
+        _meshStore.Clear();
         _meshes.Clear();
         _signatures.Clear();
         _lastAppliedExportSignature = 0;
@@ -252,11 +230,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     private void RemoveMesh(StaticWorldChunkMeshKey key)
     {
-        if (_buffers.Remove(key, out StaticMeshBuffer? buffer))
-        {
-            buffer.Dispose();
-        }
-
+        _meshStore.Remove(key);
         _meshes.Remove(key);
         _signatures.Remove(key);
     }
@@ -404,13 +378,20 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         int rebuiltMeshes = 0;
         int reusedMeshes = 0;
-        int uploadsRemaining = MaxMeshUploadsPerFrame;
-        while (uploadsRemaining > 0 && _activeUploadBatch.TryTakeNext(out StaticWorldChunkBuildOutput? output))
+        long uploadedBytes = 0;
+        while (_activeUploadBatch.TryPeekNext(out StaticWorldChunkBuildOutput? next))
         {
-            ArgumentNullException.ThrowIfNull(output);
-            ReplaceMesh(output);
+            ArgumentNullException.ThrowIfNull(next);
+            long meshBytes = next.Mesh.ExposedFaceCount > 0 ? next.Mesh.UploadByteCount : 0;
+            if (uploadedBytes > 0 && uploadedBytes + meshBytes > UploadByteBudgetPerFrame)
+            {
+                break;
+            }
+
+            _activeUploadBatch.TryTakeNext(out _);
+            ReplaceMesh(next);
+            uploadedBytes += meshBytes;
             rebuiltMeshes++;
-            uploadsRemaining--;
         }
 
         if (_activeUploadBatch.IsComplete)
@@ -434,17 +415,17 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     private void ReplaceMesh(StaticWorldChunkBuildOutput output)
     {
-        if (_buffers.Remove(output.Key, out StaticMeshBuffer? oldBuffer))
-        {
-            oldBuffer.Dispose();
-        }
-
-        _meshes[output.Key] = output.Mesh;
+        // Only metadata is kept; the vertex and index lists go to the GPU and are then dropped.
+        _meshes[output.Key] = output.Mesh.ToInfo();
         _signatures[output.Key] = output.Signature;
 
         if (output.Mesh.ExposedFaceCount > 0)
         {
-            _buffers[output.Key] = new StaticMeshBuffer(output.Mesh);
+            _meshStore.Upload(output.Key, output.Mesh);
+        }
+        else
+        {
+            _meshStore.Remove(output.Key);
         }
     }
 
@@ -464,51 +445,6 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private static Task<StaticWorldChunkBuildBatch> StartDefaultBuildTask(StaticWorldChunkBuildRequest request)
     {
         return Task.Run(() => BuildBatch(request));
-    }
-
-    private static StaticVoxelRenderCell[] CollectNeighborOccluders(
-        StaticWorldChunkKey chunkKey,
-        IReadOnlyDictionary<StaticWorldChunkKey, StaticVoxelRenderCell[]> cellsByChunk)
-    {
-        List<StaticVoxelRenderCell> occluders = new();
-        for (int x = chunkKey.X - 1; x <= chunkKey.X + 1; x++)
-        {
-            for (int y = chunkKey.Y - 1; y <= chunkKey.Y + 1; y++)
-            {
-                for (int z = chunkKey.Z - 1; z <= chunkKey.Z + 1; z++)
-                {
-                    if (cellsByChunk.TryGetValue(new StaticWorldChunkKey(x, y, z), out StaticVoxelRenderCell[]? chunkCells))
-                    {
-                        occluders.AddRange(chunkCells);
-                    }
-                }
-            }
-        }
-
-        return occluders.ToArray();
-    }
-
-    private static int CalculateInputSignature(
-        StaticWorldChunkMeshKey key,
-        IReadOnlyList<StaticVoxelRenderCell> materialCells,
-        IReadOnlyList<StaticVoxelRenderCell> occluderCells)
-    {
-        HashCode hash = new();
-        hash.Add(key);
-        AddCellsToSignature(ref hash, materialCells);
-        AddCellsToSignature(ref hash, occluderCells);
-        return hash.ToHashCode();
-    }
-
-    private static void AddCellsToSignature(ref HashCode hash, IReadOnlyList<StaticVoxelRenderCell> cells)
-    {
-        hash.Add(cells.Count);
-        foreach (StaticVoxelRenderCell cell in cells)
-        {
-            hash.Add(cell.Center);
-            hash.Add(cell.Size);
-            hash.Add(cell.MaterialId);
-        }
     }
 
     public static int CalculateExportSignature(GeometryRenderExport export)
@@ -615,6 +551,11 @@ internal sealed class StaticWorldChunkUploadBatch
 
     public bool IsComplete => _pendingOutputs.Count == 0;
 
+    public bool TryPeekNext(out StaticWorldChunkBuildOutput? output)
+    {
+        return _pendingOutputs.TryPeek(out output);
+    }
+
     public bool TryTakeNext(out StaticWorldChunkBuildOutput? output)
     {
         if (_pendingOutputs.Count == 0)
@@ -645,3 +586,640 @@ public readonly record struct StaticWorldChunkRenderStats(
 public readonly record struct StaticWorldChunkSyncStats(
     int RebuiltMeshes,
     int ReusedMeshes);
+
+// Owns the GPU side of the static chunk meshes. The default store keeps one StaticMeshBuffer per
+// mesh key and refills it in place on rebuild; tests substitute a store that needs no GL context.
+public interface IStaticWorldChunkMeshStore
+{
+    // Creates the key's buffer, or replaces the contents of the existing one.
+    void Upload(StaticWorldChunkMeshKey key, StaticWorldChunkMesh mesh);
+
+    void Remove(StaticWorldChunkMeshKey key);
+
+    // Returns false when the key has no buffer.
+    bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh);
+
+    void Clear();
+}
+
+public sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
+{
+    private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
+
+    public void Upload(StaticWorldChunkMeshKey key, StaticWorldChunkMesh mesh)
+    {
+        if (_buffers.TryGetValue(key, out StaticMeshBuffer? buffer))
+        {
+            buffer.Upload(mesh);
+            return;
+        }
+
+        _buffers[key] = new StaticMeshBuffer(mesh);
+    }
+
+    public void Remove(StaticWorldChunkMeshKey key)
+    {
+        if (_buffers.Remove(key, out StaticMeshBuffer? buffer))
+        {
+            buffer.Dispose();
+        }
+    }
+
+    public bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh)
+    {
+        if (!_buffers.TryGetValue(mesh.Key, out StaticMeshBuffer? buffer))
+        {
+            return false;
+        }
+
+        render.DrawStaticMesh(camera, buffer, mesh.MaterialId, mesh.MaterialRole);
+        return true;
+    }
+
+    public void Clear()
+    {
+        foreach (StaticMeshBuffer buffer in _buffers.Values)
+        {
+            buffer.Dispose();
+        }
+
+        _buffers.Clear();
+    }
+}
+
+// Plans the static chunk build inputs on the build worker.
+//
+// Cells are grouped by chunk in first-appearance order, and by material in first-appearance order
+// within a chunk, exactly as the former GroupBy plan did. Occluders of a chunk are its own cells
+// plus the cells of the 26 neighbour chunks that can cover one of its faces. Those are found with
+// a face lookup keyed by (face direction, quantized face plane, unit grid square) instead of
+// copying every cell of all 27 chunks per chunk. Only faces that can touch another chunk are
+// inserted or looked up. Cells that cannot touch a face never cover it, so the built faces are
+// the same as with the full 27-chunk occluder list.
+//
+// A mesh signature combines the mesh key, its material cells and a hash of the 27 chunks around it
+// (each chunk hashed once), so it changes whenever a cell the old 27-chunk occluder copy contained
+// changes, including across chunk borders.
+internal static class StaticWorldChunkPlanner
+{
+    // Must match StaticWorldChunkMeshBuilder's face plane tolerance and quantization.
+    private const float Epsilon = 0.0001f;
+    // Float slack when deciding which chunks a box reaches.
+    private const float BorderSlack = 0.001f;
+    // Occluders wider than this on any axis skip the grid and are offered to every neighbour chunk.
+    // It also bounds how far from a chunk border a grid occluder can reach, so it is kept small.
+    private const float MaxGridOccluderSize = 2f;
+    private const int DirectionCount = 6;
+    private const int ChunkSide = StaticWorldChunkKey.DefaultChunkSideInWorldUnits;
+
+    public static List<StaticWorldChunkBuildInput> Plan(
+        IReadOnlyList<StaticVoxelRenderCell> cells,
+        IReadOnlyDictionary<StaticWorldChunkMeshKey, int> cachedSignatures,
+        IReadOnlySet<StaticWorldChunkKey> dirtyChunks)
+    {
+        ArgumentNullException.ThrowIfNull(cells);
+        ArgumentNullException.ThrowIfNull(cachedSignatures);
+        ArgumentNullException.ThrowIfNull(dirtyChunks);
+
+        int cellCount = cells.Count;
+        StaticVoxelRenderCell[] cellArray = new StaticVoxelRenderCell[cellCount];
+        Dictionary<StaticWorldChunkKey, int> chunkIndexByKey = new();
+        List<StaticWorldChunkKey> chunkKeys = new();
+        List<int> chunkCellCounts = new();
+        int[] chunkOfCell = new int[cellCount];
+        Vector3 maxGridCellSize = Vector3.Zero;
+        float minCellExtent = float.MaxValue;
+        for (int i = 0; i < cellCount; i++)
+        {
+            StaticVoxelRenderCell cell = cells[i];
+            cellArray[i] = cell;
+            StaticWorldChunkKey key = StaticWorldChunkKey.FromWorldPosition(cell.Center);
+            if (!chunkIndexByKey.TryGetValue(key, out int chunkIndex))
+            {
+                chunkIndex = chunkKeys.Count;
+                chunkIndexByKey.Add(key, chunkIndex);
+                chunkKeys.Add(key);
+                chunkCellCounts.Add(0);
+            }
+
+            chunkOfCell[i] = chunkIndex;
+            chunkCellCounts[chunkIndex]++;
+            if (!IsLargeOccluder(cell))
+            {
+                maxGridCellSize = Vector3.ComponentMax(maxGridCellSize, cell.Size);
+            }
+
+            minCellExtent = MathF.Min(minCellExtent, MathF.Min(cell.Size.X, MathF.Min(cell.Size.Y, cell.Size.Z)));
+        }
+
+        int chunkCount = chunkKeys.Count;
+        StaticVoxelRenderCell[][] chunkCells = new StaticVoxelRenderCell[chunkCount][];
+        int[] fill = new int[chunkCount];
+        for (int c = 0; c < chunkCount; c++)
+        {
+            chunkCells[c] = new StaticVoxelRenderCell[chunkCellCounts[c]];
+        }
+
+        for (int i = 0; i < cellCount; i++)
+        {
+            int c = chunkOfCell[i];
+            chunkCells[c][fill[c]++] = cellArray[i];
+        }
+
+        int[] chunkHashes = new int[chunkCount];
+        for (int c = 0; c < chunkCount; c++)
+        {
+            HashCode hash = new();
+            AddCellsToSignature(ref hash, chunkCells[c]);
+            chunkHashes[c] = hash.ToHashCode();
+        }
+
+        // A grid occluder covers a face only if it spans the face's other two axes, so a cell whose
+        // face it can cover is at most as wide as the grid cells there; only its depth along the
+        // face axis is unbounded. Large cells are excluded here when they can never be covered.
+        Vector3 maxCoveredDepth = Vector3.Zero;
+        foreach (StaticVoxelRenderCell cell in cellArray)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int uAxis = UAxis(axis);
+                int vAxis = VAxis(axis);
+                if (Get(cell.Size, uAxis) <= Get(maxGridCellSize, uAxis) + (2f * Epsilon) + BorderSlack &&
+                    Get(cell.Size, vAxis) <= Get(maxGridCellSize, vAxis) + (2f * Epsilon) + BorderSlack &&
+                    Get(cell.Size, axis) > Get(maxCoveredDepth, axis))
+                {
+                    Set(ref maxCoveredDepth, axis, Get(cell.Size, axis));
+                }
+            }
+        }
+
+        FaceGeometry geometry = new(
+            maxCoveredDepth * 0.5f,
+            maxGridCellSize * 0.5f,
+            cellCount == 0 ? 0f : MathF.Max(0f, (minCellExtent * 0.5f) - Epsilon) * 0.5f);
+        int[] neighborMasks = new int[chunkCount];
+        for (int c = 0; c < chunkCount; c++)
+        {
+            neighborMasks[c] = CalculateNeighborMask(chunkKeys[c], chunkIndexByKey);
+        }
+
+        FaceLookup lookup = FaceLookup.Create(cellArray, chunkOfCell, chunkKeys, neighborMasks, geometry, out List<int> largeOccluders);
+
+        List<StaticWorldChunkBuildInput> inputs = new();
+        int[] occluderStamp = new int[cellCount];
+        List<StaticVoxelRenderCell> neighborOccluders = new();
+        List<(GeometryMaterialId MaterialId, List<StaticVoxelRenderCell> Cells)> materialGroups = new();
+        for (int c = 0; c < chunkCount; c++)
+        {
+            StaticWorldChunkKey chunkKey = chunkKeys[c];
+            StaticVoxelRenderCell[] ownCells = chunkCells[c];
+            int stamp = c + 1;
+
+            neighborOccluders.Clear();
+            if (lookup.HasEntries && neighborMasks[c] != 0)
+            {
+                foreach (StaticVoxelRenderCell cell in ownCells)
+                {
+                    lookup.CollectForeignOccluders(cell, c, chunkKey, neighborMasks[c], geometry, chunkOfCell, chunkKeys, occluderStamp, stamp, cellArray, neighborOccluders);
+                }
+            }
+
+            foreach (int large in largeOccluders)
+            {
+                int largeChunk = chunkOfCell[large];
+                if (largeChunk != c &&
+                    occluderStamp[large] != stamp &&
+                    IsNeighborChunk(chunkKey, chunkKeys[largeChunk]))
+                {
+                    occluderStamp[large] = stamp;
+                    neighborOccluders.Add(cellArray[large]);
+                }
+            }
+
+            StaticVoxelRenderCell[] occluderCells = neighborOccluders.Count == 0
+                ? ownCells
+                : [.. ownCells, .. neighborOccluders];
+            int neighborhoodHash = CalculateNeighborhoodHash(chunkKey, chunkIndexByKey, chunkHashes);
+
+            GroupByMaterial(ownCells, materialGroups);
+            bool chunkDirty = dirtyChunks.Contains(chunkKey);
+            foreach ((GeometryMaterialId materialId, List<StaticVoxelRenderCell> group) in materialGroups)
+            {
+                StaticVoxelRenderCell[] materialCells = group.ToArray();
+                foreach (StaticTerrainMaterialRole role in StaticTerrainMaterialCatalog.ResolveRoles(materialId))
+                {
+                    StaticWorldChunkMeshKey meshKey = new(chunkKey, materialId, role);
+                    int signature = CalculateInputSignature(meshKey, materialCells, neighborhoodHash);
+                    if (!chunkDirty &&
+                        cachedSignatures.TryGetValue(meshKey, out int cachedSignature) &&
+                        cachedSignature == signature)
+                    {
+                        continue;
+                    }
+
+                    inputs.Add(new StaticWorldChunkBuildInput(meshKey, materialCells, occluderCells, signature));
+                }
+            }
+        }
+
+        return inputs;
+    }
+
+    private static void GroupByMaterial(
+        StaticVoxelRenderCell[] chunkCells,
+        List<(GeometryMaterialId MaterialId, List<StaticVoxelRenderCell> Cells)> groups)
+    {
+        groups.Clear();
+        foreach (StaticVoxelRenderCell cell in chunkCells)
+        {
+            List<StaticVoxelRenderCell>? target = null;
+            foreach ((GeometryMaterialId materialId, List<StaticVoxelRenderCell> group) in groups)
+            {
+                if (materialId == cell.MaterialId)
+                {
+                    target = group;
+                    break;
+                }
+            }
+
+            if (target == null)
+            {
+                target = new List<StaticVoxelRenderCell>();
+                groups.Add((cell.MaterialId, target));
+            }
+
+            target.Add(cell);
+        }
+    }
+
+    private static int CalculateNeighborhoodHash(
+        StaticWorldChunkKey chunkKey,
+        Dictionary<StaticWorldChunkKey, int> chunkIndexByKey,
+        int[] chunkHashes)
+    {
+        HashCode hash = new();
+        for (int x = chunkKey.X - 1; x <= chunkKey.X + 1; x++)
+        {
+            for (int y = chunkKey.Y - 1; y <= chunkKey.Y + 1; y++)
+            {
+                for (int z = chunkKey.Z - 1; z <= chunkKey.Z + 1; z++)
+                {
+                    if (chunkIndexByKey.TryGetValue(new StaticWorldChunkKey(x, y, z), out int index))
+                    {
+                        hash.Add(true);
+                        hash.Add(chunkHashes[index]);
+                    }
+                    else
+                    {
+                        hash.Add(false);
+                    }
+                }
+            }
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int CalculateInputSignature(
+        StaticWorldChunkMeshKey key,
+        IReadOnlyList<StaticVoxelRenderCell> materialCells,
+        int neighborhoodHash)
+    {
+        HashCode hash = new();
+        hash.Add(key);
+        AddCellsToSignature(ref hash, materialCells);
+        hash.Add(neighborhoodHash);
+        return hash.ToHashCode();
+    }
+
+    private static void AddCellsToSignature(ref HashCode hash, StaticVoxelRenderCell[] cells)
+    {
+        hash.Add(cells.Length);
+        foreach (StaticVoxelRenderCell cell in cells)
+        {
+            hash.Add(cell.Center);
+            hash.Add(cell.Size);
+            hash.Add(cell.MaterialId);
+        }
+    }
+
+    private static void AddCellsToSignature(ref HashCode hash, IReadOnlyList<StaticVoxelRenderCell> cells)
+    {
+        hash.Add(cells.Count);
+        for (int i = 0; i < cells.Count; i++)
+        {
+            StaticVoxelRenderCell cell = cells[i];
+            hash.Add(cell.Center);
+            hash.Add(cell.Size);
+            hash.Add(cell.MaterialId);
+        }
+    }
+
+    private static bool IsNeighborChunk(StaticWorldChunkKey a, StaticWorldChunkKey b)
+    {
+        return Math.Abs(a.X - b.X) <= 1 && Math.Abs(a.Y - b.Y) <= 1 && Math.Abs(a.Z - b.Z) <= 1;
+    }
+
+    // Bit per existing neighbour chunk, indexed by NeighborBit; the chunk itself is not included.
+    private static int CalculateNeighborMask(
+        StaticWorldChunkKey chunkKey,
+        Dictionary<StaticWorldChunkKey, int> chunkIndexByKey)
+    {
+        int mask = 0;
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    if ((dx | dy | dz) != 0 &&
+                        chunkIndexByKey.ContainsKey(new StaticWorldChunkKey(chunkKey.X + dx, chunkKey.Y + dy, chunkKey.Z + dz)))
+                    {
+                        mask |= 1 << NeighborBit(dx, dy, dz);
+                    }
+                }
+            }
+        }
+
+        return mask;
+    }
+
+    private static int NeighborBit(int dx, int dy, int dz)
+    {
+        return ((dx + 1) * 9) + ((dy + 1) * 3) + (dz + 1);
+    }
+
+    // False when every point of [min, max] lies in the given chunk or in neighbour chunks that do
+    // not exist, so no cell of another neighbour chunk can have its center there.
+    private static bool MayReachNeighbor(Vector3 min, Vector3 max, StaticWorldChunkKey chunkKey, int neighborMask)
+    {
+        if (neighborMask == 0)
+        {
+            return false;
+        }
+
+        AxisReach(min.X, max.X, chunkKey.X, out int xLow, out int xHigh);
+        AxisReach(min.Y, max.Y, chunkKey.Y, out int yLow, out int yHigh);
+        AxisReach(min.Z, max.Z, chunkKey.Z, out int zLow, out int zHigh);
+        for (int dx = xLow; dx <= xHigh; dx++)
+        {
+            for (int dy = yLow; dy <= yHigh; dy++)
+            {
+                for (int dz = zLow; dz <= zHigh; dz++)
+                {
+                    if ((dx | dy | dz) != 0 && (neighborMask & (1 << NeighborBit(dx, dy, dz))) != 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static void AxisReach(float min, float max, int chunkCoordinate, out int low, out int high)
+    {
+        float regionMin = (float)chunkCoordinate * ChunkSide;
+        low = min - BorderSlack <= regionMin ? -1 : 0;
+        high = max + BorderSlack >= regionMin + ChunkSide ? 1 : 0;
+    }
+
+    private static int Quantize(float value)
+    {
+        return (int)MathF.Round(value / Epsilon);
+    }
+
+    // Direction d is the face of the covered cell: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z. The covering
+    // occluder's opposite face lies on the same plane (within Epsilon), and its extent on the
+    // other two axes spans the covered face (within Epsilon).
+    private static int Axis(int direction)
+    {
+        return direction >> 1;
+    }
+
+    private static bool IsPositive(int direction)
+    {
+        return (direction & 1) == 0;
+    }
+
+    private static int UAxis(int axis)
+    {
+        return axis == 0 ? 1 : 0;
+    }
+
+    private static int VAxis(int axis)
+    {
+        return axis == 2 ? 1 : 2;
+    }
+
+    private static float Get(Vector3 value, int axis)
+    {
+        return axis switch
+        {
+            0 => value.X,
+            1 => value.Y,
+            _ => value.Z
+        };
+    }
+
+    private static void Set(ref Vector3 value, int axis, float component)
+    {
+        switch (axis)
+        {
+            case 0:
+                value.X = component;
+                break;
+            case 1:
+                value.Y = component;
+                break;
+            default:
+                value.Z = component;
+                break;
+        }
+    }
+
+    // HalfMaxCoveredDepth bounds, per face axis, half the depth of any cell a grid occluder can
+    // cover; HalfMaxGridSize bounds half the size of any grid (not large) occluder. GridInset is at
+    // most half the smallest cell size minus Epsilon (halved again for float slack): a covered
+    // face's center lies at least that far inside the covering occluder's span.
+    private readonly record struct FaceGeometry(Vector3 HalfMaxCoveredDepth, Vector3 HalfMaxGridSize, float GridInset);
+
+    private static bool IsLargeOccluder(StaticVoxelRenderCell cell)
+    {
+        return cell.Size.X > MaxGridOccluderSize ||
+            cell.Size.Y > MaxGridOccluderSize ||
+            cell.Size.Z > MaxGridOccluderSize;
+    }
+
+    // Packs (direction, plane key, grid u, grid v) into one key. Grid coordinates keep their low
+    // 14 bits, so far-apart squares can share a slot; that only adds candidates, which are
+    // harmless extra occluders, and never drops one.
+    private static long FaceSlot(int direction, int planeKey, int u, int v)
+    {
+        return ((long)direction << 60) |
+            ((long)(uint)planeKey << 28) |
+            ((long)(u & 0x3FFF) << 14) |
+            (long)(v & 0x3FFF);
+    }
+
+    private sealed class FaceLookup
+    {
+        private readonly Dictionary<long, int> _heads;
+        private readonly List<int> _entryCells;
+        private readonly List<int> _entryNext;
+
+        private FaceLookup(int capacity)
+        {
+            _heads = new Dictionary<long, int>(capacity);
+            _entryCells = new List<int>(capacity);
+            _entryNext = new List<int>(capacity);
+        }
+
+        public bool HasEntries => _heads.Count > 0;
+
+        public static FaceLookup Create(
+            StaticVoxelRenderCell[] cells,
+            int[] chunkOfCell,
+            List<StaticWorldChunkKey> chunkKeys,
+            int[] neighborMasks,
+            FaceGeometry geometry,
+            out List<int> largeOccluders)
+        {
+            FaceLookup lookup = new(cells.Length);
+            largeOccluders = new List<int>();
+            for (int i = 0; i < cells.Length; i++)
+            {
+                StaticVoxelRenderCell cell = cells[i];
+                if (IsLargeOccluder(cell))
+                {
+                    largeOccluders.Add(i);
+                    continue;
+                }
+
+                int chunkIndex = chunkOfCell[i];
+                if (neighborMasks[chunkIndex] == 0)
+                {
+                    continue;
+                }
+
+                StaticWorldChunkKey chunkKey = chunkKeys[chunkIndex];
+                Vector3 min = cell.Min;
+                Vector3 max = cell.Max;
+                for (int direction = 0; direction < DirectionCount; direction++)
+                {
+                    int axis = Axis(direction);
+                    int uAxis = UAxis(axis);
+                    int vAxis = VAxis(axis);
+                    // A +X face is covered by an occluder's min X plane, a -X face by its max X plane.
+                    float plane = IsPositive(direction) ? Get(min, axis) : Get(max, axis);
+
+                    // Where the center of a cell this occluder covers can lie: across the plane, and
+                    // at least GridInset inside the occluder's span on the other axes. If no other
+                    // existing chunk reaches into that region, the covered cell is in the
+                    // occluder's own chunk and already has it through that chunk's cells.
+                    Vector3 inset = new(geometry.GridInset);
+                    Vector3 regionMin = min + inset;
+                    Vector3 regionMax = max - inset;
+                    float halfCovered = Get(geometry.HalfMaxCoveredDepth, axis) + Epsilon;
+                    Set(ref regionMin, axis, IsPositive(direction) ? plane - halfCovered : plane - Epsilon);
+                    Set(ref regionMax, axis, IsPositive(direction) ? plane + Epsilon : plane + halfCovered);
+                    if (!MayReachNeighbor(regionMin, regionMax, chunkKey, neighborMasks[chunkIndex]))
+                    {
+                        continue;
+                    }
+
+                    int uMin = (int)MathF.Floor(Get(min, uAxis) + geometry.GridInset);
+                    int uMax = (int)MathF.Floor(Get(max, uAxis) - geometry.GridInset);
+                    int vMin = (int)MathF.Floor(Get(min, vAxis) + geometry.GridInset);
+                    int vMax = (int)MathF.Floor(Get(max, vAxis) - geometry.GridInset);
+                    int planeKey = Quantize(plane);
+                    for (int u = uMin; u <= uMax; u++)
+                    {
+                        for (int v = vMin; v <= vMax; v++)
+                        {
+                            lookup.Add(FaceSlot(direction, planeKey, u, v), i);
+                        }
+                    }
+                }
+            }
+
+            return lookup;
+        }
+
+        private void Add(long slot, int cellIndex)
+        {
+            int entry = _entryCells.Count;
+            _entryCells.Add(cellIndex);
+            _entryNext.Add(_heads.TryGetValue(slot, out int head) ? head : -1);
+            _heads[slot] = entry;
+        }
+
+        // Adds every looked-up cell of another neighbour chunk that may cover a face of the cell.
+        // A covering occluder spans the face, so its grid range holds the face center's square, and
+        // its plane is within one quantization step of the face plane (the builder's own window).
+        public void CollectForeignOccluders(
+            StaticVoxelRenderCell cell,
+            int chunkIndex,
+            StaticWorldChunkKey chunkKey,
+            int neighborMask,
+            FaceGeometry geometry,
+            int[] chunkOfCell,
+            List<StaticWorldChunkKey> chunkKeys,
+            int[] occluderStamp,
+            int stamp,
+            StaticVoxelRenderCell[] cells,
+            List<StaticVoxelRenderCell> occluders)
+        {
+            Vector3 min = cell.Min;
+            Vector3 max = cell.Max;
+            for (int direction = 0; direction < DirectionCount; direction++)
+            {
+                int axis = Axis(direction);
+                int uAxis = UAxis(axis);
+                int vAxis = VAxis(axis);
+                float plane = IsPositive(direction) ? Get(max, axis) : Get(min, axis);
+
+                // Where the center of a grid occluder covering this face can lie (large occluders
+                // are offered separately). If that region is inside this chunk, every such
+                // occluder is one of the chunk's own cells or would be in a chunk that does not exist.
+                Vector3 half = geometry.HalfMaxGridSize + new Vector3(Epsilon);
+                Vector3 regionMin = max - half;
+                Vector3 regionMax = min + half;
+                float halfAxis = Get(half, axis);
+                Set(ref regionMin, axis, IsPositive(direction) ? plane - Epsilon : plane - halfAxis);
+                Set(ref regionMax, axis, IsPositive(direction) ? plane + halfAxis : plane + Epsilon);
+                if (!MayReachNeighbor(regionMin, regionMax, chunkKey, neighborMask))
+                {
+                    continue;
+                }
+
+                int u = (int)MathF.Floor((Get(min, uAxis) + Get(max, uAxis)) * 0.5f);
+                int v = (int)MathF.Floor((Get(min, vAxis) + Get(max, vAxis)) * 0.5f);
+                int planeKey = Quantize(plane);
+                for (int offset = -1; offset <= 1; offset++)
+                {
+                    if (!_heads.TryGetValue(FaceSlot(direction, unchecked(planeKey + offset), u, v), out int entry))
+                    {
+                        continue;
+                    }
+
+                    for (; entry >= 0; entry = _entryNext[entry])
+                    {
+                        int candidate = _entryCells[entry];
+                        int candidateChunk = chunkOfCell[candidate];
+                        if (candidateChunk == chunkIndex ||
+                            occluderStamp[candidate] == stamp ||
+                            !IsNeighborChunk(chunkKey, chunkKeys[candidateChunk]))
+                        {
+                            continue;
+                        }
+
+                        occluderStamp[candidate] = stamp;
+                        occluders.Add(cells[candidate]);
+                    }
+                }
+            }
+        }
+    }
+}

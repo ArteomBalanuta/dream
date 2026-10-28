@@ -20,7 +20,7 @@ public sealed class StaticMeshBuffer : IDisposable
     private readonly int _vertexArrayObject;
     private readonly int _vertexBufferObject;
     private readonly int _elementBufferObject;
-    private readonly int _indexCount;
+    private int _indexCount;
     private bool _disposed;
 
     static StaticMeshBuffer()
@@ -28,16 +28,40 @@ public sealed class StaticMeshBuffer : IDisposable
         VerifyVertexLayout();
     }
 
+    // Creates the VAO, VBO and EBO once; the attribute layout is recorded in the VAO here and
+    // never changes, so later uploads only replace buffer contents.
     public StaticMeshBuffer(StaticWorldChunkMesh mesh)
     {
-        _indexCount = mesh.Indices.Count;
         _vertexArrayObject = GL.GenVertexArray();
         _vertexBufferObject = GL.GenBuffer();
         _elementBufferObject = GL.GenBuffer();
 
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, _elementBufferObject);
+        GL.EnableVertexAttribArray(PositionAttributeLocation);
+        GL.VertexAttribPointer(PositionAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, PositionOffset);
+        GL.EnableVertexAttribArray(NormalAttributeLocation);
+        GL.VertexAttribPointer(NormalAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, NormalOffset);
+        GL.EnableVertexAttribArray(TexCoordAttributeLocation);
+        GL.VertexAttribPointer(TexCoordAttributeLocation, 2, VertexAttribPointerType.Float, false, VertexStride, TexCoordOffset);
+        GL.BindVertexArray(0);
+
+        Upload(mesh);
+    }
+
+    public int IndexCount => _indexCount;
+
+    // Replaces the buffer contents in place: the same VAO/VBO/EBO handles, no new GL objects.
+    public void Upload(StaticWorldChunkMesh mesh)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         ReadOnlySpan<StaticWorldVertex> vertices = AsReadOnlySpan(mesh.Vertices);
         ReadOnlySpan<uint> indices = AsReadOnlySpan(mesh.Indices);
 
+        // The element buffer binding is VAO state, so bind this VAO before touching the EBO.
         GL.BindVertexArray(_vertexArrayObject);
 
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
@@ -54,14 +78,8 @@ public sealed class StaticMeshBuffer : IDisposable
             ref MemoryMarshal.GetReference(indices),
             BufferUsageHint.StaticDraw);
 
-        GL.EnableVertexAttribArray(PositionAttributeLocation);
-        GL.VertexAttribPointer(PositionAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, PositionOffset);
-        GL.EnableVertexAttribArray(NormalAttributeLocation);
-        GL.VertexAttribPointer(NormalAttributeLocation, 3, VertexAttribPointerType.Float, false, VertexStride, NormalOffset);
-        GL.EnableVertexAttribArray(TexCoordAttributeLocation);
-        GL.VertexAttribPointer(TexCoordAttributeLocation, 2, VertexAttribPointerType.Float, false, VertexStride, TexCoordOffset);
-
         GL.BindVertexArray(0);
+        _indexCount = indices.Length;
     }
 
     public void Draw()
