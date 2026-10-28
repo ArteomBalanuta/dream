@@ -34,7 +34,7 @@ public sealed class NetworkSessionCoordinator
                 ? LocalServerNotStartedMessage
                 : _localServer.IsReady
                     ? $"Local server ready on 127.0.0.1:{_localServer.BoundPort}"
-                    : "Starting local server...";
+                    : _localServer.StartingStatus ?? "Starting local server...";
 
     private const string LocalServerNotStartedMessage =
         "Local server not started; it starts on Use Local Server or a localhost connect.";
@@ -172,13 +172,8 @@ public sealed class NetworkSessionCoordinator
         }
 
         State = ConnectionFlowState.WaitingForLocalServer;
-        StatusMessage = "Starting local server...";
+        StatusMessage = _localServer.StartingStatus ?? "Starting local server...";
     }
 
-    private static bool IsLoopbackHost(string host)
-    {
-        return string.Equals(host.Trim(), "localhost", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(host.Trim(), "127.0.0.1", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(host.Trim(), "::1", StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool IsLoopbackHost(string host) => LoopbackHost.IsLoopback(host);
 }

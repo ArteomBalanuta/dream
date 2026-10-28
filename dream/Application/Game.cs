@@ -27,6 +27,9 @@ public class Game : GameWindow
     // Replaced with a fresh, unstarted handle when a play session ends: the ended session's
     // integrated server is stopped with it, and the next local session starts a new one.
     private ILocalServerHandle _localServer;
+    // The stops of the integrated servers let go of so far. They all share one world database, so
+    // a new integrated server starts only after them, and the window close waits for them.
+    private readonly LocalServerShutdownGate _localServerShutdown = new();
     // Title setters are synchronous Win32 calls; skip them when the text has not changed.
     private readonly ChangedTextSink _consoleTitle = new(text => Console.Title = text);
     private readonly ChangedTextSink _windowTitle;
@@ -93,10 +96,13 @@ public class Game : GameWindow
         }
     }
 
-    private static ILocalServerHandle CreateLocalServerHandle()
+    // The handle reads the shutdown gate when it is asked to start, not now: the ended session's
+    // server is stopped (and tracked) only after its replacement handle exists.
+    private ILocalServerHandle CreateLocalServerHandle()
     {
         return new OnDemandLocalServerHandle(
-            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult());
+            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult(),
+            startAfter: () => _localServerShutdown.Pending);
     }
 
     // The connection screen, at launch and after a play session ends. Each one gets its own
@@ -214,8 +220,13 @@ public class Game : GameWindow
         _localServer = CreateLocalServerHandle();
         RemoteClientOptions endedOptions = endedScene.SessionOptions;
         bool stoppedLocalServer = endedLocalServer.IsStarted;
+        // Decided before the teardown: was the ended session on this integrated server at all?
+        RemoteClientOptions? relaunchFor = PlaySessionEndTransition.RelaunchTarget(endedLocalServer, endedOptions);
 
-        IReadOnlyList<Exception> failures = PlaySessionEndTransition.TearDown(endedScene, endedLocalServer);
+        // A stop that outlasts the teardown's wait is tracked in _localServerShutdown, and the
+        // next integrated server starts only after it.
+        IReadOnlyList<Exception> failures =
+            PlaySessionEndTransition.TearDown(endedScene, endedLocalServer, shutdownGate: _localServerShutdown);
         foreach (Exception failure in failures)
         {
             Console.WriteLine($"[session] teardown failed: {failure.GetType().Name}: {failure.Message}");
@@ -234,7 +245,7 @@ public class Game : GameWindow
             resolveLocalPort: false,
             autoConnectUsesInitialOptions: false,
             sessionEndReason: reason,
-            relaunchLocalServerFor: stoppedLocalServer ? endedOptions : null);
+            relaunchLocalServerFor: relaunchFor);
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
@@ -334,9 +345,12 @@ public class Game : GameWindow
         }
         finally
         {
-            // Bounded like the session-end teardown: a hung integrated server is abandoned after
-            // PlaySessionEndTransition.LocalServerStopTimeout, and the process exit ends it.
-            if (PlaySessionEndTransition.StopLocalServer(_localServer) is Exception stopFailure)
+            // The window is closing, so this waits longer than the session-end teardown: up to
+            // PlaySessionEndTransition.LocalServerExitTimeout (the persistence drain deadline plus
+            // busy_timeout) for this server and any earlier one still saving, logging progress, so
+            // the final checkpoint is not cut off by the process exit. Only a server hung past
+            // that is abandoned.
+            if (PlaySessionEndTransition.StopLocalServerForExit(_localServer, _localServerShutdown) is Exception stopFailure)
             {
                 (failures ??= []).Add(stopFailure);
             }
