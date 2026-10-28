@@ -58,6 +58,7 @@ MSYS_NO_PATHCONV=1 dotnet build dream/dream.csproj -c Release
 DREAM_LOAD_TEST=1 MSYS_NO_PATHCONV=1 dotnet test dream.Tests/dream.Tests.csproj -c Release "/p:BaseOutputPath=<absolute repo path>/artifacts/verify-bin/" --filter "FullyQualifiedName~ServerLoadTests.Smoke8"
 ```
 
+- GC mode: the test host runs workstation concurrent GC, the same as production (`dream.csproj` sets no GC options; `dream.Tests.csproj` sets `ServerGarbageCollection=false` on purpose). Every report states it: the `.md` header prints `GC mode: workstation concurrent (matches production)` and the JSON has `environment.serverGc`. If a report says SERVER GC (for example `DOTNET_gcServer=1` is set in the shell), its GC counts, managed memory and tick percentiles do not represent production; rerun with `DOTNET_gcServer=0`.
 - Scenarios: `Smoke8`, `Players32`, `World10k`, `Soak` (30 minutes). `DREAM_LOAD_DURATION_SECONDS` shortens any of them.
 - Use Release; Debug numbers are several times worse. Other heavy processes on the machine skew the tick figures, so compare runs taken under the same conditions.
 - The tick figures come from `DedicatedServerService.CaptureMetrics()` (always on, no `DREAM_NET_DIAGNOSTICS` needed): tick-loop iteration p50/p95/p99/max, advance per simulated tick, dropped ticks, checkpoint capture and write times, write-queue depth, and bytes and frames per connection.

@@ -12,9 +12,13 @@ namespace Dream.Tests;
 // cost (for example AsyncResourceLoaderTests.PumpUploads_Respects_MaxPerFrame took 6.9 s and failed).
 //
 // Raising the pool's MINIMUM only lets it create threads without the injection delay; it does not
-// change how any code schedules work, and the production game and server never depend on the pool
-// size (their tick, render and transport loops run on dedicated threads). The current values are
-// kept when they are already higher, for example when DOTNET_ThreadPool_MinThreads is set.
+// change how any code schedules work. Production does use the thread pool for transport: the
+// ServerConnection writer loop and the RemoteClientSession send and receive loops are Task.Run
+// tasks. It stays unaffected because production has a handful of concurrent connections and
+// never blocks a pool thread in a test-style wait (no sync-over-async), so its pool is never
+// starved and the injection delay never shows; a bug that depended on starvation would need that
+// blocking, which only the tests add. The current values are kept when they are already higher,
+// for example when DOTNET_ThreadPool_MinThreads is set.
 internal static class TestAssemblyInitializer
 {
     internal const int ThreadsPerCore = 4;

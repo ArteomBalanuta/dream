@@ -820,7 +820,7 @@ internal static class LoadReportMarkdown
         md.AppendLine(c, $"# Load run: {report.Scenario}");
         md.AppendLine();
         md.AppendLine(c, $"- Finished (UTC): {report.FinishedUtc:yyyy-MM-dd HH:mm:ss}");
-        md.AppendLine(c, $"- Machine: {report.Environment.MachineName}, {report.Environment.ProcessorCount} logical CPUs, {report.Environment.OsDescription}, {report.Environment.Framework}, server GC {report.Environment.ServerGc}, {(report.Environment.DebugBuild ? "Debug" : "Release")} build");
+        md.AppendLine(c, $"- Machine: {report.Environment.MachineName}, {report.Environment.ProcessorCount} logical CPUs, {report.Environment.OsDescription}, {report.Environment.Framework}, GC mode: {(report.Environment.ServerGc ? "SERVER GC (NOT production: production is workstation concurrent, numbers are not comparable)" : "workstation concurrent (matches production)")} / latency {report.Environment.GcLatencyMode}, {(report.Environment.DebugBuild ? "Debug" : "Release")} build");
         md.AppendLine(c, $"- Scenario: {report.Settings.Players} bots, {report.Settings.Cubes} cubes, {report.Settings.RubbleCells} rubble cells, {report.Settings.Enemies} enemies, floor {report.Settings.FloorSize}, {report.RunSeconds:0.0} s run");
         md.AppendLine();
         md.AppendLine("| Metric | Value |");
