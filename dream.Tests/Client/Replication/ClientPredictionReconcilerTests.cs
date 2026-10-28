@@ -78,8 +78,11 @@ public class ClientPredictionReconcilerTests
         Assert.Equal(ClientReconciliationKind.None, result.Kind);
     }
 
+    // NETR-4: a snap no longer drops the unacknowledged ticks. It lands on the server position
+    // with commands 4 and 5 (0.1 each) replayed on top, keeps one sample per tick from the ack on,
+    // and clears any pending smoothing.
     [Fact]
-    public void Reconcile_LargeDivergence_SnapsAndClearsHistory()
+    public void Reconcile_LargeDivergence_SnapsToServerPlusReplayedUnacknowledgedTicks()
     {
         ClientPredictionReconciler reconciler = new();
         RecordStraightRun(reconciler, firstSequence: 1, lastSequence: 5, stepPerTick: 0.1f);
@@ -88,20 +91,47 @@ public class ClientPredictionReconcilerTests
         ClientReconciliationResult result = reconciler.Reconcile(3, respawn);
 
         Assert.Equal(ClientReconciliationKind.Snap, result.Kind);
-        Assert.Equal(respawn, result.SnapPosition);
-        Assert.Equal(0, reconciler.HistoryCount);
+        AssertVector(respawn + new Vector3(0.2f, 0f, 0f), result.SnapPosition);
+        AssertVector(respawn - PositionAt(3, 0.1f), result.Error);
+        Assert.Equal(3, reconciler.HistoryCount);
         Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
     }
 
+    // After the snap the history describes the replayed path, so a later snapshot that agrees
+    // with it is not corrected again.
     [Fact]
-    public void Reconcile_AfterSnap_WaitsForComparableSampleInsteadOfSnappingAgain()
+    public void Reconcile_AfterSnap_ComparesLaterAcksAgainstTheReplayedPath()
     {
         ClientPredictionReconciler reconciler = new();
         RecordStraightRun(reconciler, firstSequence: 1, lastSequence: 5, stepPerTick: 0.1f);
-        reconciler.Reconcile(3, new Vector3(50f, 0f, 0f));
+        ClientReconciliationResult snap = reconciler.Reconcile(3, new Vector3(50f, 0f, 0f));
+        Assert.Equal(ClientReconciliationKind.Snap, snap.Kind);
+        AssertVector(new Vector3(50.2f, 0f, 0f), snap.SnapPosition);
+        // The client keeps predicting from the snap position.
+        for (ulong sequence = 6; sequence <= 9; sequence++)
+        {
+            reconciler.RecordPrediction(sequence, new Vector3(50.2f + (sequence - 5) * 0.1f, 0f, 0f));
+        }
+
+        ClientReconciliationResult result = reconciler.Reconcile(6, new Vector3(50.3f, 0f, 0f));
+
+        Assert.Equal(ClientReconciliationKind.None, result.Kind);
+        Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
+    }
+
+    // With nothing acknowledged there is nothing to replay: the history is dropped, and an ack
+    // that still predates every sample recorded after that waits instead of snapping again.
+    [Fact]
+    public void Reconcile_AfterUnacknowledgedSnap_WaitsForComparableSampleInsteadOfSnappingAgain()
+    {
+        ClientPredictionReconciler reconciler = new();
+        RecordStraightRun(reconciler, firstSequence: 1, lastSequence: 5, stepPerTick: 0.1f);
+        ClientReconciliationResult snap = reconciler.Reconcile(null, new Vector3(50f, 0f, 0f));
+        Assert.Equal(ClientReconciliationKind.Snap, snap.Kind);
+        Assert.Equal(new Vector3(50f, 0f, 0f), snap.SnapPosition);
+        Assert.Equal(0, reconciler.HistoryCount);
         reconciler.RecordPrediction(9, new Vector3(50.2f, 0f, 0f));
 
-        // The server still lags: its ack predates every sample recorded since the snap.
         ClientReconciliationResult result = reconciler.Reconcile(6, new Vector3(49f, 0f, 0f));
 
         Assert.Equal(ClientReconciliationKind.None, result.Kind);

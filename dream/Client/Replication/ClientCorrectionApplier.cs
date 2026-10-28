@@ -85,6 +85,8 @@ public static class ClientCorrectionApplier
             ClientReconciliationResult result = reconciler.Reconcile(acknowledged, actor.Value.Position);
             if (result.Kind == ClientReconciliationKind.Snap)
             {
+                // SetWorldPosition teleports the body and zeroes its velocity, so the predicted
+                // momentum from before the snap does not carry the player on past it.
                 runtime.Player.SetWorldPosition(result.SnapPosition);
             }
         }
