@@ -224,6 +224,37 @@ Used for:
 - dedicated equipped-slot assignment
 - reconnect restore of tool selection
 
+### `player_starter_grants` (migration 0002)
+
+One row per player. It records which version of the starter kit the player has received.
+
+Columns:
+
+- `player_name TEXT NOT NULL PRIMARY KEY`, referencing `player_profiles(player_name)` `ON DELETE CASCADE`
+- `kit_version INTEGER NOT NULL`, with `CHECK >= 0`
+- `updated_utc TEXT NOT NULL`, the write time
+
+The inventory repository owns this table. `ToolCatalog.StarterKit` versions the kit:
+
+| Kit version | Adds |
+| --- | --- |
+| 1 | hammer, blade, maul, lantern |
+| 2 | torch |
+
+How grants work:
+
+- `PlayerInventoryService` grants only the kinds introduced after the player's recorded version. An item a player gets rid of is therefore never granted again, even into an empty backpack.
+- Migration `0002_player_starter_grants.sql` only creates the table; it does no backfill.
+- A player with inventory rows but no grant row is treated as having kit v1. They receive the missing later kinds (the torch) once, kinds they already hold are skipped, and the current version is recorded.
+- A new player with an empty backpack and no row receives the whole kit, and the current version is recorded.
+
+How the table is read and written:
+
+- `LoadPlayerInventory` reads the grant row in its single statement, through a `UNION ALL` on the grant table's primary key. The join prefetch therefore gets slots, items and kit version from one snapshot.
+- `SaveStarterKitGrant` is an upsert that never lowers the stored version. It is queued right after the writes for the granted items, so it lands in the same write-queue group commit.
+- `DeleteInventorySlots` leaves the grant row in place.
+- Upgrading a version 1 database to 0002 takes the usual `{db}.v0001-to-v0002.{timestamp}.bak` backup.
+
 ### `combat_formulas`
 
 One row per authoritative combat formula expression.
