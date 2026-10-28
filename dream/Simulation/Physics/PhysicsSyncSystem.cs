@@ -210,7 +210,7 @@ public class PhysicsSyncSystem
         SyncFracturePieces(map, pendingFracturePieceSyncs);
         if (bodySet != null)
         {
-            RememberBodiesToRevisit(bodies);
+            RememberBodiesToRevisit();
         }
 
         ReportInvariantViolationsInDebugBuilds(map, movedCubes.Count);
@@ -301,16 +301,18 @@ public class PhysicsSyncSystem
     }
 
     // Fills `bodies`, in set order, with the bodies whose motion state can differ from what the
-    // last sync saw, and returns whether any body left the set since then. A sleeping body is
-    // neither integrated nor has its motion state synchronized by Bullet, so its transform is the
-    // one the last sync read and the map already holds; syncing it again changes nothing. Every
-    // body this code teleports (ResetBodyToCenter, WorldPhysicsBinder.TryMoveCompatibilityCubeBody)
-    // is activated in the same call. Collected:
+    // last sync saw, and returns whether any body left the set since then. Bullet changes a
+    // body's motion state only in synchronizeMotionStates, for bodies active after the step: an
+    // island put to sleep in a step is put to sleep in buildIslands, before integrateTransforms,
+    // and is neither integrated nor synchronized in that step. So a body that is not active now
+    // has the transform the last sync read and the map already holds, and syncing it again
+    // changes nothing. Every body this code teleports (ResetBodyToCenter,
+    // WorldPhysicsBinder.TryMoveCompatibilityCubeBody) is activated in the same call. Collected:
     //   - bodies Bullet reports active (awake, or wanting deactivation but still integrated);
     //   - bodies added since the last sync, so each is synced at least once (it seeds its
     //     last-reported center there);
-    //   - bodies the last sync left active or with a rejection streak (the streak advances every
-    //     sync until the body is accepted or reset, whether or not it sleeps).
+    //   - bodies with a rejection streak (the streak advances every sync until the body is
+    //     accepted or reset, whether or not it sleeps).
     // Each is processed exactly as the full pass would, in the same relative order; the skipped
     // sleeping bodies would only have been re-accepted in place with no effect. So the result is
     // identical to syncing every body. Finding the active ones still reads one native flag per
@@ -408,18 +410,9 @@ public class PhysicsSyncSystem
         revisit.Clear();
     }
 
-    private void RememberBodiesToRevisit(List<RigidBody> syncedBodies)
+    private void RememberBodiesToRevisit()
     {
         _revisitBodies.Clear();
-        for (int i = 0; i < syncedBodies.Count; i++)
-        {
-            RigidBody body = syncedBodies[i];
-            if (body.IsActive)
-            {
-                _revisitBodies.Add(body);
-            }
-        }
-
         foreach (RigidBody body in _rejectionStreaks.Keys)
         {
             _revisitBodies.Add(body);

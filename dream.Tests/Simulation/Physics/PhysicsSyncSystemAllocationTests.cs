@@ -48,8 +48,8 @@ public class PhysicsSyncSystemAllocationTests
     }
 
     // SCALE-5: the body set path skips sleeping bodies, so the test above may process few of them.
-    // These keep every body in play: all awake on the set path (activity tracking and the revisit
-    // merge included), and a plain list (every body, no tracking).
+    // These keep bodies in play: all awake on the set path (activity tracking included), half
+    // asleep (half skipped), and a plain list (every body, no tracking).
     [Fact]
     public void SyncDynamicMapBodies_RestingCubesAllAwake_OnTheSetAndOnAList_DoesNotAllocate()
     {
@@ -76,7 +76,7 @@ public class PhysicsSyncSystemAllocationTests
         });
         Assert.Equal(physics.DynamicMapCubeBodies.Count, setSync.LastSyncedBodyCount);
 
-        // Half asleep, so the next sync revisits bodies the last one left awake.
+        // Half asleep: the set path skips that half and syncs the rest.
         int index = 0;
         long revisitBytes = AllocationAssert.AtMost(0, () =>
         {
