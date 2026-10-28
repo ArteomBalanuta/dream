@@ -62,12 +62,12 @@ public static class ClientAuthoritativeActionApplier
 
         switch (result.Payload)
         {
-            case WorldMutationResult mutation when mutation.Applied:
-                RemoteWorldMutationApplier.ApplyWorldMutations(
-                    runtime.Map,
-                    [new WorldMutationDelta(mutation.Kind, mutation.CellPosition)]);
-                break;
-
+            // An accepted world mutation is not applied here. The server publishes every accepted
+            // build as a sequenced CubePlaced delta (with its material and replicated id) in the
+            // snapshot stream, which is the only authority for world state. Re-applying the result
+            // as a bare delta used to replace that cube with a default-material cube without an id
+            // when the snapshot came first (the server sends each tick's snapshot before its action
+            // results), and to add an unsequenced cube the checksum did not cover when it came last.
             case CombatResolutionResult combat when combat.DamageApplied > 0 && combat.TargetActorId.HasValue:
                 if (runtime.TryResolveCombatActor(combat.TargetActorId.Value, out CombatActorHandle actor))
                 {
