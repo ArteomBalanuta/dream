@@ -11,34 +11,64 @@ public partial class Render
     // The FrameLighting uniform buffer. Created with the shaders, disposed with them.
     private FrameLightingBuffer? _frameLightingBuffer;
 
+    // The LightList uniform buffer (point lights, wave T2a). Same lifetime as _frameLightingBuffer.
+    private LightListBuffer? _lightListBuffer;
+
     // Lighting the next world pass uploads. The scene sets it each frame before DrawWorld.
     public void SetFrameLighting(in FrameLighting lighting) => _frameLighting = lighting;
 
     public ref readonly FrameLighting CurrentFrameLighting => ref _frameLighting;
 
-    // Uploads CurrentFrameLighting for this frame (world and view-model ranges) and binds the
-    // world range. WorldRenderer.DrawWorld calls it once per frame, before any world draw.
+    // Uploads CurrentFrameLighting for this frame (world and view-model ranges), selects the
+    // nearest point lights in the frustum from Lights (plus the debug ring) and uploads them
+    // (world and view-model ranges), and binds both world ranges. WorldRenderer.DrawWorld calls it
+    // once per frame, before any world draw.
     public void UploadFrameLighting(Camera camera)
     {
         ArgumentNullException.ThrowIfNull(camera);
-        _frameLightingBuffer?.Upload(in _frameLighting, camera.Position, camera.GetViewMatrix());
+        Vector3 cameraPosition = camera.Position;
+        Matrix4 view = camera.GetViewMatrix();
+        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
+        SelectPointLights(cameraPosition, in view);
+        _lightListBuffer?.Upload(in _selectedLights, in view);
     }
 
-    public void BindWorldLighting() => _frameLightingBuffer?.BindWorld();
+    public void BindWorldLighting()
+    {
+        _frameLightingBuffer?.BindWorld();
+        _lightListBuffer?.BindWorld();
+    }
 
-    public void BindViewModelLighting() => _frameLightingBuffer?.BindViewModel();
+    public void BindViewModelLighting()
+    {
+        _frameLightingBuffer?.BindViewModel();
+        _lightListBuffer?.BindViewModel();
+    }
 
-    // Creates the buffer and fills both ranges with the current lighting (camera at the origin),
-    // so a world program drawn before the first DrawWorld still reads defined values.
+    // Creates the buffers and fills both ranges of each with the current lighting (camera at the
+    // origin) and no point lights, so a world program drawn before the first DrawWorld still reads
+    // defined values.
     private void InitializeFrameLighting()
     {
         _frameLightingBuffer = new FrameLightingBuffer();
         _frameLightingBuffer.Upload(in _frameLighting, Vector3.Zero, Matrix4.Identity);
+        _selectedLights = default;
+        _lightListBuffer = new LightListBuffer();
+        _lightListBuffer.Upload(in _selectedLights, Matrix4.Identity);
+        InitializeDebugPointLights();
     }
 
     private void DisposeFrameLighting()
     {
-        _frameLightingBuffer?.Dispose();
-        _frameLightingBuffer = null;
+        try
+        {
+            _lightListBuffer?.Dispose();
+            _lightListBuffer = null;
+        }
+        finally
+        {
+            _frameLightingBuffer?.Dispose();
+            _frameLightingBuffer = null;
+        }
     }
 }
