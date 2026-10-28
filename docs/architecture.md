@@ -326,8 +326,11 @@ Bullet puts a simulation island to sleep only when none of its bodies is active.
 - **Freeze.** A placed unit cube whose own velocity has stayed under Bullet's sleeping thresholds for `FreezeAfterRestSeconds` (0.5 s) gets mass 0 (a static object) and its velocities zeroed. Static objects never join an island, so a frozen cube costs nothing.
 - **Wake on push.** A frozen cube wakes when a mover (an awake cube, or a player moving faster than `WakeSpeed`, 0.1 m/s) moves into its side. The push passes on, so a pushed row or stack wakes in the same tick.
 - **Wake on ride.** A frozen cube resting on top of a mover wakes. Cubes a mover stands on stay frozen, so walking on or landing on a floor of cubes wakes nothing.
-- **Wake on support removal.** Every frozen cube touching a map body that is removed (a broken or moved cube, a rebuilt cell) wakes, so nothing is left floating.
-- **Wake on `Activate`.** A frozen body that other code activates (`Activate(true)` after a teleport or reset) wakes, so existing callers keep their meaning.
+- **Wake on support removal.** `WakeRidersOf` wakes every frozen cube resting on a body that stops supporting it, and the stacks on those cubes. Side neighbours and the cubes below stay frozen. It runs when:
+  - a map body is removed from the world (a broken or moved cube, a rebuilt cell; `OnBodyRemoving`);
+  - a player body is removed (a session disconnects), parked (its seat is emptied), detached or teleported (`Player.SetWorldPosition`). A player body is a 1 m box, so cubes can freeze on its top. A teleport zeroes its velocity, so the mover rule would never see it carry them away;
+  - a support is moved in place (`WorldPhysicsBinder`'s compatibility cube move), before the move. This also covers a support that is not frozen.
+- **Wake on `Activate`.** A frozen body that other code activates (`Activate(true)` after a teleport or reset) wakes, so existing callers keep their meaning. A frozen body never moves on its own, so if its box differs from the one it froze with, it was moved, and the frozen cubes resting on its old box are woken too.
 
 Fracture rubble is never frozen. `DREAM_CUBE_REST_FREEZE=0` turns freezing off (`docs/configuration.md`). The measured effect is in `docs/performance-and-optimizations.md`.
 

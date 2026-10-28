@@ -193,6 +193,8 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(10), $"{elapsed.Elapsed.TotalMilliseconds:0} ms");
         Assert.Equal(Queued, writes.FailedWrites);
         Assert.Equal(0, writes.PendingCount);
+        // Failed fast without a retry, but the drain still saw the lock.
+        Assert.True(writes.LockSeenDuringShutdownDrain);
         Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'short-drop-%';"));
         SqliteConnection.ClearAllPools();
     }

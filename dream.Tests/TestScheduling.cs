@@ -306,7 +306,8 @@ public static class TestScheduling
     //
     // The move sets TestMethodTestCase.TestMethod through reflection (its setter is not public).
     // If an xUnit upgrade removes or changes it, Split reports why through diagnostic and returns
-    // false with no case moved: the suite then runs unsplit (slower, still correct) instead of
+    // false with no case moved (a failure partway through moves the cases already moved back to
+    // their original collection): the suite then runs unsplit (slower, still correct) instead of
     // failing every run. Returns true when the split applied.
     internal static bool Split(IEnumerable<IXunitTestCase> testCases, Action<string>? diagnostic = null)
     {
@@ -318,21 +319,51 @@ public static class TestScheduling
         }
 
         List<(IXunitTestCase TestCase, ITestMethod Own)> moves = [];
+        // Cases already moved, with the test method each had before, for the rollback.
+        List<(IXunitTestCase TestCase, ITestMethod Original)> moved = [];
         try
         {
             CollectSplits(testCases, moves);
             for (int i = 0; i < moves.Count; i++)
             {
+                ITestMethod original = moves[i].TestCase.TestMethod;
                 property.SetValue(moves[i].TestCase, moves[i].Own);
+                moved.Add((moves[i].TestCase, original));
             }
         }
         catch (Exception ex)
         {
-            ReportSplitDisabled(diagnostic, $"{ex.GetType().Name}: {ex.Message}");
+            string reason = $"{ex.GetType().Name}: {ex.Message}";
+            string? rollbackFailure = RollBack(property, moved);
+            ReportSplitDisabled(
+                diagnostic,
+                rollbackFailure == null
+                    ? reason
+                    : $"{reason}; moving the {moved.Count} cases already split back failed ({rollbackFailure}), so some may still run in their own collection");
             return false;
         }
 
         return true;
+    }
+
+    // Restores the cases moved before a failure, newest first. Null when every one was restored,
+    // else why one was not (the rest are still attempted).
+    private static string? RollBack(PropertyInfo property, List<(IXunitTestCase TestCase, ITestMethod Original)> moved)
+    {
+        string? failure = null;
+        for (int i = moved.Count - 1; i >= 0; i--)
+        {
+            try
+            {
+                property.SetValue(moved[i].TestCase, moved[i].Original);
+            }
+            catch (Exception ex)
+            {
+                failure ??= $"{ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        return failure;
     }
 
     private static void ReportSplitDisabled(Action<string>? diagnostic, string reason)

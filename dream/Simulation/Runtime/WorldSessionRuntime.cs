@@ -802,8 +802,9 @@ public sealed class WorldSessionRuntime : IDisposable
 
         // Shutdown flush: a full checkpoint behind the queued immediate writes, then finish those
         // writes before the owner disposes the repositories.
-        WriteFinalCheckpoint();
+        FinalCheckpoint? finalCheckpoint = WriteFinalCheckpoint();
         _writes?.Dispose();
+        finalCheckpoint?.WriteIfDropped(_writes);
 
         // Every player's contact callback tests against the physics world, so players go before it.
         // Secondary states remove their own session bodies; Physics.Dispose then finds none left.
@@ -1502,12 +1503,16 @@ public sealed class WorldSessionRuntime : IDisposable
     // writes, so it runs after them without a barrier wait on this thread, and under the queue's
     // one shutdown drain deadline: on a locked database it is dropped with them when the deadline
     // passes instead of adding its own barrier timeout and busy_timeout before the drain starts.
-    private void WriteFinalCheckpoint()
+    // A healthy backlog that merely outlasts the deadline must not cost the final checkpoint,
+    // though: the read is queued last, so it is the first thing such a drain drops. The returned
+    // FinalCheckpoint then writes it on this thread once the queue has stopped (still after every
+    // immediate write that ran), unless the drain saw a lock episode.
+    private FinalCheckpoint? WriteFinalCheckpoint()
     {
         if (!WriteCheckpointOnDispose || _worldPersistence == null || _checkpointWriter == null ||
             _writes is { IsClosed: true })
         {
-            return;
+            return null;
         }
 
         try
@@ -1515,16 +1520,17 @@ public sealed class WorldSessionRuntime : IDisposable
             PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint(full: true);
             if (checkpoint == null)
             {
-                return;
+                return null;
             }
 
             IPersistenceCheckpointWriter writer = _checkpointWriter;
             if (_writes is { IsBackground: true } writes)
             {
                 writes.BeginShutdownDrain();
-                if (writes.EnqueueRead(() => WriteFinalCheckpoint(writer, checkpoint)))
+                FinalCheckpoint queued = new(writer, checkpoint);
+                if (writes.EnqueueRead(queued.WriteFromQueue))
                 {
-                    return;
+                    return queued;
                 }
             }
 
@@ -1533,6 +1539,41 @@ public sealed class WorldSessionRuntime : IDisposable
         catch (Exception ex)
         {
             LogFinalCheckpointError(ex);
+        }
+
+        return null;
+    }
+
+    // The final checkpoint queued as a read. Whichever of the queue worker (WriteFromQueue) and the
+    // dispose thread (WriteIfDropped, after the queue stopped) claims it first writes it, once.
+    private sealed class FinalCheckpoint(IPersistenceCheckpointWriter writer, PersistenceCheckpoint checkpoint)
+    {
+        private int _claimed;
+
+        public void WriteFromQueue()
+        {
+            if (Interlocked.Exchange(ref _claimed, 1) == 0)
+            {
+                WriteFinalCheckpoint(writer, checkpoint);
+            }
+        }
+
+        // Called after PersistenceWriteQueue.Dispose returned, so the worker has stopped: an
+        // unclaimed checkpoint was dropped by the drain deadline. On a database the drain saw
+        // locked it stays dropped (shutdown stays bounded by the deadline); otherwise the backlog
+        // was only slow, and the checkpoint gets its attempt here.
+        public void WriteIfDropped(PersistenceWriteQueue? writes)
+        {
+            if (writes is { LockSeenDuringShutdownDrain: true } ||
+                Interlocked.Exchange(ref _claimed, 1) != 0)
+            {
+                return;
+            }
+
+            Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write(
+                "server.checkpoint.final-fallback",
+                $"final checkpoint dropped by an unlocked drain; writing it after the queue stopped rows={checkpoint.RowCount}");
+            WriteFinalCheckpoint(writer, checkpoint);
         }
     }
 

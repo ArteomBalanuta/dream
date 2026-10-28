@@ -58,6 +58,8 @@ public sealed class PersistenceWriteQueue : IDisposable
     private long _drainDeadlineMilliseconds;
     // Mirrors _lockEpisode for other threads (IsLocked).
     private volatile bool _locked;
+    // Set once the shutdown drain has seen the database locked (LockSeenDuringShutdownDrain).
+    private volatile bool _lockSeenDuringShutdownDrain;
     // Worker-thread state for the current lock episode (database locked until a group runs again).
     private bool _lockEpisode;
     private TimeSpan _lockRetryDelay = InitialLockRetryDelay;
@@ -137,7 +139,19 @@ public sealed class PersistenceWriteQueue : IDisposable
         long now = Environment.TickCount64;
         long deadline = now + (long)Math.Min(_disposeDrainDeadline.TotalMilliseconds, long.MaxValue / 4);
         Interlocked.CompareExchange(ref _drainDeadlineMilliseconds, Math.Max(1, deadline), 0);
+        if (_locked)
+        {
+            _lockSeenDuringShutdownDrain = true;
+        }
     }
+
+    // True once the shutdown drain has seen a lock episode: the queue was in one when the drain
+    // started, or a group's transaction could not start on a locked database after it started
+    // (retried, or failed fast past the deadline). Shutdown work that runs outside the queue's
+    // drain deadline (the runtime's final checkpoint fallback) is skipped then, so a held lock
+    // still bounds shutdown by the deadline; on a database that was never locked, a backlog that
+    // merely outlasts the deadline does not cost it the final checkpoint.
+    public bool LockSeenDuringShutdownDrain => _lockSeenDuringShutdownDrain;
 
     // Time left until the shutdown drain deadline: DisposeDrainDeadline before the drain started,
     // never negative.
@@ -415,6 +429,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     private void RequeueAndBackOff(List<QueuedWrite> requeue)
     {
         Interlocked.Increment(ref _lockRetries);
+        NoteLockDuringShutdownDrain();
         if (!_lockEpisode)
         {
             _lockEpisode = true;
@@ -446,6 +461,14 @@ public sealed class PersistenceWriteQueue : IDisposable
                 // Dispose pulses on cancel; a spurious wake only retries early.
                 Monitor.Wait(_sync, delay);
             }
+        }
+    }
+
+    private void NoteLockDuringShutdownDrain()
+    {
+        if (IsShutdownDrainStarted)
+        {
+            _lockSeenDuringShutdownDrain = true;
         }
     }
 
@@ -538,6 +561,11 @@ public sealed class PersistenceWriteQueue : IDisposable
                 catch (Exception ex)
                 {
                     transactionStartFailed = batch.TransactionStartFailed;
+                    if (transactionStartFailed && batch.TransactionStartBusy)
+                    {
+                        NoteLockDuringShutdownDrain();
+                    }
+
                     bool retry = transactionStartFailed && batch.TransactionStartBusy && !_cancelled;
                     batch.RollBackWrite();
                     if (retry)
