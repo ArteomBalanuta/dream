@@ -567,7 +567,7 @@ public class ClientAuthoritativeStateApplierTests
             Array.Empty<WorldMutationDelta>(),
             [new DamageEventDelta(3001, CreatureKind.Enemy, 11, ActorDied: false, CurrentHealth: 59, MaxHealth: 100)]);
 
-        ClientSnapshotDamageApplier.ApplyToRuntime(runtime, events, snapshot);
+        ClientSnapshotDamageApplier.ApplyToRuntime(runtime, events, snapshot, new ClientScenePresenter());
 
         DamageAppliedEvent damage = Assert.Single(observed);
         Assert.Equal(11, damage.Amount);

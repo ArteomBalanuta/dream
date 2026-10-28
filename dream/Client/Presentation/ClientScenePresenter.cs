@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Diagnostics;
@@ -11,7 +13,7 @@ namespace Dream.Client.Presentation;
 // Runs on every render frame (BuildRemotePlayerStates, BuildPlayerRoster) and on every snapshot
 // (ApplySnapshot), so steady state allocates nothing: scratch collections are reused and the
 // sorted roster is rebuilt only when the roster changes.
-public sealed class ClientScenePresenter : IEnemyRenderPoseSource
+public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorSessionHistory
 {
     private static readonly TimeSpan DiagnosticsLogInterval = TimeSpan.FromSeconds(1);
 
@@ -36,6 +38,12 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
     private readonly Comparison<PlayerRosterEntry> _rosterComparison;
     private bool _sortedRosterIsStale = true;
 
+    // The session of every player actor (local included) in the last snapshot applied, and the
+    // one being filled from the snapshot in progress; swapped at the end of ApplySnapshot. Join
+    // state never seeds it: see ApplyJoinAccepted.
+    private Dictionary<int, string> _lastSnapshotPlayerSessions = [];
+    private Dictionary<int, string> _currentSnapshotPlayerSessions = [];
+
     // Reused per-snapshot scratch.
     private readonly HashSet<int> _observedRemoteActorIds = [];
     private readonly HashSet<string> _observedPlayerSessions = new(StringComparer.Ordinal);
@@ -55,6 +63,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
         _observedRemoteActorIds.Clear();
         _observedPlayerSessions.Clear();
         _observedEnemyActorIds.Clear();
+        _currentSnapshotPlayerSessions.Clear();
         IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
         for (int i = 0; i < actors.Count; i++)
         {
@@ -71,6 +80,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
             }
 
             _observedPlayerSessions.Add(actor.SessionId);
+            _currentSnapshotPlayerSessions[actor.ActorId] = actor.SessionId;
             string displayName = string.IsNullOrWhiteSpace(actor.DisplayName)
                 ? actor.SessionId
                 : actor.DisplayName;
@@ -120,6 +130,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
         }
 
         PruneUnobservedEnemies();
+        (_lastSnapshotPlayerSessions, _currentSnapshotPlayerSessions) = (_currentSnapshotPlayerSessions, _lastSnapshotPlayerSessions);
+        _currentSnapshotPlayerSessions.Clear();
 
         _staleRosterSessions.Clear();
         foreach (string sessionId in _playerRoster.Keys)
@@ -182,6 +194,19 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
                 Array.Empty<WorldMutationDelta>(),
                 Array.Empty<DamageEventDelta>()));
         }
+
+        // The join's actors are the state at the join, but damage events the server queued before
+        // it (from a player who left, perhaps under an actor id now reused) still arrive with the
+        // next snapshot. Only a snapshot is a baseline for attributing damage, so the history
+        // starts empty.
+        _lastSnapshotPlayerSessions.Clear();
+    }
+
+    // The player session that held the actor id in the last snapshot applied. ClientSnapshotDamageApplier
+    // reads it before this presenter applies the next snapshot.
+    public bool TryGetLastSnapshotPlayerSession(int actorId, [NotNullWhen(true)] out string? sessionId)
+    {
+        return _lastSnapshotPlayerSessions.TryGetValue(actorId, out sessionId);
     }
 
     // The local player first, then display name (case-insensitive), then session id: the order

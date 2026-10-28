@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Runtime;
@@ -5,19 +6,35 @@ using Dream.Simulation.World;
 
 namespace Dream.Client.Replication;
 
+// Which player session held a player actor id in the last snapshot the client applied.
+// Implemented by ClientScenePresenter.
+public interface IPlayerActorSessionHistory
+{
+    bool TryGetLastSnapshotPlayerSession(int actorId, [NotNullWhen(true)] out string? sessionId);
+}
+
 public static class ClientSnapshotDamageApplier
 {
+    // Must run before the history applies this snapshot, so the history still describes the
+    // previous one (PlayScene applies damage before ClientScenePresenter.ApplySnapshot).
     public static void ApplyToRuntime(
         IClientWorldState runtime,
         SceneEventHub events,
-        ServerSnapshotEnvelope snapshot)
+        ServerSnapshotEnvelope snapshot,
+        IPlayerActorSessionHistory playerSessions)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentNullException.ThrowIfNull(events);
+        ArgumentNullException.ThrowIfNull(playerSessions);
 
         foreach (DamageEventDelta damageEvent in snapshot.DamageEvents)
         {
             if (damageEvent.Amount <= 0)
+            {
+                continue;
+            }
+
+            if (!IsAttributable(damageEvent, snapshot, playerSessions))
             {
                 continue;
             }
@@ -27,5 +44,43 @@ public static class ClientSnapshotDamageApplier
                 events.Publish(new DamageAppliedEvent(actor, damageEvent.Amount, FloatingCombatTextKind.Regular));
             }
         }
+    }
+
+    // A damage event carries an actor id but no session, and the server reuses a player actor id
+    // once its session leaves. The events of one snapshot span the whole interval since the
+    // previous snapshot, without their order relative to a leave or a join, so a player event
+    // belongs to a known player only when the same session held the id at both ends of the
+    // interval: in the previous snapshot and in this one. Any other player event (the id changed
+    // hands, appeared, or vanished in the interval, or no snapshot came before it since the join)
+    // could be the previous holder's, and is dropped rather than shown on the wrong player.
+    // (An id that left and came back to the same session within one interval is
+    // indistinguishable from one that never changed hands, and passes.) Enemy and object ids are
+    // not reused this way and always pass.
+    public static bool IsAttributable(
+        DamageEventDelta damageEvent,
+        ServerSnapshotEnvelope snapshot,
+        IPlayerActorSessionHistory playerSessions)
+    {
+        if (damageEvent.Kind != CreatureKind.Player)
+        {
+            return true;
+        }
+
+        if (!playerSessions.TryGetLastSnapshotPlayerSession(damageEvent.ActorId, out string? previousSessionId))
+        {
+            return false;
+        }
+
+        IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            ActorSnapshot actor = actors[i];
+            if (actor.ActorId == damageEvent.ActorId && actor.Kind == CreatureKind.Player)
+            {
+                return string.Equals(actor.SessionId, previousSessionId, StringComparison.Ordinal);
+            }
+        }
+
+        return false;
     }
 }

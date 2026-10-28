@@ -42,6 +42,13 @@ public sealed class PlayerAnimationClipTracker
         return true;
     }
 
+    // Forgets the actor's clip, so the next TryApplyClip plays it. Used when the actor id passes to
+    // another player (the server reuses player actor ids): the new player starts from its own clip.
+    public bool Remove(int actorId)
+    {
+        return _activeClipNamesByActorId.Remove(actorId);
+    }
+
     public void RemoveExcept(IReadOnlySet<int> activeActorIds)
     {
         ArgumentNullException.ThrowIfNull(activeActorIds);
