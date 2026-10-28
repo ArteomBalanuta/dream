@@ -110,6 +110,15 @@ public class PlayScene : IDisposable
 
     public string ConnectedServerEndpoint => _remoteClient.Options.EndpointLabel;
 
+    // Why the session ended (a lost connection, a rejected join, or a join that timed out), or
+    // null while it is live. Game does not yet return to the startup scene on it (NETR-2); Update
+    // reports it once on the console and in the network log.
+    public string? SessionEndReason => _remoteClient.IsConnected
+        ? null
+        : _remoteClient.DisconnectReason ?? "Disconnected from the server.";
+
+    private bool _sessionEndReported;
+
     internal SceneEventHub Events => _events;
 
     public PlayScene(
@@ -697,6 +706,22 @@ public class PlayScene : IDisposable
         {
             ApplyReplicatedMessage(message);
         }
+
+        if (!_sessionEndReported && !_remoteClient.IsConnected)
+        {
+            ReportSessionEnd();
+        }
+    }
+
+    // Once per scene, off the steady-state frame path.
+    private void ReportSessionEnd()
+    {
+        _sessionEndReported = true;
+        string reason = SessionEndReason ?? "Disconnected from the server.";
+        Console.WriteLine($"[session] ended: {reason}");
+        NetworkDiagnosticsLog.Write(
+            "client.scene.session-end",
+            $"session={_remoteClient.SessionId} reason={reason}");
     }
 
     public void ReportPresentedFramePerformance(double totalFrameMilliseconds, double swapBuffersMilliseconds)

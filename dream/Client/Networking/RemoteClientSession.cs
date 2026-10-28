@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading.Channels;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
+using Dream.Server;
 using Dream.Simulation.Players;
 
 namespace Dream.Client.Networking;
@@ -52,6 +54,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // the loop ends first. ConnectAsync waits on it briefly.
     private readonly TaskCompletionSource<ServerHelloMessage?> _serverHello =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Join supervision (see JoinSupervisorAsync). The receive loop hands every JoinAccepted and
+    // JoinRejected to the supervisor until the join settles, and completes the channel when it ends.
+    private readonly TimeProvider _timeProvider;
+    private readonly Channel<IServerToClientMessage> _joinReplies =
+        Channel.CreateUnbounded<IServerToClientMessage>(new UnboundedChannelOptions { SingleReader = true });
+    private int _joinSupervisorStarted;
+    private volatile bool _joinSettled;
+    private int _joinRetryCount;
+    private Task? _joinSupervisorTask;
 
     // How long ConnectAsync waits for the server's hello before returning the session anyway.
     public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
@@ -66,16 +77,29 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // closed by the server.
     public static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(1);
 
+    // The server answers a join whose saved data could not be loaded in time with JoinRejected
+    // (DedicatedServerHost.JoinRetryRejectionReason) and keeps the connection open, so the join
+    // request is sent again on the same connection after JoinRetryBaseDelay, doubling each time,
+    // up to MaxJoinRetries times. Any other rejection, a last retry rejected, or no JoinAccepted
+    // within JoinTimeout of the first request ends the session with a DisconnectReason; the
+    // keepalive would otherwise keep an unjoined client connected forever. The waits use the
+    // injected TimeProvider; the keepalive does not.
+    public const int MaxJoinRetries = 3;
+    public static readonly TimeSpan JoinRetryBaseDelay = TimeSpan.FromSeconds(1);
+    public static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(45);
+
     public RemoteClientSession(
         ITransportConnection connection,
         IProtocolCodec codec,
         IMessageFramer framer,
-        RemoteClientOptions options)
+        RemoteClientOptions options,
+        TimeProvider? timeProvider = null)
     {
         _connection = connection;
         _codec = codec;
         _framer = framer;
         Options = options;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _commandLogKey = $"client.tx.command.{options.SessionId}";
         _slowCommandLogKey = $"client.tx.command.slow.{options.SessionId}";
         _keepaliveLogKey = $"client.tx.keepalive.{options.SessionId}";
@@ -90,7 +114,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // Why the connection stopped, when it stopped other than by this session's own disposal; for
     // example "Server uses protocol v1; this client uses v2.", or "Connection lost: ..." when the
     // server closed the socket (an idle or stall close) or a send failed. Null while connected.
+    // Also set when the join fails: "Join rejected: ..." or "Join timed out: ...".
     public string? DisconnectReason { get; private set; }
+
+    // True once the server accepted this session's join.
+    public bool IsJoined { get; private set; }
+
+    // Join requests re-sent after a retryable rejection.
+    public int JoinRetryCount => Volatile.Read(ref _joinRetryCount);
 
     public static async ValueTask<RemoteClientSession> ConnectAsync(
         RemoteClientOptions options,
@@ -98,7 +129,8 @@ public sealed class RemoteClientSession : IAsyncDisposable
         IProtocolCodec? codec = null,
         IMessageFramer? framer = null,
         CancellationToken cancellationToken = default,
-        TimeSpan? serverHelloTimeout = null)
+        TimeSpan? serverHelloTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         transport ??= new TcpClientConnector();
         codec ??= new TransportJsonCodec();
@@ -116,7 +148,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         NetworkDiagnosticsLog.Write(
             "client.connect.transport",
             $"endpoint={options.EndpointLabel} connection={connection.ConnectionId} connectMs={stopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00}");
-        RemoteClientSession session = new(connection, codec, framer, options);
+        RemoteClientSession session = new(connection, codec, framer, options, timeProvider);
         await session.SendHelloAsync(cancellationToken);
         await session.SendJoinRequestAsync(cancellationToken);
         session.StartBackgroundReceive();
@@ -155,11 +187,140 @@ public sealed class RemoteClientSession : IAsyncDisposable
         await SendMessageAsync(new ClientHelloMessage(Options.ClientName), cancellationToken);
     }
 
+    // The first call also starts the join supervisor, whose timeout counts from here.
     public async ValueTask SendJoinRequestAsync(CancellationToken cancellationToken = default)
     {
+        StartJoinSupervisor();
         await SendMessageAsync(
             new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName),
             cancellationToken);
+    }
+
+    private void StartJoinSupervisor()
+    {
+        if (Volatile.Read(ref _disposeState) != 0 ||
+            Interlocked.Exchange(ref _joinSupervisorStarted, 1) != 0)
+        {
+            return;
+        }
+
+        long firstRequestTimestamp = _timeProvider.GetTimestamp();
+        CancellationToken shutdownToken;
+        try
+        {
+            shutdownToken = _shutdown.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        Volatile.Write(
+            ref _joinSupervisorTask,
+            Task.Run(() => JoinSupervisorAsync(firstRequestTimestamp, shutdownToken)));
+    }
+
+    // Waits for the join's outcome. A retryable rejection re-sends the request through the send
+    // loop after a backoff (1 s, 2 s, 4 s); anything else that is not JoinAccepted ends the session.
+    // Stops quietly when the connection ends first (the receive loop set the reason) or on dispose.
+    private async Task JoinSupervisorAsync(long firstRequestTimestamp, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                TimeSpan remaining = JoinTimeout - _timeProvider.GetElapsedTime(firstRequestTimestamp);
+                IServerToClientMessage? reply = remaining > TimeSpan.Zero
+                    ? await ReadJoinReplyAsync(remaining, cancellationToken)
+                    : null;
+                if (reply == null)
+                {
+                    EndSessionForJoin(
+                        $"Join timed out: the server did not accept the join within {JoinTimeout.TotalSeconds:0} s.");
+                    return;
+                }
+
+                if (reply is JoinAcceptedMessage)
+                {
+                    return;
+                }
+
+                string reason = ((JoinRejectedMessage)reply).Reason;
+                int retries = Volatile.Read(ref _joinRetryCount);
+                if (!string.Equals(reason, DedicatedServerHost.JoinRetryRejectionReason, StringComparison.Ordinal))
+                {
+                    EndSessionForJoin($"Join rejected: {reason}");
+                    return;
+                }
+
+                if (retries >= MaxJoinRetries)
+                {
+                    EndSessionForJoin($"Join rejected after {retries + 1} attempts: {reason}");
+                    return;
+                }
+
+                TimeSpan delay = JoinRetryBaseDelay * (1 << retries);
+                if (delay >= JoinTimeout - _timeProvider.GetElapsedTime(firstRequestTimestamp))
+                {
+                    EndSessionForJoin(
+                        $"Join timed out: the server did not accept the join within {JoinTimeout.TotalSeconds:0} s.");
+                    return;
+                }
+
+                NetworkDiagnosticsLog.Write(
+                    "client.join.retry",
+                    $"endpoint={Options.EndpointLabel} session={Options.SessionId} attempt={retries + 2} delayMs={delay.TotalMilliseconds:0} reason={reason}");
+                await Task.Delay(delay, _timeProvider, cancellationToken);
+                Interlocked.Increment(ref _joinRetryCount);
+                _pendingMessages.Enqueue(new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName));
+                SignalSendLoop();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ChannelClosedException)
+        {
+        }
+    }
+
+    // The next join reply, or null when none arrives within timeout.
+    private async ValueTask<IServerToClientMessage?> ReadJoinReplyAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource deadline = new(timeout, _timeProvider);
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            return await _joinReplies.Reader.ReadAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    // Ends the session the way a lost connection does: IsConnected false with a DisconnectReason
+    // the owner shows. The loops stop; the socket closes when the owner disposes the session.
+    private void EndSessionForJoin(string reason)
+    {
+        _joinSettled = true;
+        if (Volatile.Read(ref _disposeState) != 0)
+        {
+            return;
+        }
+
+        DisconnectReason ??= reason;
+        IsConnected = false;
+        NetworkDiagnosticsLog.Write(
+            "client.join.failed",
+            $"endpoint={Options.EndpointLabel} session={Options.SessionId} reason={DisconnectReason}");
+        try
+        {
+            _shutdown.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     public async ValueTask SendCommandFrameAsync(PlayerCommandFrame commandFrame, CancellationToken cancellationToken = default)
@@ -227,6 +388,12 @@ public sealed class RemoteClientSession : IAsyncDisposable
     }
 
     private volatile bool _sending;
+
+    // Wake-ups queued for the send loop and not yet taken (tests).
+    internal int PendingSendSignalCount => _outboundSignal.CurrentCount;
+
+    // True while the send loop is inside a pass, e.g. blocked in a transport send (tests).
+    internal bool IsSendInFlight => _sending;
 
     private void SignalSendLoop()
     {
@@ -339,6 +506,16 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
                 _serverHello.TrySetResult(hello);
             }
+            else if (!_joinSettled && serverMessage is JoinAcceptedMessage or JoinRejectedMessage)
+            {
+                if (serverMessage is JoinAcceptedMessage)
+                {
+                    _joinSettled = true;
+                    IsJoined = true;
+                }
+
+                _joinReplies.Writer.TryWrite(serverMessage);
+            }
 
             _inboundMessages.Enqueue(serverMessage);
             LogInbound(decoded.Envelope, serverMessage);
@@ -383,8 +560,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
                     continue;
                 }
 
-                Volatile.Write(ref _keepaliveDue, 1);
-                SignalSendLoop();
+                // One signal per due keepalive: while a send is stalled the flag stays set (the
+                // send loop clears it only after its current send), so the semaphore no longer
+                // gains a release every half interval and the loop does not spin through them
+                // once the send completes.
+                if (Interlocked.Exchange(ref _keepaliveDue, 1) == 0)
+                {
+                    SignalSendLoop();
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -406,6 +589,18 @@ public sealed class RemoteClientSession : IAsyncDisposable
             try
             {
                 await _keepaliveTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        // Before the send loop: a retry it queued must not start a send loop after that one ended.
+        if (Volatile.Read(ref _joinSupervisorTask) is Task joinSupervisor)
+        {
+            try
+            {
+                await joinSupervisor;
             }
             catch (OperationCanceledException)
             {
@@ -584,6 +779,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             IsConnected = false;
             _serverHello.TrySetResult(null);
+            // The connection is gone; a join supervisor waiting on a reply stops without a reason
+            // of its own.
+            _joinReplies.Writer.TryComplete();
             NetworkDiagnosticsLog.Write(
                 "client.disconnect",
                 $"endpoint={Options.EndpointLabel} connection={_connection.ConnectionId} session={Options.SessionId} reason={DisconnectReason ?? "closed"}");

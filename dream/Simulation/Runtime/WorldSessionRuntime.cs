@@ -113,9 +113,11 @@ public sealed class WorldSessionRuntime : IDisposable
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
     // on receive threads, consumed on the tick.
     private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
-    // Players whose join failed before their saved state was restored (RestorePersistedPlayerState);
+    // Sessions whose join failed before their saved state was restored (RestorePersistedPlayerState);
     // their in-memory stats are defaults, so PersistPlayerProfile must not save them over the row.
-    private readonly HashSet<string> _unrestoredPlayerNames = new(StringComparer.OrdinalIgnoreCase);
+    // Keyed by session, not display name, so another session sharing the name still saves; an
+    // entry goes when the session restores or is detached.
+    private readonly HashSet<PlayerSessionId> _unrestoredPlayerSessions = [];
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
@@ -317,6 +319,7 @@ public sealed class WorldSessionRuntime : IDisposable
             out IAuthoritativePlayerTarget? target)
                 ? target!.Combatant
                 : Player.Combatant);
+        _unrestoredPlayerSessions.Remove(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
         _primaryPlayerTarget = null;
@@ -484,7 +487,7 @@ public sealed class WorldSessionRuntime : IDisposable
             NetworkDiagnosticsLog.Write("server.persistence.join-sync-read", $"player={playerName}");
             if (_writes != null && !_writes.Flush(TimeSpan.FromSeconds(5)))
             {
-                _unrestoredPlayerNames.Add(playerName);
+                _unrestoredPlayerSessions.Add(sessionId);
                 NetworkDiagnosticsLog.Write("server.persistence.join-sync-read-timeout", $"player={playerName}");
                 throw new InvalidOperationException(
                     $"Saved data for player '{playerName}' is still being written; retry the join.");
@@ -494,7 +497,7 @@ public sealed class WorldSessionRuntime : IDisposable
             worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
         }
 
-        _unrestoredPlayerNames.Remove(playerName);
+        _unrestoredPlayerSessions.Remove(sessionId);
         CacheProfile(playerName, profile);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
@@ -814,6 +817,9 @@ public sealed class WorldSessionRuntime : IDisposable
     }
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
+
+    // Sessions whose failed join left default stats that must not be saved (tests).
+    internal int UnrestoredPlayerSessionCount => _unrestoredPlayerSessions.Count;
 
     public const ulong WorldChecksumIntervalTicks = 64;
     private ulong _nextWorldChecksumTick;
@@ -2068,7 +2074,7 @@ public sealed class WorldSessionRuntime : IDisposable
             || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
             || player == null
             || player.IsLocal
-            || _unrestoredPlayerNames.Contains(player.DisplayName))
+            || _unrestoredPlayerSessions.Contains(sessionId))
         {
             return;
         }
