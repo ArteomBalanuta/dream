@@ -42,7 +42,7 @@ internal sealed class SqliteWriteBatch : IPersistenceWriteBatch
 
     // PersistenceWriteQueue (Simulation) only knows the IPersistenceWriteBatch port; this installs
     // the SQLite batch as its default when the assembly loads, before any queue can start a worker.
-#pragma warning disable CA2255 // The dream executable owns this registration; it is not a library.
+#pragma warning disable CA2255 // The initializer only sets a factory default inside this same assembly, and runs before any PersistenceWriteQueue exists.
     [ModuleInitializer]
 #pragma warning restore CA2255
     internal static void RegisterAsDefault()
