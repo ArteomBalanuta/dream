@@ -21,4 +21,10 @@ public interface IProtocolCodec
     void WriteEnvelope(TransportEnvelope envelope, ReadOnlySpan<byte> payloadJson, IBufferWriter<byte> destination);
 
     DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload);
+
+    // Decode on the server's receive path. A codec that knows which kinds only the server sends
+    // (TransportJsonCodec) refuses them from the envelope's kind, before it decodes the payload,
+    // so a client cannot make the server build a world chunk or snapshot. Others decode as usual
+    // and leave the check to the caller.
+    DecodedProtocolMessage DecodeFromClient(ReadOnlySpan<byte> payload) => Decode(payload);
 }

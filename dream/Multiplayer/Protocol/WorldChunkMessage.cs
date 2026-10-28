@@ -23,8 +23,13 @@ public sealed record WorldChunkMessage(
     public const string Kind = "server.world-chunk";
 
     // A chunk's world fragment stops after the item that brings it to this many bytes, so a chunk
-    // frame stays near 256 KB however large the world is.
-    public const int DefaultChunkBytes = 256 * 1024;
+    // frame stays near 64 KB however large the world is. Sized from the server's send-stall
+    // allowance (ServerConnectionOptions): a frame must finish within SendStallTimeout (5 s) plus
+    // its bytes at SendStallMinimumBytesPerSecond (256 KB/s), so a 64 KB chunk survives links down
+    // to about 12.5 KB/s, where the earlier 256 KB chunks faulted any link under about 43.7 KB/s
+    // mid-resync. The cost is small: each fragment repeats the dimensions and restarts its delta
+    // bases (tens of bytes), and the writer sends one queued message per chunk.
+    public const int DefaultChunkBytes = 64 * 1024;
 
     public string MessageKind => Kind;
 }

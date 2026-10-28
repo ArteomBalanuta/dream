@@ -60,6 +60,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private long _closedBytesReceived;
     private long _closedFramesReceived;
     private long _closedCoalescedSnapshots;
+    private long _closedBackToBackWorldTransfers;
     // Held while a connection is removed and its counters retired, and while CaptureMetrics sums.
     private readonly object _connectionTotalsSync = new();
     private readonly object _performanceSync = new();
@@ -147,6 +148,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         long bytesReceived;
         long framesReceived;
         long coalesced;
+        long backToBackTransfers;
         int connections = 0;
         int joined = 0;
         lock (_connectionTotalsSync)
@@ -156,6 +158,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
             bytesReceived = Interlocked.Read(ref _closedBytesReceived);
             framesReceived = Interlocked.Read(ref _closedFramesReceived);
             coalesced = Interlocked.Read(ref _closedCoalescedSnapshots);
+            backToBackTransfers = Interlocked.Read(ref _closedBackToBackWorldTransfers);
             foreach (KeyValuePair<string, ServerConnection> entry in _connections)
             {
                 ServerConnection connection = entry.Value;
@@ -170,6 +173,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 bytesReceived += connection.BytesReceived;
                 framesReceived += connection.FramesReceived;
                 coalesced += connection.CoalescedSnapshots;
+                backToBackTransfers += connection.BackToBackWorldTransfers;
             }
         }
 
@@ -193,7 +197,10 @@ public sealed class DedicatedServerService : IAsyncDisposable
             _metrics.IdleTimeoutCloses,
             _metrics.SendStallCloses,
             _metrics.BacklogOverflowCloses,
-            _metrics.CoalesceOverflowResyncs);
+            _metrics.CoalesceOverflowResyncs,
+            _metrics.CoalesceOverflowResyncsDeferred,
+            _metrics.BackToBackOverflowResyncs,
+            backToBackTransfers);
     }
 
     // Raised once for each connection closed by an error, after the error is logged. The handler
@@ -589,15 +596,34 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // if the cooldown refuses it, the flag is re-armed and the next tick asks again. Only an
     // accepted resync is counted. The refused path runs every tick until the cooldown passes, so
     // it must not allocate.
+    // While the connection still has a world transfer queued or going out, the overflow is
+    // deferred (re-armed) instead: a resync served now would queue a second full world behind the
+    // first, and deltas dropped meanwhile are covered by the one resync served once the transfer
+    // has finished. Each wait is counted once (CoalesceOverflowResyncsDeferred), and a resync
+    // served after one is counted as back to back (BackToBackOverflowResyncs).
     private void RequestOverflowResync(ServerConnection connection)
     {
         try
         {
+            if (connection.HasWorldTransferPending)
+            {
+                if (connection.DeferOverflowResync())
+                {
+                    _metrics.RecordCoalesceOverflowResyncDeferred();
+                }
+
+                return;
+            }
+
             // Never recreates a context for a connection the host already released.
             bool accepted = _host.RequestWorldResyncIfConnected(connection.ConnectionId);
             if (accepted)
             {
                 _metrics.RecordCoalesceOverflowResync();
+                if (connection.TakeOverflowResyncDeferred())
+                {
+                    _metrics.RecordBackToBackOverflowResync();
+                }
             }
 
             HandleOverflowResyncResult(connection, accepted);
@@ -690,6 +716,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
             {
                 ReportConnectionError(connection, "cleanup-error", $"{ex.GetType().Name}: {ex.Message}", ex);
             }
+
+            // The receive loop has ended, so no late message from this connection can reach the
+            // host any more; a takeover mark for it (NETR-8) has done its job. Without this the
+            // host's set of taken-over ids only shrank when a new socket reused the same id.
+            _host.ForgetTakenOverConnection(connection.ConnectionId);
         }
     }
 
@@ -798,6 +829,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         Interlocked.Add(ref _closedBytesReceived, connection.BytesReceived);
         Interlocked.Add(ref _closedFramesReceived, connection.FramesReceived);
         Interlocked.Add(ref _closedCoalescedSnapshots, connection.CoalescedSnapshots);
+        Interlocked.Add(ref _closedBackToBackWorldTransfers, connection.BackToBackWorldTransfers);
     }
 
     private void LogUnjoinedTick(int executedTicks, double advanceMs)

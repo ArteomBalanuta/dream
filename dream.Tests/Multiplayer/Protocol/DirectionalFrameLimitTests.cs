@@ -7,11 +7,12 @@ namespace Dream.Tests.Multiplayer.Protocol;
 
 // NETR-7: one 1 MB limit used to cover both directions, so a client could make the server buffer
 // up to 1 MB per frame while a large world (World10k) could not reach a client at all. The limits
-// are now per direction: client frames 64 KB, server frames 32 MB.
+// are now per direction: client frames 64 KB, server frames 8 MB (32 MB until chunked world
+// transfer removed whole-world frames; see WorldTransferLimitTests for how 8 MB was sized).
 public class DirectionalFrameLimitTests
 {
     private const int ClientCap = 64 * 1024;
-    private const int ServerCap = 32 * 1024 * 1024;
+    private const int ServerCap = 8 * 1024 * 1024;
 
     [Fact]
     public void Defaults_AreSmallClientFrames_AndLargeServerFrames()
