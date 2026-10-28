@@ -116,6 +116,7 @@ public class RenderOwnershipTests
 
     // The player renderers own only the per-instance player models; the shared ModelAssets cache
     // (enemy, viewmodel and cube models) is released elsewhere and must never be disposed here.
+    // Comments are stripped first, so a comment that names the call cannot satisfy the check.
     [Theory]
     [InlineData("LocalPlayerRenderer.cs")]
     [InlineData("RemotePlayerRenderer.cs")]
@@ -123,9 +124,60 @@ public class RenderOwnershipTests
     {
         string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Actors", fileName));
 
-        Assert.Contains("ModelAssets.RequestPlayerInstance()", source);
-        Assert.DoesNotContain("ModelAssets.Get(", source);
-        Assert.DoesNotContain("ModelAssets.DisposeAll", source);
+        AssertCreatesOnlyPerInstanceModels(StripComments(source));
+    }
+
+    // Guards the check above against a renderer that names the per-instance call only in comments
+    // while it draws a shared model (one pose shared by every player).
+    [Fact]
+    public void Per_Instance_Model_Check_Rejects_Shared_Models_Named_Only_In_Comments()
+    {
+        const string sharedModelRenderer = """
+            // Requests a per-instance model (ModelAssets.RequestPlayerInstance()) for each actor.
+            /* _model = ModelAssets.RequestPlayerInstance(); */
+            public void Draw()
+            {
+                string note = "// not a comment";
+                if (ModelAssets.TryGet(ModelAssets.PlayerPath, out AnimatedModel? model))
+                {
+                    model.Update(0f);
+                }
+            }
+            """;
+        const string perInstanceRenderer = """
+            // Shared ModelAssets.TryGet( models are never used here.
+            public void Draw()
+            {
+                string url = "http://example";
+                _model ??= ModelAssets.RequestPlayerInstance();
+            }
+            """;
+
+        string stripped = StripComments(sharedModelRenderer);
+        Assert.DoesNotContain("RequestPlayerInstance", stripped);
+        Assert.Contains("\"// not a comment\"", stripped);
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertCreatesOnlyPerInstanceModels(stripped));
+        // Unstripped, the comments alone would have satisfied the old Contains check.
+        Assert.Contains("ModelAssets.RequestPlayerInstance()", sharedModelRenderer);
+        AssertCreatesOnlyPerInstanceModels(StripComments(perInstanceRenderer));
+    }
+
+    private static void AssertCreatesOnlyPerInstanceModels(string code)
+    {
+        Assert.Matches(new Regex(@"(\?\?)?=\s*ModelAssets\.RequestPlayerInstance\(\)\s*;"), code);
+        Assert.DoesNotContain("ModelAssets.TryGet(ModelAssets.PlayerPath", code);
+        Assert.DoesNotContain("ModelAssets.TryGet(", code);
+        Assert.DoesNotContain("ModelAssets.Get(", code);
+        Assert.DoesNotContain("ModelAssets.DisposeAll", code);
+    }
+
+    // Removes // and /* */ comments while leaving string literals (which may contain "//") intact.
+    private static string StripComments(string source)
+    {
+        return Regex.Replace(
+            source,
+            @"""(?:\\.|[^""\\\n])*""|//[^\n]*|/\*[\s\S]*?\*/",
+            match => match.Value.StartsWith('"') ? match.Value : string.Empty);
     }
 
     private static bool IsReleased(string source, string fieldName, FieldKind kind)

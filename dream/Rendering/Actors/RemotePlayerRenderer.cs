@@ -12,11 +12,21 @@ namespace Dream.Rendering.Actors;
 
 public sealed class RemotePlayerRenderer : IDisposable
 {
+    // Model streaming: a remote player's per-instance model is requested once the player is within
+    // ModelRequestDistance (render distance plus a margin, so it is usually ready before it comes
+    // into view) and released once the player is beyond the larger ModelReleaseDistance. The gap
+    // between the two is hysteresis, so a player hovering at the edge never re-requests every frame.
+    // At most MaxPendingModelRequests decodes are in flight; further requests wait for a free slot.
+    public const float ModelRequestDistance = WorldVisibility.MaxRenderDistance * 1.25f;
+    public const float ModelReleaseDistance = WorldVisibility.MaxRenderDistance * 1.5f;
+    public const int MaxPendingModelRequests = 4;
+
     private readonly Render _render;
     private readonly Dictionary<int, AsyncResourceHandle<AnimatedModel>> _playerModels = [];
     private readonly PlayerAnimationClipTracker _clipTracker = new();
     private readonly HashSet<int> _activeActorIds = [];
     private readonly List<int> _staleActorIds = [];
+    private readonly List<int> _modelActorIds = [];
     private readonly List<RemotePlayerPresentationState> _visiblePlayers = [];
 
     public RemotePlayerRenderer(Render render)
@@ -24,16 +34,21 @@ public sealed class RemotePlayerRenderer : IDisposable
         _render = render;
     }
 
+    // Instance requests still decoding or waiting for upload, as of the last Draw.
+    public int PendingModelCount { get; private set; }
+
     public RemotePlayerRenderStats Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
     {
         PruneModelEntries(remotePlayers);
+        ReleaseFarModels(camera.Position, remotePlayers);
+        RequestMissingModels(camera.Position, remotePlayers);
 
         SelectVisiblePlayers(camera, remotePlayers, _visiblePlayers);
         for (int i = 0; i < _visiblePlayers.Count; i++)
         {
             RemotePlayerPresentationState remotePlayer = _visiblePlayers[i];
             PlayerRenderState renderState = PlayerRenderState.CreateRemote(remotePlayer);
-            // The actor's model is requested in PruneModelEntries and loads in the background.
+            // The actor's model is requested in RequestMissingModels and loads in the background.
             // Until it is uploaded the actor is skipped (its name label is drawn by the HUD), and
             // no clip is recorded, so the current clip is applied on the first drawn frame.
             if (!_playerModels.TryGetValue(remotePlayer.ActorId, out AsyncResourceHandle<AnimatedModel>? handle) ||
@@ -51,11 +66,14 @@ public sealed class RemotePlayerRenderer : IDisposable
             model.EndRender();
         }
 
+        // ModelCount reports uploaded models only; requests still loading are PendingModelCount.
+        CountModelStates(_playerModels, out int readyModels, out int pendingModels);
+        PendingModelCount = pendingModels;
         return new RemotePlayerRenderStats(
             remotePlayers.Count,
             CountAlive(remotePlayers),
             _visiblePlayers.Count,
-            _playerModels.Count);
+            readyModels);
     }
 
     public static IReadOnlyList<RemotePlayerPresentationState> SelectVisiblePlayers(
@@ -150,25 +168,121 @@ public sealed class RemotePlayerRenderer : IDisposable
         return staleActorIds.Count;
     }
 
-    // Requests a per-instance model (ModelAssets.RequestPlayerInstance()) for every active actor
-    // that has none, visible or not, so a player walking into view is usually already loaded.
-    private void RequestMissingModels(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    // Fills farActorIds with the active actors that hold a model handle but are beyond
+    // ModelReleaseDistance. The caller disposes and removes them afterwards.
+    public static void CollectFarModelActorIds<THandle>(
+        Vector3 cameraPosition,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        Dictionary<int, THandle> cachedModels,
+        List<int> farActorIds)
     {
+        farActorIds.Clear();
+        const float releaseDistanceSquared = ModelReleaseDistance * ModelReleaseDistance;
         for (int i = 0; i < remotePlayers.Count; i++)
         {
-            int actorId = remotePlayers[i].ActorId;
-            if (_playerModels.ContainsKey(actorId))
+            RemotePlayerPresentationState remotePlayer = remotePlayers[i];
+            if (cachedModels.ContainsKey(remotePlayer.ActorId) &&
+                (remotePlayer.Pose.Position - cameraPosition).LengthSquared > releaseDistanceSquared)
             {
-                continue;
+                farActorIds.Add(remotePlayer.ActorId);
             }
+        }
+    }
 
+    // Fills requestActorIds with up to freeSlots actors that have no model handle and are within
+    // ModelRequestDistance. Actors already within render distance come first, so a capped frame
+    // spends its slots on players that are on screen before the ones in the margin.
+    public static void CollectModelRequestActorIds<THandle>(
+        Vector3 cameraPosition,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        Dictionary<int, THandle> cachedModels,
+        int freeSlots,
+        List<int> requestActorIds)
+    {
+        requestActorIds.Clear();
+        const float renderDistanceSquared = WorldVisibility.MaxRenderDistance * WorldVisibility.MaxRenderDistance;
+        const float requestDistanceSquared = ModelRequestDistance * ModelRequestDistance;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            float minDistanceSquared = pass == 0 ? -1f : renderDistanceSquared;
+            float maxDistanceSquared = pass == 0 ? renderDistanceSquared : requestDistanceSquared;
+            for (int i = 0; i < remotePlayers.Count; i++)
+            {
+                if (requestActorIds.Count >= freeSlots)
+                {
+                    return;
+                }
+
+                RemotePlayerPresentationState remotePlayer = remotePlayers[i];
+                float distanceSquared = (remotePlayer.Pose.Position - cameraPosition).LengthSquared;
+                if (distanceSquared <= minDistanceSquared ||
+                    distanceSquared > maxDistanceSquared ||
+                    cachedModels.ContainsKey(remotePlayer.ActorId))
+                {
+                    continue;
+                }
+
+                requestActorIds.Add(remotePlayer.ActorId);
+            }
+        }
+    }
+
+    public static void CountModelStates(
+        Dictionary<int, AsyncResourceHandle<AnimatedModel>> cachedModels,
+        out int ready,
+        out int pending)
+    {
+        ready = 0;
+        pending = 0;
+        foreach (AsyncResourceHandle<AnimatedModel> handle in cachedModels.Values)
+        {
+            AsyncResourceState state = handle.State;
+            if (state == AsyncResourceState.Ready)
+            {
+                ready++;
+            }
+            else if (state == AsyncResourceState.Pending)
+            {
+                pending++;
+            }
+        }
+    }
+
+    private void ReleaseFarModels(Vector3 cameraPosition, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    {
+        CollectFarModelActorIds(cameraPosition, remotePlayers, _playerModels, _modelActorIds);
+        for (int i = 0; i < _modelActorIds.Count; i++)
+        {
+            int actorId = _modelActorIds[i];
+            AsyncResourceHandle<AnimatedModel> handle = _playerModels[actorId];
+            _playerModels.Remove(actorId);
+            handle.Dispose();
+            NetworkDiagnosticsLog.Write("client.render.remote.model", $"released far actor={actorId} cached={_playerModels.Count}");
+        }
+    }
+
+    // Requests a per-instance model for each actor within ModelRequestDistance that has none,
+    // while fewer than MaxPendingModelRequests requests are still loading.
+    private void RequestMissingModels(Vector3 cameraPosition, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    {
+        CountModelStates(_playerModels, out _, out int pending);
+        int freeSlots = MaxPendingModelRequests - pending;
+        if (freeSlots <= 0)
+        {
+            return;
+        }
+
+        CollectModelRequestActorIds(cameraPosition, remotePlayers, _playerModels, freeSlots, _modelActorIds);
+        for (int i = 0; i < _modelActorIds.Count; i++)
+        {
+            int actorId = _modelActorIds[i];
             _playerModels[actorId] = ModelAssets.RequestPlayerInstance();
             NetworkDiagnosticsLog.Write("client.render.remote.model", $"requested actor={actorId} cached={_playerModels.Count}");
         }
     }
 
-    // Disposes the per-instance model handles that are still cached; pruning already disposed
-    // the others. The handles come from ModelAssets.RequestPlayerInstance(), so this renderer owns
+    // Disposes the per-instance model handles that are still cached; pruning and far release
+    // already disposed the others. The handles are per-instance requests, so this renderer owns
     // them; disposing a handle releases its model or discards its pending decode. A second call
     // finds the cache empty, and a handle the model cache's teardown already released is a no-op.
     public void Dispose()
@@ -221,7 +335,5 @@ public sealed class RemotePlayerRenderer : IDisposable
         {
             NetworkDiagnosticsLog.Write("client.render.remote.model", $"pruned actor={_staleActorIds[i]} cached={_playerModels.Count}");
         }
-
-        RequestMissingModels(remotePlayers);
     }
 }

@@ -50,7 +50,9 @@ public class ViewModelRenderer
 
     // A model that is still loading reports "not finished", so a Use request simply waits: the
     // controller keeps the slot in Use, the one-shot plays once the model is ready, and the slot
-    // then finishes and returns to Idle as usual.
+    // then finishes and returns to Idle as usual. A model that failed to load also reports
+    // "not finished" forever, leaving the slot in Use: intentional and harmless, since nothing is
+    // drawn for it (and changing the held item resets that slot to Idle).
     private static bool UpdateSlot(ViewModelSlotState slotState, float deltaTime)
     {
         return TryResolveModel(slotState, out AnimatedModel? model) && model.Update(deltaTime);
