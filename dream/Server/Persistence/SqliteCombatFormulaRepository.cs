@@ -13,7 +13,8 @@ public sealed class SqliteCombatFormulaRepository : ICombatFormulaRepository, ID
 
     public IReadOnlyList<CombatFormulaDefinition> LoadAllEnabled()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -39,7 +40,8 @@ public sealed class SqliteCombatFormulaRepository : ICombatFormulaRepository, ID
 
     public CombatFormulaDefinition? TryGet(string formulaKey)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -59,7 +61,8 @@ public sealed class SqliteCombatFormulaRepository : ICombatFormulaRepository, ID
 
     public void Upsert(CombatFormulaDefinition definition)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO combat_formulas (

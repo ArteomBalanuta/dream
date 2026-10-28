@@ -111,7 +111,13 @@ public class LiveServerDeferredJoinLoopbackTests
             Assert.Empty(leaver.Messages.OfType<JoinAcceptedMessage>());
 
             await leaver.DisposeAsync();
-            await WaitUntilAsync(() => server.Service.ConnectionCount == 1, "the server never released the closed connection");
+            // The service drops the connection from its own list before it calls the host's
+            // ReleaseConnection, so its count alone let the tick run first: session-a's join was
+            // applied (primary seat) and then released, leaving no primary. The host's count drops
+            // only at the end of ReleaseConnection, under the tick lock, after the pending join is gone.
+            await WaitUntilAsync(
+                () => server.Service.ConnectionCount == 1 && server.Host.ConnectionCount == 1,
+                "the server never released the closed connection");
 
             await server.TickAsync();
             await stayer.WaitForAsync(messages => messages.OfType<ServerSnapshotMessage>().Any(), "a snapshot");

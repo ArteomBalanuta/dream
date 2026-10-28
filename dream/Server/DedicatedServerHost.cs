@@ -27,6 +27,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return bySession != 0 ? bySession : string.CompareOrdinal(left.ConnectionId, right.ConnectionId);
         };
 
+    // How long a join request's receive thread waits for the joining player's persisted state to
+    // load before queueing the join anyway, and how many ticks such a join may then wait for it.
+    private static readonly TimeSpan JoinPrefetchReceiveWait = TimeSpan.FromSeconds(5);
+    private const int MaxJoinPrefetchDeferralTicks = 2 * SimulationClock.AuthoritativeTicksPerSecond;
+
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
@@ -52,6 +57,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly List<PlayerSessionId> _joinedSessionIds = [];
     private readonly List<PlayerCommandFrame> _tickCommands = [];
     private readonly List<QueuedPlayerAction> _tickActions = [];
+    // Per pending join, whether its persisted player is loaded; see ApplyPendingJoins.
+    private readonly List<bool> _joinReadiness = [];
     private int _connectionsChanged = 1;
     private readonly BackgroundCheckpointWriter? _checkpointWrites;
     private double _checkpointElapsedSeconds;
@@ -88,6 +95,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public BackgroundCheckpointWriter? CheckpointWrites => _checkpointWrites;
 
     public bool DefersJoinsToTick => _deferJoinsToTick;
+
+    // Connections the host still tracks. ReleaseConnection removes one last, under the tick lock,
+    // so once this drops the released connection's pending join and seat are gone; a service-level
+    // connection count drops before the host's release runs.
+    public int ConnectionCount => _connections.Count;
 
     // How long until the tick runner's next fixed tick is due.
     public double SecondsUntilNextTick =>
@@ -140,11 +152,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         IClientToServerMessage message)
     {
         ServerRoutingContext context = GetOrCreateConnectionContext(connectionId);
+        string? joiningPlayerName = message is ClientJoinRequestMessage request
+            ? PrefetchJoiningPlayer(request)
+            : null;
         lock (_authoritySync)
         {
             if (_deferJoinsToTick && message is ClientJoinRequestMessage joinRequest)
             {
-                _pendingJoins.Add(new PendingJoin(connectionId, joinRequest));
+                _pendingJoins.Add(new PendingJoin(connectionId, joinRequest, joiningPlayerName!, DeferredTicks: 0));
                 return Array.Empty<IServerToClientMessage>();
             }
 
@@ -298,7 +313,15 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         {
             if (_deferJoinsToTick)
             {
-                _pendingJoins.RemoveAll(join => string.Equals(join.ConnectionId, connectionId, StringComparison.Ordinal));
+                for (int i = _pendingJoins.Count - 1; i >= 0; i--)
+                {
+                    if (string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal))
+                    {
+                        // Its persisted-player load will not be used.
+                        Runtime?.DiscardPersistedPlayerPrefetch(_pendingJoins[i].PlayerName);
+                        _pendingJoins.RemoveAt(i);
+                    }
+                }
             }
 
             if (_connectionClaims.TryGetValue(connectionId, out string? sessionId))
@@ -425,8 +448,31 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
     }
 
-    // Same-tick joins in canonical order. A join whose connection was dropped is skipped. With no
-    // pending join this returns before touching anything, so steady-state ticks do not allocate.
+    // Starts the joining player's persisted-state load on the persistence worker and waits for it
+    // here, on the connection's receive thread, before the join is queued (or, without deferral,
+    // routed). The join applied on the tick then reads only memory: the tick no longer flushes the
+    // write queue or reads the database (250-550 ms per join under load). The wait is bounded; a
+    // join whose load is still running when its tick comes is deferred (see ApplyPendingJoins).
+    private string PrefetchJoiningPlayer(ClientJoinRequestMessage request)
+    {
+        string playerName = WorldSessionRuntime.ResolveJoinPlayerName(request.RequestedSessionId, request.DisplayName);
+        if (Runtime?.BeginPersistedPlayerPrefetch(playerName) is { } prefetch
+            && !prefetch.Wait(JoinPrefetchReceiveWait))
+        {
+            Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write(
+                "server.join.prefetch-slow",
+                $"session={request.RequestedSessionId} player={playerName} waited={JoinPrefetchReceiveWait.TotalMilliseconds:0}ms");
+        }
+
+        return playerName;
+    }
+
+    // Same-tick joins in canonical order. A join whose connection was dropped is skipped. A join
+    // whose persisted player is not loaded yet waits for a later tick (at most
+    // MaxJoinPrefetchDeferralTicks, after which the runtime reads synchronously), so the tick never
+    // waits on the database. Readiness is decided for the whole batch before any join is applied,
+    // because applying a join consumes its player's prefetch. With no pending join this returns
+    // before touching anything, so steady-state ticks do not allocate.
     private void ApplyPendingJoins()
     {
         if (_pendingJoins.Count == 0)
@@ -442,11 +488,28 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             joins.Sort(ComparePendingJoinsOrdinal);
         }
 
+        WorldSessionRuntime? runtime = Runtime;
+        _joinReadiness.Clear();
+        for (int i = 0; i < joins.Count; i++)
+        {
+            PendingJoin join = joins[i];
+            _joinReadiness.Add(runtime == null
+                || join.DeferredTicks >= MaxJoinPrefetchDeferralTicks
+                || runtime.IsPersistedPlayerReady(join.PlayerName, startIfMissing: true));
+        }
+
         for (int i = 0; i < joins.Count; i++)
         {
             PendingJoin join = joins[i];
             if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
             {
+                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName);
+                continue;
+            }
+
+            if (!_joinReadiness[i])
+            {
+                _pendingJoins.Add(join with { DeferredTicks = join.DeferredTicks + 1 });
                 continue;
             }
 
@@ -458,12 +521,19 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
 
             context.ClearOutboundMessages();
+            // An accepted join consumed its load; a rejected one (or one that restored nothing)
+            // drops it, so a later join of this player reads fresh rows.
+            runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName);
         }
 
         joins.Clear();
     }
 
-    private readonly record struct PendingJoin(string ConnectionId, ClientJoinRequestMessage Request);
+    private readonly record struct PendingJoin(
+        string ConnectionId,
+        ClientJoinRequestMessage Request,
+        string PlayerName,
+        int DeferredTicks);
 
     // Connections are added and removed off the tick thread. Enumerating the ConcurrentDictionary
     // is safe during those changes, and a change made mid-enumeration sets the flag again for the

@@ -18,12 +18,27 @@ public sealed class SqliteSchemaBootstrapper
         _schemaScriptPath = schemaScriptPath;
     }
 
+    // Per-connection settings. journal_mode=WAL is stored in the database file (EnsureSchema sets
+    // it once); synchronous and busy_timeout are per connection, so every connection sets them.
+    // WAL with synchronous=NORMAL syncs at checkpoints instead of on every commit, and readers no
+    // longer block the writer. busy_timeout makes a writer wait for another connection's write
+    // (the checkpoint writer and the write queue run on different threads) instead of failing.
+    private const string ConnectionPragmas =
+        "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+
     public string ConnectionString => _connectionString;
 
     public void EnsureSchema()
     {
         string script = File.ReadAllText(_schemaScriptPath);
         using SqliteConnection connection = CreateOpenConnection();
+        using (SqliteCommand journal = connection.CreateCommand())
+        {
+            // Persistent: once set, every later connection to this file opens in WAL mode.
+            journal.CommandText = "PRAGMA journal_mode=WAL;";
+            journal.ExecuteScalar();
+        }
+
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = script;
         command.ExecuteNonQuery();
@@ -62,7 +77,21 @@ public sealed class SqliteSchemaBootstrapper
     {
         SqliteConnection connection = new(_connectionString);
         connection.Open();
+        using SqliteCommand pragmas = connection.CreateCommand();
+        pragmas.CommandText = ConnectionPragmas;
+        pragmas.ExecuteNonQuery();
         return connection;
+    }
+
+    // The connection a repository call runs on. Inside a SqliteWriteBatch (the write queue's worker
+    // groups its writes into one transaction) it is the batch's open connection, which the lease
+    // does not close; anywhere else it is a new connection the lease closes.
+    public SqliteConnectionLease OpenConnection()
+    {
+        SqliteConnection? enlisted = SqliteWriteBatch.TryEnlist(this);
+        return enlisted != null
+            ? new SqliteConnectionLease(enlisted, owned: false)
+            : new SqliteConnectionLease(CreateOpenConnection(), owned: true);
     }
 
     public static string FormatUtc(DateTime value)

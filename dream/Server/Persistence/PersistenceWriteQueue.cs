@@ -7,15 +7,26 @@ namespace Dream.Server.Persistence;
 // enqueue order, so SQLite connection setup and fsync no longer happen on the simulation tick.
 // Inline mode runs each write immediately; tests and tools that read the repository right
 // after an action use it.
+//
+// Group commit: the worker takes every write queued so far (up to MaxWritesPerGroup) and runs them
+// inside one SqliteWriteBatch, so the SQLite repositories they call share one open connection and
+// one transaction, with a savepoint per write. A failing write is rolled back to its savepoint and
+// counted as failed; the writes around it still commit. A fracture's ten writes cost one commit
+// instead of ten autocommits.
 public sealed class PersistenceWriteQueue : IDisposable
 {
+    // Bounds how long one transaction holds the database's write lock (the checkpoint writer waits
+    // for it) and how much one failed commit has to replay.
+    public const int MaxWritesPerGroup = 256;
+
     private readonly bool _background;
     private readonly object _sync = new();
-    private readonly Queue<Action> _pending = new();
+    private readonly Queue<QueuedWrite> _pending = new();
     private Task _worker = Task.CompletedTask;
     private bool _running;
     private long _completedWrites;
     private long _failedWrites;
+    private long _committedGroups;
     private int _pendingCount;
 
     private PersistenceWriteQueue(bool background)
@@ -33,6 +44,10 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     public long FailedWrites => Interlocked.Read(ref _failedWrites);
 
+    // Database transactions the worker committed (background mode). A burst of writes queued faster
+    // than the worker drains them commits in a few groups instead of one transaction per write.
+    public long CommittedGroups => Interlocked.Read(ref _committedGroups);
+
     // Writes queued but not yet started (always 0 in inline mode). A counter kept beside the queue,
     // so the server tick reads it without taking the writer's lock.
     public int PendingCount => Volatile.Read(ref _pendingCount);
@@ -40,24 +55,16 @@ public sealed class PersistenceWriteQueue : IDisposable
     public void Enqueue(Action write)
     {
         ArgumentNullException.ThrowIfNull(write);
-        if (!_background)
-        {
-            Execute(write);
-            return;
-        }
+        Enqueue(new QueuedWrite(write, CountsAsWrite: true));
+    }
 
-        lock (_sync)
-        {
-            _pending.Enqueue(write);
-            Interlocked.Increment(ref _pendingCount);
-            if (_running)
-            {
-                return;
-            }
-
-            _running = true;
-            _worker = Task.Run(DrainPending);
-        }
+    // Runs a read on the worker, after every write enqueued before it, so it sees their rows (the
+    // join-time profile prefetch). It is not counted as a write, and it must handle its own
+    // failures; an exception is only logged. Inline mode runs it immediately.
+    public void EnqueueRead(Action read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        Enqueue(new QueuedWrite(read, CountsAsWrite: false));
     }
 
     // Waits until every write enqueued so far has run. Read paths call this before reading
@@ -88,7 +95,8 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     // Runs every queued write before returning. A bounded wait here let the worker keep writing
     // after the runtime and its owner were disposed, so a busy shutdown (a fracture queues one
-    // write per piece) could land rows in the database long after the server stopped.
+    // write per piece) could land rows in the database long after the server stopped. Group commit
+    // keeps that drain short.
     public void Dispose()
     {
         while (true)
@@ -108,38 +116,167 @@ public sealed class PersistenceWriteQueue : IDisposable
         }
     }
 
-    private void DrainPending()
+    private void Enqueue(QueuedWrite write)
     {
-        while (true)
+        if (!_background)
         {
-            Action next;
-            lock (_sync)
-            {
-                if (_pending.Count == 0)
-                {
-                    _running = false;
-                    return;
-                }
+            ExecuteInline(write);
+            return;
+        }
 
-                next = _pending.Dequeue();
-                Interlocked.Decrement(ref _pendingCount);
+        lock (_sync)
+        {
+            _pending.Enqueue(write);
+            Interlocked.Increment(ref _pendingCount);
+            if (_running)
+            {
+                return;
             }
 
-            Execute(next);
+            _running = true;
+            _worker = Task.Run(DrainPending);
         }
     }
 
-    private void Execute(Action write)
+    private void DrainPending()
     {
+        List<QueuedWrite> group = new(Math.Min(MaxWritesPerGroup, 64));
+        using SqliteWriteBatch batch = new();
+        batch.Activate();
         try
         {
-            write();
-            Interlocked.Increment(ref _completedWrites);
+            while (true)
+            {
+                group.Clear();
+                lock (_sync)
+                {
+                    while (_pending.Count > 0 && group.Count < MaxWritesPerGroup)
+                    {
+                        group.Add(_pending.Dequeue());
+                    }
+
+                    Interlocked.Add(ref _pendingCount, -group.Count);
+                }
+
+                if (group.Count == 0)
+                {
+                    // Idle: close the connection before reporting the queue drained, so Flush and
+                    // Dispose return with no connection of this queue left open on the database.
+                    batch.Abandon();
+                    lock (_sync)
+                    {
+                        if (_pending.Count == 0)
+                        {
+                            _running = false;
+                            return;
+                        }
+                    }
+
+                    continue;
+                }
+
+                try
+                {
+                    RunGroup(batch, group);
+                }
+                catch (Exception ex)
+                {
+                    // RunGroup reports per-write failures itself; this only keeps the worker alive
+                    // (a dead worker would leave _running set and Flush waiting) if cleanup fails.
+                    batch.Abandon();
+                    NetworkDiagnosticsLog.Write("server.persistence.error", $"group failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
         }
-        catch (Exception ex) when (_background)
+        finally
         {
-            Interlocked.Increment(ref _failedWrites);
-            NetworkDiagnosticsLog.Write("server.persistence.error", $"{ex.GetType().Name}: {ex.Message}");
+            SqliteWriteBatch.Deactivate();
         }
     }
+
+    // One transaction for the whole group. If the commit itself fails (the transaction is lost,
+    // not one write), every write is rolled back with it, so each is replayed in a group of its
+    // own; the repositories' writes are upserts and deletes, so a replay lands the same rows.
+    private void RunGroup(SqliteWriteBatch batch, List<QueuedWrite> group)
+    {
+        bool[]? failed = null;
+        try
+        {
+            for (int i = 0; i < group.Count; i++)
+            {
+                batch.BeginWrite();
+                try
+                {
+                    group[i].Action();
+                    batch.CompleteWrite();
+                }
+                catch (Exception ex)
+                {
+                    batch.RollBackWrite();
+                    failed ??= new bool[group.Count];
+                    failed[i] = true;
+                    ReportFailure(group[i], ex);
+                }
+            }
+
+            long committedBefore = batch.CommittedTransactions;
+            batch.Commit();
+            Interlocked.Add(ref _committedGroups, batch.CommittedTransactions - committedBefore);
+        }
+        catch (Exception ex)
+        {
+            batch.Abandon();
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.error",
+                $"group of {group.Count} not committed, replaying one by one: {ex.GetType().Name}: {ex.Message}");
+            if (group.Count == 1)
+            {
+                if (failed == null)
+                {
+                    ReportFailure(group[0], ex);
+                }
+
+                return;
+            }
+
+            for (int i = 0; i < group.Count; i++)
+            {
+                if (failed == null || !failed[i])
+                {
+                    RunGroup(batch, [group[i]]);
+                }
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < group.Count; i++)
+        {
+            if (group[i].CountsAsWrite && (failed == null || !failed[i]))
+            {
+                Interlocked.Increment(ref _completedWrites);
+            }
+        }
+    }
+
+    private void ReportFailure(QueuedWrite write, Exception ex)
+    {
+        if (write.CountsAsWrite)
+        {
+            Interlocked.Increment(ref _failedWrites);
+        }
+
+        NetworkDiagnosticsLog.Write("server.persistence.error", $"{ex.GetType().Name}: {ex.Message}");
+    }
+
+    private void ExecuteInline(QueuedWrite write)
+    {
+        write.Action();
+        if (write.CountsAsWrite)
+        {
+            Interlocked.Increment(ref _completedWrites);
+        }
+    }
+
+    private readonly record struct QueuedWrite(Action Action, bool CountsAsWrite);
 }

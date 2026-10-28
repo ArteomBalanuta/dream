@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
@@ -108,6 +110,9 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly PersistenceWriteQueue? _writes;
     private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _knownProfileNames = new(StringComparer.OrdinalIgnoreCase);
+    // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
+    // on receive threads, consumed on the tick.
+    private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
@@ -329,6 +334,88 @@ public sealed class WorldSessionRuntime : IDisposable
         }
     }
 
+    // The name a join restores its persisted state under: the trimmed display name, or the session
+    // id when the name is blank (ConnectedPlayer's rule, which the joined player ends up with).
+    public static string ResolveJoinPlayerName(string requestedSessionId, string? displayName)
+    {
+        return string.IsNullOrWhiteSpace(displayName) ? requestedSessionId : displayName.Trim();
+    }
+
+    // Starts loading a joining player's persisted profile and world state on the persistence
+    // worker, so the join itself (applied on the tick) does no database I/O. Called from the
+    // connection's receive thread when the join request arrives; thread-safe. The read is queued
+    // behind every write already queued, so it sees this player's latest saved state, and a newer
+    // prefetch for the same name replaces an older one. Null when the runtime has no profiles.
+    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
+        if (_playerProfiles == null)
+        {
+            return null;
+        }
+
+        IPlayerProfileRepository profiles = _playerProfiles;
+        IWorldPersistenceRepository? world = _worldPersistence;
+        PersistedPlayerPrefetch prefetch = new(playerName);
+        _playerPrefetches[playerName] = prefetch;
+        void Load()
+        {
+            try
+            {
+                PersistedPlayerProfile profile = profiles.GetOrCreate(playerName);
+                prefetch.Complete(profile, world?.TryGetPlayerWorldState(playerName));
+            }
+            catch (Exception ex)
+            {
+                prefetch.Fail(ex);
+                NetworkDiagnosticsLog.Write(
+                    "server.persistence.prefetch-error",
+                    $"player={playerName} {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        if (_writes != null)
+        {
+            _writes.EnqueueRead(Load);
+        }
+        else
+        {
+            Load();
+        }
+
+        return prefetch;
+    }
+
+    // Tick side of the join prefetch: true when RestorePersistedPlayerState for this name can run
+    // without touching the database (no profiles, or the prefetch finished). With startIfMissing a
+    // join that has no prefetch (another connection's join consumed it, or the request bypassed the
+    // receive path) starts one and reports false, so the caller defers the join.
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing)
+    {
+        if (_playerProfiles == null)
+        {
+            return true;
+        }
+
+        if (_playerPrefetches.TryGetValue(playerName, out PersistedPlayerPrefetch? prefetch))
+        {
+            return prefetch.IsCompleted;
+        }
+
+        if (startIfMissing)
+        {
+            BeginPersistedPlayerPrefetch(playerName);
+        }
+
+        return false;
+    }
+
+    // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
+    public void DiscardPersistedPlayerPrefetch(string playerName)
+    {
+        _playerPrefetches.TryRemove(playerName, out _);
+    }
+
     public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
     {
         if (_playerProfiles == null)
@@ -336,11 +423,29 @@ public sealed class WorldSessionRuntime : IDisposable
             return;
         }
 
-        // Join is rare and runs off the tick; make queued writes for this player visible first.
-        _writes?.Flush(TimeSpan.FromSeconds(5));
-        PersistedPlayerProfile profile = _playerProfiles.GetOrCreate(playerName);
+        PersistedPlayerProfile profile;
+        PersistedPlayerWorldState? worldState;
+        if (_playerPrefetches.TryRemove(playerName, out PersistedPlayerPrefetch? prefetch)
+            && prefetch.TryGetResult(out PersistedPlayerProfile prefetched, out PersistedPlayerWorldState? prefetchedWorld))
+        {
+            // Every profile save this runtime queues goes through SaveProfile, which caches it, so a
+            // cached profile is at least as new as the row the prefetch read. That covers a save
+            // queued after the prefetch: a reconnect whose old connection is released (and its
+            // profile saved) after the new connection asked to join.
+            profile = _profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached) ? cached : prefetched;
+            worldState = prefetchedWorld;
+        }
+        else
+        {
+            // No finished prefetch: a direct JoinSession caller (tools and tests), or a prefetch that
+            // failed or outlived the host's deferral bound. Read synchronously after the queued writes.
+            NetworkDiagnosticsLog.Write("server.persistence.join-sync-read", $"player={playerName}");
+            _writes?.Flush(TimeSpan.FromSeconds(5));
+            profile = _playerProfiles.GetOrCreate(playerName);
+            worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
+        }
+
         CacheProfile(playerName, profile);
-        PersistedPlayerWorldState? worldState = _worldPersistence?.TryGetPlayerWorldState(playerName);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
@@ -376,8 +481,8 @@ public sealed class WorldSessionRuntime : IDisposable
     }
 
     // The primary seat's command frame whose primary use triggered in the last tick advanced with
-    // deferPrimarySeatUse, once. The caller resolves it with TryCreateCommandPrimaryUseActionMessage
-    // and ProcessAuthoritativeAction in the same ordinal session-id pass as the secondary seats.
+    // deferPrimarySeatUse, once. The caller resolves it with TryProcessCommandPrimaryUse in the same
+    // ordinal session-id pass as the secondary seats.
     public bool TryTakeDeferredPrimarySeatUse(out PlayerCommandFrame commandFrame)
     {
         commandFrame = _deferredPrimarySeatUseFrame;
@@ -389,7 +494,7 @@ public sealed class WorldSessionRuntime : IDisposable
     // The secondary seats whose primary use triggered in the last tick, as the frames they simulated,
     // in ordinal session-id order. Each seat contributes at most one use per tick, through the same
     // attack-interval repeat gate as the primary seat. The caller resolves them with
-    // TryCreateCommandPrimaryUseActionMessage in its ordinal pass, merged with the primary seat's.
+    // TryProcessCommandPrimaryUse in its ordinal pass, merged with the primary seat's.
     public IReadOnlyList<PlayerCommandFrame> TriggeredSecondaryUseFrames => _triggeredSecondaryUseFrames;
 
     // The idle form of a starved seat's last command: no movement or one-shot inputs, no look
@@ -1426,7 +1531,7 @@ public sealed class WorldSessionRuntime : IDisposable
         }
     }
 
-    public PlayerActionMessage? TryCreateCommandPrimaryUseActionMessage(PlayerCommandFrame commandFrame)
+    private PlayerActionMessage? TryCreateCommandPrimaryUseActionMessage(PlayerCommandFrame commandFrame)
     {
         if (!TryResolveActionContext(commandFrame.SessionId, out AuthoritativeSessionActionContext? context) ||
             context == null)

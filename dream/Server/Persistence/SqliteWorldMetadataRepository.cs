@@ -41,7 +41,8 @@ public sealed class SqliteWorldMetadataRepository
 
     public bool TryGetSimulationSeed(out ulong seed)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         return TryReadSimulationSeed(connection, out seed);
     }
 
@@ -49,7 +50,8 @@ public sealed class SqliteWorldMetadataRepository
     // INSERT OR IGNORE keeps the first stored seed if two loads race on the same database.
     public WorldSimulationSeed GetOrCreateSimulationSeed(Func<ulong>? generator = null)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         if (TryReadSimulationSeed(connection, out ulong existing))
         {
             return new WorldSimulationSeed(existing, Created: false);
