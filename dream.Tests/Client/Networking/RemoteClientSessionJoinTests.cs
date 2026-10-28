@@ -153,8 +153,23 @@ public class RemoteClientSessionJoinTests
         await session.SendJoinRequestAsync();
 
         await WaitUntilAsync(() => session.IsJoined, "the join");
-        await WaitUntilAsync(() => clock.TimerCount == 0, "the deadline timer to go");
-        clock.Advance(TimeSpan.FromMinutes(5));
+        // The join deadline timer goes; since NETR-2 the only timer left is the server-silence
+        // watchdog's, due 8 s after the join (not at the 45 s join deadline).
+        await WaitUntilAsync(
+            () => clock.TimerCount == 1 && clock.HasTimerDueIn(RemoteClientSession.ServerSilenceTimeout),
+            "the deadline timer to go");
+        Assert.False(clock.HasTimerDueIn(RemoteClientSession.JoinTimeout));
+
+        // Five minutes, well past the join deadline, with the server sending a frame every second
+        // (it sends snapshots at 32-64 Hz; a silent one is the watchdog's business).
+        for (int second = 1; second <= 300; second++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            long before = session.InboundFrameCount;
+            server.Queue(new ServerHelloMessage("test-server", TransportEnvelope.CurrentProtocolVersion, (ulong)second));
+            await WaitUntilAsync(() => session.InboundFrameCount > before, $"frame {second}");
+        }
+
         await Task.Delay(50);
         Assert.True(session.IsConnected);
         Assert.Null(session.DisconnectReason);

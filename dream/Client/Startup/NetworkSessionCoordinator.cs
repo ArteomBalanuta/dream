@@ -95,6 +95,21 @@ public sealed class NetworkSessionCoordinator
         _pendingConnectionTask = ConnectInternalAsync(resolved);
     }
 
+    // Shows why the previous play session ended (a lost connection, a silent server, a failed
+    // join) on the connection screen Game returns to. The flow is idle again, so Connect and Use
+    // Local Server work as usual and replace the message.
+    public void ReportSessionEnded(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (IsBusy)
+        {
+            return;
+        }
+
+        State = ConnectionFlowState.Failed;
+        StatusMessage = $"Session ended: {reason}";
+    }
+
     public Task WaitForPendingConnectionAsync()
     {
         return _pendingConnectionTask ?? Task.CompletedTask;

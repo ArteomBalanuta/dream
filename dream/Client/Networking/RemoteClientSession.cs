@@ -63,6 +63,12 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private volatile bool _joinSettled;
     private int _joinRetryCount;
     private Task? _joinSupervisorTask;
+    // Server-silence watchdog (see ServerSilenceWatchdogAsync). _lastInboundTimestamp is a
+    // _timeProvider timestamp written by the receive loop for every complete inbound frame.
+    private readonly TaskCompletionSource _joinAccepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private long _lastInboundTimestamp;
+    private long _inboundFrameCount;
+    private Task? _watchdogTask;
 
     // How long ConnectAsync waits for the server's hello before returning the session anyway.
     public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
@@ -87,6 +93,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public const int MaxJoinRetries = 3;
     public static readonly TimeSpan JoinRetryBaseDelay = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(45);
+
+    // The server sends a snapshot every tick or two (32-64 Hz), so a joined session that receives
+    // no frame at all for ServerSilenceTimeout is talking to a hung or vanished server whose socket
+    // never closed (a frozen process, a dropped route). The watchdog then ends the session the way
+    // a lost connection does, with ServerSilenceDisconnectReason. Only inbound frames count: the
+    // client's own keepalives prove nothing about the server. The wait uses the injected
+    // TimeProvider.
+    public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
+    public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
     public RemoteClientSession(
         ITransportConnection connection,
@@ -114,7 +129,8 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // Why the connection stopped, when it stopped other than by this session's own disposal; for
     // example "Server uses protocol v1; this client uses v2.", or "Connection lost: ..." when the
     // server closed the socket (an idle or stall close) or a send failed. Null while connected.
-    // Also set when the join fails: "Join rejected: ..." or "Join timed out: ...".
+    // Also set when the join fails: "Join rejected: ..." or "Join timed out: ...", and by the
+    // server-silence watchdog (ServerSilenceDisconnectReason).
     public string? DisconnectReason { get; private set; }
 
     // True once the server accepted this session's join.
@@ -122,6 +138,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     // Join requests re-sent after a retryable rejection.
     public int JoinRetryCount => Volatile.Read(ref _joinRetryCount);
+
+    // Complete inbound frames read so far, empty ones included (tests).
+    internal long InboundFrameCount => Interlocked.Read(ref _inboundFrameCount);
 
     public static async ValueTask<RemoteClientSession> ConnectAsync(
         RemoteClientOptions options,
@@ -299,11 +318,16 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
     }
 
-    // Ends the session the way a lost connection does: IsConnected false with a DisconnectReason
-    // the owner shows. The loops stop; the socket closes when the owner disposes the session.
     private void EndSessionForJoin(string reason)
     {
         _joinSettled = true;
+        EndSession(reason, "client.join.failed");
+    }
+
+    // Ends the session the way a lost connection does: IsConnected false with a DisconnectReason
+    // the owner shows. The loops stop; the socket closes when the owner disposes the session.
+    private void EndSession(string reason, string logEvent)
+    {
         if (Volatile.Read(ref _disposeState) != 0)
         {
             return;
@@ -312,7 +336,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         DisconnectReason ??= reason;
         IsConnected = false;
         NetworkDiagnosticsLog.Write(
-            "client.join.failed",
+            logEvent,
             $"endpoint={Options.EndpointLabel} session={Options.SessionId} reason={DisconnectReason}");
         try
         {
@@ -479,6 +503,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
+            // Any complete frame shows the server is alive; written before a JoinAccepted below
+            // releases the watchdog, so its first wait counts from the join.
+            Volatile.Write(ref _lastInboundTimestamp, _timeProvider.GetTimestamp());
+            Interlocked.Increment(ref _inboundFrameCount);
             if (payload.IsEmpty)
             {
                 continue;
@@ -512,6 +540,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 {
                     _joinSettled = true;
                     IsJoined = true;
+                    _joinAccepted.TrySetResult();
                 }
 
                 _joinReplies.Writer.TryWrite(serverMessage);
@@ -523,11 +552,38 @@ public sealed class RemoteClientSession : IAsyncDisposable
     }
 
     // Also starts the keepalive task, so a connected session stays alive while its owner's loop
-    // is frozen.
+    // is frozen, and the server-silence watchdog.
     public void StartBackgroundReceive()
     {
         _receiveLoopTask ??= Task.Run(() => ReceiveLoopAsync(_shutdown.Token));
         _keepaliveTask ??= Task.Run(() => KeepaliveLoopAsync(_shutdown.Token));
+        _watchdogTask ??= Task.Run(() => ServerSilenceWatchdogAsync(_shutdown.Token));
+    }
+
+    // Idle until the join is accepted (before that the join supervisor's timeout applies), then
+    // sleeps until ServerSilenceTimeout after the newest inbound frame and re-checks. One timer
+    // wait per wake-up, at most one per ServerSilenceTimeout while frames flow; nothing on the
+    // receive path beyond the timestamp write.
+    private async Task ServerSilenceWatchdogAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _joinAccepted.Task.WaitAsync(cancellationToken);
+            while (IsConnected)
+            {
+                TimeSpan silence = _timeProvider.GetElapsedTime(Volatile.Read(ref _lastInboundTimestamp));
+                if (silence >= ServerSilenceTimeout)
+                {
+                    EndSession(ServerSilenceDisconnectReason, "client.watchdog.silence");
+                    return;
+                }
+
+                await Task.Delay(ServerSilenceTimeout - silence, _timeProvider, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
     }
 
     // Runs off the render thread. PeriodicTimer waits allocate nothing after the first.
@@ -589,6 +645,17 @@ public sealed class RemoteClientSession : IAsyncDisposable
             try
             {
                 await _keepaliveTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        if (_watchdogTask != null)
+        {
+            try
+            {
+                await _watchdogTask;
             }
             catch (OperationCanceledException)
             {

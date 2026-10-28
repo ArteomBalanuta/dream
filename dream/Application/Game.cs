@@ -9,6 +9,7 @@ using Dream.Rendering.ViewModels;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Dream.Application;
 
@@ -23,7 +24,9 @@ public class Game : GameWindow
     private readonly GameSettings _settings;
     private readonly DesktopClientConfig _desktopClientConfig;
     private readonly string _desktopClientConfigPath;
-    private readonly ILocalServerHandle _localServer;
+    // Replaced with a fresh, unstarted handle when a play session ends: the ended session's
+    // integrated server is stopped with it, and the next local session starts a new one.
+    private ILocalServerHandle _localServer;
     // Title setters are synchronous Win32 calls; skip them when the text has not changed.
     private readonly ChangedTextSink _consoleTitle = new(text => Console.Title = text);
     private readonly ChangedTextSink _windowTitle;
@@ -66,30 +69,58 @@ public class Game : GameWindow
         int frameCap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
-        _localServer = new OnDemandLocalServerHandle(
-            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult());
-        NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());
-        ClientConnectionOptions? initialOptions = null;
-        bool autoConnectUsesInitialOptions = false;
+        _localServer = CreateLocalServerHandle();
         if (RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions))
         {
-            initialOptions = new ClientConnectionOptions(
-                remoteOptions!.Host,
-                remoteOptions.Port.ToString(),
-                remoteOptions.DisplayName);
-            autoConnectUsesInitialOptions = true;
+            ShowStartupScene(
+                new Vector2i(1440, 1024),
+                new ClientConnectionOptions(
+                    remoteOptions!.Host,
+                    remoteOptions.Port.ToString(),
+                    remoteOptions.DisplayName),
+                resolveLocalPort: false,
+                autoConnectUsesInitialOptions: true,
+                sessionEndReason: null);
         }
         else
         {
-            initialOptions = coordinator.ResolveInitialOptions(_desktopClientConfig.ToConnectionOptions());
+            ShowStartupScene(
+                new Vector2i(1440, 1024),
+                _desktopClientConfig.ToConnectionOptions(),
+                resolveLocalPort: true,
+                autoConnectUsesInitialOptions: false,
+                sessionEndReason: null);
         }
+    }
 
+    private static ILocalServerHandle CreateLocalServerHandle()
+    {
+        return new OnDemandLocalServerHandle(
+            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult());
+    }
+
+    // The connection screen, at launch and after a play session ends. Each one gets its own
+    // coordinator over the current local server handle. A loopback endpoint is resolved to the
+    // integrated server's current port (which starts it), as at launch.
+    [MemberNotNull(nameof(_startupScene))]
+    private void ShowStartupScene(
+        Vector2i size,
+        ClientConnectionOptions options,
+        bool resolveLocalPort,
+        bool autoConnectUsesInitialOptions,
+        string? sessionEndReason)
+    {
+        NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());
+        ClientConnectionOptions initialOptions = resolveLocalPort
+            ? coordinator.ResolveInitialOptions(options)
+            : options;
         _startupScene = new StartupConnectionScene(
-            new Vector2i(1440, 1024),
+            size,
             coordinator,
             initialOptions,
             PersistConnectionOptions,
-            autoConnectUsesInitialOptions);
+            autoConnectUsesInitialOptions,
+            sessionEndReason);
         CursorState = _startupScene.DesiredCursorState;
     }
 
@@ -145,9 +176,47 @@ public class Game : GameWindow
             _playScene.Update(args, KeyboardState, MouseState);
             Vector3 position = _playScene.LastReportedPlayerPosition;
             _consoleTitle.Set($"Player Position: ({position.X:0.0}, {position.Y:0.0}, {position.Z:0.0})");
+            ReturnToStartupIfSessionEnded();
         }
 
         CursorState = _playScene?.DesiredCursorState ?? _startupScene!.DesiredCursorState;
+    }
+
+    // A play session that ended (the server closed or went silent, or the join failed) would
+    // otherwise leave the player in a frozen world. Runs on the update pass of the single-threaded
+    // window, so the GL context is current for the play scene's GL cleanup. The scene is cleared
+    // before its teardown and the local server handle replaced first, so OnUnload can never
+    // dispose either a second time. The connection screen comes back with the same endpoint and
+    // name and shows the reason; the player can reconnect or start a local game again.
+    private void ReturnToStartupIfSessionEnded()
+    {
+        if (_playScene == null || !PlaySessionEndTransition.HasEnded(_playScene, out string? reason))
+        {
+            return;
+        }
+
+        PlayScene endedScene = _playScene;
+        _playScene = null;
+        ILocalServerHandle endedLocalServer = _localServer;
+        _localServer = CreateLocalServerHandle();
+        RemoteClientOptions endedOptions = endedScene.SessionOptions;
+        bool stoppedLocalServer = endedLocalServer.IsStarted;
+
+        IReadOnlyList<Exception> failures = PlaySessionEndTransition.TearDown(endedScene, endedLocalServer);
+        foreach (Exception failure in failures)
+        {
+            Console.WriteLine($"[session] teardown failed: {failure.GetType().Name}: {failure.Message}");
+        }
+
+        Console.WriteLine(
+            $"[session] returned to the connection screen: {reason}" +
+            (stoppedLocalServer ? " (local server stopped)" : string.Empty));
+        ShowStartupScene(
+            ClientSize,
+            new ClientConnectionOptions(endedOptions.Host, endedOptions.Port.ToString(), endedOptions.DisplayName),
+            resolveLocalPort: true,
+            autoConnectUsesInitialOptions: false,
+            sessionEndReason: reason);
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)

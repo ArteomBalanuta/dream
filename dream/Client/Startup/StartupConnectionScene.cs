@@ -27,12 +27,17 @@ public sealed class StartupConnectionScene : IDisposable
         NetworkSessionCoordinator coordinator,
         ClientConnectionOptions? initialOptions = null,
         Action<ClientConnectionOptions>? persistConnectionOptions = null,
-        bool autoConnectUsesInitialOptions = false)
+        bool autoConnectUsesInitialOptions = false,
+        string? sessionEndReason = null)
     {
         _renderer = new StartupMenuRenderer(initialSize);
         _coordinator = coordinator;
         _persistConnectionOptions = persistConnectionOptions;
         _autoConnectUsesInitialOptions = autoConnectUsesInitialOptions;
+        // A scene Game returns to after a session ended shows why and waits for the player;
+        // auto-connect (DREAM_AUTO_CONNECT) applies to the first scene only, so a server that
+        // keeps dropping the client cannot cause a reconnect loop.
+        _autoConnectAttempted = sessionEndReason != null;
         if (initialOptions != null)
         {
             _host = initialOptions.Host;
@@ -43,6 +48,11 @@ public sealed class StartupConnectionScene : IDisposable
         else
         {
             TryApplyLocalDefaults();
+        }
+
+        if (sessionEndReason != null)
+        {
+            _coordinator.ReportSessionEnded(sessionEndReason);
         }
     }
 

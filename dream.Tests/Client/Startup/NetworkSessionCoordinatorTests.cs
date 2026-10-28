@@ -94,6 +94,26 @@ public class NetworkSessionCoordinatorTests
         await session.DisposeAsync();
     }
 
+    [Fact]
+    public async Task ReportSessionEnded_ShowsTheReason_AndConnectingStillWorks()
+    {
+        FakeLocalServerHandle localServer = new(isReady: true, boundPort: 6123);
+        NetworkSessionCoordinator coordinator = new(localServer, new FakeRemoteSessionConnector());
+
+        coordinator.ReportSessionEnded("Connection lost: no data from the server for 8 s");
+
+        Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
+        Assert.False(coordinator.IsBusy);
+        Assert.Equal("Session ended: Connection lost: no data from the server for 8 s", coordinator.StatusMessage);
+
+        coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", "6123", "player-a"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(ConnectionFlowState.Connected, coordinator.State);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
     private sealed class FakeLocalServerHandle : ILocalServerHandle
     {
         public FakeLocalServerHandle(bool isReady, int boundPort, string? errorMessage = null)

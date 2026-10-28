@@ -146,6 +146,52 @@ public class SceneTeardownTests
         Assert.Single(Regex.Matches(source, @"_startupScene\s*=\s*new\b"));
     }
 
+    // NETR-2: when the play session ends, Game checks it after the scene's update, clears the
+    // scene and swaps the local server handle before the teardown (so OnUnload cannot dispose
+    // either again), tears down through PlaySessionEndTransition, then shows the connection
+    // screen with the reason.
+    [Fact]
+    public void Game_Returns_To_The_Startup_Scene_When_The_Session_Ends()
+    {
+        string source = ReadSource("dream", "Application", "Game.cs");
+        string update = ExtractMethodBody(source, "protected override void OnUpdateFrame(FrameEventArgs args)");
+        Assert.True(
+            IndexOf(update, "_playScene.Update(args, KeyboardState, MouseState);") <
+            IndexOf(update, "ReturnToStartupIfSessionEnded();"));
+
+        string switchBody = ExtractMethodBody(source, "private void ReturnToStartupIfSessionEnded()");
+        int decision = IndexOf(switchBody, "PlaySessionEndTransition.HasEnded(_playScene, out string? reason)");
+        int clearScene = IndexOf(switchBody, "_playScene = null;");
+        int captureServer = IndexOf(switchBody, "ILocalServerHandle endedLocalServer = _localServer;");
+        int replaceServer = IndexOf(switchBody, "_localServer = CreateLocalServerHandle();");
+        int tearDown = IndexOf(switchBody, "PlaySessionEndTransition.TearDown(endedScene, endedLocalServer)");
+        int startup = IndexOf(switchBody, "ShowStartupScene(");
+        int reasonArgument = IndexOf(switchBody, "sessionEndReason: reason");
+
+        Assert.True(decision < clearScene, "The scene is left only once its session has ended.");
+        Assert.True(clearScene < tearDown, "The scene field is cleared before the teardown, so OnUnload cannot dispose it again.");
+        Assert.True(captureServer < replaceServer && replaceServer < tearDown, "The handle is replaced before the old one is stopped.");
+        Assert.True(tearDown < startup && startup < reasonArgument, "The connection screen comes back after the teardown, with the reason.");
+        // The teardown failures are reported, not thrown out of the frame.
+        Assert.DoesNotContain("throw", switchBody);
+
+        // Only ShowStartupScene creates a startup scene, at launch and after a session ends.
+        string show = ExtractMethodBody(source, "private void ShowStartupScene(");
+        Assert.Contains("_startupScene = new StartupConnectionScene(", show);
+        Assert.Contains("sessionEndReason);", show);
+        Assert.Contains("NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());", show);
+    }
+
+    [Fact]
+    public void StartupConnectionScene_Shows_The_Session_End_Reason_And_Does_Not_Auto_Reconnect()
+    {
+        string source = ReadSource("dream", "Client", "Startup", "StartupConnectionScene.cs");
+        string constructor = ExtractMethodBody(source, "public StartupConnectionScene(");
+
+        Assert.Contains("_autoConnectAttempted = sessionEndReason != null;", constructor);
+        Assert.Contains("_coordinator.ReportSessionEnded(sessionEndReason);", constructor);
+    }
+
     private static bool IsDisposable(Type type) =>
         typeof(IDisposable).IsAssignableFrom(type) || typeof(IAsyncDisposable).IsAssignableFrom(type);
 

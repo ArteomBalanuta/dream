@@ -34,7 +34,7 @@ namespace Dream.Client.Scenes;
 // PlayScene is currently the desktop gameplay orchestration root.
 // Authoritative world/player/physics ownership is expected to move out of this scene into
 // a dedicated runtime, while client presentation concerns remain scene-owned.
-public class PlayScene : IDisposable
+public class PlayScene : IDisposable, ISessionEndSource
 {
     private const string LoopbackRemotePlayersEnvironmentVariable = "DREAM_LOOPBACK_REMOTE_PLAYERS";
     private const string RenderPerformanceLogEnvironmentVariable = "DREAM_RENDER_PERF_LOG";
@@ -110,14 +110,19 @@ public class PlayScene : IDisposable
 
     public string ConnectedServerEndpoint => _remoteClient.Options.EndpointLabel;
 
-    // Why the session ended (a lost connection, a rejected join, or a join that timed out), or
-    // null while it is live. Game does not yet return to the startup scene on it (NETR-2); Update
-    // reports it once on the console and in the network log.
+    // Why the session ended (a lost connection, a server silent for 8 s, a rejected join, or a
+    // join that timed out), or null while it is live. Update reports it once on the console and in
+    // the network log; Game then disposes this scene and returns to the connection screen, which
+    // shows it (NETR-2).
     public string? SessionEndReason => _remoteClient.IsConnected
         ? null
         : _remoteClient.DisconnectReason ?? "Disconnected from the server.";
 
     private bool _sessionEndReported;
+
+    // The endpoint and name this scene's session used, so the connection screen Game returns to
+    // after the session ends is filled in for a reconnect.
+    public RemoteClientOptions SessionOptions => _remoteClient.Options;
 
     internal SceneEventHub Events => _events;
 
