@@ -45,9 +45,10 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         Func<DedicatedServerHost>? hostFactory = null)
     {
         hostFactory ??= ServerBootstrap.CreateAuthoritativeHost;
+        DedicatedServerHost? host = null;
         try
         {
-            DedicatedServerHost host = hostFactory();
+            host = hostFactory();
             TcpServerTransport transport = new(IPAddress.Loopback, preferredPort);
             DedicatedServerService service = new(
                 host,
@@ -69,6 +70,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         }
         catch (Exception ex)
         {
+            // A failed start (the port is taken, say) must still release the host: it owns the
+            // runtime's native physics world and, with persistence, the open database.
+            host?.Dispose();
             return ValueTask.FromResult(new IntegratedLocalServerHandle(
                 host: null,
                 service: null,

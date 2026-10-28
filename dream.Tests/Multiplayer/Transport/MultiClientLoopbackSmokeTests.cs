@@ -39,8 +39,8 @@ public class MultiClientLoopbackSmokeTests
         Assert.True(server.IsReady, server.ErrorMessage);
         int floorSize = host!.Runtime!.Map.Width;
 
-        ClientUnderTest a = await ClientUnderTest.ConnectAsync(server.BoundPort, "session-a", floorSize);
-        ClientUnderTest b = await ClientUnderTest.ConnectAsync(server.BoundPort, "session-b", floorSize);
+        using ClientUnderTest a = await ClientUnderTest.ConnectAsync(server.BoundPort, "session-a", floorSize);
+        using ClientUnderTest b = await ClientUnderTest.ConnectAsync(server.BoundPort, "session-b", floorSize);
         await using (a.Session)
         await using (b.Session)
         {
@@ -119,7 +119,8 @@ public class MultiClientLoopbackSmokeTests
             PrimaryUsePressed: false);
     }
 
-    private sealed class ClientUnderTest
+    // Owns its ClientWorldSession (and so a native physics world), which Dispose releases.
+    private sealed class ClientUnderTest : IDisposable
     {
         private readonly ClientWorldSession _world;
         private readonly Dictionary<string, List<Vector3>> _positions = new(StringComparer.Ordinal);
@@ -150,6 +151,11 @@ public class MultiClientLoopbackSmokeTests
             return new ClientUnderTest(
                 remote,
                 new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub()));
+        }
+
+        public void Dispose()
+        {
+            _world.Dispose();
         }
 
         public void Drain()
