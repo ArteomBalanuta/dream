@@ -173,18 +173,19 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
                 // Checksums go out periodically; the client that left saw about 120 ticks of them.
                 int expectedChecksums = client == b ? 1 : 2;
                 Assert.True(replay.ChecksumsVerified >= expectedChecksums, $"{client.SessionId} verified {replay.ChecksumsVerified} checksums.");
-                if (client == rejoinedB && generatedCellsFracturedBeforeRejoin > 0)
+                if (client == rejoinedB)
                 {
-                    // Known production bug, pinned by the skipped
-                    // LateJoiner_AfterAGeneratedCubeFractured_BuildsTheServersWorld test: a client
-                    // that joins after generated terrain fractured keeps that terrain cube.
+                    // A client that joins after generated terrain fractured must drop that terrain
+                    // cube (see LateJoiner_AfterAGeneratedCubeFractured_BuildsTheServersWorld).
                     output.WriteLine(
                         $"{client.SessionId} (rejoined) joined after {generatedCellsFracturedBeforeRejoin} generated cells fractured: " +
-                        $"{replay.ChecksumMismatches} checksum mismatches (known bug, not asserted)");
-                    continue;
+                        $"{replay.ChecksumMismatches} checksum mismatches");
                 }
 
-                Assert.Equal(0, replay.ChecksumMismatches);
+                Assert.True(
+                    replay.ChecksumMismatches == 0,
+                    $"{client.SessionId}: {replay.ChecksumMismatches} checksum mismatches " +
+                    $"({generatedCellsFracturedBeforeRejoin} generated cells fractured before the rejoin).");
                 if (client != b)
                 {
                     Assert.Equal(serverChecksum, replay.FinalChecksum);
@@ -209,16 +210,14 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
         }
     }
 
-    // Regression for a production bug (pre-existing, not from wave 6): a client that joins (or
-    // resyncs into a fresh world) after the server fractured a GENERATED terrain cube keeps that
-    // cube. The client builds the generated startup terrain itself; RemoteWorldMutationApplier.
-    // ApplyWorldSnapshot (RemoteWorldMutationApplier.cs:35-43) only removes cubes whose cell is not
-    // in desiredAllCells, and desiredAllCells includes the snapshot's fractured cells, so the intact
-    // generated cube at a fractured cell survives. Map.RestoreFracturePieces no longer removes a
-    // cube in the origin cell (Map.cs:584-586), so the client ends with both the intact cube and
-    // the rubble, and its WorldStateChecksum never matches the server's. The resync a mismatch
-    // triggers applies the same full world through the same path, so it never heals.
-    [Fact(Skip = "Production bug: RemoteWorldMutationApplier.ApplyWorldSnapshot (RemoteWorldMutationApplier.cs:35-43) keeps an intact cube at a cell the full world lists as fractured, so a late joiner keeps fractured generated terrain and its world checksum never matches (resync does not heal it).")]
+    // Regression for a production bug (pre-existing, not from wave 6, fixed in wave 6 fix loop 1):
+    // a client that joins (or resyncs into a fresh world) after the server fractured a GENERATED
+    // terrain cube kept that cube. The client builds the generated startup terrain itself, and
+    // RemoteWorldMutationApplier.ApplyWorldSnapshot used to treat the snapshot's fractured cells as
+    // cells that may keep a cube. Map.RestoreFracturePieces no longer removes a cube in the origin
+    // cell, so the client ended with both the intact cube and the rubble, its WorldStateChecksum
+    // never matched the server's, and the resync (same path) never healed it.
+    [Fact]
     public void LateJoiner_AfterAGeneratedCubeFractured_BuildsTheServersWorld_AndAResyncKeepsIt()
     {
         AssertLateJoinerMatchesAfterGeneratedFracture();

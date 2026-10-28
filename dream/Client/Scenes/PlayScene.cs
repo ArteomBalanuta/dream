@@ -385,7 +385,9 @@ public class PlayScene : IDisposable
                 _actionFeedback.CurrentRejectionMessage,
                 _inventory,
                 ConnectedServerEndpoint,
-                performance);
+                performance,
+                _scenePresenter,
+                RemotePlayerRenderTick);
         _lastHudDrawMilliseconds = Stopwatch.GetElapsedTime(hudDrawStart).TotalMilliseconds;
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
