@@ -43,6 +43,12 @@ public sealed class ServerConnection : IAsyncDisposable
     private Task? _writerTask;
     private bool _writing;
     private long _coalescedSnapshots;
+    // Always-on traffic counters (frames include the length prefix). Updated with Interlocked by
+    // the writer task and the receive loop, read by DedicatedServerService metrics.
+    private long _bytesSent;
+    private long _framesSent;
+    private long _bytesReceived;
+    private long _framesReceived;
 
     public ServerConnection(
         ITransportConnection transport,
@@ -72,6 +78,14 @@ public sealed class ServerConnection : IAsyncDisposable
     }
 
     public long CoalescedSnapshots => Interlocked.Read(ref _coalescedSnapshots);
+
+    public long BytesSent => Interlocked.Read(ref _bytesSent);
+
+    public long FramesSent => Interlocked.Read(ref _framesSent);
+
+    public long BytesReceived => Interlocked.Read(ref _bytesReceived);
+
+    public long FramesReceived => Interlocked.Read(ref _framesReceived);
 
     // Set when the writer failed or the backlog overflowed; the service drops faulted connections.
     public bool IsFaulted { get; private set; }
@@ -129,6 +143,7 @@ public sealed class ServerConnection : IAsyncDisposable
             return false;
         }
 
+        Interlocked.Add(ref _bytesReceived, bytesRead);
         _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
         FlushInboundFrames();
         return !IsFaulted;
@@ -215,7 +230,7 @@ public sealed class ServerConnection : IAsyncDisposable
                 ServerSnapshotEnvelope.TryCoalesce(pending.Snapshot, snapshotMessage.Snapshot, out ServerSnapshotEnvelope merged))
             {
                 last.Value = new OutboundEntry(new ServerSnapshotMessage(merged), Shared: null);
-                _coalescedSnapshots++;
+                Interlocked.Increment(ref _coalescedSnapshots);
                 return;
             }
         }
@@ -330,6 +345,7 @@ public sealed class ServerConnection : IAsyncDisposable
     {
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
+            Interlocked.Increment(ref _framesReceived);
             if (payload.IsEmpty)
             {
                 continue;
@@ -380,6 +396,8 @@ public sealed class ServerConnection : IAsyncDisposable
             // because the send is awaited here, inside _sendLock, before the next encode reuses the
             // buffer; transports must not keep the memory after SendAsync completes.
             await _transport.SendAsync(frame, cancellationToken);
+            Interlocked.Add(ref _bytesSent, frameLength);
+            Interlocked.Increment(ref _framesSent);
         }
         finally
         {

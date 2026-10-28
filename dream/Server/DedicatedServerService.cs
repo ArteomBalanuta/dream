@@ -3,6 +3,8 @@ using System.Diagnostics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
+using Dream.Server.Persistence;
+using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 
 namespace Dream.Server;
@@ -10,8 +12,6 @@ namespace Dream.Server;
 
 public sealed class DedicatedServerService : IAsyncDisposable
 {
-    private static readonly DedicatedServerPerformanceSnapshot UntimedPerformance = new(0d, 0d, 0d, Sampled: true);
-
     // How long a rejection may take to reach a peer before its connection is closed anyway.
     private static readonly TimeSpan RejectionSendTimeout = TimeSpan.FromSeconds(1);
 
@@ -30,6 +30,23 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private int _connectionsChanged = 1;
     private bool _started;
 
+    // Always-on tick metrics. The dropped-tick mirror is a SimulationClock fed the same elapsed
+    // times as the host's tick runner (which only this service advances), so its DroppedTicks
+    // equals the runner's without reaching into the host.
+    private readonly ServerTickMetrics _metrics = new();
+    private readonly SimulationClock _droppedTickMirror = new();
+    private readonly BackgroundCheckpointWriter? _checkpointWrites;
+    private readonly PersistenceWriteQueue? _persistenceWrites;
+    // Counters of connections already removed, so service totals survive disconnects.
+    private long _closedBytesSent;
+    private long _closedFramesSent;
+    private long _closedBytesReceived;
+    private long _closedFramesReceived;
+    private long _closedCoalescedSnapshots;
+    private readonly object _performanceSync = new();
+    private DedicatedServerPerformanceSnapshot _latestPerformance = DedicatedServerPerformanceSnapshot.Empty;
+    private long _latestPerformanceVersion;
+
     public DedicatedServerService(
         DedicatedServerHost host,
         IServerTransport transport,
@@ -40,14 +57,83 @@ public sealed class DedicatedServerService : IAsyncDisposable
         _transport = transport;
         _codec = codec;
         _framer = framer;
+        _checkpointWrites = host.CheckpointWrites;
+        _persistenceWrites = host.Runtime?.PersistenceWrites;
     }
 
     public int Port => _transport.Port;
 
     public int ConnectionCount => _connections.Count;
 
-    public DedicatedServerPerformanceSnapshot LatestPerformance { get; private set; } =
-        DedicatedServerPerformanceSnapshot.Empty;
+    public ServerTickMetrics TickMetrics => _metrics;
+
+    // The last AdvanceOnceAsync call's phase times. Built on read (at most once per advance), so
+    // the tick itself allocates nothing for it.
+    public DedicatedServerPerformanceSnapshot LatestPerformance
+    {
+        get
+        {
+            long version = _metrics.Version;
+            lock (_performanceSync)
+            {
+                if (version != _latestPerformanceVersion)
+                {
+                    _metrics.GetLastPhases(out double advanceMs, out double snapshotMs, out double broadcastMs);
+                    _latestPerformance = new DedicatedServerPerformanceSnapshot(advanceMs, snapshotMs, broadcastMs, Sampled: true);
+                    _latestPerformanceVersion = version;
+                }
+
+                return _latestPerformance;
+            }
+        }
+    }
+
+    // Copies every server metric. Safe from any thread; allocation-free apart from enumerating the
+    // connection dictionary. resetWindow restarts the windowed tick histogram.
+    public ServerMetricsSnapshot CaptureMetrics(bool resetWindow = false)
+    {
+        ServerTickMetricsSnapshot tick = _metrics.Capture(resetWindow);
+        long bytesSent = Interlocked.Read(ref _closedBytesSent);
+        long framesSent = Interlocked.Read(ref _closedFramesSent);
+        long bytesReceived = Interlocked.Read(ref _closedBytesReceived);
+        long framesReceived = Interlocked.Read(ref _closedFramesReceived);
+        long coalesced = Interlocked.Read(ref _closedCoalescedSnapshots);
+        int connections = 0;
+        int joined = 0;
+        foreach (KeyValuePair<string, ServerConnection> entry in _connections)
+        {
+            ServerConnection connection = entry.Value;
+            connections++;
+            if (_host.IsConnectionJoined(connection.ConnectionId))
+            {
+                joined++;
+            }
+
+            bytesSent += connection.BytesSent;
+            framesSent += connection.FramesSent;
+            bytesReceived += connection.BytesReceived;
+            framesReceived += connection.FramesReceived;
+            coalesced += connection.CoalescedSnapshots;
+        }
+
+        return new ServerMetricsSnapshot(
+            tick,
+            connections,
+            joined,
+            bytesSent,
+            framesSent,
+            bytesReceived,
+            framesReceived,
+            coalesced,
+            _checkpointWrites?.CompletedWrites ?? 0,
+            _checkpointWrites?.FailedWrites ?? 0,
+            _checkpointWrites?.SupersededCheckpoints ?? 0,
+            _checkpointWrites?.LastWriteMilliseconds ?? 0d,
+            _checkpointWrites?.MaxWriteMilliseconds ?? 0d,
+            _checkpointWrites?.MeanWriteMilliseconds ?? 0d,
+            _persistenceWrites?.CompletedWrites ?? 0,
+            _persistenceWrites?.FailedWrites ?? 0);
+    }
 
     // Raised once for each connection closed by an error, after the error is logged. The handler
     // runs on the connection's receive task and must not block.
@@ -99,9 +185,19 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public async ValueTask<int> AdvanceOnceAsync(double elapsedSeconds, CancellationToken cancellationToken = default)
     {
         await DropFaultedConnectionsAsync();
-        Stopwatch? advanceStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
+        return AdvanceAndBroadcast(elapsedSeconds);
+    }
+
+    // The synchronous body of AdvanceOnceAsync. Kept out of the async method so its locals (the
+    // phase timestamps) do not widen the async state machine that Debug builds allocate per call.
+    private int AdvanceAndBroadcast(double elapsedSeconds)
+    {
+        long checkpointsBefore = _checkpointWrites?.EnqueuedCheckpoints ?? 0;
+        long advanceStart = ServerTickMetrics.Timestamp();
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
-        advanceStopwatch?.Stop();
+        long advanceTicks = ServerTickMetrics.Timestamp() - advanceStart;
+        bool capturedCheckpoint = (_checkpointWrites?.EnqueuedCheckpoints ?? 0) != checkpointsBefore;
+        _droppedTickMirror.QueueElapsed(elapsedSeconds);
         DeliverPendingJoinReplies();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
@@ -110,7 +206,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 _host.DiscardUndeliveredSnapshotDeltas();
             }
 
-            LatestPerformance = CreatePerformance(advanceStopwatch, snapshotStopwatch: null, broadcastStopwatch: null);
+            RecordAdvance(executedTicks, advanceTicks, snapshotTicks: 0, broadcastTicks: 0, capturedCheckpoint);
             return executedTicks;
         }
 
@@ -128,19 +224,18 @@ public sealed class DedicatedServerService : IAsyncDisposable
         if (joinedConnections.Count == 0)
         {
             _host.DiscardUndeliveredSnapshotDeltas();
-            LatestPerformance = CreatePerformance(advanceStopwatch, snapshotStopwatch: null, broadcastStopwatch: null);
+            RecordAdvance(executedTicks, advanceTicks, snapshotTicks: 0, broadcastTicks: 0, capturedCheckpoint);
             if (NetworkDiagnosticsLog.IsEnabled)
             {
-                LogUnjoinedTick(executedTicks, advanceStopwatch);
+                LogUnjoinedTick(executedTicks, ServerTickMetrics.ToMilliseconds(advanceTicks));
             }
 
             return executedTicks;
         }
 
-        Stopwatch? snapshotStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
+        long snapshotStart = ServerTickMetrics.Timestamp();
         ServerSnapshotMessage snapshot = _host.CreateSnapshotMessage();
-        snapshotStopwatch?.Stop();
-        Stopwatch? broadcastStopwatch = NetworkDiagnosticsLog.IsEnabled ? Stopwatch.StartNew() : null;
+        long broadcastStart = ServerTickMetrics.Timestamp();
         // Enqueue only: each connection's writer task does the socket I/O, so a stalled client
         // cannot hold up the tick loop for everyone else. The snapshot payload is the same for
         // every joined connection (it carries every session's accepted command sequence), so it
@@ -151,9 +246,14 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             joinedConnections[i].EnqueueSnapshot(snapshot, sharedPayload);
         }
-        broadcastStopwatch?.Stop();
 
-        LatestPerformance = CreatePerformance(advanceStopwatch, snapshotStopwatch, broadcastStopwatch);
+        long broadcastEnd = ServerTickMetrics.Timestamp();
+        RecordAdvance(
+            executedTicks,
+            advanceTicks,
+            broadcastStart - snapshotStart,
+            broadcastEnd - broadcastStart,
+            capturedCheckpoint);
 
         // Only the results are handed to connections, never this list, so it can be reused.
         List<AuthoritativeActionResult> pendingActionResults = _pendingActionResults;
@@ -179,9 +279,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 elapsedSeconds,
                 joinedConnections.Count,
                 pendingActionResults.Count,
-                advanceStopwatch,
-                snapshotStopwatch,
-                broadcastStopwatch,
+                ServerTickMetrics.ToMilliseconds(advanceTicks),
+                ServerTickMetrics.ToMilliseconds(broadcastStart - snapshotStart),
+                ServerTickMetrics.ToMilliseconds(broadcastEnd - broadcastStart),
                 snapshot);
         }
 
@@ -279,6 +379,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
 
             Volatile.Write(ref _connectionsChanged, 1);
             _host.ReleaseConnection(connection.ConnectionId);
+            RetireConnectionCounters(connection);
             NetworkDiagnosticsLog.Write(
                 "server.disconnect",
                 $"connection={connection.ConnectionId} reason=faulted connections={_connections.Count}");
@@ -319,6 +420,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 {
                     Volatile.Write(ref _connectionsChanged, 1);
                     _host.ReleaseConnection(connection.ConnectionId);
+                    RetireConnectionCounters(connection);
                     NetworkDiagnosticsLog.Write(
                         "server.disconnect",
                         $"connection={connection.ConnectionId} connections={_connections.Count}");
@@ -392,30 +494,38 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
-    private static DedicatedServerPerformanceSnapshot CreatePerformance(
-        Stopwatch? advanceStopwatch,
-        Stopwatch? snapshotStopwatch,
-        Stopwatch? broadcastStopwatch)
+    private void RecordAdvance(
+        int executedTicks,
+        long advanceTicks,
+        long snapshotTicks,
+        long broadcastTicks,
+        bool capturedCheckpoint)
     {
-        if (advanceStopwatch == null && snapshotStopwatch == null && broadcastStopwatch == null)
+        _metrics.RecordAdvance(executedTicks, advanceTicks, snapshotTicks, broadcastTicks, capturedCheckpoint);
+        _metrics.RecordDroppedTicks(_droppedTickMirror.DroppedTicks);
+        if (_persistenceWrites != null)
         {
-            return UntimedPerformance;
+            _metrics.RecordWriteQueueDepth(_persistenceWrites.PendingCount);
         }
-
-        return new DedicatedServerPerformanceSnapshot(
-            advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
-            snapshotStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
-            broadcastStopwatch?.Elapsed.TotalMilliseconds ?? 0d,
-            Sampled: true);
     }
 
-    private void LogUnjoinedTick(int executedTicks, Stopwatch? advanceStopwatch)
+    // Keeps a removed connection's traffic in the service totals.
+    private void RetireConnectionCounters(ServerConnection connection)
+    {
+        Interlocked.Add(ref _closedBytesSent, connection.BytesSent);
+        Interlocked.Add(ref _closedFramesSent, connection.FramesSent);
+        Interlocked.Add(ref _closedBytesReceived, connection.BytesReceived);
+        Interlocked.Add(ref _closedFramesReceived, connection.FramesReceived);
+        Interlocked.Add(ref _closedCoalescedSnapshots, connection.CoalescedSnapshots);
+    }
+
+    private void LogUnjoinedTick(int executedTicks, double advanceMs)
     {
         NetworkDiagnosticsLog.WriteEvery(
             "server.tick.unjoined",
             TimeSpan.FromSeconds(1),
             "server.tick",
-            () => $"ticks={executedTicks} connections={_connections.Count} joined=0 advanceMs={advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00}");
+            () => $"ticks={executedTicks} connections={_connections.Count} joined=0 advanceMs={advanceMs:0.00}");
     }
 
     private void LogJoinedTick(
@@ -423,9 +533,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
         double elapsedSeconds,
         int joinedCount,
         int actionCount,
-        Stopwatch? advanceStopwatch,
-        Stopwatch? snapshotStopwatch,
-        Stopwatch? broadcastStopwatch,
+        double advanceMs,
+        double snapshotMs,
+        double broadcastMs,
         ServerSnapshotMessage snapshot)
     {
         NetworkDiagnosticsLog.WriteEvery(
@@ -433,9 +543,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
             TimeSpan.FromSeconds(1),
             "server.tick",
             () => $"ticks={executedTicks} elapsed={elapsedSeconds * 1000d:0.00}ms connections={_connections.Count} " +
-                $"joined={joinedCount} advanceMs={advanceStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
-                $"snapshotMs={snapshotStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
-                $"broadcastMs={broadcastStopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} actions={actionCount} " +
+                $"joined={joinedCount} advanceMs={advanceMs:0.00} " +
+                $"snapshotMs={snapshotMs:0.00} " +
+                $"broadcastMs={broadcastMs:0.00} actions={actionCount} " +
                 NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot));
     }
 }

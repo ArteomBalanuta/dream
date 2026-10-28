@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Server.Persistence;
 
@@ -18,6 +19,12 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     private long _completedWrites;
     private long _failedWrites;
     private long _supersededCheckpoints;
+    private long _enqueuedCheckpoints;
+    // Stopwatch ticks spent in IPersistenceCheckpointWriter.Write, successful or not.
+    private long _lastWriteTicks;
+    private long _maxWriteTicks;
+    private long _totalWriteTicks;
+    private long _timedWrites;
 
     public BackgroundCheckpointWriter(IPersistenceCheckpointWriter writer)
     {
@@ -30,10 +37,27 @@ public sealed class BackgroundCheckpointWriter : IDisposable
 
     public long SupersededCheckpoints => Interlocked.Read(ref _supersededCheckpoints);
 
+    // Every Enqueue call; the server compares it across a tick to see whether that tick captured one.
+    public long EnqueuedCheckpoints => Interlocked.Read(ref _enqueuedCheckpoints);
+
+    public double LastWriteMilliseconds => ServerTickMetrics.ToMilliseconds(Interlocked.Read(ref _lastWriteTicks));
+
+    public double MaxWriteMilliseconds => ServerTickMetrics.ToMilliseconds(Interlocked.Read(ref _maxWriteTicks));
+
+    public double MeanWriteMilliseconds
+    {
+        get
+        {
+            long writes = Interlocked.Read(ref _timedWrites);
+            return writes == 0 ? 0d : ServerTickMetrics.ToMilliseconds(Interlocked.Read(ref _totalWriteTicks)) / writes;
+        }
+    }
+
     public void Enqueue(PersistenceCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
 
+        Interlocked.Increment(ref _enqueuedCheckpoints);
         lock (_sync)
         {
             if (_pending != null)
@@ -98,6 +122,7 @@ public sealed class BackgroundCheckpointWriter : IDisposable
                 }
             }
 
+            long started = Stopwatch.GetTimestamp();
             try
             {
                 _writer.Write(next);
@@ -108,6 +133,28 @@ public sealed class BackgroundCheckpointWriter : IDisposable
                 Interlocked.Increment(ref _failedWrites);
                 NetworkDiagnosticsLog.Write("server.checkpoint.error", $"{ex.GetType().Name}: {ex.Message}");
             }
+            finally
+            {
+                RecordWriteDuration(Stopwatch.GetTimestamp() - started);
+            }
+        }
+    }
+
+    private void RecordWriteDuration(long ticks)
+    {
+        Interlocked.Exchange(ref _lastWriteTicks, ticks);
+        Interlocked.Add(ref _totalWriteTicks, ticks);
+        Interlocked.Increment(ref _timedWrites);
+        long max = Interlocked.Read(ref _maxWriteTicks);
+        while (ticks > max)
+        {
+            long observed = Interlocked.CompareExchange(ref _maxWriteTicks, ticks, max);
+            if (observed == max)
+            {
+                break;
+            }
+
+            max = observed;
         }
     }
 }
