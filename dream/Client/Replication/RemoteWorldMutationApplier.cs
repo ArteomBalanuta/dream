@@ -26,14 +26,15 @@ public static class RemoteWorldMutationApplier
         HashSet<(int X, int Y, int Z)> desiredCells = desiredPlacedCubes
             .Select(cube => ToCellKey(cube.CellPosition))
             .ToHashSet();
-        HashSet<(int X, int Y, int Z)> desiredFracturedCells = desiredFracturedCubes
-            .Select(cube => ToCellKey(cube.CellPosition))
-            .ToHashSet();
         HashSet<(int X, int Y, int Z)> desiredAuthoredSubcellCells = (snapshot.AuthoredSubcellCells ?? Array.Empty<Vector3>())
             .Select(ToCellKey)
             .ToHashSet();
+        // Cells that may keep a cube. A fractured cell is deliberately not one of them: its rubble
+        // does not occupy the cell, so a cube there survives only when the snapshot also lists a
+        // placed cube in it (a new cube built over old rubble). Otherwise a client that generated
+        // the terrain itself kept the intact cube beside the restored rubble, and RestoreFracturePieces
+        // no longer removes it, so its world checksum never matched and resyncs never healed it.
         HashSet<(int X, int Y, int Z)> desiredAllCells = desiredCells
-            .Concat(desiredFracturedCells)
             .Concat(desiredAuthoredSubcellCells)
             .ToHashSet();
 

@@ -701,13 +701,15 @@ public class Render : IDisposable
         HudStatusSnapshot status,
         PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
-        FramePerformanceSnapshot performance = default)
+        FramePerformanceSnapshot performance = default,
+        IEnemyRenderPoseSource? enemyPoseSource = null,
+        double enemyRenderTick = 0d)
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         BeginHudFrame(args, windowFocused, settings, mouseState);
         DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
-        DrawWorldActorLabels(camera, remotePlayers, activeEnemies);
+        DrawWorldActorLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
         HudInteractionRequest request = DrawHudInterface(
             settings,
             status,
@@ -767,12 +769,14 @@ public class Render : IDisposable
     private void DrawWorldActorLabels(
         Camera camera,
         IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
-        IReadOnlyList<EnemyActor> activeEnemies)
+        IReadOnlyList<EnemyActor> activeEnemies,
+        IEnemyRenderPoseSource? enemyPoseSource,
+        double enemyRenderTick)
     {
         List<WorldActorLabelState> labels = _worldActorLabels;
         labels.Clear();
         ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels);
-        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels);
+        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick);
         if (labels.Count == 0)
         {
             return;

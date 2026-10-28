@@ -35,7 +35,9 @@ public class HudRenderer
         HudStatusSnapshot status,
         PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
-        FramePerformanceSnapshot performance = default)
+        FramePerformanceSnapshot performance = default,
+        IEnemyRenderPoseSource? enemyPoseSource = null,
+        double enemyRenderTick = 0d)
     {
         return _render.DrawHUD(
             args,
@@ -51,9 +53,12 @@ public class HudRenderer
             status,
             inventory,
             connectionLabel,
-            performance);
+            performance,
+            enemyPoseSource,
+            enemyRenderTick);
     }
 
+    // Enemy labels follow enemyPoseSource at enemyRenderTick, the pose the enemy models draw at.
     public HudFrameResult DrawFrame(
         FrameEventArgs args,
         bool windowFocused,
@@ -66,7 +71,9 @@ public class HudRenderer
         string? rejectionMessage,
         PlayerInventorySnapshot? inventory = null,
         string? connectionLabel = null,
-        FramePerformanceSnapshot performance = default)
+        FramePerformanceSnapshot performance = default,
+        IEnemyRenderPoseSource? enemyPoseSource = null,
+        double enemyRenderTick = 0d)
     {
         return DrawFrame(
             args,
@@ -82,7 +89,9 @@ public class HudRenderer
             state.HudStatus,
             inventory,
             connectionLabel,
-            performance);
+            performance,
+            enemyPoseSource,
+            enemyRenderTick);
     }
 
     public void UpdateProjectionForSettings(GameSettings settings)

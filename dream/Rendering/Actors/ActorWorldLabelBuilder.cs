@@ -42,10 +42,15 @@ public static class ActorWorldLabelBuilder
         }
     }
 
+    // With a pose source, each label sits over the enemy's interpolated render pose for renderTick
+    // (the pose the wolf model draws at); without one, or when the source has no pose for an enemy,
+    // it sits over the authoritative position.
     public static void AppendEnemyLabels(
         IReadOnlyList<EnemyActor> enemies,
         List<WorldActorLabelState> destination,
-        ActorHealthLabelCache? healthLabels)
+        ActorHealthLabelCache? healthLabels,
+        IEnemyRenderPoseSource? poseSource = null,
+        double renderTick = 0d)
     {
         for (int index = 0; index < enemies.Count; index++)
         {
@@ -55,8 +60,9 @@ public static class ActorWorldLabelBuilder
                 continue;
             }
 
+            Vector3 position = EnemyRenderer.ResolveRenderPose(enemy, poseSource, renderTick).Position;
             destination.Add(new WorldActorLabelState(
-                enemy.Position + new Vector3(0f, enemy.CollisionHeight + 0.25f, 0f),
+                position + new Vector3(0f, enemy.CollisionHeight + 0.25f, 0f),
                 enemy.DisplayName,
                 GetHealthLabel(healthLabels, enemy.Combatant.Health.CurrentHealth, enemy.Combatant.Health.MaxHealth)));
         }
