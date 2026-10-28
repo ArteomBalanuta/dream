@@ -30,9 +30,30 @@ public sealed class ConnectedPlayer
 
     public ulong? LastAcceptedActionSequence { get; private set; }
 
-    public void MarkSpawned() => IsSpawned = true;
+    // The registry this player is registered in (null once it forgets the player); told when the
+    // spawn state changes so it can keep its active and departed sets (PlayerSessionRegistry).
+    internal PlayerSessionRegistry? Registry { get; set; }
 
-    public void MarkDespawned() => IsSpawned = false;
+    internal long RegistrationOrder { get; set; }
+
+    internal bool CountedAsSpawnedRemote { get; set; }
+
+    internal LinkedListNode<ConnectedPlayer>? DepartedNode { get; set; }
+
+    public void MarkSpawned() => SetSpawned(true);
+
+    public void MarkDespawned() => SetSpawned(false);
+
+    private void SetSpawned(bool spawned)
+    {
+        if (IsSpawned == spawned)
+        {
+            return;
+        }
+
+        IsSpawned = spawned;
+        Registry?.OnSpawnStateChanged(this);
+    }
 
     public void UpdateDisplayName(string? displayName)
     {
