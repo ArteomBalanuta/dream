@@ -21,9 +21,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private Task? _receiveLoopTask;
     // Outbound traffic from the render thread is only enqueued; one writer task sends it, so a
-    // full socket buffer can no longer block a frame. Commands collapse into one merged pending
-    // frame (one-shot inputs are OR-ed), actions keep their order.
-    private readonly LatestPlayerCommandInbox _pendingCommands = new();
+    // full socket buffer can no longer block a frame. Commands (one per prediction tick) go out in
+    // order through a bounded FIFO that merges its oldest frames on overflow; actions keep their
+    // order too.
+    private readonly ClientOutboundCommandQueue _pendingCommands = new();
     private readonly ConcurrentQueue<IClientToServerMessage> _pendingMessages = new();
     private readonly SemaphoreSlim _outboundSignal = new(0, int.MaxValue);
     private readonly object _sendLoopSync = new();
@@ -153,9 +154,22 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     public long SentCommandCount => Interlocked.Read(ref _sentCommandCount);
 
+    // Commands queued but not yet handed to the transport.
+    public int PendingCommandCount => _pendingCommands.Count;
+
+    // Commands folded into a neighbour because the outbound queue was full.
+    public long MergedCommandCount => _pendingCommands.MergedCount;
+
+    // Queues one command for the send loop. Commands are sent in queue order; a command for
+    // another session, or one whose sequence is not newer than the last queued, is ignored.
     public void QueueCommandFrame(PlayerCommandFrame commandFrame)
     {
-        _pendingCommands.Enqueue(commandFrame);
+        if (!string.Equals(commandFrame.SessionId.Value, SessionId, StringComparison.Ordinal) ||
+            !_pendingCommands.TryEnqueue(commandFrame))
+        {
+            return;
+        }
+
         SignalSendLoop();
     }
 
@@ -203,7 +217,6 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     private async Task SendLoopAsync(CancellationToken cancellationToken)
     {
-        PlayerSessionId[] sessionIds = [new PlayerSessionId(SessionId)];
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -217,7 +230,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                         await SendMessageAsync(message, cancellationToken);
                     }
 
-                    foreach (PlayerCommandFrame command in _pendingCommands.Drain(sessionIds))
+                    while (_pendingCommands.TryDequeue(out PlayerCommandFrame command))
                     {
                         await SendMessageAsync(new PlayerCommandMessage(command), cancellationToken);
                         Interlocked.Increment(ref _sentCommandCount);

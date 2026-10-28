@@ -58,19 +58,17 @@ public class PlayScene : IDisposable
     private readonly RemoteClientSession _remoteClient;
     private readonly GameplayInputResumeFilter _gameplayInputResumeFilter = new();
     private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
-    private readonly LatestPlayerCommandInbox _localSimulationCommandInbox = new();
     private readonly bool _renderPerformanceLoggingEnabled;
 
     // The client's replicated world and predicted local player; authority lives on the server.
     // PlayScene remains the desktop composition root plus client presentation owner.
     private readonly ClientWorldSession _runtime;
-    private readonly ServerTickRunner _tickRunner = new();
+    // One command per 64 Hz prediction tick, its sequence the tick (NETR-4).
+    private readonly ClientCommandTickStream _commandTicks = new(PlayerSessionId.LocalDefault);
     private readonly bool _enableLoopbackRemotePlayers;
     private readonly ClientActionSequenceTracker _actionSequences = new();
     private readonly ClientPredictionReconciler _predictionReconciler = new();
     private readonly ServerTickClock _serverTickClock = new();
-    private ulong _nextLocalCommandSequence = 1;
-    private PlayerCommandFrame? _lastLocalSimulationCommandFrame;
     private bool _wasSettingsTogglePressed;
     private bool _wasInventoryTogglePressed;
     private bool _wasCameraViewTogglePressed;
@@ -87,9 +85,8 @@ public class PlayScene : IDisposable
     private PlayerInventorySnapshot? _inventory;
     private bool _disposed;
 
-    // Inputs and output of the prediction tick for the current frame. The tick runner calls a
+    // Inputs and output of the prediction tick for the current frame. The tick stream calls a
     // static lambda with this scene as its state, so these are fields rather than captured locals.
-    private PlayerCommandFrame _tickCommandFrame;
     private PlayerSimulationTuning _tickTuning;
     private bool _tickPrimaryUseTriggered;
 
@@ -187,27 +184,27 @@ public class PlayScene : IDisposable
         _viewModelController.RefreshPose();
         HandleGlobalInput(keyboardState);
         bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
+        // The frame only captures input; each prediction tick below turns it into one command
+        // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
             _runtime.LocalPlayerSessionId,
-            _nextLocalCommandSequence++,
+            0,
             keyboardState,
             mouseState,
             allowGameplayInput);
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
-        _actionSequences.ObserveCommandSequence(commandFrame.Sequence);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
-        _localSimulationCommandInbox.Enqueue(commandFrame);
+        _commandTicks.CaptureInput(commandFrame);
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
         // Predict with the server's movement values; a local NoclipSpeed the server does not use
         // makes every snapshot disagree with the prediction.
         _tickTuning = _settings.ToPlayerSimulationTuning().WithAuthoritativeMovement();
-        _tickCommandFrame = commandFrame;
         _tickPrimaryUseTriggered = false;
-        _tickRunner.Advance(
+        _commandTicks.Advance(
             args.Time,
             this,
-            static (scene, tick, fixedDeltaSeconds) => scene.RunPredictionTick(tick, fixedDeltaSeconds));
+            static (scene, command, fixedDeltaSeconds) => scene.RunPredictionTick(command, fixedDeltaSeconds));
 
         if (_tickPrimaryUseTriggered)
         {
@@ -232,29 +229,26 @@ public class PlayScene : IDisposable
         _actionFeedback.Update(delta);
     }
 
-    private void RunPredictionTick(ulong tick, float fixedDeltaSeconds)
+    // One prediction tick and its one command: the server gets every tick's command, in order,
+    // and the prediction recorded for the same sequence is what its acknowledgement is compared to.
+    private void RunPredictionTick(PlayerCommandFrame command, float fixedDeltaSeconds)
     {
-        PlayerCommandFrame simulationCommandFrame = ResolveLocalSimulationCommandFrame(
-            _tickCommandFrame,
-            out PlayerCommandFrame? freshSourceFrame);
-        if (freshSourceFrame.HasValue)
-        {
-            // One merged command per client tick: the server consumes at most one per tick,
-            // so per-frame sends only cost decoding and lock contention.
-            QueueRemoteCommandFrame(freshSourceFrame.Value);
-        }
+        ulong tick = command.Sequence;
+        _actionSequences.ObserveCommandSequence(tick);
+        QueueRemoteCommandFrame(command);
 
         // The simulation frame has primary use stripped (the server owns the action), so the
         // local animation is driven from the held input instead. Before, it never played.
+        PlayerCommandFrame simulationCommandFrame = ClientSimulationCommandPolicy.PrepareForLocalSimulation(
+            command,
+            useRemoteAuthority: true);
         bool playPrimaryUse = _runtime.AdvancePredictionTick(
             tick,
             fixedDeltaSeconds,
             simulationCommandFrame,
             _tickTuning,
-            primaryUseHeld: _lastLocalSimulationCommandFrame?.PrimaryUsePressed ?? false);
-        _predictionReconciler.RecordPrediction(
-            simulationCommandFrame.Sequence,
-            _runtime.Player.GetWorldPosition());
+            primaryUseHeld: command.PrimaryUsePressed);
+        _predictionReconciler.RecordPrediction(tick, _runtime.Player.GetWorldPosition());
         if (playPrimaryUse)
         {
             _tickPrimaryUseTriggered = true;
@@ -281,7 +275,7 @@ public class PlayScene : IDisposable
         long captureStart = Stopwatch.GetTimestamp();
         WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
             WorldVisibility.MaxRenderDistance,
-            (float)_tickRunner.RemainingSeconds,
+            (float)_commandTicks.RemainingSeconds,
             _settings.CameraViewMode);
         long remoteStatesStart = Stopwatch.GetTimestamp();
         // A live list owned by the presenter; it is only read within this frame.
@@ -826,38 +820,6 @@ public class PlayScene : IDisposable
             new Vector2(commandFrame.LookIntent.YawDelta, commandFrame.LookIntent.PitchDelta),
             _settings.MouseSensitivity,
             allowLook: true);
-    }
-
-    private PlayerCommandFrame ResolveLocalSimulationCommandFrame(
-        PlayerCommandFrame currentFrame,
-        out PlayerCommandFrame? freshSourceFrame)
-    {
-        freshSourceFrame = _localSimulationCommandInbox.TryDrain(currentFrame.SessionId, out PlayerCommandFrame pendingFrame)
-            ? pendingFrame
-            : null;
-        PlayerCommandFrame simulationSource = freshSourceFrame
-            ?? _lastLocalSimulationCommandFrame
-            ?? ClearOneShotMoveInputs(currentFrame);
-
-        _lastLocalSimulationCommandFrame = ClearOneShotMoveInputs(simulationSource);
-        return ClientSimulationCommandPolicy.PrepareForLocalSimulation(
-            simulationSource,
-            useRemoteAuthority: true);
-    }
-
-    private static PlayerCommandFrame ClearOneShotMoveInputs(PlayerCommandFrame frame)
-    {
-        PlayerMoveIntent move = frame.MoveIntent;
-        return frame with
-        {
-            MoveIntent = new PlayerMoveIntent(
-                move.ForwardAxis,
-                move.StrafeAxis,
-                move.VerticalAxis,
-                JumpPressed: false,
-                FreezePressed: false,
-                ToggleNoclipPressed: false)
-        };
     }
 
     private void ApplyHudRequest(HudInteractionRequest request, Action<Vector2i> applyClientSize)

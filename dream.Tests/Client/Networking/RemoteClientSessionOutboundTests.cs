@@ -30,8 +30,10 @@ public class RemoteClientSessionOutboundTests
         Assert.True(await session.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
     }
 
+    // NETR-4: commands queued during a short stall are all sent, in order, one per tick; they no
+    // longer collapse into the newest one (the server would then lose every tick but the last).
     [Fact]
-    public async Task QueuedCommandsWhileStalled_CollapseIntoOneMergedCommand()
+    public async Task QueuedCommandsWhileStalled_AreAllSentInOrder()
     {
         GatedTransportConnection connection = new();
         await using RemoteClientSession session = CreateSession(connection);
@@ -45,10 +47,64 @@ public class RemoteClientSessionOutboundTests
         Assert.True(await session.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
 
         PlayerCommandMessage[] commands = connection.Sent.OfType<PlayerCommandMessage>().ToArray();
-        Assert.Equal(2, commands.Length);
-        Assert.Equal(1ul, commands[0].CommandFrame.Sequence);
-        Assert.Equal(4ul, commands[1].CommandFrame.Sequence);
-        Assert.True(commands[1].CommandFrame.MoveIntent.JumpPressed);
+        Assert.Equal([1ul, 2ul, 3ul, 4ul], commands.Select(command => command.CommandFrame.Sequence));
+        Assert.Equal([false, true, false, false], commands.Select(command => command.CommandFrame.MoveIntent.JumpPressed));
+        Assert.Equal(0, session.MergedCommandCount);
+    }
+
+    // A stall longer than the 16-command queue merges the oldest commands instead of dropping
+    // them: the jump and the primary use pressed early in the stall survive, the merged command
+    // carries the newest sequence it absorbed, and everything still goes out in order.
+    [Fact]
+    public async Task QueuedCommandsBeyondCapacity_MergeOldestKeepingPressesAndNewestSequence()
+    {
+        GatedTransportConnection connection = new();
+        await using RemoteClientSession session = CreateSession(connection);
+
+        session.QueueCommandFrame(CreateCommand(1, jump: false));
+        Assert.True(connection.FirstSendStarted.Wait(TimeSpan.FromSeconds(5)));
+        const ulong last = 41;
+        for (ulong sequence = 2; sequence <= last; sequence++)
+        {
+            session.QueueCommandFrame(CreateCommand(sequence, jump: sequence == 3, primaryUse: sequence == 5));
+        }
+
+        Assert.Equal(ClientOutboundCommandQueue.DefaultCapacity, session.PendingCommandCount);
+        connection.Release();
+        Assert.True(await session.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+
+        PlayerCommandFrame[] commands = connection.Sent.OfType<PlayerCommandMessage>().Select(message => message.CommandFrame).ToArray();
+        Assert.Equal(1 + ClientOutboundCommandQueue.DefaultCapacity, commands.Length);
+        Assert.Equal(1ul, commands[0].Sequence);
+        // Commands 2..26 merged into one; 27..41 follow unmerged.
+        ulong firstUnmerged = last - (ulong)ClientOutboundCommandQueue.DefaultCapacity + 2;
+        Assert.Equal(firstUnmerged - 1, commands[1].Sequence);
+        Assert.True(commands[1].MoveIntent.JumpPressed);
+        Assert.True(commands[1].PrimaryUsePressed);
+        Assert.Equal(
+            Enumerable.Range((int)firstUnmerged, (int)(last - firstUnmerged + 1)).Select(value => (ulong)value),
+            commands.Skip(2).Select(command => command.Sequence));
+        Assert.All(commands.Skip(2), command => Assert.False(command.MoveIntent.JumpPressed || command.PrimaryUsePressed));
+        Assert.Equal((long)(firstUnmerged - 3), session.MergedCommandCount);
+    }
+
+    [Fact]
+    public async Task QueuedCommands_ForAnotherSessionOrNotNewer_AreIgnored()
+    {
+        GatedTransportConnection connection = new();
+        connection.Release();
+        await using RemoteClientSession session = CreateSession(connection);
+
+        session.QueueCommandFrame(CreateCommand(5, jump: false));
+        session.QueueCommandFrame(CreateCommand(5, jump: true));
+        session.QueueCommandFrame(CreateCommand(4, jump: true));
+        session.QueueCommandFrame(CreateCommand(6, jump: false) with { SessionId = new PlayerSessionId("session-b") });
+        session.QueueCommandFrame(CreateCommand(7, jump: false));
+        Assert.True(await session.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+
+        PlayerCommandFrame[] commands = connection.Sent.OfType<PlayerCommandMessage>().Select(message => message.CommandFrame).ToArray();
+        Assert.Equal([5ul, 7ul], commands.Select(command => command.Sequence));
+        Assert.All(commands, command => Assert.False(command.MoveIntent.JumpPressed));
     }
 
     [Fact]
@@ -79,7 +135,7 @@ public class RemoteClientSessionOutboundTests
             new RemoteClientOptions("127.0.0.1", 5057, "session-a", "player-a", "player-a"));
     }
 
-    private static PlayerCommandFrame CreateCommand(ulong sequence, bool jump)
+    private static PlayerCommandFrame CreateCommand(ulong sequence, bool jump, bool primaryUse = false)
     {
         return new PlayerCommandFrame(
             new PlayerSessionId("session-a"),
@@ -87,7 +143,7 @@ public class RemoteClientSessionOutboundTests
             PlayerModeSwitchIntent.None,
             new PlayerMoveIntent(1f, 0f, 0f, JumpPressed: jump),
             PlayerLookIntent.None,
-            PrimaryUsePressed: false);
+            PrimaryUsePressed: primaryUse);
     }
 
     private static PlayerActionMessage CreateAction(ulong sequence)

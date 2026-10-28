@@ -12,6 +12,10 @@ public enum ClientReconciliationKind
     Snap
 }
 
+// SnapPosition is where a Snap puts the player: the server position with the unacknowledged
+// commands replayed on top (just the server position when nothing was acknowledged). Error is
+// the server position minus the prediction for the acknowledged command.
+
 public readonly record struct ClientReconciliationResult(
     ClientReconciliationKind Kind,
     Vector3 Error,
@@ -26,8 +30,17 @@ public readonly record struct ClientReconciliationResult(
 // current position, as the old hard snap effectively did, pulled the player back by
 // speed × round-trip on every snapshot.
 //
-// Accepted errors are applied as a pending offset that drains over SmoothingSeconds, and the
-// remaining history is shifted by the same error so the next snapshot does not count it again.
+// The client records exactly one sample per prediction tick, and its command sequence is that tick
+// (NETR-4), so the samples after the acknowledged one are the unacknowledged commands, one per
+// tick. A correction replays them from the server state: every later sample, and so the player,
+// moves by the error, which is what re-simulating those ticks from the server position gives as
+// long as the error is a displacement (the replay is the per-tick prediction deltas, not a second
+// physics run: stepping the client's physics world again would also re-step every rubble body).
+//
+// Small errors are applied as a pending offset that drains over SmoothingSeconds. Large ones snap:
+// the player moves at once to the server position plus the replayed ticks, its velocity is zeroed
+// by the applier, and the shifted history stays, so later snapshots compare against the replayed
+// path instead of finding no comparable sample.
 public sealed class ClientPredictionReconciler
 {
     public const float DefaultDeadbandDistance = 0.05f;
@@ -41,6 +54,12 @@ public sealed class ClientPredictionReconciler
     private readonly float _smoothingSeconds;
     private Vector3 _pendingOffset;
     private float _smoothingRemainingSeconds;
+    // The ack the last comparison used. A snapshot that repeats it comes from a server that has
+    // simulated more ticks without a new command from this client (it repeats the last one, then
+    // idles: NETR-3), so its position is the server's extrapolation, not the result of that
+    // command; comparing it with the acknowledged prediction pulled the player along with every
+    // starved snapshot, and the next real ack then counted the same ticks again.
+    private ulong? _lastComparedSequence;
 
     public ClientPredictionReconciler(
         float deadbandDistance = DefaultDeadbandDistance,
@@ -89,6 +108,11 @@ public sealed class ClientPredictionReconciler
             return Snap(serverPosition);
         }
 
+        if (_lastComparedSequence == acknowledgedSequence.Value)
+        {
+            return new ClientReconciliationResult(ClientReconciliationKind.None, Vector3.Zero, serverPosition);
+        }
+
         // Every recorded sample is newer than the ack (for example right after a snap, while the
         // server still lags behind): nothing to compare yet, so wait for a later snapshot.
         int sampleIndex = FindLatestSampleAtOrBefore(acknowledgedSequence.Value);
@@ -98,8 +122,10 @@ public sealed class ClientPredictionReconciler
         }
 
         Vector3 predicted = _history[sampleIndex].Position;
-        // Keep the acknowledged sample: the server can ack the same sequence again.
+        // Keep the acknowledged sample: the next comparison may need it as the latest at or
+        // before its ack.
         _history.RemoveRange(0, sampleIndex);
+        _lastComparedSequence = acknowledgedSequence.Value;
 
         Vector3 error = serverPosition - predicted;
         float distance = error.Length;
@@ -108,14 +134,15 @@ public sealed class ClientPredictionReconciler
             return new ClientReconciliationResult(ClientReconciliationKind.None, error, serverPosition);
         }
 
+        ShiftHistory(error);
         if (distance >= _snapDistance)
         {
-            return Snap(serverPosition);
-        }
-
-        for (int index = 0; index < _history.Count; index++)
-        {
-            _history[index] = (_history[index].Sequence, _history[index].Position + error);
+            // The samples hold intended positions (pending smoothing included), so the newest one,
+            // shifted, is the server state with every unacknowledged tick replayed on top; the
+            // snap lands there and replaces whatever smoothing was still pending.
+            _pendingOffset = Vector3.Zero;
+            _smoothingRemainingSeconds = 0f;
+            return new ClientReconciliationResult(ClientReconciliationKind.Snap, error, _history[^1].Position);
         }
 
         _pendingOffset += error;
@@ -147,6 +174,15 @@ public sealed class ClientPredictionReconciler
         _history.Clear();
         _pendingOffset = Vector3.Zero;
         _smoothingRemainingSeconds = 0f;
+        _lastComparedSequence = null;
+    }
+
+    private void ShiftHistory(Vector3 error)
+    {
+        for (int index = 0; index < _history.Count; index++)
+        {
+            _history[index] = (_history[index].Sequence, _history[index].Position + error);
+        }
     }
 
     private ClientReconciliationResult Snap(Vector3 serverPosition)
