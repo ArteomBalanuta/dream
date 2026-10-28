@@ -27,7 +27,8 @@ public class DependencyDirectionTests
     ];
 
     // ARCH-2: Simulation is the lower layer. The rules, the persistence ports and the tick-driven
-    // host contract live in Simulation; Server implements and composes them.
+    // host contract live in Simulation; Server implements and composes them. The persistence ports
+    // stay storage-agnostic: SQLite types belong to Server/Persistence only.
     private static readonly string[] SimulationForbiddenTokens =
     [
         "Dream.Client",
@@ -35,6 +36,7 @@ public class DependencyDirectionTests
         "Dream.Application",
         "Dream.Server",
         "ImGuiNET",
+        "Microsoft.Data.Sqlite",
         "OpenTK.Windowing",
         "OpenTK.Graphics"
     ];
