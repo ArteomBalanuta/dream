@@ -9,12 +9,13 @@ using Vector4 = OpenTK.Mathematics.Vector4;
 namespace Dream.Rendering.Models;
 
 // Everything AnimatedModel computes on the CPU: the parsed glTF, vertex and index arrays,
-// decoded textures, material factors, skin joints, animations and the pose. It has no GL
-// dependency, so Load may run on any thread; AnimatedModel(AnimatedModelData) then only uploads.
+// decoded textures, material factors, skin joints, animations, the shared skeleton and the rest
+// pose. It has no GL dependency, so Load may run on any thread; AnimatedModel(AnimatedModelData)
+// then only uploads.
 //
-// One instance belongs to exactly one AnimatedModel. The ModelRoot and the AnimatedModelPose are
-// per-instance animation state, so two models built from one data object would animate each
-// other. The AnimatedModel constructor rejects a data object that has already been used.
+// One data object belongs to exactly one AnimatedModel, which uploads its buffers once; the
+// AnimatedModel constructor rejects a data object that has already been used. Actors animate
+// through AnimatedModelInstance objects over the shared Skeleton, never through the model itself.
 public sealed class AnimatedModelData
 {
     public const int MaxSupportedJoints = 64;
@@ -44,7 +45,7 @@ public sealed class AnimatedModelData
         AnimatedModelPrimitiveData[][] meshPrimitives,
         AnimatedModelSkinJoint[]? skinJoints,
         Dictionary<string, Animation> animations,
-        AnimatedModelPose pose)
+        AnimatedModelSkeleton skeleton)
     {
         SourcePath = sourcePath;
         Model = model;
@@ -52,7 +53,8 @@ public sealed class AnimatedModelData
         MeshPrimitives = meshPrimitives;
         SkinJoints = skinJoints;
         Animations = animations;
-        Pose = pose;
+        Skeleton = skeleton;
+        Pose = new AnimatedModelPose(skeleton);
     }
 
     public string SourcePath { get; }
@@ -70,6 +72,11 @@ public sealed class AnimatedModelData
 
     public IReadOnlyDictionary<string, Animation> Animations { get; }
 
+    // The immutable rig, clips and keyframe tracks, shared by every instance of the model.
+    public AnimatedModelSkeleton Skeleton { get; }
+
+    // The rest pose the model draws when no instance is given (static models such as cubes).
+    // It is never animated.
     public AnimatedModelPose Pose { get; }
 
     public static AnimatedModelData Load(string path)
@@ -79,8 +86,8 @@ public sealed class AnimatedModelData
         AnimatedModelSkinJoint[]? skinJoints = LoadSkinning(model);
         AnimatedModelPrimitiveData[][] meshPrimitives = LoadMeshes(model);
         Dictionary<string, Animation> animations = LoadAnimations(model);
-        AnimatedModelPose pose = new(model);
-        return new AnimatedModelData(path, model, materials, meshPrimitives, skinJoints, animations, pose);
+        AnimatedModelSkeleton skeleton = new(model, animations, skinJoints);
+        return new AnimatedModelData(path, model, materials, meshPrimitives, skinJoints, animations, skeleton);
     }
 
     internal void MarkConsumed()

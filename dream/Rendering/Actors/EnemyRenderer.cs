@@ -56,14 +56,18 @@ public sealed class EnemyRenderer
 
             // The shared wolf model loads in the background; until it is ready the enemy is not
             // drawn and no clip is recorded, so the clip is applied on the first drawn frame.
+            // The model (GPU buffers, skeleton, clips) is shared; each enemy animates its own
+            // instance, which advances exactly once per frame by this frame's dt.
             if (ModelAssets.TryGet(renderState.ModelPath, out AnimatedModel? model))
             {
-                _visualStates.GetOrAdd(actorId).ApplyClip(model, renderState.ClipName);
-                model.Update(deltaTime);
+                AnimatedModelInstance instance = AdvanceInstance(
+                    _visualStates.GetOrAdd(actorId, model.Skeleton),
+                    renderState.ClipName,
+                    deltaTime);
 
                 Shader shader = _render.GetShader(renderState.ShaderName);
                 model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-                model.RenderPrepared(shader, renderState.ModelMatrix);
+                model.RenderPrepared(shader, instance, renderState.ModelMatrix);
                 model.EndRender();
             }
 
@@ -77,6 +81,18 @@ public sealed class EnemyRenderer
         }
 
         _visualStates.PruneExcept(_currentIds);
+    }
+
+    // One enemy's per-frame animation step: start the clip if it changed, then advance the enemy's
+    // own instance by deltaTime. Called once per enemy per frame; allocates nothing.
+    public static AnimatedModelInstance AdvanceInstance(EnemyVisualState state, string clipName, float deltaTime)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        AnimatedModelInstance instance = state.Instance
+            ?? throw new InvalidOperationException("The enemy state has no animation instance; bind it first.");
+        state.ApplyClip(clipName);
+        instance.Update(deltaTime);
+        return instance;
     }
 
     // The interpolated pose when the source has one for this enemy, else the authoritative pose.

@@ -23,19 +23,21 @@ public sealed class PlayerAnimationClipTracker
         return true;
     }
 
-    // Per-frame overload: takes the model instead of a method-group delegate, which would
-    // allocate a new Action<string> on every call.
-    public bool TryApplyClip(int actorId, string clipName, AnimatedModel model)
+    // Per-frame overload: takes the actor's instance instead of a method-group delegate, which
+    // would allocate a new Action<string> on every call. A clip recorded for the actor is replayed
+    // when the instance is not actually looping it (a new instance after the actor's handle was
+    // released and requested again starts stopped).
+    public bool TryApplyClip(int actorId, string clipName, AnimatedModelInstance instance)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clipName);
-        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(instance);
 
-        if (IsActiveClip(actorId, clipName))
+        if (IsActiveClip(actorId, clipName) && instance.IsPlayingLoop(clipName))
         {
             return false;
         }
 
-        model.PlayLoop(clipName);
+        instance.PlayLoop(clipName);
         _activeClipNamesByActorId[actorId] = clipName;
         return true;
     }
