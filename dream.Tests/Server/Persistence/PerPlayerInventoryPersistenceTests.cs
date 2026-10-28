@@ -499,6 +499,7 @@ public sealed class PerPlayerInventoryPersistenceTests
         private readonly Dictionary<string, int> _calls = [];
         private readonly Dictionary<long, PersistedItemInstance> _items = [];
         private readonly Dictionary<(string Player, int Slot), PersistedInventorySlot> _slots = [];
+        private readonly Dictionary<string, int> _grants = [];
 
         private bool _failSlotWrites;
 
@@ -595,7 +596,7 @@ public sealed class PerPlayerInventoryPersistenceTests
                 .Where(_items.ContainsKey)
                 .Select(id => _items[id])
                 .ToArray();
-            return new PersistedPlayerInventory(slots, items);
+            return new PersistedPlayerInventory(slots, items, _grants.TryGetValue(name, out int kit) ? kit : null);
         }
 
         public long GetMaxItemInstanceId()
@@ -623,6 +624,13 @@ public sealed class PerPlayerInventoryPersistenceTests
             {
                 _slots.Remove(key);
             }
+        }
+
+        public void SaveStarterKitGrant(string playerName, int kitVersion)
+        {
+            Count(nameof(SaveStarterKitGrant));
+            string name = playerName.Trim();
+            _grants[name] = Math.Max(_grants.GetValueOrDefault(name), kitVersion);
         }
     }
 }

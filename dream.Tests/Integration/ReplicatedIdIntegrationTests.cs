@@ -586,5 +586,9 @@ public class ReplicatedIdIntegrationTests
         public void DeleteInventorySlots(string playerName)
         {
         }
+
+        public void SaveStarterKitGrant(string playerName, int kitVersion)
+        {
+        }
     }
 }

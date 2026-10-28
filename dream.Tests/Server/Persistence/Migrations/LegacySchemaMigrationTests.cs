@@ -51,7 +51,8 @@ public sealed class LegacySchemaMigrationTests
             rowsBefore = SqliteSchemaSnapshot.DumpRows(connection);
         }
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
+        // The baseline alone, which must reproduce today's schema; later migrations add to it.
+        SchemaMigrationResult result = database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator(), log.Add);
 
         Assert.Equal(0, result.FromVersion);
         Assert.Equal(1, result.ToVersion);
@@ -97,7 +98,7 @@ public sealed class LegacySchemaMigrationTests
             rowsBefore = SqliteSchemaSnapshot.DumpRows(connection);
         }
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        SchemaMigrationResult result = database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
 
         Assert.Equal(new SchemaMigrationResult(0, 1, result.BackupPath), result);
         Assert.NotNull(result.BackupPath);
@@ -119,6 +120,31 @@ public sealed class LegacySchemaMigrationTests
         Assert.Equal(8L, Scalar(migrated, "SELECT COUNT(*) FROM combat_formulas;"));
         Assert.Equal(0L, Scalar(migrated, "SELECT COUNT(*) FROM world_metadata;"));
         Assert.Equal("wal", Scalar(migrated, "PRAGMA journal_mode;"));
+    }
+
+    [Fact]
+    public void PreMigrationDatabase_TakesEveryShippedMigrationInOneStep_WithOneBackup()
+    {
+        using MigrationTestDatabase database = new();
+        database.BuildWithPreMigrationBootstrapper();
+        database.ExecuteScript("""
+            INSERT INTO player_profiles (player_name, display_name) VALUES ('alice', 'Alice');
+            """ + ProfileAndChildRows);
+        IReadOnlyList<string> rowsBefore;
+        using (SqliteConnection connection = database.Open())
+        {
+            rowsBefore = SqliteSchemaSnapshot.DumpRows(connection);
+        }
+
+        SchemaMigrationResult result = database.Schema.EnsureSchema();
+
+        Assert.Equal(new SchemaMigrationResult(0, MigrationTestDatabase.ShippedLatestVersion, result.BackupPath), result);
+        string backup = Assert.Single(database.Backups());
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0002\.\d{8}T\d{6}Z\.bak$", backup);
+        using SqliteConnection migrated = database.Open();
+        Assert.Equal(rowsBefore, SqliteSchemaSnapshot.DumpRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal(0L, Scalar(migrated, "SELECT COUNT(*) FROM player_starter_grants;"));
     }
 
     private static object? Scalar(SqliteConnection connection, string sql)

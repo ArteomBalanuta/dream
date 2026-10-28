@@ -534,6 +534,9 @@ public sealed class JoinPersistencePrefetchTests
 
         public void DeleteInventorySlots(string playerName) => Call(nameof(DeleteInventorySlots), () => inner.DeleteInventorySlots(playerName));
 
+        public void SaveStarterKitGrant(string playerName, int kitVersion) =>
+            Call(nameof(SaveStarterKitGrant), () => inner.SaveStarterKitGrant(playerName, kitVersion));
+
         private T Call<T>(string name, Func<T> call)
         {
             recorder.Record(name);

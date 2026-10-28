@@ -106,15 +106,16 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(2, inventory.LoadedItemInstanceCount);
 
         Assert.True(inventory.Ensure("Bob"));
-        // The equipped slot first, then the starter top-up: Bob holds only hammers, so every other
-        // starter kind is granted into the lowest free slots (0, 1, 2, then 4).
-        Assert.Equal(StarterCount - 1, world.ItemSaves);
-        Assert.Equal(1 + (StarterCount - 1), world.SlotSaves);
+        // The equipped slot first, then the starter top-up: Bob has items but no recorded kit
+        // version, so he is taken to hold kit v1 and only the torch (v2) is granted, into the lowest
+        // free slot (0).
+        Assert.Equal(1, world.ItemSaves);
+        Assert.Equal(1 + 1, world.SlotSaves);
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Bob");
         Assert.Equal(11, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
         Assert.True(snapshot.Slots[3].IsEquipped);
-        // Slot 0 holds the topped-up blade, not the ignored second load's item 99.
-        Assert.Equal("tool.field-blade", snapshot.Slots[0].Item!.Value.ItemKind);
+        // Slot 0 holds the topped-up torch, not the ignored second load's item 99.
+        Assert.Equal("tool.torch", snapshot.Slots[0].Item!.Value.ItemKind);
         Assert.NotEqual(99, snapshot.Slots[0].Item!.Value.ItemInstanceId);
         Assert.Equal(0, world.Loads);
     }
@@ -400,7 +401,9 @@ public sealed class PlayerInventoryServiceTests
     public void Ensure_TopUpStopsWhenTheBackpackFills()
     {
         PlayerInventoryService inventory = new(worldPersistence: null, writes: null);
-        // Hammers everywhere but one slot: only the first missing kind (the blade) fits.
+        // Hammers everywhere but one slot. With no grant recorded the inventory is taken to hold kit
+        // v1, so the blade, maul and lantern are not granted again; only the torch (v2) is, and it
+        // fits.
         List<PersistedInventorySlot> slots = [];
         List<PersistedItemInstance> items = [];
         int freeSlot = 7;
@@ -421,7 +424,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Max"));
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Max");
-        Assert.Equal("tool.field-blade", snapshot.Slots[freeSlot].Item!.Value.ItemKind);
+        Assert.Equal("tool.torch", snapshot.Slots[freeSlot].Item!.Value.ItemKind);
         Assert.Equal(InventoryConstants.BackpackSlotCount, inventory.LoadedItemInstanceCount);
         // Nothing was equipped, so Ensure equipped the first occupied slot before topping up.
         Assert.Equal(1, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
@@ -482,6 +485,253 @@ public sealed class PlayerInventoryServiceTests
         }
     }
 
+    [Fact]
+    public void StarterKit_IsVersioned_V1IsThePreT2Set_V2AddsTheTorch()
+    {
+        Assert.Equal(
+            [
+                new StarterKitEntry("tool.builder-hammer", 1),
+                new StarterKitEntry("tool.field-blade", 1),
+                new StarterKitEntry("tool.stone-maul", 1),
+                new StarterKitEntry("tool.survey-lantern", 1),
+                new StarterKitEntry("tool.torch", 2)
+            ],
+            ToolCatalog.StarterKit);
+        Assert.Equal(2, ToolCatalog.CurrentStarterKitVersion);
+        Assert.Equal(ToolCatalog.CurrentStarterKitVersion, ToolCatalog.StarterKit.Max(entry => entry.IntroducedVersion));
+        Assert.Equal(1, ToolCatalog.UnrecordedStarterKitVersion);
+        Assert.Equal(ToolCatalog.StarterKit.Select(entry => entry.ItemKind), ToolCatalog.StarterItemKinds);
+    }
+
+    [Fact]
+    public void Ensure_NewPlayer_GetsTheWholeKit_AndRecordsTheCurrentKitVersion()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes);
+
+        Assert.True(inventory.Ensure("Olga"));
+
+        Assert.Equal(StarterCount, world.ItemSaves);
+        Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.Grants["Olga"]);
+        Assert.Equal(1, world.GrantSaves);
+        Assert.True(inventory.Ensure("Olga"));
+        Assert.Equal(1, world.GrantSaves);
+    }
+
+    [Fact]
+    public void Ensure_PreT2Player_GetsExactlyOneTorch_AndRecordsKitV2()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes);
+        inventory.ApplyLoaded("Pia", LegacyInventory("Pia", firstItemId: 1, equippedSlot: 0));
+
+        Assert.True(inventory.Ensure("Pia"));
+        Assert.True(inventory.Ensure("Pia"));
+
+        PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Pia");
+        Assert.Single(snapshot.Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        Assert.Equal(1, world.ItemSaves);
+        Assert.Equal(2, world.Grants["Pia"]);
+        Assert.Equal(1, world.GrantSaves);
+    }
+
+    [Fact]
+    public void Ensure_AfterTheGrantIsRecorded_ARemovedTorchIsNotGrantedAgainOnRejoin()
+    {
+        FakeWorld world = new();
+        using (PersistenceWriteQueue writes = PersistenceWriteQueue.Inline())
+        {
+            PlayerInventoryService first = new(world, writes);
+            first.ApplyLoaded("Quin", LegacyInventory("Quin", firstItemId: 1, equippedSlot: 0));
+            Assert.True(first.Ensure("Quin"));
+            Assert.Equal("tool.torch", first.BuildSnapshot("Quin").Slots[4].Item!.Value.ItemKind);
+            Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+        }
+
+        // The torch leaves the backpack (as a future drop or trade would), then the player rejoins.
+        Assert.True(world.Rows.Remove(("Quin", 4)));
+        using PersistenceWriteQueue rejoinWrites = PersistenceWriteQueue.Inline();
+        PlayerInventoryService rejoined = new(world, rejoinWrites);
+        rejoined.ApplyLoaded("Quin", world.LoadPlayerInventory("Quin"));
+
+        Assert.True(rejoined.Ensure("Quin"));
+
+        PlayerInventorySnapshot snapshot = rejoined.BuildSnapshot("Quin");
+        Assert.DoesNotContain(snapshot.Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        Assert.Equal(1, world.ItemSaves);
+        Assert.Equal(1, world.GrantSaves);
+    }
+
+    [Fact]
+    public void Ensure_RecordedPlayerWithAnEmptiedBackpack_IsNotReseeded()
+    {
+        FakeWorld world = new();
+        world.Grants["Rae"] = ToolCatalog.CurrentStarterKitVersion;
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes);
+
+        Assert.True(inventory.Ensure("Rae"));
+
+        Assert.Equal(0, inventory.LoadedItemInstanceCount);
+        Assert.Equal(0, world.ItemSaves);
+        Assert.Equal(0, world.SlotSaves);
+        Assert.Equal(0, world.GrantSaves);
+        Assert.Null(inventory.BuildSnapshot("Rae").EquippedSlot!.Value.Item);
+    }
+
+    [Fact]
+    public void Ensure_LegacyPlayerAlreadyHoldingTheTorch_GetsNoItem_AndRecordsKitV2()
+    {
+        // A player the pre-record top-up already gave the torch: the whole kit, no grant row.
+        FakeWorld world = new();
+        world.Seed("Sam", firstItemId: 1);
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes);
+
+        Assert.True(inventory.Ensure("Sam"));
+
+        Assert.Equal(0, world.ItemSaves);
+        Assert.Equal(2, world.Grants["Sam"]);
+        Assert.Equal(1, world.GrantSaves);
+    }
+
+    [Fact]
+    public void Ensure_FullBackpack_RecordsOnlyKitV1_ThenGrantsTheTorchOnceASlotIsFree()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes);
+        List<PersistedInventorySlot> slots = [];
+        List<PersistedItemInstance> items = [];
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            long id = slotIndex + 1;
+            slots.Add(new PersistedInventorySlot("Tia", slotIndex, id, DateTime.UtcNow));
+            items.Add(Item(id, "Tia"));
+        }
+
+        inventory.ApplyLoaded("Tia", new PersistedPlayerInventory(slots, items));
+
+        Assert.True(inventory.Ensure("Tia"));
+        Assert.Equal(0, world.ItemSaves);
+        Assert.Equal(1, world.Grants["Tia"]);
+        Assert.True(inventory.Ensure("Tia"));
+        Assert.Equal(1, world.GrantSaves);
+
+        // A slot frees up (simulated in memory), and the torch now arrives once.
+        Assert.True(inventory.LoadedSlotsByPlayer["Tia"].Remove(InventoryConstants.BackpackSlotCount - 1));
+        Assert.True(inventory.Ensure("Tia"));
+        Assert.True(inventory.Ensure("Tia"));
+
+        Assert.Equal(1, world.ItemSaves);
+        Assert.Equal("tool.torch", inventory.BuildSnapshot("Tia").Slots[InventoryConstants.BackpackSlotCount - 1].Item!.Value.ItemKind);
+        Assert.Equal(2, world.Grants["Tia"]);
+        Assert.Equal(2, world.GrantSaves);
+    }
+
+    [Fact]
+    public void Ensure_KitVersionTravelsWithAnInventoryRestoredAfterAnUnconfirmedEviction()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
+        PlayerInventoryService inventory = new(world, writes);
+        Assert.True(inventory.Ensure("Uma"));
+        Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+        // The rows lose the grant, so only the moved-out copy still knows the kit version.
+        Assert.True(world.Grants.Remove("Uma"));
+
+        using ManualResetEventSlim gate = new(initialState: false);
+        try
+        {
+            writes.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
+            world.FailSlotWrites = true;
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Uma", 1));
+            inventory.Evict("Uma");
+            Assert.Equal(1, inventory.UnconfirmedEvictionCount);
+        }
+        finally
+        {
+            gate.Set();
+        }
+
+        Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+        world.FailSlotWrites = false;
+        inventory.ApplyLoaded("Uma", world.LoadPlayerInventory("Uma"));
+        Assert.Equal(0, inventory.UnconfirmedEvictionCount);
+
+        // The torch leaves the restored backpack; Ensure does not grant it again.
+        Assert.True(inventory.LoadedSlotsByPlayer["Uma"].Remove(4));
+        Assert.True(inventory.Ensure("Uma"));
+        Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+
+        Assert.DoesNotContain(inventory.BuildSnapshot("Uma").Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        Assert.Equal(StarterCount, world.ItemSaves);
+    }
+
+    [Fact]
+    public void StarterGrant_SurvivesASqliteRestart_AndARemovedTorchIsNotGrantedAgain()
+    {
+        using PersistenceTestDatabase database = new();
+        using (SqlitePlayerProfileRepository profiles = new(database.Schema))
+        {
+            profiles.GetOrCreate("Vic");
+        }
+
+        using (SqliteWorldPersistenceRepository world = new(database.Schema))
+        {
+            PersistedPlayerInventory legacy = LegacyInventory("Vic", firstItemId: 1, equippedSlot: 0);
+            foreach (PersistedItemInstance item in legacy.Items)
+            {
+                world.SaveItemInstance(item);
+            }
+
+            foreach (PersistedInventorySlot slot in legacy.Slots)
+            {
+                world.SaveInventorySlot(slot);
+            }
+
+            Assert.Null(world.LoadPlayerInventory("Vic").StarterKitVersion);
+            using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+            PlayerInventoryService inventory = new(world, writes);
+            inventory.RestoreItemIdCounter();
+            Assert.True(inventory.Ensure("Vic"));
+            Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+        }
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Assert.Equal(2L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
+        Assert.Equal(1L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
+        // The torch leaves the backpack: its slot and item rows are deleted.
+        using (Microsoft.Data.Sqlite.SqliteConnection connection = database.Schema.CreateOpenConnection())
+        using (Microsoft.Data.Sqlite.SqliteCommand delete = connection.CreateCommand())
+        {
+            delete.CommandText = """
+                DELETE FROM player_inventory_slots WHERE player_name = 'Vic' AND slot_index = 4;
+                DELETE FROM item_instances WHERE item_kind = 'tool.torch';
+                """;
+            Assert.Equal(2, delete.ExecuteNonQuery());
+        }
+
+        using (SqliteWorldPersistenceRepository world = new(database.Schema))
+        {
+            PersistedPlayerInventory loaded = world.LoadPlayerInventory("Vic");
+            Assert.Equal(2, loaded.StarterKitVersion);
+            using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+            PlayerInventoryService inventory = new(world, writes);
+            inventory.RestoreItemIdCounter();
+            inventory.ApplyLoaded("Vic", loaded);
+            Assert.True(inventory.Ensure("Vic"));
+            Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+            Assert.DoesNotContain(inventory.BuildSnapshot("Vic").Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        }
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Assert.Equal(0L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
+        Assert.Equal(2L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
+    }
+
     private static int IndexOfStarter(string itemKind)
     {
         for (int i = 0; i < StarterCount; i++)
@@ -536,8 +786,14 @@ public sealed class PlayerInventoryServiceTests
         private int _itemSaves;
         private int _slotSaves;
         private int _loads;
+        private int _grantSaves;
 
         public Dictionary<(string Player, int Slot), PersistedInventorySlot> Rows { get; } = [];
+
+        // The recorded starter kit version by player name.
+        public Dictionary<string, int> Grants { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public int GrantSaves => Volatile.Read(ref _grantSaves);
 
         public int ItemSaves => Volatile.Read(ref _itemSaves);
 
@@ -578,7 +834,7 @@ public sealed class PlayerInventoryServiceTests
                 .Where(_items.ContainsKey)
                 .Select(id => _items[id])
                 .ToArray();
-            return new PersistedPlayerInventory(slots, items);
+            return new PersistedPlayerInventory(slots, items, Grants.TryGetValue(playerName, out int kit) ? kit : null);
         }
 
         public long GetMaxItemInstanceId()
@@ -635,5 +891,11 @@ public sealed class PlayerInventoryServiceTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Rows.Values.ToArray();
 
         public void DeleteInventorySlots(string playerName) { }
+
+        public void SaveStarterKitGrant(string playerName, int kitVersion)
+        {
+            Interlocked.Increment(ref _grantSaves);
+            Grants[playerName] = Math.Max(Grants.GetValueOrDefault(playerName), kitVersion);
+        }
     }
 }

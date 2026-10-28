@@ -203,5 +203,7 @@ public sealed class EnemyReassignPersistenceTests
         public void SaveInventorySlot(PersistedInventorySlot slot) => inner.SaveInventorySlot(slot);
 
         public void DeleteInventorySlots(string playerName) => inner.DeleteInventorySlots(playerName);
+
+        public void SaveStarterKitGrant(string playerName, int kitVersion) => inner.SaveStarterKitGrant(playerName, kitVersion);
     }
 }
