@@ -116,6 +116,11 @@ public partial class Render : IWorldInstanceDrawTarget
         animation.EndRender();
     }
 
+    // The fallback cube's per-instance model matrices. Owned with the fallback cube mesh: its VAO's
+    // instanceModel attributes (locations 6..9, divisor 1) keep pointing at this buffer between
+    // draws, so the two live and die together (Dispose deletes the VAO first, then this buffer).
+    private readonly InstanceMatrixBuffer _fallbackInstances = new();
+
     // IWorldInstanceDrawTarget: every model-less cube or block of one material in a single
     // instanced draw of the fallback cube mesh, with the same program, material and cull state
     // as the single-cube fallback. The shader derives each instance's normal matrix from its
@@ -123,7 +128,6 @@ public partial class Render : IWorldInstanceDrawTarget
     public void DrawFallbackInstances(
         Camera camera,
         GeometryMaterialId materialId,
-        InstanceMatrixBuffer instances,
         Matrix4[] modelMatrices,
         int count)
     {
@@ -136,8 +140,8 @@ public partial class Render : IWorldInstanceDrawTarget
         BindTerrainMaterial(camera, Matrix4.Identity, material, instanced: true);
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(TriangleFace.Back);
-        instances.Upload(modelMatrices, count);
-        _fallbackCubeBuffer.DrawInstanced(instances, count);
+        _fallbackInstances.Upload(modelMatrices, count);
+        _fallbackCubeBuffer.DrawInstanced(_fallbackInstances, count);
         // Leave the program the way every non-instanced user of it expects.
         GetShader("cube").SetBool("useInstancing", false);
     }

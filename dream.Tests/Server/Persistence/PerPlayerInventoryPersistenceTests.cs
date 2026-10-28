@@ -166,6 +166,109 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(SlotItemId(joined, 3), EquippedItemId(rejoined));
     }
 
+    // Review S3: the queue drops a failed write, so an inventory whose write failed is the only
+    // current copy. Leaving and being evicted must not swap it for the stale rows.
+    [Fact]
+    public void FailedInventoryWrite_KeepsTheInventoryThroughEviction_AndTheRejoinSeesTheInMemoryState()
+    {
+        CountingWorld world = new();
+        using WorldSessionRuntime runtime = CreateBackgroundRuntime(world);
+        runtime.MaxDepartedProfiles = 0;
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("visitor", "Visitor");
+        PlayerInventorySnapshot joined = Capture(runtime, "visitor");
+        WaitForWrites(runtime);
+        long failedBefore = runtime.PersistenceWrites!.FailedWrites;
+
+        world.FailSlotWrites = true;
+        Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 2)).Accepted);
+        WaitForWrites(runtime);
+        world.FailSlotWrites = false;
+        Assert.Equal(failedBefore + 1, runtime.PersistenceWrites.FailedWrites);
+        // The row still names the first starter item.
+        Assert.Equal(SlotItemId(joined, 0), EquippedRowItemId(world, "Visitor"));
+
+        host.ReleaseSession("visitor");
+        Assert.Equal(0, runtime.ProfileCacheCount);
+        Assert.Equal(1, runtime.LoadedInventoryCount);
+
+        host.JoinSession("visitor-again", "Visitor");
+        PlayerInventorySnapshot rejoined = Capture(runtime, "visitor-again");
+        Assert.Equal(ItemIds(joined), ItemIds(rejoined));
+        Assert.Equal(SlotItemId(joined, 2), EquippedItemId(rejoined));
+
+        // It stays retained through later evictions too.
+        host.ReleaseSession("visitor-again");
+        Assert.Equal(1, runtime.LoadedInventoryCount);
+    }
+
+    [Fact]
+    public void InventoryWriteFailingAfterEviction_IsRestoredOnRejoin()
+    {
+        CountingWorld world = new();
+        using WorldSessionRuntime runtime = CreateBackgroundRuntime(world);
+        runtime.MaxDepartedProfiles = 0;
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("visitor", "Visitor");
+        PlayerInventorySnapshot joined = Capture(runtime, "visitor");
+        WaitForWrites(runtime);
+
+        using ManualResetEventSlim gate = new(initialState: false);
+        try
+        {
+            // The equip's write is still queued (and will fail) when the player leaves and is evicted.
+            runtime.PersistenceWrites!.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
+            world.FailSlotWrites = true;
+            Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 3)).Accepted);
+            host.ReleaseSession("visitor");
+            Assert.Equal(0, runtime.LoadedInventoryCount);
+            Assert.Equal(1, runtime.UnconfirmedInventoryEvictionCount);
+        }
+        finally
+        {
+            gate.Set();
+        }
+
+        WaitForWrites(runtime);
+        world.FailSlotWrites = false;
+        Assert.Equal(SlotItemId(joined, 0), EquippedRowItemId(world, "Visitor"));
+
+        host.JoinSession("visitor-again", "Visitor");
+        PlayerInventorySnapshot rejoined = Capture(runtime, "visitor-again");
+        Assert.Equal(ItemIds(joined), ItemIds(rejoined));
+        Assert.Equal(SlotItemId(joined, 3), EquippedItemId(rejoined));
+        Assert.Equal(0, runtime.UnconfirmedInventoryEvictionCount);
+    }
+
+    [Fact]
+    public void ConfirmedInventoryEviction_IsForgotten_AndTheRejoinReadsTheRows()
+    {
+        CountingWorld world = new();
+        using WorldSessionRuntime runtime = CreateBackgroundRuntime(world);
+        runtime.MaxDepartedProfiles = 0;
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("visitor", "Visitor");
+        PlayerInventorySnapshot joined = Capture(runtime, "visitor");
+        Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 1)).Accepted);
+        host.ReleaseSession("visitor");
+        Assert.Equal(0, runtime.LoadedInventoryCount);
+        WaitForWrites(runtime);
+        Assert.Equal(SlotItemId(joined, 1), EquippedRowItemId(world, "Visitor"));
+
+        // The next eviction forgets the confirmed one.
+        host.JoinSession("other", "Other");
+        host.ReleaseSession("other");
+        WaitForWrites(runtime);
+        host.JoinSession("third", "Third");
+        host.ReleaseSession("third");
+        Assert.True(runtime.UnconfirmedInventoryEvictionCount <= 1);
+
+        int loadsBefore = world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory));
+        host.JoinSession("visitor-again", "Visitor");
+        Assert.Equal(loadsBefore + 1, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
+        Assert.Equal(SlotItemId(joined, 1), EquippedItemId(Capture(runtime, "visitor-again")));
+    }
+
     [Fact]
     public void Startup_LoadsNoInventory_AndAJoinLoadsOnlyItsOwn()
     {
@@ -264,6 +367,24 @@ public sealed class PerPlayerInventoryPersistenceTests
             new SceneEventHub(),
             playerProfiles: new SqlitePlayerProfileRepository(database.Schema),
             worldPersistence: new SqliteWorldPersistenceRepository(database.Schema));
+    }
+
+    private static WorldSessionRuntime CreateBackgroundRuntime(CountingWorld world)
+    {
+        return new WorldSessionRuntime(
+            16,
+            new Vector3(5f, 1.5f, 5f),
+            new SceneEventHub(),
+            playerProfiles: new InMemoryProfiles(),
+            worldPersistence: world,
+            persistenceWrites: PersistenceWriteQueue.Background());
+    }
+
+    private static long EquippedRowItemId(CountingWorld world, string playerName)
+    {
+        return world.LoadPlayerInventory(playerName).Slots
+            .Single(slot => slot.SlotIndex == InventoryConstants.EquippedSlotIndex)
+            .ItemInstanceId;
     }
 
     private static DedicatedServerHost CreateDedicatedHost(PersistenceTestDatabase database)
@@ -377,7 +498,16 @@ public sealed class PerPlayerInventoryPersistenceTests
         private readonly Dictionary<long, PersistedItemInstance> _items = [];
         private readonly Dictionary<(string Player, int Slot), PersistedInventorySlot> _slots = [];
 
+        private bool _failSlotWrites;
+
         public int ItemCount => _items.Count;
+
+        // Makes SaveInventorySlot throw (on the write worker), like a write the queue drops.
+        public bool FailSlotWrites
+        {
+            get => Volatile.Read(ref _failSlotWrites);
+            set => Volatile.Write(ref _failSlotWrites, value);
+        }
 
         public int Calls(string method) => _calls.GetValueOrDefault(method);
 
@@ -474,6 +604,11 @@ public sealed class PerPlayerInventoryPersistenceTests
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {
             Count(nameof(SaveInventorySlot));
+            if (Volatile.Read(ref _failSlotWrites))
+            {
+                throw new InvalidOperationException("Simulated inventory slot write failure.");
+            }
+
             _slots[(slot.PlayerName.Trim(), slot.SlotIndex)] = slot with { PlayerName = slot.PlayerName.Trim() };
         }
 

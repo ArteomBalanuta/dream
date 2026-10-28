@@ -50,7 +50,6 @@ public class WorldInstanceBatchDrawerTests
         Assert.Equal(materialCount, target.FallbackCalls);
         Assert.Equal(0, target.ModelCalls);
         Assert.Equal(cubeCount, target.TotalInstances);
-        Assert.Same(drawer.FallbackInstances, target.LastInstances);
     }
 
     [Fact]
@@ -219,7 +218,22 @@ public class WorldInstanceBatchDrawerTests
         Assert.DoesNotContain("_render.DrawGeometryBlock(", source);
         Assert.Contains("_instanceDrawer.DrawCubeBatches(_render, camera, batches);", source);
         Assert.Contains("_instanceDrawer.DrawGeometryBlockBatches(_render, camera, dynamicBlockBatches);", source);
-        Assert.Contains("_instanceDrawer.Dispose();", Method(source, "public void Dispose()"));
+        // The drawer holds no GL resources: the fallback instance buffer belongs to Render.
+        Assert.DoesNotContain("InstanceMatrixBuffer _", source);
+        Assert.DoesNotContain("_instanceDrawer.Dispose", source);
+    }
+
+    // GPU-6 nit: the fallback cube's instance buffer is owned with the fallback cube mesh whose VAO
+    // points 6..9 at it, and deleted right after that VAO.
+    [Fact]
+    public void Render_Owns_The_Fallback_Instance_Buffer_And_Deletes_It_After_The_Fallback_Vao()
+    {
+        string render = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        Assert.Contains("private readonly InstanceMatrixBuffer _fallbackInstances = new();", render);
+        string dispose = Method(render, "public void Dispose()");
+        int vao = dispose.IndexOf("RunDisposeStep(_fallbackCubeBuffer.Dispose, ref failures);", StringComparison.Ordinal);
+        int instances = dispose.IndexOf("RunDisposeStep(_fallbackInstances.Dispose, ref failures);", StringComparison.Ordinal);
+        Assert.True(vao >= 0 && instances > vao, "Render.Dispose must delete the fallback VAO, then its instance buffer.");
     }
 
     [Fact]
@@ -231,8 +245,8 @@ public class WorldInstanceBatchDrawerTests
 
         Assert.Contains("BindTerrainMaterial(camera, Matrix4.Identity, material, instanced: true)", fallback);
         Assert.Contains("GL.CullFace(TriangleFace.Back);", fallback);
-        Assert.Contains("instances.Upload(modelMatrices, count);", fallback);
-        Assert.Contains("_fallbackCubeBuffer.DrawInstanced(instances, count);", fallback);
+        Assert.Contains("_fallbackInstances.Upload(modelMatrices, count);", fallback);
+        Assert.Contains("_fallbackCubeBuffer.DrawInstanced(_fallbackInstances, count);", fallback);
         Assert.Contains("GetShader(\"cube\").SetBool(\"useInstancing\", false);", fallback);
         Assert.Contains("shader.SetBool(\"useInstancing\", instanced);", bind);
         Assert.Matches(new Regex(@"if \(!instanced\)\s*\{\s*shader\.SetModelMatrix\(modelMatrix\);"), bind);
@@ -318,7 +332,6 @@ public class WorldInstanceBatchDrawerTests
         public int TotalInstances;
         public bool CaptureMatrices;
         public readonly List<Matrix4> Captured = new();
-        public InstanceMatrixBuffer? LastInstances;
         public Matrix4[]? LastMatrices;
 
         public void DrawModelInstances(Camera camera, AnimatedModel animation, string shaderName, Matrix4[] modelMatrices, int count)
@@ -330,12 +343,10 @@ public class WorldInstanceBatchDrawerTests
         public void DrawFallbackInstances(
             Camera camera,
             GeometryMaterialId materialId,
-            InstanceMatrixBuffer instances,
             Matrix4[] modelMatrices,
             int count)
         {
             FallbackCalls++;
-            LastInstances = instances;
             Record(modelMatrices, count);
         }
 

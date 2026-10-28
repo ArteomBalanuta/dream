@@ -76,8 +76,10 @@ public class Wave12InstancedAttributeStateTests
     {
         string render = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
         string fallback = Method(render, "public void DrawFallbackInstances(");
-        Assert.True(fallback.IndexOf("if (count == 0)", StringComparison.Ordinal) < fallback.IndexOf("instances.Upload(", StringComparison.Ordinal));
-        Assert.True(fallback.IndexOf("instances.Upload(", StringComparison.Ordinal) < fallback.IndexOf("DrawInstanced(", StringComparison.Ordinal));
+        int upload = fallback.IndexOf("_fallbackInstances.Upload(", StringComparison.Ordinal);
+        Assert.True(upload >= 0);
+        Assert.True(fallback.IndexOf("if (count == 0)", StringComparison.Ordinal) < upload);
+        Assert.True(upload < fallback.IndexOf("DrawInstanced(", StringComparison.Ordinal));
 
         string model = Read("dream/Rendering/Models/AnimatedModel.cs");
         string prepared = Method(model[model.LastIndexOf("public void RenderPreparedInstanced(", StringComparison.Ordinal)..], "public void RenderPreparedInstanced(");

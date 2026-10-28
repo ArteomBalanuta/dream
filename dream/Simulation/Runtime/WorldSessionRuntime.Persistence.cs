@@ -504,10 +504,12 @@ public sealed partial class WorldSessionRuntime
         }
     }
 
-    // Also evicts the name's inventory and its _knownProfileNames entry: inventory is written
-    // through (every change queues its write when it happens, see PersistInventorySlot), so nothing
-    // is pending only in memory, and a later join reads the queued writes back through its prefetch
-    // (ordered behind them) or the synchronous fallback (which flushes them first).
+    // Also evicts the name's inventory and its _knownProfileNames entry. Inventory is written
+    // through (every change queues its write when it happens, see PersistInventorySlot), and a later
+    // join reads the queued writes back through its prefetch (ordered behind them) or the
+    // synchronous fallback (which flushes them first). The queue drops a write that fails, though,
+    // so an inventory whose writes may have failed is kept (or restored on the next load) instead
+    // of being replaced by stale rows; see EvictPlayerInventory.
     private void EvictCachedProfile(string playerName)
     {
         if (_profileCache.Remove(playerName, out PersistedPlayerProfile profile)
