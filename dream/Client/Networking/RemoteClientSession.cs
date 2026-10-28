@@ -530,11 +530,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
             Interlocked.Increment(ref _inboundFrameCount);
-            // A transfer whose final chunk never comes would otherwise hold every later message
-            // forever while the snapshots keep the silence watchdog satisfied.
-            _worldTransfers.CheckDeadline();
             if (payload.IsEmpty)
             {
+                // A transfer whose final chunk never comes would otherwise hold every later message
+                // forever while the frames keep the silence watchdog satisfied.
+                _worldTransfers.CheckDeadline();
                 continue;
             }
 
@@ -600,6 +600,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
             }
 
             LogInbound(decoded.Envelope, serverMessage);
+            // Checked after the frame was accepted, so a chunk that arrives right at a bound counts
+            // as progress, and a final chunk completes its transfer instead of being rejected. A
+            // transfer whose final chunk never comes would otherwise hold every later message
+            // forever while the snapshots keep the silence watchdog satisfied.
+            _worldTransfers.CheckDeadline();
         }
     }
 

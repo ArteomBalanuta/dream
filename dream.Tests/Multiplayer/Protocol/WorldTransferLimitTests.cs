@@ -97,7 +97,8 @@ public sealed class WorldTransferLimitTests(ITestOutputHelper output)
     public void Deadline_CountsFromTheCarrier_OnTheInjectedClock()
     {
         ManualTimeProvider clock = new();
-        WorldTransferReassembler reassembler = new(new WorldTransferLimits { Deadline = TimeSpan.FromSeconds(60) }, clock);
+        // The progress timeout is off: this is about the total deadline alone.
+        WorldTransferReassembler reassembler = new(new WorldTransferLimits { Deadline = TimeSpan.FromSeconds(60), ProgressTimeout = TimeSpan.Zero }, clock);
         reassembler.CheckDeadline();
         clock.Advance(TimeSpan.FromSeconds(500));
         reassembler.CheckDeadline(); // No transfer in progress: nothing to time.
@@ -114,7 +115,7 @@ public sealed class WorldTransferLimitTests(ITestOutputHelper output)
     public void Deadline_DoesNotCarryOverToTheNextTransfer()
     {
         ManualTimeProvider clock = new();
-        WorldTransferReassembler reassembler = new(new WorldTransferLimits { Deadline = TimeSpan.FromSeconds(60) }, clock);
+        WorldTransferReassembler reassembler = new(new WorldTransferLimits { Deadline = TimeSpan.FromSeconds(60), ProgressTimeout = TimeSpan.Zero }, clock);
         reassembler.Accept(Carrier(1), _ => { });
         clock.Advance(TimeSpan.FromSeconds(50));
         Assert.NotNull(reassembler.Accept(Chunk(1, 0, final: true, Cubes(4, 4, 4, 3)), _ => { }));
@@ -122,7 +123,9 @@ public sealed class WorldTransferLimitTests(ITestOutputHelper output)
         reassembler.Accept(Carrier(2), _ => { });
         clock.Advance(TimeSpan.FromSeconds(50));
         reassembler.CheckDeadline();
-        Assert.Equal(TimeSpan.FromSeconds(120), WorldTransferLimits.Default.Deadline);
+        // Wave 10 fix loop 2 (reviewer S3): 300 s in total, 30 s without a chunk.
+        Assert.Equal(TimeSpan.FromSeconds(300), WorldTransferLimits.Default.Deadline);
+        Assert.Equal(TimeSpan.FromSeconds(30), WorldTransferLimits.Default.ProgressTimeout);
     }
 
     // The client session: a carrier whose final chunk never comes, while snapshots keep arriving
@@ -159,6 +162,194 @@ public sealed class WorldTransferLimitTests(ITestOutputHelper output)
         Assert.StartsWith("World transfer failed:", session.DisconnectReason);
         Assert.Contains("did not finish within 60 s", session.DisconnectReason);
         Assert.False(session.TryDequeueInbound(out _));
+    }
+
+    // ---- Progress-based deadline (wave 10 fix loop 2, reviewer S3) -----------------------------
+
+    // A World85k resync on a 12.5-15 KB/s link: a chunk every 9 s with a snapshot in between
+    // takes 270 s in total, past the old 120 s bound. It keeps making progress, so it completes.
+    [Fact]
+    public void SlowButSteadyTransfer_PastTheOld120sBound_Completes()
+    {
+        ManualTimeProvider clock = new();
+        WorldTransferReassembler reassembler = new(WorldTransferLimits.Default, clock);
+        List<IServerToClientMessage> delivered = [];
+        reassembler.Accept(Carrier(5), delivered.Add);
+        const int chunks = 30;
+        WorldTransferReceiver? completed = null;
+        for (int i = 0; i < chunks; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(4.5));
+            reassembler.Accept(Snapshot((ulong)i), delivered.Add);
+            reassembler.CheckDeadline();
+            clock.Advance(TimeSpan.FromSeconds(4.5));
+            completed = reassembler.Accept(Chunk(5, i, final: i == chunks - 1, Cubes(64, 8, 64, 3)), delivered.Add);
+            reassembler.CheckDeadline();
+        }
+
+        Assert.NotNull(completed);
+        Assert.Equal(chunks, completed.ChunksReceived);
+        Assert.Null(reassembler.Current);
+        ServerSnapshotMessage world = Assert.IsType<ServerSnapshotMessage>(delivered[0]);
+        Assert.NotNull(world.Snapshot.World);
+        Assert.Equal(chunks + 1, delivered.Count);
+    }
+
+    // Snapshots keep arriving (so the silence watchdog would stay satisfied) but no chunk does:
+    // 30 s after the last chunk the transfer fails with its reason, long before the 300 s total.
+    [Fact]
+    public void StalledTransfer_WithNoChunkFor30s_FailsWithItsReason()
+    {
+        ManualTimeProvider clock = new();
+        WorldTransferReassembler reassembler = new(WorldTransferLimits.Default, clock);
+        reassembler.Accept(Carrier(6), _ => { });
+        clock.Advance(TimeSpan.FromSeconds(20));
+        reassembler.Accept(Chunk(6, 0, final: false, Cubes(8, 8, 8, 2)), _ => { });
+        reassembler.CheckDeadline();
+        for (int i = 0; i < 6; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            reassembler.Accept(Snapshot((ulong)i), _ => { });
+            reassembler.CheckDeadline(); // 30 s exactly is still inside the bound.
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        reassembler.Accept(Snapshot(6), _ => { });
+        WorldTransferLimitException error = Assert.Throws<WorldTransferLimitException>(reassembler.CheckDeadline);
+        Assert.Contains("World transfer 6 stalled: no chunk for 30 s", error.Message);
+        Assert.Contains("1 chunks", error.Message);
+    }
+
+    // The carrier counts as progress until the first chunk: a transfer whose first chunk never
+    // comes fails 30 s after the carrier.
+    [Fact]
+    public void StalledTransfer_BeforeItsFirstChunk_FailsAfterTheProgressTimeout()
+    {
+        ManualTimeProvider clock = new();
+        WorldTransferReassembler reassembler = new(WorldTransferLimits.Default, clock);
+        reassembler.Accept(Carrier(8), _ => { });
+        clock.Advance(TimeSpan.FromSeconds(30));
+        reassembler.CheckDeadline();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        WorldTransferLimitException error = Assert.Throws<WorldTransferLimitException>(reassembler.CheckDeadline);
+        Assert.Contains("stalled: no chunk for 30 s", error.Message);
+    }
+
+    // The total deadline still ends a transfer that trickles in forever, chunk by chunk.
+    [Fact]
+    public void TricklingTransfer_EndsAtTheTotalDeadline()
+    {
+        ManualTimeProvider clock = new();
+        WorldTransferReassembler reassembler = new(WorldTransferLimits.Default, clock);
+        reassembler.Accept(Carrier(9), _ => { });
+        int index = 0;
+        for (; index < 30; index++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            reassembler.Accept(Chunk(9, index, final: false, Cubes(64, 8, 64, 1)), _ => { });
+            reassembler.CheckDeadline();
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        reassembler.Accept(Chunk(9, index, final: false, Cubes(64, 8, 64, 1)), _ => { });
+        WorldTransferLimitException error = Assert.Throws<WorldTransferLimitException>(reassembler.CheckDeadline);
+        Assert.Contains("did not finish within 300 s", error.Message);
+    }
+
+    // The client session checks the bounds after it accepted a frame: a final chunk arriving
+    // just past the total deadline completes its transfer instead of being rejected, and the
+    // session stays connected with the world delivered.
+    [Fact]
+    public async Task Session_FinalChunkArrivingRightAtTheDeadline_CompletesTheTransfer()
+    {
+        ManualTimeProvider clock = new();
+        GatedTransport transport = new("final-at-deadline");
+        await using RemoteClientSession session = new(
+            transport,
+            new TransportJsonCodec(),
+            new LengthPrefixedMessageFramer(1 << 20),
+            new RemoteClientOptions("127.0.0.1", 1, "session-a", "A", "limits"),
+            clock,
+            new WorldTransferLimits { Deadline = TimeSpan.FromSeconds(60) });
+        session.StartBackgroundReceive();
+        ulong sequence = 1;
+        transport.Feed(Frame(Carrier(11), sequence++));
+        transport.Feed(Frame(Chunk(11, 0, final: false, Cubes(8, 8, 8, 2)), sequence++));
+        await WaitUntilAsync(() => session.InboundFrameCount == 2);
+        clock.Advance(TimeSpan.FromSeconds(25));
+        transport.Feed(Frame(Chunk(11, 1, final: false, Cubes(8, 8, 8, 2)), sequence++));
+        transport.Feed(Frame(Snapshot(1), sequence++));
+        await WaitUntilAsync(() => session.InboundFrameCount == 4);
+        // The frame count goes up just before a frame is processed; let the last one finish
+        // before the clock passes the deadline (were it checked late, it would see at most 50 s).
+        await Task.Delay(100);
+        Assert.True(session.IsReceivingWorld);
+        clock.Advance(TimeSpan.FromSeconds(25));
+
+        // 60.5 s after the carrier and 35.5 s after the last chunk: past both bounds, but this
+        // frame is the final chunk, so it is accepted before the bounds are checked.
+        clock.Advance(TimeSpan.FromSeconds(10.5));
+        transport.Feed(Frame(Chunk(11, 2, final: true, Cubes(8, 8, 8, 2)), sequence++));
+        await WaitUntilAsync(() => session.WorldTransfersCompleted == 1 || !session.IsConnected);
+        Assert.True(session.IsConnected, session.DisconnectReason);
+        Assert.False(session.IsReceivingWorld);
+        Assert.True(session.TryDequeueInbound(out IServerToClientMessage? first));
+        ServerSnapshotMessage world = Assert.IsType<ServerSnapshotMessage>(first);
+        Assert.Equal(6, world.Snapshot.World!.Value.PlacedCubes!.Count);
+        Assert.True(session.TryDequeueInbound(out IServerToClientMessage? held));
+        Assert.Equal(1UL, Assert.IsType<ServerSnapshotMessage>(held).Snapshot.ServerTick);
+    }
+
+    // The session on the default limits: a transfer that progresses every 10 s for 200 s (past
+    // the old 120 s bound) completes; one that then stalls for more than 30 s ends the session
+    // with the stall reason.
+    [Fact]
+    public async Task Session_SlowSteadyTransferCompletes_AndAStalledOneEndsWithItsReason()
+    {
+        ManualTimeProvider clock = new();
+        GatedTransport transport = new("slow-then-stalled");
+        await using RemoteClientSession session = new(
+            transport,
+            new TransportJsonCodec(),
+            new LengthPrefixedMessageFramer(1 << 20),
+            new RemoteClientOptions("127.0.0.1", 1, "session-a", "A", "limits"),
+            clock,
+            WorldTransferLimits.Default);
+        session.StartBackgroundReceive();
+        ulong sequence = 1;
+        int frames = 0;
+        transport.Feed(Frame(Carrier(21), sequence++));
+        await WaitUntilAsync(() => session.InboundFrameCount == 1);
+        frames = 1;
+        for (int i = 0; i < 20; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            transport.Feed(Frame(Chunk(21, i, final: i == 19, Cubes(64, 8, 64, 2)), sequence++));
+            frames++;
+            await WaitUntilAsync(() => session.InboundFrameCount == frames);
+        }
+
+        Assert.True(session.IsConnected, session.DisconnectReason);
+        Assert.Equal(1, session.WorldTransfersCompleted);
+
+        transport.Feed(Frame(Carrier(22), sequence++));
+        transport.Feed(Frame(Chunk(22, 0, final: false, Cubes(64, 8, 64, 2)), sequence++));
+        frames += 2;
+        await WaitUntilAsync(() => session.InboundFrameCount == frames);
+        for (int i = 0; i < 6; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            transport.Feed(Frame(Snapshot((ulong)i), sequence++));
+            frames++;
+            await WaitUntilAsync(() => session.InboundFrameCount == frames);
+            Assert.True(session.IsConnected, session.DisconnectReason);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        transport.Feed(Frame(Snapshot(99), sequence));
+        await WaitUntilAsync(() => !session.IsConnected);
+        Assert.StartsWith("World transfer failed:", session.DisconnectReason);
+        Assert.Contains("World transfer 22 stalled: no chunk for 30 s", session.DisconnectReason);
     }
 
     // ---- Compact world validation --------------------------------------------------------------

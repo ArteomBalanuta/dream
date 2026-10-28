@@ -146,10 +146,23 @@ public sealed record WorldTransferLimits
     // has chunks; 4096 chunks of 64 KB would be a 256 MB world.
     public int MaxHeldMessages { get; init; } = 4096;
 
-    // From the carrier's arrival to the final chunk. 120 s covers the 1.1 MB World85k resync at
-    // the slowest link the server keeps (a 64 KB chunk inside the 5 s send-stall timeout, about
-    // 12.5 KB/s: ~90 s). Zero or less turns the deadline off.
-    public TimeSpan Deadline { get; init; } = TimeSpan.FromSeconds(120);
+    // Two bounds, both checked by WorldTransferReassembler.CheckDeadline:
+    //
+    // ProgressTimeout: from the carrier, or the latest chunk, to the next chunk. This is what
+    // catches a transfer that stopped. The server keeps a connection only while each frame write
+    // finishes inside the 5 s send-stall timeout (plus its size allowance), and while a transfer
+    // runs its writer alternates one chunk and one queued message, so on any link the server keeps
+    // a chunk follows the previous one within about two such writes (~10 s). 30 s is three times
+    // that. Zero or less turns it off.
+    public TimeSpan ProgressTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    // From the carrier's arrival to the final chunk, however steadily the chunks come: a backstop
+    // for a transfer that trickles forever. The 1.1 MB World85k resync at the slowest link the
+    // server keeps (a 64 KB chunk inside the 5 s send-stall timeout, about 12.5 KB/s) takes ~90 s
+    // for its chunks alone, and the snapshot the writer sends between each pair of chunks pushes
+    // it past 120 s on a 12.5-15 KB/s link; 300 s leaves more than twice that. Zero or less turns
+    // it off.
+    public TimeSpan Deadline { get; init; } = TimeSpan.FromSeconds(300);
 
     // The item budget for a world of these dimensions.
     public long MaxItemsFor(int width, int height, int depth)
@@ -169,7 +182,8 @@ public sealed class WorldTransferLimitException(string message) : InvalidOperati
 // with the assembled world followed by the held messages. The consumer so sees exactly the
 // protocol v2 message order. Chunks themselves are never delivered. Not thread-safe: one reader.
 // Every transfer is bounded by Limits: items and held messages in Accept, the deadline in
-// CheckDeadline, which the client's receive loop calls for every frame it drains.
+// CheckDeadline, which the client's receive loop calls after every frame it drains (after the
+// frame was accepted, so a final chunk that arrives just at a bound still completes its transfer).
 public sealed class WorldTransferReassembler
 {
     private readonly TimeProvider _timeProvider;
@@ -193,22 +207,38 @@ public sealed class WorldTransferReassembler
     public WorldTransferReceiver? Current => Volatile.Read(ref _current);
 
     // Throws WorldTransferLimitException when the transfer in progress started more than
-    // Limits.Deadline ago. Allocation-free when there is none or it is inside the deadline.
+    // Limits.Deadline ago, or received no chunk (counting the carrier as the start) for more than
+    // Limits.ProgressTimeout. Allocation-free when there is none or it is inside both bounds.
     public void CheckDeadline()
     {
         WorldTransferReceiver? current = _current;
-        TimeSpan deadline = Limits.Deadline;
-        if (current == null || deadline <= TimeSpan.Zero)
+        if (current == null)
         {
             return;
         }
 
+        TimeSpan deadline = Limits.Deadline;
         TimeSpan elapsed = _timeProvider.GetElapsedTime(current.StartedTimestamp);
-        if (elapsed > deadline)
+        if (deadline > TimeSpan.Zero && elapsed > deadline)
         {
             throw new WorldTransferLimitException(
                 $"World transfer {current.TransferId} did not finish within {deadline.TotalSeconds:0.###} s " +
                 $"({current.ChunksReceived} chunks, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s).");
+        }
+
+        TimeSpan progressTimeout = Limits.ProgressTimeout;
+        if (progressTimeout <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        TimeSpan stalled = _timeProvider.GetElapsedTime(current.LastProgressTimestamp);
+        if (stalled > progressTimeout)
+        {
+            throw new WorldTransferLimitException(
+                $"World transfer {current.TransferId} stalled: no chunk for {progressTimeout.TotalSeconds:0.###} s " +
+                $"({current.ChunksReceived} chunks, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s; " +
+                $"last progress {stalled.TotalSeconds:0.#} s ago).");
         }
     }
 
@@ -230,6 +260,7 @@ public sealed class WorldTransferReassembler
 
             if (!current.Add(chunk))
             {
+                current.LastProgressTimestamp = _timeProvider.GetTimestamp();
                 return null;
             }
 
@@ -313,6 +344,7 @@ public sealed class WorldTransferReceiver
             ?? throw new ArgumentException("The message does not announce a world transfer.", nameof(carrier));
         _limits = limits;
         StartedTimestamp = startedTimestamp;
+        LastProgressTimestamp = startedTimestamp;
     }
 
     public IServerToClientMessage Carrier { get; }
@@ -321,6 +353,10 @@ public sealed class WorldTransferReceiver
 
     // When the carrier arrived, a timestamp of the reassembler's TimeProvider.
     public long StartedTimestamp { get; }
+
+    // When the latest chunk (or, before the first, the carrier) arrived, on the same clock. Set by
+    // the reassembler.
+    public long LastProgressTimestamp { get; internal set; }
 
     public int ChunksReceived { get; private set; }
 
