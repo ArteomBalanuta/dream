@@ -32,6 +32,9 @@ public sealed class WorldSessionRuntime : IDisposable
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
 
+    // Actor id of the first enemy a fresh world spawns; each later spawn takes the next id.
+    public const int FirstEnemyActorId = 2000;
+
     // Seed used when the host supplies none. Every attack roll derives from this seed plus the
     // tick, session, action sequence and target, so a fixed default keeps runs reproducible.
     public const ulong DefaultSimulationSeed = 0x6472_6561_6D5F_7631UL;
@@ -107,6 +110,11 @@ public sealed class WorldSessionRuntime : IDisposable
     private bool _hasDeferredPrimarySeatUse;
     private PlayerCommandFrame _deferredPrimarySeatUseFrame;
     private int _nextRemoteActorId = 2;
+    // Every spawned enemy gets a fresh actor id, so a respawn is a different actor on the wire
+    // and a client drops the dead enemy's interpolation buffer instead of sliding it to the new
+    // spawn. Part of simulation state: same-seed servers with the same history allocate the same
+    // ids. Persisted enemies advance it past their ids when the world is restored.
+    private int _nextEnemyActorId = FirstEnemyActorId;
     private long _nextItemInstanceId = 1;
 
     public WorldSessionRuntime(
@@ -1073,6 +1081,7 @@ public sealed class WorldSessionRuntime : IDisposable
 
         if (!cubeReceipt.WasFatal)
         {
+            UpdatePersistedCubeHealth(record);
             return new AuthoritativeActionResult(
                 message.SessionId.Value,
                 message.ActionSequence,
@@ -1247,7 +1256,7 @@ public sealed class WorldSessionRuntime : IDisposable
         EnemyCombatant combatant = new(
             () => spawnPosition,
             _events,
-            actorId: 2000,
+            actorId: AllocateEnemyActorId(),
             maxHealth: 100,
             attackDamage: 12,
             attackIntervalSeconds: 1.05f,
@@ -1266,6 +1275,14 @@ public sealed class WorldSessionRuntime : IDisposable
             level: 1);
         _enemies.Add(wolf);
         PersistEnemy(wolf);
+    }
+
+    // Monotonic and deterministic. A wolf is only spawned when no enemy is active (startup or
+    // EnsureWolfExists), and a restore advances the counter past every persisted enemy, so the
+    // id is never held by a live or persisted enemy.
+    private int AllocateEnemyActorId()
+    {
+        return _nextEnemyActorId++;
     }
 
     private void EnsureWolfExists()
@@ -1769,6 +1786,8 @@ public sealed class WorldSessionRuntime : IDisposable
         foreach (PersistedEnemyInstance enemy in enemies)
         {
             _enemies.Add(CreatePersistedEnemy(enemy));
+            // A restored world never hands a later spawn an id it already persisted.
+            _nextEnemyActorId = Math.Max(_nextEnemyActorId, enemy.EnemyId + 1);
         }
     }
 
@@ -1889,6 +1908,21 @@ public sealed class WorldSessionRuntime : IDisposable
             world.DeleteCubeFracturePieces(cubeId);
             world.SavePlacedCube(persisted);
         });
+    }
+
+    // Keeps the in-memory persisted row's health equal to the live record's after a non-fatal
+    // hit, so an identity repair never brings back older health. The database row itself is
+    // refreshed by the next checkpoint (CapturePlacedCubeCheckpoint), not on every hit.
+    private void UpdatePersistedCubeHealth(WorldObjectRecord record)
+    {
+        if (_persistedCubes.TryGetValue(record.Actor.Id, out PersistedPlacedCube cached))
+        {
+            _persistedCubes[record.Actor.Id] = cached with
+            {
+                CurrentHealth = record.Health.CurrentHealth,
+                MaxHealth = record.Health.MaxHealth
+            };
+        }
     }
 
     private void DeletePersistedPlacedCube(int cubeId)
@@ -2132,11 +2166,14 @@ public sealed class WorldSessionRuntime : IDisposable
             return record;
         }
 
+        // Only identity (id and owner) is repaired: health is live state that combat changes
+        // between checkpoints, so a record whose identity still matches keeps its own health.
+        // When the registry link was lost (the resolver registered a fresh record with a new id
+        // and no owner), the record's health is meaningless and the cached row's health, kept
+        // current by every hit (UpdatePersistedCubeHealth), is restored with the identity.
         bool identityMatches =
             record.Actor.Id == persistedCube.CubeId &&
-            string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase) &&
-            record.Health.CurrentHealth == persistedCube.CurrentHealth &&
-            record.Health.MaxHealth == persistedCube.MaxHealth;
+            string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase);
         if (identityMatches)
         {
             return record;

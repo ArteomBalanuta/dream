@@ -5,6 +5,7 @@ using Dream.Client.Presentation;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -13,14 +14,14 @@ using Dream.Simulation.World;
 namespace Dream.Tests.Integration;
 
 // NET-4 under real replication: the production authoritative host runs the runtime's own wolf
-// (actor 2000, 2.8 m/s) chasing a walking player, the player kills it and it respawns at its spawn
-// point. Every snapshot goes through the wire codec and feeds a ServerTickClock and a
+// (first actor id 2000, 2.8 m/s) chasing a walking player, the player kills it and it respawns at
+// its spawn point under a fresh actor id. Every snapshot goes through the wire codec and feeds a ServerTickClock and a
 // ClientScenePresenter frame by frame, the PlayScene order. A lagging client is modelled with the
 // server's own per-connection merge (ServerSnapshotEnvelope.TryCoalesce, what ServerConnection
 // does while a writer is blocked): runs of snapshots are merged and arrive as one.
 public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper output)
 {
-    private const int WolfActorId = 2000;
+    private const int WolfActorId = WorldSessionRuntime.FirstEnemyActorId;
     private const string Session = "session-a";
     private const float Tolerance = 1e-4f;
     private const float OnPathTolerance = 0.02f;
@@ -105,14 +106,14 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
     // spawn instead of snapping when the client never sees it missing. On the authoritative host
     // the kill is resolved after the enemies update (deferred primary use), so the kill tick's
     // snapshot has no wolf and the next tick's has the respawned wolf under the same actor id
-    // (EnsureWolfExists reuses 2000). ClientScenePresenter.ApplyEnemySample
+    // (EnsureWolfExists used to reuse 2000). ClientScenePresenter.ApplyEnemySample
     // (ClientScenePresenter.cs:326-356) restarts the buffer only when the wolf was missing from a
     // snapshot or moved more than EnemyTeleportDistance (4 m). When the client lags, the server
     // merges the kill tick's snapshot into the next one (ServerSnapshotEnvelope.TryCoalesce keeps
     // the newer actors), the absence is lost, and a respawn within 4 m of the death position is
-    // interpolated as a slide. The presenter has no respawn signal to use instead (health jumping
-    // back to full, or a life counter, would be one).
-    [Fact(Skip = "Production bug: ClientScenePresenter.ApplyEnemySample (ClientScenePresenter.cs:349-353) only restarts an enemy buffer when the wolf moved > 4 m or was seen missing; with the kill tick's snapshot coalesced away (ServerSnapshotEnvelope.TryCoalesce keeps only the newer actors) a wolf respawning within 4 m of where it died slides back to its spawn.")]
+    // interpolated as a slide. Fixed on the server: every spawn takes a fresh actor id
+    // (WorldSessionRuntime.AllocateEnemyActorId), so the respawn is a new actor with a new buffer.
+    [Fact]
     public void WolfKilledNearItsSpawn_WithTheDeathSnapshotCoalesced_SnapsInsteadOfSliding()
     {
         RunNearSpawnDeath(lagDeathTick: true);
@@ -124,6 +125,21 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
     public void WolfKilledNearItsSpawn_WithEverySnapshotDelivered_Snaps()
     {
         RunNearSpawnDeath(lagDeathTick: false);
+    }
+
+    // The server side of the fix: the respawned wolf is a different actor, so a client that never
+    // saw the death still sees a new actor id and starts a fresh buffer for it.
+    [Fact]
+    public void RespawnedWolf_TakesAFreshActorId()
+    {
+        using EnemyReplicationDriver driver = new(output);
+        driver.Idle(ticks: 60);
+        driver.FightUntilTheWolfDies(lagDeathTick: false);
+        driver.Idle(ticks: 5);
+
+        Assert.Equal(WolfActorId, driver.WolfIdOfLife(1));
+        Assert.Equal(WolfActorId + 1, driver.WolfIdOfLife(2));
+        Assert.Equal(WolfActorId + 1, driver.CurrentWolf!.Combatant.Actor.Id);
     }
 
     private void RunNearSpawnDeath(bool lagDeathTick)
@@ -231,7 +247,8 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
 
     // The production authoritative host with one session, ticked in-process; each snapshot is
     // encoded and decoded like on the wire, merged while the client lags, and presented frame by
-    // frame. It tracks the wolf's lives on the server (a life ends when actor 2000 is missing).
+    // frame. It tracks the wolf's lives on the server (a life ends when the wolf is missing or its
+    // actor id changes; each life has its own actor id).
     private sealed class EnemyReplicationDriver : IDisposable
     {
         private readonly ITestOutputHelper _output;
@@ -241,11 +258,13 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         private readonly ServerTickClock _clock = new();
         private readonly List<(int Tick, int Life, Vector3 Position)> _serverWolf = [];
         private readonly Dictionary<ulong, int> _lifeByTick = [];
+        private readonly Dictionary<int, int> _wolfIdByLife = [];
         private ServerSnapshotEnvelope? _held;
         private ulong _sequence;
         private ulong _newestDelivered;
         private int _life = 1;
         private bool _wolfWasPresent = true;
+        private int _trackedWolfId = WolfActorId;
         private Vector3? _lastDeliveredWolf;
         private int _lastDeliveredLife;
         private int _frame;
@@ -265,6 +284,8 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
             _ = _host.CreateSnapshotMessage();
             _newestDelivered = accepted.CurrentServerTick;
             Assert.NotNull(WolfPosition);
+            Assert.Equal(WolfActorId, CurrentWolf!.Combatant.Actor.Id);
+            _wolfIdByLife[_life] = WolfActorId;
         }
 
         public WorldSessionRuntime Runtime { get; }
@@ -275,12 +296,14 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
 
         public List<Delivery> Deliveries { get; } = [];
 
-        public float WolfMoveSpeed => Runtime.Enemies.ActiveActors.Single(enemy => enemy.Combatant.Actor.Id == WolfActorId).MoveSpeed;
+        public float WolfMoveSpeed => CurrentWolf!.MoveSpeed;
 
-        public Vector3? WolfPosition => Runtime.Enemies.ActiveActors
-            .Where(enemy => enemy.Combatant.Actor.Id == WolfActorId && enemy.IsActive)
-            .Select(enemy => (Vector3?)enemy.Position)
-            .FirstOrDefault();
+        // The runtime's one wolf, whatever actor id its current life has.
+        public EnemyActor? CurrentWolf => Runtime.Enemies.ActiveActors.SingleOrDefault(enemy => enemy.IsActive);
+
+        public Vector3? WolfPosition => CurrentWolf?.Position;
+
+        public int WolfIdOfLife(int life) => _wolfIdByLife[life];
 
         public PlayerCommandFrame Walk(float forward)
         {
@@ -308,7 +331,7 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
             for (int i = 0; i < 2000; i++)
             {
                 Vector3 eye = PlayerPosition + new Vector3(0f, 0.35f, 0f);
-                EnemyActor wolf = Runtime.Enemies.ActiveActors.Single(enemy => enemy.Combatant.Actor.Id == WolfActorId);
+                EnemyActor wolf = CurrentWolf!;
                 Vector3 toWolf = wolf.Combatant.GetCombatAnchorWorldPosition() - eye;
                 Step(Command(PlayerInteractionMode.Combat, PlayerMoveIntent.None, toWolf.Normalized(), attack: true), lagging: false, holdIfTheWolfDied: lagDeathTick);
                 if (WolfPosition == null)
@@ -399,8 +422,8 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
 
         private void TrackServerWolf()
         {
-            Vector3? wolf = WolfPosition;
-            if (wolf == null)
+            EnemyActor? current = CurrentWolf;
+            if (current == null)
             {
                 if (_wolfWasPresent)
                 {
@@ -411,21 +434,32 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
                 return;
             }
 
+            int wolfId = current.Combatant.Actor.Id;
+            if (_wolfWasPresent && wolfId != _trackedWolfId)
+            {
+                _life++;
+            }
+
             _wolfWasPresent = true;
+            _trackedWolfId = wolfId;
+            _wolfIdByLife[_life] = wolfId;
+            Vector3? wolf = current.Position;
             _lifeByTick[Runtime.CurrentServerTick] = _life;
             _serverWolf.Add((Tick, _life, wolf.Value));
         }
 
         private void Deliver(ServerSnapshotEnvelope snapshot)
         {
-            int before = _presenter.GetRemoteEnemySampleCount(WolfActorId);
+            ActorSnapshot? wolf = snapshot.Actors.Where(actor => actor.Kind == CreatureKind.Enemy && actor.IsAlive).Cast<ActorSnapshot?>().SingleOrDefault();
+            int deliveredWolfId = wolf?.ActorId ?? WolfActorId;
+            int before = _presenter.GetRemoteEnemySampleCount(deliveredWolfId);
             _clock.Observe(snapshot.ServerTick);
             _presenter.ApplySnapshot(snapshot);
-            int after = _presenter.GetRemoteEnemySampleCount(WolfActorId);
-            ActorSnapshot? wolf = snapshot.Actors.Where(actor => actor.ActorId == WolfActorId && actor.IsAlive).Cast<ActorSnapshot?>().FirstOrDefault();
+            int after = _presenter.GetRemoteEnemySampleCount(deliveredWolfId);
             if (wolf != null)
             {
                 int life = _lifeByTick[snapshot.ServerTick];
+                Assert.Equal(_wolfIdByLife[life], wolf.Value.ActorId);
                 Deliveries.Add(new Delivery(
                     snapshot.ServerTick,
                     snapshot.ServerTick - _newestDelivered,
@@ -448,8 +482,10 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         private void Render()
         {
             double renderTick = _clock.RenderTick;
-            bool hasPose = _presenter.TryGetEnemyRenderPose(WolfActorId, renderTick, out InterpolatedActorPose pose);
             int life = _lifeByTick.TryGetValue(_newestDelivered, out int deliveredLife) ? deliveredLife : 0;
+            // The client draws the wolf of the newest delivered life, under that life's actor id.
+            int wolfId = _wolfIdByLife.TryGetValue(life, out int id) ? id : WolfActorId;
+            bool hasPose = _presenter.TryGetEnemyRenderPose(wolfId, renderTick, out InterpolatedActorPose pose);
             Samples.Add(new RenderSample(_frame++, renderTick, _newestDelivered, life, hasPose, hasPose ? pose.Position : default));
         }
 

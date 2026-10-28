@@ -72,8 +72,8 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
         // A plain restart: the stored seed comes back, and the built cube comes back as it was
         // left: whole in its cell, or as its persisted fracture pieces. Whether it broke within
-        // the script depends on the seed's rolls and on the checkpoint bug covered by the skipped
-        // PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits test. Generated terrain that the
+        // the script depends on the seed's rolls (PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits
+        // pins that damage accumulates between hits). Generated terrain that the
         // secondaries' attacks fracture is not persisted, by design.
         using (ServerPersistenceBundle reopened = database.OpenBundle())
         {
@@ -122,15 +122,13 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             $"first fracture {first.FractureTick}, roll ticks {first.HitTicks.Count}, rubble {first.RubblePieces}");
     }
 
-    // Regression for a production bug: on a persistent world a player-placed cube's damage is
-    // reverted by the next hit until a 5 s checkpoint refreshes the in-memory persisted copy.
-    // ProcessCombatUseAction calls RepairCubeRecordFromPersistence before every hit
-    // (WorldSessionRuntime.cs:1059), which treats a live health that differs from the cached
-    // PersistedPlacedCube (still full health from placement, since a non-fatal hit never updates
-    // _persistedCubes) as an identity mismatch (WorldSessionRuntime.cs:2138) and rebuilds the record
-    // with the cached health (WorldSessionRuntime.cs:2145). A cube that is not one-shot then cannot
-    // be broken until a checkpoint lands between two hits.
-    [Fact(Skip = "Production bug: WorldSessionRuntime.RepairCubeRecordFromPersistence (WorldSessionRuntime.cs:1059, 2138-2151) resets a placed cube's health to the placement-time persisted value before every hit, so damage between persistence checkpoints is lost.")]
+    // Regression for a production bug: on a persistent world a player-placed cube's damage was
+    // reverted by the next hit until a 5 s checkpoint refreshed the in-memory persisted copy.
+    // ProcessCombatUseAction calls RepairCubeRecordFromPersistence before every hit, which treated
+    // a live health that differed from the cached PersistedPlacedCube (still full health from
+    // placement) as an identity mismatch and rebuilt the record with the cached health. Fixed: the
+    // repair compares identity (id, owner) only, and a non-fatal hit refreshes the cached health.
+    [Fact]
     public void PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits_AndBreaksBeforeTheFirstCheckpoint()
     {
         using TempDatabase database = new();

@@ -57,7 +57,7 @@ public sealed class WorldObjectRegistry
         int? actorId = null,
         string? ownerPlayerName = null)
     {
-        return Register(
+        WorldObjectRecord record = Register(
             cube,
             () => cube.Position + new Vector3(0f, cube.Side * 0.75f, 0f),
             () => map.RemoveCube(cube),
@@ -66,6 +66,13 @@ public sealed class WorldObjectRegistry
             currentHealth,
             actorId,
             ownerPlayerName);
+
+        // Every registration path (placement, persistence restore, rebinds, identity repair,
+        // snapshot restore after a map rebuild) keys the map's replicated id to the actor id the
+        // server replicates for this cube, so the authoritative map resolves and checksums cubes
+        // by the same identity a client map receives. Map.RemoveCube drops the id again.
+        map.AssignReplicatedCubeId(cube, record.Actor.Id);
+        return record;
     }
 
     public WorldObjectRecord? TryGet(object sourceObject)
