@@ -200,10 +200,10 @@ public class StaticTerrainBatchedPassTests
         List<MethodBase> roots =
         [
             .. typeof(StaticWorldChunkRenderer).GetMethods(All).Where(method => method.Name == nameof(StaticWorldChunkRenderer.Draw)),
-            .. glStore.GetMethods(All).Where(method => method.Name is "Contains" or "BeginPass" or "BindMaterial" or "Draw" or "EndPass"),
+            .. glStore.GetMethods(All).Where(method => method.Name is "Contains" or "TryGetDrawHandle" or "BeginPass" or "BindMaterial" or "Draw" or "EndPass"),
         ];
         Assert.Equal(2, roots.Count(method => method.DeclaringType == typeof(StaticWorldChunkRenderer)));
-        Assert.Equal(5, roots.Count(method => method.DeclaringType == glStore));
+        Assert.Equal(7, roots.Count(method => method.DeclaringType == glStore));
 
         HashSet<MethodBase> reached = CallGraph.Reachable(roots, dream);
 

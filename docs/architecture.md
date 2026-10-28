@@ -31,13 +31,34 @@ Production code uses the `Dream` root namespace with folder-matched file-scoped 
 
 - `Dream.Application.*` owns process startup, window shell, settings, and app-level runtime state.
 - `Dream.Client.*` owns desktop startup, input, presentation, replication intake, gameplay scene composition, and remote client networking.
-- `Dream.Server.*` owns headless server bootstrap and the dedicated host/service loop.
+- `Dream.Server.*` owns headless server bootstrap, the dedicated host/service loop, and the SQLite persistence implementations (`Dream.Server.Persistence`).
 - `Dream.Multiplayer.*` owns shared protocol, transport, session, and diagnostics seams.
-- `Dream.Simulation.*` owns authoritative world, player, enemy, combat, physics, and runtime state.
+- `Dream.Simulation.*` owns authoritative world, player, enemy, combat, physics, and runtime state. It also owns the combat-formula rules (`Dream.Simulation.Rules`) and the persistence ports and records (`Dream.Simulation.Persistence`: repository interfaces, `Persisted*` records, `PersistenceWriteQueue`, `IPersistenceWriteBatch`).
 - `Dream.Rendering.*` owns OpenGL, model loading, world/actor/HUD/viewmodel rendering, and visual asset definitions.
 - `Dream.Assets.*`, `Dream.Configuration.*`, and `Dream.Utilities.*` hold narrow cross-cutting helpers.
 
 Dependency-direction tests keep server sources from referencing client/rendering namespaces and keep protocol sources free from presentation/rendering dependencies. A future multi-project split should happen only after these folder and namespace boundaries stay stable.
+
+### Simulation does not reference Server (ARCH-2)
+
+Simulation is the lower layer; Server implements and composes it. `DependencyDirectionTests` enforces the rule: no source under `dream/Simulation` may reference `Dream.Server`, `Dream.Client`, `Dream.Rendering`, `Dream.Application`, ImGui, or OpenTK windowing/graphics (or `Dream.Configuration`/`GameSettings`). The same tests keep client sources off persistence and server rules, and `ClientSources_ReferenceServerOnlyFromAllowlistedFiles` pins the exact client files that may reference `Dream.Server`: `Networking/RemoteClientOptions.cs`, `Networking/RemoteClientSession.cs`, `Scenes/PlayScene.cs`, `Startup/ILocalServerHandle.cs`, `Startup/IntegratedLocalServerHandle.cs`, `Startup/NetworkSessionCoordinator.cs` and `Startup/OnDemandLocalServerHandle.cs`. The list is a ratchet: a file that stops referencing the server must leave it, and none may be added.
+
+How the seam is wired:
+
+- The combat-formula rules (`CombatFormulaService`, `CombatFormulaSet`, the expression engine) live in `Dream.Simulation.Rules`.
+- The persistence ports and records live in `Dream.Simulation.Persistence`. `RuntimePersistencePorts` (in `Dream.Simulation.Runtime`) bundles the repositories, formula service, checkpoint writer, `PersistenceWriteQueue`, simulation seed and an owner to dispose. `RuntimeAuthoritativeSessionHost.CreateDefault(RuntimePersistencePorts?)` takes it, and a host created without one persists nothing.
+- `ServerBootstrap.CreateRuntimeHost(ServerPersistenceBundle?)` builds the ports from the server's SQLite bundle (`CreateRuntimePersistencePorts`) and creates the host.
+- `PersistenceWriteQueue` runs its writes inside an `IPersistenceWriteBatch` from `WriteBatchFactory`. The default is a pass-through batch. `Dream.Server.Persistence.SqliteWriteBatch` replaces that default through a `[ModuleInitializer]` when the assembly loads, before any queue can start a worker. The initializer only sets a factory default inside the same assembly.
+- The SQLite repositories and schema bootstrap stay in `Dream.Server.Persistence`.
+
+### Stale-session takeover (NETR-8)
+
+A client that lost its connection (crash, network drop) often rejoins before the server has noticed the old socket is dead. `DedicatedServerHost` handles the rejoin by measuring the silence of the connection that holds the seat.
+
+- Liveness: each `ServerConnection` records when its last complete inbound frame arrived, on the connection options' clock. Empty keepalive frames count. `CheckLiveness` also closes a peer that exceeds the idle timeout or stalls a write (see `docs/configuration.md`, Connection liveness).
+- Takeover: a join for a session id, or a player name, that another connection holds takes the seat over when that holder has been silent for the takeover window. The window is intended to be 3 s for the same session id and 8 s for a name match (the integrator verifies the values against `DedicatedServerHost`). The old connection is released with its profile saved, the new one gets the seat and the saved profile, and `DedicatedServerService` closes the old transport.
+- Live holder: a holder heard from inside the window keeps the seat. The join is rejected with `SessionInUseRejectionReason` (same session id) or the duplicate-display-name reason (same name), so a second client cannot hijack a live player.
+- Joins are also rate limited (intended; limits are documented in `docs/configuration.md` once the integrator confirms them).
 
 ## Main Object Relationships
 
@@ -177,9 +198,9 @@ World mutation deltas carry a server-assigned `Sequence`, and `JoinAcceptedMessa
 - Join and resync worlds travel as chunked transfers (protocol v3, SCALE-1).
   - The tick captures the world into pooled flat arrays (`WorldSessionRuntime.CaptureWorldSnapshot`, `WorldSnapshotCapture`); `ExportWorldSnapshot` returns a `WorldSnapshot` whose lists are views over that capture.
   - `ServerConnection` sends a queued `JoinAccepted` or world snapshot as its carrier (`WorldTransferId` set, no world), then `server.world-chunk` messages (`WorldChunkMessage`) of about 256 KB each, alternating with the queued snapshots and actions. It encodes the chunks on its writer task and releases the capture after the last one.
-  - Worlds use the compact format of `WorldSnapshotJsonConverter`: delta-coded integer cells, material runs, delta-coded ids, centers off the cell center and moved rubble quantized to 1/4096 m, unmoved rubble as its first-pass pattern. That is about 11 B per resting cube against 127 B in v2.
-  - `RemoteClientSession` passes messages through `WorldTransferReassembler`. It holds the carrier and everything after it until the final chunk, then delivers the carrier with the assembled world followed by the held messages, so consumers see the v2 order and the held deltas apply on top of the world.
-  - A v2 peer is refused with a `ProtocolVersionMismatchException` that names both versions.
+  - Worlds use the compact format of `WorldSnapshotJsonConverter`: delta-coded integer cells, material runs, delta-coded ids, centers off the cell center and moved rubble quantized to 1/4096 m, unmoved rubble as its first-pass pattern. That is about 11 B per resting cube against 127 B in the older protocol v2 format.
+  - `RemoteClientSession` passes messages through `WorldTransferReassembler`. It holds the carrier and everything after it until the final chunk, then delivers the carrier with the assembled world followed by the held messages, so consumers see the carrier, then the held messages, in their original order and the held deltas apply on top of the world.
+  - A peer on an older protocol version is refused with a `ProtocolVersionMismatchException` that names both versions.
 - Rubble is client-cosmetic for players. Fracture pieces use the Bullet `DebrisFilter` group and players use `CharacterFilter`, and neither collides with the other on server or client, so locally simulated rubble cannot make prediction diverge.
 
 Every joined session gets the same server-side player.

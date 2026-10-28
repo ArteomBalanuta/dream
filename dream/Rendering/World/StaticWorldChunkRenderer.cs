@@ -27,6 +27,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     // The visible meshes of this frame and their sort keys (material slot << 32 | visible index).
     // Both arrays are reused across frames and only grow, so a steady-state Draw allocates nothing.
     private StaticWorldChunkMeshInfo[] _visibleMeshes = [];
+    // The store's draw handle per visible mesh, so Draw needs no second lookup by key.
+    private object?[] _visibleHandles = [];
     private long[] _drawOrder = [];
     private Task<StaticWorldChunkBuildBatch>? _activeBuildTask;
     private StaticWorldChunkBuildRequest? _activeBuildRequest;
@@ -217,12 +219,13 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 continue;
             }
 
-            if (!_meshStore.Contains(mesh.Key))
+            if (!_meshStore.TryGetDrawHandle(mesh.Key, out object? handle))
             {
                 continue;
             }
 
             _visibleMeshes[visibleMeshes] = mesh;
+            _visibleHandles[visibleMeshes] = handle;
             _drawOrder[visibleMeshes] = ((long)entry.MaterialSlot << 32) | (uint)visibleMeshes;
             _drawnChunks.Add(mesh.Key.ChunkKey);
             visibleMeshes++;
@@ -280,7 +283,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
                 materialBinds++;
             }
 
-            _meshStore.Draw(render, in _visibleMeshes[(int)(uint)key]);
+            int visibleIndex = (int)(uint)key;
+            _meshStore.Draw(render, in _visibleMeshes[visibleIndex], _visibleHandles[visibleIndex]);
         }
 
         _meshStore.EndPass(render);
@@ -296,6 +300,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         int capacity = Math.Max(meshCount, Math.Max(16, _drawOrder.Length * 2));
         _visibleMeshes = new StaticWorldChunkMeshInfo[capacity];
+        _visibleHandles = new object?[capacity];
         _drawOrder = new long[capacity];
     }
 
@@ -766,6 +771,20 @@ internal interface IStaticWorldChunkMeshStore
     // Draws a mesh the culling loop found in the store, with the material bound last.
     void Draw(Render render, in StaticWorldChunkMeshInfo mesh);
 
+    // Contains plus the draw handle, in one lookup. The renderer keeps the handle for the pass and
+    // hands it back to Draw, so a mesh costs one dictionary lookup per frame. Stores without a
+    // handle keep the default: Contains, and Draw by key.
+    bool TryGetDrawHandle(StaticWorldChunkMeshKey key, out object? handle)
+    {
+        handle = null;
+        return Contains(key);
+    }
+
+    void Draw(Render render, in StaticWorldChunkMeshInfo mesh, object? handle)
+    {
+        Draw(render, in mesh);
+    }
+
     void EndPass(Render render);
 
     void Clear();
@@ -815,6 +834,23 @@ internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
         {
             buffer.DrawBatched();
         }
+    }
+
+    public bool TryGetDrawHandle(StaticWorldChunkMeshKey key, out object? handle)
+    {
+        if (_buffers.TryGetValue(key, out StaticMeshBuffer? buffer))
+        {
+            handle = buffer;
+            return true;
+        }
+
+        handle = null;
+        return false;
+    }
+
+    public void Draw(Render render, in StaticWorldChunkMeshInfo mesh, object? handle)
+    {
+        ((StaticMeshBuffer)handle!).DrawBatched();
     }
 
     public void EndPass(Render render)
