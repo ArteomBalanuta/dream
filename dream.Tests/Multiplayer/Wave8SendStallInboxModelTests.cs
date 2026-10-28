@@ -15,19 +15,28 @@ namespace Dream.Tests.Multiplayer;
 // position error at an ack is (client walk ticks up to the acked sequence) - (server walk ticks).
 // One walk tick is ~0.094 m at the default tuning (the loopback test measured 4.53 m for 48 ticks).
 //
-// Findings (see the loopback test Wave8CommandStallCorrectionLoopbackTests for the real stack):
-// - Current (FIFO 16): the queue folds 48 stall commands into one frame with a sequence jump of
-//   48. The inbox stores it as ONE slot standing for ONE tick (BufferedPlayerCommandInbox.cs:229),
-//   SkipRepeatedTicks then skips 16 leading ticks and the frame pops with the full jumped sequence
-//   (line 253). The server simulated 16 repeated + 1 walk ticks for 64 client walk ticks: an error
-//   of 47 ticks (~4.4 m, the measured 4.53 m snap).
-// - A bigger client FIFO (no merge) or an inbox that counts a sequence gap as N ticks (the same
-//   thing for constant input) does NOT fix it on its own: the replayable backlog is 48 ticks; the
-//   client keeps sending one frame per tick, so the depth never drains and the elastic shed
-//   (ShedWindowTicks = 32) merges it down to one frame, dropping the same ~47 ticks a bit later.
-// - What the server really did during the stall was: walk 16 ticks, then idle 48. A client that
-//   predicts that too (idle once its oldest unsent command is MaxCommandRepeatTicks old) agrees with
-//   the server for the stall; modelled: max error 16 ticks (~1.5 m, smoothed, no snap), 7 at the end.
+// The error is measured, like the reconciler, only when the ack advances.
+//
+// Findings at the wave 8 tip (e4c6930), before the fix loop:
+// - FIFO 16: the queue folded 48 stall commands into one frame with a sequence jump of 48, which
+//   the inbox stored as ONE slot standing for ONE tick; it skipped 16 leading ticks and popped the
+//   frame with the full jumped sequence. The server simulated 16 repeated + 1 walk ticks for 64
+//   client walk ticks: an error of 47 ticks (~4.4 m, the measured 4.53 m snap).
+// - A bigger client FIFO (no merge) or an inbox that counts a sequence gap as N ticks did not fix it
+//   on its own: the replayable backlog is 48 ticks; the client keeps sending one frame per tick, so
+//   the depth never drains and the elastic shed (ShedWindowTicks = 32) merges it down to one frame,
+//   dropping the same ~47 ticks a bit later. Both still hold for a client that walks through the
+//   stall (the first two tests): that is why the client has to idle.
+//
+// The fix (wave 8 fix loop 1), end to end:
+// - The client predicts AND sends idle once its oldest unsent command is MaxCommandRepeatTicks old
+//   (ClientCommandTickStream), which is what the server simulates for those ticks.
+// - The outbound queue folds the backlog into runs of equal movement, and the inbox counts a
+//   folded frame's sequence jump as that many ticks (reviewer S2).
+// - The inbox skips every starved tick, not just the 16 repeated ones: matching the repeated
+//   movement for the repeat window, then idle; a switch a few ticks off the server's is tolerated.
+// Modelled: the error at every new ack is 0 ticks with an exact switch, at most the offset with a
+// switch off by up to 3 ticks, and nothing is shed.
 public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
 {
     private const int WalkBeforeStall = 32;
@@ -36,14 +45,18 @@ public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
     private static readonly PlayerSessionId Session = new("w8-model");
     private static readonly Vector3 Facing = Vector3.UnitZ;
 
+    // A client that walks through the stall: the inbox now counts the folded frame's 50 ticks and
+    // skips the 16 repeated ones, but the other 34 walk ticks mismatch the server's idle ticks, so
+    // they are replayed on top of the client's fresh commands and the shed cuts them.
     [Fact]
-    public void CurrentFifo16_MergedStallFrameCountsAsOneTick_ServerEndsFortySevenWalkTicksBehind()
+    public void Fifo16_ClientWalkingThroughTheStall_ReplaysTheBacklogAndShedsIt_ServerEndsFortySevenWalkTicksBehind()
     {
         ModelResult result = Run(fifoCapacity: ClientOutboundCommandQueue.DefaultCapacity, clientIdlesWhenSendStalled: false);
         output.WriteLine(result.ToString());
 
         // 50 here (no frame held by a blocked send), 48 on the real loopback stack.
         Assert.InRange(result.LargestSequenceJump, 46UL, 52UL);
+        Assert.True(result.Sheds > 0, result.ToString());
         Assert.InRange(result.MaxErrorTicks, 40, 52);
         Assert.InRange(result.FinalErrorTicks, 40, 52);
     }
@@ -60,21 +73,35 @@ public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void ClientPredictsIdleAfterSixteenUnsentTicks_StaysBelowSnapDistance()
+    public void ClientPredictsIdleAfterSixteenUnsentTicks_ServerAgreesAtEveryAck()
     {
         ModelResult result = Run(fifoCapacity: ClientOutboundCommandQueue.DefaultCapacity, clientIdlesWhenSendStalled: true);
         output.WriteLine(result.ToString());
 
-        // Not zero: SkipRepeatedTicks only skips leading frames that match the REPEATED frame (at most
-        // 16), so the idle part of the backlog is replayed and later shed while the client walks
-        // again. Measured max 16 ticks (~1.5 m, a smooth correction) and 7 at the end, against 48
-        // (~4.5 m snap) today. Making the inbox also skip backlog frames for the ticks the runtime
-        // idled (debt = every starved tick, matching idle beyond the repeat window) would remove it.
-        Assert.True(result.MaxErrorTicks < 32, result.ToString());
-        Assert.InRange(result.FinalErrorTicks, -10, 10);
+        // The folded walk run is followed by the folded idle run: the wire still jumps.
+        Assert.True(result.LargestSequenceJump > 16, result.ToString());
+        Assert.Equal(0, result.Sheds);
+        Assert.Equal(0, result.MaxErrorTicks);
+        Assert.Equal(0, result.FinalErrorTicks);
     }
 
-    private static ModelResult Run(int fifoCapacity, bool clientIdlesWhenSendStalled)
+    // The client's estimate of where the server switched to idle can be a few ticks off.
+    [Theory]
+    [InlineData(-3)]
+    [InlineData(-1)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void ClientIdleSwitchOffByAFewTicks_ErrsByAtMostThoseTicks(int idleSwitchOffset)
+    {
+        ModelResult result = Run(fifoCapacity: ClientOutboundCommandQueue.DefaultCapacity, clientIdlesWhenSendStalled: true, idleSwitchOffset);
+        output.WriteLine(result.ToString());
+
+        Assert.Equal(0, result.Sheds);
+        Assert.InRange(result.MaxErrorTicks, 0, Math.Abs(idleSwitchOffset));
+        Assert.InRange(result.FinalErrorTicks, -Math.Abs(idleSwitchOffset), Math.Abs(idleSwitchOffset));
+    }
+
+    private static ModelResult Run(int fifoCapacity, bool clientIdlesWhenSendStalled, int idleSwitchOffset = 0)
     {
         ClientOutboundCommandQueue queue = new(fifoCapacity);
         BufferedPlayerCommandInbox inbox = new();
@@ -94,6 +121,7 @@ public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
         int previousPending = 0;
         long walkUpToAck = 0;
         ulong oldestUnsent = 0;
+        ulong lastComparedAck = 0;
         bool stalled = false;
 
         int totalTicks = WalkBeforeStall + StallTicks + TicksAfterStall;
@@ -103,7 +131,7 @@ public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
 
             // Client produces exactly one command per tick (NETR-4).
             bool walk = true;
-            if (clientIdlesWhenSendStalled && stalled && oldestUnsent != 0 && tick - oldestUnsent > (ulong)WorldSessionRuntime.MaxCommandRepeatTicks)
+            if (clientIdlesWhenSendStalled && stalled && oldestUnsent != 0 && (long)(tick - oldestUnsent) >= WorldSessionRuntime.MaxCommandRepeatTicks + idleSwitchOffset)
             {
                 walk = false;
             }
@@ -168,7 +196,13 @@ public class Wave8SendStallInboxModelTests(ITestOutputHelper output)
             previousPending = pending;
             walkUpToAck = clientWalked.Where(entry => entry.Key <= ack && entry.Value).LongCount();
             int error = (int)(walkUpToAck - serverWalkTicks);
-            maxError = Math.Max(maxError, Math.Abs(error));
+            // The reconciler compares only a new ack: a repeated one comes from a server that kept
+            // simulating without a command (ClientPredictionReconciler._lastComparedSequence).
+            if (ack != lastComparedAck)
+            {
+                lastComparedAck = ack;
+                maxError = Math.Max(maxError, Math.Abs(error));
+            }
         }
 
         return new ModelResult(fifoCapacity, clientIdlesWhenSendStalled, largestJump, maxError, (int)(walkUpToAck - serverWalkTicks), sheds, ack, serverWalkTicks);

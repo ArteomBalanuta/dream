@@ -115,7 +115,8 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
     [Fact]
     public void Snap_DiscardsPendingSmoothing()
     {
-        ClientPredictionReconciler reconciler = new();
+        // The replay is under test here, not the discard of far snaps.
+        ClientPredictionReconciler reconciler = new(replayDiscardDistance: float.PositiveInfinity);
         for (ulong sequence = 1; sequence <= 6; sequence++)
         {
             reconciler.RecordPrediction(sequence, new Vector3(sequence * 0.1f, 0f, 0f));

@@ -84,7 +84,8 @@ public class ClientPredictionReconcilerTests
     [Fact]
     public void Reconcile_LargeDivergence_SnapsToServerPlusReplayedUnacknowledgedTicks()
     {
-        ClientPredictionReconciler reconciler = new();
+        // The replay is under test here, not the discard of far snaps.
+        ClientPredictionReconciler reconciler = new(replayDiscardDistance: float.PositiveInfinity);
         RecordStraightRun(reconciler, firstSequence: 1, lastSequence: 5, stepPerTick: 0.1f);
         Vector3 respawn = new(20f, 1.5f, 20f);
 
@@ -102,7 +103,8 @@ public class ClientPredictionReconcilerTests
     [Fact]
     public void Reconcile_AfterSnap_ComparesLaterAcksAgainstTheReplayedPath()
     {
-        ClientPredictionReconciler reconciler = new();
+        // The replay is under test here, not the discard of far snaps.
+        ClientPredictionReconciler reconciler = new(replayDiscardDistance: float.PositiveInfinity);
         RecordStraightRun(reconciler, firstSequence: 1, lastSequence: 5, stepPerTick: 0.1f);
         ClientReconciliationResult snap = reconciler.Reconcile(3, new Vector3(50f, 0f, 0f));
         Assert.Equal(ClientReconciliationKind.Snap, snap.Kind);
@@ -215,6 +217,110 @@ public class ClientPredictionReconcilerTests
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.MoveSpeed, predicted.MoveSpeed);
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.NoclipSpeed, predicted.NoclipSpeed);
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.JumpVelocity, predicted.JumpVelocity);
+    }
+
+    // Reviewer S11: a snap replays the unacknowledged ticks as a translation of the client's path.
+    // When that path would end inside a solid cell of the client's map, the snap lands on the
+    // server position alone instead of walking the player into the cell.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Snap_WhoseReplayEntersASolidCell_LandsOnTheServerPositionOnly(bool cellIsSolid)
+    {
+        using ClientWorldSession runtime = CreateRuntime();
+        if (cellIsSolid)
+        {
+            Assert.NotNull(runtime.Map.TryAddCube(new Vector3(2f, 1f, 6f), isStatic: true, withPhysics: false));
+        }
+
+        ClientPredictionReconciler reconciler = new();
+        for (ulong sequence = 1; sequence <= 5; sequence++)
+        {
+            reconciler.RecordPrediction(sequence, new Vector3(2f + sequence * 0.1f, 1.5f, 2f));
+        }
+
+        Vector3 server = new(2.3f, 1.5f, 6.3f);
+        ClientReconciliationResult result = reconciler.Reconcile(3, server, runtime.Map);
+
+        Assert.Equal(ClientReconciliationKind.Snap, result.Kind);
+        if (cellIsSolid)
+        {
+            AssertVector(server, result.SnapPosition);
+            Assert.Equal(1, reconciler.DiscardedReplays);
+        }
+        else
+        {
+            AssertVector(server + new Vector3(0.2f, 0f, 0f), result.SnapPosition);
+            Assert.Equal(0, reconciler.DiscardedReplays);
+        }
+    }
+
+    // Reviewer S11, an obstacle only the server has: the server pushes the player 7 m back against
+    // a wall 1 m behind it, which the client's map does not know, and the input stays held. The
+    // snap used to land on the server position plus 2 m of replayed walking, inside the wall;
+    // beyond ReplayDiscardDistance it lands on the server position. Holding the input then only
+    // smooths (the client walks into the wall, each ack pulls it back): no repeated snapping.
+    [Fact]
+    public void FarSnap_AgainstAnObstacleTheClientDoesNotKnow_LandsOnTheServer_AndDoesNotSnapAgainWhileHeld()
+    {
+        const float Step = 0.1f;
+        const int LatencyTicks = 20;
+        const int PushTick = 60;
+        const int Ticks = 400;
+        const float SecondsPerTick = 1f / SimulationClock.AuthoritativeTicksPerSecond;
+        ClientPredictionReconciler reconciler = new();
+        float[] serverX = new float[Ticks + 1];
+        float wallX = 0f;
+        float clientX = 0f;
+        int snaps = 0;
+        float landing = float.NaN;
+        float maxPastWallAfterSnap = 0f;
+        for (int tick = 1; tick <= Ticks; tick++)
+        {
+            // Server: walks the same commands; at PushTick it is pushed 7 m back, 1 m in front of a wall.
+            if (tick == PushTick)
+            {
+                serverX[tick] = serverX[tick - 1] - 7f;
+                wallX = serverX[tick] + 1f;
+            }
+            else
+            {
+                serverX[tick] = serverX[tick - 1] + Step;
+                if (tick > PushTick)
+                {
+                    serverX[tick] = Math.Min(serverX[tick], wallX);
+                }
+            }
+
+            // Client: walks every tick (no wall in its map) and drains its smoothing.
+            clientX += Step + reconciler.TakeSmoothingStep(SecondsPerTick).X;
+            reconciler.RecordPrediction((ulong)tick, new Vector3(clientX, 0f, 0f));
+            int ack = tick - LatencyTicks;
+            if (ack >= 1 && tick % 2 == 0)
+            {
+                ClientReconciliationResult result = reconciler.Reconcile((ulong)ack, new Vector3(serverX[ack], 0f, 0f));
+                if (result.Kind == ClientReconciliationKind.Snap)
+                {
+                    snaps++;
+                    clientX = result.SnapPosition.X;
+                    landing = clientX;
+                }
+            }
+
+            if (snaps > 0)
+            {
+                maxPastWallAfterSnap = Math.Max(maxPastWallAfterSnap, clientX - wallX);
+            }
+        }
+
+        Assert.Equal(1, snaps);
+        // The server position at the ack, in front of the wall, not 2 m of replay past it.
+        Assert.True(landing <= wallX, $"landed {landing - wallX:F2} m past the wall");
+        Assert.Equal(1, reconciler.DiscardedReplays);
+        // Held against the wall the client runs ahead by the unacknowledged ticks' walk (2 m) plus
+        // the correction still smoothing in, and stays there.
+        Assert.True(maxPastWallAfterSnap <= LatencyTicks * Step + 1f, $"{maxPastWallAfterSnap:F2} m past the wall");
+        Assert.InRange(clientX - wallX, LatencyTicks * Step - 0.3f, LatencyTicks * Step + 1f);
     }
 
     private static void RecordStraightRun(

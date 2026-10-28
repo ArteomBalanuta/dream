@@ -20,10 +20,26 @@ namespace Dream.Client.Replication;
 //
 // Sequences are consecutive and monotonic, so both the server's latest-only inbox and a buffered
 // one that consumes one command per tick accept them.
+//
+// Send stalls mirror the server's NETR-3 rule. A server that gets no command repeats the last one
+// for MaxCommandRepeatTicks (BufferedPlayerCommandInbox.ServerRepeatTicks) ticks and then idles, and when the backlog arrives
+// its inbox skips the commands those starved ticks already simulated (BufferedPlayerCommandInbox).
+// Once the oldest command the client has not handed to the transport is that many ticks old, the
+// server is idling this player, so every further tick of the stall predicts AND sends no movement
+// (facing, presses and primary use are kept): the client's prediction is then what the server
+// simulated, and the backlog's idle commands match the server's idle ticks. Before, the client
+// walked through the stall and snapped back about 4.5 m when it ended. The backlog is read from
+// the probe given to ObserveSendBacklog (RemoteClientSession.PendingCommandCount: commands queued
+// but not yet handed to the transport; a send blocked by the stall holds the oldest one).
 public sealed class ClientCommandTickStream
 {
+    // Queued commands at which the oldest unsent one (one more, held by the blocked send) is
+    // MaxCommandRepeatTicks old when the next command is produced.
+    public const int SendStallBacklog = BufferedPlayerCommandInbox.ServerRepeatTicks - 1;
+
     private readonly ServerTickRunner _tickRunner;
     private readonly PlayerSessionId _fallbackSessionId;
+    private Func<int>? _unsentCommandCount;
     private PlayerCommandFrame _pendingInput;
     private bool _hasPendingInput;
     private PlayerCommandFrame _heldInput;
@@ -45,6 +61,16 @@ public sealed class ClientCommandTickStream
 
     // Ticks skipped because one advance would have exceeded the cap.
     public long DroppedTicks => _tickRunner.DroppedTicks;
+
+    // Ticks whose command was made idle because the send was stalled past the repeat window.
+    public long SendStallIdleTicks { get; private set; }
+
+    // Gives the stream the number of commands queued but not yet handed to the transport, read
+    // once per tick (no allocation). Null turns send-stall idling off.
+    public void ObserveSendBacklog(Func<int>? unsentCommandCount)
+    {
+        _unsentCommandCount = unsentCommandCount;
+    }
 
     // Merges one render frame's input into the input the next tick consumes. Its sequence is
     // ignored; the tick assigns it.
@@ -91,7 +117,19 @@ public sealed class ClientCommandTickStream
 
         _heldInput = HoldWithoutOneShots(source);
         _hasHeldInput = true;
-        return source with { Sequence = tick };
+        PlayerCommandFrame command = source with { Sequence = tick };
+        if (_unsentCommandCount != null && _unsentCommandCount() >= SendStallBacklog)
+        {
+            // The server idles this player past its repeat window; predict and send the same.
+            PlayerMoveIntent move = command.MoveIntent;
+            command = command with
+            {
+                MoveIntent = new PlayerMoveIntent(0f, 0f, 0f, move.JumpPressed, move.FreezePressed, move.ToggleNoclipPressed)
+            };
+            SendStallIdleTicks++;
+        }
+
+        return command;
     }
 
     // What a tick without fresh input repeats: the held axes, facing and primary use, without the

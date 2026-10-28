@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using OpenTK.Mathematics;
 
 namespace Dream.Client.Replication;
@@ -13,8 +14,9 @@ public enum ClientReconciliationKind
 }
 
 // SnapPosition is where a Snap puts the player: the server position with the unacknowledged
-// commands replayed on top (just the server position when nothing was acknowledged). Error is
-// the server position minus the prediction for the acknowledged command.
+// commands replayed on top, or just the server position when nothing was acknowledged or the
+// replay was discarded. Error is the server position minus the prediction for the acknowledged
+// command.
 
 public readonly record struct ClientReconciliationResult(
     ClientReconciliationKind Kind,
@@ -41,17 +43,26 @@ public readonly record struct ClientReconciliationResult(
 // the player moves at once to the server position plus the replayed ticks, its velocity is zeroed
 // by the applier, and the shifted history stays, so later snapshots compare against the replayed
 // path instead of finding no comparable sample.
+//
+// The replay is a translation of the client's own path, so it is only trusted for moderate
+// errors. At ReplayDiscardDistance or more (a teleport, a respawn, a long rejected walk), or when
+// the translated path would put the player inside a solid cell of the client's map, the snap lands
+// on the server position alone and the unacknowledged samples are rebased there: replaying a walk
+// that the server stopped (at an obstacle the client walked through) would put the player into or
+// past the obstacle again, and every later snapshot would pull it back.
 public sealed class ClientPredictionReconciler
 {
     public const float DefaultDeadbandDistance = 0.05f;
     public const float DefaultSnapDistance = 3f;
     public const float DefaultSmoothingSeconds = 0.1f;
+    public const float DefaultReplayDiscardDistance = 2f * DefaultSnapDistance;
     private const int MaxHistory = 256;
 
     private readonly List<(ulong Sequence, Vector3 Position)> _history = [];
     private readonly float _deadbandDistance;
     private readonly float _snapDistance;
     private readonly float _smoothingSeconds;
+    private readonly float _replayDiscardDistance;
     private Vector3 _pendingOffset;
     private float _smoothingRemainingSeconds;
     // The ack the last comparison used. A snapshot that repeats it comes from a server that has
@@ -64,12 +75,17 @@ public sealed class ClientPredictionReconciler
     public ClientPredictionReconciler(
         float deadbandDistance = DefaultDeadbandDistance,
         float snapDistance = DefaultSnapDistance,
-        float smoothingSeconds = DefaultSmoothingSeconds)
+        float smoothingSeconds = DefaultSmoothingSeconds,
+        float replayDiscardDistance = DefaultReplayDiscardDistance)
     {
         _deadbandDistance = deadbandDistance;
         _snapDistance = snapDistance;
         _smoothingSeconds = smoothingSeconds;
+        _replayDiscardDistance = Math.Max(replayDiscardDistance, snapDistance);
     }
+
+    // Snaps that landed on the server position alone instead of the replayed path.
+    public long DiscardedReplays { get; private set; }
 
     public Vector3 PendingOffset => _pendingOffset;
 
@@ -100,7 +116,9 @@ public sealed class ClientPredictionReconciler
         }
     }
 
-    public ClientReconciliationResult Reconcile(ulong? acknowledgedSequence, Vector3 serverPosition)
+    // The map, when given, is the client's: a replayed path that enters one of its solid cells is
+    // discarded. No allocation.
+    public ClientReconciliationResult Reconcile(ulong? acknowledgedSequence, Vector3 serverPosition, Map? map = null)
     {
         // No accepted command means the server is not moving this player from our input.
         if (!acknowledgedSequence.HasValue)
@@ -142,6 +160,19 @@ public sealed class ClientPredictionReconciler
             // snap lands there and replaces whatever smoothing was still pending.
             _pendingOffset = Vector3.Zero;
             _smoothingRemainingSeconds = 0f;
+            if (distance >= _replayDiscardDistance || ReplayEntersSolidCell(map))
+            {
+                // The ticks after the ack will be simulated from the server position; until their
+                // acks say where they went, assume they did not move.
+                for (int index = 1; index < _history.Count; index++)
+                {
+                    _history[index] = (_history[index].Sequence, serverPosition);
+                }
+
+                DiscardedReplays++;
+                return new ClientReconciliationResult(ClientReconciliationKind.Snap, error, serverPosition);
+            }
+
             return new ClientReconciliationResult(ClientReconciliationKind.Snap, error, _history[^1].Position);
         }
 
@@ -183,6 +214,30 @@ public sealed class ClientPredictionReconciler
         {
             _history[index] = (_history[index].Sequence, _history[index].Position + error);
         }
+    }
+
+    // Whether a replayed (already shifted) unacknowledged sample lies in a solid cell of the map.
+    private bool ReplayEntersSolidCell(Map? map)
+    {
+        if (map == null)
+        {
+            return false;
+        }
+
+        for (int index = 1; index < _history.Count; index++)
+        {
+            Vector3 position = _history[index].Position;
+            Cube? cube = map.TryGetCubeAtCell(
+                (int)MathF.Floor(position.X),
+                (int)MathF.Floor(position.Y),
+                (int)MathF.Floor(position.Z));
+            if (cube is { IsSolid: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ClientReconciliationResult Snap(Vector3 serverPosition)
