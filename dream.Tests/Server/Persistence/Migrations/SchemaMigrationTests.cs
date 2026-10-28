@@ -318,7 +318,8 @@ public sealed class SchemaMigrationTests
     public void MigrationThatEndsTheTransaction_Throws_AndRecordsNoVersion(string script)
     {
         using MigrationTestDatabase database = new();
-        database.Schema.EnsureSchema();
+        // Stop at v1, so the injected 0002 below is the pending migration whatever the shipped set holds.
+        database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
         string directory = Path.Combine(database.RootDirectory, "migrations");
         Directory.CreateDirectory(directory);
         File.Copy(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0001_baseline.sql"), Path.Combine(directory, "0001_baseline.sql"));

@@ -27,7 +27,7 @@ public sealed class SchemaTooNewServerStartupTests
         Assert.NotEqual(0, exitCode);
         string line = Assert.Single(log);
         Assert.Contains("version 99", line, StringComparison.Ordinal);
-        Assert.Contains("version 1 ", line, StringComparison.Ordinal);
+        Assert.Contains($"version {MigrationTestDatabase.ShippedLatestVersion} ", line, StringComparison.Ordinal);
     }
 
     [Fact]
