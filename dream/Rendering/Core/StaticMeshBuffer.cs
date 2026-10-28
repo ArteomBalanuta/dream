@@ -109,6 +109,25 @@ public sealed class StaticMeshBuffer : IDisposable
         RenderCounters.CountDraw();
     }
 
+    // Draws `instanceCount` copies of this mesh in one instanced call, each with its model matrix
+    // from `instances` (already uploaded). The instance attribute pointers are VAO state, so they
+    // are set while this VAO is bound; non-instanced draws of the same VAO ignore them because the
+    // shader reads `model` when useInstancing is false.
+    public void DrawInstanced(InstanceMatrixBuffer instances, int instanceCount)
+    {
+        ArgumentNullException.ThrowIfNull(instances);
+        if (_indexCount == 0 || instanceCount <= 0)
+        {
+            return;
+        }
+
+        GL.BindVertexArray(_vertexArrayObject);
+        instances.BindAttributes();
+        GL.DrawElementsInstanced(PrimitiveType.Triangles, _indexCount, DrawElementsType.UnsignedInt, IntPtr.Zero, instanceCount);
+        RenderCounters.CountDraw();
+        GL.BindVertexArray(0);
+    }
+
     public static void EndBatchedDraws()
     {
         GL.BindVertexArray(0);

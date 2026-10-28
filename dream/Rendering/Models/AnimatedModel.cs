@@ -56,7 +56,8 @@ public class AnimatedModel : IDisposable
     private bool _disposed;
     private readonly ReusableMatrixBuffer _instanceSourceMatrices = new();
     private readonly ReusableMatrixBuffer _instanceNodeMatrices = new();
-    private int _instanceModelBuffer;
+    // One persistent instance VBO per model, reused by every instanced batch of it.
+    private readonly InstanceMatrixBuffer _instanceMatrixBuffer = new();
     private readonly AnimatedModelSkeleton _skeleton;
     // The view and projection of the current BeginRender, for a switch to an alpha-mask program.
     private Matrix4 _renderView = Matrix4.Identity;
@@ -447,6 +448,9 @@ public class AnimatedModel : IDisposable
         // Instanced draws read the model matrix from the per-instance attribute and derive the
         // normal matrix from it in the shader, so `model` and `normalMatrix` are not uploaded.
         shader.SetBool("useInstancing", true);
+        // Every primitive of the node draws the same instances, so their matrices go up once per
+        // node; each primitive only points its own VAO at the shared buffer.
+        _instanceMatrixBuffer.Upload(modelMatrices, count);
         Shader bound = shader;
         foreach (MeshBuffers primitive in primitives)
         {
@@ -463,7 +467,7 @@ public class AnimatedModel : IDisposable
             SetMaterialProperties(program, material);
 
             GL.BindVertexArray(primitive.VAO);
-            UploadInstanceModelMatrices(modelMatrices, count);
+            _instanceMatrixBuffer.BindAttributes();
             GL.DrawElementsInstanced(
                 primitive.PrimitiveType,
                 primitive.IndexCount,
@@ -507,35 +511,6 @@ public class AnimatedModel : IDisposable
         if (!ReferenceEquals(bound, shader))
         {
             shader.Use();
-        }
-    }
-
-    private void UploadInstanceModelMatrices(Matrix4[] modelMatrices, int count)
-    {
-        _instanceModelBuffer = _instanceModelBuffer == 0
-            ? GL.GenBuffer()
-            : _instanceModelBuffer;
-
-        GL.BindBuffer(BufferTarget.ArrayBuffer, _instanceModelBuffer);
-        GL.BufferData(
-            BufferTarget.ArrayBuffer,
-            count * Unsafe.SizeOf<Matrix4>(),
-            modelMatrices,
-            BufferUsageHint.DynamicDraw);
-
-        int stride = Unsafe.SizeOf<Matrix4>();
-        for (int column = 0; column < 4; column++)
-        {
-            int attributeLocation = 6 + column;
-            GL.EnableVertexAttribArray(attributeLocation);
-            GL.VertexAttribPointer(
-                attributeLocation,
-                4,
-                VertexAttribPointerType.Float,
-                normalized: false,
-                stride,
-                column * 4 * sizeof(float));
-            GL.VertexAttribDivisor(attributeLocation, 1);
         }
     }
 
@@ -681,11 +656,7 @@ public class AnimatedModel : IDisposable
 
         _disposed = true;
         foreach (var texture in _textures) GL.DeleteTexture(texture);
-        if (_instanceModelBuffer != 0)
-        {
-            GL.DeleteBuffer(_instanceModelBuffer);
-            _instanceModelBuffer = 0;
-        }
+        _instanceMatrixBuffer.Dispose();
 
         foreach (var mesh in _meshPrimitives.Values.SelectMany(p => p))
         {
