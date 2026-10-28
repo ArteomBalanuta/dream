@@ -786,21 +786,6 @@ public class Render : IDisposable
         GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
     }
 
-    private void DrawCubeTransparent(Camera camera, Matrix4 modelMatrix)
-    {
-        Shader shader = _shaders.TryGet("default", out var s) ? s : _shaders["default"];
-        shader.Use();
-        shader.SetVector3("color", new Vector3(0.5f, 0.7f, 1.0f)); // light blue
-        SetTransforms(shader, modelMatrix, camera.GetViewMatrix());
-
-        GL.Enable(EnableCap.Blend);
-        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-        GL.BindVertexArray(_vertexArrayObject);
-        DrawCubeFaceFans();
-        GL.BindVertexArray(0);
-        GL.Disable(EnableCap.Blend);
-    }
-
     public void DrawCollisionShape(Matrix4 modelMatrix, Camera camera)
     {
         Shader shader = _shaders["default"];

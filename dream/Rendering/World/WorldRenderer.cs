@@ -4,6 +4,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.World;
 
@@ -24,12 +25,53 @@ public class WorldRenderer : IDisposable
         _render = render;
     }
 
+    // Half the diagonal of a unit cube: the per-axis half extent of a box that holds the cube in
+    // any orientation, matching the bounding radius WorldVisibility uses.
+    private const float CubeBoundingRadiusPerSide = 0.8660254f;
+
+    // Distance and direction cull first (cheap, and keeps the render distance), then the frustum.
+    public static bool IsCubeInView(Vector3 cameraPosition, Vector3 cameraFront, in ViewFrustum frustum, Cube cube)
+    {
+        if (!WorldVisibility.IsCubeVisible(cameraPosition, cameraFront, cube))
+        {
+            return false;
+        }
+
+        float halfExtent = cube.Side * CubeBoundingRadiusPerSide;
+        return frustum.IntersectsBox(cube.Position, new Vector3(halfExtent));
+    }
+
+    public static bool IsGeometryBlockInView(
+        Vector3 cameraPosition,
+        Vector3 cameraFront,
+        in ViewFrustum frustum,
+        GeometryRenderBlockDescriptor block)
+    {
+        if (!WorldVisibility.IsGeometryBlockVisible(cameraPosition, cameraFront, block))
+        {
+            return false;
+        }
+
+        float halfExtent = block.Size.Length * 0.5f;
+        return frustum.IntersectsBox(block.Center, new Vector3(halfExtent));
+    }
+
+    public static ViewFrustum CreateFrustum(Camera camera, Render render)
+    {
+        ArgumentNullException.ThrowIfNull(camera);
+        ArgumentNullException.ThrowIfNull(render);
+        return ViewFrustum.FromViewAndProjection(camera.GetViewMatrix(), render.ProjectionMatrix);
+    }
+
     public WorldRenderStats DrawWorld(Camera camera, IEnumerable<Cube> cubes)
     {
+        ViewFrustum frustum = CreateFrustum(camera, _render);
+        Vector3 cameraPosition = camera.Position;
+        Vector3 cameraFront = camera.Front;
         _visibleCubes.Clear();
         foreach (Cube cube in cubes)
         {
-            if (!WorldVisibility.IsCubeVisible(camera.Position, camera.Front, cube))
+            if (!IsCubeInView(cameraPosition, cameraFront, frustum, cube))
             {
                 continue;
             }
@@ -54,13 +96,17 @@ public class WorldRenderer : IDisposable
 
     public WorldRenderStats DrawWorld(Camera camera, GeometryRenderExport export)
     {
-        StaticWorldChunkRenderStats staticStats = _staticChunkRenderer.Draw(_render, camera, export);
+        // One frustum per frame, shared by the static chunks, dynamic cubes and dynamic blocks.
+        ViewFrustum frustum = CreateFrustum(camera, _render);
+        Vector3 cameraPosition = camera.Position;
+        Vector3 cameraFront = camera.Front;
+        StaticWorldChunkRenderStats staticStats = _staticChunkRenderer.Draw(_render, camera, frustum, export);
         _visibleCubes.Clear();
         IReadOnlyList<Cube> dynamicCubes = export.DynamicCompatibilityCubes;
         for (int i = 0; i < dynamicCubes.Count; i++)
         {
             Cube cube = dynamicCubes[i];
-            if (!WorldVisibility.IsCubeVisible(camera.Position, camera.Front, cube))
+            if (!IsCubeInView(cameraPosition, cameraFront, frustum, cube))
             {
                 continue;
             }
@@ -76,7 +122,7 @@ public class WorldRenderer : IDisposable
         for (int i = 0; i < dynamicBlocks.Count; i++)
         {
             GeometryRenderBlockDescriptor block = dynamicBlocks[i];
-            if (!WorldVisibility.IsGeometryBlockVisible(camera.Position, camera.Front, block))
+            if (!IsGeometryBlockInView(cameraPosition, cameraFront, frustum, block))
             {
                 continue;
             }
