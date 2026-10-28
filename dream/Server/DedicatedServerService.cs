@@ -49,6 +49,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private int _ticksSinceSnapshot = SnapshotDueTicks;
     private long _snapshotsBroadcast;
     private long _skippedSnapshotAdvances;
+    private long _oversizedBroadcasts;
 
     // Always-on tick metrics. Dropped ticks are read from the host's tick runner after each advance.
     private readonly ServerTickMetrics _metrics = new();
@@ -114,6 +115,10 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public long SnapshotsBroadcast => Interlocked.Read(ref _snapshotsBroadcast);
 
     public long SkippedSnapshotAdvances => Interlocked.Read(ref _skippedSnapshotAdvances);
+
+    // Broadcasts sent without their deltas because one advance's deltas passed the merge caps
+    // (every joined connection was flagged for a world resync instead).
+    public long OversizedBroadcasts => Interlocked.Read(ref _oversizedBroadcasts);
 
     public ServerTickMetrics TickMetrics => _metrics;
 
@@ -322,6 +327,28 @@ public sealed class DedicatedServerService : IAsyncDisposable
         Interlocked.Increment(ref _snapshotsBroadcast);
         long snapshotStart = ServerTickMetrics.Timestamp();
         ServerSnapshotMessage snapshot = _host.CreateSnapshotMessage();
+        // One advance runs up to DefaultMaxTicksPerAdvance ticks and nothing caps the fractures or
+        // damage of one tick, so a broadcast can carry more deltas than the merge caps allow a
+        // lagging connection, and its shared payload can pass the frame cap, which would fault
+        // every connection's writer in the same tick. Past the caps the deltas are dropped and
+        // every joined connection gets a world resync on the coalesce-overflow path (deferred
+        // behind a transfer still going out). The writer catches a payload that passes the frame
+        // cap under the caps the same way (ServerConnection.EncodeServerFrame).
+        bool dropDeltas = ExceedsDeltaCaps(snapshot.Snapshot, ConnectionOptions);
+        if (dropDeltas)
+        {
+            if (NetworkDiagnosticsLog.IsEnabled)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.snapshot.oversized",
+                    $"tick={snapshot.Snapshot.ServerTick} mutations={snapshot.Snapshot.WorldMutations?.Count ?? 0} " +
+                    $"damage={snapshot.Snapshot.DamageEvents?.Count ?? 0} connections={joinedConnections.Count}; deltas dropped, world resyncs requested");
+            }
+
+            snapshot = ServerConnection.WithoutDeltas(snapshot);
+            Interlocked.Increment(ref _oversizedBroadcasts);
+        }
+
         long broadcastStart = ServerTickMetrics.Timestamp();
         // Enqueue only: each connection's writer task does the socket I/O, so a stalled client
         // cannot hold up the tick loop for everyone else. The snapshot payload is the same for
@@ -333,6 +360,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             ServerConnection connection = joinedConnections[i];
             connection.EnqueueSnapshot(snapshot, sharedPayload);
+            if (dropDeltas)
+            {
+                connection.FlagOverflowResync();
+            }
+
             if (connection.TryTakeOverflowResync())
             {
                 RequestOverflowResync(connection);
@@ -588,6 +620,13 @@ public sealed class DedicatedServerService : IAsyncDisposable
             "server.disconnect",
             $"connection={connectionId} reason=session-taken-over connections={_connections.Count}");
         await connection.DisposeAsync();
+    }
+
+    // Same caps as a lagging connection's merge (ServerConnection.AppendCoalesced). Allocation-free.
+    internal static bool ExceedsDeltaCaps(in ServerSnapshotEnvelope snapshot, ServerConnectionOptions options)
+    {
+        return (snapshot.WorldMutations?.Count ?? 0) > options.MaxCoalescedWorldMutations ||
+            (snapshot.DamageEvents?.Count ?? 0) > options.MaxCoalescedDamageEvents;
     }
 
     // A lagging connection's merged deltas passed the cap and were dropped. Ask for a full world

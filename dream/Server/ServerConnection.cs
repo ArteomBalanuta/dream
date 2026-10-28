@@ -13,6 +13,9 @@ public sealed class ServerConnection : IAsyncDisposable
     private readonly DedicatedServerHost _host;
     private readonly IProtocolCodec _codec;
     private readonly IMessageFramer _framer;
+    // The framer's write cap (int.MaxValue when it has none): a snapshot whose encoded payload
+    // passes it is sent without its deltas instead of faulting the writer (EncodeServerFrame).
+    private readonly int _maxWritePayloadBytes;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly byte[] _receiveChunk = new byte[16 * 1024];
     private readonly FrameReceiveBuffer _receiveBuffer = new();
@@ -69,6 +72,7 @@ public sealed class ServerConnection : IAsyncDisposable
     // Set when a merge overflowed the delta caps; taken by the service, which requests a resync.
     private int _overflowResyncPending;
     private long _overflowResyncs;
+    private long _oversizedSnapshotFrames;
     // Always-on traffic counters (frames include the length prefix). Updated with Interlocked by
     // the writer task and the receive loop, read by DedicatedServerService metrics.
     private long _bytesSent;
@@ -129,6 +133,9 @@ public sealed class ServerConnection : IAsyncDisposable
         _host = host;
         _codec = codec;
         _framer = framer;
+        _maxWritePayloadBytes = framer is LengthPrefixedMessageFramer lengthPrefixed
+            ? lengthPrefixed.MaxWritePayloadBytes
+            : int.MaxValue;
         _options = options;
         _timeProvider = options.TimeProvider;
         _idleTimeoutTimestampTicks = ToTimestampTicks(options.IdleTimeout, _timeProvider);
@@ -194,8 +201,13 @@ public sealed class ServerConnection : IAsyncDisposable
 
     public ServerConnectionOptions Options => _options;
 
-    // Merges whose deltas passed the caps and were dropped for a world resync.
+    // Snapshots whose deltas were dropped for a world resync: merges past the caps, broadcasts
+    // past them (FlagOverflowResync) and snapshots too large for the frame cap (EncodeServerFrame).
     public long OverflowResyncs => Interlocked.Read(ref _overflowResyncs);
+
+    // Snapshots the writer sent without their deltas because the encoded frame passed the
+    // framer's write cap.
+    public long OversizedSnapshotFrames => Interlocked.Read(ref _oversizedSnapshotFrames);
 
     // Called by the service once per advance, on its tick thread. Faults the connection when no
     // complete frame arrived within IdleTimeout, or the current socket write has been running for
@@ -248,6 +260,41 @@ public sealed class ServerConnection : IAsyncDisposable
     public bool TryTakeOverflowResync()
     {
         return Interlocked.Exchange(ref _overflowResyncPending, 0) != 0;
+    }
+
+    // The service sent this connection a broadcast snapshot without its deltas (they passed the
+    // caps in one advance), so it needs a full world resync like an overflowing merge. Taken by
+    // TryTakeOverflowResync on the same path, so the pending-transfer deferral applies.
+    public void FlagOverflowResync()
+    {
+        Interlocked.Increment(ref _overflowResyncs);
+        Volatile.Write(ref _overflowResyncPending, 1);
+    }
+
+    // The snapshot without its world mutations, damage events and world checksum: actors,
+    // interaction mode and accepted command sequences only. Sent when the deltas are dropped for a
+    // world resync; the checksum goes too, because it covers the dropped deltas and would only
+    // make the client ask for a second resync of its own.
+    internal static ServerSnapshotMessage WithoutDeltas(ServerSnapshotMessage message)
+    {
+        return message with
+        {
+            Snapshot = message.Snapshot with
+            {
+                WorldMutations = Array.Empty<WorldMutationDelta>(),
+                DamageEvents = Array.Empty<DamageEventDelta>(),
+                WorldChecksum = null,
+                WorldChecksumSequence = 0
+            }
+        };
+    }
+
+    // True when the snapshot carries deltas that a WithoutDeltas copy would drop.
+    internal static bool HasDeltas(in ServerSnapshotEnvelope snapshot)
+    {
+        return (snapshot.WorldMutations?.Count ?? 0) > 0 ||
+            (snapshot.DamageEvents?.Count ?? 0) > 0 ||
+            snapshot.WorldChecksum.HasValue;
     }
 
     // Puts back a flag taken by TryTakeOverflowResync whose resync the host refused (its
@@ -880,6 +927,26 @@ public sealed class ServerConnection : IAsyncDisposable
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");
             }
+        }
+
+        // A delta snapshot too large for the peer's frame cap (one advance's deltas, which the
+        // merge caps do not bound) would fault this writer, and with a shared payload every
+        // connection's writer at once. It goes out without its deltas instead, and the
+        // connection is flagged for a world resync, which the service picks up on its next
+        // broadcast. Only an oversized frame pays for this.
+        if (_frameWriter.WrittenCount - _framer.HeaderLength > _maxWritePayloadBytes &&
+            message is ServerSnapshotMessage { Snapshot.World: null } oversized &&
+            HasDeltas(oversized.Snapshot))
+        {
+            int oversizedBytes = _frameWriter.WrittenCount - _framer.HeaderLength;
+            _frameWriter.BeginFrame(_framer);
+            _codec.Encode(envelope, WithoutDeltas(oversized), _frameWriter);
+            Interlocked.Increment(ref _oversizedSnapshotFrames);
+            FlagOverflowResync();
+            NetworkDiagnosticsLog.Write(
+                "server.connection.snapshot-oversized",
+                $"connection={ConnectionId} tick={oversized.Snapshot.ServerTick} bytes={oversizedBytes} cap={_maxWritePayloadBytes} " +
+                $"mutations={oversized.Snapshot.WorldMutations?.Count ?? 0} damage={oversized.Snapshot.DamageEvents?.Count ?? 0}; deltas dropped, world resync requested");
         }
 
         ReadOnlyMemory<byte> frame = _frameWriter.CompleteFrame(_framer);
