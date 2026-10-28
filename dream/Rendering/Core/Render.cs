@@ -275,11 +275,11 @@ public class Render : IDisposable
             AssetPaths.Shader("vertexShader.glsl"),
             AssetPaths.Shader("fragmentShader.glsl"));
 
-        LoadShader("cube",
+        LoadWorldShader("cube",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("cubeFragment.glsl"));
 
-        LoadShader("enemy",
+        LoadWorldShader("enemy",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("enemyFragment.glsl"));
     }
@@ -669,10 +669,30 @@ public class Render : IDisposable
         _shaders.Replace(name, shader);
     }
 
+    // A world-pass program: the opaque program plus its glTF MASK variant (the same sources with
+    // Shader.AlphaMaskDefine), which AnimatedModel switches to only for MASK materials. The variant
+    // is owned and disposed by the opaque program. Like LoadShader, a failed compile of either
+    // keeps the previous pair.
+    public void LoadWorldShader(string name, string vertexPath, string fragmentPath)
+    {
+        Shader shader = new(vertexPath, fragmentPath);
+        try
+        {
+            shader.AttachAlphaMaskVariant(new Shader(vertexPath, fragmentPath, Shader.AlphaMaskDefine));
+        }
+        catch
+        {
+            shader.Dispose();
+            throw;
+        }
+
+        _shaders.Replace(name, shader);
+    }
+
     // Common method to set transformation uniforms.
     private void SetTransforms(Shader shader, Matrix4 model, Matrix4 view)
     {
-        shader.SetMatrix4("model", model);
+        shader.SetModelMatrix(model);
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", _projection);
     }
@@ -1329,7 +1349,7 @@ public class Render : IDisposable
         Shader shader = GetShader("cube");
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.Use();
-        shader.SetMatrix4("model", modelMatrix);
+        shader.SetModelMatrix(modelMatrix);
         shader.SetMatrix4("view", camera.GetViewMatrix());
         shader.SetMatrix4("projection", _projection);
         shader.SetBool("useSkinning", false);
@@ -1337,6 +1357,8 @@ public class Render : IDisposable
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
+        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
+        // (only its alpha-mask variant has one).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {
