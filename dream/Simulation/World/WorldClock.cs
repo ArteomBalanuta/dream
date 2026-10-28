@@ -2,8 +2,14 @@ namespace Dream.Simulation.World;
 
 // The authoritative world clock. WorldTicks counts simulation ticks since the world was created
 // and survives restarts (world_metadata.world_time_ticks); it never reads the wall clock, so the
-// time of day only moves while the server ticks. It is presentation state: it stays out of
-// SimulationStateChecksum and WorldStateChecksum, and gameplay does not branch on it.
+// time of day only moves while the server ticks.
+//
+// Since wave T2 it is a gameplay input: the wolf population step (WorldSessionRuntime.Enemies)
+// keeps a second wolf at night. Phase is a pure function of the persisted world ticks,
+// TicksPerDay and the number of ticks run, so those three are lockstep inputs: servers that must
+// stay in lockstep need the same values. Advance runs first in AdvanceAuthoritativeTick, before
+// any gameplay. The clock itself stays out of SimulationStateChecksum and WorldStateChecksum; what
+// it changes (the extra wolf's actor and id) is hashed there like any other enemy.
 public sealed class WorldClock
 {
     public WorldClock(WorldClockSettings settings, long worldTicks = 0)

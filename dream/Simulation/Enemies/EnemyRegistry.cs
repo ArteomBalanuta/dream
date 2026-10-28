@@ -40,6 +40,22 @@ public sealed class EnemyRegistry
         _actors.Clear();
     }
 
+    // Removes the enemy with this actor id, keeping the others' order (the order the tick updates
+    // them in and the checksum hashes them in). Allocation-free. False when no enemy has the id.
+    public bool Remove(int actorId)
+    {
+        for (int i = 0; i < _actors.Count; i++)
+        {
+            if (_actors[i].Combatant.Actor.Id == actorId)
+            {
+                _actors.RemoveAt(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public bool TryGetEnemyByActorId(int actorId, out EnemyActor? actor)
     {
         actor = FindByActorId(actorId);
