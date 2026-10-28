@@ -1,0 +1,500 @@
+using BulletSharp;
+using BulletSharp.Math;
+using Dream.Simulation.Physics;
+using Dream.Simulation.Players;
+using Dream.Simulation.World;
+using Dream.Tests.Utilities;
+using Xunit;
+using Xunit.Abstractions;
+using TkVector2 = OpenTK.Mathematics.Vector2;
+using TkVector3 = OpenTK.Mathematics.Vector3;
+
+namespace Dream.Tests.Simulation.Physics;
+
+// PHYS-2: player bodies never deactivate, and Bullet unites every pair of overlapping dynamic
+// proxies into one island, so a player on a carpet of touching cubes kept the whole carpet
+// solving every tick. CubeRestFreezer turns resting cubes static (they leave islands) and wakes
+// only the cubes something pushes, carries or un-supports.
+public class CubeRestFreezerTests
+{
+    private const float TickSeconds = 1f / 64f;
+    private const int CarpetSide = 21;
+    private const int CarpetOrigin = 4;
+    private const int SettleTicks = 320;
+
+    private readonly ITestOutputHelper _output;
+
+    public CubeRestFreezerTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [Fact]
+    public void PlayerStandingOnCarpet_AfterSettling_NoCubeIsActive()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        TkVector3 start = scene.CarpetTop(10, 10);
+        Player player = scene.AddPlayer(start);
+
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+
+        int active = scene.CountActiveCarpetBodies();
+        _output.WriteLine($"carpet {scene.Carpet.Count}, active {active}, frozen {scene.Physics.CubeRest.FrozenCount}, synced {scene.Sync.LastSyncedBodyCount}");
+        Assert.True(scene.Carpet.Count >= 400);
+        Assert.Equal(0, active);
+        Assert.Equal(0, scene.Sync.LastSyncedBodyCount);
+        Assert.Equal(scene.Carpet.Count, scene.Physics.CubeRest.FrozenCount);
+        Assert.True(player.PhysicsBody.IsActive);
+
+        // The player still stands on the carpet (static cubes collide like the resting ones did).
+        TkVector3 position = player.GetWorldPosition();
+        Assert.InRange(position.Y, start.Y - 0.05f, start.Y + 0.05f);
+        Assert.Empty(scene.Map.FindInvariantViolations());
+    }
+
+    // The measured problem, kept as a regression reference: with freezing off, the player's
+    // never-sleeping body keeps the whole carpet's island awake.
+    [Fact]
+    public void PlayerStandingOnCarpet_WithFreezingOff_KeepsTheWholeCarpetAwake()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: false);
+        Player player = scene.AddPlayer(scene.CarpetTop(10, 10));
+
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+
+        int active = scene.CountActiveCarpetBodies();
+        _output.WriteLine($"carpet {scene.Carpet.Count}, active {active}");
+        Assert.Equal(scene.Carpet.Count, active);
+        Assert.Equal(0, scene.Physics.CubeRest.FrozenCount);
+    }
+
+    [Fact]
+    public void PlayerWalkingAcrossCarpet_WakesNothingUnderfoot()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(scene.CarpetTop(2, 10) + new TkVector3(0.23f, 0f, -0.13f));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.Equal(0, scene.CountActiveCarpetBodies());
+        long wokenBefore = scene.Physics.CubeRest.TotalWoken;
+
+        int maxActive = 0;
+        TkVector3 before = player.GetWorldPosition();
+        TkVector3 diagonal = new TkVector3(1f, 0f, 0.35f).Normalized();
+        for (int tick = 0; tick < 128; tick++)
+        {
+            scene.Run(player, 1, tick < 64 ? TkVector3.UnitX : diagonal);
+            maxActive = Math.Max(maxActive, scene.CountActiveCarpetBodies());
+        }
+
+        TkVector3 after = player.GetWorldPosition();
+        _output.WriteLine($"walked {after.X - before.X:0.00} m, max active {maxActive}");
+        Assert.True(after.X - before.X > 5f, $"walked only {after.X - before.X} m");
+        Assert.InRange(after.Y, before.Y - 0.01f, before.Y + 0.01f);
+        Assert.Equal(0, maxActive);
+        Assert.Equal(wokenBefore, scene.Physics.CubeRest.TotalWoken);
+    }
+
+    // A player standing exactly cell-aligned (a cell-centered spawn) has its front face flush
+    // with the next seam of the carpet. Bullet's box-box contact then pushes against the next
+    // cube's side; dynamic cubes yielded, a static one would hold the player forever. The flush
+    // seam rule wakes that row, and the walk matches the all-dynamic run.
+    [Fact]
+    public void PlayerStartingCellAligned_WalksAcrossTheSeamsLikeWithDynamicCubes()
+    {
+        float[] walked = new float[2];
+        foreach (bool freeze in new[] { true, false })
+        {
+            using Scene scene = Scene.Create(freezeEnabled: freeze);
+            Player player = scene.AddPlayer(scene.CarpetTop(2, 10));
+            scene.Run(player, SettleTicks, TkVector3.Zero);
+            float startX = player.GetWorldPosition().X;
+            scene.Run(player, 64, TkVector3.UnitX);
+            walked[freeze ? 0 : 1] = player.GetWorldPosition().X - startX;
+        }
+
+        _output.WriteLine($"walked frozen {walked[0]:0.0000} m, dynamic {walked[1]:0.0000} m");
+        Assert.True(walked[0] > 5f, $"walked only {walked[0]} m");
+        Assert.InRange(walked[0], walked[1] - 0.05f, walked[1] + 0.05f);
+    }
+
+    [Fact]
+    public void PlayerPushingACube_MovesItAndWakesOnlyWhatItTouches()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        // A lone row of 3 cubes beside the carpet, one cell apart from it, and a player on the
+        // floor west of the row pushing east along it.
+        int z = CarpetOrigin + CarpetSide + 1;
+        List<RigidBody> row = [];
+        for (int x = 10; x < 13; x++)
+        {
+            row.Add(scene.AddCube(x, 1, z));
+        }
+
+        // A cube touching the row's side (north of the first cube) that the push slides past.
+        RigidBody side = scene.AddCube(10, 1, z + 1);
+        Player player = scene.AddPlayer(new TkVector3(9.48f, 1.52f, z + 0.5f));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.Equal(0, scene.CountActiveCarpetBodies());
+        Assert.All(row, body => Assert.True(scene.Physics.CubeRest.IsFrozen(body)));
+
+        float startX = row[2].WorldTransform.Origin.X;
+        bool sideWoke = false;
+        bool carpetWoke = false;
+        for (int tick = 0; tick < 32; tick++)
+        {
+            scene.Run(player, 1, TkVector3.UnitX);
+            sideWoke |= side.IsActive;
+            carpetWoke |= scene.Carpet.Any(entry => entry.Body.IsActive);
+        }
+
+        float moved = row[2].WorldTransform.Origin.X - startX;
+        _output.WriteLine($"row end moved {moved:0.000} m; active {scene.CountActive()}");
+        Assert.True(moved > 0.5f, $"the pushed row moved {moved} m");
+        Assert.All(row, body => Assert.True(body.IsActive));
+        Assert.False(carpetWoke);
+        Assert.False(sideWoke);
+
+        // Once the player stops, everything refreezes.
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.Equal(0, scene.CountActive());
+        Assert.Empty(scene.Map.FindInvariantViolations());
+    }
+
+    // Pushing feels the same: a lone cube on the floor, and a cube resting on top of the carpet
+    // (which the player pushes while standing on the carpet), travel as far as with every cube
+    // dynamic.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PushedCube_TravelsAsFarAsWithDynamicCubes(bool onTopOfCarpet)
+    {
+        float[] moved = new float[2];
+        int[] wokenCarpet = new int[2];
+        foreach (bool freeze in new[] { true, false })
+        {
+            using Scene scene = Scene.Create(freezeEnabled: freeze);
+            RigidBody pushed;
+            Player player;
+            if (onTopOfCarpet)
+            {
+                pushed = scene.AddCube(CarpetOrigin + 8, 2, CarpetOrigin + 10);
+                player = scene.AddPlayer(scene.CarpetTop(6, 10) + new TkVector3(0.98f, 0f, 0f));
+            }
+            else
+            {
+                int z = CarpetOrigin + CarpetSide + 2;
+                pushed = scene.AddCube(10, 1, z);
+                player = scene.AddPlayer(new TkVector3(9.48f, 1.52f, z + 0.5f));
+            }
+
+            scene.Run(player, SettleTicks, TkVector3.Zero);
+            float startX = pushed.WorldTransform.Origin.X;
+            scene.Run(player, 48, TkVector3.UnitX);
+            moved[freeze ? 0 : 1] = pushed.WorldTransform.Origin.X - startX;
+            wokenCarpet[freeze ? 0 : 1] = scene.CountActiveCarpetBodies();
+            Assert.Empty(scene.Map.FindInvariantViolations());
+        }
+
+        _output.WriteLine($"moved frozen {moved[0]:0.000} m (carpet awake {wokenCarpet[0]}), dynamic {moved[1]:0.000} m (carpet awake {wokenCarpet[1]})");
+        Assert.True(moved[0] > 1f, $"the pushed cube moved {moved[0]} m");
+        Assert.InRange(moved[0], moved[1] - 0.15f, moved[1] + 0.15f);
+        // At most the carpet rows the push slides along (the cube rests cell-aligned, so the seam
+        // ahead of it and the two corner seams beside it are flush), never the whole carpet.
+        Assert.True(wokenCarpet[0] <= 3 * CarpetSide, $"{wokenCarpet[0]} carpet cubes woke");
+    }
+
+    [Fact]
+    public void PushingTheBottomOfAStack_CarriesTheCubesAboveIt()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        int z = CarpetOrigin + CarpetSide + 2;
+        RigidBody bottom = scene.AddCube(10, 1, z);
+        RigidBody top = scene.AddCube(10, 2, z);
+        Player player = scene.AddPlayer(new TkVector3(9.48f, 1.52f, z + 0.5f));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(bottom));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(top));
+
+        scene.Run(player, 1, TkVector3.UnitX);
+
+        Assert.True(bottom.IsActive);
+        Assert.True(top.IsActive);
+    }
+
+    [Fact]
+    public void RemovingASupportingCube_WakesTheStackAboveItOnly()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(scene.CarpetTop(2, 2));
+        Cube supportCube = scene.CubeAt(10, 1, 10);
+        RigidBody sideNeighbour = scene.Carpet.Single(entry => ReferenceEquals(entry.Cube, scene.CubeAt(11, 1, 10))).Body;
+        RigidBody rider = scene.AddCube(10, 2, 10);
+        RigidBody topRider = scene.AddCube(10, 3, 10);
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(topRider));
+        float restY = rider.WorldTransform.Origin.Y;
+        float topRestY = topRider.WorldTransform.Origin.Y;
+
+        Assert.True(scene.Map.RemoveCube(supportCube));
+        Assert.False(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.False(scene.Physics.CubeRest.IsFrozen(topRider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(sideNeighbour));
+        scene.Run(player, 64, TkVector3.Zero);
+
+        float fallen = restY - rider.WorldTransform.Origin.Y;
+        float topFallen = topRestY - topRider.WorldTransform.Origin.Y;
+        _output.WriteLine($"rider fell {fallen:0.000} m, top rider {topFallen:0.000} m");
+        Assert.InRange(fallen, 0.9f, 1.1f);
+        Assert.InRange(topFallen, 0.9f, 1.1f);
+        Assert.Empty(scene.Map.FindInvariantViolations());
+    }
+
+    [Fact]
+    public void ActivatingAFrozenCube_UnfreezesItBeforeTheNextStep()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(scene.CarpetTop(2, 2));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        RigidBody body = scene.Carpet[0].Body;
+        Assert.True(scene.Physics.CubeRest.IsFrozen(body));
+        Assert.True(body.IsStaticObject);
+
+        body.Activate(true);
+        scene.Run(player, 1, TkVector3.Zero);
+
+        Assert.False(scene.Physics.CubeRest.IsFrozen(body));
+        Assert.False(body.IsStaticObject);
+        Assert.Equal(1f, body.InvMass);
+    }
+
+    [Fact]
+    public void Grounded_JumpWorksOnFrozenCubesAndOnTerrain()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player onCarpet = scene.AddPlayer(scene.CarpetTop(10, 10));
+        Player onFloor = scene.AddPlayer(new TkVector3(1.5f, 1.52f, 1.5f));
+        scene.Run([onCarpet, onFloor], SettleTicks, TkVector3.Zero);
+        Assert.Equal(0, scene.CountActiveCarpetBodies());
+        float carpetY = onCarpet.GetWorldPosition().Y;
+        float floorY = onFloor.GetWorldPosition().Y;
+
+        scene.Run([onCarpet, onFloor], 1, TkVector3.Zero, jump: true);
+        scene.Run([onCarpet, onFloor], 8, TkVector3.Zero);
+
+        _output.WriteLine($"carpet rise {onCarpet.GetWorldPosition().Y - carpetY:0.000}, floor rise {onFloor.GetWorldPosition().Y - floorY:0.000}");
+        Assert.True(onCarpet.GetWorldPosition().Y - carpetY > 0.3f);
+        Assert.True(onFloor.GetWorldPosition().Y - floorY > 0.3f);
+
+        // Landing on the frozen carpet wakes nothing.
+        scene.Run([onCarpet, onFloor], 128, TkVector3.Zero);
+        Assert.InRange(onCarpet.GetWorldPosition().Y, carpetY - 0.05f, carpetY + 0.05f);
+        Assert.Equal(0, scene.CountActiveCarpetBodies());
+    }
+
+    // The freeze/wake pass runs every tick on the server: walking over a frozen carpet allocates nothing.
+    [Fact]
+    public void Tick_WithAFrozenCarpetAndAWalkingPlayer_AllocatesNothing()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(scene.CarpetTop(10, 10) + new TkVector3(0.23f, 0f, -0.13f));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.Equal(scene.Carpet.Count, scene.Physics.CubeRest.FrozenCount);
+        Player[] players = [player];
+        int tick = 0;
+
+        AllocationAssert.AtMost(0, () =>
+        {
+            TkVector3 direction = (tick++ / 24) % 2 == 0 ? TkVector3.UnitX : -TkVector3.UnitX;
+            scene.Run(players, 1, direction);
+        });
+
+        Assert.Equal(0, scene.CountActiveCarpetBodies());
+    }
+
+    // Two identical worlds given identical input stay bit-identical through freezing, a push
+    // that wakes and moves cubes, and refreezing (the two-server determinism requirement).
+    [Fact]
+    public void TwoIdenticalWorlds_StayBitIdenticalThroughFreezeAndWake()
+    {
+        using Scene first = Scene.Create(freezeEnabled: true);
+        using Scene second = Scene.Create(freezeEnabled: true);
+        foreach (Scene scene in new[] { first, second })
+        {
+            scene.AddCube(CarpetOrigin + 8, 2, CarpetOrigin + 10);
+            scene.AddPlayer(scene.CarpetTop(6, 10) + new TkVector3(0.98f, 0f, 0f));
+            scene.AddPlayer(new TkVector3(1.5f, 1.52f, 1.5f));
+        }
+
+        TkVector3[] script = [TkVector3.Zero, TkVector3.UnitX, new TkVector3(0.6f, 0f, 0.8f), TkVector3.Zero];
+        for (int phase = 0; phase < script.Length; phase++)
+        {
+            first.Run(first.Players, 120, script[phase]);
+            second.Run(second.Players, 120, script[phase]);
+            Assert.Equal(first.Physics.CubeRest.FrozenCount, second.Physics.CubeRest.FrozenCount);
+            Assert.Equal(first.Physics.CubeRest.TotalWoken, second.Physics.CubeRest.TotalWoken);
+            RigidBody[] firstBodies = first.Physics.DynamicMapCubeBodies.ToArray();
+            RigidBody[] secondBodies = second.Physics.DynamicMapCubeBodies.ToArray();
+            Assert.Equal(firstBodies.Length, secondBodies.Length);
+            for (int i = 0; i < firstBodies.Length; i++)
+            {
+                Assert.Equal(firstBodies[i].WorldTransform.Origin, secondBodies[i].WorldTransform.Origin);
+                Assert.Equal(first.Physics.CubeRest.IsFrozen(firstBodies[i]), second.Physics.CubeRest.IsFrozen(secondBodies[i]));
+            }
+
+            for (int i = 0; i < first.Players.Count; i++)
+            {
+                Assert.Equal(first.Players[i].GetWorldPosition(), second.Players[i].GetWorldPosition());
+            }
+        }
+
+        Assert.True(first.Physics.CubeRest.TotalWoken > 0);
+    }
+
+    [Fact]
+    public void TurningFreezingOff_RestoresEveryBody()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(scene.CarpetTop(10, 10));
+        scene.Run(player, SettleTicks, TkVector3.Zero);
+        Assert.Equal(scene.Carpet.Count, scene.Physics.CubeRest.FrozenCount);
+
+        scene.Physics.CubeRest.Enabled = false;
+
+        Assert.Equal(0, scene.Physics.CubeRest.FrozenCount);
+        Assert.All(scene.Carpet, entry =>
+        {
+            Assert.False(entry.Body.IsStaticObject);
+            Assert.Equal(1f, entry.Body.InvMass);
+            Assert.True(entry.Body.IsActive);
+        });
+    }
+
+    private sealed class Scene : IDisposable
+    {
+        private readonly List<Player> _players = [];
+
+        public IReadOnlyList<Player> Players => _players;
+
+        private Scene(PhysicsIntegrator physics, Map map)
+        {
+            Physics = physics;
+            Map = map;
+        }
+
+        public PhysicsIntegrator Physics { get; }
+
+        public Map Map { get; }
+
+        public PhysicsSyncSystem Sync { get; } = new();
+
+        public List<(Cube Cube, RigidBody Body)> Carpet { get; } = [];
+
+        public static Scene Create(bool freezeEnabled)
+        {
+            PhysicsIntegrator physics = new();
+            physics.CubeRest.Enabled = freezeEnabled;
+            Map map = new(physics, width: 32, depth: 32);
+            Scene scene = new(physics, map);
+            for (int x = CarpetOrigin; x < CarpetOrigin + CarpetSide; x++)
+            {
+                for (int z = CarpetOrigin; z < CarpetOrigin + CarpetSide; z++)
+                {
+                    Cube cube = Assert.IsType<Cube>(map.TryAddCube(new TkVector3(x, 1f, z), withPhysics: true));
+                    scene.Carpet.Add((cube, scene.BodyOf(cube)));
+                }
+            }
+
+            return scene;
+        }
+
+        // Center of a player standing on the carpet cell at (carpet-relative) column i, j.
+        public TkVector3 CarpetTop(int i, int j)
+        {
+            return new TkVector3(CarpetOrigin + i + 0.5f, 2.52f, CarpetOrigin + j + 0.5f);
+        }
+
+        public RigidBody AddCube(int x, int y, int z)
+        {
+            Cube cube = Assert.IsType<Cube>(Map.TryAddCube(new TkVector3(x, y, z), withPhysics: true));
+            return BodyOf(cube);
+        }
+
+        public Cube CubeAt(int x, int y, int z)
+        {
+            return Assert.IsType<Cube>(Map.Cubes[x, y, z]);
+        }
+
+        public Player AddPlayer(TkVector3 position)
+        {
+            RigidBody body = new PhysicsFactory().CreatePlayerBody(position.ToBullet());
+            Physics.AddSessionPlayerBody(body);
+            Player player = new(Map, Physics, body, position);
+            _players.Add(player);
+            return player;
+        }
+
+        public void Run(Player player, int ticks, TkVector3 direction, bool jump = false)
+        {
+            Run([player], ticks, direction, jump);
+        }
+
+        public void Run(IReadOnlyList<Player> players, int ticks, TkVector3 direction, bool jump = false)
+        {
+            PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+            for (int tick = 0; tick < ticks; tick++)
+            {
+                for (int i = 0; i < players.Count; i++)
+                {
+                    players[i].Update(
+                        TickSeconds,
+                        new PlayerSimulationInput(new MovementCommand(direction, JumpPressed: jump && tick == 0), TkVector2.Zero, AllowGameplayInput: true),
+                        tuning);
+                }
+
+                Physics.StepSimulationFixed(TickSeconds);
+                for (int i = 0; i < players.Count; i++)
+                {
+                    players[i].SyncCameraFromBody(tuning);
+                }
+
+                Sync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
+            }
+        }
+
+        public int CountActiveCarpetBodies()
+        {
+            return Carpet.Count(entry => entry.Body.IsActive);
+        }
+
+        public int CountActive()
+        {
+            int active = 0;
+            foreach (RigidBody body in Physics.DynamicMapCubeBodies)
+            {
+                if (body.IsActive)
+                {
+                    active++;
+                }
+            }
+
+            return active;
+        }
+
+        public void Dispose()
+        {
+            foreach (Player player in _players)
+            {
+                player.Dispose();
+            }
+
+            Physics.Dispose();
+        }
+
+        private RigidBody BodyOf(Cube cube)
+        {
+            return Physics.DynamicMapCubeBodies.Single(candidate =>
+                candidate.UserObject is ValueTuple<Cube, TkVector3> tuple && ReferenceEquals(tuple.Item1, cube));
+        }
+    }
+}

@@ -23,6 +23,11 @@ public class PhysicsIntegrator : IDisposable
     public InsertionOrderedSet<RigidBody> MapCubeBodies { get; } = new();
     public InsertionOrderedSet<RigidBody> DynamicMapCubeBodies { get; } = new();
 
+    // Freezes resting placed cubes into static colliders and wakes the ones something pushes,
+    // carries or un-supports, so player bodies (which never sleep) do not keep a whole cube
+    // carpet's island awake (PHYS-2; see CubeRestFreezer). It runs before every step.
+    public CubeRestFreezer CubeRest { get; } = new();
+
     // Fracture rubble is simulated per client and never replicated, so players do not collide
     // with it on either side; otherwise local rubble would make prediction diverge from the server.
     public const CollisionFilterGroups PlayerCollisionGroup = CollisionFilterGroups.CharacterFilter;
@@ -45,6 +50,11 @@ public class PhysicsIntegrator : IDisposable
 
     internal void RemoveMapBodyFromWorld(RigidBody body)
     {
+        if (World != null)
+        {
+            CubeRest.OnBodyRemoving(body);
+        }
+
         _removeRigidBodyFromWorld(body);
     }
 
@@ -185,12 +195,26 @@ public class PhysicsIntegrator : IDisposable
 
     public void StepSimulation(float deltaTime)
     {
+        PrepareCubesForStep(deltaTime);
         World.StepSimulation(deltaTime, 10);
     }
 
     public void StepSimulationFixed(float fixedDeltaTime)
     {
+        PrepareCubesForStep(fixedDeltaTime);
         World.StepSimulation(fixedDeltaTime, 0);
+    }
+
+    // Before the step, so a body frozen here keeps exactly the transform the last physics sync
+    // read (PhysicsSyncSystem relies on inactive bodies not having moved since), and player
+    // bodies already carry the velocity their motors set for this step.
+    private void PrepareCubesForStep(float deltaTime)
+    {
+        CubeRest.BeforeStep(
+            DynamicMapCubeBodies,
+            IsPlayerBodyParked ? null : PlayerBody,
+            _sessionPlayerBodies,
+            deltaTime);
     }
 
     public void RegisterPlayerBody(RigidBody playerBody, PhysicsBodyOwnership ownership)
@@ -267,6 +291,7 @@ public class PhysicsIntegrator : IDisposable
 
     public void ResetMapBodies()
     {
+        CubeRest.Clear();
         foreach (RigidBody body in MapCubeBodies)
         {
             if (body == null)
