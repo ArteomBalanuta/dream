@@ -116,7 +116,8 @@ public class ProtocolVersionMismatchClientTests
 
         Assert.True(session.IsConnected);
         Assert.Null(session.DisconnectReason);
-        Assert.True(session.TryDequeueInbound(out IServerToClientMessage? hello));
+        IServerToClientMessage? hello = null;
+        Assert.True(SpinWait.SpinUntil(() => session.TryDequeueInbound(out hello), TimeSpan.FromSeconds(5)));
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, Assert.IsType<ServerHelloMessage>(hello).ProtocolVersion);
     }
 
