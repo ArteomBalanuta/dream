@@ -18,6 +18,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     private bool _running;
     private long _completedWrites;
     private long _failedWrites;
+    private int _pendingCount;
 
     private PersistenceWriteQueue(bool background)
     {
@@ -34,17 +35,9 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     public long FailedWrites => Interlocked.Read(ref _failedWrites);
 
-    // Writes queued but not yet started (always 0 in inline mode).
-    public int PendingCount
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _pending.Count;
-            }
-        }
-    }
+    // Writes queued but not yet started (always 0 in inline mode). A counter kept beside the queue,
+    // so the server tick reads it without taking the writer's lock.
+    public int PendingCount => Volatile.Read(ref _pendingCount);
 
     public void Enqueue(Action write)
     {
@@ -58,6 +51,7 @@ public sealed class PersistenceWriteQueue : IDisposable
         lock (_sync)
         {
             _pending.Enqueue(write);
+            Interlocked.Increment(ref _pendingCount);
             if (_running)
             {
                 return;
@@ -113,6 +107,7 @@ public sealed class PersistenceWriteQueue : IDisposable
                 }
 
                 next = _pending.Dequeue();
+                Interlocked.Decrement(ref _pendingCount);
             }
 
             Execute(next);

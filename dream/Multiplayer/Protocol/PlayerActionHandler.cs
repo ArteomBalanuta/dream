@@ -60,20 +60,13 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             return;
         }
 
-        if (context.ActionQueue is PlayerActionQueue boundedQueue)
+        if (!context.ActionQueue.TryEnqueue(actionMessage, out _))
         {
-            if (!boundedQueue.TryEnqueue(actionMessage, out _))
-            {
-                context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
-                    actionMessage,
-                    serverTick: 0,
-                    $"Too many pending player actions; at most {PlayerActionQueue.MaxPendingActionsPerSession} may wait for a tick.")));
-            }
-
-            return;
+            context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                actionMessage,
+                serverTick: 0,
+                $"Too many pending player actions; at most {PlayerActionQueue.MaxPendingActionsPerSession} may wait for a tick.")));
         }
-
-        context.ActionQueue.Enqueue(actionMessage);
     }
 
     // Build and combat use intents are created only by the server, from command-frame primary use,

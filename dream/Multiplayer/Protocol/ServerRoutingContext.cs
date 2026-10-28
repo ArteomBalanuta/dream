@@ -37,8 +37,10 @@ public sealed class ServerRoutingContext
 
     public List<IServerToClientMessage> OutboundMessages { get; } = [];
 
-    // A connection gets at most one world resync per cooldown; requests inside it are dropped.
-    public static readonly TimeSpan WorldResyncCooldown = TimeSpan.FromSeconds(2);
+    // A connection gets at most one world resync per cooldown; requests inside it are dropped. It
+    // is shorter than the client's 2 s retry interval (PlayScene), which runs on a different clock,
+    // so a retry that arrives a little early because of jitter is still served.
+    public static readonly TimeSpan WorldResyncCooldown = TimeSpan.FromSeconds(1.5);
 
     private bool _hasAcceptedWorldResync;
     private long _lastAcceptedWorldResyncTimestamp;

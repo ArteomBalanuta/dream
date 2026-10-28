@@ -14,7 +14,7 @@ using Dream.Simulation.World.Geometry;
 namespace Dream.Tests.Integration;
 
 // Wave 7 tester: NETR-6 defers world resyncs to the end of the tick and limits them to one per
-// 2 s per connection. The wave-6 resync loop for fractured terrain must still converge: a late
+// 1.5 s per connection. The wave-6 resync loop for fractured terrain must still converge: a late
 // joiner that generated the terrain itself, joining after a terrain cube fractured, reaches the
 // server checksum (directly or through a deferred resync) and stays there.
 public class Wave7LateJoinFractureResyncLoopbackTests(ITestOutputHelper output)
@@ -73,7 +73,7 @@ public class Wave7LateJoinFractureResyncLoopbackTests(ITestOutputHelper output)
         Assert.Equal(0, joinPhase.MismatchesAfterFirstMatch);
 
         // Now diverge on purpose (a stray local cube) and send a second request inside the server's
-        // 2 s cooldown on top of the first: the deferred resync must still heal the client.
+        // 1.5 s cooldown on top of the first: the deferred resync must still heal the client.
         (int x, int y, int z) = FindFreeRaisedCell(world.Map, serverMap);
         Assert.NotNull(world.Map.TryAddCube(new Vector3(x, y, z), withPhysics: false));
         lastRequest.Reset();
