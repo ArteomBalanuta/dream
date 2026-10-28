@@ -24,18 +24,32 @@ namespace Dream.Tests.Load;
 //  - remote-actor presentation (ServerTickClock + TickInterpolationBuffer, as PlayScene drives
 //    them) freezes for about the transfer time and recovers; any backward step of the rendered
 //    remote actor after the transfer is measured and reported.
+// A second case runs a ~640 KB World50k resync over a 30 KB/s link (fix loop 1, tester C).
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class Wave10SlowLinkResyncMeasurementTests(ITestOutputHelper output)
 {
-    private const int LinkBytesPerSecond = 50 * 1024;
     private const int SnapshotIntervalTicks = 2;
 
     [LoadFact]
-    public async Task World50kResync_At50KBps_KeepsTheSessionAlive_AndRemoteActorsRecover()
+    public Task World50kResync_At50KBps_KeepsTheSessionAlive_AndRemoteActorsRecover()
     {
         // 50k cubes encode to only ~640 KB in the v3 compact format; 85k cubes make the ~1.1 MB resync.
-        WorldSnapshot world = WorldTransferProtocolTests.CreateWorld(cubes: 85_000, rubble: 1_000, subcells: 10);
-        ThrottledLink link = new("slow-50k", LinkBytesPerSecond);
+        return MeasureAsync(linkBytesPerSecond: 50 * 1024, cubes: 85_000);
+    }
+
+    // Fix loop 1 (tester C): with 256 KB chunks the server faulted any link under about 43.7 KB/s
+    // mid-resync (a chunk's write overran its 5 s + size/256 KB/s stall allowance). 64 KB chunks
+    // keep each write near 2 s here.
+    [LoadFact]
+    public Task World50kResync_At30KBps_KeepsTheSessionAlive_AndRemoteActorsRecover()
+    {
+        return MeasureAsync(linkBytesPerSecond: 30 * 1024, cubes: 50_000);
+    }
+
+    private async Task MeasureAsync(int linkBytesPerSecond, int cubes)
+    {
+        WorldSnapshot world = WorldTransferProtocolTests.CreateWorld(cubes: cubes, rubble: 1_000, subcells: 10);
+        ThrottledLink link = new($"slow-{linkBytesPerSecond / 1024}k", linkBytesPerSecond);
         using DedicatedServerHost host = CreateHost(new MutatingAuthority { MutationsPerTick = 0 });
         await using ServerConnection connection = new(link.Server, host, new TransportJsonCodec(), new LengthPrefixedMessageFramer(), ServerConnectionOptions.Default);
         await using RemoteClientSession client = new(link.Client, new TransportJsonCodec(), new LengthPrefixedMessageFramer(), new RemoteClientOptions("127.0.0.1", 1, "session-a", "Slow A", "w10-slow"));

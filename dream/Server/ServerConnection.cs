@@ -83,7 +83,21 @@ public sealed class ServerConnection : IAsyncDisposable
     // chunk and one queued message, so the regular traffic keeps flowing and the backlog stays
     // bounded. The capture is released after the last chunk. Writer task only (and DisposeAsync
     // once the writer has ended).
+    // Releasing on the final chunk is safe because nothing reads the capture after it: the final
+    // chunk is fully encoded into _chunkPayloadWriter (WriteNextChunk returns only after the
+    // fragment's last item was written) before ReleaseCapture runs, the envelope then copies those
+    // bytes, and the sender is complete, so no later WriteNextChunk can touch the capture. The
+    // runtime gave the capture to this transfer alone (releaseCaptureWhenDone), so no other
+    // connection or tick reads it either.
     private WorldTransferSender? _activeTransfer;
+    // World transfers queued or running: +1 when a message that will become a transfer is queued,
+    // -1 when its final chunk is sent; 0 again once the connection faults or its writer ends.
+    // Read by the service (HasWorldTransferPending) so it does not pile overflow resyncs behind a
+    // transfer that is still going out. Guarded by _outboundSync.
+    private int _pendingWorldTransfers;
+    private long _backToBackWorldTransfers;
+    // Set while an overflow resync waits for a transfer to finish (DeferOverflowResync).
+    private int _overflowResyncDeferred;
     private bool _chunkDue;
     private int _nextWorldTransferId;
     private long _worldTransfers;
@@ -151,6 +165,22 @@ public sealed class ServerConnection : IAsyncDisposable
     public long WorldTransfers => Interlocked.Read(ref _worldTransfers);
 
     public long WorldChunksSent => Interlocked.Read(ref _worldChunksSent);
+
+    // True while a world transfer (join or resync) is queued or still going out.
+    public bool HasWorldTransferPending
+    {
+        get
+        {
+            lock (_outboundSync)
+            {
+                return _pendingWorldTransfers > 0;
+            }
+        }
+    }
+
+    // World transfers queued while another one was queued or running, so they went out back to
+    // back: each is a full world sent right after another.
+    public long BackToBackWorldTransfers => Interlocked.Read(ref _backToBackWorldTransfers);
 
     // The byte budget of one chunk's world fragment (tests shrink it to force many chunks).
     internal int WorldChunkBytes { get; set; } = WorldChunkMessage.DefaultChunkBytes;
@@ -225,6 +255,22 @@ public sealed class ServerConnection : IAsyncDisposable
     public void RearmOverflowResync()
     {
         Volatile.Write(ref _overflowResyncPending, 1);
+    }
+
+    // Puts back a flag taken by TryTakeOverflowResync because a world transfer is still queued or
+    // going out (HasWorldTransferPending): a resync served now would only queue a second full world
+    // behind it. The next tick after the transfer finished asks again. Returns true the first time
+    // since the last TakeOverflowResyncDeferred, so a caller can count each wait once.
+    public bool DeferOverflowResync()
+    {
+        Volatile.Write(ref _overflowResyncPending, 1);
+        return Interlocked.Exchange(ref _overflowResyncDeferred, 1) == 0;
+    }
+
+    // True once when the overflow resync being served had waited behind a transfer.
+    public bool TakeOverflowResyncDeferred()
+    {
+        return Interlocked.Exchange(ref _overflowResyncDeferred, 0) != 0;
     }
 
     public void EnqueueSnapshot(ServerSnapshotMessage snapshotMessage)
@@ -499,6 +545,17 @@ public sealed class ServerConnection : IAsyncDisposable
                 _outbound.AddLast(entry);
             }
 
+            // The writer turns exactly these entries into transfers (see WriteLoopAsync).
+            if (entry.Shared == null && WorldTransfer.TryGetWorld(entry.Message, out _))
+            {
+                if (_pendingWorldTransfers > 0)
+                {
+                    Interlocked.Increment(ref _backToBackWorldTransfers);
+                }
+
+                _pendingWorldTransfers++;
+            }
+
             _writerTask ??= Task.Run(() => WriteLoopAsync(_writerShutdown.Token));
         }
 
@@ -566,8 +623,9 @@ public sealed class ServerConnection : IAsyncDisposable
                         lock (_outboundSync)
                         {
                             // A transfer still running keeps the connection busy for
-                            // FlushOutboundAsync even while the queue is empty.
-                            _writing = _activeTransfer != null;
+                            // FlushOutboundAsync even while the queue is empty; a faulted
+                            // connection sends no more chunks, so it is not busy.
+                            _writing = _activeTransfer != null && !IsFaulted;
                             if (entry.Coalesced != null)
                             {
                                 entry.Coalesced.Reset();
@@ -601,6 +659,7 @@ public sealed class ServerConnection : IAsyncDisposable
             lock (_outboundSync)
             {
                 _writing = false;
+                _pendingWorldTransfers = 0;
             }
         }
     }
@@ -639,6 +698,10 @@ public sealed class ServerConnection : IAsyncDisposable
         if (transfer.IsComplete)
         {
             _activeTransfer = null;
+            lock (_outboundSync)
+            {
+                _pendingWorldTransfers = Math.Max(0, _pendingWorldTransfers - 1);
+            }
         }
     }
 
@@ -661,6 +724,7 @@ public sealed class ServerConnection : IAsyncDisposable
         IsFaulted = true;
         CloseReason = closeReason;
         _outbound.Clear();
+        _pendingWorldTransfers = 0;
         NetworkDiagnosticsLog.Write(
             "server.connection.fault",
             $"connection={ConnectionId} kind={closeReason} reason={reason}");
@@ -681,7 +745,9 @@ public sealed class ServerConnection : IAsyncDisposable
             DecodedProtocolMessage decoded;
             try
             {
-                decoded = _codec.Decode(payload);
+                // Server-only kinds (a world chunk, a snapshot) are refused before their payload is
+                // decoded.
+                decoded = _codec.DecodeFromClient(payload);
             }
             catch (Exception ex) when (ProtocolVersionMismatchException.ReadForeignProtocolVersion(payload) is int clientVersion)
             {

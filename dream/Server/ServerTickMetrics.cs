@@ -203,7 +203,14 @@ public readonly record struct ServerMetricsSnapshot(
     long BacklogOverflowCloses = 0,
     // Lagging connections whose merged snapshot deltas passed the cap and were replaced by a
     // server-requested full world resync.
-    long CoalesceOverflowResyncs = 0);
+    long CoalesceOverflowResyncs = 0,
+    // Overflow resyncs that waited for a world transfer still queued or going out to that
+    // connection (counted once per wait), and those of them later served, back to back with it.
+    long CoalesceOverflowResyncsDeferred = 0,
+    long BackToBackOverflowResyncs = 0,
+    // World transfers (joins and resyncs of any origin) queued while another transfer to the same
+    // connection was still queued or going out: full worlds sent back to back.
+    long BackToBackWorldTransfers = 0);
 
 // Always-on, allocation-free server tick metrics. The tick thread records phase timestamps from
 // Stopwatch.GetTimestamp; readers on other threads copy a ServerTickMetricsSnapshot out under the
@@ -243,6 +250,8 @@ public sealed class ServerTickMetrics
     private long _sendStallCloses;
     private long _backlogOverflowCloses;
     private long _coalesceOverflowResyncs;
+    private long _coalesceOverflowResyncsDeferred;
+    private long _backToBackOverflowResyncs;
 
     public long IdleTimeoutCloses => Interlocked.Read(ref _idleTimeoutCloses);
 
@@ -273,6 +282,22 @@ public sealed class ServerTickMetrics
     public void RecordCoalesceOverflowResync()
     {
         Interlocked.Increment(ref _coalesceOverflowResyncs);
+    }
+
+    public long CoalesceOverflowResyncsDeferred => Interlocked.Read(ref _coalesceOverflowResyncsDeferred);
+
+    public long BackToBackOverflowResyncs => Interlocked.Read(ref _backToBackOverflowResyncs);
+
+    // An overflow resync that waits for the connection's world transfer to finish.
+    public void RecordCoalesceOverflowResyncDeferred()
+    {
+        Interlocked.Increment(ref _coalesceOverflowResyncsDeferred);
+    }
+
+    // A deferred overflow resync served once that transfer finished.
+    public void RecordBackToBackOverflowResync()
+    {
+        Interlocked.Increment(ref _backToBackOverflowResyncs);
     }
 
     // One AdvanceOnceAsync call. The phase durations are Stopwatch ticks; snapshot and broadcast

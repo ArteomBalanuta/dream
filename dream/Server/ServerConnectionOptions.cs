@@ -19,7 +19,9 @@ public sealed record ServerConnectionOptions
     // The slowest link a frame write is still allowed to run at: each write's stall limit is
     // SendStallTimeout plus frameBytes / this rate, so a slow but live client receiving a large
     // frame (a full world resync) is not mistaken for a stalled one. Zero or less gives every
-    // frame the flat SendStallTimeout.
+    // frame the flat SendStallTimeout. Worlds go out in WorldChunkMessage.DefaultChunkBytes (64 KB)
+    // chunks, sized so one chunk fits inside this allowance on a link of about 12.5 KB/s
+    // (64 KB / (5 s + 0.25 s)); the largest other frame is a coalesced snapshot.
     public int SendStallMinimumBytesPerSecond { get; init; } = 256 * 1024;
 
     // A lagging client's unsent snapshots merge into one. When the merged world mutations or

@@ -4,14 +4,24 @@ namespace Dream.Multiplayer.Protocol;
 
 // Largest frame payload per direction. A client only ever sends small frames (hello, join,
 // one command per tick, actions, keepalives, resync requests), so the server reads with a small
-// cap that bounds what a hostile peer can make it buffer. The server sends snapshots and, on join
-// or resync, the whole world, so the client reads with a large cap. Each side writes with the cap
-// its peer reads with, so an oversized frame fails at its writer with a clear reason instead of
-// reaching the peer. The 32 MB server cap is a stopgap until chunked world transfer (SCALE-1).
+// cap that bounds what a hostile peer can make it buffer. The server sends snapshots and world
+// chunks, so the client reads with a larger cap. Each side writes with the cap its peer reads
+// with, so an oversized frame fails at its writer with a clear reason instead of reaching the peer.
+//
+// Since chunked world transfer (protocol v3, SCALE-1) no frame carries a whole world: a join or
+// resync world goes out as a carrier plus WorldChunkMessage frames of about 64 KB. The largest
+// legitimate server frame is now a lagging client's coalesced snapshot at the merge caps
+// (ServerConnectionOptions: 4096 world mutations and 4096 damage events; past them the deltas are
+// dropped for a resync). Measured worst case (WorldTransferLimitTests: every mutation a fracture
+// with six moved pieces, every number at full length, 320 actors): 2.74 MB. A World85k chunk is
+// about 65 KB and its carrier under 200 B. The 8 MB cap keeps about 3x headroom over that worst
+// case (4 MB would leave 1.5x, and one tick's snapshot is not capped by the merge limits) and
+// bounds what a client buffers for one frame to a quarter of the 32 MB stopgap that whole-world
+// frames needed.
 public sealed record FrameLimitOptions
 {
     public const int DefaultClientToServerMaxPayloadBytes = 64 * 1024;
-    public const int DefaultServerToClientMaxPayloadBytes = 32 * 1024 * 1024;
+    public const int DefaultServerToClientMaxPayloadBytes = 8 * 1024 * 1024;
 
     // Overrides ClientToServerMaxPayloadBytes (bytes, a positive integer) for one run.
     public const string ClientToServerEnvironmentVariable = "DREAM_CLIENT_FRAME_LIMIT_BYTES";

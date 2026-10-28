@@ -200,6 +200,24 @@ public sealed class TransportJsonCodec : IProtocolCodec
 
     public DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload)
     {
+        return Decode(payload, fromClient: false);
+    }
+
+    public DecodedProtocolMessage DecodeFromClient(ReadOnlySpan<byte> payload)
+    {
+        return Decode(payload, fromClient: true);
+    }
+
+    // The kinds only a server sends. A client frame of one of these is refused from its envelope,
+    // before the payload (which may be a large world chunk or snapshot) is decoded.
+    public static bool IsServerOnlyKind(string messageKind)
+    {
+        return messageKind is "server.hello" or "server.join-accepted" or "server.join-rejected"
+            or "server.snapshot" or "server.action" or WorldChunkMessage.Kind;
+    }
+
+    private DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload, bool fromClient)
+    {
         Utf8JsonReader reader = new(payload);
         if (!reader.Read())
         {
@@ -277,6 +295,12 @@ public sealed class TransportJsonCodec : IProtocolCodec
             throw new InvalidOperationException(
                 $"Unsupported protocol version {envelope.ProtocolVersion}. " +
                 $"Supported version: {TransportEnvelope.CurrentProtocolVersion}.");
+        }
+
+        if (fromClient && IsServerOnlyKind(envelope.MessageKind))
+        {
+            throw new InvalidOperationException(
+                $"Received server-only message kind '{messageKind}' from a client; its payload was not decoded.");
         }
 
         IProtocolMessage message = messageKind switch

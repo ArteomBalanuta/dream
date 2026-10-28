@@ -194,8 +194,9 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
     // takes 40 ms and every queued snapshot overflows the delta cap, so the service asks for a resync
     // whenever the 1.5 s cooldown allows. Transfers must never overlap on the wire (the client
     // reassembler would throw on a second carrier), and once the link is fast and the world is quiet
-    // every queued transfer drains and no new one starts. The number of resyncs queued behind an
-    // unfinished transfer is reported: each is a full world.
+    // every queued transfer drains and no new one starts. Fix loop 1 (tester B, reviewer S6): an
+    // overflow while a transfer is queued or going out is deferred until it finished, so no full
+    // world is ever queued behind an unfinished one (before: 6 transfers in 8 s, 5 redundant).
     [Fact]
     public async Task OverflowResyncs_DuringAnInFlightTransfer_AreSentOneAfterAnother_AndConverge()
     {
@@ -230,6 +231,17 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
                 $"up to {maxQueuedWorlds} full worlds queued behind an unfinished transfer, {connection.WorldChunksSent} chunks sent");
             Assert.True(servedInPhase1 >= 2, $"only {servedInPhase1} resyncs were served; the scenario did not overflow during a transfer");
             Assert.False(connection.IsFaulted, connection.CloseReason.ToString());
+            ServerMetricsSnapshot metrics = service.CaptureMetrics();
+            output.WriteLine(
+                $"metrics: {metrics.CoalesceOverflowResyncs} overflow resyncs served, {metrics.CoalesceOverflowResyncsDeferred} deferred behind a transfer, " +
+                $"{metrics.BackToBackOverflowResyncs} served right after one, {metrics.BackToBackWorldTransfers} transfers queued behind another");
+            // At most the one resync just served and not yet started by the writer; never a second
+            // full world queued behind an unfinished transfer.
+            Assert.InRange(maxQueuedWorlds, 0, 1);
+            Assert.Equal(0, connection.BackToBackWorldTransfers);
+            Assert.Equal(0, metrics.BackToBackWorldTransfers);
+            Assert.True(metrics.CoalesceOverflowResyncsDeferred >= 1, "no overflow happened while a transfer was in flight");
+            Assert.InRange(metrics.BackToBackOverflowResyncs, 1, metrics.CoalesceOverflowResyncsDeferred);
 
             // Phase 2: the link recovers and the world goes quiet.
             authority.MutationsPerTick = 0;
@@ -249,6 +261,7 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
 
             Assert.False(connection.IsFaulted);
             Assert.Equal(authority.WorldResyncs, connection.WorldTransfers);
+            Assert.Equal(0, connection.BackToBackWorldTransfers);
 
             // The client side: one carrier at a time, every transfer completes, ids 1..n in order.
             IReadOnlyList<IProtocolMessage> wire = Decode(transport.Frames);
@@ -263,7 +276,7 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
             int deliveredWorlds = delivered.Count(message => message is ServerSnapshotMessage { Snapshot.World: not null });
             Assert.Equal(carriers, deliveredWorlds);
             output.WriteLine(
-                $"converged: {connection.WorldTransfers} full-world transfers in total ({connection.WorldTransfers - 1} redundant after the first), " +
+                $"converged: {connection.WorldTransfers} full-world transfers in total, {connection.BackToBackWorldTransfers} queued behind an unfinished one, " +
                 $"{connection.WorldChunksSent} chunks, {connection.BytesSent:N0} B");
         }
         finally

@@ -76,7 +76,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // transfer's final server.world-chunk arrives; then the carrier goes into the inbound queue
     // with the assembled world, followed by the held messages in arrival order. Consumers so see
     // the protocol v2 order, and world mutations in the held snapshots apply on top of the world.
-    private readonly WorldTransferReassembler _worldTransfers = new();
+    // The transfer is bounded (WorldTransferLimits: items, held messages, a deadline on the
+    // injected TimeProvider, checked for every drained frame); a breach ends the session with
+    // "World transfer failed: ..." like any other protocol error.
+    private readonly WorldTransferReassembler _worldTransfers;
     private readonly Action<IServerToClientMessage> _deliverInbound;
     private long _worldTransfersCompleted;
     private long _worldTransferStartedTimestamp;
@@ -119,13 +122,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
         IProtocolCodec codec,
         IMessageFramer framer,
         RemoteClientOptions options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        WorldTransferLimits? worldTransferLimits = null)
     {
         _connection = connection;
         _codec = codec;
         _framer = framer;
         Options = options;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _worldTransfers = new WorldTransferReassembler(worldTransferLimits ?? WorldTransferLimits.Default, _timeProvider);
         _commandLogKey = $"client.tx.command.{options.SessionId}";
         _slowCommandLogKey = $"client.tx.command.slow.{options.SessionId}";
         _keepaliveLogKey = $"client.tx.keepalive.{options.SessionId}";
@@ -525,6 +530,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
             Interlocked.Increment(ref _inboundFrameCount);
+            // A transfer whose final chunk never comes would otherwise hold every later message
+            // forever while the snapshots keep the silence watchdog satisfied.
+            _worldTransfers.CheckDeadline();
             if (payload.IsEmpty)
             {
                 continue;
@@ -882,6 +890,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (WorldTransferLimitException ex)
+        {
+            DisconnectReason = $"World transfer failed: {ex.Message}";
         }
         catch (ProtocolVersionMismatchException ex)
         {

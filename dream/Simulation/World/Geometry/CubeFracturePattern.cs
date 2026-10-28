@@ -3,6 +3,10 @@ using Dream.Simulation.Determinism;
 
 namespace Dream.Simulation.World.Geometry;
 
+// Wire contract: protocol v3 sends unmoved rubble as k=0 ("the cell's first-pass rubble") and the
+// client regenerates the pieces here (WorldSnapshotJsonConverter). Any change to this pattern (the
+// salt, the anchors, the piece count, the random draws or their order) changes what k=0 means on
+// the wire, so old and new peers would build different rubble; it needs a protocol version bump.
 public static class CubeFracturePattern
 {
     // "fracture" in ASCII; keeps rubble seeds apart from other per-cell seeds.

@@ -388,7 +388,42 @@ public sealed class WorldSnapshotJsonConverter : JsonConverter<WorldSnapshot>
             }
         }
 
+        ValidateDimensions(width, height, depth);
         return Create(width, height, depth, sequence, cubes, subcells, rubble);
+    }
+
+    // The largest width, height or depth a decoded world may announce, and the most cells it may
+    // span. Today's worlds are at most 100 x 8 x 100; the receiver sizes its item budget from these
+    // dimensions (WorldTransferLimits), so they must be sane before anything trusts them.
+    public const int MaxDimension = 1 << 14;
+    public const long MaxCells = 1L << 30;
+
+    private static void ValidateDimensions(int width, int height, int depth)
+    {
+        if (width < 0 || height < 0 || depth < 0)
+        {
+            throw new JsonException($"Compact world dimensions {width}x{height}x{depth} must not be negative.");
+        }
+
+        if (width > MaxDimension || height > MaxDimension || depth > MaxDimension ||
+            (long)width * height * depth > MaxCells)
+        {
+            throw new JsonException(
+                $"Compact world dimensions {width}x{height}x{depth} are out of range (at most {MaxDimension} per axis and {MaxCells} cells).");
+        }
+    }
+
+    // A running delta sum. A crafted delta must not wrap the long and land back in the int range.
+    private static long Accumulate(long total, long delta)
+    {
+        try
+        {
+            return checked(total + delta);
+        }
+        catch (OverflowException)
+        {
+            throw new JsonException("Compact world delta overflows.");
+        }
     }
 
     // A decoded world in the list shape the list-based export produced: PlacedCubeCells holds the
@@ -442,9 +477,9 @@ public sealed class WorldSnapshotJsonConverter : JsonConverter<WorldSnapshot>
         long material = -1;
         while (TryReadInteger(ref reader, out long dx))
         {
-            x += dx;
-            y += ReadInteger(ref reader);
-            z += ReadInteger(ref reader);
+            x = Accumulate(x, dx);
+            y = Accumulate(y, ReadInteger(ref reader));
+            z = Accumulate(z, ReadInteger(ref reader));
             long t = ReadInteger(ref reader);
             long flags = t & (CubeFlagBits - 1);
             long idDelta = (t - flags) / CubeFlagBits;
@@ -471,7 +506,7 @@ public sealed class WorldSnapshotJsonConverter : JsonConverter<WorldSnapshot>
             int? actorId = null;
             if ((flags & FlagId) != 0)
             {
-                previousId += idDelta;
+                previousId = Accumulate(previousId, idDelta);
                 actorId = ToInt32(previousId);
             }
             else if (idDelta != 0)
@@ -501,9 +536,9 @@ public sealed class WorldSnapshotJsonConverter : JsonConverter<WorldSnapshot>
         long x = 0, y = 0, z = 0;
         while (TryReadInteger(ref reader, out long dx))
         {
-            x += dx;
-            y += ReadInteger(ref reader);
-            z += ReadInteger(ref reader);
+            x = Accumulate(x, dx);
+            y = Accumulate(y, ReadInteger(ref reader));
+            z = Accumulate(z, ReadInteger(ref reader));
             cells.Add(new Vector3(ToInt32(x), ToInt32(y), ToInt32(z)));
         }
 
@@ -523,9 +558,9 @@ public sealed class WorldSnapshotJsonConverter : JsonConverter<WorldSnapshot>
         long material = -1;
         while (TryReadInteger(ref reader, out long dx))
         {
-            x += dx;
-            y += ReadInteger(ref reader);
-            z += ReadInteger(ref reader);
+            x = Accumulate(x, dx);
+            y = Accumulate(y, ReadInteger(ref reader));
+            z = Accumulate(z, ReadInteger(ref reader));
             long h = ReadInteger(ref reader);
             if (h < 0)
             {
