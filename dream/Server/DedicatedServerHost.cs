@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
@@ -37,6 +38,17 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public const string JoinRetryRejectionReason =
         "The server could not load this player's saved data in time; retry the join.";
 
+    // Stale-session takeover (NETR-8). A join for a session (or a player name) held by another
+    // connection takes it over when that connection has sent no frame for this long: clients send
+    // a frame at least every second (RemoteClientSession.KeepaliveInterval), so two seconds of
+    // silence means a crashed client or a dropped network, which the 10 s idle timeout would only
+    // release later. A connection heard from within this window keeps its session, and the join is
+    // rejected with SessionInUseRejectionReason, so a second client cannot hijack a live player.
+    public static readonly TimeSpan StaleSessionTakeoverSilence = TimeSpan.FromSeconds(2);
+
+    public const string SessionInUseRejectionReason =
+        "Session already in use: another connection is still active for it.";
+
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
@@ -69,6 +81,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private bool _disposed;
     private readonly BackgroundCheckpointWriter? _checkpointWrites;
     private double _checkpointElapsedSeconds;
+    // Connections whose session a join took over (NETR-8). The host already released them; the
+    // service drains the queue and closes their transports. The set drops any late message from
+    // one of them, so it cannot come back as a ghost context, including one still in flight when
+    // the service's own release for it runs. A mark stays until a new connection with the same id
+    // attaches (ForgetTakenOverConnection); ids are remote endpoints, so that is a new socket.
+    private readonly ConcurrentQueue<string> _takenOverConnectionQueue = new();
+    private readonly ConcurrentDictionary<string, byte> _takenOverConnections = new(StringComparer.Ordinal);
 
     public DedicatedServerHost(
         IAuthoritativeSessionHost? authority,
@@ -126,6 +145,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // claim is confirmed and before its queued actions are purged.
     internal Action<string>? ReleasingSessionForTest { get; set; }
 
+    // Clock for connection liveness (stale-session takeover). DedicatedServerService sets it to its
+    // connection options' clock; tests pass a fake one.
+    internal TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
     public static DedicatedServerHost CreateDefault()
@@ -164,7 +187,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         string connectionId,
         IClientToServerMessage message)
     {
-        if (Volatile.Read(ref _disposed))
+        if (Volatile.Read(ref _disposed) || _takenOverConnections.ContainsKey(connectionId))
         {
             return Array.Empty<IServerToClientMessage>();
         }
@@ -172,6 +195,19 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ServerRoutingContext context = GetOrCreateConnectionContext(connectionId);
         lock (_authoritySync)
         {
+            // A connection whose session was taken over while this message was on its way: the
+            // context fetched above is a fresh one created after the takeover removed the old one,
+            // so it is dropped again instead of lingering as a ghost.
+            if (_takenOverConnections.ContainsKey(connectionId))
+            {
+                if (_connections.TryRemove(new KeyValuePair<string, ServerRoutingContext>(connectionId, context)))
+                {
+                    Volatile.Write(ref _connectionsChanged, 1);
+                }
+
+                return Array.Empty<IServerToClientMessage>();
+            }
+
             // The context was fetched before the lock. If the connection was released (or the host
             // disposed) in between, the message belongs to a connection that no longer exists: a
             // command routed now would leave a stale ring in the inbox for a session a reconnect
@@ -182,6 +218,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             {
                 return Array.Empty<IServerToClientMessage>();
             }
+
+            context.MarkInbound(TimeProvider.GetTimestamp());
 
             if (_deferJoinsToTick && message is ClientJoinRequestMessage joinRequest)
             {
@@ -333,6 +371,32 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     public bool TryClaimSession(string connectionId, string sessionId, out string? rejectionReason)
     {
+        return TryClaimSession(connectionId, sessionId, displayName: null, out rejectionReason);
+    }
+
+    // Claims run under the tick lock (joins are routed under it; the lock is re-entrant), so a
+    // takeover's release cannot interleave with a tick, another join or the old connection's own
+    // release. Identity is unauthenticated: a session id is a client-chosen string (a fresh
+    // "client-<guid>" per connect, broadcast to every client in snapshots) and the persisted
+    // profile is keyed by the display name. So a rejoin after a client crash normally arrives with
+    // a new session id and the same display name, and a stale holder is looked up both ways:
+    //  - the same session id claimed by another connection;
+    //  - another claimed connection whose joined player name (ResolveJoinPlayerName) matches.
+    // Either is taken over only when it has been silent for StaleSessionTakeoverSilence; anyone
+    // could already take the name once the old connection's 10 s idle timeout released it, so
+    // the takeover only shortens that window for a dead connection and never touches a live one.
+    // A live holder of the same session id rejects the join with SessionInUseRejectionReason; a
+    // live holder of the name is left to the runtime's duplicate-display-name rejection.
+    public bool TryClaimSession(string connectionId, string sessionId, string? displayName, out string? rejectionReason)
+    {
+        lock (_authoritySync)
+        {
+            return TryClaimSessionLocked(connectionId, sessionId, displayName, out rejectionReason);
+        }
+    }
+
+    private bool TryClaimSessionLocked(string connectionId, string sessionId, string? displayName, out string? rejectionReason)
+    {
         if (_connectionClaims.TryGetValue(connectionId, out string? existingSession))
         {
             if (string.Equals(existingSession, sessionId, StringComparison.Ordinal))
@@ -343,6 +407,22 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             rejectionReason = $"Connection is already joined as session '{existingSession}'.";
             return false;
+        }
+
+        if (_sessionClaims.TryGetValue(sessionId, out string? currentOwner)
+            && !string.Equals(currentOwner, connectionId, StringComparison.Ordinal)
+            && !TryTakeOverStaleConnection(currentOwner, connectionId, sessionId, "session-id"))
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.session.in-use",
+                $"connection={connectionId} session={sessionId} owner={currentOwner}");
+            rejectionReason = SessionInUseRejectionReason;
+            return false;
+        }
+
+        if (displayName != null)
+        {
+            TakeOverStaleHoldersOfPlayerName(connectionId, sessionId, displayName);
         }
 
         if (_sessionClaims.TryAdd(sessionId, connectionId))
@@ -365,8 +445,134 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return true;
         }
 
-        rejectionReason = $"Session '{sessionId}' is already joined by another connection.";
+        rejectionReason = SessionInUseRejectionReason;
         return false;
+    }
+
+    // Whether a join of another connection, still pending or in the batch being applied, waits on
+    // the same player's prefetch. Under the tick lock.
+    private bool IsPlayerPrefetchSharedByAnotherJoin(string playerName, string releasedConnectionId)
+    {
+        return ContainsJoinOfPlayer(_pendingJoins, playerName, releasedConnectionId)
+            || ContainsJoinOfPlayer(_applyingJoins, playerName, releasedConnectionId);
+    }
+
+    private static bool ContainsJoinOfPlayer(List<PendingJoin> joins, string playerName, string excludedConnectionId)
+    {
+        for (int i = 0; i < joins.Count; i++)
+        {
+            if (!string.Equals(joins[i].ConnectionId, excludedConnectionId, StringComparison.Ordinal)
+                && string.Equals(joins[i].PlayerName, playerName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Takes over every other claimed connection whose joined player is the joining one's player
+    // (the same ResolveJoinPlayerName, compared like the runtime's display-name check) under a
+    // different session id, when it is stale. A live one is left alone. Under the tick lock.
+    private void TakeOverStaleHoldersOfPlayerName(string connectionId, string sessionId, string displayName)
+    {
+        string playerName = WorldSessionRuntime.ResolveJoinPlayerName(sessionId, displayName);
+        string? staleHolder = null;
+        do
+        {
+            staleHolder = null;
+            foreach (KeyValuePair<string, string> claim in _connectionClaims)
+            {
+                if (string.Equals(claim.Key, connectionId, StringComparison.Ordinal)
+                    || string.Equals(claim.Value, sessionId, StringComparison.Ordinal)
+                    || !_connections.TryGetValue(claim.Key, out ServerRoutingContext? holder)
+                    || holder.LastJoinRequest is not { } holderJoin
+                    || !string.Equals(
+                        WorldSessionRuntime.ResolveJoinPlayerName(holderJoin.RequestedSessionId, holderJoin.DisplayName),
+                        playerName,
+                        StringComparison.OrdinalIgnoreCase)
+                    || !IsConnectionStale(holder))
+                {
+                    continue;
+                }
+
+                staleHolder = claim.Key;
+                break;
+            }
+
+            // Released outside the enumeration, which the release edits.
+            if (staleHolder != null
+                && !TryTakeOverStaleConnection(staleHolder, connectionId, sessionId, "player-name"))
+            {
+                return;
+            }
+        }
+        while (staleHolder != null);
+    }
+
+    private bool IsConnectionStale(ServerRoutingContext context)
+    {
+        long silenceTicks = TimeProvider.GetTimestamp() - context.LastInboundTimestamp;
+        return silenceTicks >= (long)(StaleSessionTakeoverSilence.TotalSeconds * TimeProvider.TimestampFrequency);
+    }
+
+    // Releases a stale connection's claim, queued actions, command ring and runtime seat through
+    // ReleaseConnection, so the joining connection can claim the session (or the player) next.
+    // The release saves the departing player's profile into the runtime's profile cache, which
+    // RestorePersistedPlayerState prefers over the join's older prefetch, and keeps any prefetch
+    // a pending join still needs (see ReleaseConnection). False when the holder is still live.
+    // Under the tick lock.
+    private bool TryTakeOverStaleConnection(string staleConnectionId, string takingConnectionId, string sessionId, string match)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        // A claim always has a context (both go in ReleaseConnection); one without is a leftover,
+        // and taking it over is safe.
+        if (_connections.TryGetValue(staleConnectionId, out ServerRoutingContext? staleContext)
+            && !IsConnectionStale(staleContext))
+        {
+            return false;
+        }
+
+        double silenceSeconds = staleContext == null
+            ? double.PositiveInfinity
+            : (TimeProvider.GetTimestamp() - staleContext.LastInboundTimestamp) / (double)TimeProvider.TimestampFrequency;
+        NetworkDiagnosticsLog.Write(
+            "server.session.takeover",
+            $"connection={takingConnectionId} session={sessionId} stale={staleConnectionId} match={match} silence={silenceSeconds:0.###}s");
+        _takenOverConnections[staleConnectionId] = 0;
+        ReleaseConnection(staleConnectionId);
+        _takenOverConnectionQueue.Enqueue(staleConnectionId);
+        return true;
+    }
+
+    // The next connection whose session a join took over. The host already released it; the
+    // caller (DedicatedServerService) closes its transport; a later ReleaseConnection for it finds
+    // nothing left. Allocation-free when there is none.
+    public bool TryTakeTakenOverConnection(out string connectionId)
+    {
+        return _takenOverConnectionQueue.TryDequeue(out connectionId!);
+    }
+
+    // A new connection with this id (a remote endpoint reused by a new socket) is attached, so
+    // messages under the id are no longer the taken-over connection's late frames.
+    public void ForgetTakenOverConnection(string connectionId)
+    {
+        _takenOverConnections.TryRemove(connectionId, out _);
+    }
+
+    // Liveness from the transport: framesReceived is the connection's total of complete inbound
+    // frames, empty keepalive frames included, which the host never sees as messages. Called by
+    // the service on its tick thread for every connection; allocation-free.
+    public void ObserveInboundFrames(string connectionId, long framesReceived)
+    {
+        if (_connections.TryGetValue(connectionId, out ServerRoutingContext? context))
+        {
+            context.ObserveInboundFrameCount(framesReceived, TimeProvider.GetTimestamp());
+        }
     }
 
     // Releasing a connection runs entirely under the tick lock, where every claim is taken (joins
@@ -398,9 +604,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 {
                     if (string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal))
                     {
-                        // Its persisted-player load will not be used.
-                        Runtime?.DiscardPersistedPlayerPrefetch(_pendingJoins[i].PlayerName);
+                        // Its persisted-player load will not be used, unless another connection's
+                        // join of the same player shares it (prefetches are keyed by player name):
+                        // a takeover releases the old connection while the new one's join, whose
+                        // load is already Ready, is being routed.
+                        string playerName = _pendingJoins[i].PlayerName;
                         _pendingJoins.RemoveAt(i);
+                        if (!IsPlayerPrefetchSharedByAnotherJoin(playerName, connectionId))
+                        {
+                            Runtime?.DiscardPersistedPlayerPrefetch(playerName);
+                        }
                     }
                 }
             }
