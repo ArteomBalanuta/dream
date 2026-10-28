@@ -150,7 +150,7 @@ public static class ServerBootstrap
         Action<string>? log = null)
     {
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
-        schema.EnsureSchema();
+        schema.EnsureSchema(log);
         SqliteWorldMetadataRepository metadata = new(schema);
         WorldSimulationSeed stored = metadata.GetOrCreateSimulationSeed();
         if (stored.Created)

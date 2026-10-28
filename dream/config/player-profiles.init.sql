@@ -2,6 +2,12 @@
 -- Identity is keyed by player name in the current first-pass design.
 -- The schema is intentionally denormalized so the authoritative host can restore
 -- active world state quickly on startup and on reconnect.
+--
+-- FROZEN pre-migration schema; tests use it as the legacy fixture. The server no longer runs this
+-- script: the schema comes from config/migrations/NNNN_*.sql (0001_baseline.sql holds these
+-- statements byte-for-byte, plus world_metadata). SqliteSchemaBootstrapper still takes this file's
+-- path and finds the migrations directory next to it. Change the schema with a new migration, never
+-- here.
 
 PRAGMA foreign_keys = ON;
 

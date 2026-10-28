@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Server.Persistence.Migrations;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
@@ -6,11 +7,13 @@ namespace Dream.Server.Persistence;
 public sealed class SqliteSchemaBootstrapper
 {
     private readonly string _connectionString;
+    private readonly string _databasePath;
     private readonly string _schemaScriptPath;
 
     public SqliteSchemaBootstrapper(string databasePath, string schemaScriptPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath) ?? ".");
+        _databasePath = databasePath;
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
@@ -37,49 +40,50 @@ public sealed class SqliteSchemaBootstrapper
 
     public string ConnectionString => _connectionString;
 
-    public void EnsureSchema()
+    // The migrations directory sits next to the schema script: config/migrations/NNNN_name.sql.
+    public string MigrationsDirectory =>
+        Path.Combine(Path.GetDirectoryName(_schemaScriptPath) ?? ".", "migrations");
+
+    // Puts the database in WAL mode, then applies the pending migrations from MigrationsDirectory.
+    // Throws SchemaTooNewException, before anything is written, when a newer build already migrated
+    // the file.
+    public SchemaMigrationResult EnsureSchema(Action<string>? log = null)
     {
-        string script = File.ReadAllText(_schemaScriptPath);
+        return EnsureSchema(new SqliteSchemaMigrator(LoadMigrations()), log);
+    }
+
+    // The shipped config/player-profiles.init.sql always has config/migrations next to it. A schema
+    // script without that directory (a test's hand-written schema in a temp folder) is its own single
+    // baseline migration, which reproduces what the pre-migration bootstrapper did with it.
+    private IReadOnlyList<ISchemaMigration> LoadMigrations()
+    {
+        string directory = MigrationsDirectory;
+        return Directory.Exists(directory)
+            ? SchemaMigrations.LoadFromDirectory(directory)
+            : [new BaselineMigration("baseline", File.ReadAllText(_schemaScriptPath))];
+    }
+
+    public SchemaMigrationResult EnsureSchema(ISchemaMigrator migrator, Action<string>? log = null)
+    {
+        ArgumentNullException.ThrowIfNull(migrator);
         using SqliteConnection connection = CreateOpenConnection();
+        // Checked before the journal-mode change, which would otherwise rewrite the file header of a
+        // database this build must leave untouched.
+        int stored = migrator.GetCurrentVersion(connection);
+        if (stored > migrator.LatestVersion)
+        {
+            throw new SchemaTooNewException(stored, migrator.LatestVersion);
+        }
+
         using (SqliteCommand journal = connection.CreateCommand())
         {
-            // Persistent: once set, every later connection to this file opens in WAL mode.
+            // Persistent: once set, every later connection to this file opens in WAL mode. It cannot
+            // change inside a transaction, so it runs before the migrator's.
             journal.CommandText = "PRAGMA journal_mode=WAL;";
             journal.ExecuteScalar();
         }
 
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = script;
-        command.ExecuteNonQuery();
-        // Additive: databases created before the world_metadata table existed gain it here, and
-        // SqliteWorldMetadataRepository fills in the simulation seed on their first load.
-        using (SqliteCommand metadata = connection.CreateCommand())
-        {
-            metadata.CommandText =
-                "CREATE TABLE IF NOT EXISTS world_metadata (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL);";
-            metadata.ExecuteNonQuery();
-        }
-
-        EnsureColumnExists(
-            connection,
-            tableName: "player_profiles",
-            columnName: "experience",
-            alterStatement: "ALTER TABLE player_profiles ADD COLUMN experience INTEGER NOT NULL DEFAULT 0;");
-        EnsureColumnExists(
-            connection,
-            tableName: "placed_cube_instances",
-            columnName: "center_x",
-            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_x REAL NULL;");
-        EnsureColumnExists(
-            connection,
-            tableName: "placed_cube_instances",
-            columnName: "center_y",
-            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_y REAL NULL;");
-        EnsureColumnExists(
-            connection,
-            tableName: "placed_cube_instances",
-            columnName: "center_z",
-            alterStatement: "ALTER TABLE placed_cube_instances ADD COLUMN center_z REAL NULL;");
+        return migrator.Migrate(_databasePath, connection, log);
     }
 
     public SqliteConnection CreateOpenConnection()
@@ -114,36 +118,5 @@ public sealed class SqliteSchemaBootstrapper
             value,
             CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
-    }
-
-    private static void EnsureColumnExists(
-        SqliteConnection connection,
-        string tableName,
-        string columnName,
-        string alterStatement)
-    {
-        bool found = false;
-        using (SqliteCommand pragma = connection.CreateCommand())
-        {
-            pragma.CommandText = $"PRAGMA table_info({tableName});";
-            using SqliteDataReader reader = pragma.ExecuteReader();
-            while (reader.Read())
-            {
-                if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
-                {
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        if (found)
-        {
-            return;
-        }
-
-        using SqliteCommand alter = connection.CreateCommand();
-        alter.CommandText = alterStatement;
-        alter.ExecuteNonQuery();
     }
 }
