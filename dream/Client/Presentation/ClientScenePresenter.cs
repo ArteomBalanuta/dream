@@ -4,6 +4,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using OpenTK.Mathematics;
@@ -97,6 +98,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             entry.CurrentHealth = actor.CurrentHealth;
             entry.MaxHealth = actor.MaxHealth;
             entry.IsAlive = actor.IsAlive;
+            entry.HeldLight = actor.HeldLight;
             entry.IsMoving = entry.LastSnapshotPosition.HasValue &&
                 (actor.Position - entry.LastSnapshotPosition.Value).LengthSquared > 0.0001f;
             entry.LastSnapshotPosition = actor.Position;
@@ -252,7 +254,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.CurrentHealth,
                 entry.MaxHealth,
                 entry.IsAlive,
-                entry.IsMoving));
+                entry.IsMoving,
+                entry.HeldLight));
         }
 
         return _remotePlayerStates;
@@ -465,6 +468,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         public bool IsAlive { get; set; }
 
         public bool IsMoving { get; set; }
+
+        // T2f: the latest snapshot's held light, not interpolated (it switches with the snapshot).
+        public HeldLightKind HeldLight { get; set; }
 
         public Vector3? LastSnapshotPosition { get; set; }
     }

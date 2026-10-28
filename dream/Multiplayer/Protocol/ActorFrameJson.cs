@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -25,7 +26,10 @@ namespace Dream.Multiplayer.Protocol;
 //       Combat      null | [strength, attackSpeed, vitality]
 //       Progression null | [level, experience, experienceToNextLevel]
 //       Starved     starvedTicks
-// A Full record carries every group (groups is 255). An idle actor costs its id and a comma; a
+//       Equipment   heldLight (HeldLightKind), protocol v6
+// A Full record carries every group through Starved (groups is 255), and Equipment (511) only
+// when the held light is not None; a Full record without Equipment means None. A delta record
+// carries Equipment when the held light changed. An idle actor costs its id and a comma; a
 // walking player about 20 bytes (`[18,2,410,0,-205],` is 18, pinned by DeltaActorSnapshotTests),
 // about 30 while it also turns (the Facing group adds three more changes).
 // The frame as a standalone converter. The codec reaches the frame through the snapshot envelope's
@@ -177,6 +181,11 @@ internal static class ActorFrameJson
             writer.WriteNumberValue(record.StarvedTicks);
         }
 
+        if ((groups & ActorFieldGroups.Equipment) != 0)
+        {
+            writer.WriteNumberValue((int)record.HeldLight);
+        }
+
         writer.WriteEndArray();
     }
 
@@ -280,13 +289,13 @@ internal static class ActorFrameJson
 
         int actorId = NextInt32(ref reader);
         int rawGroups = NextInt32(ref reader);
-        if (rawGroups <= 0 || (rawGroups & ~(int)ActorFieldGroups.All) != 0)
+        if (rawGroups <= 0 || (rawGroups & ~(int)ActorFieldGroups.Valid) != 0)
         {
             throw new JsonException($"Actor {actorId}'s record has an invalid group mask {rawGroups}.");
         }
 
         ActorFieldGroups groups = (ActorFieldGroups)rawGroups;
-        if ((groups & ActorFieldGroups.Full) != 0 && groups != ActorFieldGroups.All)
+        if ((groups & ActorFieldGroups.Full) != 0 && (groups & ActorFieldGroups.All) != ActorFieldGroups.All)
         {
             throw new JsonException($"Actor {actorId}'s full record must carry every group, found {rawGroups}.");
         }
@@ -380,6 +389,18 @@ internal static class ActorFrameJson
             starvedTicks = NextInt32(ref reader);
         }
 
+        HeldLightKind heldLight = HeldLightKind.None;
+        if ((groups & ActorFieldGroups.Equipment) != 0)
+        {
+            int rawHeldLight = NextInt32(ref reader);
+            if (rawHeldLight is < byte.MinValue or > byte.MaxValue)
+            {
+                throw new JsonException($"Actor {actorId}'s held light {rawHeldLight} is out of range.");
+            }
+
+            heldLight = (HeldLightKind)rawHeldLight;
+        }
+
         ExpectEndArray(ref reader, "actor record");
         return new ActorWireRecord(
             actorId,
@@ -400,7 +421,8 @@ internal static class ActorFrameJson
             behaviorState,
             combatStats,
             progression,
-            starvedTicks);
+            starvedTicks,
+            heldLight);
     }
 
     private static void WriteNullableString(Utf8JsonWriter writer, string? value)

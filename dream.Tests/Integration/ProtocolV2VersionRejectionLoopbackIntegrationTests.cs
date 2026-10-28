@@ -22,7 +22,7 @@ namespace Dream.Tests.Integration;
 
 // ProtocolV2SharedSnapshotLoopbackIntegrationTests' old-client case: the server rejects a v1, v2,
 // v3 or v4 client (protocol v3 changed the world wire format, SCALE-1; v4 the snapshot actors and
-// the envelope header, SCALE-2; v5 added the world clock to join-accepted, T1) with a logged reason
+// the envelope header, SCALE-2; v5 added the world clock to join-accepted, T1; v6 the held light, T2f) with a logged reason
 // and no unobserved task fault while the other clients keep playing. Its own class so it runs in
 // parallel with the other loopback runs.
 public class ProtocolV2VersionRejectionLoopbackIntegrationTests
@@ -32,10 +32,11 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
     [InlineData(2)]
     [InlineData(3)]
     [InlineData(4)]
+    [InlineData(5)]
     public async Task OldClient_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying(int legacyVersion)
     {
-        Assert.Equal(5, TransportEnvelope.CurrentProtocolVersion);
-        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v5.";
+        Assert.Equal(6, TransportEnvelope.CurrentProtocolVersion);
+        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v6.";
         List<Exception> unobserved = [];
         EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
         {
@@ -83,7 +84,7 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
                     _ => ProtocolWireOptions.V3,
                 });
             InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 5.", versionError.Message);
+            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 6.", versionError.Message);
 
             using TcpClient legacy = new();
             await legacy.ConnectAsync(IPAddress.Loopback, server.Port);

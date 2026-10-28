@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -18,9 +19,10 @@ namespace Dream.Multiplayer.Protocol;
 //    "maxHealth":n,"isAlive":b,"interactionMode":n?,
 //    "combatStats":{"strength":n,"attackSpeed":f,"vitality":n}?,"displayName":s?,
 //    "progression":{"level":n,"experience":n,"experienceToNextLevel":n}?,"enemyBehaviorState":n?,
-//    "starvedTicks":n?}
+//    "starvedTicks":n?,"heldLight":n?}
 // starvedTicks (W9-2) is left out when zero, so a snapshot without starved ticks keeps the bytes it
 // had before the field existed; a reader that predates it skips it as an unknown property.
+// heldLight (T2f, protocol v6) is likewise left out when None.
 internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
 {
     private static readonly JsonEncodedText ActorId = JsonEncodedText.Encode("actorId");
@@ -37,6 +39,7 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
     private static readonly JsonEncodedText Progression = JsonEncodedText.Encode("progression");
     private static readonly JsonEncodedText EnemyBehaviorStateName = JsonEncodedText.Encode("enemyBehaviorState");
     private static readonly JsonEncodedText StarvedTicks = JsonEncodedText.Encode("starvedTicks");
+    private static readonly JsonEncodedText HeldLight = JsonEncodedText.Encode("heldLight");
 
     public override ActorSnapshot Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -65,6 +68,7 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
         PlayerProgressionSnapshot? progression = null;
         EnemyBehaviorState? enemyBehaviorState = null;
         int starvedTicks = 0;
+        HeldLightKind heldLight = HeldLightKind.None;
 
         while (HotPathJson.NextProperty(ref reader, nameof(ActorSnapshot)))
         {
@@ -130,6 +134,16 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
             {
                 starvedTicks = HotPathJson.ReadInt32(ref reader);
             }
+            else if (reader.ValueTextEquals(HeldLight.EncodedUtf8Bytes))
+            {
+                int rawHeldLight = HotPathJson.ReadInt32(ref reader);
+                if (rawHeldLight is < byte.MinValue or > byte.MaxValue)
+                {
+                    throw new JsonException($"The held light {rawHeldLight} is out of range.");
+                }
+
+                heldLight = (HeldLightKind)rawHeldLight;
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
@@ -150,7 +164,8 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
             displayName,
             progression,
             enemyBehaviorState,
-            starvedTicks);
+            starvedTicks,
+            heldLight);
     }
 
     internal static void WriteActor(Utf8JsonWriter writer, ActorSnapshot value)
@@ -198,6 +213,11 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
         if (value.StarvedTicks != 0)
         {
             writer.WriteNumber(StarvedTicks, value.StarvedTicks);
+        }
+
+        if (value.HeldLight != HeldLightKind.None)
+        {
+            writer.WriteNumber(HeldLight, (int)value.HeldLight);
         }
 
         writer.WriteEndObject();
