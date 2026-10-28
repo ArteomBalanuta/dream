@@ -4,20 +4,31 @@ using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using OpenTK.Mathematics;
 
 namespace Dream.Client.Presentation;
 
 // Runs on every render frame (BuildRemotePlayerStates, BuildPlayerRoster) and on every snapshot
 // (ApplySnapshot), so steady state allocates nothing: scratch collections are reused and the
 // sorted roster is rebuilt only when the roster changes.
-public sealed class ClientScenePresenter
+public sealed class ClientScenePresenter : IEnemyRenderPoseSource
 {
     private static readonly TimeSpan DiagnosticsLogInterval = TimeSpan.FromSeconds(1);
+
+    // A newer enemy sample farther than this from the previous one is a teleport (a respawn whose
+    // death snapshot was coalesced away, or a server-side reposition): the buffer restarts there
+    // instead of sliding across the gap. Wolves move under 3 m/s, so a real step never comes close.
+    public const float EnemyTeleportDistance = 4f;
 
     private string? _localSessionId;
     private string _applyLogKey = null!;
     private readonly Dictionary<int, RemotePlayerEntry> _remotePlayers = [];
     private readonly Dictionary<string, PlayerRosterEntry> _playerRoster = new(StringComparer.Ordinal);
+
+    // One tick-keyed pose buffer per live remote enemy. Entries of pruned enemies return to the
+    // pool with their sample storage, so enemies that come and go do not allocate in steady state.
+    private readonly Dictionary<int, RemoteEnemyEntry> _remoteEnemies = [];
+    private readonly Stack<RemoteEnemyEntry> _remoteEnemyPool = new();
 
     // Reused outputs. Callers get these lists themselves, not copies; see the Build methods.
     private readonly List<RemotePlayerPresentationState> _remotePlayerStates = [];
@@ -30,6 +41,8 @@ public sealed class ClientScenePresenter
     private readonly HashSet<string> _observedPlayerSessions = new(StringComparer.Ordinal);
     private readonly List<int> _staleRemoteActorIds = [];
     private readonly List<string> _staleRosterSessions = [];
+    private readonly HashSet<int> _observedEnemyActorIds = [];
+    private readonly List<int> _staleEnemyActorIds = [];
 
     public ClientScenePresenter(string? localSessionId = null)
     {
@@ -41,10 +54,17 @@ public sealed class ClientScenePresenter
     {
         _observedRemoteActorIds.Clear();
         _observedPlayerSessions.Clear();
+        _observedEnemyActorIds.Clear();
         IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
         for (int i = 0; i < actors.Count; i++)
         {
             ActorSnapshot actor = actors[i];
+            if (actor.Kind == CreatureKind.Enemy)
+            {
+                ApplyEnemySample(actor, snapshot.ServerTick);
+                continue;
+            }
+
             if (actor.Kind != CreatureKind.Player || string.IsNullOrWhiteSpace(actor.SessionId))
             {
                 continue;
@@ -99,6 +119,8 @@ public sealed class ClientScenePresenter
             }
         }
 
+        PruneUnobservedEnemies();
+
         _staleRosterSessions.Clear();
         foreach (string sessionId in _playerRoster.Keys)
         {
@@ -139,6 +161,7 @@ public sealed class ClientScenePresenter
 
         // A join starts a new server tick timeline; samples keyed by the old one would never be replaced.
         _remotePlayers.Clear();
+        ReleaseAllEnemies();
 
         foreach (PlayerRosterEntry entry in joinAccepted.EffectiveRoster)
         {
@@ -208,6 +231,26 @@ public sealed class ClientScenePresenter
         }
 
         return _remotePlayerStates;
+    }
+
+    public int RemoteEnemyBufferCount => _remoteEnemies.Count;
+
+    public int GetRemoteEnemySampleCount(int actorId)
+    {
+        return _remoteEnemies.TryGetValue(actorId, out RemoteEnemyEntry? entry) ? entry.Buffer.Count : 0;
+    }
+
+    // The enemy's pose on the server-tick render timeline. False when the enemy has no buffer
+    // (never seen, dead or removed); the renderer then falls back to the authoritative pose.
+    public bool TryGetEnemyRenderPose(int actorId, double renderTick, out InterpolatedActorPose pose)
+    {
+        if (_remoteEnemies.TryGetValue(actorId, out RemoteEnemyEntry? entry))
+        {
+            return entry.Buffer.TrySample(renderTick, out pose);
+        }
+
+        pose = default;
+        return false;
     }
 
     public ClientScenePresenterDebugState CaptureDebugState(double renderTick)
@@ -280,6 +323,73 @@ public sealed class ClientScenePresenter
         return created;
     }
 
+    private void ApplyEnemySample(ActorSnapshot actor, ulong serverTick)
+    {
+        // A dead enemy stops interpolating: it is not observed, so its buffer is pruned below and
+        // a later respawn under the same id starts from an empty buffer (a teleport, not a slide).
+        // This matches RemoteEnemyStateApplier, which removes dead enemies from the registry.
+        if (actor.CurrentHealth <= 0 || !actor.IsAlive)
+        {
+            return;
+        }
+
+        _observedEnemyActorIds.Add(actor.ActorId);
+        if (!_remoteEnemies.TryGetValue(actor.ActorId, out RemoteEnemyEntry? entry))
+        {
+            entry = _remoteEnemyPool.Count > 0 ? _remoteEnemyPool.Pop() : new RemoteEnemyEntry();
+            entry.LastFacing = -Vector3.UnitZ;
+            _remoteEnemies[actor.ActorId] = entry;
+        }
+
+        Vector3 facing = actor.Facing;
+        facing.Y = 0f;
+        facing = facing.LengthSquared > 0.000001f ? facing.Normalized() : entry.LastFacing;
+        entry.LastFacing = facing;
+
+        if (entry.Buffer.TryGetNewest(out TickPoseSample newest) &&
+            serverTick > newest.ServerTick &&
+            (actor.Position - newest.Position).LengthSquared > EnemyTeleportDistance * EnemyTeleportDistance)
+        {
+            entry.Buffer.Clear();
+        }
+
+        entry.Buffer.AddSample(serverTick, actor.Position, facing);
+    }
+
+    private void PruneUnobservedEnemies()
+    {
+        _staleEnemyActorIds.Clear();
+        foreach (int actorId in _remoteEnemies.Keys)
+        {
+            if (!_observedEnemyActorIds.Contains(actorId))
+            {
+                _staleEnemyActorIds.Add(actorId);
+            }
+        }
+
+        for (int i = 0; i < _staleEnemyActorIds.Count; i++)
+        {
+            _remoteEnemies.Remove(_staleEnemyActorIds[i], out RemoteEnemyEntry? entry);
+            ReleaseEnemyEntry(entry!);
+        }
+    }
+
+    private void ReleaseAllEnemies()
+    {
+        foreach (RemoteEnemyEntry entry in _remoteEnemies.Values)
+        {
+            ReleaseEnemyEntry(entry);
+        }
+
+        _remoteEnemies.Clear();
+    }
+
+    private void ReleaseEnemyEntry(RemoteEnemyEntry entry)
+    {
+        entry.Buffer.Clear();
+        _remoteEnemyPool.Push(entry);
+    }
+
     private void LogPrunedRemotePlayer(int actorId, string sessionId, ServerSnapshotEnvelope snapshot)
     {
         if (!NetworkDiagnosticsLog.ShouldLogEvery($"client.presenter.prune.{actorId}", DiagnosticsLogInterval))
@@ -304,6 +414,13 @@ public sealed class ClientScenePresenter
         return $"[{string.Join(", ", _playerRoster.Values.Select(entry => $"{entry.SessionId}#{entry.ActorId}/{entry.DisplayName}"))}]";
     }
 
+    private sealed class RemoteEnemyEntry
+    {
+        public TickInterpolationBuffer Buffer { get; } = new();
+
+        public Vector3 LastFacing { get; set; } = -Vector3.UnitZ;
+    }
+
     private sealed class RemotePlayerEntry(string sessionId)
     {
         public string SessionId { get; } = sessionId;
@@ -320,6 +437,13 @@ public sealed class ClientScenePresenter
 
         public bool IsMoving { get; set; }
 
-        public OpenTK.Mathematics.Vector3? LastSnapshotPosition { get; set; }
+        public Vector3? LastSnapshotPosition { get; set; }
     }
+}
+
+// Interpolated enemy poses for the render path. Implemented by ClientScenePresenter; the enemy
+// renderer reads it so gameplay keeps the latest authoritative EnemyActor.Position.
+public interface IEnemyRenderPoseSource
+{
+    bool TryGetEnemyRenderPose(int actorId, double renderTick, out InterpolatedActorPose pose);
 }

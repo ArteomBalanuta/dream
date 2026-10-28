@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Client.Presentation;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
 using Dream.Simulation.Enemies;
@@ -19,7 +20,22 @@ public sealed class EnemyRenderer
         _render = render;
     }
 
+    // Draws every enemy at its authoritative pose.
     public void Draw(Camera camera, IReadOnlyList<EnemyActor> actors, float deltaTime, bool showCollisionGeometry)
+    {
+        DrawAtRenderTick(camera, actors, deltaTime, showCollisionGeometry, poseSource: null, renderTick: 0d);
+    }
+
+    // With a pose source, enemies draw at their pose interpolated for renderTick on the server-tick
+    // timeline. EnemyActor.Position is never written here: gameplay, hit tests and the collision
+    // debug shape keep the latest authoritative position.
+    public void DrawAtRenderTick(
+        Camera camera,
+        IReadOnlyList<EnemyActor> actors,
+        float deltaTime,
+        bool showCollisionGeometry,
+        IEnemyRenderPoseSource? poseSource,
+        double renderTick)
     {
         _currentIds.Clear();
         foreach (EnemyActor actor in actors)
@@ -32,9 +48,10 @@ public sealed class EnemyRenderer
             int actorId = actor.Combatant.Actor.Id;
             _currentIds.Add(actorId);
 
+            InterpolatedActorPose pose = ResolveRenderPose(actor, poseSource, renderTick);
             EnemyRenderState renderState = EnemyRenderState.CreateWolf(
-                actor.Position,
-                actor.Forward,
+                pose.Position,
+                pose.Facing,
                 actor.BehaviorState);
 
             // The shared wolf model loads in the background; until it is ready the enemy is not
@@ -60,5 +77,21 @@ public sealed class EnemyRenderer
         }
 
         _visualStates.PruneExcept(_currentIds);
+    }
+
+    // The interpolated pose when the source has one for this enemy, else the authoritative pose.
+    // A degenerate interpolated facing falls back to the actor's authoritative forward.
+    public static InterpolatedActorPose ResolveRenderPose(
+        EnemyActor actor,
+        IEnemyRenderPoseSource? poseSource,
+        double renderTick)
+    {
+        if (poseSource is not null &&
+            poseSource.TryGetEnemyRenderPose(actor.Combatant.Actor.Id, renderTick, out InterpolatedActorPose pose))
+        {
+            return pose.Facing.LengthSquared > 0.0001f ? pose : pose with { Facing = actor.Forward };
+        }
+
+        return new InterpolatedActorPose(actor.Position, actor.Forward);
     }
 }

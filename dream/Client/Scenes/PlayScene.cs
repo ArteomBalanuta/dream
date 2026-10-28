@@ -279,11 +279,13 @@ public class PlayScene : IDisposable
         long worldDrawStart = Stopwatch.GetTimestamp();
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
         long enemyDrawStart = Stopwatch.GetTimestamp();
-        _render.Enemies.Draw(
+        _render.Enemies.DrawAtRenderTick(
             presentation.Camera,
             presentation.ActiveEnemies,
             (float)args.Time,
-            _settings.ShowCollisionGeometry);
+            _settings.ShowCollisionGeometry,
+            _scenePresenter,
+            RemotePlayerRenderTick);
         long enemyDrawEnd = Stopwatch.GetTimestamp();
         _lastClearMilliseconds = Stopwatch.GetElapsedTime(clearStart, captureStart).TotalMilliseconds;
         _lastPresentationCaptureMilliseconds = Stopwatch.GetElapsedTime(captureStart, remoteStatesStart).TotalMilliseconds;
