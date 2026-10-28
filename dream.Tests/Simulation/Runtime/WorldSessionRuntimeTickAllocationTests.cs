@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
@@ -47,6 +48,7 @@ public class WorldSessionRuntimeTickAllocationTests
     [Fact]
     public void AdvanceAuthoritativeTick_ThreeRemoteSessionsIdleWolf_AllocatesNothing()
     {
+        RequireDiagnosticsOff();
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors);
 
@@ -68,6 +70,7 @@ public class WorldSessionRuntimeTickAllocationTests
     [Fact]
     public void AdvanceAuthoritativeTick_ThreeRemoteSessionsChasingWolf_AllocatesNothing()
     {
+        RequireDiagnosticsOff();
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors);
         // Inside aggro range of the nearest player but outside attack range, put back every tick
@@ -130,6 +133,7 @@ public class WorldSessionRuntimeTickAllocationTests
     [Fact]
     public void ExportServerSnapshotEnvelope_RestingTick_AllocatesOnlyTheWirePayload()
     {
+        RequireDiagnosticsOff();
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
 
         long tickAndExportBytes = AllocationAssert.MeasureBytesPerIteration(
@@ -165,6 +169,7 @@ public class WorldSessionRuntimeTickAllocationTests
     [Fact]
     public void ExportServerSnapshotEnvelope_IdleCommandsFromEverySession_AllocatesOnlyTheWirePayload()
     {
+        RequireDiagnosticsOff();
         using WorldSessionRuntime runtime = CreateSettledRuntime(out ulong tick);
         PlayerSessionId primary = runtime.PrimaryRemoteSessionId!.Value;
 
@@ -203,6 +208,16 @@ public class WorldSessionRuntimeTickAllocationTests
         Assert.True(
             tickAndExportBytes <= payloadBytes + RuntimeTickBudgetBytes,
             $"Allocated {tickAndExportBytes} B per tick; budget is {payloadBytes + RuntimeTickBudgetBytes} B.");
+    }
+
+    // RuntimeTickBudgetBytes is 0 only with diagnostics off: while DREAM_NET_DIAGNOSTICS is set,
+    // Player.CheckAndLogCollisions builds its collision report every 0.5 s and allocates. Fail with
+    // that reason rather than a bare byte count, and do not skip, so a diagnostics-on run is visible.
+    private static void RequireDiagnosticsOff()
+    {
+        Assert.False(
+            NetworkDiagnosticsLog.IsEnabled,
+            "This test needs DREAM_NET_DIAGNOSTICS unset: the diagnostics collision report allocates, so the 0 B tick budget does not apply.");
     }
 
     // What a fresh, exactly sized actor list and accepted-sequence dictionary of this envelope's

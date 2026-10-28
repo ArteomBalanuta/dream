@@ -30,6 +30,10 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     private readonly CombatFormulaService _combatFormulaService;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private double _lastPhysicsStepMilliseconds;
+    // Reused first-person camera for CapturePresentationState. It never leaves this type:
+    // ThirdPersonCameraRig.Resolve copies it into the camera the presentation state carries.
+    private readonly Camera _firstPersonCameraScratch = new(Vector3.Zero);
+    private bool _disposed;
 
     public ClientWorldSession(
         int floorSize,
@@ -132,9 +136,11 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         float presentationLeadSeconds = 0f,
         CameraViewMode cameraViewMode = CameraViewMode.FirstPerson)
     {
-        Camera firstPersonCamera = Player.CreatePresentationCamera(presentationLeadSeconds);
+        // The returned state's camera stays a new instance per capture: callers (and tests) may keep
+        // a state across captures and compare cameras, so only the intermediate camera is reused.
+        Player.CopyPresentationCameraTo(_firstPersonCameraScratch, presentationLeadSeconds);
         Camera presentationCamera = ThirdPersonCameraRig.Resolve(
-            firstPersonCamera,
+            _firstPersonCameraScratch,
             Player.GetWorldPosition(),
             cameraViewMode);
 
@@ -189,6 +195,14 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        // The player's contact callback tests against the physics world, so it goes first.
+        Player.Dispose();
         Physics.Dispose();
     }
 

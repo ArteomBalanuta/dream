@@ -265,7 +265,6 @@ public class Player : IReplicatedPlayerTarget, IDisposable
         _disposed = true;
         _collisionScratch.Clear();
         _contactCallback.Dispose();
-        GC.SuppressFinalize(this);
     }
 
     private static Vector3 WorldToGridPosition(Vector3 worldPosition)

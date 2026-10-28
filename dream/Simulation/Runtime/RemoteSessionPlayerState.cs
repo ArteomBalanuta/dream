@@ -164,6 +164,9 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
         }
 
         _disposed = true;
+        // The player's contact callback tests against this body in the physics world, so dispose
+        // it before the body leaves the world. The body itself is removed and disposed once, here.
+        _player.Dispose();
         _physics.RemoveSessionPlayerBody(_player.PhysicsBody);
     }
 }
