@@ -11,6 +11,74 @@ public sealed class WorldObjectRegistry
     private readonly Dictionary<object, WorldObjectRecord> _records = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Cube, DetachedCubeRecord> _detachedCubeRecords = new(ReferenceEqualityComparer.Instance);
     private int _nextActorId = 1000;
+    // Persistence checkpoint change tracking (off until EnableCheckpointTracking; clients never
+    // turn it on): cubes registered (placed, restored, rebound, re-identified) or damaged since the
+    // last ClearCheckpointChanges, and the actor ids of cube records removed since then and not
+    // registered again. Cube moves are tracked by the map (Map.CheckpointMovedCubes).
+    private HashSet<Cube>? _checkpointDirtyCubes;
+    private HashSet<int>? _checkpointRemovedCubeIds;
+    private Action<WorldObjectRecord>? _recordDamaged;
+
+    public bool IsCheckpointTrackingEnabled => _checkpointDirtyCubes != null;
+
+    public void EnableCheckpointTracking()
+    {
+        _checkpointDirtyCubes ??= new HashSet<Cube>(ReferenceEqualityComparer.Instance);
+        _checkpointRemovedCubeIds ??= [];
+        if (_recordDamaged == null)
+        {
+            _recordDamaged = MarkCheckpointDirty;
+            foreach (WorldObjectRecord record in _records.Values)
+            {
+                record.Damaged = _recordDamaged;
+            }
+        }
+    }
+
+    // Concrete sets (read-only by contract), so the capture enumerates them without boxing.
+    internal HashSet<Cube> CheckpointDirtyCubes => _checkpointDirtyCubes ?? EmptyCubeSet;
+
+    internal HashSet<int> CheckpointRemovedCubeIds => _checkpointRemovedCubeIds ?? EmptyIdSet;
+
+    public void ClearCheckpointChanges()
+    {
+        _checkpointDirtyCubes?.Clear();
+        _checkpointRemovedCubeIds?.Clear();
+    }
+
+    // Visits every cube record without allocating (GetCubeRecords copies them into an array).
+    public Dictionary<object, WorldObjectRecord>.ValueCollection Records => _records.Values;
+
+    private static readonly HashSet<Cube> EmptyCubeSet = [];
+    private static readonly HashSet<int> EmptyIdSet = [];
+
+    private void MarkCheckpointDirty(WorldObjectRecord record)
+    {
+        if (record.SourceObject is Cube cube && _records.TryGetValue(cube, out WorldObjectRecord? current) &&
+            ReferenceEquals(current, record))
+        {
+            _checkpointDirtyCubes?.Add(cube);
+        }
+    }
+
+    private void TrackRegistered(WorldObjectRecord record)
+    {
+        record.Damaged = _recordDamaged;
+        if (_checkpointDirtyCubes != null && record.SourceObject is Cube cube)
+        {
+            _checkpointDirtyCubes.Add(cube);
+            _checkpointRemovedCubeIds!.Remove(record.Actor.Id);
+        }
+    }
+
+    private void TrackRemoved(WorldObjectRecord record)
+    {
+        record.Damaged = null;
+        if (_checkpointRemovedCubeIds != null && record.SourceObject is Cube)
+        {
+            _checkpointRemovedCubeIds.Add(record.Actor.Id);
+        }
+    }
 
     public WorldObjectRecord Register(
         object sourceObject,
@@ -46,6 +114,7 @@ public sealed class WorldObjectRegistry
             currentHealth ?? maxHealth);
 
         _records[sourceObject] = record;
+        TrackRegistered(record);
         return record;
     }
 
@@ -124,6 +193,8 @@ public sealed class WorldObjectRegistry
             return false;
         }
 
+        TrackRemoved(record);
+
         if (sourceObject is Cube cube && preserveDetachedRecord)
         {
             _detachedCubeRecords[cube] = new DetachedCubeRecord(
@@ -147,7 +218,11 @@ public sealed class WorldObjectRegistry
         bool removed = record.TryRemoveFromWorld();
         if (removed)
         {
-            _records.Remove(record.SourceObject);
+            if (_records.Remove(record.SourceObject, out WorldObjectRecord? removedRecord))
+            {
+                TrackRemoved(removedRecord);
+            }
+
             if (record.SourceObject is Cube cube)
             {
                 _detachedCubeRecords.Remove(cube);
@@ -165,7 +240,11 @@ public sealed class WorldObjectRegistry
         int currentHealth,
         string? ownerPlayerName)
     {
-        _records.Remove(cube);
+        if (_records.Remove(cube, out WorldObjectRecord? replaced))
+        {
+            TrackRemoved(replaced);
+        }
+
         _detachedCubeRecords.Remove(cube);
 
         if (TryGetAuthoritativeCubeCell(map, cube, out GeometryCellKey cell))
@@ -176,7 +255,10 @@ public sealed class WorldObjectRegistry
                 .ToArray();
             foreach (object staleEntry in staleEntries)
             {
-                _records.Remove(staleEntry);
+                if (_records.Remove(staleEntry, out WorldObjectRecord? stale))
+                {
+                    TrackRemoved(stale);
+                }
             }
         }
 
@@ -229,6 +311,11 @@ public sealed class WorldObjectRegistry
 
     public void RestoreCubeSnapshot(Map map, WorldObjectCubeSnapshot snapshot)
     {
+        foreach (WorldObjectRecord existing in _records.Values)
+        {
+            TrackRemoved(existing);
+        }
+
         _records.Clear();
         _detachedCubeRecords.Clear();
 
@@ -254,7 +341,11 @@ public sealed class WorldObjectRegistry
 
     private WorldObjectRecord RebindCubeRecord(WorldObjectRecord record, Cube cube, Map map)
     {
-        _records.Remove(record.SourceObject);
+        if (_records.Remove(record.SourceObject))
+        {
+            TrackRemoved(record);
+        }
+
         return RegisterCube(
             cube,
             map,
@@ -332,9 +423,18 @@ public sealed class WorldObjectRecord : IDamageable, ICombatAnchorProvider
 
     public CombatActorHandle Actor { get; }
 
+    // Set by WorldObjectRegistry while the record is registered and checkpoint tracking is on.
+    internal Action<WorldObjectRecord>? Damaged { get; set; }
+
     public DamageReceipt ApplyDamage(int amount)
     {
-        return Health.ApplyDamage(amount);
+        DamageReceipt receipt = Health.ApplyDamage(amount);
+        if (receipt.AppliedAmount > 0)
+        {
+            Damaged?.Invoke(this);
+        }
+
+        return receipt;
     }
 
     public Vector3 GetCombatAnchorWorldPosition()

@@ -310,6 +310,11 @@ public class Map
             return false;
         }
 
+        if (cube.Position != position)
+        {
+            _checkpointMovedCubes?.Add(cube);
+        }
+
         GeometryCellKey newKey = new(
             (int)MathF.Floor(position.X + 1e-6f),
             (int)MathF.Floor(position.Y + 1e-6f),
@@ -644,6 +649,7 @@ public class Map
 
     private void RebuildRubbleArtifacts(GeometryCellKey cell, bool syncPhysics)
     {
+        _checkpointDirtyRubbleCells?.Add(cell);
         _pendingRenderDirtyCells.Add(cell);
         _pendingCollisionDirtyCells.Add(cell);
         if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? rubble))
@@ -672,28 +678,89 @@ public class Map
     public IReadOnlyList<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
         CaptureFracturePieces()
     {
-        List<(GeometryCellKey, int, GeometryFracturePiece, GeometryMaterialId)> pieces = [];
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> pieces = [];
+        CaptureFracturePiecesInto(pieces);
+        return pieces;
+    }
+
+    // Appends every valid fracture piece, in CaptureFracturePieces order, without allocating
+    // beyond the caller's list growth.
+    public void CaptureFracturePiecesInto(
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> pieces)
+    {
+        ArgumentNullException.ThrowIfNull(pieces);
         foreach (GeometryCellRecord record in _rubbleCells.Values)
         {
-            if (record.FracturePieces == null)
+            AppendFracturePieces(record, pieces);
+        }
+    }
+
+    // Appends the valid fracture pieces of one rubble cell; false when the cell has no rubble.
+    public bool CaptureFracturePiecesInto(
+        GeometryCellKey cell,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> pieces)
+    {
+        ArgumentNullException.ThrowIfNull(pieces);
+        if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? record))
+        {
+            return false;
+        }
+
+        AppendFracturePieces(record, pieces);
+        return true;
+    }
+
+    private static void AppendFracturePieces(
+        GeometryCellRecord record,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> pieces)
+    {
+        if (record.FracturePieces == null)
+        {
+            return;
+        }
+
+        for (int index = 0; index < record.FracturePieces.Count; index++)
+        {
+            GeometryFracturePiece piece = record.FracturePieces[index];
+            if (!piece.IsValid())
             {
                 continue;
             }
 
-            for (int index = 0; index < record.FracturePieces.Count; index++)
-            {
-                GeometryFracturePiece piece = record.FracturePieces[index];
-                if (!piece.IsValid())
-                {
-                    continue;
-                }
-
-                pieces.Add((record.Key, index, piece, record.Definition.MaterialId));
-            }
+            pieces.Add((record.Key, index, piece, record.Definition.MaterialId));
         }
-
-        return pieces;
     }
+
+    // Persistence checkpoint change tracking (off until EnableCheckpointTracking; client maps never
+    // turn it on). Every cube position change and every rubble change (set, removed, a piece moved)
+    // is recorded, so an incremental checkpoint visits only those. HashSet adds reuse capacity, so
+    // a moving world adds no per-tick allocation once the sets have grown.
+    private HashSet<Cube>? _checkpointMovedCubes;
+    private HashSet<GeometryCellKey>? _checkpointDirtyRubbleCells;
+
+    public bool IsCheckpointTrackingEnabled => _checkpointMovedCubes != null;
+
+    public void EnableCheckpointTracking()
+    {
+        _checkpointMovedCubes ??= new HashSet<Cube>(ReferenceEqualityComparer.Instance);
+        _checkpointDirtyRubbleCells ??= [];
+    }
+
+    // Cubes whose position changed since ClearCheckpointChanges; empty while tracking is off.
+    // Concrete sets (read-only by contract), so the capture enumerates them without boxing.
+    internal HashSet<Cube> CheckpointMovedCubes => _checkpointMovedCubes ?? EmptyCubeSet;
+
+    // Rubble cells changed since ClearCheckpointChanges; empty while tracking is off.
+    internal HashSet<GeometryCellKey> CheckpointDirtyRubbleCells => _checkpointDirtyRubbleCells ?? EmptyCellSet;
+
+    public void ClearCheckpointChanges()
+    {
+        _checkpointMovedCubes?.Clear();
+        _checkpointDirtyRubbleCells?.Clear();
+    }
+
+    private static readonly HashSet<Cube> EmptyCubeSet = [];
+    private static readonly HashSet<GeometryCellKey> EmptyCellSet = [];
 
     public bool RestoreGeneratedStartupCell(GeometryCellKey cell)
     {
