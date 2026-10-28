@@ -1,102 +1,94 @@
+using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
 
-public sealed class SqliteCombatFormulaRepository : ICombatFormulaRepository, IDisposable
+public sealed class SqliteCombatFormulaRepository
+    : SqliteRepositoryBase, ICombatFormulaRepository, IDisposable
 {
-    private readonly SqliteSchemaBootstrapper _schema;
+    private const string LoadAllEnabledSql = """
+        SELECT
+            formula_key,
+            expression_text,
+            description,
+            enabled,
+            updated_utc
+        FROM combat_formulas
+        WHERE enabled = 1
+        ORDER BY formula_key;
+        """;
+
+    private const string TryGetSql = """
+        SELECT
+            formula_key,
+            expression_text,
+            description,
+            enabled,
+            updated_utc
+        FROM combat_formulas
+        WHERE formula_key = $formulaKey;
+        """;
+
+    private const string UpsertSql = """
+        INSERT INTO combat_formulas (
+            formula_key,
+            expression_text,
+            description,
+            enabled,
+            updated_utc
+        )
+        VALUES (
+            $formulaKey,
+            $expressionText,
+            $description,
+            $enabled,
+            $updatedUtc
+        )
+        ON CONFLICT(formula_key) DO UPDATE SET
+            expression_text = excluded.expression_text,
+            description = excluded.description,
+            enabled = excluded.enabled,
+            updated_utc = excluded.updated_utc;
+        """;
 
     public SqliteCombatFormulaRepository(SqliteSchemaBootstrapper schema)
+        : base(new SqliteWorldStore(schema))
     {
-        _schema = schema;
     }
 
     public IReadOnlyList<CombatFormulaDefinition> LoadAllEnabled()
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT
-                formula_key,
-                expression_text,
-                description,
-                enabled,
-                updated_utc
-            FROM combat_formulas
-            WHERE enabled = 1
-            ORDER BY formula_key;
-            """;
-
-        using SqliteDataReader reader = command.ExecuteReader();
-        List<CombatFormulaDefinition> definitions = [];
-        while (reader.Read())
-        {
-            definitions.Add(ReadDefinition(reader));
-        }
-
-        return definitions;
+        return QueryList(LoadAllEnabledSql, ReadDefinition);
     }
 
     public CombatFormulaDefinition? TryGet(string formulaKey)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT
-                formula_key,
-                expression_text,
-                description,
-                enabled,
-                updated_utc
-            FROM combat_formulas
-            WHERE formula_key = $formulaKey;
-            """;
-        command.Parameters.AddWithValue("$formulaKey", formulaKey.Trim());
-
-        using SqliteDataReader reader = command.ExecuteReader();
-        return reader.Read() ? ReadDefinition(reader) : null;
+        return QuerySingle(
+            TryGetSql,
+            formulaKey,
+            static (command, key) => command.BindText("$formulaKey", key.Trim()),
+            ReadDefinition);
     }
 
     public void Upsert(CombatFormulaDefinition definition)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO combat_formulas (
-                formula_key,
-                expression_text,
-                description,
-                enabled,
-                updated_utc
-            )
-            VALUES (
-                $formulaKey,
-                $expressionText,
-                $description,
-                $enabled,
-                $updatedUtc
-            )
-            ON CONFLICT(formula_key) DO UPDATE SET
-                expression_text = excluded.expression_text,
-                description = excluded.description,
-                enabled = excluded.enabled,
-                updated_utc = excluded.updated_utc;
-            """;
-        command.Parameters.AddWithValue("$formulaKey", definition.FormulaKey.Trim());
-        command.Parameters.AddWithValue("$expressionText", definition.ExpressionText.Trim());
-        command.Parameters.AddWithValue("$description", definition.Description.Trim());
-        command.Parameters.AddWithValue("$enabled", definition.Enabled ? 1 : 0);
-        command.Parameters.AddWithValue("$updatedUtc", SqliteSchemaBootstrapper.FormatUtc(
-            definition.UpdatedUtc == default ? DateTime.UtcNow : definition.UpdatedUtc));
-        command.ExecuteNonQuery();
+        Execute(UpsertSql, definition, static (command, value) => BindDefinition(command, value));
     }
 
     public void Dispose()
     {
+    }
+
+    private static void BindDefinition(SqliteCommand command, CombatFormulaDefinition definition)
+    {
+        command.BindText("$formulaKey", definition.FormulaKey.Trim());
+        command.BindText("$expressionText", definition.ExpressionText.Trim());
+        command.BindText("$description", definition.Description.Trim());
+        command.BindInt64("$enabled", definition.Enabled ? 1 : 0);
+        command.BindUtc(
+            "$updatedUtc",
+            definition.UpdatedUtc == default ? DateTime.UtcNow : definition.UpdatedUtc);
     }
 
     private static CombatFormulaDefinition ReadDefinition(SqliteDataReader reader)
@@ -106,6 +98,6 @@ public sealed class SqliteCombatFormulaRepository : ICombatFormulaRepository, ID
             reader.GetString(1),
             reader.GetString(2),
             reader.GetInt64(3) != 0,
-            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(4)));
+            reader.GetUtc(4));
     }
 }

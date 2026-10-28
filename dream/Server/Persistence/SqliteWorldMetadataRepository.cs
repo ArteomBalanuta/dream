@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using Dream.Server.Persistence.Store;
 using Dream.Simulation.Runtime;
 using Microsoft.Data.Sqlite;
 
@@ -10,18 +11,18 @@ public readonly record struct WorldSimulationSeed(ulong Seed, bool Created);
 
 // Key/value metadata about the persisted world, stored in the world_metadata table that
 // SqliteSchemaBootstrapper.EnsureSchema creates: the simulation seed and the world clock.
-public sealed partial class SqliteWorldMetadataRepository
+public sealed partial class SqliteWorldMetadataRepository : SqliteRepositoryBase
 {
     public const string SimulationSeedKey = "simulation_seed";
 
     // WorldClock.WorldTicks as a decimal integer; written by SqlitePersistenceCheckpointWriter.
     public const string WorldTimeTicksKey = "world_time_ticks";
 
-    private readonly SqliteSchemaBootstrapper _schema;
+    private const string SelectValueSql = "SELECT value FROM world_metadata WHERE key = $key;";
 
     public SqliteWorldMetadataRepository(SqliteSchemaBootstrapper schema)
+        : base(new SqliteWorldStore(schema))
     {
-        _schema = schema;
     }
 
     // A cryptographically random 64-bit seed. Only called when a world is created (or when an
@@ -44,30 +45,28 @@ public sealed partial class SqliteWorldMetadataRepository
 
     public bool TryGetSimulationSeed(out ulong seed)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        return TryReadSimulationSeed(connection, out seed);
+        using SqliteSession session = Store.OpenSession();
+        return TryReadSimulationSeed(session, out seed);
     }
 
     // Returns the stored seed, or generates, stores and returns a new one when the world has none.
     // INSERT OR IGNORE keeps the first stored seed if two loads race on the same database.
     public WorldSimulationSeed GetOrCreateSimulationSeed(Func<ulong>? generator = null)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        if (TryReadSimulationSeed(connection, out ulong existing))
+        // One session for the read, the insert and the re-read, as one connection lease today.
+        using SqliteSession session = Store.OpenSession();
+        if (TryReadSimulationSeed(session, out ulong existing))
         {
             return new WorldSimulationSeed(existing, Created: false);
         }
 
         ulong generated = (generator ?? GenerateSimulationSeed)();
         int inserted;
-        using (SqliteCommand insert = connection.CreateCommand())
+        using (SqliteCommand insert = session.CreateCommand(
+            "INSERT OR IGNORE INTO world_metadata (key, value) VALUES ($key, $value);"))
         {
-            insert.CommandText =
-                "INSERT OR IGNORE INTO world_metadata (key, value) VALUES ($key, $value);";
-            insert.Parameters.AddWithValue("$key", SimulationSeedKey);
-            insert.Parameters.AddWithValue("$value", FormatSeed(generated));
+            insert.BindText("$key", SimulationSeedKey);
+            insert.BindText("$value", FormatSeed(generated));
             inserted = insert.ExecuteNonQuery();
         }
 
@@ -76,7 +75,7 @@ public sealed partial class SqliteWorldMetadataRepository
             return new WorldSimulationSeed(generated, Created: true);
         }
 
-        if (!TryReadSimulationSeed(connection, out ulong raced))
+        if (!TryReadSimulationSeed(session, out ulong raced))
         {
             throw new InvalidOperationException("World simulation seed could not be stored or read.");
         }
@@ -97,11 +96,9 @@ public sealed partial class SqliteWorldMetadataRepository
     // False for a world that has never written a checkpoint (it starts at WorldTicks 0).
     public bool TryGetWorldTimeTicks(out long ticks)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand select = connection.CreateCommand();
-        select.CommandText = "SELECT value FROM world_metadata WHERE key = $key;";
-        select.Parameters.AddWithValue("$key", WorldTimeTicksKey);
+        using SqliteSession session = Store.OpenSession();
+        using SqliteCommand select = session.CreateCommand(SelectValueSql);
+        select.BindText("$key", WorldTimeTicksKey);
         object? value = select.ExecuteScalar();
         if (value is null or DBNull)
         {
@@ -121,11 +118,10 @@ public sealed partial class SqliteWorldMetadataRepository
         return true;
     }
 
-    private static bool TryReadSimulationSeed(SqliteConnection connection, out ulong seed)
+    private static bool TryReadSimulationSeed(SqliteSession session, out ulong seed)
     {
-        using SqliteCommand select = connection.CreateCommand();
-        select.CommandText = "SELECT value FROM world_metadata WHERE key = $key;";
-        select.Parameters.AddWithValue("$key", SimulationSeedKey);
+        using SqliteCommand select = session.CreateCommand(SelectValueSql);
+        select.BindText("$key", SimulationSeedKey);
         object? value = select.ExecuteScalar();
         if (value is null or DBNull)
         {
