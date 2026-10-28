@@ -82,8 +82,9 @@ public class FrameLightingContractTests
         // The actor ambient scale is FrameLighting.Params.z, set per time of day, not a constant.
         Assert.DoesNotContain("const float ActorAmbientScale", source);
         Assert.Contains("const float ActorDirectScale = 0.75;", source);
+        // Wave T2 C0: the material emissive is added after exposure and before fog.
         Assert.Matches(
-            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ dreamDirect\(n\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\), fragPos\), baseColor\.a\);",
+            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ dreamDirect\(n\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\) \+ material\.emissiveFactor, fragPos\), baseColor\.a\);",
             source);
     }
 

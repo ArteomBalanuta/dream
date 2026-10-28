@@ -20,6 +20,7 @@ struct Material {
     bool hasBaseColorTexture;
     sampler2D baseColorTexture;
     float alphaCutoff;
+    vec3 emissiveFactor; // linear RGB added after exposure, before fog (0 = not emissive)
 };
 
 // Declare the uniform variable
@@ -44,6 +45,6 @@ void main()
 
     // Frame lighting (lighting.glsl): hemisphere ambient plus sun and moon, then exposure and fog.
     vec3 n = normalize(normal);
-    vec3 lit = dreamExpose((dreamAmbient(n) + dreamDirect(n)) * baseColor.rgb);
-    FragColor = vec4(dreamApplyFog(lit, fragPos), baseColor.a);
+    vec3 lit = (dreamAmbient(n) + dreamDirect(n)) * baseColor.rgb;
+    FragColor = vec4(dreamApplyFog(dreamExpose(lit) + material.emissiveFactor, fragPos), baseColor.a);
 }

@@ -278,6 +278,19 @@ internal sealed class PlayerInventoryService
         return ToolCatalog.Resolve(item.ItemKind).StatModifier;
     }
 
+    // The light the equipped item casts; mirrors ResolveEquippedToolModifier and allocates nothing.
+    public HeldLightKind ResolveEquippedHeldLight(string playerName)
+    {
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long itemInstanceId)
+            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        {
+            return HeldLightKind.None;
+        }
+
+        return ToolCatalog.Resolve(item.ItemKind).HeldLight;
+    }
+
     // Loads a player's inventory that no join loaded (a direct caller of a runtime without profiles,
     // such as a tool or test): the queued writes are flushed first so the read is current. False
     // when they did not drain in time; the inventory then stays unloaded, so no starter inventory
