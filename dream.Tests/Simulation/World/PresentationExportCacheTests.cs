@@ -3,21 +3,23 @@ using Xunit;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using static Dream.Tests.Simulation.World.PresentationExportCacheAssertions;
 
 namespace Dream.Tests.Simulation.World;
 
 // The presentation export caches its static part per Map.StaticContentVersion. After every kind
 // of mutation it must still match an uncached capture: all static content, plus dynamic content
 // within the radius.
+//
+// The scenarios are split over three classes so they run in parallel: placed and moved cubes
+// (this class), static geometry edits (PresentationExportCacheStaticEditTests), and the content
+// version and export signature (PresentationExportCacheVersionTests).
 public class PresentationExportCacheTests
 {
-    private const float LocalRadius = 4f;
-    private static readonly Vector3 LocalCenter = new(5f, 1.5f, 5f);
-
     [Fact]
     public void PlacingAndRemovingCubes_MatchesUncachedExport()
     {
-        Map map = CreateTerrainMap();
+        Map map = CreateStartupTerrainMap();
         Vector3 dynamicCell = FindOpenCell(map, 4, 4);
         Vector3 staticCell = FindOpenCell(map, 12, 12);
 
@@ -32,7 +34,7 @@ public class PresentationExportCacheTests
     [Fact]
     public void MovingDynamicCube_MatchesUncachedExport()
     {
-        Map map = CreateTerrainMap();
+        Map map = CreateStartupTerrainMap();
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(FindOpenCell(map, 4, 4, run: 6), withPhysics: false));
 
         for (int step = 0; step < 8; step++)
@@ -47,7 +49,7 @@ public class PresentationExportCacheTests
     [Fact]
     public void MovingStaticCube_BecomesDynamic_MatchesUncachedExport()
     {
-        Map map = CreateTerrainMap();
+        Map map = CreateStartupTerrainMap();
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(FindOpenCell(map, 4, 4, run: 3), isStatic: true, withPhysics: false));
 
         AssertEquivalentAfter(map, () => map.UpdateCubePosition(cube, cube.Position + new Vector3(0.2f, 0f, 0f), syncPhysics: false));
@@ -56,198 +58,50 @@ public class PresentationExportCacheTests
     }
 
     [Fact]
-    public void SubdividingPlacedAndGroundCells_MatchesUncachedExport()
-    {
-        Map map = CreateTerrainMap();
-        Vector3 placed = FindOpenCell(map, 4, 4);
-        map.AddCube(placed, withPhysics: false);
-        GeometryCellKey placedKey = new((int)placed.X, 1, (int)placed.Z);
-        GeometryCellKey groundKey = new(2, 0, 2);
-
-        AssertEquivalentAfter(map, () => map.ApplyGeometrySubcellSolid(placedKey, new GeometrySubcellKey(0, 0, 0), isSolid: false));
-        AssertEquivalentAfter(map, () => map.ApplyGeometrySubcellSolid(placedKey, new GeometrySubcellKey(1, 1, 1), isSolid: false));
-        AssertEquivalentAfter(map, () => map.ApplyGeometrySubcellSolid(groundKey, new GeometrySubcellKey(0, 0, 0), isSolid: false));
-        AssertEquivalentAfter(map, () => Assert.True(map.RestoreSolidCubeCell(placedKey)));
-    }
-
-    [Fact]
-    public void ChangingMergedSculptureSubcells_MatchesUncachedExport()
-    {
-        Map map = CreateTerrainMap();
-        GeometryCellRecord sculpture = map.GeometryCells.Values.First(record => record.SubdivisionState != null && record.Key.Y > 0);
-        long version = map.StaticContentVersion;
-
-        AssertEquivalentAfter(map, () => map.ApplyGeometrySubcellSolid(sculpture.Key, new GeometrySubcellKey(0, 0, 0), isSolid: false));
-        Assert.NotEqual(version, map.StaticContentVersion);
-        AssertEquivalentAfter(map, () => map.ApplyGeometrySubcellSolid(sculpture.Key, new GeometrySubcellKey(0, 0, 0), isSolid: true));
-        AssertEquivalentAfter(map, () => Assert.True(map.RestoreGeneratedStartupCell(sculpture.Key)));
-    }
-
-    [Fact]
-    public void FractureAndRubble_MatchesUncachedExport()
-    {
-        Map map = CreateTerrainMap();
-        Vector3 dynamicCell = FindOpenCell(map, 4, 4);
-        Vector3 staticCell = FindOpenCell(map, 6, 6);
-        map.AddCube(dynamicCell, withPhysics: false);
-        map.AddCube(staticCell, isStatic: true, withPhysics: false);
-        GeometryCellKey dynamicKey = new((int)dynamicCell.X, 1, (int)dynamicCell.Z);
-        GeometryCellKey staticKey = new((int)staticCell.X, 1, (int)staticCell.Z);
-
-        AssertEquivalentAfter(map, () => Assert.True(map.FractureCubeIntoPieces(dynamicKey)));
-        AssertEquivalentAfter(map, () => Assert.True(map.FractureCubeIntoPieces(staticKey)));
-        GeometryFracturePiece piece = map.TryGetRubbleAtCell(dynamicKey)!.FracturePieces![0];
-        AssertEquivalentAfter(map, () => Assert.True(map.UpdateFracturePiecePosition(dynamicKey, 0, piece.Center + new Vector3(0f, 0f, 20f))));
-        AssertEquivalentAfter(map, () => Assert.True(map.RemoveRubble(staticKey)));
-        AssertEquivalentAfter(map, () => Assert.True(map.RestoreFracturePieces(
-            staticKey,
-            GeometryMaterialId.Sand,
-            CubeFracturePattern.CreateFirstPassRubble(staticKey),
-            withPhysics: false)));
-    }
-
-    [Fact]
     public void CopiedPlacedCubes_MatchUncachedExport()
     {
-        Map source = CreateTerrainMap();
+        Map source = CreateStartupTerrainMap();
         source.AddCube(FindOpenCell(source, 4, 4), withPhysics: false);
         source.AddCube(FindOpenCell(source, 8, 8), isStatic: true, withPhysics: false);
-        Map target = CreateTerrainMap();
+        Map target = CreateStartupTerrainMap();
 
         AssertEquivalentAfter(target, () => source.CopyPlacedCubesTo(target));
     }
+}
 
-    [Fact]
-    public void StaticContentVersion_IsStableWithoutStaticChanges()
-    {
-        Map map = CreateTerrainMap();
-        Cube cube = Assert.IsType<Cube>(map.TryAddCube(FindOpenCell(map, 4, 4, run: 4), withPhysics: false));
-        long version = map.StaticContentVersion;
+// Shared by the PresentationExportCache* test classes.
+internal static class PresentationExportCacheAssertions
+{
+    public const float LocalRadius = 4f;
+    public static readonly Vector3 LocalCenter = new(5f, 1.5f, 5f);
 
-        GeometryRenderExport first = Capture(map, LocalCenter, LocalRadius);
-        GeometryRenderExport second = Capture(map, LocalCenter, LocalRadius);
-        map.UpdateCubePosition(cube, cube.Position + new Vector3(0.3f, 0f, 0f));
-        map.UpdateCubePosition(cube, cube.Position + new Vector3(1f, 0f, 0f));
-        GeometryRenderExport moved = Capture(map, LocalCenter, LocalRadius);
+    // Smaller than the startup floor, but at least 20 cells wide so the floor is still enriched
+    // terrain with raised landmarks. The world generator adds the merged sculpture cells only from
+    // 48x32 cells, so tests that need those (or compare them against the cache) use the startup
+    // size instead.
+    public const int SmallTerrainSize = 24;
 
-        Assert.Equal(version, map.StaticContentVersion);
-        Assert.Equal(version, first.StaticContentVersion);
-        Assert.Equal(version, second.StaticContentVersion);
-        Assert.Equal(version, moved.StaticContentVersion);
-        Assert.Same(first.CompatibilityCubes, moved.CompatibilityCubes);
-        Assert.Same(first.Blocks, moved.Blocks);
-    }
-
-    [Fact]
-    public void StaticContentVersion_ChangesAfterStaticChanges()
-    {
-        Map map = CreateTerrainMap();
-        long initial = map.StaticContentVersion;
-        Cube cube = Assert.IsType<Cube>(map.TryAddCube(FindOpenCell(map, 4, 4, run: 2), isStatic: true, withPhysics: false));
-        long afterAdd = map.StaticContentVersion;
-        map.UpdateCubePosition(cube, cube.Position + new Vector3(0.2f, 0f, 0f), syncPhysics: false);
-        long afterInCellMove = map.StaticContentVersion;
-        map.RemoveCube(cube);
-        long afterRemove = map.StaticContentVersion;
-
-        Assert.NotEqual(initial, afterAdd);
-        Assert.NotEqual(afterAdd, afterInCellMove);
-        Assert.NotEqual(afterInCellMove, afterRemove);
-    }
-
-    [Fact]
-    public void StaticContentVersion_DiffersBetweenMaps()
-    {
-        Map first = CreateTerrainMap();
-        Map second = CreateTerrainMap();
-
-        Assert.NotEqual(0, first.StaticContentVersion);
-        Assert.NotEqual(first.StaticContentVersion, second.StaticContentVersion);
-    }
-
-    [Fact]
-    public void ExportSignature_IsStableForUnchangedFrames_AndChangesWithStaticContent()
-    {
-        Map map = CreateTerrainMap();
-        Capture(map, LocalCenter, LocalRadius);
-
-        int first = StaticWorldChunkRenderer.CalculateExportSignature(Capture(map, LocalCenter, LocalRadius));
-        int second = StaticWorldChunkRenderer.CalculateExportSignature(Capture(map, LocalCenter, LocalRadius));
-        map.AddCube(FindOpenCell(map, 4, 4), isStatic: true, withPhysics: false);
-        GeometryRenderExport changedExport = Capture(map, LocalCenter, LocalRadius);
-        int changed = StaticWorldChunkRenderer.CalculateExportSignature(changedExport);
-        int settled = StaticWorldChunkRenderer.CalculateExportSignature(Capture(map, LocalCenter, LocalRadius));
-
-        Assert.Equal(first, second);
-        Assert.NotEmpty(changedExport.StaticDirtyCells);
-        Assert.NotEqual(first, changed);
-        Assert.NotEqual(first, settled);
-    }
-
-    [Fact]
-    public void ExportSignature_DoesNotDependOnStaticDirtyCellOrder()
-    {
-        GeometryRenderExport export = Capture(CreateTerrainMap(), LocalCenter, LocalRadius) with
-        {
-            StaticDirtyCells = [new GeometryCellKey(1, 1, 1), new GeometryCellKey(2, 1, 1)]
-        };
-        GeometryRenderExport reordered = export with
-        {
-            StaticDirtyCells = [new GeometryCellKey(2, 1, 1), new GeometryCellKey(1, 1, 1)]
-        };
-
-        Assert.Equal(
-            StaticWorldChunkRenderer.CalculateExportSignature(export),
-            StaticWorldChunkRenderer.CalculateExportSignature(reordered));
-    }
-
-    [Fact]
-    public void ExportSignature_WithoutVersion_StillHashesContent()
-    {
-        Map map = CreateTerrainMap();
-        Capture(map, LocalCenter, LocalRadius);
-        GeometryRenderExport before = Capture(map, LocalCenter, LocalRadius) with { StaticContentVersion = 0 };
-        GeometryRenderExport beforeAgain = Capture(map, LocalCenter, LocalRadius) with { StaticContentVersion = 0 };
-        map.AddCube(FindOpenCell(map, 4, 4), isStatic: true, withPhysics: false);
-        GeometryRenderExport after = Capture(map, LocalCenter, LocalRadius) with
-        {
-            StaticContentVersion = 0,
-            StaticDirtyCells = []
-        };
-
-        Assert.Equal(
-            StaticWorldChunkRenderer.CalculateExportSignature(before),
-            StaticWorldChunkRenderer.CalculateExportSignature(beforeAgain));
-        Assert.NotEqual(
-            StaticWorldChunkRenderer.CalculateExportSignature(before),
-            StaticWorldChunkRenderer.CalculateExportSignature(after));
-    }
-
-    [Fact]
-    public void UncachedExports_KeepUnknownVersion()
-    {
-        Map map = CreateTerrainMap();
-
-        Assert.Equal(0, map.CaptureFullGeometryRenderExport().StaticContentVersion);
-        Assert.Equal(0, map.CaptureGeometryRenderExport(LocalCenter, LocalRadius).StaticContentVersion);
-    }
-
-    private static Map CreateTerrainMap()
+    public static Map CreateStartupTerrainMap()
     {
         // Startup size, so the merged sculpture cells are generated.
+        return CreateTerrainMap(WorldDefaults.StartupFloorSize);
+    }
+
+    public static Map CreateTerrainMap(int size)
+    {
         return new Map(
             physics: null,
             generateStartupTerrain: true,
-            width: WorldDefaults.StartupFloorSize,
-            depth: WorldDefaults.StartupFloorSize);
+            width: size,
+            depth: size);
     }
 
-    private static GeometryRenderExport Capture(Map map, Vector3 center, float radius)
+    public static GeometryRenderExport Capture(Map map, Vector3 center, float radius)
     {
         return map.CapturePresentationGeometryRenderExport(center, radius);
     }
 
-    private static void AssertEquivalentAfter(Map map, Action mutate)
+    public static void AssertEquivalentAfter(Map map, Action mutate)
     {
         // Warm the cache first so the mutation has to invalidate it.
         Capture(map, LocalCenter, LocalRadius);
@@ -259,7 +113,7 @@ public class PresentationExportCacheTests
         Assert.Empty(map.FindInvariantViolations());
     }
 
-    private static void AssertMatchesUncached(Map map, Vector3 center, float radius)
+    public static void AssertMatchesUncached(Map map, Vector3 center, float radius)
     {
         GeometryRenderExport cached = Capture(map, center, radius);
         GeometryRenderExport full = map.CaptureFullGeometryRenderExport();
@@ -284,6 +138,25 @@ public class PresentationExportCacheTests
         Assert.Equal(map.StaticContentVersion, cached.StaticContentVersion);
     }
 
+    public static Vector3 FindOpenCell(Map map, int startX, int startZ, int run = 1)
+    {
+        for (int x = startX; x < map.Width - run; x++)
+        {
+            for (int z = startZ; z < map.Depth - 1; z++)
+            {
+                bool open = Enumerable.Range(0, run).All(offset =>
+                    map.TryGetGeometryCellAtCell(x + offset, 1, z) == null &&
+                    map.TryGetRubbleAtCell(new GeometryCellKey(x + offset, 1, z)) == null);
+                if (open)
+                {
+                    return new Vector3(x, 1f, z);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("No open cell found in the terrain world.");
+    }
+
     private static void AssertSameReferences(IEnumerable<Cube> expected, IEnumerable<Cube> actual)
     {
         Cube[] expectedItems = expected.ToArray();
@@ -294,6 +167,7 @@ public class PresentationExportCacheTests
     }
 
     private static void AssertSameItems<T>(IEnumerable<T> expected, IEnumerable<T> actual)
+        where T : notnull
     {
         Dictionary<T, int> counts = new();
         int expectedCount = 0;
@@ -322,24 +196,5 @@ public class PresentationExportCacheTests
         float dy = Math.Max(Math.Max(min.Y - point.Y, 0f), point.Y - max.Y);
         float dz = Math.Max(Math.Max(min.Z - point.Z, 0f), point.Z - max.Z);
         return (dx * dx) + (dy * dy) + (dz * dz) <= radius * radius;
-    }
-
-    private static Vector3 FindOpenCell(Map map, int startX, int startZ, int run = 1)
-    {
-        for (int x = startX; x < map.Width - run; x++)
-        {
-            for (int z = startZ; z < map.Depth - 1; z++)
-            {
-                bool open = Enumerable.Range(0, run).All(offset =>
-                    map.TryGetGeometryCellAtCell(x + offset, 1, z) == null &&
-                    map.TryGetRubbleAtCell(new GeometryCellKey(x + offset, 1, z)) == null);
-                if (open)
-                {
-                    return new Vector3(x, 1f, z);
-                }
-            }
-        }
-
-        throw new InvalidOperationException("No open cell found in the terrain world.");
     }
 }

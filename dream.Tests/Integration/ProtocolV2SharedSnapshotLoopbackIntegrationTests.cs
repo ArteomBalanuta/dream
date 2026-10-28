@@ -16,6 +16,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Multiplayer.Protocol;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Integration;
 
@@ -26,20 +27,23 @@ namespace Dream.Tests.Integration;
 // connection's own envelope, slimmed to v2, with actors in canonical order. Every client also
 // applies what it receives into a ClientWorldSession, like PlayScene, and checks the world
 // checksums the server sends.
-[Collection(TimingSensitiveCollection.Name)]
+//
+// The slow-client and v1-rejection cases live in ProtocolV2SlowClientLoopbackIntegrationTests and
+// ProtocolV2VersionRejectionLoopbackIntegrationTests so the three runs go in parallel; they use
+// the raw client and server harness below.
 public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper output)
 {
-    private const string SnapshotKind = "server.snapshot";
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+    internal const string SnapshotKind = "server.snapshot";
+    internal static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     // Join order is deliberately not ordinal: the primary seat goes to the first joiner, and the
     // two secondaries join in reverse ordinal order.
-    private const string PrimarySession = "session-m";
-    private const string LateSecondary = "session-b";
-    private const string EarlySecondary = "session-z";
+    internal const string PrimarySession = "session-m";
+    internal const string LateSecondary = "session-b";
+    internal const string EarlySecondary = "session-z";
 
     // Cells within the primary's build reach of its spawn at (5, 1.5, 5).
-    private static readonly Vector3[] BuildCells =
+    internal static readonly Vector3[] BuildCells =
     [
         new(7f, 1f, 5f), new(3f, 1f, 5f), new(5f, 1f, 7f), new(5f, 1f, 3f),
         new(7f, 1f, 6f), new(3f, 1f, 4f), new(6f, 1f, 7f), new(4f, 1f, 3f)
@@ -47,7 +51,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
 
     // Build use is server-originated only (NETR-6 rejects it over player.action), so the primary's
     // builds are queued on the host; the placed cubes still reach every client through snapshots.
-    private static void EnqueuePrimaryBuild(ServerUnderTest server, int buildIndex)
+    internal static void EnqueuePrimaryBuild(ServerUnderTest server, int buildIndex)
     {
         Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
             new PlayerSessionId(PrimarySession),
@@ -64,7 +68,10 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         await using RawClient late = await server.ConnectAndJoinAsync(LateSecondary);
         RawClient[] clients = [primary, early, late];
 
-        const int Ticks = 200;
+        // 90 ticks: every build is placed by tick 75, the walkers start and stop at least once,
+        // and the runtime's world checksum (every 64 ticks) reaches the clients at least twice,
+        // once after several builds have landed.
+        const int Ticks = 90;
         int builds = 0;
         for (int i = 0; i < Ticks; i++)
         {
@@ -73,7 +80,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             await early.SendCommandAsync(walking: i % 60 < 20);
             await late.SendCommandAsync(walking: i % 50 < 10);
 
-            if (i % 25 == 5 && builds < BuildCells.Length)
+            if (i % 10 == 5 && builds < BuildCells.Length)
             {
                 EnqueuePrimaryBuild(server, builds++);
             }
@@ -129,9 +136,14 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         // The world changed, and every client rebuilt the server's world from the stream.
         Assert.True(primary.AcceptedActions > 0, "No build was accepted.");
         ulong serverChecksum = WorldStateChecksum.Compute(server.Host.Runtime!.Map);
-        foreach (RawClient client in clients)
+        // Each replay builds its own client world from its own client's frames (no frame arrives
+        // any more), so the three run at once.
+        int floorSize = server.Host.Runtime!.Map.Width;
+        ClientWorldReplay[] replays = await Task.WhenAll(clients.Select(client => Task.Run(() => client.Replay(floorSize))));
+        for (int c = 0; c < clients.Length; c++)
         {
-            ClientWorldReplay replay = client.Replay(server.Host.Runtime!.Map.Width);
+            RawClient client = clients[c];
+            ClientWorldReplay replay = replays[c];
             Assert.True(replay.ChecksumsVerified >= 2, $"{client.SessionId} verified {replay.ChecksumsVerified} checksums.");
             Assert.Equal(0, replay.ChecksumMismatches);
             Assert.Equal(serverChecksum, replay.FinalChecksum);
@@ -143,277 +155,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             $"frames=[{string.Join(",", clients.Select(client => client.Frames.Count))}]");
     }
 
-    [Fact]
-    public async Task SlowClient_GetsMergedSnapshotsEncodedForItsConnection_ThatDecode_WithMutationsInOrder()
-    {
-        await using ServerUnderTest server = await ServerUnderTest.StartAsync();
-        await using RawClient primary = await server.ConnectAndJoinAsync(PrimarySession);
-        await using RawClient fast = await server.ConnectAndJoinAsync(EarlySecondary);
-        // A tiny receive window and a paused reader: the server's writer for this connection
-        // blocks in the socket send, and its queued snapshots merge behind the blocked one.
-        await using RawClient slow = await server.ConnectAndJoinAsync(LateSecondary, receiveBufferSize: 1024);
-        ServerConnection slowConnection = server.ConnectionFor(slow);
-        ulong slowJoinTick = server.Host.Runtime!.CurrentServerTick;
-        slow.PauseReading();
-
-        int builds = 0;
-        int tick = 0;
-        int ticksAfterFirstMerge = 0;
-        while (ticksAfterFirstMerge < 120)
-        {
-            Assert.True(tick < 6000, $"The slow connection never coalesced (pending {slowConnection.PendingOutboundCount}).");
-            await primary.SendCommandAsync(walking: false);
-            await fast.SendCommandAsync(walking: tick % 90 < 30);
-            // Builds keep coming while the slow client lags, so merged snapshots carry mutations.
-            if (tick % 15 == 3 && builds < BuildCells.Length && (builds < 2 || slowConnection.CoalescedSnapshots > 0))
-            {
-                EnqueuePrimaryBuild(server, builds++);
-            }
-
-            await server.TickAsync();
-            Assert.True(await server.ConnectionFor(primary).FlushOutboundAsync(Timeout));
-            Assert.True(await server.ConnectionFor(fast).FlushOutboundAsync(Timeout));
-            Assert.False(slowConnection.IsFaulted, "The slow connection faulted instead of coalescing.");
-            ticksAfterFirstMerge += slowConnection.CoalescedSnapshots > 0 ? 1 : 0;
-            tick++;
-        }
-
-        Assert.Equal(BuildCells.Length, builds);
-        slow.ResumeReading();
-        Assert.True(await slowConnection.FlushOutboundAsync(Timeout), "The slow connection never drained.");
-        ulong lastTick = server.Host.Runtime!.CurrentServerTick;
-        await slow.WaitForSnapshotTickAsync(lastTick);
-        await fast.WaitForSnapshotTickAsync(lastTick);
-        await primary.WaitForSnapshotTickAsync(lastTick);
-
-        long coalesced = slowConnection.CoalescedSnapshots;
-        Assert.True(coalesced > 0);
-        Assert.Null(slow.ReadFault);
-        AssertEnvelopeSequencesAreGapFree(slow);
-        AssertSlimV2Payloads(slow);
-        AssertCanonicalActorOrder(slow);
-
-        List<Frame> slowSnapshots = slow.Snapshots().ToList();
-        List<Frame> fastSnapshots = fast.Snapshots().ToList();
-        // Every merged-away tick is missing from the slow stream, and nothing else is.
-        int fastSinceSlowJoined = fastSnapshots.Count(frame => TickOf(frame) > slowJoinTick);
-        Assert.Equal(0, server.ConnectionFor(fast).CoalescedSnapshots);
-        Assert.Equal(fastSinceSlowJoined - coalesced, slowSnapshots.Count);
-        Assert.All(slowSnapshots, frame => Assert.True(TickOf(frame) > slowJoinTick));
-
-        // Merged snapshots were encoded for this connection alone: their payload matches no
-        // shared payload, yet re-encoding the decoded message reproduces it exactly.
-        Dictionary<ulong, Frame> fastByTick = SnapshotsByTick(fast);
-        int merged = 0;
-        int mergedMutations = 0;
-        TransportJsonCodec codec = new();
-        foreach (Frame frame in slowSnapshots)
-        {
-            ServerSnapshotEnvelope snapshot = ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot;
-            Frame shared = fastByTick[snapshot.ServerTick];
-            if (!frame.PayloadJson.AsSpan().SequenceEqual(shared.PayloadJson))
-            {
-                merged++;
-                mergedMutations += snapshot.WorldMutations.Count;
-                byte[] reencoded = codec.Encode(frame.Decoded.Envelope, (ServerSnapshotMessage)frame.Decoded.Message);
-                Assert.True(
-                    reencoded.AsSpan().SequenceEqual(frame.Payload),
-                    $"tick {snapshot.ServerTick}: the merged snapshot does not round-trip byte for byte.");
-            }
-        }
-
-        Assert.True(merged > 0, "No merged snapshot reached the wire.");
-        Assert.True(mergedMutations > 0, "No merged snapshot carried a world mutation.");
-
-        // Mutations and damage arrive in the same order, none lost or repeated, merged or not.
-        string[] fastMutations = MutationStream(fast, after: slowJoinTick);
-        string[] slowMutations = MutationStream(slow, after: slowJoinTick);
-        Assert.Equal(fastMutations, slowMutations);
-        ulong[] sequences = slow.Snapshots()
-            .SelectMany(frame => ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot.WorldMutations)
-            .Select(mutation => mutation.Sequence)
-            .ToArray();
-        Assert.True(sequences.Length > 0, "No mutation reached the slow client.");
-        for (int i = 1; i < sequences.Length; i++)
-        {
-            Assert.True(sequences[i] > sequences[i - 1], $"mutation {sequences[i]} arrived after {sequences[i - 1]}");
-        }
-
-        Assert.Equal(DamageStream(fast, slowJoinTick), DamageStream(slow, slowJoinTick));
-
-        // The lagging client still converges on the server's world.
-        ClientWorldReplay replay = slow.Replay(server.Host.Runtime!.Map.Width);
-        Assert.Equal(0, replay.ChecksumMismatches);
-        Assert.Equal(WorldStateChecksum.Compute(server.Host.Runtime!.Map), replay.FinalChecksum);
-
-        output.WriteLine(
-            $"ticks={lastTick} coalesced={coalesced} slowSnapshots={slowSnapshots.Count} fastSnapshots={fastSnapshots.Count} " +
-            $"mergedOnWire={merged} mergedMutations={mergedMutations} mutations={sequences.Length} builds={primary.AcceptedActions}");
-    }
-
-    [Fact]
-    public async Task V1Client_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying()
-    {
-        const string ExpectedReason = "Client uses protocol v1; this server uses v2.";
-        List<Exception> unobserved = [];
-        EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
-        {
-            // The handler is process-wide; keep only faults caused by this test's v1 frame.
-            if (args.Exception.Flatten().InnerExceptions.Any(inner => inner.ToString().Contains("protocol version 1", StringComparison.OrdinalIgnoreCase)))
-            {
-                lock (unobserved)
-                {
-                    unobserved.Add(args.Exception);
-                }
-            }
-        };
-        TaskScheduler.UnobservedTaskException += onUnobserved;
-        try
-        {
-            await using ServerUnderTest server = await ServerUnderTest.StartAsync();
-            List<ServerConnectionError> connectionErrors = [];
-            server.Service.ConnectionError += error =>
-            {
-                lock (connectionErrors)
-                {
-                    connectionErrors.Add(error);
-                }
-            };
-            await using RawClient a = await server.ConnectAndJoinAsync(PrimarySession);
-            await using RawClient b = await server.ConnectAndJoinAsync(EarlySecondary);
-            for (int i = 0; i < 20; i++)
-            {
-                await a.SendCommandAsync(walking: true);
-                await b.SendCommandAsync(walking: false);
-                await server.TickAsync();
-                Assert.True(await server.FlushAllAsync());
-            }
-
-            // A protocol v1 client: v1 serializer options (explicit nulls and messageKind in the
-            // payload) and protocolVersion 1 in the envelope, framed exactly like a v2 frame.
-            ClientHelloMessage hello = new("legacy-v1-client");
-            byte[] v1Hello = JsonSerializer.SerializeToUtf8Bytes(
-                new { protocolVersion = 1, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
-                ProtocolWireOptions.V1);
-            InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-            Assert.Equal("Unsupported protocol version 1. Supported version: 2.", versionError.Message);
-
-            using TcpClient legacy = new();
-            await legacy.ConnectAsync(IPAddress.Loopback, server.Port);
-            ServerConnection legacyConnection = await server.AcceptAsync();
-            Assert.Equal(3, server.Service.ConnectionCount);
-            NetworkStream legacyStream = legacy.GetStream();
-            await legacyStream.WriteAsync(new LengthPrefixedMessageFramer().Frame(v1Hello));
-
-            // The server reads the frame, fails to decode it, answers with one v2 rejection that
-            // names both versions, and closes only that connection.
-            using MemoryStream received = new();
-            byte[] buffer = new byte[4096];
-            using (CancellationTokenSource readTimeout = new(Timeout))
-            {
-                while (true)
-                {
-                    int read;
-                    try
-                    {
-                        read = await legacyStream.ReadAsync(buffer, readTimeout.Token);
-                    }
-                    catch (IOException)
-                    {
-                        // A reset is also a close.
-                        break;
-                    }
-
-                    if (read == 0)
-                    {
-                        break;
-                    }
-
-                    received.Write(buffer, 0, read);
-                }
-            }
-
-            byte[] receivedBytes = received.ToArray();
-            Assert.True(
-                new LengthPrefixedMessageFramer().TryDeframe(receivedBytes, out byte[]? rejectionPayload, out int consumed),
-                $"expected one complete rejection frame, got {receivedBytes.Length} bytes");
-            Assert.Equal(receivedBytes.Length, consumed);
-            DecodedProtocolMessage rejection = new TransportJsonCodec().Decode(rejectionPayload!);
-            Assert.Equal(TransportEnvelope.CurrentProtocolVersion, rejection.Envelope.ProtocolVersion);
-            Assert.Equal(1UL, rejection.Envelope.Sequence);
-            Assert.Equal(ExpectedReason, Assert.IsType<JoinRejectedMessage>(rejection.Message).Reason);
-
-            await WaitUntilAsync(() => server.Service.ConnectionCount == 2, "the v1 connection was never dropped");
-            Assert.False(server.Host.IsConnectionJoined(legacyConnection.ConnectionId));
-
-            // The server logged the reason once, for that connection only (its id is the remote
-            // endpoint), as a protocol mismatch rather than a generic error.
-            lock (connectionErrors)
-            {
-                ServerConnectionError logged = Assert.Single(connectionErrors);
-                Assert.Equal(legacyConnection.ConnectionId, logged.ConnectionId);
-                Assert.EndsWith($":{((IPEndPoint)legacy.Client.LocalEndPoint!).Port}", logged.ConnectionId);
-                Assert.Equal("protocol-mismatch", logged.Kind);
-                Assert.Equal(ExpectedReason, logged.Reason);
-                ProtocolVersionMismatchException mismatch = Assert.IsType<ProtocolVersionMismatchException>(logged.Exception);
-                Assert.Equal(1, mismatch.PeerVersion);
-                Assert.Equal(versionError.Message, mismatch.InnerException!.Message);
-            }
-
-            // The connection loop task must not end faulted: force the finalizers that would
-            // report an unobserved task exception and check that none came from this connection.
-            for (int i = 0; i < 5; i++)
-            {
-                await Task.Delay(20);
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            }
-
-            lock (unobserved)
-            {
-                Assert.Empty(unobserved);
-            }
-
-            // The server keeps ticking and the v2 clients keep receiving every snapshot.
-            int framesBefore = a.Frames.Count;
-            for (int i = 0; i < 30; i++)
-            {
-                await a.SendCommandAsync(walking: true);
-                await b.SendCommandAsync(walking: true);
-                await server.TickAsync();
-                Assert.True(await server.FlushAllAsync());
-            }
-
-            ulong lastTick = server.Host.Runtime!.CurrentServerTick;
-            await a.WaitForSnapshotTickAsync(lastTick);
-            await b.WaitForSnapshotTickAsync(lastTick);
-            Assert.True(a.Frames.Count >= framesBefore + 30);
-            foreach (RawClient client in new[] { a, b })
-            {
-                Assert.Null(client.ReadFault);
-                AssertEnvelopeSequencesAreGapFree(client);
-                Assert.True(client.IsConnected);
-            }
-
-            lock (connectionErrors)
-            {
-                Assert.Single(connectionErrors);
-            }
-
-            // A v2 client can still join afterwards.
-            await using RawClient c = await server.ConnectAndJoinAsync(LateSecondary);
-            await server.TickAsync();
-            Assert.True(await server.FlushAllAsync());
-            await c.WaitForSnapshotTickAsync(server.Host.Runtime!.CurrentServerTick);
-            Assert.Null(c.ReadFault);
-        }
-        finally
-        {
-            TaskScheduler.UnobservedTaskException -= onUnobserved;
-        }
-    }
-
-    private static void AssertEnvelopeSequencesAreGapFree(RawClient client)
+    internal static void AssertEnvelopeSequencesAreGapFree(RawClient client)
     {
         List<Frame> frames = client.Frames.ToList();
         for (int i = 0; i < frames.Count; i++)
@@ -434,7 +176,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         }
     }
 
-    private static void AssertSlimV2Payloads(RawClient client)
+    internal static void AssertSlimV2Payloads(RawClient client)
     {
         foreach (Frame frame in client.Frames)
         {
@@ -453,7 +195,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
 
     // NET-6: secondaries are captured in ordinal session-id order whatever the join order. The
     // primary seat still comes first (it is whoever joined first), a documented gap.
-    private static void AssertCanonicalActorOrder(RawClient client)
+    internal static void AssertCanonicalActorOrder(RawClient client)
     {
         string[] expected = [PrimarySession, LateSecondary, EarlySecondary];
         int checkedSnapshots = 0;
@@ -476,17 +218,17 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         Assert.True(checkedSnapshots > 0, $"{client.SessionId} never saw all three players.");
     }
 
-    private static Dictionary<ulong, Frame> SnapshotsByTick(RawClient client)
+    internal static Dictionary<ulong, Frame> SnapshotsByTick(RawClient client)
     {
         return client.Snapshots().ToDictionary(frame => ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot.ServerTick);
     }
 
-    private static ulong TickOf(Frame frame)
+    internal static ulong TickOf(Frame frame)
     {
         return ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot.ServerTick;
     }
 
-    private static string[] MutationStream(RawClient client, ulong after)
+    internal static string[] MutationStream(RawClient client, ulong after)
     {
         return client.Snapshots()
             .Select(frame => ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot)
@@ -498,7 +240,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             .ToArray();
     }
 
-    private static string[] DamageStream(RawClient client, ulong after)
+    internal static string[] DamageStream(RawClient client, ulong after)
     {
         return client.Snapshots()
             .Select(frame => ((ServerSnapshotMessage)frame.Decoded.Message).Snapshot)
@@ -508,7 +250,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             .ToArray();
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, string failure)
+    internal static async Task WaitUntilAsync(Func<bool> condition, string failure)
     {
         DateTime deadline = DateTime.UtcNow + Timeout;
         while (!condition())
@@ -523,7 +265,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
     internal sealed record ClientWorldReplay(int ChecksumsVerified, int ChecksumMismatches, ulong FinalChecksum, int MutationsApplied);
 
     // The real service and host, ticked by the test instead of the service's own tick loop.
-    private sealed class ServerUnderTest : IAsyncDisposable
+    internal sealed class ServerUnderTest : IAsyncDisposable
     {
         private readonly Dictionary<RawClient, ServerConnection> _connections = [];
 
@@ -553,7 +295,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
 
         public ValueTask<ServerConnection> AcceptAsync()
         {
-            return Service.AcceptNextClientAsync();
+            return new ValueTask<ServerConnection>(Service.AcceptOnThreadPoolAsync());
         }
 
         public async Task<RawClient> ConnectAndJoinAsync(string sessionId, int? receiveBufferSize = null)
@@ -589,7 +331,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             bool flushed = true;
             foreach (ServerConnection connection in _connections.Values)
             {
-                flushed &= await connection.FlushOutboundAsync(Timeout);
+                flushed &= await OutboundDrain.FlushAsync(connection, Timeout);
             }
 
             return flushed;

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.Core;
 
-[Collection("RenderThreadAffinity")]
+[Collection(RenderThreadAffinityCollection.Name)]
 public class ShaderLifetimeTests
 {
     [Fact]

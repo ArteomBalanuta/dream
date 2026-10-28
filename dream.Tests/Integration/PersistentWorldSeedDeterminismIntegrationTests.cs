@@ -26,25 +26,30 @@ namespace Dream.Tests.Integration;
 // and per-tick SimulationStateChecksum. A restart from the same database rolls with the same
 // stored seed and replays the same script identically; a second database gets its own seed and
 // diverges at a damage roll. The seed never reaches the wire.
+//
+// The restart replay is here; the divergence, wire and placed-cube damage cases live in
+// PersistentWorldSeedDivergenceIntegrationTests, PersistentWorldSeedLoopbackIntegrationTests and
+// PersistentWorldPlacedCubeDamageIntegrationTests so the long scripted runs go in parallel. They
+// share the scripted server and helpers below.
 public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper output)
 {
     // Past the first 5 s persistence checkpoint (320 ticks), so the run also covers a checkpoint.
-    private const int Ticks = 400;
-    private const int EnemyActorId = 4300;
-    private const int EnemyMaxHealth = 400;
-    private const string PrimarySession = "session-a";
-    private const string SessionB = "session-b";
-    private const string SessionC = "session-c";
-    private static readonly string[] Sessions = [PrimarySession, SessionB, SessionC];
+    internal const int Ticks = 400;
+    internal const int EnemyActorId = 4300;
+    internal const int EnemyMaxHealth = 400;
+    internal const string PrimarySession = "session-a";
+    internal const string SessionB = "session-b";
+    internal const string SessionC = "session-c";
+    internal static readonly string[] Sessions = [PrimarySession, SessionB, SessionC];
 
-    private const int WalkUntil = 20;
-    private const int BuildAt = 3;
-    private const int FightFrom = 30;
-    private const int CubeAttackFrom = 130;
+    internal const int WalkUntil = 20;
+    internal const int BuildAt = 3;
+    internal const int FightFrom = 30;
+    internal const int CubeAttackFrom = 130;
     // DedicatedServerHost captures a persistence checkpoint every 5 s of server time.
-    private const int CheckpointTicks = 5 * SimulationClock.AuthoritativeTicksPerSecond;
+    internal const int CheckpointTicks = 5 * SimulationClock.AuthoritativeTicksPerSecond;
 
-    private static readonly Vector3 EnemyPosition = new(7.5f, 1f, 11f);
+    internal static readonly Vector3 EnemyPosition = new(7.5f, 1f, 11f);
 
     [Fact]
     public void Restart_FromTheSameDatabase_KeepsTheStoredSeed_AndTheScriptReplaysEveryTickChecksum()
@@ -122,36 +127,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             $"first fracture {first.FractureTick}, roll ticks {first.HitTicks.Count}, rubble {first.RubblePieces}");
     }
 
-    // Regression for a production bug: on a persistent world a player-placed cube's damage was
-    // reverted by the next hit until a 5 s checkpoint refreshed the in-memory persisted copy.
-    // ProcessCombatUseAction calls RepairCubeRecordFromPersistence before every hit, which treated
-    // a live health that differed from the cached PersistedPlacedCube (still full health from
-    // placement) as an identity mismatch and rebuilt the record with the cached health. Fixed: the
-    // repair compares identity (id, owner) only, and a non-fatal hit refreshes the cached health.
-    [Fact]
-    public void PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits_AndBreaksBeforeTheFirstCheckpoint()
-    {
-        using TempDatabase database = new();
-        using PersistentScriptedServer server = new(database.OpenBundle());
-        server.RunScript(CubeOnlyScript, ticks: CheckpointTicks - 10);
-
-        output.WriteLine($"persistent: {DescribeHits(server)}; fractured at {server.BuiltCubeFractureTick}");
-        AssertCubeLosesHealthEveryHitAndBreaks(server);
-    }
-
-    // The same cube script on the same production host without persistence: damage accumulates
-    // and the cube breaks well before the first checkpoint, so the failure above is persistence's.
-    [Fact]
-    public void EphemeralWorld_PlacedCube_KeepsItsDamageBetweenHits_AndBreaksBeforeTheFirstCheckpoint()
-    {
-        using PersistentScriptedServer server = new(ServerBootstrap.CreateAuthoritativeHost(persistence: null));
-        server.RunScript(CubeOnlyScript, ticks: CheckpointTicks - 10);
-
-        output.WriteLine($"ephemeral: {DescribeHits(server)}; fractured at {server.BuiltCubeFractureTick}");
-        AssertCubeLosesHealthEveryHitAndBreaks(server);
-    }
-
-    private static void AssertCubeLosesHealthEveryHitAndBreaks(PersistentScriptedServer server)
+    internal static void AssertCubeLosesHealthEveryHitAndBreaks(PersistentScriptedServer server)
     {
         Assert.NotNull(server.BuiltCubeId);
         Assert.True(server.BuiltCubeHits.Count >= 2, $"Only {server.BuiltCubeHits.Count} hits landed on the cube.");
@@ -165,133 +141,14 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         Assert.True(server.BuiltCubeFractureTick > 0, $"The cube never broke: {DescribeHits(server)}");
     }
 
-    private static string DescribeHits(PersistentScriptedServer server)
+    internal static string DescribeHits(PersistentScriptedServer server)
     {
         return string.Join(", ", server.BuiltCubeHits.Select(hit => $"t{hit.Tick}:{hit.Health}hp"));
     }
 
-    [Fact]
-    public void SecondDatabase_GetsADifferentSeed_AndDivergesAtADamageRoll_NotBefore()
-    {
-        using TempDatabase left = new();
-        using TempDatabase right = new();
-        using PersistentScriptedServer first = new(left.OpenBundle());
-        using PersistentScriptedServer second = new(right.OpenBundle());
-
-        Assert.NotEqual(first.Seed, second.Seed);
-        Assert.Equal(first.Hash(), second.Hash());
-
-        int firstDivergence = -1;
-        for (int tick = 1; tick <= Ticks; tick++)
-        {
-            ScriptStep step = Script(tick, first);
-            first.Advance(tick, step);
-            second.Advance(tick, step);
-            if (firstDivergence < 0 && first.Hash() != second.Hash())
-            {
-                firstDivergence = tick;
-                output.WriteLine($"tick {tick}: {first.CurrentParts} vs {second.CurrentParts}");
-            }
-        }
-
-        RunRecord a = first.Record;
-        RunRecord b = second.Record;
-        int firstHit = Math.Min(a.FirstHitTick, b.FirstHitTick);
-        output.WriteLine($"first hits {a.FirstHitTick}/{b.FirstHitTick}, first divergence {firstDivergence}");
-        Assert.True(firstHit > 0, "No hit landed.");
-        Assert.True(firstDivergence > 0, "Two worlds with different seeds never diverged.");
-        Assert.True(firstDivergence >= FightFrom, $"Diverged at tick {firstDivergence}, before combat started.");
-        Assert.True(firstDivergence >= firstHit, $"Diverged at tick {firstDivergence}, before the first hit at {firstHit}.");
-        // The divergence is caused by a roll: a hit landed on one of the two servers in that tick.
-        Assert.True(
-            a.HitTicks.Contains(firstDivergence) || b.HitTicks.Contains(firstDivergence),
-            $"Diverged at tick {firstDivergence}, where neither server rolled a hit.");
-    }
-
-    [Fact]
-    public async Task PersistentServer_OverLoopback_NeverPutsTheSeedOnTheWire()
-    {
-        using TempDatabase database = new();
-        ServerPersistenceBundle bundle = database.OpenBundle();
-        ulong seed = bundle.SimulationSeed!.Value;
-        await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(ServerBootstrap.CreateAuthoritativeHost(bundle));
-        Assert.Equal(seed, server.Host.Runtime!.SimulationSeed);
-
-        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(PrimarySession);
-        await using WireLoopbackClient b = await server.ConnectAndJoinAsync(SessionB);
-        WireLoopbackClient[] clients = [a, b];
-
-        // Build, fight the runtime's own wolf until it dies and respawns, and request a full
-        // world resync, so join, snapshot, action, damage and full-world frames are all captured.
-        int builds = 0;
-        Vector3[] buildCells = [new(7f, 1f, 5f), new(3f, 1f, 5f), new(5f, 1f, 7f)];
-        for (int tick = 0; tick < 240; tick++)
-        {
-            foreach (WireLoopbackClient client in clients)
-            {
-                Vector3 facing = server.DirectionToNearestEnemy(client.SessionId) ?? Vector3.UnitZ;
-                await client.SendCommandAsync(PlayerInteractionMode.Combat, PlayerMoveIntent.None, facing, attack: true);
-            }
-
-            if (tick % 20 == 2 && builds < buildCells.Length)
-            {
-                // Build use is server-originated only (NETR-6 rejects it over player.action); its
-                // action result still reaches client a over the wire after the tick.
-                Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
-                    new PlayerSessionId(a.SessionId),
-                    (ulong)(builds + 1),
-                    new BuildUseIntent(buildCells[builds]))));
-                builds++;
-            }
-
-            if (tick == 150)
-            {
-                await b.SendAsync(new ClientWorldResyncRequestMessage(0));
-            }
-
-            await server.TickAsync();
-            Assert.True(await server.FlushAllAsync());
-        }
-
-        ulong lastTick = server.Host.Runtime!.CurrentServerTick;
-        foreach (WireLoopbackClient client in clients)
-        {
-            await client.WaitForSnapshotTickAsync(lastTick);
-            Assert.Null(client.ReadFault);
-        }
-
-        Assert.Contains(b.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage { Snapshot.World: not null });
-        Assert.Contains(a.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage message && message.Snapshot.DamageEvents.Count > 0);
-
-        byte[][] needles = SeedRepresentations(seed);
-        long scannedBytes = 0;
-        foreach (WireLoopbackClient client in clients)
-        {
-            byte[] stream = client.RawStream;
-            scannedBytes += stream.Length;
-            foreach (byte[] needle in needles)
-            {
-                Assert.True(
-                    stream.AsSpan().IndexOf(needle) < 0,
-                    $"{client.SessionId}'s wire stream contains the seed as '{Describe(needle)}'.");
-            }
-
-            foreach (WireFrame frame in client.Frames)
-            {
-                foreach (byte[] needle in needles)
-                {
-                    Assert.True(frame.Payload.AsSpan().IndexOf(needle) < 0, $"A {frame.Decoded.Envelope.MessageKind} frame contains the seed.");
-                }
-            }
-        }
-
-        output.WriteLine(
-            $"scanned {scannedBytes} bytes in {clients.Sum(client => client.Frames.Count)} frames for {needles.Length} seed spellings");
-    }
-
     // Decimal, hex (lower and upper, padded and unpadded, with and without 0x), and the raw
     // little- and big-endian bytes.
-    private static byte[][] SeedRepresentations(ulong seed)
+    internal static byte[][] SeedRepresentations(ulong seed)
     {
         string[] texts =
         [
@@ -311,12 +168,12 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         return [.. texts.Distinct(StringComparer.Ordinal).Select(Encoding.UTF8.GetBytes), little, big];
     }
 
-    private static string Describe(byte[] needle)
+    internal static string Describe(byte[] needle)
     {
         return needle.All(value => value is >= 0x20 and < 0x7f) ? Encoding.ASCII.GetString(needle) : Convert.ToHexString(needle);
     }
 
-    private static int FirstDifference(IReadOnlyList<ulong> left, IReadOnlyList<ulong> right)
+    internal static int FirstDifference(IReadOnlyList<ulong> left, IReadOnlyList<ulong> right)
     {
         for (int i = 0; i < Math.Min(left.Count, right.Count); i++)
         {
@@ -329,7 +186,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         return left.Count == right.Count ? -1 : Math.Min(left.Count, right.Count);
     }
 
-    private static void AssertScriptExercisedEverything(RunRecord record)
+    internal static void AssertScriptExercisedEverything(RunRecord record)
     {
         Assert.True(record.FirstHitTick > 0, "No hit landed.");
         Assert.True(record.EnemyDeathTick > 0, "The scripted enemy never died.");
@@ -337,7 +194,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         Assert.True(record.RubblePieces > 0, "No rubble pieces.");
     }
 
-    private static ScriptStep Script(int tick, PersistentScriptedServer reference)
+    internal static ScriptStep Script(int tick, PersistentScriptedServer reference)
     {
         Dictionary<string, PlayerCommandFrame> commands = new(StringComparer.Ordinal);
         List<(string Session, IPlayerActionPayload Payload)> actions = [];
@@ -390,7 +247,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
     }
 
     // Only the primary acts: it builds, then attacks its cube along +X every tick from tick 10.
-    private static ScriptStep CubeOnlyScript(int tick, PersistentScriptedServer reference)
+    internal static ScriptStep CubeOnlyScript(int tick, PersistentScriptedServer reference)
     {
         Dictionary<string, PlayerCommandFrame> commands = new(StringComparer.Ordinal);
         foreach (string session in Sessions)
@@ -411,17 +268,17 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         return new ScriptStep(commands, actions);
     }
 
-    private static Vector3 DirectionFrom(Vector3 origin, Vector3 target)
+    internal static Vector3 DirectionFrom(Vector3 origin, Vector3 target)
     {
         Vector3 direction = target - origin;
         return direction.LengthSquared <= 0.0001f ? Vector3.UnitZ : direction.Normalized();
     }
 
-    private sealed record ScriptStep(
+    internal sealed record ScriptStep(
         IReadOnlyDictionary<string, PlayerCommandFrame> Commands,
         IReadOnlyList<(string Session, IPlayerActionPayload Payload)> Actions);
 
-    private sealed record RunRecord(
+    internal sealed record RunRecord(
         IReadOnlyList<ulong> Checksums,
         IReadOnlyList<SimulationStateChecksum.Parts> Parts,
         IReadOnlyList<int> HitTicks,
@@ -432,7 +289,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
     // The production persistent host (deferred joins, persisted profiles, world and seed), driven
     // in-process one tick at a time so every command lands in the same tick on every run.
-    private sealed class PersistentScriptedServer : IDisposable
+    internal sealed class PersistentScriptedServer : IDisposable
     {
         private readonly DedicatedServerHost _host;
         private readonly Dictionary<string, ulong> _actionSequences = new(StringComparer.Ordinal);
@@ -514,6 +371,8 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             Runtime.Map.CaptureFracturePieces().Count());
 
         public ulong Hash() => SimulationStateChecksum.Compute(Runtime);
+
+        public int FirstHitTick => _firstHitTick;
 
         public RunRecord RunScript(Func<int, PersistentScriptedServer, ScriptStep> script, int ticks = Ticks)
         {

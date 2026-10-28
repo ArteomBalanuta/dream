@@ -20,7 +20,6 @@ namespace Dream.Tests.Integration;
 // DEC-7 took IClientWorldState (and its replication-ack state) off the authoritative
 // WorldSessionRuntime. The client must still get all of its world state through
 // ClientWorldSession, which is now the interface's only implementation.
-[Collection(TimingSensitiveCollection.Name)]
 public class ClientWorldStateBoundaryIntegrationTests
 {
     [Fact]
@@ -66,6 +65,8 @@ public class ClientWorldStateBoundaryIntegrationTests
         await using RemoteClientSession client = await RemoteClientSession.ConnectAsync(
             new RemoteClientOptions("127.0.0.1", server.BoundPort, SessionId, "Dec Seven", "dec7-test"));
 
+        // A safety deadline only: the loop exits as soon as every condition below has been seen.
+        TimeSpan deadline = TimeSpan.FromSeconds(30);
         Stopwatch clock = Stopwatch.StartNew();
         bool joined = false;
         int snapshots = 0;
@@ -76,6 +77,8 @@ public class ClientWorldStateBoundaryIntegrationTests
         bool buildsSent = false;
         int buildFrames = 0;
         int acceptedBuilds = 0;
+        ulong lastBuildCommandSequence = 0;
+        int snapshotsAtLastBuildAck = -1;
         SceneEventHub clientEvents = new();
         // Build use reaches the server only as command-frame primary use (NETR-6 rejects
         // BuildUseIntent over player.action). The client holds primary use in Building mode while
@@ -87,11 +90,17 @@ public class ClientWorldStateBoundaryIntegrationTests
             new Vector3(0f, 0.75f, 1f).Normalized(), new Vector3(0f, 0.75f, -1f).Normalized()
         ];
         const int FramesPerFacing = 10;
-        while (clock.Elapsed < TimeSpan.FromSeconds(8))
+        while (clock.Elapsed < deadline)
         {
             commandSequence++;
             PlayerSessionId session = new(SessionId);
-            PlayerCommandFrame frame = buildsSent && buildFrames < buildFacings.Length * FramesPerFacing
+            bool buildFrame = buildsSent && buildFrames < buildFacings.Length * FramesPerFacing;
+            if (buildFrame)
+            {
+                lastBuildCommandSequence = commandSequence;
+            }
+
+            PlayerCommandFrame frame = buildFrame
                 ? new PlayerCommandFrame(
                     session,
                     commandSequence,
@@ -136,6 +145,17 @@ public class ClientWorldStateBoundaryIntegrationTests
                             serverPosition = self.Position;
                         }
 
+                        // The server accepts a command frame in the tick that simulates it, so once a
+                        // snapshot acknowledges the last build frame every build has been attempted.
+                        if (snapshotsAtLastBuildAck < 0 && lastBuildCommandSequence > 0 &&
+                            buildFrames >= buildFacings.Length * FramesPerFacing &&
+                            snapshot.LastAcceptedCommandSequences != null &&
+                            snapshot.LastAcceptedCommandSequences.TryGetValue(SessionId, out ulong acked) &&
+                            acked >= lastBuildCommandSequence)
+                        {
+                            snapshotsAtLastBuildAck = snapshots;
+                        }
+
                         break;
                 }
             }
@@ -147,11 +167,17 @@ public class ClientWorldStateBoundaryIntegrationTests
                 buildsSent = true;
             }
 
-            if (buildsSent && buildFrames >= buildFacings.Length * FramesPerFacing && acceptedBuilds > 0 &&
+            // Exit on progress, not on elapsed time: every build frame has been simulated and answered
+            // (a later snapshot followed the one acknowledging the last build frame, so no accepted
+            // build can still arrive), the accepted ones are all replicated into the client world,
+            // and enough snapshots and checksums have been seen for the assertions below.
+            if (buildsSent && buildFrames >= buildFacings.Length * FramesPerFacing &&
+                snapshotsAtLastBuildAck >= 0 && snapshots > snapshotsAtLastBuildAck &&
+                acceptedBuilds > 0 &&
                 clientWorld.Map.SolidCubes.Count(cube => cube.Position.Y > 1f) == placedBefore + acceptedBuilds &&
                 clientWorld.LastAppliedReplicatedWorldMutationSequence > 0 &&
-                checksumsVerified > 3 &&
-                clock.Elapsed > TimeSpan.FromSeconds(3))
+                snapshots > 10 &&
+                checksumsVerified > 3)
             {
                 break;
             }

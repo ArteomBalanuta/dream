@@ -24,20 +24,20 @@ namespace Dream.Tests.Integration;
 // until it fractures, and a client-requested world resync (a full World snapshot). Every frame
 // any client received must decode, and its payload must re-encode through the reflection
 // reference (ProtocolWireOptions.V2) byte for byte; every client's replayed world must match the
-// server's checksums.
-[Collection(TimingSensitiveCollection.Name)]
+// server's checksums. The late-joiner regression lives in SnapshotConverterLateJoinerIntegrationTests
+// so the two run in parallel.
 public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper output)
 {
-    private const int Ticks = 300;
-    private const string PrimarySession = "session-a";
-    private const string SessionB = "session-b";
-    private const string SessionC = "session-c";
+    internal const int Ticks = 300;
+    internal const string PrimarySession = "session-a";
+    internal const string SessionB = "session-b";
+    internal const string SessionC = "session-c";
 
-    private const int JoinCAt = 20;
-    private const int BuildAt = 5;
-    private const int LeaveBAt = 120;
-    private const int RejoinBAt = 160;
-    private const int ResyncAt = 220;
+    internal const int JoinCAt = 20;
+    internal const int BuildAt = 5;
+    internal const int LeaveBAt = 120;
+    internal const int RejoinBAt = 160;
+    internal const int ResyncAt = 220;
 
     [Fact]
     public async Task ThreeClients_JoinLeaveRejoinCombatFractureResync_EveryFrameReencodesByteIdentically_AndWorldsMatch()
@@ -170,9 +170,14 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
             // Every client, the one that left included, rebuilt the server's world from its own
             // stream; the connected ones end on the server's final world.
             ulong serverChecksum = WorldStateChecksum.Compute(server.Runtime.Map);
-            foreach (WireLoopbackClient client in everyClient)
+            // Each replay builds its own client world from its own client's frames (no frame
+            // arrives any more), so they run at once.
+            int floorSize = server.Runtime.Map.Width;
+            ClientWorldReplay[] replays = await Task.WhenAll(everyClient.Select(client => Task.Run(() => Replay(client, floorSize))));
+            for (int index = 0; index < everyClient.Count; index++)
             {
-                ClientWorldReplay replay = Replay(client, server.Runtime.Map.Width);
+                WireLoopbackClient client = everyClient[index];
+                ClientWorldReplay replay = replays[index];
                 output.WriteLine($"{client.SessionId}: frames {client.Frames.Count}, checksums verified {replay.ChecksumsVerified}, mutations {replay.MutationsApplied}");
                 // Checksums go out periodically; the client that left saw about 120 ticks of them.
                 int expectedChecksums = client == b ? 1 : 2;
@@ -214,68 +219,7 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
         }
     }
 
-    // Regression for a production bug (pre-existing, not from wave 6, fixed in wave 6 fix loop 1):
-    // a client that joins (or resyncs into a fresh world) after the server fractured a GENERATED
-    // terrain cube kept that cube. The client builds the generated startup terrain itself, and
-    // RemoteWorldMutationApplier.ApplyWorldSnapshot used to treat the snapshot's fractured cells as
-    // cells that may keep a cube. Map.RestoreFracturePieces no longer removes a cube in the origin
-    // cell, so the client ended with both the intact cube and the rubble, its WorldStateChecksum
-    // never matched the server's, and the resync (same path) never healed it.
-    [Fact]
-    public void LateJoiner_AfterAGeneratedCubeFractured_BuildsTheServersWorld_AndAResyncKeepsIt()
-    {
-        AssertLateJoinerMatchesAfterGeneratedFracture();
-    }
-
-    private void AssertLateJoinerMatchesAfterGeneratedFracture()
-    {
-        using DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(persistence: null);
-        WorldSessionRuntime runtime = host.Runtime!;
-        Assert.Empty(host.HandleClientMessage("connection-a", new ClientJoinRequestMessage(PrimarySession, "Name A")));
-        AdvanceOneTick(host);
-        _ = host.CreateSnapshotMessage();
-
-        // The primary breaks the generated terrain cube on its +X ray (terrain starts at x = 7).
-        ulong sequence = 0;
-        for (int tick = 0; tick < 600 && !runtime.Map.CaptureFracturePieces().Any(); tick++)
-        {
-            host.HandleClientMessage("connection-a", new PlayerCommandMessage(new PlayerCommandFrame(
-                new PlayerSessionId(PrimarySession),
-                ++sequence,
-                new PlayerModeSwitchIntent(PlayerInteractionMode.Combat),
-                PlayerMoveIntent.None,
-                new PlayerLookIntent(0f, 0f, Vector3.UnitX),
-                PrimaryUsePressed: true)));
-            AdvanceOneTick(host);
-            host.DrainPendingActionResults();
-            _ = host.CreateSnapshotMessage();
-        }
-
-        GeometryCellKey[] fractured = runtime.Map.CaptureFracturePieces().Select(piece => piece.Cell).Distinct().ToArray();
-        Assert.NotEmpty(fractured);
-        Assert.All(fractured, cell => Assert.True(cell.X >= 7, $"{cell} is not generated terrain."));
-
-        Assert.Empty(host.HandleClientMessage("connection-b", new ClientJoinRequestMessage(SessionB, "Name B")));
-        AdvanceOneTick(host);
-        List<PendingConnectionReply> replies = [];
-        host.DrainPendingJoinRepliesInto(replies);
-        JoinAcceptedMessage accepted = Assert.IsType<JoinAcceptedMessage>(
-            Assert.Single(replies, reply => reply.ConnectionId == "connection-b" && reply.Message is JoinAcceptedMessage).Message);
-        ulong serverChecksum = WorldStateChecksum.Compute(runtime.Map);
-
-        using ClientWorldSession world = new(runtime.Map.Width, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
-        ClientJoinAcceptedApplier.ApplyToRuntime(world, accepted);
-        output.WriteLine($"fractured {string.Join(", ", fractured)}; intact cube left at a fractured cell: " +
-            string.Join(", ", fractured.Where(cell => world.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z) != null)));
-        Assert.Equal(serverChecksum, WorldStateChecksum.Compute(world.Map));
-        Assert.All(fractured, cell => Assert.Null(world.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z)));
-
-        // And the full-world resync the client would request lands on the same world.
-        RemoteWorldMutationApplier.ApplySnapshotToRuntime(world, runtime.ExportWorldResyncEnvelope());
-        Assert.Equal(serverChecksum, WorldStateChecksum.Compute(world.Map));
-    }
-
-    private static void AdvanceOneTick(DedicatedServerHost host)
+    internal static void AdvanceOneTick(DedicatedServerHost host)
     {
         int executed = host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
         if (executed == 0)
@@ -286,7 +230,7 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
         Assert.Equal(1, executed);
     }
 
-    private static int GeneratedFracturedCells(WireLoopbackServer server, Vector3 buildCell)
+    internal static int GeneratedFracturedCells(WireLoopbackServer server, Vector3 buildCell)
     {
         return server.Runtime.Map.CaptureFracturePieces()
             .Select(piece => piece.Cell)
@@ -296,7 +240,7 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
 
     // On the startup floor generated terrain starts at x = 7 beside the spawn; the cube goes in
     // the free cell between the primary and that terrain, on its +X attack ray.
-    private static Vector3 BuildCellBeside(WireLoopbackServer server, string sessionId)
+    internal static Vector3 BuildCellBeside(WireLoopbackServer server, string sessionId)
     {
         ActorSnapshot primary = server.Runtime.CaptureActorSnapshots().Single(actor => actor.SessionId == sessionId);
         Vector3 cell = new(MathF.Floor(primary.Position.X) + 1f, 1f, MathF.Floor(primary.Position.Z));
@@ -304,10 +248,10 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
         return cell;
     }
 
-    private sealed record ClientWorldReplay(int ChecksumsVerified, int ChecksumMismatches, ulong FinalChecksum, int MutationsApplied);
+    internal sealed record ClientWorldReplay(int ChecksumsVerified, int ChecksumMismatches, ulong FinalChecksum, int MutationsApplied);
 
     // Applies every received message, in order, into a client world like PlayScene does.
-    private static ClientWorldReplay Replay(WireLoopbackClient client, int floorSize)
+    internal static ClientWorldReplay Replay(WireLoopbackClient client, int floorSize)
     {
         using ClientWorldSession world = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         int verified = 0;

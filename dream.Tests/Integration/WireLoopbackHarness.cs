@@ -11,6 +11,7 @@ using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Integration;
 
@@ -52,7 +53,7 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
 
     public async Task<WireLoopbackClient> ConnectAndJoinAsync(string sessionId, int? receiveBufferSize = null)
     {
-        Task<ServerConnection> accept = Service.AcceptNextClientAsync().AsTask();
+        Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(Port, sessionId, receiveBufferSize);
         ServerConnection connection = await accept.WaitAsync(Timeout);
         _connections[client] = connection;
@@ -88,9 +89,13 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         }
     }
 
-    // One fixed tick per call; the clock's float accumulation may need a second nudge.
+    // One fixed tick per call; the clock's float accumulation may need a second nudge. The tick
+    // waits until the server has read every command and action the clients sent before it, so a
+    // scripted step is applied in the tick that follows it however late the server's receive loop
+    // runs on a busy machine.
     public async Task TickAsync()
     {
+        await WaitUntilSentMessagesAreReadAsync();
         ulong before = Runtime.CurrentServerTick;
         int executed = await Service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
         if (executed == 0)
@@ -102,6 +107,47 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         Assert.Equal(before + 1, Runtime.CurrentServerTick);
     }
 
+    // The server routes a command or action under the same lock that runs a tick, recording it as
+    // the connection's last one before it returns, so once the last sent sequence shows here the
+    // next tick sees it.
+    private async Task WaitUntilSentMessagesAreReadAsync()
+    {
+        DateTime deadline = DateTime.UtcNow + Timeout;
+        foreach ((WireLoopbackClient client, ServerConnection connection) in _connections)
+        {
+            SpinWait spinner = default;
+            while (!HasRead(connection.ConnectionId, client))
+            {
+                Assert.True(DateTime.UtcNow < deadline, $"The server never read {client.SessionId}'s last command or action.");
+                Assert.False(connection.IsFaulted, $"{client.SessionId}'s connection faulted.");
+                if (spinner.NextSpinWillYield)
+                {
+                    await Task.Yield();
+                }
+
+                spinner.SpinOnce(sleep1Threshold: -1);
+            }
+        }
+    }
+
+    private bool HasRead(string connectionId, WireLoopbackClient client)
+    {
+        ulong commands = client.SentCommandSequence;
+        ulong actions = client.SentActionSequence;
+        if (commands == 0 && actions == 0)
+        {
+            return true;
+        }
+
+        if (!Host.TryGetConnectionContext(connectionId, out ServerRoutingContext? context) || context == null)
+        {
+            return false;
+        }
+
+        return (commands == 0 || context.LastCommandMessage?.CommandFrame.Sequence >= commands) &&
+            (actions == 0 || context.LastActionMessage?.ActionSequence >= actions);
+    }
+
     public async Task<bool> FlushAllAsync(params WireLoopbackClient[] except)
     {
         bool flushed = true;
@@ -109,7 +155,7 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         {
             if (Array.IndexOf(except, client) < 0)
             {
-                flushed &= await connection.FlushOutboundAsync(Timeout);
+                flushed &= await OutboundDrain.FlushAsync(connection, Timeout);
             }
         }
 
@@ -175,6 +221,11 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
     }
 
     public string SessionId { get; }
+
+    // The sequence of the last command and action this client wrote to the socket (0 for none).
+    public ulong SentCommandSequence => Volatile.Read(ref _commandSequence);
+
+    public ulong SentActionSequence => Volatile.Read(ref _actionSequence);
 
     public Exception? ReadFault { get; private set; }
 

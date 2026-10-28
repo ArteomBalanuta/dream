@@ -37,10 +37,13 @@ public class InPlaceUserObjectPhysicsSyncIntegrationTests(ITestOutputHelper outp
     private static readonly int[] FractureTicks = [140, 260, 380];
 
     [Fact]
-    public void LongPushFractureScenario_EveryBodyUserObjectMatchesTheMap_BoxesAreUnshared_AndRunsAreDeterministic()
+    public async Task LongPushFractureScenario_EveryBodyUserObjectMatchesTheMap_BoxesAreUnshared_AndRunsAreDeterministic()
     {
-        RunResult first = Run();
-        RunResult second = Run();
+        // The two runs share nothing (each builds its own physics world, maps and seeded random),
+        // so they run at the same time; determinism means they must still agree tick for tick.
+        RunResult[] runs = await Task.WhenAll(Task.Run(Run), Task.Run(Run));
+        RunResult first = runs[0];
+        RunResult second = runs[1];
 
         Assert.Equal(first.ServerChecksums.Length, second.ServerChecksums.Length);
         for (int tick = 0; tick < first.ServerChecksums.Length; tick++)

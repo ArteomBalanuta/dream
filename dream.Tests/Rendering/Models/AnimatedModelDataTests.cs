@@ -12,9 +12,16 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.Models;
 
-public class AnimatedModelDataTests
+public class AnimatedModelDataTests : IClassFixture<GltfModelRootFixture>
 {
     private static readonly ConcurrentDictionary<string, Lazy<Task<AnimatedModelData>>> SharedLoads = new();
+
+    private readonly GltfModelRootFixture _models;
+
+    public AnimatedModelDataTests(GltfModelRootFixture models)
+    {
+        _models = models;
+    }
 
     public static TheoryData<string> ModelPaths() => new()
     {
@@ -120,7 +127,8 @@ public class AnimatedModelDataTests
     public async Task Load_Vertices_MatchReferenceProcessing(string modelPath)
     {
         AnimatedModelData data = await LoadSharedOffThread(modelPath);
-        ModelRoot reference = ModelRoot.Load(modelPath);
+        // An independent parse, only read here (accessors and indices), so it is shared.
+        ModelRoot reference = _models.Get(modelPath, "reference");
 
         foreach (Mesh mesh in reference.LogicalMeshes)
         {

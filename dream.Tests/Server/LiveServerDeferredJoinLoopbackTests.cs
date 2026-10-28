@@ -6,6 +6,7 @@ using Dream.Multiplayer.Transport;
 using Dream.Server;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
 
@@ -14,7 +15,6 @@ namespace Dream.Tests.Server;
 // the test so several join requests are read before the same tick. Joins that land in one tick
 // must give the same seats, actor ids and spawns whatever order the server read them in, and a
 // client must hear its JoinAccepted before its first snapshot.
-[Collection(TimingSensitiveCollection.Name)]
 public class LiveServerDeferredJoinLoopbackTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
@@ -238,7 +238,7 @@ public class LiveServerDeferredJoinLoopbackTests
 
         public async Task<RawClient> ConnectAsync(string sessionId)
         {
-            Task<ServerConnection> accept = Service.AcceptNextClientAsync().AsTask();
+            Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
             RawClient client = await RawClient.ConnectAsync(Service.Port, sessionId);
             await accept.WaitAsync(Timeout);
             return client;

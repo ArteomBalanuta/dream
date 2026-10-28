@@ -84,14 +84,17 @@ public class BackgroundWorkTests
     public void ObserveAndForget_ReportsLaterFault()
     {
         RenderFaultLog log = new(_ => { });
-        TaskCompletionSource<int> source = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // No RunContinuationsAsynchronously: ObserveAndForget registers its continuation with
+        // ExecuteSynchronously, so SetException runs it inline on this thread. The report is
+        // therefore deterministic and never waits for a (possibly starved) thread-pool thread.
+        TaskCompletionSource<int> source = new();
         InvalidOperationException error = new("late");
 
         BackgroundWork.ObserveAndForget(source.Task, log, "test-source");
         Assert.Equal(0, log.FaultCount);
         source.SetException(error);
 
-        Assert.True(SpinWait.SpinUntil(() => log.FaultCount == 1, TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, log.FaultCount);
         Assert.Same(error, log.LastFault);
         Assert.Equal(1, log.GetFaultCount("test-source"));
     }
