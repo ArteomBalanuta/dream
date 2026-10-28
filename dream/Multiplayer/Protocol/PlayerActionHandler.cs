@@ -70,10 +70,11 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     }
 
     // Build and combat use intents are created only by the server, from command-frame primary use,
-    // which applies the use cadence and targeting. Over the wire a client may send only these.
+    // which applies the use cadence and targeting. Over the wire a client may send only these. The
+    // build material selection places nothing by itself; it only picks what later uses place.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
-        return payload is InventoryEquipIntent or PlayerStatsUpdateIntent;
+        return payload is InventoryEquipIntent or PlayerStatsUpdateIntent or BuildMaterialSelectIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

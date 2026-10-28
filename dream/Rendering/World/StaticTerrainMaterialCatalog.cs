@@ -11,9 +11,12 @@ public static class StaticTerrainMaterialCatalog
 {
     // One slot per (material id, role) pair of the known material ids, plus one slot for unknown ids.
     public const int RoleCount = 4;
-    public const int KnownMaterialCount = (int)GeometryMaterialId.GrassPath + 1;
+    public const int KnownMaterialCount = (int)GeometryMaterialId.Lamp + 1;
     public const int UnknownMaterialSlot = KnownMaterialCount * RoleCount;
     public const int MaterialSlotCount = UnknownMaterialSlot + 1;
+
+    public static readonly Vector4 LampBaseColor = new(1f, 0.85f, 0.6f, 1f);
+    public static readonly Vector3 LampEmissive = new(0.9f, 0.75f, 0.5f);
 
     private static readonly StaticTerrainMaterialRole[] GrassRoles =
         [StaticTerrainMaterialRole.Top, StaticTerrainMaterialRole.Side, StaticTerrainMaterialRole.Bottom];
@@ -111,6 +114,17 @@ public static class StaticTerrainMaterialCatalog
             GeometryMaterialId.Snow => Single(materialId, ResolvePolyHavenTexture("snow_04", "snow_04.diffuse.jpg")),
             GeometryMaterialId.Rock => Single(materialId, ResolvePolyHavenTexture("rocks_ground_08", "rocks_ground_08.diffuse.jpg")),
             GeometryMaterialId.GrassPath => Single(materialId, ResolvePolyHavenTexture("grass_path_3", "grass_path_3.diffuse.jpg")),
+            // Untextured warm block that glows: the emissive term is added after exposure, so it
+            // reads at night without lighting itself (its light on the surroundings comes from
+            // LampLightIndex).
+            GeometryMaterialId.Lamp => new StaticTerrainMaterial(
+                materialId,
+                StaticTerrainMaterialRole.Single,
+                LampBaseColor,
+                string.Empty)
+            {
+                Emissive = LampEmissive
+            },
             _ => throw new ArgumentOutOfRangeException(nameof(materialId), materialId, "Not a known terrain material.")
         };
     }

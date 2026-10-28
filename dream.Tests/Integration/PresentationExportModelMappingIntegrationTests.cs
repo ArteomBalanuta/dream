@@ -79,7 +79,8 @@ public class PresentationExportModelMappingIntegrationTests
             GeometryMaterialId.Mud,
             GeometryMaterialId.Snow,
             GeometryMaterialId.Rock,
-            GeometryMaterialId.GrassPath
+            GeometryMaterialId.GrassPath,
+            GeometryMaterialId.Lamp
         ];
         Assert.Equal(Enum.GetValues<GeometryMaterialId>().Length - 3, unmapped.Length);
         foreach (GeometryMaterialId materialId in unmapped)

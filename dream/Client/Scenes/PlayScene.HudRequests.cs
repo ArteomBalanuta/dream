@@ -82,6 +82,17 @@ public partial class PlayScene
                 new InventoryEquipIntent(request.EquipInventorySlotIndex.Value)));
         }
 
+        if (request.BuildMaterial is BuildMaterialChoice buildMaterial)
+        {
+            // The server keeps the pick per session and places it from the next build on; the HUD
+            // shows what was sent.
+            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
+                new PlayerSessionId(_remoteClient.SessionId),
+                _actionSequences.NextActionSequence(),
+                new BuildMaterialSelectIntent(buildMaterial.MaterialId)));
+            _render.BuildMaterialSelection = buildMaterial.MaterialId;
+        }
+
         if (request.RequestedResolution.HasValue)
         {
             applyClientSize(request.RequestedResolution.Value);

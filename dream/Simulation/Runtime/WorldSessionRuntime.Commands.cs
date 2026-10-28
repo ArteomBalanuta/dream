@@ -219,6 +219,8 @@ public sealed partial class WorldSessionRuntime
                     context.Combatant),
             InventoryEquipIntent equipIntent
                 => ProcessInventoryEquipAction(message, context.Player, equipIntent),
+            BuildMaterialSelectIntent materialIntent
+                => ProcessBuildMaterialSelectAction(message, context.Player, materialIntent),
             PlayerStatsUpdateIntent statsIntent
                 => ProcessPlayerStatsUpdateAction(message, context.Combatant, statsIntent),
             CombatUseIntent

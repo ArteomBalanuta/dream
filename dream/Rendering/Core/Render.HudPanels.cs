@@ -5,6 +5,7 @@ using Dream.Rendering.Sky;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
+using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 using ImGuiNET;
 
@@ -36,6 +37,7 @@ public partial class Render
         int? vitality = null;
         FloatingCombatTextTuning? floatingCombatText = null;
         int? equipInventorySlotIndex = null;
+        BuildMaterialChoice? buildMaterial = null;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
@@ -233,6 +235,11 @@ public partial class Render
             DrawInventoryOverlay(inventory, ref equipInventorySlotIndex);
         }
 
+        if (status.InteractionMode == PlayerInteractionMode.Building)
+        {
+            DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
+        }
+
         return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
@@ -247,7 +254,61 @@ public partial class Render
             attackSpeed,
             vitality,
             floatingCombatText,
-            equipInventorySlotIndex);
+            equipInventorySlotIndex,
+            buildMaterial);
+    }
+
+    // The "Build" window, shown in Building mode: Auto (the supporting cell's material) or one of
+    // BuildMaterialCatalog.Placeable. It takes clicks only while an overlay has freed the mouse
+    // (Esc or V), like the HUD panel; otherwise it just shows the current pick.
+    private static void DrawBuildMaterialPanel(
+        GeometryMaterialId? selection,
+        bool interactive,
+        ref BuildMaterialChoice? buildMaterial)
+    {
+        ImGui.SetNextWindowPos(new System.Numerics.Vector2(10f, 300f), ImGuiCond.FirstUseEver);
+        ImGui.Begin("Build",
+            ImGuiWindowFlags.AlwaysAutoResize |
+            ImGuiWindowFlags.NoFocusOnAppearing |
+            (interactive ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs));
+
+        DrawBuildMaterialButton(null, selection, ref buildMaterial);
+        IReadOnlyList<GeometryMaterialId> placeable = BuildMaterialCatalog.Placeable;
+        for (int i = 0; i < placeable.Count; i++)
+        {
+            ImGui.SameLine();
+            DrawBuildMaterialButton(placeable[i], selection, ref buildMaterial);
+        }
+
+        if (!interactive)
+        {
+            ImGui.TextDisabled("Esc or V to choose");
+        }
+
+        ImGui.End();
+    }
+
+    private static void DrawBuildMaterialButton(
+        GeometryMaterialId? material,
+        GeometryMaterialId? selection,
+        ref BuildMaterialChoice? buildMaterial)
+    {
+        bool selected = material == selection;
+        if (selected)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.20f, 0.42f, 0.22f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.26f, 0.52f, 0.28f, 1f));
+        }
+
+        if (ImGui.Button(BuildMaterialCatalog.DisplayName(material), new System.Numerics.Vector2(64f, 32f)) && !selected)
+        {
+            buildMaterial = new BuildMaterialChoice(material);
+        }
+
+        if (selected)
+        {
+            ImGui.PopStyleColor(2);
+        }
     }
 
     // The "receiving world" line at the top of the HUD panel while a world transfer has run past
