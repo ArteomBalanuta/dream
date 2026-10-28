@@ -1,0 +1,189 @@
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
+using OpenTK.Windowing.GraphicsLibraryFramework;
+using System.Diagnostics;
+using Dream.Application;
+using Dream.Client.Presentation;
+using Dream.Rendering.Actors;
+using Dream.Rendering.Core;
+using Dream.Rendering.Hud;
+using Dream.Rendering.World;
+using Dream.Server;
+using Dream.Simulation.World;
+
+namespace Dream.Client.Scenes;
+
+public partial class PlayScene
+{
+    public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
+    {
+        // Render primarily consumes scene/runtime state for desktop presentation, even though
+        // this path still applies scene-owned runtime requests such as floor rebuilds today.
+        // Uploads a few background-decoded models before anything draws this frame; draws only
+        // poll the model cache, so a model never loads synchronously inside a draw call.
+        // The counters cover the previous frame from here to here, HUD included.
+        _lastFrameCounters = RenderCounters.CaptureAndReset();
+        GpuFrameTimer gpuTimer = _gpuTimer ??= new GpuFrameTimer(GlGpuQueryApi.Instance);
+        gpuTimer.BeginFrame();
+        ModelAssets.PumpUploads(ModelUploadsPerFrame);
+        long clearStart = Stopwatch.GetTimestamp();
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        // The world pass sets its own state rather than inheriting whatever the last pass (the
+        // HUD's ImGui restore, or the startup menu) left: opaque, depth-tested geometry.
+        GL.Disable(EnableCap.Blend);
+        GL.Enable(EnableCap.DepthTest);
+        long captureStart = Stopwatch.GetTimestamp();
+        WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
+            WorldVisibility.MaxRenderDistance,
+            (float)_commandTicks.RemainingSeconds,
+            _settings.CameraViewMode);
+        long remoteStatesStart = Stopwatch.GetTimestamp();
+        // A live list owned by the presenter; it is only read within this frame.
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
+            RemotePlayerRenderTick);
+
+        long worldDrawStart = Stopwatch.GetTimestamp();
+        gpuTimer.BeginSection(GpuTimerSection.World);
+        WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        // Actors runs from the enemies through the debug and viewmodel draws, up to the HUD.
+        // BeginSection ends the open section first, so the timer queries never nest.
+        gpuTimer.BeginSection(GpuTimerSection.Actors);
+        long enemyDrawStart = Stopwatch.GetTimestamp();
+        _render.Enemies.DrawAtRenderTick(
+            presentation.Camera,
+            presentation.ActiveEnemies,
+            (float)args.Time,
+            _settings.ShowCollisionGeometry,
+            _scenePresenter,
+            RemotePlayerRenderTick);
+        long enemyDrawEnd = Stopwatch.GetTimestamp();
+        _lastClearMilliseconds = Stopwatch.GetElapsedTime(clearStart, captureStart).TotalMilliseconds;
+        _lastPresentationCaptureMilliseconds = Stopwatch.GetElapsedTime(captureStart, remoteStatesStart).TotalMilliseconds;
+        _lastRemotePlayerStatesMilliseconds = Stopwatch.GetElapsedTime(remoteStatesStart, worldDrawStart).TotalMilliseconds;
+
+        double localPlayerDrawMilliseconds = 0d;
+        if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
+        {
+            long localPlayerDrawStart = Stopwatch.GetTimestamp();
+            _render.LocalPlayers.Draw(
+                new LocalPlayerPresentationState(
+                    _runtime.Player.GetWorldPosition(),
+                    _runtime.Player.Camera.HorizontalForward,
+                    _localPlayerWasMoving),
+                presentation.Camera,
+                (float)args.Time);
+            localPlayerDrawMilliseconds = Stopwatch.GetElapsedTime(localPlayerDrawStart).TotalMilliseconds;
+        }
+
+        long remotePlayerDrawStart = Stopwatch.GetTimestamp();
+        RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(
+            presentation.Camera,
+            remotePlayerStates,
+            (float)args.Time);
+        double remotePlayerDrawMilliseconds = Stopwatch.GetElapsedTime(remotePlayerDrawStart).TotalMilliseconds;
+        LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
+
+        DedicatedServerPerformanceSnapshot serverPerformance =
+            _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
+        FramePerformanceSnapshot performance = presentation.Performance.WithRenderStats(
+            worldRenderStats.VisibleCompatibilityCubes,
+            worldRenderStats.VisibleGeometryBlocks,
+            worldRenderStats.CompatibilityBatchCount,
+            worldRenderStats.GeometryBatchCount,
+            worldRenderStats.VisibleStaticChunks,
+            worldRenderStats.StaticChunkMeshCount,
+            worldRenderStats.StaticChunkExposedFaces,
+            worldRenderStats.StaticChunkTriangles,
+            worldRenderStats.StaticChunkSignatureMilliseconds,
+            worldRenderStats.StaticChunkExtractMilliseconds,
+            worldRenderStats.StaticChunkPlanMilliseconds,
+            worldRenderStats.StaticChunkSyncMilliseconds,
+            worldRenderStats.StaticChunkDrawMilliseconds,
+            worldRenderStats.StaticChunkRebuiltMeshes,
+            worldRenderStats.StaticChunkReusedMeshes) with
+        {
+            TotalFrameMilliseconds = _lastPresentedFrameMilliseconds,
+            WorldDrawMilliseconds = Stopwatch.GetElapsedTime(worldDrawStart, enemyDrawStart).TotalMilliseconds,
+            EnemyDrawMilliseconds = Stopwatch.GetElapsedTime(enemyDrawStart, enemyDrawEnd).TotalMilliseconds,
+            LocalPlayerDrawMilliseconds = localPlayerDrawMilliseconds,
+            RemotePlayerDrawMilliseconds = remotePlayerDrawMilliseconds,
+            HudDrawMilliseconds = _lastHudDrawMilliseconds,
+            SwapBuffersMilliseconds = _lastSwapBuffersMilliseconds,
+            ServerTickMilliseconds = serverPerformance.TickMilliseconds,
+            ServerSnapshotMilliseconds = serverPerformance.SnapshotMilliseconds,
+            ServerBroadcastMilliseconds = serverPerformance.BroadcastMilliseconds,
+            PreDrawMilliseconds = _lastClearMilliseconds + _lastPresentationCaptureMilliseconds + _lastRemotePlayerStatesMilliseconds,
+            PreDrawClearMilliseconds = _lastClearMilliseconds,
+            PreDrawCaptureMilliseconds = _lastPresentationCaptureMilliseconds,
+            PreDrawRemoteStatesMilliseconds = _lastRemotePlayerStatesMilliseconds,
+            GpuWorldMilliseconds = gpuTimer.Latest.WorldMilliseconds,
+            GpuActorsMilliseconds = gpuTimer.Latest.ActorsMilliseconds,
+            GpuHudMilliseconds = gpuTimer.Latest.HudMilliseconds,
+            GpuPrimitives = gpuTimer.Latest.PrimitivesGenerated,
+            DrawCalls = _lastFrameCounters.DrawCalls,
+            ProgramBinds = _lastFrameCounters.ProgramBinds,
+            UniformUploads = _lastFrameCounters.UniformUploads
+        };
+        if (_settings.ShowCollisionGeometry)
+        {
+            long debugDrawStart = Stopwatch.GetTimestamp();
+            _render.Debug.DrawCollisionBodies(presentation.MapCollisionBodies, presentation.Camera);
+            if (presentation.PlayerCollisionBody != null)
+            {
+                _render.DrawCollisionBody(presentation.PlayerCollisionBody, presentation.Camera);
+            }
+            performance = performance with
+            {
+                DebugDrawMilliseconds = Stopwatch.GetElapsedTime(debugDrawStart).TotalMilliseconds
+            };
+        }
+
+        if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
+        {
+            long viewModelDrawStart = Stopwatch.GetTimestamp();
+            _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+            performance = performance with
+            {
+                ViewModelDrawMilliseconds = Stopwatch.GetElapsedTime(viewModelDrawStart).TotalMilliseconds
+            };
+        }
+
+        long hudDrawStart = Stopwatch.GetTimestamp();
+        gpuTimer.BeginSection(GpuTimerSection.Hud);
+        HudFrameResult hudResult =
+            _render.Hud.DrawFrame(
+                args,
+                windowFocused,
+                _settings,
+                mouseState,
+                presentation,
+                remotePlayerStates,
+                _scenePresenter.BuildPlayerRoster(),
+                _combatFeedback,
+                _actionFeedback.CurrentRejectionMessage,
+                _inventory,
+                ConnectedServerEndpoint,
+                performance,
+                _scenePresenter,
+                RemotePlayerRenderTick);
+        gpuTimer.EndFrame();
+        _lastHudDrawMilliseconds = Stopwatch.GetElapsedTime(hudDrawStart).TotalMilliseconds;
+        LogRenderPerformanceIfEnabled(args, performance, windowFocused);
+        ApplyHudRequest(hudResult.Request, applyClientSize);
+        _render.Hud.UpdateProjectionForSettings(_settings);
+    }
+
+    public void Resize(Vector2i size)
+    {
+        GL.Viewport(0, 0, size.X, size.Y);
+        _settings.ApplyResolution(size);
+        _render.Hud.UpdateProjectionForSettings(_settings);
+    }
+
+    public void ReportPresentedFramePerformance(double totalFrameMilliseconds, double swapBuffersMilliseconds)
+    {
+        _lastPresentedFrameMilliseconds = totalFrameMilliseconds;
+        _lastSwapBuffersMilliseconds = swapBuffersMilliseconds;
+    }
+}

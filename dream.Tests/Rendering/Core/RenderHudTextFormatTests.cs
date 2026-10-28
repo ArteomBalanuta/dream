@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Rendering.Core;
@@ -76,7 +77,7 @@ public class RenderHudTextFormatTests
 
     private static string ReadRenderSource()
     {
-        return File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        return PartialClassSource.Read(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
     }
 
     private static string FindRepoRoot()

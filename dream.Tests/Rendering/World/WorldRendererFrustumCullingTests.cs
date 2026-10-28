@@ -119,7 +119,7 @@ public class WorldRendererFrustumCullingTests
     [Fact]
     public void DrawCubeTransparent_IsRemovedFromRender()
     {
-        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        string source = PartialClassSource.Read(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
         Assert.DoesNotContain("DrawCubeTransparent", source);
     }
 

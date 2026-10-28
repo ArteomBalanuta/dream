@@ -19,7 +19,7 @@ namespace Dream.Tests.Integration;
 // 10 s, no inbound frame) against a real client that sends commands only from prediction ticks.
 //
 // - Menus: PlayScene.Update keeps running with gameplay input off and still produces one (idle)
-//   command per prediction tick (PlayScene.cs:186-206), so an open menu is never idle.
+//   command per prediction tick (PlayScene.Update.cs, Update), so an open menu is never idle.
 // - A frozen game loop (a long GC, a debugger break, a Windows modal move/resize loop while the
 //   title bar is held) sends no commands. The session's receive task keeps draining the socket, so
 //   the server never sees a send stall, and since NETR-2 the session's own keepalive task sends an

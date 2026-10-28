@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Rendering;
@@ -70,7 +71,7 @@ public class DisposeRobustnessStructuralTests
     }
 
     private static string Read(string relative) =>
-        File.ReadAllText(Path.Combine(FindRepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar)));
+        PartialClassSource.Read(Path.Combine(FindRepoRoot(), relative.Replace('/', Path.DirectorySeparatorChar)));
 
     private static string FindRepoRoot()
     {

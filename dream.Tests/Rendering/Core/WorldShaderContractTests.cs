@@ -46,7 +46,7 @@ public class WorldShaderContractTests
     [Fact]
     public void Every_Model_Upload_In_The_World_Paths_Goes_Through_SetModelMatrix()
     {
-        string render = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        string render = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
         string animatedModel = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Models", "AnimatedModel.cs"));
 
         foreach (string source in new[] { render, animatedModel })
@@ -115,7 +115,7 @@ public class WorldShaderContractTests
     [Fact]
     public void World_Programs_Are_Loaded_With_Their_Mask_Variant_And_Terrain_Uses_The_Opaque_One()
     {
-        string render = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        string render = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
 
         Assert.Matches(@"LoadWorldShader\(""cube"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""cubeFragment\.glsl""\)\);", render);
         Assert.Matches(@"LoadWorldShader\(""enemy"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""enemyFragment\.glsl""\)\);", render);

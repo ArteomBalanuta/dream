@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Rendering.Core;
@@ -334,7 +335,7 @@ public class AsyncResourceLoaderTests
     [Fact]
     public void Cube_Scale_Resolution_Compares_Source_Paths_And_Never_Touches_The_Cache()
     {
-        string render = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        string render = PartialClassSource.Read(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
         int start = render.IndexOf("private static float ResolveCubeAssetScale(", StringComparison.Ordinal);
         Assert.True(start >= 0);
         int end = render.IndexOf("\n    }", start, StringComparison.Ordinal);
@@ -349,7 +350,7 @@ public class AsyncResourceLoaderTests
     [Fact]
     public void PlayScene_Preloads_Models_And_Pumps_Uploads_Before_Drawing()
     {
-        string scene = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Client", "Scenes", "PlayScene.cs"));
+        string scene = PartialClassSource.Read(Path.Combine(FindRepoRoot(), "dream", "Client", "Scenes", "PlayScene.cs"));
         int renderStart = scene.IndexOf("public void Render(FrameEventArgs args", StringComparison.Ordinal);
         Assert.True(renderStart >= 0);
 
