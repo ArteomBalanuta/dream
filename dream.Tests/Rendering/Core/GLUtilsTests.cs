@@ -99,6 +99,69 @@ public class GLUtilsTests
         Assert.Equal(GLUtils.MaxErrorsDrainedPerCheck, calls);
     }
 
+    [Fact]
+    public void A_Fatal_Error_Drained_By_Any_Check_Latches_So_The_Frame_End_Check_Sees_It()
+    {
+        // The latch is per thread (GL is render-thread only), so a fresh thread starts clean.
+        bool latchedBefore = true;
+        GLFaultKind shaderCheck = GLFaultKind.None;
+        GLFaultKind laterCheck = GLFaultKind.Fatal;
+        bool latchedAfter = false;
+        GLFaultKind frameEndView = GLFaultKind.None;
+        GLFaultKind afterReset = GLFaultKind.Fatal;
+        Thread thread = new(() =>
+        {
+            latchedBefore = GLUtils.FatalErrorLatched;
+            Queue<ErrorCode> errors = new([ErrorCode.OutOfMemory, ErrorCode.NoError, ErrorCode.NoError]);
+            RecordingSink sink = new();
+
+            // A caller such as Shader creation drains the OOM and drops the result...
+            shaderCheck = GLUtils.CheckGLError("Shader creation", () => errors.Dequeue(), sink);
+            // ...so the queue is empty by the time the frame-end check drains it.
+            laterCheck = GLUtils.CheckGLError("frame end", () => errors.Dequeue(), sink);
+            latchedAfter = GLUtils.FatalErrorLatched;
+            frameEndView = GLUtils.WithFatalLatch(laterCheck);
+
+            GLUtils.ResetFatalErrorLatch();
+            afterReset = GLUtils.WithFatalLatch(GLFaultKind.None);
+        });
+        thread.Start();
+        thread.Join();
+
+        Assert.False(latchedBefore);
+        Assert.Equal(GLFaultKind.Fatal, shaderCheck);
+        Assert.Equal(GLFaultKind.None, laterCheck);
+        Assert.True(latchedAfter);
+        Assert.Equal(GLFaultKind.Fatal, frameEndView);
+        Assert.Equal(GLFaultKind.None, afterReset);
+    }
+
+    [Fact]
+    public void A_Recoverable_Error_Does_Not_Latch()
+    {
+        bool latched = true;
+        Thread thread = new(() =>
+        {
+            GLUtils.CheckGLError("bad enum", new Queue<ErrorCode>([ErrorCode.InvalidEnum, ErrorCode.NoError]).Dequeue, new RecordingSink());
+            latched = GLUtils.FatalErrorLatched;
+        });
+        thread.Start();
+        thread.Join();
+
+        Assert.False(latched);
+    }
+
+    [Fact]
+    public void The_Context_Only_Check_Game_Calls_Applies_The_Fatal_Latch()
+    {
+        // Game's frame-end check calls CheckGLError("frame end"), the overload that reads GL; it
+        // needs a context, so this checks the source that overload goes through the latch.
+        string source = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "GLUtils.cs"));
+        Assert.Matches(
+            @"public static GLFaultKind CheckGLError\(string context\) =>\s*WithFatalLatch\(CheckGLError\(context, s_getError, RenderFaultLog\.Shared\)\);",
+            source);
+    }
+
     [Theory]
     [InlineData(DebugSeverity.DebugSeverityHigh, true)]
     [InlineData(DebugSeverity.DebugSeverityMedium, true)]

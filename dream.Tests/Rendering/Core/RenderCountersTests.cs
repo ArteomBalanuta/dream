@@ -114,6 +114,55 @@ public class RenderCountersTests
         Assert.Equal(8, uniformCalls);
     }
 
+    [Fact]
+    public void Every_GL_Draw_Call_In_The_Game_Is_Followed_By_A_Draw_Count()
+    {
+        // Draws need a GL context, so this checks the source: each GL.Draw* statement (instanced
+        // ones included, which count as one draw) is followed by RenderCounters.CountDraw().
+        string root = Path.Combine(RepoRoot(), "dream");
+        string separator = Path.DirectorySeparatorChar.ToString();
+        int drawCalls = 0;
+        foreach (string file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        {
+            string relative = Path.GetRelativePath(root, file);
+            if (relative.StartsWith("bin" + separator, StringComparison.Ordinal) ||
+                relative.StartsWith("obj" + separator, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string[] lines = File.ReadAllText(file).Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].TrimStart().StartsWith("GL.Draw", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                drawCalls++;
+                int end = i;
+                while (!lines[end].TrimEnd().EndsWith(");", StringComparison.Ordinal))
+                {
+                    end++;
+                }
+
+                int next = end + 1;
+                while (lines[next].Trim().Length == 0 || lines[next].TrimStart().StartsWith("//", StringComparison.Ordinal))
+                {
+                    next++;
+                }
+
+                Assert.True(
+                    lines[next].Trim() == "RenderCounters.CountDraw();",
+                    $"{relative}:{i + 1} draws without RenderCounters.CountDraw() after it.");
+            }
+        }
+
+        // StaticMeshBuffer, AnimatedModel (plain and instanced), Render (ImGui, cube fans,
+        // crosshair) and StartupMenuRenderer (ImGui).
+        Assert.True(drawCalls >= 7, $"Expected at least 7 GL.Draw* call sites, found {drawCalls}.");
+    }
+
     private static string RepoRoot()
     {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);

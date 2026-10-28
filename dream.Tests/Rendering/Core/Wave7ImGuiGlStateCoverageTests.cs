@@ -43,10 +43,9 @@ public class Wave7ImGuiGlStateCoverageTests
             restore.IndexOf("GL.BindTexture(", StringComparison.Ordinal));
     }
 
-    // The pass calls GL.Scissor(...) and binds GL_ARRAY_BUFFER to its own vertex buffer, but the
-    // snapshot keeps neither the scissor box nor the array-buffer binding. No world pass enables
-    // scissor today, so this is latent.
-    [Fact(Skip = "bug (latent, low): ImGuiGlStateSnapshot restores GL_SCISSOR_TEST but not GL_SCISSOR_BOX or GL_ARRAY_BUFFER_BINDING (wave 7 tester report)")]
+    // The pass calls GL.Scissor(...) and binds GL_ARRAY_BUFFER to its own vertex buffer, so the
+    // snapshot must keep both the scissor box and the array-buffer binding.
+    [Fact]
     public void Snapshot_CapturesTheScissorBoxAndArrayBuffer_ThePassChanges()
     {
         string source = Read("dream/Rendering/Core/Render.cs");

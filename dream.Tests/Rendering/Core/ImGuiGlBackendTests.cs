@@ -69,16 +69,22 @@ public class ImGuiGlBackendTests
 
     [Theory]
     [MemberData(nameof(ImGuiBackends))]
-    public void RenderImGuiDrawData_EnablesScissorTestForThePassAndDisablesItAfter(string relativePath)
+    public void RenderImGuiDrawData_EnablesScissorTestForThePassAndRestoresItAfter(string relativePath)
     {
         string body = Method(Read(relativePath), "private void RenderImGuiDrawData(ImDrawDataPtr drawData)");
         int enableAt = body.IndexOf("GL.Enable(EnableCap.ScissorTest)", StringComparison.Ordinal);
         int drawAt = body.IndexOf("GL.DrawElements(", StringComparison.Ordinal);
-        int disableAt = body.IndexOf("GL.Disable(EnableCap.ScissorTest)", StringComparison.Ordinal);
+        int restoreAt = body.IndexOf("previousState.Restore()", StringComparison.Ordinal);
 
         Assert.True(enableAt >= 0, "ScissorTest is never enabled, so ImGui clip rects are ignored.");
         Assert.True(drawAt > enableAt, "ScissorTest must be enabled before drawing.");
-        Assert.True(disableAt > drawAt, "ScissorTest must be disabled after the ImGui pass.");
+        // The snapshot puts the caller's scissor flag and box back; a disable right before it is
+        // redundant and would hide a snapshot that forgot the flag.
+        Assert.True(restoreAt > drawAt, "ScissorTest must be restored after the ImGui pass.");
+        Assert.DoesNotContain("GL.Disable(EnableCap.ScissorTest)", body);
+        string restore = Method(Read("dream/Rendering/Core/Render.cs"), "public void Restore()");
+        Assert.Contains("SetEnabled(EnableCap.ScissorTest, _scissorTest)", restore);
+        Assert.Contains("GL.Scissor(_scissorX, _scissorY, _scissorWidth, _scissorHeight)", restore);
         Assert.Contains("ImGuiScissorRect.TryFromClipRect(", body);
     }
 
