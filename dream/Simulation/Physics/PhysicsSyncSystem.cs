@@ -65,6 +65,11 @@ public class PhysicsSyncSystem
 
     public int LastSkippedBodyCount { get; private set; }
 
+    // Bodies reset to their accepted map center after RejectionsBeforeReset rejected syncs, over
+    // this system's lifetime. A steadily growing count means a body physics keeps moving where the
+    // map will not follow (each reset also wakes the body and its island).
+    public long TotalRejectionResets { get; private set; }
+
     // The returned MovedCubes belongs to the caller and stays valid across later syncs: it is a
     // new array when cubes moved and a shared empty array otherwise.
     public PhysicsSyncResult SyncDynamicMapBodies(Map map, IReadOnlyList<RigidBody> dynamicBodies)
@@ -202,6 +207,7 @@ public class PhysicsSyncSystem
             }
 
             _rejectionStreaks.Remove(rejected.Body);
+            TotalRejectionResets++;
             Vector3 acceptedCenter = rejected.Cube.Position;
             rejected.Body.UserObject = (rejected.Cube, acceptedCenter);
             ResetBodyToCenter(rejected.Body, acceptedCenter);

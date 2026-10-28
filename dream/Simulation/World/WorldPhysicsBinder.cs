@@ -33,7 +33,23 @@ public class WorldPhysicsBinder
     private readonly List<RigidBody> _removalScratch = [];
     private readonly HashSet<RigidBody> _removalSetScratch = new(ReferenceEqualityComparer.Instance);
     private readonly List<GeometryCellKey> _removalCellScratch = [];
+    // Cached so the RemoveAll calls in RemoveCompatibilityCubeBodies allocate no delegate per call.
+    private readonly Predicate<RigidBody> _isBeingRemoved;
     private RigidBody? _floorBody;
+
+    // Cell supports. The map treats an occupied cell as full for cube transitions
+    // (Map.CanTransitionCubeToCell), but a partial static cell (a startup sculpture cell, a carved
+    // static cell) collides only through its solid microcells. A dynamic cube resting above one
+    // fell into the empty part, the map rejected the transition on every sync, and
+    // PhysicsSyncSystem reset the body to its accepted center every RejectionsBeforeReset ticks,
+    // forever: neither the body nor its island ever slept. A support is a static full-cell box that
+    // only dynamic map cubes collide with, so physics blocks exactly the cell the map treats as
+    // occupied. Players (character group) and fracture rubble (debris group) are left out by the
+    // mask, so what they collide with is unchanged; kinematic replicated cubes on mirrors are in
+    // the static group, which the mask leaves out too.
+    public const CollisionFilterGroups CellSupportCollisionGroup = CollisionFilterGroups.StaticFilter;
+    public const CollisionFilterGroups CellSupportCollisionMask = CollisionFilterGroups.DefaultFilter;
+    private readonly Dictionary<GeometryCellKey, RigidBody> _cellSupportBodies = new();
 
     // Replicated cube bodies belong to a client mirror map: full cubes are moved only by
     // authoritative server deltas, so they are kinematic and never enter the local sync list.
@@ -41,6 +57,67 @@ public class WorldPhysicsBinder
     {
         _physics = physics;
         _replicatedCubeBodies = replicatedCubeBodies;
+        _isBeingRemoved = _removalSetScratch.Contains;
+    }
+
+    public int CellSupportBodyCount => _cellSupportBodies.Count;
+
+    public bool TryGetCellSupportBody(GeometryCellKey cellKey, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RigidBody? body)
+    {
+        return _cellSupportBodies.TryGetValue(cellKey, out body);
+    }
+
+    // Adds or removes one cell's support (see CellSupportCollisionGroup). Idempotent.
+    public void SyncCellSupportBody(GeometryCellKey cellKey, bool needed)
+    {
+        if (!needed)
+        {
+            if (_cellSupportBodies.Remove(cellKey, out RigidBody? existing))
+            {
+                RemoveBody(existing);
+            }
+
+            return;
+        }
+
+        if (_cellSupportBodies.ContainsKey(cellKey))
+        {
+            return;
+        }
+
+        var shape = new BoxShape(0.5f)
+        {
+            Margin = 0f
+        };
+
+        var startTransform = Matrix.Translation(new BulletSharp.Math.Vector3(
+            cellKey.X + 0.5f,
+            cellKey.Y + 0.5f,
+            cellKey.Z + 0.5f));
+        var motionState = new DefaultMotionState(startTransform);
+        var rbInfo = new RigidBodyConstructionInfo(0f, motionState, shape, BulletSharp.Math.Vector3.Zero);
+        var body = new RigidBody(rbInfo)
+        {
+            UserObject = new GeometryCellSupportReference(cellKey),
+            Friction = 0.8f,
+            Restitution = 0.2f,
+            AngularFactor = BulletSharp.Math.Vector3.Zero
+        };
+
+        // The filter has to be given when the body enters the world: the broadphase pairs it with
+        // overlapping proxies right away. A harness integrator has no native world and stands in
+        // through AddMapBodyToWorld.
+        if (_physics.World != null)
+        {
+            _physics.World.AddRigidBody(body, CellSupportCollisionGroup, CellSupportCollisionMask);
+        }
+        else
+        {
+            _physics.AddMapBodyToWorld(body);
+        }
+
+        _physics.MapCubeBodies.Add(body);
+        _cellSupportBodies.Add(cellKey, body);
     }
 
     public void AddFloorBody(int width, int depth)
@@ -529,16 +606,17 @@ public class WorldPhysicsBinder
                 continue;
             }
 
-            cellBodies.RemoveAll(bodySet.Contains);
+            cellBodies.RemoveAll(_isBeingRemoved);
             if (cellBodies.Count == 0)
             {
                 _geometryCellBodies.Remove(cells[i]);
+                _spareCellBodyLists.Push(cellBodies);
             }
         }
 
         if (anyMerged)
         {
-            _mergedStaticCollisionBodies.RemoveAll(bodySet.Contains);
+            _mergedStaticCollisionBodies.RemoveAll(_isBeingRemoved);
         }
 
         _cubeBodies.Remove(cube);
@@ -566,3 +644,6 @@ public class WorldPhysicsBinder
         body.Activate(true);
     }
 }
+
+// The user object of a cell support body (WorldPhysicsBinder.SyncCellSupportBody).
+public readonly record struct GeometryCellSupportReference(GeometryCellKey CellKey);
