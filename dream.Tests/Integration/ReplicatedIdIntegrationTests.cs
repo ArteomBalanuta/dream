@@ -575,6 +575,10 @@ public class ReplicatedIdIntegrationTests
 
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Array.Empty<PersistedInventorySlot>();
 
+        public PersistedPlayerInventory LoadPlayerInventory(string playerName) => PersistedPlayerInventory.Empty;
+
+        public long GetMaxItemInstanceId() => 0;
+
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {
         }

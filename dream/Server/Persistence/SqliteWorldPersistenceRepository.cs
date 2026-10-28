@@ -591,6 +591,90 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         return slots;
     }
 
+    // One statement, so the slots and items come from one snapshot. The WHERE uses the slot table's
+    // primary key (player_name, slot_index) and the join the item table's primary key, so a load
+    // reads one player's rows only (no new index is needed).
+    internal const string LoadPlayerInventorySql = """
+        SELECT
+            s.player_name,
+            s.slot_index,
+            s.item_instance_id,
+            s.updated_utc,
+            i.item_instance_id,
+            i.item_kind,
+            i.display_name,
+            i.visual_id,
+            i.owner_player_name,
+            i.world_position_x,
+            i.world_position_y,
+            i.world_position_z,
+            i.state,
+            i.stack_count,
+            i.created_utc,
+            i.updated_utc
+        FROM player_inventory_slots AS s
+        LEFT JOIN item_instances AS i ON i.item_instance_id = s.item_instance_id
+        WHERE s.player_name = $playerName
+        ORDER BY s.slot_index;
+        """;
+
+    public PersistedPlayerInventory LoadPlayerInventory(string playerName)
+    {
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = LoadPlayerInventorySql;
+        command.Parameters.AddWithValue("$playerName", playerName.Trim());
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<PersistedInventorySlot> slots = [];
+        List<PersistedItemInstance> items = [];
+        HashSet<long> itemIds = [];
+        while (reader.Read())
+        {
+            slots.Add(new PersistedInventorySlot(
+                reader.GetString(0),
+                reader.GetInt32(1),
+                reader.GetInt64(2),
+                SqliteSchemaBootstrapper.ParseUtc(reader.GetString(3))));
+            if (reader.IsDBNull(4) || !itemIds.Add(reader.GetInt64(4)))
+            {
+                continue;
+            }
+
+            Vector3? worldPosition = reader.IsDBNull(9)
+                ? null
+                : new Vector3(reader.GetFloat(9), reader.GetFloat(10), reader.GetFloat(11));
+            items.Add(new PersistedItemInstance(
+                reader.GetInt64(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                worldPosition,
+                reader.GetString(12),
+                reader.GetInt32(13),
+                SqliteSchemaBootstrapper.ParseUtc(reader.GetString(14)),
+                SqliteSchemaBootstrapper.ParseUtc(reader.GetString(15))));
+        }
+
+        return new PersistedPlayerInventory(slots, items);
+    }
+
+    // Both maxima read an index (the item table's primary key, the slot table's item id index).
+    // Slots count too: foreign keys are not enforced on the runtime's connections.
+    public long GetMaxItemInstanceId()
+    {
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MAX(
+                COALESCE((SELECT MAX(item_instance_id) FROM item_instances), 0),
+                COALESCE((SELECT MAX(item_instance_id) FROM player_inventory_slots), 0));
+            """;
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
     public void SaveItemInstance(PersistedItemInstance item)
     {
         using SqliteConnectionLease lease = _schema.OpenConnection();

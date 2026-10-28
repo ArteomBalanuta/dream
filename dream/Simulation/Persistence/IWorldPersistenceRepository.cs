@@ -37,6 +37,15 @@ public interface IWorldPersistenceRepository
 
     IReadOnlyList<PersistedInventorySlot> LoadInventorySlots();
 
+    // One player's inventory slots and the item instances they reference, read in one consistent
+    // snapshot. The name matches the slot rows exactly (trimmed), like the profile and world state.
+    // The runtime loads inventories per player (join prefetch) instead of all of them at startup.
+    PersistedPlayerInventory LoadPlayerInventory(string playerName);
+
+    // The highest item instance id any persisted row uses (item or slot), or 0 when there is none.
+    // New item ids start above it, so they never collide with an inventory that is not loaded.
+    long GetMaxItemInstanceId();
+
     void SaveInventorySlot(PersistedInventorySlot slot);
 
     void DeleteInventorySlots(string playerName);

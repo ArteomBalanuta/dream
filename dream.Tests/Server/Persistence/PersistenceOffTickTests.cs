@@ -203,6 +203,10 @@ public sealed class PersistenceOffTickTests
 
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Read(Inner.LoadInventorySlots);
 
+        public PersistedPlayerInventory LoadPlayerInventory(string playerName) => Read(() => Inner.LoadPlayerInventory(playerName));
+
+        public long GetMaxItemInstanceId() => Read(Inner.GetMaxItemInstanceId);
+
         public void SaveInventorySlot(PersistedInventorySlot slot) => Write(() => Inner.SaveInventorySlot(slot));
 
         public void DeleteInventorySlots(string playerName) => Write(() => Inner.DeleteInventorySlots(playerName));

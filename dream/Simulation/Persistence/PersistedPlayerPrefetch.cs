@@ -13,7 +13,7 @@ public enum PersistedPlayerLoadState
     Missing
 }
 
-// A joining player's persisted profile and world state, loaded on the persistence worker before the
+// A joining player's persisted profile, world state and inventory, loaded on the persistence worker before the
 // join is applied on the tick (see WorldSessionRuntime.BeginPersistedPlayerPrefetch). The load is
 // read-only: a player with no saved profile completes with no profile, and the row is created only
 // when the join is applied. Completed once by the worker; read by the tick (IsCompleted, Error,
@@ -23,6 +23,7 @@ public sealed class PersistedPlayerPrefetch
     private readonly ManualResetEventSlim _done = new(initialState: false);
     private PersistedPlayerProfile? _profile;
     private PersistedPlayerWorldState? _worldState;
+    private PersistedPlayerInventory? _inventory;
     private Exception? _error;
 
     public PersistedPlayerPrefetch(string playerName)
@@ -75,9 +76,26 @@ public sealed class PersistedPlayerPrefetch
         return true;
     }
 
+    // The loaded inventory, when the load finished without an error and read one (null when the
+    // runtime has no world persistence, or the load predates per-player inventories).
+    public bool TryGetInventory(out PersistedPlayerInventory? inventory)
+    {
+        if (!_done.IsSet || _error != null)
+        {
+            inventory = null;
+            return false;
+        }
+
+        inventory = _inventory;
+        return inventory != null;
+    }
+
     // First result wins. Reads run outside the write queue's transactions (see
     // PersistenceWriteQueue.EnqueueRead), so a completed result only ever holds committed rows.
-    internal void Complete(PersistedPlayerProfile? profile, PersistedPlayerWorldState? worldState)
+    internal void Complete(
+        PersistedPlayerProfile? profile,
+        PersistedPlayerWorldState? worldState,
+        PersistedPlayerInventory? inventory = null)
     {
         if (_done.IsSet)
         {
@@ -86,6 +104,7 @@ public sealed class PersistedPlayerPrefetch
 
         _profile = profile;
         _worldState = worldState;
+        _inventory = inventory;
         _done.Set();
     }
 
