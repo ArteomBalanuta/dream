@@ -3,19 +3,157 @@ using Dream.Simulation.Persistence;
 
 namespace Dream.Server.Persistence.Repositories;
 
-// Skeleton from the wave A contract commit; A3 moves the SQL in.
+// enemy_instances: the live enemies, keyed by enemy_id.
 public sealed partial class SqliteEnemyRepository(IWorldStore store)
     : SqliteRepositoryBase(store), IEnemyRepository
 {
-    public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() =>
-        throw new NotImplementedException("A3");
+    private const string LoadSql = """
+        SELECT
+            enemy_id,
+            enemy_kind,
+            display_name,
+            position_x,
+            position_y,
+            position_z,
+            facing_x,
+            facing_y,
+            facing_z,
+            current_hp,
+            max_hp,
+            strength,
+            agility,
+            vitality,
+            energy,
+            movement_speed,
+            attack_speed,
+            level,
+            created_utc,
+            updated_utc
+        FROM enemy_instances
+        ORDER BY enemy_id;
+        """;
 
+    private const string UpsertSql = """
+        INSERT INTO enemy_instances (
+            enemy_id,
+            enemy_kind,
+            display_name,
+            position_x,
+            position_y,
+            position_z,
+            facing_x,
+            facing_y,
+            facing_z,
+            current_hp,
+            max_hp,
+            strength,
+            agility,
+            vitality,
+            energy,
+            movement_speed,
+            attack_speed,
+            level,
+            created_utc,
+            updated_utc
+        )
+        VALUES (
+            $enemyId,
+            $enemyKind,
+            $displayName,
+            $positionX,
+            $positionY,
+            $positionZ,
+            $facingX,
+            $facingY,
+            $facingZ,
+            $currentHealth,
+            $maxHealth,
+            $strength,
+            $agility,
+            $vitality,
+            $energy,
+            $movementSpeed,
+            $attackSpeed,
+            $level,
+            $createdUtc,
+            $updatedUtc
+        )
+        ON CONFLICT(enemy_id) DO UPDATE SET
+            enemy_kind = excluded.enemy_kind,
+            display_name = excluded.display_name,
+            position_x = excluded.position_x,
+            position_y = excluded.position_y,
+            position_z = excluded.position_z,
+            facing_x = excluded.facing_x,
+            facing_y = excluded.facing_y,
+            facing_z = excluded.facing_z,
+            current_hp = excluded.current_hp,
+            max_hp = excluded.max_hp,
+            strength = excluded.strength,
+            agility = excluded.agility,
+            vitality = excluded.vitality,
+            energy = excluded.energy,
+            movement_speed = excluded.movement_speed,
+            attack_speed = excluded.attack_speed,
+            level = excluded.level,
+            updated_utc = excluded.updated_utc;
+        """;
+
+    private const string DeleteSql = "DELETE FROM enemy_instances WHERE enemy_id = $enemyId;";
+
+    private const string ReassignSql = "UPDATE enemy_instances SET enemy_id = $newEnemyId WHERE enemy_id = $oldEnemyId;";
+
+    public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() =>
+        QueryList(LoadSql, static reader => new PersistedEnemyInstance(
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetVector3(3),
+            reader.GetVector3(6),
+            new PersistedCreatureStats(
+                CurrentHealth: reader.GetInt32(9),
+                MaxHealth: reader.GetInt32(10),
+                Strength: reader.GetInt32(11),
+                Agility: reader.GetInt32(12),
+                Vitality: reader.GetInt32(13),
+                Energy: reader.GetInt32(14),
+                MovementSpeed: reader.GetFloat(15),
+                AttackSpeed: reader.GetFloat(16),
+                Level: reader.GetInt32(17)),
+            reader.GetUtc(18),
+            reader.GetUtc(19)));
+
+    // created_utc keeps enemy.CreatedUtc (UtcNow when unset); updated_utc is the write time.
     public void SaveEnemyInstance(PersistedEnemyInstance enemy) =>
-        throw new NotImplementedException("A3");
+        Execute(UpsertSql, enemy, static (command, e) =>
+        {
+            command.BindInt64("$enemyId", e.EnemyId);
+            command.BindText("$enemyKind", e.EnemyKind);
+            command.BindText("$displayName", e.DisplayName);
+            command.BindVector3("$positionX", "$positionY", "$positionZ", e.Position);
+            command.BindVector3("$facingX", "$facingY", "$facingZ", e.Facing);
+            command.BindInt64("$currentHealth", e.Stats.CurrentHealth);
+            command.BindInt64("$maxHealth", e.Stats.MaxHealth);
+            command.BindInt64("$strength", e.Stats.Strength);
+            command.BindInt64("$agility", e.Stats.Agility);
+            command.BindInt64("$vitality", e.Stats.Vitality);
+            command.BindInt64("$energy", e.Stats.Energy);
+            command.BindReal("$movementSpeed", e.Stats.MovementSpeed);
+            command.BindReal("$attackSpeed", e.Stats.AttackSpeed);
+            command.BindInt64("$level", e.Stats.Level);
+            command.BindUtc("$createdUtc", e.CreatedUtc == default ? DateTime.UtcNow : e.CreatedUtc);
+            command.BindUtc("$updatedUtc", DateTime.UtcNow);
+        });
 
     public void DeleteEnemyInstance(int enemyId) =>
-        throw new NotImplementedException("A3");
+        Execute(DeleteSql, enemyId, static (command, id) => command.BindInt64("$enemyId", id));
 
+    // One UPDATE of the primary key: atomic on its own, and under the write queue's savepoint
+    // when it runs in a group. A taken newEnemyId fails the primary key and changes nothing.
     public void ReassignEnemyId(int oldEnemyId, int newEnemyId) =>
-        throw new NotImplementedException("A3");
+        Execute(ReassignSql, (oldEnemyId, newEnemyId), static (command, ids) =>
+        {
+            command.BindInt64("$oldEnemyId", ids.oldEnemyId);
+            command.BindInt64("$newEnemyId", ids.newEnemyId);
+        });
 }
