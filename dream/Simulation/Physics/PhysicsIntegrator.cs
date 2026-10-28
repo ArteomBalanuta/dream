@@ -120,6 +120,9 @@ public class PhysicsIntegrator : IDisposable
 
     public PhysicsIntegrator()
     {
+        // Before the first world exists: libbulletc's profiler thread index wraps after 63
+        // threads and then crashes natively (see BulletProfilerGuard).
+        BulletProfilerGuard.EnsureApplied();
         _collisionConfig = new DefaultCollisionConfiguration();
         _dispatcher = new CollisionDispatcher(_collisionConfig);
         _broadphase = new DbvtBroadphase();
