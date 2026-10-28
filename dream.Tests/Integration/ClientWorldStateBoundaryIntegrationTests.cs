@@ -20,6 +20,7 @@ namespace Dream.Tests.Integration;
 // DEC-7 took IClientWorldState (and its replication-ack state) off the authoritative
 // WorldSessionRuntime. The client must still get all of its world state through
 // ClientWorldSession, which is now the interface's only implementation.
+[Collection(TimingSensitiveCollection.Name)]
 public class ClientWorldStateBoundaryIntegrationTests
 {
     [Fact]

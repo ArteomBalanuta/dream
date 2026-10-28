@@ -19,6 +19,7 @@ namespace Dream.Tests.Integration;
 // large strings, including frames over PooledFrameWriter.RetainedCapacityLimit so the writer's
 // shrink path runs between ordinary frames. The receiving side decodes with the server's codec and
 // framer and checks every frame: order, gap-free sequences, and bytes identical to the byte[] path.
+[Collection(TimingSensitiveCollection.Name)]
 public class PooledClientSendLoopbackIntegrationTests
 {
     private const int CommandCount = 500;

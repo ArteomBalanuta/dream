@@ -11,6 +11,7 @@ namespace Dream.Tests.Server;
 
 // The server loop slept with Task.Delay(1) (~15.6 ms on Windows) against a 15.625 ms tick, so
 // iterations alternated between 0 and 2 ticks and snapshots arrived irregularly.
+[Collection(TimingSensitiveCollection.Name)]
 public class TickPacerTests
 {
     [Fact]
