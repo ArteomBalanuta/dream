@@ -293,6 +293,11 @@ public class DedicatedServerTickAllocationTests
     [Fact]
     public void RuntimeHost_AdvanceTick_AddsLittleOverRuntimeTick()
     {
+        // The 0 B budgets hold only with diagnostics off: Player.CheckAndLogCollisions allocates its
+        // collision report while DREAM_NET_DIAGNOSTICS is set. Fail loudly instead of with a byte count.
+        Assert.False(
+            NetworkDiagnosticsLog.IsEnabled,
+            "This test needs DREAM_NET_DIAGNOSTICS unset: the diagnostics collision report allocates, so the 0 B runtime tick budget does not apply.");
         using RuntimeAuthoritativeSessionHost runtimeHost = RuntimeAuthoritativeSessionHost.CreateDefault();
         runtimeHost.JoinSession("session-a", "Player A");
         runtimeHost.JoinSession("session-b", "Player B");

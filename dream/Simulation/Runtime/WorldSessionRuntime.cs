@@ -70,6 +70,7 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly Dictionary<PlayerSessionId, RemoteSessionPlayerState> _secondaryRemotePlayers = new();
     // _secondaryRemotePlayers' values in ordinal session-id order; rebuilt on attach and detach.
     private RemoteSessionPlayerState[] _orderedSecondaryRemotePlayers = [];
+    private bool _disposed;
     // The primary seat's player target, created once per primary session id. Its delegates read
     // live state; it is dropped on attach, detach and seat changes and rebuilt on next use.
     private AuthoritativePlayerTarget? _primaryPlayerTarget;
@@ -578,6 +579,12 @@ public sealed class WorldSessionRuntime : IDisposable
 
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         foreach (IDisposable subscription in _subscriptions)
         {
             subscription.Dispose();
@@ -585,6 +592,17 @@ public sealed class WorldSessionRuntime : IDisposable
 
         // Finish queued persistence writes before the owner disposes the repositories.
         _writes?.Dispose();
+
+        // Every player's contact callback tests against the physics world, so players go before it.
+        // Secondary states remove their own session bodies; Physics.Dispose then finds none left.
+        foreach (RemoteSessionPlayerState secondary in _secondaryRemotePlayers.Values)
+        {
+            secondary.Dispose();
+        }
+
+        _secondaryRemotePlayers.Clear();
+        _orderedSecondaryRemotePlayers = [];
+        Player.Dispose();
         Physics.Dispose();
     }
 
