@@ -89,6 +89,8 @@ public sealed class PersistenceWriteQueueShutdownTests(ITestOutputHelper output)
         Assert.Equal(Queued, writes.FailedWrites);
         Assert.Equal(0, writes.PendingCount);
         Assert.Equal(0, rowsAtDispose);
+        // Slow, not locked: the drain never saw a lock episode.
+        Assert.False(writes.LockSeenDuringShutdownDrain);
         Assert.False(writes.Enqueue(() => profiles.Save(PersistenceGroupCommitTests.Profile("dropped-late", experience: 0))));
 
         Thread.Sleep(TimeSpan.FromMilliseconds(300));

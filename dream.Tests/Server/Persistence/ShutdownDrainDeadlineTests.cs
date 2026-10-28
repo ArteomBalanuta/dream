@@ -73,6 +73,10 @@ public sealed class ShutdownDrainDeadlineTests(ITestOutputHelper output)
         Assert.True(writes.IsClosed);
         Assert.Equal(0, writes.PendingCount);
         Assert.Equal(5, writes.FailedWrites);
+        // The drain saw the lock, so the dropped final checkpoint gets no fallback attempt on the
+        // dispose thread (it would add a busy_timeout past the deadline).
+        Assert.True(writes.LockSeenDuringShutdownDrain);
+        Assert.Equal(0, checkpoints.Attempts);
 
         // Nothing writes after dispose returned.
         Thread.Sleep(TimeSpan.FromMilliseconds(300));
@@ -122,6 +126,65 @@ public sealed class ShutdownDrainDeadlineTests(ITestOutputHelper output)
         Assert.Equal(1, background.CompletedWrites);
         Assert.Equal(0, background.DeferredAtShutdownCheckpoints);
         Assert.Equal(3, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-clean-%';"));
+        SqliteConnection.ClearAllPools();
+    }
+
+    // Wave 9 fix loop 2 (S4): the drain deadline starts at BackgroundCheckpointWriter.Dispose, and
+    // the final checkpoint is queued last, so a large but healthy backlog that outlasts the
+    // deadline dropped it first, although the database was never locked. Without a lock episode the
+    // final checkpoint is now written after the queue stopped, still behind every write that ran.
+    [Fact]
+    public void HostDispose_WithASlowUnlockedBacklogPastTheDeadline_StillWritesTheFinalCheckpoint()
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+        TimeSpan drainDeadline = TimeSpan.FromMilliseconds(500);
+        PersistenceWriteQueue writes = PersistenceWriteQueue.Background(drainDeadline);
+        ConcurrentQueue<string> order = new();
+        RecordingCheckpointWriter checkpoints = new(new SqlitePersistenceCheckpointWriter(database.Schema), order);
+        WorldSessionRuntime runtime = CreateRuntime(database, checkpoints, writes);
+        DedicatedServerHost host = CreateHost(runtime);
+        Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
+        Assert.Equal(0, writes.FailedWrites);
+
+        // 40 writes of 100 ms each: about 4 s of healthy work against a 0.5 s deadline.
+        const int Queued = 40;
+        for (int i = 0; i < Queued; i++)
+        {
+            int index = i;
+            PersistedPlayerProfile profile = PersistenceGroupCommitTests.Profile($"shutdown-slow-{i}", experience: i);
+            writes.Enqueue(() =>
+            {
+                Thread.Sleep(100);
+                profiles.Save(profile);
+                order.Enqueue($"write-{index}");
+            });
+        }
+
+        Stopwatch elapsed = Stopwatch.StartNew();
+        host.Dispose();
+        elapsed.Stop();
+
+        string[] logged = [.. order];
+        int ranWrites = logged.Count(entry => entry.StartsWith("write-", StringComparison.Ordinal));
+        output.WriteLine(
+            $"slow unlocked host dispose took {elapsed.Elapsed.TotalMilliseconds:0} ms " +
+            $"(drain deadline {drainDeadline.TotalMilliseconds:0} ms); ran={ranWrites} failed={writes.FailedWrites} " +
+            $"lockRetries={writes.LockRetries}; checkpoint writes attempted={checkpoints.Attempts}");
+        // The backlog really outlasted the deadline: the queue dropped part of it.
+        Assert.True(writes.FailedWrites > 0, $"failed={writes.FailedWrites}");
+        Assert.Equal(Queued, ranWrites + writes.FailedWrites);
+        Assert.False(writes.LockSeenDuringShutdownDrain);
+        Assert.Equal(0, writes.PendingCount);
+        // The final checkpoint was written once, after every write that ran.
+        Assert.Equal(1, checkpoints.Attempts);
+        Assert.Equal("checkpoint", logged[^1]);
+        Assert.Equal(1, logged.Count(entry => entry == "checkpoint"));
+        Assert.Equal(ranWrites, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-slow-%';"));
+
+        // Nothing writes after dispose returned.
+        Thread.Sleep(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(ranWrites, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-slow-%';"));
         SqliteConnection.ClearAllPools();
     }
 

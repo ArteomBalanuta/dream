@@ -61,8 +61,10 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     }
 
     // Checkpoints Dispose left unwritten because their barrier could not complete before the
-    // shutdown drain deadline (the database was locked). The runtime's final full checkpoint,
-    // queued behind the same immediate writes, covers them.
+    // shutdown drain deadline (the database was locked, or a backlog outlasted the deadline). The
+    // runtime's final full checkpoint, queued behind the same immediate writes, covers them: on a
+    // database the drain never saw locked, it is written even when the drain drops it (see
+    // WorldSessionRuntime.WriteFinalCheckpoint).
     public long DeferredAtShutdownCheckpoints => Interlocked.Read(ref _deferredAtShutdown);
 
     public long CompletedWrites => Interlocked.Read(ref _completedWrites);
@@ -166,7 +168,11 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     // Dispose then writes a final full checkpoint, which covers a failed write still held here.
     // Dispose starts the write queue's shutdown drain deadline: a barrier wait that cannot finish
     // within it (a locked database) gives up and leaves the checkpoint to the final one, instead of
-    // waiting its own ImmediateWritesWaitTimeout on top of the queue's drain.
+    // waiting its own ImmediateWritesWaitTimeout on top of the queue's drain. Starting the deadline
+    // here means this write and the queued immediate writes consume it before the final checkpoint
+    // runs; the runtime therefore drops the final checkpoint with the deadline only when the drain
+    // saw a lock episode (PersistenceWriteQueue.LockSeenDuringShutdownDrain), and otherwise writes
+    // it after the queue stopped.
     public void Dispose()
     {
         _immediateWrites?.BeginShutdownDrain();
