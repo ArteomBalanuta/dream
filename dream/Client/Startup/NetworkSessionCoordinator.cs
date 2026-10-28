@@ -111,7 +111,18 @@ public sealed class NetworkSessionCoordinator
     {
         try
         {
-            _connectedSession = await _connector.ConnectAsync(options);
+            RemoteClientSession session = await _connector.ConnectAsync(options);
+            if (!session.IsConnected && session.DisconnectReason is string reason)
+            {
+                // Ended before the play scene could take it, e.g. a join rejected during the
+                // connect: stay on the connection screen with the reason.
+                await session.DisposeAsync();
+                State = ConnectionFlowState.Failed;
+                StatusMessage = reason;
+                return;
+            }
+
+            _connectedSession = session;
             State = ConnectionFlowState.Connected;
             StatusMessage = $"Connected to {options.Host}:{options.Port}.";
         }
