@@ -15,7 +15,9 @@ namespace Dream.Multiplayer.Protocol;
 // dropped for a resync). Measured worst case (WorldTransferLimitTests: every mutation a fracture
 // with six moved pieces, every number at full length, 320 actors): 2.74 MB. A World85k chunk is
 // about 65 KB and its carrier under 200 B. The 8 MB cap keeps about 3x headroom over that worst
-// case (4 MB would leave 1.5x, and one tick's snapshot is not capped by the merge limits) and
+// case (4 MB would leave 1.5x). One tick's broadcast is not capped by the merge limits on the wire,
+// but DedicatedServerService strips one past the delta caps (and ServerConnection one past this
+// write cap) to actors and acks and answers it with a resync instead of faulting connections. It also
 // bounds what a client buffers for one frame to a quarter of the 32 MB stopgap that whole-world
 // frames needed.
 public sealed record FrameLimitOptions
