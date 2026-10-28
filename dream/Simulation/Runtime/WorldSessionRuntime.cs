@@ -899,6 +899,24 @@ public sealed class WorldSessionRuntime : IDisposable
         return acceptedSequences;
     }
 
+    // The ticks this seat simulated after the tick that consumed its acknowledged command (W9-2):
+    // starved ticks that repeated that command, then idled (MaxCommandRepeatTicks). The seat's
+    // counter is reset to 0 by the accepting tick and counts that tick too, hence the - 1. A session
+    // with no accepted command has no ack to measure from, so it reports 0.
+    private int CaptureStarvedTicks(PlayerSessionId sessionId)
+    {
+        if (!_sessions.TryGet(sessionId, out ConnectedPlayer? player)
+            || player?.LastAcceptedCommandSequence is null)
+        {
+            return 0;
+        }
+
+        int ticksSinceCommand = _secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? secondary)
+            ? secondary.TicksSinceLastCommand
+            : _primaryTicksSinceCommand;
+        return Math.Max(0, ticksSinceCommand - 1);
+    }
+
     // A resting or jostled cube emits a same-cell CubeMoved every tick. Such a move only changes
     // the exact center, so it can be dropped whenever a later mutation for the same cube follows
     // in the batch. Cross-cell moves are kept in order because they change cell occupancy.
@@ -976,7 +994,8 @@ public sealed class WorldSessionRuntime : IDisposable
                 new PlayerProgressionSnapshot(
                     playerTarget.Combatant.Level,
                     playerTarget.Combatant.Experience,
-                    EvaluateSnapshotExperienceToNextLevel(playerTarget.Combatant))));
+                    EvaluateSnapshotExperienceToNextLevel(playerTarget.Combatant)),
+                StarvedTicks: CaptureStarvedTicks(playerTarget.SessionId)));
         }
 
         _snapshotPlayerTargets.Clear();

@@ -82,8 +82,9 @@ public static class ClientCorrectionApplier
             ulong? acknowledged = snapshot.LastAcceptedCommandSequences.TryGetValue(localSessionId, out ulong sequence)
                 ? sequence
                 : null;
-            // The client map lets a snap discard a replayed path that runs into a solid cell.
-            ClientReconciliationResult result = reconciler.Reconcile(acknowledged, actor.Value.Position, runtime.Map);
+            // The client map lets a snap discard a replayed path that runs into a solid cell; the
+            // starved ticks pair the position with the prediction it stands for (W9-2).
+            ClientReconciliationResult result = reconciler.Reconcile(acknowledged, actor.Value.Position, runtime.Map, actor.Value.StarvedTicks);
             if (result.Kind == ClientReconciliationKind.Snap)
             {
                 // SetWorldPosition teleports the body and zeroes its velocity, so the predicted

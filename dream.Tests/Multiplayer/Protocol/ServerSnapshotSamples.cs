@@ -161,7 +161,9 @@ internal static class ServerSnapshotSamples
                 (mask & 4) != 0 ? new PlayerCombatStatsSnapshot(RandomInt(random), RandomFloat(random), RandomInt(random)) : null,
                 (mask & 8) != 0 ? RandomString(random, roundTrippable) : null,
                 (mask & 16) != 0 ? new PlayerProgressionSnapshot(RandomInt(random), RandomInt(random), RandomInt(random)) : null,
-                (mask & 32) != 0 ? (EnemyBehaviorState)random.Next(0, 5) : null);
+                (mask & 32) != 0 ? (EnemyBehaviorState)random.Next(0, 5) : null,
+                // From the mask, so the random stream (and every sample after it) is unchanged.
+                (mask & 3) == 3 ? mask >> 2 : 0);
         }
 
         return actors;

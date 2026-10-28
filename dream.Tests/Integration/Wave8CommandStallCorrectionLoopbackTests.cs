@@ -41,6 +41,14 @@ namespace Dream.Tests.Integration;
 // client's send queue never grows and only the ack lag (ClientCommandTickStream's second trigger,
 // wired here as PlayScene wires it) can tell the client the server is idling it. And steady play
 // over a constant 200 ms uplink delay, which must never trigger the idle mirror.
+//
+// Wave 9 fix loop 1 (W9-5): the facing probe had ranked a walk off the world edge as open and the
+// client walked along its camera's default -Z, so the steady and hitchy runs measured a free fall
+// (7.1 m total correction in a flaky run). With the walk on the floor and W9-2 (starved ticks
+// compared like with like), max correction / mean per ack, 3 runs each, 64 Hz vs 32 Hz snapshots:
+// send stall 0.000 / 0.000 both; frame stall 0.37-0.84 m vs 0.84 m; network stall 0.000 both;
+// steady 200 ms 0.56-0.65 m (mean 0.0021-0.0024) vs 0.56-0.65 m (0.0042-0.0066); hitchy 0.46 m
+// (0.0017) vs 0.46 m (0.0033). No snaps. The max is the join settle at ack ~40 in every run.
 public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 {
     private const int WalkTicksBeforeStall = 32;
@@ -123,6 +131,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 
         Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("hitchy"));
         Assert.Equal(0, report.SnapsAfter);
+        Assert.True(report.ClientEndHeight > 1f, report.Describe("the client fell off the world"));
     }
 
     private enum Scenario
@@ -150,6 +159,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             Assert.Equal(0L, report.SendStallIdleTicks);
             Assert.Equal(0, report.SnapsAfter);
             Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("steady"));
+            // W9-5: the comparison is only of walking if the walk stayed on the floor.
+            Assert.True(report.ClientEndHeight > 1f, report.Describe("the client fell off the world"));
         }
 
         // Similar, not identical: each 32 Hz ack folds two ticks of drift into one correction, so
@@ -307,7 +318,11 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                         allowGameplaySimulation: false);
                 }
 
-                return (Position(runtime, sessionId) - start).Xz.Length;
+                // A walk off the world edge keeps its horizontal speed while it falls, so distance
+                // alone ranked it as open (W9-5: the steady and hitchy scenarios then measured a
+                // free fall). Only a walk that stays on the floor counts.
+                Vector3 end = Position(runtime, sessionId);
+                return MathF.Abs(end.Y - start.Y) < 0.1f ? (end - start).Xz.Length : -1f;
             })
             .First();
 
@@ -346,7 +361,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         int MaxPendingDuringStall,
         // Mean correction per acknowledged snapshot after the stall start, and their count.
         float MeanCorrectionAfter = 0f,
-        int CorrectionSamples = 0)
+        int CorrectionSamples = 0,
+        // The client player's height at the end: the walk must stay on the floor (W9-5).
+        float ClientEndHeight = float.NaN)
     {
         public string Describe(string label) =>
             $"{label}: max correction after {MaxCorrectionAfter:F3} m (largest smooth {MaxSmoothAfter:F3} m, snaps {SnapsAfter}, " +
@@ -354,7 +371,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             $"send-stall idle ticks {SendStallIdleTicks} (ack-lag only {AckStallIdleTicks}), max unsent during stall {MaxPendingDuringStall}; stall start tick {StallStartTick}, max correction at ack {MaxCorrectionAck} (client tick {MaxCorrectionTick}); " +
             $"stall end tick {StallEndTick}, last ack {LastAcknowledged}, dropped ticks {DroppedTicks}, merged commands {MergedCommands}, " +
             $"largest sequence jump {LargestSequenceJump}, commands sent {CommandsSent}, server walked {ServerWalked:F2} m since stall start, " +
-            $"client walked {ClientWalked:F2} m since stall start";
+            $"client walked {ClientWalked:F2} m since stall start, client height at end {ClientEndHeight:F2} m";
     }
 
     private sealed class HeadlessClient : IDisposable
@@ -413,6 +430,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         public void Frame(double elapsedSeconds)
         {
             _world.Player.NudgeWorldPosition(_reconciler.TakeSmoothingStep((float)elapsedSeconds));
+            // The relayed command carries the camera's front as its facing (Tick), so the camera
+            // must face the probed direction, not its default front (-Z) (W9-5).
+            _world.Player.SetFacing(_facing);
             Ticks.CaptureInput(Walk(_world.LocalPlayerSessionId, 0, _facing));
             Ticks.Advance(elapsedSeconds, this, static (client, command, fixedDeltaSeconds) => client.Tick(command, fixedDeltaSeconds));
         }
@@ -436,6 +456,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 if (message is JoinAcceptedMessage accepted)
                 {
                     ClientJoinAcceptedApplier.ApplyToRuntime(_world, accepted);
+                    _world.Player.SetFacing(_facing);
                     _reconciler.Reset();
                     continue;
                 }
@@ -523,7 +544,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 Ticks.AckStallIdleTicks,
                 MaxPendingDuringStall,
                 _correctionSamples == 0 ? 0f : (float)(_correctionSum / _correctionSamples),
-                _correctionSamples);
+                _correctionSamples,
+                _clientAtEnd.Y);
         }
     }
 

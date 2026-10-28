@@ -305,6 +305,34 @@ public class ServerSnapshotConverterTests(ITestOutputHelper output)
         Assert.Equal(default, empty);
     }
 
+    // W9-2: an actor's starved ticks go on the wire only when non-zero, so a snapshot without
+    // starvation keeps its pre-W9-2 bytes; when present they round-trip, match the reference, and
+    // sit last in the actor, where a reader that predates them skips them as an unknown property.
+    [Fact]
+    public void StarvedTicks_AreLeftOutWhenZero_AndRoundTripOtherwise()
+    {
+        TransportJsonCodec codec = new();
+        ActorSnapshot walking = new(7, CreatureKind.Player, "session-a", new Vector3(1f, 2f, 3f), Vector3.UnitZ, 90, 100, true);
+        ServerSnapshotMessage unstarved = new(SnapshotWith(actors: [walking]));
+        string unstarvedJson = Encoding.UTF8.GetString(codec.Encode(Envelope(unstarved, 1), unstarved));
+        Assert.DoesNotContain("starvedTicks", unstarvedJson, StringComparison.Ordinal);
+        AssertByteIdentical(unstarved);
+
+        ServerSnapshotMessage starved = new(SnapshotWith(actors: [walking with { StarvedTicks = 3 }]));
+        AssertByteIdentical(starved);
+        string starvedJson = Encoding.UTF8.GetString(codec.Encode(Envelope(starved, 1), starved));
+        Assert.Contains("\"isAlive\":true,\"starvedTicks\":3}", starvedJson, StringComparison.Ordinal);
+        Assert.Equal(unstarvedJson.Length + ",\"starvedTicks\":3".Length, starvedJson.Length);
+        ActorSnapshot decoded = Assert.Single(Assert.IsType<ServerSnapshotMessage>(codec.Decode(Encoding.UTF8.GetBytes(starvedJson)).Message).Snapshot.Actors);
+        Assert.Equal(walking with { StarvedTicks = 3 }, decoded);
+
+        ActorSnapshot reordered = Assert.Single(Assert.IsType<ServerSnapshotMessage>(DecodePayload(
+            codec,
+            """{"snapshot":{"actors":[{"starvedTicks":5,"future":{"x":[1]},"actorId":7,"kind":0}]}}""")).Snapshot.Actors);
+        Assert.Equal(5, reordered.StarvedTicks);
+        Assert.Equal(7, reordered.ActorId);
+    }
+
     // The envelope decode returns the shared literal for a known message kind; an escaped
     // spelling of the same kind still matches it.
     [Fact]

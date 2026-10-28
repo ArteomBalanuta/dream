@@ -24,6 +24,10 @@ namespace Dream.Tests.Simulation.Runtime;
 // speed after a send or network stall (0.000 m at 64 Hz), 0.11-0.57 m pairs in the hitchy loop once
 // the player is falling (the wave-8 harness walks off the world edge), up to speed x k for an
 // interval or a catch-up advance holding k starved ticks.
+//
+// Fixed (wave 9 fix loop 1): each player actor carries StarvedTicks, the ticks simulated since its
+// ack, and the reconciler compares with its prediction that many ticks after the ack. The
+// measurement above still holds for a caller that leaves starvedTicks out.
 public class Wave9StarvedTickAckTests
 {
     private const string Session = "w9-starved";
@@ -69,8 +73,11 @@ public class Wave9StarvedTickAckTests
     }
 
     // What it should be (W9-2): a prediction that matched the server's simulation of every acked
-    // command is never corrected, whichever tick the snapshot was taken on.
-    [Fact(Skip = "W9-2: a snapshot taken on a starved tick pairs the old ack with an extrapolated position")]
+    // command is never corrected, whichever tick the snapshot was taken on. The fix: the snapshot
+    // says how many starved ticks its position holds (ActorSnapshot.StarvedTicks) and the client
+    // compares with its prediction that many ticks after the ack, as ClientCorrectionApplier does.
+    // Here the client has not predicted the starved tick, so it is extrapolated.
+    [Fact]
     public void PerfectPrediction_IsNotCorrected_ByASnapshotTakenOnAStarvedTick()
     {
         (_, ServerSnapshotEnvelope starved, IReadOnlyList<Vector3> path) = RunWalkThenStarveWithPath(walkTicks: 32);
@@ -80,10 +87,144 @@ public class Wave9StarvedTickAckTests
             reconciler.RecordPrediction((ulong)(i + 1), path[i]);
         }
 
-        Vector3 inSnapshot = Assert.Single(starved.Actors, actor => actor.SessionId == Session).Position;
-        ClientReconciliationResult result = reconciler.Reconcile(starved.LastAcceptedCommandSequences[Session], inSnapshot);
+        ActorSnapshot actor = Assert.Single(starved.Actors, actor => actor.SessionId == Session);
+        Assert.Equal(1, actor.StarvedTicks);
+        ClientReconciliationResult result = reconciler.Reconcile(
+            starved.LastAcceptedCommandSequences[Session],
+            actor.Position,
+            starvedTicks: actor.StarvedTicks);
+        _output.WriteLine($"perfect prediction, starved tick extrapolated: error {result.Error.Length:F4} m ({result.Kind})");
         Assert.Equal(ClientReconciliationKind.None, result.Kind);
     }
+
+    // The client usually has predicted past the ack already: its own sample for the starved tick
+    // (the same walk the server repeated) is what the snapshot is compared with, exactly.
+    [Fact]
+    public void PerfectPrediction_ComparesWithTheClientSampleForTheStarvedTick()
+    {
+        (Vector3 atAck, ServerSnapshotEnvelope starved, IReadOnlyList<Vector3> path) = RunWalkThenStarveWithPath(walkTicks: 32);
+        ActorSnapshot actor = Assert.Single(starved.Actors, actor => actor.SessionId == Session);
+        ClientPredictionReconciler reconciler = new();
+        for (int i = 0; i < path.Count; i++)
+        {
+            reconciler.RecordPrediction((ulong)(i + 1), path[i]);
+        }
+
+        // The client walked tick 33 with the command the server repeated, and is a tick further on.
+        reconciler.RecordPrediction(33, actor.Position);
+        reconciler.RecordPrediction(34, actor.Position + (actor.Position - atAck));
+        ClientReconciliationResult result = reconciler.Reconcile(32, actor.Position, starvedTicks: actor.StarvedTicks);
+        Assert.Equal(ClientReconciliationKind.None, result.Kind);
+        Assert.Equal(Vector3.Zero, result.Error);
+    }
+
+    // Snapshots on the tick that consumed the command hold no starved tick (the field is left off
+    // the wire and the comparison is the acknowledged sample, as before the fix); each starved tick
+    // after it counts one more under the same ack.
+    [Fact]
+    public void StarvedTicks_CountTheTicksSimulatedSinceTheAck()
+    {
+        WorldSessionRuntime runtime = new(48, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession(Session, Session);
+        runtime.Enemies.Clear();
+        Assert.Equal(0, SessionActor(host.ExportSnapshot()).StarvedTicks);
+        for (ulong tick = 1; tick <= 3; tick++)
+        {
+            host.AdvanceTick(tick, SimulationClock.FixedDeltaSeconds, [Walk(tick, Vector3.UnitX)], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+            Assert.Equal(0, SessionActor(host.ExportSnapshot()).StarvedTicks);
+        }
+
+        for (int starvedTick = 1; starvedTick <= 20; starvedTick++)
+        {
+            host.AdvanceTick(3UL + (ulong)starvedTick, SimulationClock.FixedDeltaSeconds, [], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+            ServerSnapshotEnvelope snapshot = host.ExportSnapshot();
+            Assert.Equal(3UL, snapshot.LastAcceptedCommandSequences[Session]);
+            Assert.Equal(starvedTick, SessionActor(snapshot).StarvedTicks);
+        }
+
+        host.AdvanceTick(24, SimulationClock.FixedDeltaSeconds, [Walk(24, Vector3.UnitX)], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+        Assert.Equal(0, SessionActor(host.ExportSnapshot()).StarvedTicks);
+    }
+
+    // A secondary seat (any session but the runtime's primary one) counts its own starved ticks;
+    // the other seats' commands do not reset them.
+    [Fact]
+    public void StarvedTicks_AreCountedPerSession_ForSecondarySeats()
+    {
+        const string Other = "w9-starved-other";
+        WorldSessionRuntime runtime = new(48, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession(Session, Session);
+        host.JoinSession(Other, Other);
+        runtime.Enemies.Clear();
+        PlayerCommandFrame OtherWalk(ulong sequence) => Walk(sequence, -Vector3.UnitX) with { SessionId = new PlayerSessionId(Other) };
+        for (ulong tick = 1; tick <= 3; tick++)
+        {
+            host.AdvanceTick(tick, SimulationClock.FixedDeltaSeconds, [Walk(tick, Vector3.UnitX), OtherWalk(tick)], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+        }
+
+        ServerSnapshotEnvelope fed = host.ExportSnapshot();
+        Assert.All(fed.Actors, actor => Assert.Equal(0, actor.StarvedTicks));
+        for (ulong tick = 4; tick <= 5; tick++)
+        {
+            host.AdvanceTick(tick, SimulationClock.FixedDeltaSeconds, [Walk(tick, Vector3.UnitX)], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+        }
+
+        ServerSnapshotEnvelope otherStarved = host.ExportSnapshot();
+        Assert.Equal(0, SessionActor(otherStarved).StarvedTicks);
+        Assert.Equal(3UL, otherStarved.LastAcceptedCommandSequences[Other]);
+        Assert.Equal(2, Assert.Single(otherStarved.Actors, actor => actor.SessionId == Other).StarvedTicks);
+    }
+
+    // While falling a starved tick moves the player further than a walking one. The client's own
+    // samples for the repeated ticks match exactly; extrapolating them (not yet predicted) stays
+    // within the deadband.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void FallingPrediction_IsNotCorrected_ByASnapshotTakenAfterStarvedTicks(bool clientPredictedTheStarvedTicks)
+    {
+        WorldSessionRuntime runtime = new(48, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession(Session, Session);
+        runtime.Enemies.Clear();
+        runtime.Player.SetWorldPosition(new Vector3(5f, 30f, 5f));
+        ClientPredictionReconciler reconciler = new();
+        for (ulong tick = 1; tick <= 16; tick++)
+        {
+            host.AdvanceTick(tick, SimulationClock.FixedDeltaSeconds, [Walk(tick, Vector3.UnitX)], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+            reconciler.RecordPrediction(tick, Position(runtime));
+        }
+
+        Vector3 atAck = Position(runtime);
+        for (ulong tick = 17; tick <= 18; tick++)
+        {
+            host.AdvanceTick(tick, SimulationClock.FixedDeltaSeconds, [], PlayerSimulationTuning.AuthoritativeDefault, allowGameplaySimulation: false);
+            if (clientPredictedTheStarvedTicks)
+            {
+                // A replica simulating the same repeated command lands on the same samples.
+                reconciler.RecordPrediction(tick, Position(runtime));
+            }
+        }
+
+        ActorSnapshot actor = SessionActor(host.ExportSnapshot());
+        Assert.Equal(2, actor.StarvedTicks);
+        Assert.True(atAck.Y - actor.Position.Y > 0.05f, $"not falling: {atAck} -> {actor.Position}");
+        ClientReconciliationResult result = reconciler.Reconcile(16, actor.Position, starvedTicks: actor.StarvedTicks);
+        _output.WriteLine($"falling, 2 starved ticks, predicted {clientPredictedTheStarvedTicks}: {(actor.Position - atAck).Length:F3} m moved, error {result.Error.Length:F4} m ({result.Kind})");
+        Assert.Equal(ClientReconciliationKind.None, result.Kind);
+        if (clientPredictedTheStarvedTicks)
+        {
+            Assert.Equal(Vector3.Zero, result.Error);
+        }
+    }
+
+    private static PlayerCommandFrame Walk(ulong sequence, Vector3 facing) =>
+        new(new PlayerSessionId(Session), sequence, PlayerModeSwitchIntent.None, new PlayerMoveIntent(1f, 0f), new PlayerLookIntent(0f, 0f, facing), PrimaryUsePressed: false);
+
+    private static ActorSnapshot SessionActor(ServerSnapshotEnvelope snapshot) =>
+        Assert.Single(snapshot.Actors, actor => actor.SessionId == Session);
 
     private static (Vector3 AtAck, ServerSnapshotEnvelope Starved) RunWalkThenStarve(int walkTicks)
     {

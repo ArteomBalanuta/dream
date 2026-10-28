@@ -34,7 +34,14 @@ public sealed record ServerConnectionOptions
 
     public const int DefaultSnapshotIntervalTicks = 2;
 
-    // Overrides SnapshotIntervalTicks (a positive integer) for one server run.
+    // The largest interval DREAM_SNAPSHOT_INTERVAL_TICKS may set (250 ms at 64 Hz). Far longer
+    // intervals starve the client of acks and snapshots: past about 500 ticks its 8 s watchdog
+    // would drop a healthy connection, and well before that the ack-lag stall trigger
+    // (ClientCommandTickStream) reads every interval as a stall. Larger values are clamped to it.
+    public const int MaxSnapshotIntervalOverrideTicks = 16;
+
+    // Overrides SnapshotIntervalTicks (a positive integer, at most MaxSnapshotIntervalOverrideTicks)
+    // for one server run.
     public const string SnapshotIntervalEnvironmentVariable = "DREAM_SNAPSHOT_INTERVAL_TICKS";
 
     // Service-wide (DedicatedServerService reads it from the options it was built with): the server
@@ -47,7 +54,8 @@ public sealed record ServerConnectionOptions
     public int SnapshotIntervalTicks { get; init; } = DefaultSnapshotIntervalTicks;
 
     // Applies DREAM_SNAPSHOT_INTERVAL_TICKS when it is set. An invalid value (not a positive
-    // integer) keeps the current interval with a log line.
+    // integer) keeps the current interval with a log line; one above
+    // MaxSnapshotIntervalOverrideTicks is clamped to it with a log line.
     public ServerConnectionOptions WithEnvironmentOverrides(Action<string>? log = null)
     {
         return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log);
@@ -63,6 +71,12 @@ public sealed record ServerConnectionOptions
         if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ticks) &&
             ticks > 0)
         {
+            if (ticks > MaxSnapshotIntervalOverrideTicks)
+            {
+                log?.Invoke($"{SnapshotIntervalEnvironmentVariable} {ticks} is above {MaxSnapshotIntervalOverrideTicks}; using {MaxSnapshotIntervalOverrideTicks} ticks.");
+                ticks = MaxSnapshotIntervalOverrideTicks;
+            }
+
             return this with { SnapshotIntervalTicks = ticks };
         }
 
