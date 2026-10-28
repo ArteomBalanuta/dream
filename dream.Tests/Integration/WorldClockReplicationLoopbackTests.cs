@@ -1,4 +1,3 @@
-using System.Reflection;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Protocol;
@@ -113,7 +112,7 @@ public class WorldClockReplicationLoopbackTests
             if (persistedWorldTicks is long worldTicks)
             {
                 // What a restart from a persisted world gives the runtime before its first tick.
-                SetWorldClock(host.Runtime!, new WorldClock(WorldClockSettings.Default, worldTicks));
+                host.Runtime!.ConfigureWorldClock(WorldClockSettings.Default, worldTicks);
             }
 
             return new ClockServer(await WireLoopbackServer.StartAsync(host));
@@ -180,13 +179,5 @@ public class WorldClockReplicationLoopbackTests
         public ValueTask DisposeAsync() => Wire.DisposeAsync();
 
         private void Record() => _serverWorldTicks[Runtime.CurrentServerTick] = Runtime.WorldClock.WorldTicks;
-
-        // WorldSessionRuntime.WorldClock has a private setter; the persistence path that sets it
-        // from a stored world time is T1a's. The test only needs a runtime whose clock is not at 0.
-        private static void SetWorldClock(WorldSessionRuntime runtime, WorldClock clock)
-        {
-            PropertyInfo property = typeof(WorldSessionRuntime).GetProperty(nameof(WorldSessionRuntime.WorldClock))!;
-            property.SetValue(runtime, clock);
-        }
     }
 }

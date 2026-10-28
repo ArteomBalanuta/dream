@@ -144,9 +144,45 @@ public class ClientWorldClockTests
         AllocationAssert.AtMost(0, () =>
         {
             tick += 0.25d;
-            sink += clock.TimeOfDay01(tick) + clock.DayNumber(tick);
+            sink += clock.TimeOfDay01(tick) + clock.DayNumber(tick)
+                + (float)clock.TimeOfDay01Exact(tick) + (int)clock.Phase(tick);
         });
 
         Assert.True(float.IsFinite(sink));
+    }
+
+    // On the exact tick of each phase bound (a 1-minute day: 04:00, 07:00, 17:00, 20:00), and on
+    // every other tick of the day, Phase and TimeOfDay01Exact equal the server clock's.
+    [Fact]
+    public void Phase_MatchesTheServer_OnEveryTick_BoundsIncluded()
+    {
+        WorldClockSettings oneMinute = WorldClockSettings.FromDayLengthMinutes(1);
+        WorldClock server = new(oneMinute, worldTicks: 2 * oneMinute.TicksPerDay);
+        ClientWorldClock clock = new();
+        clock.Apply(server.CaptureAnchor(serverTick: 250));
+        int bounds = 0;
+
+        for (ulong tick = 251; tick <= 250 + (ulong)oneMinute.TicksPerDay; tick++)
+        {
+            WorldDayPhase before = server.Phase;
+            server.Advance();
+            Assert.Equal(server.TimeOfDay01, clock.TimeOfDay01Exact(tick));
+            Assert.Equal(server.Phase, clock.Phase(tick));
+            if (server.Phase != before)
+            {
+                bounds++;
+            }
+        }
+
+        Assert.Equal(4, bounds);
+    }
+
+    [Fact]
+    public void Phase_WithoutAnAnchor_IsTheStartPhase()
+    {
+        ClientWorldClock clock = new();
+
+        Assert.Equal(WorldClockSettings.StartTimeOfDay01, clock.TimeOfDay01Exact(99.5));
+        Assert.Equal(WorldDayPhase.Day, clock.Phase(99.5));
     }
 }

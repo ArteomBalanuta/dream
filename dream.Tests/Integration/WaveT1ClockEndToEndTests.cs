@@ -130,29 +130,20 @@ public sealed class WaveT1ClockEndToEndTests(ITestOutputHelper output)
 
                 ClientWorldClock clock = await server.AssertClientMatchesAsync(client, minimumComparedTicks: 2_400);
 
-                // The client's phase (from its replicated time) follows the server's at every
-                // snapshot tick, and it sees every phase and the day roll over.
+                // The client's phase (from its replicated time) equals the server's at every
+                // snapshot tick, the exact bound ticks included, and it sees every phase and the
+                // day roll over.
                 List<WorldDayPhase> clientPhases = [];
                 int mismatches = 0;
-                int floatBoundMismatches = 0;
-                foreach (ulong tick in server.ComparedTicks(client))
+                ulong[] compared = [.. server.ComparedTicks(client)];
+                foreach (ulong tick in compared)
                 {
-                    WorldDayPhase clientPhase = WorldDayPhases.At(clock.TimeOfDay01(tick));
-                    WorldDayPhase anchorPhase = WorldDayPhases.At(clock.Anchor.TimeOfDay01At(tick));
+                    WorldDayPhase clientPhase = clock.Phase(tick);
                     WorldDayPhase serverPhase = server.ServerPhaseAt(tick);
-                    if (anchorPhase != serverPhase)
-                    {
-                        mismatches++;
-                        output.WriteLine($"tick {tick}: anchor (double) {anchorPhase}, server {serverPhase}");
-                    }
-
                     if (clientPhase != serverPhase)
                     {
-                        // ClientWorldClock.TimeOfDay01 returns float: on the exact bound tick the
-                        // rounding may land just below it. Allowed only on that one tick.
-                        floatBoundMismatches++;
-                        Assert.Equal(serverPhase, WorldDayPhases.At(clock.TimeOfDay01(tick + 1)));
-                        output.WriteLine($"tick {tick}: client (float) {clientPhase}, server {serverPhase}");
+                        mismatches++;
+                        output.WriteLine($"tick {tick}: client {clientPhase}, server {serverPhase}");
                     }
 
                     if (clientPhases.Count == 0 || clientPhases[^1] != clientPhase)
@@ -162,7 +153,13 @@ public sealed class WaveT1ClockEndToEndTests(ITestOutputHelper output)
                 }
 
                 Assert.Equal(0, mismatches);
-                Assert.True(floatBoundMismatches <= changes.Count, $"{floatBoundMismatches} float mismatches");
+                // Every bound tick the server crossed was compared, so the check above covered it.
+                foreach ((ulong tick, _, WorldDayPhase to) in changes)
+                {
+                    Assert.Contains(tick, compared);
+                    Assert.Equal(to, clock.Phase(tick));
+                }
+
                 Assert.Equal(
                     [WorldDayPhase.Day, WorldDayPhase.Dusk, WorldDayPhase.Night, WorldDayPhase.Dawn, WorldDayPhase.Day],
                     clientPhases);

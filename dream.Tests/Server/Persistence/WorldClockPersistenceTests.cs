@@ -223,4 +223,36 @@ public sealed class WorldClockPersistenceTests
                 PlayerSimulationTuning.AuthoritativeDefault);
         }
     }
+
+    // CreateRuntimeHost's DREAM_DAY_LENGTH_MINUTES warning goes to the injected log, like
+    // CreatePersistenceBundle's seed lines, and the clock gets the fallback day length.
+    [Collection(Dream.Tests.Integration.ProcessEnvironmentCollection.Name)]
+    public sealed class DayLengthLog
+    {
+        [Fact]
+        public void CreateRuntimeHost_LogsAnInvalidDayLength_ThroughTheInjectedLog()
+        {
+            string? previous = Environment.GetEnvironmentVariable(ServerBootstrap.DayLengthEnvironmentVariable);
+            try
+            {
+                Environment.SetEnvironmentVariable(ServerBootstrap.DayLengthEnvironmentVariable, "abc");
+                List<string> lines = [];
+                using RuntimeAuthoritativeSessionHost host = ServerBootstrap.CreateRuntimeHost(persistence: null, lines.Add);
+
+                string line = Assert.Single(lines);
+                Assert.Contains(ServerBootstrap.DayLengthEnvironmentVariable, line);
+                Assert.Equal(WorldClockSettings.FromDayLengthMinutes(WorldClockSettings.DefaultDayLengthMinutes), host.Runtime.WorldClock.Settings);
+
+                Environment.SetEnvironmentVariable(ServerBootstrap.DayLengthEnvironmentVariable, "2");
+                lines.Clear();
+                using RuntimeAuthoritativeSessionHost valid = ServerBootstrap.CreateRuntimeHost(persistence: null, lines.Add);
+                Assert.Empty(lines);
+                Assert.Equal(WorldClockSettings.FromDayLengthMinutes(2), valid.Runtime.WorldClock.Settings);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(ServerBootstrap.DayLengthEnvironmentVariable, previous);
+            }
+        }
+    }
 }
