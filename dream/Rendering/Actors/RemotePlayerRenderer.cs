@@ -27,6 +27,11 @@ public sealed class RemotePlayerRenderer : IDisposable
     private readonly Dictionary<int, AnimatedModelInstanceHandle> _playerModels = [];
     private readonly PlayerAnimationClipTracker _clipTracker = new();
     private readonly HashSet<int> _activeActorIds = [];
+    // The session each active actor id belonged to on the last Draw. The server reuses a player
+    // actor id once its session leaves, so the same id can carry another player from one frame to
+    // the next; that player must not inherit the old player's instance or clip.
+    private readonly Dictionary<int, string> _actorSessionIds = [];
+    private readonly List<int> _reassignedActorIds = [];
     private readonly List<int> _staleActorIds = [];
     private readonly List<int> _modelActorIds = [];
     private readonly List<RemotePlayerPresentationState> _visiblePlayers = [];
@@ -42,6 +47,7 @@ public sealed class RemotePlayerRenderer : IDisposable
     public RemotePlayerRenderStats Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
     {
         PruneModelEntries(remotePlayers);
+        ReleaseReassignedActors(remotePlayers);
         ReleaseFarModels(camera.Position, remotePlayers);
         RequestMissingModels(camera.Position, remotePlayers);
 
@@ -171,6 +177,70 @@ public sealed class RemotePlayerRenderer : IDisposable
         return staleActorIds.Count;
     }
 
+    // Records each active actor's session in actorSessionIds and fills reassignedActorIds with the
+    // actors whose id was recorded under another session: the id now belongs to a different player.
+    // Entries of inactive actors are left alone; PruneStaleSessions drops them.
+    public static void CollectReassignedActorIds(
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        Dictionary<int, string> actorSessionIds,
+        List<int> reassignedActorIds)
+    {
+        reassignedActorIds.Clear();
+        for (int i = 0; i < remotePlayers.Count; i++)
+        {
+            RemotePlayerPresentationState remotePlayer = remotePlayers[i];
+            if (actorSessionIds.TryGetValue(remotePlayer.ActorId, out string? sessionId) &&
+                string.Equals(sessionId, remotePlayer.SessionId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (sessionId != null)
+            {
+                reassignedActorIds.Add(remotePlayer.ActorId);
+            }
+
+            actorSessionIds[remotePlayer.ActorId] = remotePlayer.SessionId;
+        }
+    }
+
+    // Removes the recorded sessions of actors that are no longer active.
+    public static void PruneStaleSessions(
+        Dictionary<int, string> actorSessionIds,
+        IReadOnlySet<int> activeActorIds,
+        List<int> staleActorIds)
+    {
+        CollectStaleActorIds(actorSessionIds, activeActorIds, staleActorIds);
+        for (int i = 0; i < staleActorIds.Count; i++)
+        {
+            actorSessionIds.Remove(staleActorIds[i]);
+        }
+    }
+
+    // Disposes and removes the model handle and forgets the clip of each reassigned actor, so the
+    // player now holding the id requests its own instance and starts from its own clip. Returns
+    // how many handles were released.
+    public static int ReleaseReassignedEntries<THandle>(
+        IReadOnlyList<int> reassignedActorIds,
+        Dictionary<int, THandle> cachedModels,
+        PlayerAnimationClipTracker clipTracker)
+        where THandle : IDisposable
+    {
+        int released = 0;
+        for (int i = 0; i < reassignedActorIds.Count; i++)
+        {
+            int actorId = reassignedActorIds[i];
+            clipTracker.Remove(actorId);
+            if (cachedModels.Remove(actorId, out THandle? handle))
+            {
+                handle.Dispose();
+                released++;
+            }
+        }
+
+        return released;
+    }
+
     // Fills farActorIds with the active actors that hold a model handle but are beyond
     // ModelReleaseDistance. The caller disposes and removes them afterwards.
     public static void CollectFarModelActorIds<THandle>(
@@ -251,6 +321,21 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
     }
 
+    private void ReleaseReassignedActors(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
+    {
+        CollectReassignedActorIds(remotePlayers, _actorSessionIds, _reassignedActorIds);
+        if (_reassignedActorIds.Count == 0)
+        {
+            return;
+        }
+
+        ReleaseReassignedEntries(_reassignedActorIds, _playerModels, _clipTracker);
+        for (int i = 0; i < _reassignedActorIds.Count; i++)
+        {
+            NetworkDiagnosticsLog.Write("client.render.remote.model", $"reassigned actor={_reassignedActorIds[i]} cached={_playerModels.Count}");
+        }
+    }
+
     private void ReleaseFarModels(Vector3 cameraPosition, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
     {
         CollectFarModelActorIds(cameraPosition, remotePlayers, _playerModels, _modelActorIds);
@@ -291,6 +376,7 @@ public sealed class RemotePlayerRenderer : IDisposable
     public void Dispose()
     {
         _activeActorIds.Clear();
+        _actorSessionIds.Clear();
 
         List<Exception>? failures = null;
         foreach (AnimatedModelInstanceHandle model in _playerModels.Values)
@@ -332,6 +418,7 @@ public sealed class RemotePlayerRenderer : IDisposable
     {
         CollectActiveActorIds(remotePlayers, _activeActorIds);
         _clipTracker.RemoveExcept(_activeActorIds);
+        PruneStaleSessions(_actorSessionIds, _activeActorIds, _staleActorIds);
 
         PruneStaleEntries(_playerModels, _activeActorIds, _staleActorIds);
         for (int i = 0; i < _staleActorIds.Count; i++)

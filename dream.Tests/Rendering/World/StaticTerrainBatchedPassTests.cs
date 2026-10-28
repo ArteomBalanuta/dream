@@ -125,6 +125,31 @@ public class StaticTerrainBatchedPassTests
     }
 
     [Fact]
+    public void Draw_DropsTheFramesDrawHandles_AfterThePass()
+    {
+        RecordingPassStore store = new() { Record = false, HandOutHandles = true };
+        using StaticWorldChunkRenderer renderer = CreateRenderer(store);
+        Render render = StaticWorldChunkFrustumCullingTests.RenderWithGameProjection();
+        Camera camera = OverheadCamera();
+        GeometryRenderExport export = CreateMixedMaterialExport();
+        DrawUntilApplied(renderer, render, camera, export);
+
+        int drawsBefore = store.HandleDraws;
+        StaticWorldChunkRenderStats stats = renderer.Draw(render, camera, export);
+
+        Assert.True(stats.MeshCount > 0);
+        Assert.Equal(stats.MeshCount, store.HandleDraws - drawsBefore);
+        object?[] visibleHandles = (object?[])typeof(StaticWorldChunkRenderer)
+            .GetField("_visibleHandles", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(renderer)!;
+        Assert.True(visibleHandles.Length >= stats.MeshCount);
+        Assert.All(visibleHandles, handle => Assert.Null(handle));
+
+        long bytes = AllocationAssert.MeasureBytesPerIteration(() => renderer.Draw(render, camera, export));
+        Assert.Equal(0, bytes);
+    }
+
+    [Fact]
     public void NothingVisible_MakesNoPassCalls()
     {
         RecordingPassStore store = new();
@@ -301,19 +326,57 @@ public class StaticTerrainBatchedPassTests
     private sealed class RecordingPassStore : IStaticWorldChunkMeshStore
     {
         private readonly HashSet<StaticWorldChunkMeshKey> _live = [];
+        private readonly Dictionary<StaticWorldChunkMeshKey, object> _handles = [];
 
         public List<PassEvent> Events { get; } = [];
 
         public bool Record { get; init; } = true;
 
+        // Hands out one draw handle object per live mesh, as the GL store hands out its buffers.
+        public bool HandOutHandles { get; init; }
+
+        public int HandleDraws { get; private set; }
+
+        public bool TryGetDrawHandle(StaticWorldChunkMeshKey key, out object? handle)
+        {
+            handle = null;
+            if (!_live.Contains(key))
+            {
+                return false;
+            }
+
+            if (HandOutHandles)
+            {
+                handle = _handles[key];
+            }
+
+            return true;
+        }
+
+        public void Draw(Render render, in StaticWorldChunkMeshInfo mesh, object? handle)
+        {
+            if (HandOutHandles)
+            {
+                Assert.Same(_handles[mesh.Key], handle);
+                HandleDraws++;
+            }
+
+            Draw(render, in mesh);
+        }
+
         public void Upload(StaticWorldChunkMeshKey key, StaticWorldChunkMesh mesh)
         {
             _live.Add(key);
+            if (!_handles.ContainsKey(key))
+            {
+                _handles[key] = new object();
+            }
         }
 
         public void Remove(StaticWorldChunkMeshKey key)
         {
             _live.Remove(key);
+            _handles.Remove(key);
         }
 
         public bool Contains(StaticWorldChunkMeshKey key)
@@ -344,6 +407,7 @@ public class StaticTerrainBatchedPassTests
         public void Clear()
         {
             _live.Clear();
+            _handles.Clear();
         }
 
         private void Add(PassEvent passEvent)

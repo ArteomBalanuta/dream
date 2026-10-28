@@ -233,7 +233,18 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             visibleTriangles += mesh.TriangleCount;
         }
 
-        int materialBinds = DrawSortedByMaterial(render, camera, visibleMeshes);
+        int materialBinds;
+        try
+        {
+            materialBinds = DrawSortedByMaterial(render, camera, visibleMeshes);
+        }
+        finally
+        {
+            // The handles are only valid for this pass; dropping them keeps the array from holding
+            // buffers that a later sync removes until the slot is overwritten.
+            Array.Clear(_visibleHandles, 0, visibleMeshes);
+        }
+
         int visibleChunks = _drawnChunks.Count;
 
         double drawMilliseconds = ElapsedMilliseconds(ref timestamp);

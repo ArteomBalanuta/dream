@@ -534,7 +534,7 @@ public class PlayScene : IDisposable, ISessionEndSource
                 _remoteClient.SessionId,
                 _predictionReconciler);
             RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
-            ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot);
+            ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
