@@ -29,6 +29,7 @@ public sealed class JoinPersistencePrefetchTests
 
         RunOnReceiveThread(() => Assert.Empty(host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName))));
         RunOnReceiveThread(() => Assert.Empty(host.HandleClientMessage("connection-b", new ClientJoinRequestMessage("session-b", "Player B"))));
+        WaitForLoads(host);
 
         // A long write is in progress on the worker; the old join path flushed the queue here.
         using ManualResetEventSlim gate = new(initialState: false);
@@ -68,11 +69,22 @@ public sealed class JoinPersistencePrefetchTests
         // The newer profile is still waiting behind a slow write when the join request arrives.
         writes.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
         writes.Enqueue(() => repository.Save(PersistenceGroupCommitTests.Profile(PlayerName, experience: 40, level: 6, PlayerInteractionMode.Combat)));
+        // The receive thread (a pool thread in the service) does not wait for the load.
         ReceiveThread receive = StartReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
-        Assert.False(receive.Join(TimeSpan.FromMilliseconds(100)), "The join did not wait for the queued profile write.");
-        gate.Set();
-        Assert.True(receive.Join(TimeSpan.FromSeconds(30)));
+        Assert.True(receive.Join(TimeSpan.FromSeconds(5)), "The receive thread blocked on the join's load.");
 
+        // The join waits on the tick (without blocking it) until its load ran behind the queued write.
+        try
+        {
+            AdvanceOneTick(host);
+            Assert.Null(host.Runtime.PrimaryRemoteSessionId);
+        }
+        finally
+        {
+            gate.Set();
+        }
+
+        WaitForLoads(host);
         AdvanceOneTick(host);
 
         Assert.Equal("session-a", host.Runtime.PrimaryRemoteSessionId?.Value);
@@ -89,6 +101,7 @@ public sealed class JoinPersistencePrefetchTests
         using DedicatedServerHost host = CreateHost(repository, new SqliteWorldPersistenceRepository(database.Schema));
         WorldSessionRuntime runtime = host.Runtime!;
         RunOnReceiveThread(() => host.HandleClientMessage("connection-1", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
         AdvanceOneTick(host);
         Assert.Equal("session-a", runtime.PrimaryRemoteSessionId?.Value);
         runtime.Player.Combatant.ApplyProgression(4, 25);
@@ -96,6 +109,7 @@ public sealed class JoinPersistencePrefetchTests
         // The reconnect's request arrives (and its prefetch reads the database) while the old
         // connection still holds the session; the old one is released, saving level 4, before the tick.
         RunOnReceiveThread(() => host.HandleClientMessage("connection-2", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
         host.ReleaseConnection("connection-1");
         AdvanceOneTick(host);
 
@@ -157,11 +171,144 @@ public sealed class JoinPersistencePrefetchTests
         WorldSessionRuntime runtime = host.Runtime!;
 
         RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", $"  {PlayerName} ")));
+        WaitForLoads(host);
         Assert.True(runtime.IsPersistedPlayerReady(PlayerName, startIfMissing: false));
         AdvanceOneTick(host);
 
         Assert.Equal("session-a", runtime.PrimaryRemoteSessionId?.Value);
         Assert.False(runtime.IsPersistedPlayerReady(PlayerName, startIfMissing: false));
+    }
+
+    // The prefetch is read-only: a join request that is never applied (released before its tick)
+    // creates no profile row; an applied join of a new player creates it, off the tick.
+    [Fact]
+    public void JoinRequest_CreatesTheProfileRowOnlyWhenTheJoinIsApplied()
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository repository = new(database.Schema);
+        using DedicatedServerHost host = CreateHost(repository, new SqliteWorldPersistenceRepository(database.Schema));
+
+        for (int i = 0; i < 20; i++)
+        {
+            RunOnReceiveThread(() => host.HandleClientMessage($"spam-{i}", new ClientJoinRequestMessage($"spam-session-{i}", $"Spam {i}")));
+            host.ReleaseConnection($"spam-{i}");
+        }
+
+        RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
+        Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles;"));
+
+        AdvanceOneTick(host);
+        Assert.Equal("session-a", host.Runtime!.PrimaryRemoteSessionId?.Value);
+        WaitForLoads(host);
+        Assert.Equal(1, database.Count("SELECT COUNT(*) FROM player_profiles;"));
+        Assert.NotNull(repository.TryGet(PlayerName));
+    }
+
+    // One pending join per connection: a second request (here for another session and name) sent
+    // before the first is applied is ignored and starts no load.
+    [Fact]
+    public void SecondJoinRequestOnTheSameConnection_IsIgnoredWhileTheFirstIsPending()
+    {
+        using PersistenceTestDatabase database = new();
+        ThreadRecordingProfiles profiles = new(new SqlitePlayerProfileRepository(database.Schema));
+        using DedicatedServerHost host = CreateHost(profiles, new SqliteWorldPersistenceRepository(database.Schema));
+        WaitForLoads(host);
+        profiles.Reset();
+
+        RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
+        int callsAfterFirst = profiles.Calls;
+        RunOnReceiveThread(() => Assert.Empty(host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-b", "Player B"))));
+        WaitForLoads(host);
+        Assert.Equal(callsAfterFirst, profiles.Calls);
+
+        AdvanceOneTick(host);
+        List<PendingConnectionReply> replies = [];
+        host.DrainPendingJoinRepliesInto(replies);
+        JoinAcceptedMessage accepted = Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies).Message);
+        Assert.Equal("session-a", accepted.SessionId);
+    }
+
+    // A failed load is retried once; a second failure rejects the join with the retry reason
+    // instead of reading the database on the tick. The connection stays open and unclaimed, so
+    // the client's next join request goes through.
+    [Fact]
+    public void JoinWhoseLoadFailsTwice_IsRejectedWithTheRetryReason_AndALaterRequestJoins()
+    {
+        using PersistenceTestDatabase database = new();
+        FailingReadProfiles profiles = new(new SqlitePlayerProfileRepository(database.Schema)) { FailReads = true };
+        using DedicatedServerHost host = CreateHost(profiles, new SqliteWorldPersistenceRepository(database.Schema));
+        WorldSessionRuntime runtime = host.Runtime!;
+        List<PendingConnectionReply> replies = [];
+
+        RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
+        Assert.Equal(PersistedPlayerLoadState.Failed, runtime.GetPersistedPlayerLoadState(PlayerName));
+
+        // First failure: the tick restarts the load (which fails again) and keeps the join pending.
+        profiles.TickThreadId = Environment.CurrentManagedThreadId;
+        AdvanceOneTick(host);
+        host.DrainPendingJoinRepliesInto(replies);
+        Assert.Empty(replies);
+        WaitForLoads(host);
+
+        // Second failure: rejected, with nothing read on the tick.
+        AdvanceOneTick(host);
+        profiles.TickThreadId = -1;
+        host.DrainPendingJoinRepliesInto(replies);
+        JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(replies).Message);
+        Assert.Equal(DedicatedServerHost.JoinRetryRejectionReason, rejected.Reason);
+        Assert.Equal(0, profiles.TickThreadReads);
+        Assert.Null(runtime.PrimaryRemoteSessionId);
+        Assert.False(host.IsConnectionJoined("connection-a"));
+        Assert.Equal(PersistedPlayerLoadState.Missing, runtime.GetPersistedPlayerLoadState(PlayerName));
+
+        profiles.FailReads = false;
+        RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
+        WaitForLoads(host);
+        AdvanceOneTick(host);
+        host.DrainPendingJoinRepliesInto(replies);
+        Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies).Message);
+        Assert.Equal("session-a", runtime.PrimaryRemoteSessionId?.Value);
+    }
+
+    // A load stuck behind a locked database keeps the join deferred well past the old 128-tick
+    // bound, then rejects it with the retry reason; the tick never waits for or reads the database.
+    [Fact]
+    public void JoinWhoseLoadNeverFinishes_IsRejectedAfterTheDeferralBound()
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository repository = new(database.Schema);
+        using DedicatedServerHost host = CreateHost(repository, new SqliteWorldPersistenceRepository(database.Schema));
+        WorldSessionRuntime runtime = host.Runtime!;
+        using ManualResetEventSlim gate = new(initialState: false);
+        runtime.PersistenceWrites!.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(120)));
+        List<PendingConnectionReply> replies = [];
+        try
+        {
+            RunOnReceiveThread(() => host.HandleClientMessage("connection-a", new ClientJoinRequestMessage("session-a", PlayerName)));
+            Stopwatch elapsed = Stopwatch.StartNew();
+            for (int i = 0; i < DedicatedServerHost.MaxJoinPrefetchDeferralTicks; i++)
+            {
+                AdvanceOneTick(host);
+                host.DrainPendingJoinRepliesInto(replies);
+                Assert.Empty(replies);
+            }
+
+            Assert.True(DedicatedServerHost.MaxJoinPrefetchDeferralTicks > 128);
+            AdvanceOneTick(host);
+            elapsed.Stop();
+            host.DrainPendingJoinRepliesInto(replies);
+            JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(replies).Message);
+            Assert.Equal(DedicatedServerHost.JoinRetryRejectionReason, rejected.Reason);
+            Assert.Null(runtime.PrimaryRemoteSessionId);
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(60), $"{elapsed.Elapsed.TotalMilliseconds:0} ms");
+        }
+        finally
+        {
+            gate.Set();
+        }
     }
 
     private static DedicatedServerHost CreateHost(IPlayerProfileRepository profiles, IWorldPersistenceRepository world)
@@ -189,6 +336,12 @@ public sealed class JoinPersistencePrefetchTests
     {
         int executed = host.AdvanceTime(SimulationClock.FixedDeltaSeconds);
         return executed != 0 ? executed : host.AdvanceTime(SimulationClock.FixedDeltaSeconds * 0.01);
+    }
+
+    // The join request only starts its player's load; this waits for the persistence worker to run it.
+    private static void WaitForLoads(DedicatedServerHost host)
+    {
+        Assert.True(host.Runtime!.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)), "The persistence worker did not drain.");
     }
 
     private static void RunOnReceiveThread(Action action)
@@ -244,6 +397,45 @@ public sealed class JoinPersistencePrefetchTests
             }
 
             return true;
+        }
+    }
+
+    // Fails every read while FailReads is set; counts reads made on the tick thread.
+    private sealed class FailingReadProfiles(IPlayerProfileRepository inner) : IPlayerProfileRepository
+    {
+        private int _tickThreadReads;
+
+        public volatile bool FailReads;
+
+        public volatile int TickThreadId = -1;
+
+        public int TickThreadReads => Volatile.Read(ref _tickThreadReads);
+
+        public PersistedPlayerProfile GetOrCreate(string playerName)
+        {
+            Read();
+            return inner.GetOrCreate(playerName);
+        }
+
+        public PersistedPlayerProfile? TryGet(string playerName)
+        {
+            Read();
+            return inner.TryGet(playerName);
+        }
+
+        public void Save(PersistedPlayerProfile profile) => inner.Save(profile);
+
+        private void Read()
+        {
+            if (Environment.CurrentManagedThreadId == TickThreadId)
+            {
+                Interlocked.Increment(ref _tickThreadReads);
+            }
+
+            if (FailReads)
+            {
+                throw new InvalidOperationException("database is locked (test)");
+            }
         }
     }
 

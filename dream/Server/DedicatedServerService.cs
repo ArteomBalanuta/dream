@@ -430,7 +430,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
         _metrics.RecordCoalesceOverflowResync();
         try
         {
-            _host.HandleClientMessage(connection.ConnectionId, new ClientWorldResyncRequestMessage(ClientChecksum: 0));
+            // Never recreates a context for a connection the host already released.
+            _host.RequestWorldResyncIfConnected(connection.ConnectionId);
         }
         catch (Exception ex)
         {

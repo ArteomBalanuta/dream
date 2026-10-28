@@ -47,6 +47,11 @@ internal sealed class SqliteWriteBatch : IDisposable
     // Transactions committed by Commit, for tests and diagnostics.
     public long CommittedTransactions { get; private set; }
 
+    // Set when a connection could not be opened or its transaction could not start (the database
+    // stayed locked past busy_timeout). The queue then fails the rest of the group instead of
+    // waiting busy_timeout again for every write. Cleared by Commit and Abandon.
+    public bool TransactionStartFailed { get; private set; }
+
     public static SqliteWriteBatch? Current => t_current;
 
     // Makes this batch the ambient one on the calling thread until Deactivate.
@@ -113,6 +118,7 @@ internal sealed class SqliteWriteBatch : IDisposable
     // Commits every open transaction. The connections stay open for the next group.
     public void Commit()
     {
+        TransactionStartFailed = false;
         for (int i = 0; i < _enlisted.Count; i++)
         {
             Enlisted entry = _enlisted[i];
@@ -137,6 +143,7 @@ internal sealed class SqliteWriteBatch : IDisposable
     public void Abandon()
     {
         _inWrite = false;
+        TransactionStartFailed = false;
         for (int i = 0; i < _enlisted.Count; i++)
         {
             Enlisted entry = _enlisted[i];
@@ -185,17 +192,25 @@ internal sealed class SqliteWriteBatch : IDisposable
             }
         }
 
-        if (entry == null)
+        try
         {
-            entry = new Enlisted(schema.ConnectionString, schema.CreateOpenConnection());
-            _enlisted.Add(entry);
-        }
+            if (entry == null)
+            {
+                entry = new Enlisted(schema.ConnectionString, schema.CreateOpenConnection());
+                _enlisted.Add(entry);
+            }
 
-        if (entry.Transaction == null)
+            if (entry.Transaction == null)
+            {
+                // IMMEDIATE: take the write lock now (waiting out another writer through busy_timeout),
+                // so a write after a read in the same group can never fail with a stale snapshot.
+                entry.Transaction = entry.Connection.BeginTransaction(deferred: false);
+            }
+        }
+        catch (Exception)
         {
-            // IMMEDIATE: take the write lock now (waiting out another writer through busy_timeout),
-            // so a write after a read in the same group can never fail with a stale snapshot.
-            entry.Transaction = entry.Connection.BeginTransaction(deferred: false);
+            TransactionStartFailed = true;
+            throw;
         }
 
         if (_inWrite)

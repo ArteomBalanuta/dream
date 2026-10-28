@@ -118,14 +118,14 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
         SqliteConnection.ClearAllPools();
     }
 
-    // A queued read (the join prefetch, WorldSessionRuntime.BeginPersistedPlayerPrefetch) runs
-    // inside the open group's transaction, so it sees that group's uncommitted rows. When the
-    // group's commit then fails, PersistedPlayerPrefetch keeps that first (dirty) result ("first
-    // result wins") although the row it read was rolled back; the replayed read is ignored.
-    // Low severity: the joining player is seated with a profile the database never held (here XP 77
-    // instead of a fresh profile), which the next profile save then writes. Asserts current behaviour.
+    // A queued read (the join prefetch, WorldSessionRuntime.BeginPersistedPlayerPrefetch) used to
+    // run inside the open group's transaction, so it saw that group's uncommitted rows, and when the
+    // group's commit failed PersistedPlayerPrefetch kept that dirty result ("first result wins"):
+    // the joining player was seated with a profile the database never held (XP 77). A read now ends
+    // the group: the writes before it commit (or fail) first, and the read runs outside any
+    // transaction, so it only sees committed rows.
     [Fact]
-    public void PrefetchInAGroupWhoseCommitFails_KeepsADirtyReadOfARolledBackRow()
+    public void PrefetchAfterAGroupWhoseCommitFails_ReadsOnlyCommittedRows()
     {
         using PersistenceTestDatabase database = new();
         SqlitePlayerProfileRepository profiles = new(database.Schema);
@@ -149,23 +149,26 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
 
             world.SavePlacedCube(Cube(cubeId: 21, owner: "nobody"));
         });
-        writes.EnqueueRead(() => prefetch.Complete(profiles.GetOrCreate("ghost"), world.TryGetPlayerWorldState("ghost")));
+        // Read-only, like the join prefetch.
+        writes.EnqueueRead(() => prefetch.Complete(profiles.TryGet("ghost"), world.TryGetPlayerWorldState("ghost")));
         gate.Set();
         Assert.True(writes.Flush(Deadline));
 
-        Assert.True(prefetch.TryGetResult(out PersistedPlayerProfile seen, out _));
+        Assert.True(prefetch.TryGetLoadResult(out PersistedPlayerProfile? seen, out _));
         PersistedPlayerProfile? stored = profiles.TryGet("ghost");
-        output.WriteLine($"prefetch saw XP {seen.Stats.Experience}; database holds {(stored.HasValue ? $"XP {stored.Value.Stats.Experience}" : "no row")}");
-        Assert.Equal(77, seen.Stats.Experience);
-        Assert.NotEqual(77, stored?.Stats.Experience ?? -1);
+        output.WriteLine($"prefetch saw {(seen.HasValue ? $"XP {seen.Value.Stats.Experience}" : "no row")}; database holds {(stored.HasValue ? $"XP {stored.Value.Stats.Experience}" : "no row")}; failed writes={writes.FailedWrites}");
+        // The ghost's write was rolled back (its group's commit and its replay both failed), so
+        // neither the database nor the prefetch holds it.
+        Assert.True(writes.FailedWrites >= 1);
+        Assert.Null(stored);
+        Assert.Null(seen);
         SqliteConnection.ClearAllPools();
     }
 
     // A join that arrives while 1000 writes are queued: its prefetch read waits behind all of them
-    // (by design, so it sees this player's latest save), and DedicatedServerHost.PrefetchJoiningPlayer
-    // blocks the connection's receive thread (a thread-pool thread) for that long, up to 5 s.
-    // Measured on the development machine: well under the 5 s bound (see the output). The bound
-    // matters more for the thread pool than for the joiner: N simultaneous joins block N pool threads.
+    // (by design, so it sees this player's latest save). The receive thread no longer waits for it
+    // (the host defers the join on the tick instead), so this measures how long the join is
+    // deferred. Measured on the development machine: well under 5 s (see the output).
     [Theory]
     [InlineData("profiles")]
     [InlineData("placed-cubes")]

@@ -13,7 +13,11 @@ public sealed class SqliteSchemaBootstrapper
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath) ?? ".");
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = databasePath
+            DataSource = databasePath,
+            // Microsoft.Data.Sqlite retries a busy statement until the command timeout (30 s by
+            // default) on top of busy_timeout, so a locked database held each write for ~33 s.
+            // Matching busy_timeout bounds a write's wait for the lock at ~5 s.
+            DefaultTimeout = 5
         }.ToString();
         _schemaScriptPath = schemaScriptPath;
     }
@@ -23,8 +27,13 @@ public sealed class SqliteSchemaBootstrapper
     // WAL with synchronous=NORMAL syncs at checkpoints instead of on every commit, and readers no
     // longer block the writer. busy_timeout makes a writer wait for another connection's write
     // (the checkpoint writer and the write queue run on different threads) instead of failing.
+    // Durability trade-off: in WAL mode synchronous=NORMAL never corrupts the database, but a power
+    // loss or OS crash (not a process crash) can lose the last few commits before the next WAL
+    // sync, which is accepted here for game state.
+    // journal_size_limit truncates the -wal file back to 64 MB after a checkpoint, so one large
+    // burst (a fracture storm) does not leave a huge WAL file on disk for the rest of the run.
     private const string ConnectionPragmas =
-        "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
+        "PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA journal_size_limit=67108864;";
 
     public string ConnectionString => _connectionString;
 
