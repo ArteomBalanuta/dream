@@ -8,6 +8,7 @@ using Dream.Client.Presentation;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Sky;
 using Dream.Rendering.World;
 using Dream.Server;
 using Dream.Simulation.World;
@@ -16,6 +17,10 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // Created on the first frame, on the render thread; disposed with the scene.
+    private SkyRenderer? _sky;
+    private readonly SkyModelSettings _skySettings = SkyModelSettings.FromEnvironment();
+
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
         // Render primarily consumes scene/runtime state for desktop presentation, even though
@@ -28,6 +33,12 @@ public partial class PlayScene
         gpuTimer.BeginFrame();
         ModelAssets.PumpUploads(ModelUploadsPerFrame);
         long clearStart = Stopwatch.GetTimestamp();
+        // The sky for this frame: the replicated time of day, unless the client-local debug override
+        // replaces it. Its lighting is what the world pass uploads, and the clear colour is the
+        // horizon (== the fog colour), so a pixel nothing covers already matches the distance.
+        SkyState sky = SkyModel.Evaluate(_render.TimeOfDayOverride.Resolve(WorldTimeOfDay01), _skySettings);
+        _render.SetFrameLighting(in sky.Lighting);
+        GL.ClearColor(sky.HorizonColor.X, sky.HorizonColor.Y, sky.HorizonColor.Z, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         // The world pass sets its own state rather than inheriting whatever the last pass (the
         // HUD's ImGui restore, or the startup menu) left: opaque, depth-tested geometry.
@@ -83,6 +94,12 @@ public partial class PlayScene
             (float)args.Time);
         double remotePlayerDrawMilliseconds = Stopwatch.GetElapsedTime(remotePlayerDrawStart).TotalMilliseconds;
         LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
+
+        // Sky pass, still inside the Actors GPU section: after every opaque actor, so it shades only
+        // the pixels left at depth 1, and before the debug and viewmodel passes. It restores the
+        // world state (DepthFunc Less, depth writes on, blending off) when it is done.
+        SkyRenderer skyRenderer = _sky ??= new SkyRenderer();
+        skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
 
         DedicatedServerPerformanceSnapshot serverPerformance =
             _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
