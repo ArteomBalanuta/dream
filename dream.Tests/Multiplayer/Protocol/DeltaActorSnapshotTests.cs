@@ -178,44 +178,246 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
         output.WriteLine($"{cache.ChainBreaks} chain breaks, {withheldSnapshots} snapshots withheld actors ({cache.StaleActorsWithheld} actor-snapshots), recovered at tick {recoveredAt}");
     }
 
-    // A connection that misses broadcasts because its writer fell behind gets them merged; the
-    // merged snapshot's base was never sent to it, so it goes out as a keyframe and the client's
-    // chain never breaks.
+    // A connection that misses broadcasts because its writer fell behind (a slow link) gets them
+    // merged. The merged snapshot's own base was never sent to it, so the connection re-diffs the
+    // frame against the frame its client does hold: a delta, not a keyframe. Only the chain's own
+    // keyframes go out whole, nothing is forced, and the client's chain never breaks.
     [Fact]
-    public async Task CoalescedSnapshots_AreSentAsKeyframes_AndTheClientChainNeverBreaks()
+    public async Task CoalescedSnapshots_AreDeltasAgainstTheFrameTheClientHolds_AndTheChainNeverBreaks()
     {
         ScriptedSession session = new(players: 8, enemies: 4, seed: 9);
         ActorDeltaChain chain = new();
         TransportJsonCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
+        DedicatedServerHost host = CreateHost(new MutatingAuthority());
         GatedTransport transport = new("gated");
-        await using ServerConnection connection = new(transport, CreateHost(new MutatingAuthority()), codec, framer, WithoutLiveness);
+        await using ServerConnection connection = new(transport, host, codec, framer, WithoutLiveness);
+        string sessionId = ScriptedSession.SessionId(1);
+        host.HandleClientMessage(transport.ConnectionId, new ClientJoinRequestMessage(sessionId, "gated"));
+        HashSet<ulong> chainKeyframes = [];
+        Dictionary<ulong, ActorSnapshot[]> serverActors = [];
         ActorSnapshot[] last = [];
-        for (ulong tick = SnapshotIntervalTicks; tick <= 120; tick += SnapshotIntervalTicks)
+        for (ulong tick = SnapshotIntervalTicks; tick <= 400; tick += SnapshotIntervalTicks)
         {
-            // Stall the writer for a stretch, so several broadcasts merge.
-            if (tick == 20)
+            // A slow link: the writer stalls for 10 of every 16 ticks, so several broadcasts merge
+            // each time.
+            if (tick % 16 == 0)
             {
                 transport.Close();
             }
 
             ActorSnapshot[] actors = session.Step(SnapshotIntervalTicks);
             last = actors;
-            ServerSnapshotMessage message = new(Envelope(tick, session.AcceptedSequences(tick), actors) with { ActorDelta = chain.Next(tick, actors) });
+            ActorDeltaContext delta = chain.Next(tick, actors);
+            if (delta.IsKeyframe)
+            {
+                chainKeyframes.Add(delta.Sequence);
+            }
+
+            serverActors[delta.Sequence] = actors;
+            ServerSnapshotMessage message = new(Envelope(tick, session.AcceptedSequences(tick), actors) with { ActorDelta = delta });
             connection.EnqueueSnapshot(message, new SharedEncodedPayload(codec, message));
-            if (tick == 40)
+            // The first snapshot goes out alone: merged with the next before anything was sent,
+            // the connection would hold no frame to diff against and send a keyframe (a join).
+            if (tick % 16 == 10 || tick == SnapshotIntervalTicks)
             {
                 transport.Open();
                 Assert.True(await connection.FlushOutboundAsync(FlushDeadline));
             }
         }
 
+        transport.Open();
         Assert.True(await connection.FlushOutboundAsync(FlushDeadline));
-        Assert.True(connection.CoalescedSnapshots > 0);
-        Assert.True(connection.ActorKeyframesForced >= 1,$"{connection.ActorKeyframesForced} forced keyframes");
+        Assert.True(connection.CoalescedSnapshots >= 20, $"{connection.CoalescedSnapshots} merged");
+        Assert.Equal(0, connection.ActorKeyframesForced);
+        Assert.True(connection.ActorDeltasRebased >= 20, $"{connection.ActorDeltasRebased} rebased deltas");
+
+        ActorStateCache cache = new();
+        long sentBytes = 0;
+        long keyframeBytes = 0;
+        int rebased = 0;
+        ulong previous = 0;
+        byte[][] frames = transport.Frames;
+        ServerSnapshotMessage[] received = [.. DecodeFrames(codec, framer, frames).Select(cache.Apply)];
+        for (int i = 0; i < received.Length; i++)
+        {
+            ServerSnapshotEnvelope snapshot = received[i].Snapshot;
+            ActorWireFrame frame = snapshot.ActorFrame!;
+            if (frame.IsKeyframe)
+            {
+                Assert.Contains(frame.Sequence, chainKeyframes);
+            }
+            else
+            {
+                Assert.Equal(previous, frame.BaseSequence);
+            }
+
+            if (!frame.IsKeyframe && frame.BaseSequence != frame.Sequence - 1)
+            {
+                // What the same merged snapshot cost as a keyframe (before the rebase).
+                rebased++;
+                sentBytes += frames[i].Length - framer.HeaderLength;
+                ServerSnapshotMessage asKeyframe = new(snapshot with { ActorFrame = null, ActorDelta = ActorDeltaContext.CreateKeyframe(frame.Sequence) });
+                keyframeBytes += codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, asKeyframe.MessageKind, (ulong)i + 1), asKeyframe).Length;
+            }
+
+            AssertWithinQuantization(serverActors[frame.Sequence], snapshot.Actors, $"frame {frame.Sequence}");
+            Assert.Equal(snapshot.ServerTick, snapshot.LastAcceptedCommandSequences[sessionId]);
+            previous = frame.Sequence;
+        }
+
+        output.WriteLine(
+            $"{received.Length} snapshots, {connection.CoalescedSnapshots} merged, {rebased} rebased deltas: {sentBytes} B against {keyframeBytes} B as keyframes " +
+            $"({100d * sentBytes / keyframeBytes:0.0}%); total sent {connection.BytesSent} B");
+        Assert.Equal(connection.ActorDeltasRebased, rebased);
+        Assert.True(sentBytes * 2 < keyframeBytes, $"rebased deltas {sentBytes} B, as keyframes {keyframeBytes} B");
+        Assert.Equal(0, cache.ChainBreaks);
+        Assert.Equal(0, cache.StaleActorsWithheld);
+        AssertWithinQuantization(last, received[^1].Snapshot.Actors, "last snapshot");
+    }
+
+    // A shared broadcast past the peer's frame cap goes out without its deltas, encoded for each
+    // connection alone. Its actors keep the frame and base the shared payload had: a connection
+    // that holds the base keeps its chain (a delta), one that just joined gets the keyframe, which
+    // is counted once. The stripped body carries the full accepted-sequence map, which the client
+    // decodes.
+    [Fact]
+    public async Task OversizedSharedDelta_StrippedFallback_KeepsTheActorChain_AndTheBodyAck()
+    {
+        ScriptedSession session = new(players: 4, enemies: 1, seed: 33);
+        ActorDeltaChain chain = new();
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new(maxReadPayloadBytes: 64 * 1024, maxWritePayloadBytes: 8 * 1024);
+        DedicatedServerHost host = CreateHost(new MutatingAuthority());
+        GatedTransport earlyTransport = new("early");
+        GatedTransport lateTransport = new("late");
+        await using ServerConnection early = new(earlyTransport, host, codec, framer, WithoutLiveness);
+        await using ServerConnection late = new(lateTransport, host, codec, framer, WithoutLiveness);
+        string earlySession = ScriptedSession.SessionId(1);
+        string lateSession = ScriptedSession.SessionId(2);
+        host.HandleClientMessage(earlyTransport.ConnectionId, new ClientJoinRequestMessage(earlySession, "early"));
+        host.HandleClientMessage(lateTransport.ConnectionId, new ClientJoinRequestMessage(lateSession, "late"));
+        const ulong OversizedTick = 12;
+        ulong oversizedSequence = 0;
+        ActorSnapshot[] last = [];
+        for (ulong tick = SnapshotIntervalTicks; tick <= 30; tick += SnapshotIntervalTicks)
+        {
+            ActorSnapshot[] actors = session.Step(SnapshotIntervalTicks);
+            last = actors;
+            ServerSnapshotEnvelope envelope = Envelope(tick, session.AcceptedSequences(tick), actors) with { ActorDelta = chain.Next(tick, actors) };
+            if (tick == OversizedTick)
+            {
+                // About 18 KB of mutations: past the 8 KB cap.
+                envelope = envelope with { WorldMutations = [.. Enumerable.Range(1, 300).Select(i => Mutation((ulong)i))] };
+                Assert.False(envelope.ActorDelta!.Value.IsKeyframe);
+                oversizedSequence = envelope.ActorDelta.Value.Sequence;
+            }
+
+            ServerSnapshotMessage message = new(envelope);
+            SharedEncodedPayload shared = new(codec, message);
+            early.EnqueueSnapshot(message, shared);
+            if (tick >= OversizedTick)
+            {
+                late.EnqueueSnapshot(message, shared);
+            }
+
+            Assert.True(await early.FlushOutboundAsync(FlushDeadline));
+            Assert.True(await late.FlushOutboundAsync(FlushDeadline));
+        }
+
+        Assert.Equal(1, early.OversizedSnapshotFrames);
+        Assert.Equal(1, late.OversizedSnapshotFrames);
+        Assert.Equal(0, early.ActorKeyframesForced);
+        // The join keyframe, counted once although the frame was encoded twice.
+        Assert.Equal(1, late.ActorKeyframesForced);
+
+        foreach ((GatedTransport transport, string sessionId) in new[] { (earlyTransport, earlySession), (lateTransport, lateSession) })
+        {
+            ActorStateCache cache = new();
+            ServerSnapshotMessage[] received = [.. DecodeFrames(codec, framer, transport.Frames).Select(cache.Apply)];
+            Assert.All(transport.Frames, frame => Assert.True(frame.Length - framer.HeaderLength <= 8 * 1024, $"a {frame.Length} B frame"));
+            ServerSnapshotEnvelope stripped = Assert.Single(received, message => message.Snapshot.ServerTick == OversizedTick).Snapshot;
+            Assert.Empty(stripped.WorldMutations);
+            Assert.Equal(oversizedSequence, stripped.ActorFrame!.Sequence);
+            if (transport == earlyTransport)
+            {
+                Assert.False(stripped.ActorFrame.IsKeyframe);
+                Assert.Equal(oversizedSequence - 1, stripped.ActorFrame.BaseSequence);
+            }
+            else
+            {
+                Assert.True(stripped.ActorFrame.IsKeyframe);
+                Assert.Same(received[0].Snapshot.ActorFrame, stripped.ActorFrame);
+            }
+
+            // The stripped body has the full map; every other snapshot this connection's own ack.
+            Assert.Equal(session.AcceptedSequences(OversizedTick).Count, stripped.LastAcceptedCommandSequences.Count);
+            Assert.All(received, message => Assert.Equal(message.Snapshot.ServerTick, message.Snapshot.LastAcceptedCommandSequences[sessionId]));
+            Assert.Equal(0, cache.ChainBreaks);
+            Assert.Equal(0, cache.StaleActorsWithheld);
+            AssertWithinQuantization(last, received[^1].Snapshot.Actors, transport.ConnectionId);
+        }
+    }
+
+    // A world resync between two delta frames: the resync snapshot is off the chain (full actor
+    // list, no frame), so the next broadcast's delta, whose base the client dropped with the
+    // resync, goes out as its keyframe twin, and deltas resume after it.
+    [Fact]
+    public async Task ResyncBetweenTwoDeltas_IsFollowedByTheKeyframeTwin_AndDeltasResume()
+    {
+        ScriptedSession session = new(players: 4, enemies: 2, seed: 44);
+        ActorDeltaChain chain = new();
+        TransportJsonCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        DedicatedServerHost host = CreateHost(new MutatingAuthority());
+        GatedTransport transport = new("resynced");
+        await using ServerConnection connection = new(transport, host, codec, framer, WithoutLiveness);
+        string sessionId = ScriptedSession.SessionId(1);
+        host.HandleClientMessage(transport.ConnectionId, new ClientJoinRequestMessage(sessionId, "resynced"));
+        const ulong ResyncTick = 13;
+        ulong twinSequence = 0;
+        ActorSnapshot[] last = [];
+        for (ulong tick = SnapshotIntervalTicks; tick <= 24; tick += SnapshotIntervalTicks)
+        {
+            ActorSnapshot[] actors = session.Step(SnapshotIntervalTicks);
+            last = actors;
+            ServerSnapshotMessage message = new(Envelope(tick, session.AcceptedSequences(tick), actors) with { ActorDelta = chain.Next(tick, actors) });
+            if (tick == ResyncTick + 1)
+            {
+                Assert.False(message.Snapshot.ActorDelta!.Value.IsKeyframe);
+                twinSequence = message.Snapshot.ActorDelta.Value.Sequence;
+            }
+
+            connection.EnqueueSnapshot(message, new SharedEncodedPayload(codec, message));
+            Assert.True(await connection.FlushOutboundAsync(FlushDeadline));
+            if (tick == ResyncTick - 1)
+            {
+                // Between this delta and the next: a resync snapshot, encoded for this connection
+                // alone and off the chain (the runtime never runs it through ActorDeltaChain).
+                connection.EnqueueSnapshot(new ServerSnapshotMessage(Envelope(ResyncTick, session.AcceptedSequences(ResyncTick), actors)));
+                Assert.True(await connection.FlushOutboundAsync(FlushDeadline));
+            }
+        }
+
+        Assert.Equal(1, connection.ActorKeyframesForced);
+        Assert.Equal(0, connection.ActorDeltasRebased);
 
         ActorStateCache cache = new();
         ServerSnapshotMessage[] received = [.. DecodeFrames(codec, framer, transport.Frames).Select(cache.Apply)];
+        int resync = Array.FindIndex(received, message => message.Snapshot.ServerTick == ResyncTick);
+        Assert.True(resync > 1);
+        Assert.False(received[resync - 1].Snapshot.ActorFrame!.IsKeyframe);
+        Assert.Null(received[resync].Snapshot.ActorFrame);
+        ActorWireFrame twin = received[resync + 1].Snapshot.ActorFrame!;
+        Assert.True(twin.IsKeyframe);
+        Assert.Equal(twinSequence, twin.Sequence);
+        ActorWireFrame next = received[resync + 2].Snapshot.ActorFrame!;
+        Assert.False(next.IsKeyframe);
+        Assert.Equal(twinSequence, next.BaseSequence);
+        // The resync body carries the full map; the broadcasts this connection's ack in the header.
+        Assert.Equal(session.AcceptedSequences(ResyncTick).Count, received[resync].Snapshot.LastAcceptedCommandSequences.Count);
+        Assert.All(received, message => Assert.Equal(message.Snapshot.ServerTick, message.Snapshot.LastAcceptedCommandSequences[sessionId]));
+        Assert.Single(received[resync + 1].Snapshot.LastAcceptedCommandSequences);
         Assert.Equal(0, cache.ChainBreaks);
         Assert.Equal(0, cache.StaleActorsWithheld);
         AssertWithinQuantization(last, received[^1].Snapshot.Actors, "last snapshot");

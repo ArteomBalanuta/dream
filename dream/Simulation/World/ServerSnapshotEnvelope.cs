@@ -15,6 +15,12 @@ public readonly record struct ServerSnapshotEnvelope(
     ulong? WorldChecksum = null,
     ulong WorldChecksumSequence = 0)
 {
+    // Equality: ActorDelta and ActorFrame below take part in the record's generated Equals and
+    // GetHashCode (ActorDelta by value, which compares its base list by reference; ActorFrame by
+    // reference), like the list members above, which also compare by reference. Two envelopes
+    // with the same content but a different wire framing (a decoded copy, a keyframe twin, a
+    // rebased merged frame) are therefore not equal; compare fields when content matters.
+    //
     // SCALE-2. Set by the runtime on a broadcast export: the encoder writes the actors as a delta
     // frame against the previous export (or as a keyframe) instead of the full list. Actors stays
     // the full list; nothing in memory sees the deltas. Never on the wire as itself.

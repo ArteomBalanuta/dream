@@ -26,7 +26,8 @@ namespace Dream.Multiplayer.Protocol;
 //       Progression null | [level, experience, experienceToNextLevel]
 //       Starved     starvedTicks
 // A Full record carries every group (groups is 255). An idle actor costs its id and a comma; a
-// walking player about 25 bytes.
+// walking player about 20 bytes (`[18,2,410,0,-205],` is 18, pinned by DeltaActorSnapshotTests),
+// about 30 while it also turns (the Facing group adds three more changes).
 // The frame as a standalone converter. The codec reaches the frame through the snapshot envelope's
 // converter; this one is the reference that tests plug into the reflection serializer, as they do
 // with WorldSnapshotJsonConverter for the compact world.
