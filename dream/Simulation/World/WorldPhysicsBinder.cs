@@ -299,6 +299,9 @@ public class WorldPhysicsBinder
 
         RigidBody body = oldBodies[index];
 
+        // The cubes frozen on top of it lose their support; the moved body itself is activated
+        // below with zero velocity, so no mover rule would wake them.
+        _physics.CubeRest.WakeRidersOf(body);
         Matrix transform = Matrix.Translation(center.ToBullet());
         body.WorldTransform = transform;
         body.MotionState?.SetWorldTransform(ref transform);

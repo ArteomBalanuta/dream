@@ -240,6 +240,8 @@ public class Player : IReplicatedPlayerTarget, IDisposable
 
     public void SetWorldPosition(Vector3 position)
     {
+        // Cubes frozen on the body's top would otherwise float where it stood.
+        _physics.WakeRidersOfPlayerBody(PhysicsBody);
         _cameraRig.Teleport(PhysicsBody, position, 0.35f);
         LastReportedPosition = position;
     }

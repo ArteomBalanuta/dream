@@ -35,8 +35,18 @@ public enum BulletProfilerGuardStatus
 // (relative displacements masked) and patched only when there is exactly one match, so a different
 // libbulletc build is left alone and reported as Unsupported.
 //
-// It runs once, before the first PhysicsIntegrator creates a world; every Bullet world in dream is
-// created by PhysicsIntegrator, so no thread can be inside the function while it is rewritten.
+// The patch covers every caller of the function. The same thread-index logic is also inlined once
+// more, in btSetTaskScheduler (libbulletc+0x111990 in this build); that copy is left unpatched.
+// It is harmless: dream never installs a task scheduler, and that copy only assigns an index to
+// the calling thread, which quickprof never reads (quickprof calls the patched function).
+//
+// It runs once, from the first PhysicsIntegrator constructor, before that integrator creates its
+// world. Production code creates every Bullet world through PhysicsIntegrator. Tests also create
+// raw BulletSharp worlds, which may already be stepping on other threads when the guard runs, so
+// a thread can be about to execute the function's first bytes while they are rewritten. The six
+// patch bytes are therefore written together with the two original bytes after them as a single
+// aligned 8-byte interlocked store: another thread decodes either the whole original prologue or
+// the whole patch, never a mix.
 public static class BulletProfilerGuard
 {
     // BT_MAX_THREAD_COUNT: every quickprof entry point returns early for an index >= this.
@@ -177,19 +187,31 @@ public static class BulletProfilerGuard
             return BulletProfilerGuardStatus.Disabled;
         }
 
-        if (!VirtualProtect(match, (nuint)s_patch.Length, PageExecuteReadWrite, out uint oldProtect))
+        // The function starts 16-byte aligned (MSVC pads functions), so its first 8 bytes are one
+        // aligned quadword and can be replaced atomically.
+        if (((nint)match & (PatchWordSize - 1)) != 0)
+        {
+            detail = $"btGetCurrentThreadIndex at libbulletc+0x{(long)match - module:X} is not {PatchWordSize}-byte aligned";
+            return BulletProfilerGuardStatus.Unsupported;
+        }
+
+        if (!VirtualProtect(match, PatchWordSize, PageExecuteReadWrite, out uint oldProtect))
         {
             detail = $"VirtualProtect failed ({Marshal.GetLastPInvokeError()})";
             return BulletProfilerGuardStatus.Failed;
         }
 
+        long original = *(long*)match;
+        long patched = original;
+        byte* patchedBytes = (byte*)&patched;
         for (int i = 0; i < s_patch.Length; i++)
         {
-            match[i] = s_patch[i];
+            patchedBytes[i] = s_patch[i];
         }
 
-        VirtualProtect(match, (nuint)s_patch.Length, oldProtect, out _);
-        FlushInstructionCache(GetCurrentProcess(), match, (nuint)s_patch.Length);
+        Interlocked.Exchange(ref *(long*)match, patched);
+        VirtualProtect(match, PatchWordSize, oldProtect, out _);
+        FlushInstructionCache(GetCurrentProcess(), match, PatchWordSize);
         detail = $"btGetCurrentThreadIndex at libbulletc+0x{(long)match - module:X} now returns {DisabledThreadIndex}";
         return BulletProfilerGuardStatus.Patched;
     }
@@ -245,6 +267,9 @@ public static class BulletProfilerGuard
     }
 
     private const uint PageExecuteReadWrite = 0x40;
+
+    // One aligned quadword: the patch plus the original bytes after it, stored at once.
+    private const int PatchWordSize = 8;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern unsafe bool VirtualProtect(void* address, nuint size, uint newProtect, out uint oldProtect);

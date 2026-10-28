@@ -253,6 +253,7 @@ public class PhysicsIntegrator : IDisposable
             return;
         }
 
+        WakeRidersOfPlayerBody(body);
         _removeRigidBodyFromWorld(body);
         _disposeRigidBody(body);
     }
@@ -268,6 +269,7 @@ public class PhysicsIntegrator : IDisposable
 
         if (parked)
         {
+            WakeRidersOfPlayerBody(PlayerBody);
             _removeRigidBodyFromWorld(PlayerBody);
         }
         else
@@ -278,6 +280,18 @@ public class PhysicsIntegrator : IDisposable
         IsPlayerBodyParked = parked;
     }
 
+    // A player body is a 1 m box, so placed cubes can come to rest, and freeze, on its top. It is
+    // not a map body, so it does not go through RemoveMapBodyFromWorld: call this before it leaves
+    // the world or is teleported (a teleport zeroes its velocity, so it is no mover either), and
+    // the cubes on it fall instead of floating where it stood (see CubeRestFreezer.WakeRidersOf).
+    public void WakeRidersOfPlayerBody(RigidBody body)
+    {
+        if (World != null)
+        {
+            CubeRest.WakeRidersOf(body);
+        }
+    }
+
     public RigidBody DetachPlayerBody()
     {
         if (PlayerBody == null)
@@ -286,6 +300,7 @@ public class PhysicsIntegrator : IDisposable
         }
 
         RigidBody playerBody = PlayerBody;
+        WakeRidersOfPlayerBody(playerBody);
         _removeRigidBodyFromWorld(playerBody);
         PlayerBody = null;
         _playerBodyOwnership = null;
