@@ -99,6 +99,7 @@ public partial class PlayScene
         List<Exception>? failures = null;
         RunDisposeStep(_render.Dispose, ref failures);
         RunDisposeStep(DisposeGpuTimer, ref failures);
+        RunDisposeStep(DisposeSky, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
         RunDisposeStep(_combatFeedback.Dispose, ref failures);
         RunDisposeStep(_actionFeedback.Dispose, ref failures);
@@ -122,6 +123,13 @@ public partial class PlayScene
     {
         _gpuTimer?.Dispose();
         _gpuTimer = null;
+    }
+
+    // The sky owns its own program and VAO, so it is released with the other GL resources.
+    private void DisposeSky()
+    {
+        _sky?.Dispose();
+        _sky = null;
     }
 
     private static void RunDisposeStep(Action step, ref List<Exception>? failures)

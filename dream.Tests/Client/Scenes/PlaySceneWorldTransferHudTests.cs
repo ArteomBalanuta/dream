@@ -191,7 +191,7 @@ public sealed class PlaySceneWorldTransferHudTests(ITestOutputHelper output)
             drawHud.IndexOf("DrawHudInterface(", StringComparison.Ordinal) < drawHud.IndexOf("ImGui.Render()", StringComparison.Ordinal),
             "the HUD interface is drawn before the ImGui frame is rendered");
 
-        string hudInterface = MethodBody(render, "private static HudInteractionRequest DrawHudInterface(");
+        string hudInterface = MethodBody(render, "private HudInteractionRequest DrawHudInterface(");
         Assert.Matches(new Regex(@"DrawWorldTransferIndicator\(worldTransfer, hudText\);"), hudInterface);
         Assert.True(
             hudInterface.IndexOf("ImGui.Begin(\"HUD\"", StringComparison.Ordinal) < hudInterface.IndexOf("DrawWorldTransferIndicator(", StringComparison.Ordinal) &&

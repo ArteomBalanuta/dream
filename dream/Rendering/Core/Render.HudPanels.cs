@@ -1,6 +1,7 @@
 using Dream.Application;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Sky;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -11,7 +12,7 @@ namespace Dream.Rendering.Core;
 
 public partial class Render
 {
-    private static HudInteractionRequest DrawHudInterface(
+    private HudInteractionRequest DrawHudInterface(
         GameSettings settings,
         HudStatusSnapshot status,
         string? rejectionMessage,
@@ -182,6 +183,7 @@ public partial class Render
             }
 
             DrawViewModelControls(settings);
+            DrawTimeOfDayControls(TimeOfDayOverride);
 
             bool showCollision = settings.ShowCollisionGeometry;
             if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
@@ -376,6 +378,28 @@ public partial class Render
         if (slot.IsEquipped)
         {
             ImGui.PopStyleColor(2);
+        }
+    }
+
+    // Client-local and debug only: it changes what this client renders and nothing else. Collapsed
+    // by default so it stays out of the way.
+    private static void DrawTimeOfDayControls(TimeOfDayOverride timeOfDay)
+    {
+        if (!ImGui.CollapsingHeader("Time Of Day (debug, this client only)"))
+        {
+            return;
+        }
+
+        bool enabled = timeOfDay.Enabled;
+        if (ImGui.Checkbox("Override Time Of Day", ref enabled))
+        {
+            timeOfDay.Enabled = enabled;
+        }
+
+        float hours = timeOfDay.Hours;
+        if (ImGui.SliderFloat("Hour", ref hours, 0f, TimeOfDayOverride.HoursPerDay, "%.2f h"))
+        {
+            timeOfDay.Hours = hours;
         }
     }
 
