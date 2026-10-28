@@ -39,12 +39,23 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         "The server could not load this player's saved data in time; retry the join.";
 
     // Stale-session takeover (NETR-8). A join for a session (or a player name) held by another
-    // connection takes it over when that connection has sent no frame for this long: clients send
-    // a frame at least every second (RemoteClientSession.KeepaliveInterval), so two seconds of
-    // silence means a crashed client or a dropped network, which the 10 s idle timeout would only
-    // release later. A connection heard from within this window keeps its session, and the join is
-    // rejected with SessionInUseRejectionReason, so a second client cannot hijack a live player.
-    public static readonly TimeSpan StaleSessionTakeoverSilence = TimeSpan.FromSeconds(2);
+    // connection takes it over when that connection has sent no frame for a window, so a crashed
+    // client's rejoin does not wait for the 10 s idle timeout. A connection heard from within the
+    // window keeps its session and the join is rejected, so a second client cannot hijack a live
+    // player. Identity is unauthenticated (see TryClaimSession), so the windows trade crash-rejoin
+    // speed against how easily a network hiccup lets another client take a seat:
+    //
+    // A healthy idle client sends a frame at least every RemoteClientSession.KeepaliveInterval
+    // (1 s); its keepalive task wakes every 0.5 s, so gaps reach about 1.5 s, and one TCP
+    // retransmit or Wi-Fi stall adds more. Same-session takeover waits three keepalive intervals:
+    // the session id is a fresh "client-<guid>" per connect, so a join that repeats it is almost
+    // always the same client reconnecting.
+    public static readonly TimeSpan SameSessionTakeoverSilence = TimeSpan.FromSeconds(3);
+
+    // A join that only matches the holder's display name (another session id) is the normal crash
+    // rejoin, but the name is all a hijacker needs, so it waits much longer: a stall that long is
+    // not a hiccup. Still well under the 10 s idle release, so a crashed client gets back sooner.
+    public static readonly TimeSpan PlayerNameTakeoverSilence = TimeSpan.FromSeconds(8);
 
     public const string SessionInUseRejectionReason =
         "Session already in use: another connection is still active for it.";
@@ -149,6 +160,18 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // connection options' clock; tests pass a fake one.
     internal TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
+    // The TimeProvider timestamp of the latest ObserveInboundFrames call, the service's per-tick
+    // liveness sweep; 0 until the first one. Keepalive frames only reach a context through that
+    // sweep, so once a sweep has run, silence is measured up to it rather than up to now: a tick
+    // stall delays the sweep, and a join routed right after the stall must not see every idle
+    // client as silent for the stall's length. A host with no sweep (no service) measures to now.
+    private long _lastInboundSweepTimestamp;
+
+    // Joins dropped by the per-connection join throttle (ServerRoutingContext.IsJoinThrottled).
+    private long _throttledJoinAttempts;
+
+    internal long ThrottledJoinAttempts => Interlocked.Read(ref _throttledJoinAttempts);
+
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
     public static DedicatedServerHost CreateDefault()
@@ -221,14 +244,28 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             context.MarkInbound(TimeProvider.GetTimestamp());
 
-            if (_deferJoinsToTick && message is ClientJoinRequestMessage joinRequest)
+            if (message is ClientJoinRequestMessage joinRequest)
             {
-                QueueJoin(connectionId, joinRequest);
-                return Array.Empty<IServerToClientMessage>();
+                if (DropThrottledJoin(context, joinRequest))
+                {
+                    return Array.Empty<IServerToClientMessage>();
+                }
+
+                if (_deferJoinsToTick)
+                {
+                    QueueJoin(connectionId, joinRequest);
+                    return Array.Empty<IServerToClientMessage>();
+                }
             }
 
             context.ClearOutboundMessages();
+            context.JoinConflictsWithLiveHolder = false;
             _router.RouteServerInbound(context, message);
+            if (message is ClientJoinRequestMessage routedJoin)
+            {
+                CompleteJoinAttempt(context, routedJoin);
+            }
+
             return context.OutboundMessages.ToArray();
         }
     }
@@ -382,11 +419,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // a new session id and the same display name, and a stale holder is looked up both ways:
     //  - the same session id claimed by another connection;
     //  - another claimed connection whose joined player name (ResolveJoinPlayerName) matches.
-    // Either is taken over only when it has been silent for StaleSessionTakeoverSilence; anyone
-    // could already take the name once the old connection's 10 s idle timeout released it, so
-    // the takeover only shortens that window for a dead connection and never touches a live one.
-    // A live holder of the same session id rejects the join with SessionInUseRejectionReason; a
-    // live holder of the name is left to the runtime's duplicate-display-name rejection.
+    // Either is taken over only when it has been silent for SameSessionTakeoverSilence or
+    // PlayerNameTakeoverSilence; anyone could already take the name once the old connection's
+    // 10 s idle timeout released it, so the takeover only shortens that window for a dead
+    // connection and never touches a live one. A live holder of the same session id rejects the
+    // join with SessionInUseRejectionReason; a live holder of the name is left to the runtime's
+    // duplicate-display-name rejection. Either marks the joining context
+    // (JoinConflictsWithLiveHolder), so a rejected join throttles the connection's later joins.
     public bool TryClaimSession(string connectionId, string sessionId, string? displayName, out string? rejectionReason)
     {
         lock (_authoritySync)
@@ -411,8 +450,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
         if (_sessionClaims.TryGetValue(sessionId, out string? currentOwner)
             && !string.Equals(currentOwner, connectionId, StringComparison.Ordinal)
-            && !TryTakeOverStaleConnection(currentOwner, connectionId, sessionId, "session-id"))
+            && !TryTakeOverStaleConnection(currentOwner, connectionId, sessionId, "session-id", SameSessionTakeoverSilence))
         {
+            MarkJoinConflictWithLiveHolder(connectionId);
             NetworkDiagnosticsLog.Write(
                 "server.session.in-use",
                 $"connection={connectionId} session={sessionId} owner={currentOwner}");
@@ -445,8 +485,75 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return true;
         }
 
+        MarkJoinConflictWithLiveHolder(connectionId);
         rejectionReason = SessionInUseRejectionReason;
         return false;
+    }
+
+    private void MarkJoinConflictWithLiveHolder(string connectionId)
+    {
+        if (_connections.TryGetValue(connectionId, out ServerRoutingContext? context))
+        {
+            context.JoinConflictsWithLiveHolder = true;
+        }
+    }
+
+    // Join throttle (ServerRoutingContext.IsJoinThrottled): drops a join from a connection whose
+    // earlier join a live holder rejected, inside the throttle interval. Nothing is sent back. The
+    // first drop of each interval is logged with the time left; later ones only count. Under the
+    // tick lock.
+    private bool DropThrottledJoin(ServerRoutingContext context, ClientJoinRequestMessage join)
+    {
+        long now = TimeProvider.GetTimestamp();
+        if (!context.IsJoinThrottled(now))
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref _throttledJoinAttempts);
+        if (context.RecordDroppedJoinAttempt() == 1)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.join.throttled",
+                $"connection={context.ConnectionId} session={join.RequestedSessionId} name={join.DisplayName} reason=live-holder-rejected-earlier-join");
+        }
+
+        return true;
+    }
+
+    // After a routed join: a join a live holder rejected (the connection is still unclaimed)
+    // starts or extends the connection's join throttle; an accepted one resets it. Under the tick
+    // lock.
+    private void CompleteJoinAttempt(ServerRoutingContext context, ClientJoinRequestMessage join)
+    {
+        bool conflicted = context.JoinConflictsWithLiveHolder;
+        context.JoinConflictsWithLiveHolder = false;
+        if (_connectionClaims.ContainsKey(context.ConnectionId))
+        {
+            context.ResetJoinThrottle();
+            return;
+        }
+
+        if (!conflicted || _disposed)
+        {
+            return;
+        }
+
+        // A name conflict is rejected by the runtime, after which JoinRequestHandler releases the
+        // connection, context included. The connection is still open (it just sent this join), so
+        // its context goes back, unclaimed, to keep the throttle; its next message would have
+        // created a fresh one anyway, and its close releases this one like any other.
+        if (_connections.TryAdd(context.ConnectionId, context))
+        {
+            Volatile.Write(ref _connectionsChanged, 1);
+        }
+
+        int droppedBefore = context.DroppedJoinAttempts;
+        long intervalTicks = context.ThrottleJoins(TimeProvider.GetTimestamp(), TimeProvider.TimestampFrequency);
+        NetworkDiagnosticsLog.Write(
+            "server.join.throttle",
+            $"connection={context.ConnectionId} session={join.RequestedSessionId} name={join.DisplayName} " +
+            $"intervalMs={intervalTicks * 1000d / TimeProvider.TimestampFrequency:0} droppedLastInterval={droppedBefore}");
     }
 
     // Whether a join of another connection, still pending or in the batch being applied, waits on
@@ -473,7 +580,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     // Takes over every other claimed connection whose joined player is the joining one's player
     // (the same ResolveJoinPlayerName, compared like the runtime's display-name check) under a
-    // different session id, when it is stale. A live one is left alone. Under the tick lock.
+    // different session id, when it is stale. A live one is left alone (the runtime then rejects
+    // the duplicate name) and marks the joining context. Under the tick lock.
     private void TakeOverStaleHoldersOfPlayerName(string connectionId, string sessionId, string displayName)
     {
         string playerName = WorldSessionRuntime.ResolveJoinPlayerName(sessionId, displayName);
@@ -490,9 +598,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     || !string.Equals(
                         WorldSessionRuntime.ResolveJoinPlayerName(holderJoin.RequestedSessionId, holderJoin.DisplayName),
                         playerName,
-                        StringComparison.OrdinalIgnoreCase)
-                    || !IsConnectionStale(holder))
+                        StringComparison.OrdinalIgnoreCase))
                 {
+                    continue;
+                }
+
+                if (!IsConnectionStale(holder, PlayerNameTakeoverSilence))
+                {
+                    MarkJoinConflictWithLiveHolder(connectionId);
                     continue;
                 }
 
@@ -502,18 +615,30 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             // Released outside the enumeration, which the release edits.
             if (staleHolder != null
-                && !TryTakeOverStaleConnection(staleHolder, connectionId, sessionId, "player-name"))
+                && !TryTakeOverStaleConnection(staleHolder, connectionId, sessionId, "player-name", PlayerNameTakeoverSilence))
             {
+                MarkJoinConflictWithLiveHolder(connectionId);
                 return;
             }
         }
         while (staleHolder != null);
     }
 
-    private bool IsConnectionStale(ServerRoutingContext context)
+    private bool IsConnectionStale(ServerRoutingContext context, TimeSpan window)
     {
-        long silenceTicks = TimeProvider.GetTimestamp() - context.LastInboundTimestamp;
-        return silenceTicks >= (long)(StaleSessionTakeoverSilence.TotalSeconds * TimeProvider.TimestampFrequency);
+        return GetSilenceTicks(context) >= (long)(window.TotalSeconds * TimeProvider.TimestampFrequency);
+    }
+
+    // How long the connection is known to have been silent: from its last inbound frame up to the
+    // latest liveness sweep (see _lastInboundSweepTimestamp), or up to now when no sweep has run.
+    // A routed message marks the context with the current time, which can be past the sweep; that
+    // is negative silence, i.e. live.
+    private long GetSilenceTicks(ServerRoutingContext context)
+    {
+        long sweep = Volatile.Read(ref _lastInboundSweepTimestamp);
+        long now = TimeProvider.GetTimestamp();
+        long measuredTo = sweep != 0 && sweep < now ? sweep : now;
+        return measuredTo - context.LastInboundTimestamp;
     }
 
     // Releases a stale connection's claim, queued actions, command ring and runtime seat through
@@ -522,7 +647,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // RestorePersistedPlayerState prefers over the join's older prefetch, and keeps any prefetch
     // a pending join still needs (see ReleaseConnection). False when the holder is still live.
     // Under the tick lock.
-    private bool TryTakeOverStaleConnection(string staleConnectionId, string takingConnectionId, string sessionId, string match)
+    private bool TryTakeOverStaleConnection(string staleConnectionId, string takingConnectionId, string sessionId, string match, TimeSpan window)
     {
         if (_disposed)
         {
@@ -532,14 +657,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         // A claim always has a context (both go in ReleaseConnection); one without is a leftover,
         // and taking it over is safe.
         if (_connections.TryGetValue(staleConnectionId, out ServerRoutingContext? staleContext)
-            && !IsConnectionStale(staleContext))
+            && !IsConnectionStale(staleContext, window))
         {
             return false;
         }
 
         double silenceSeconds = staleContext == null
             ? double.PositiveInfinity
-            : (TimeProvider.GetTimestamp() - staleContext.LastInboundTimestamp) / (double)TimeProvider.TimestampFrequency;
+            : GetSilenceTicks(staleContext) / (double)TimeProvider.TimestampFrequency;
         NetworkDiagnosticsLog.Write(
             "server.session.takeover",
             $"connection={takingConnectionId} session={sessionId} stale={staleConnectionId} match={match} silence={silenceSeconds:0.###}s");
@@ -567,12 +692,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // Liveness from the transport: framesReceived is the connection's total of complete inbound
     // frames, empty keepalive frames included, which the host never sees as messages. Called by
     // the service on its tick thread for every connection; allocation-free.
+    // Each call also stamps the host's latest sweep (_lastInboundSweepTimestamp).
     public void ObserveInboundFrames(string connectionId, long framesReceived)
     {
+        long now = TimeProvider.GetTimestamp();
         if (_connections.TryGetValue(connectionId, out ServerRoutingContext? context))
         {
-            context.ObserveInboundFrameCount(framesReceived, TimeProvider.GetTimestamp());
+            context.ObserveInboundFrameCount(framesReceived, now);
         }
+
+        Volatile.Write(ref _lastInboundSweepTimestamp, now);
     }
 
     // Releasing a connection runs entirely under the tick lock, where every claim is taken (joins
@@ -847,7 +976,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
 
             context.ClearOutboundMessages();
+            context.JoinConflictsWithLiveHolder = false;
             _router.RouteServerInbound(context, join.Request);
+            CompleteJoinAttempt(context, join.Request);
             for (int replyIndex = 0; replyIndex < context.OutboundMessages.Count; replyIndex++)
             {
                 _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
