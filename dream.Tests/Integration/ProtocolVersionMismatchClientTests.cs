@@ -16,6 +16,7 @@ namespace Dream.Tests.Integration;
 // a whole v1 envelope (what a real v1 server sends) or a v2 envelope whose hello reports another
 // version. The connect must fail with a reason that names both versions, and that reason must be
 // what the connection screen shows.
+[Collection(TimingSensitiveCollection.Name)]
 public class ProtocolVersionMismatchClientTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);

@@ -15,6 +15,7 @@ using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
 
+[Collection(TimingSensitiveCollection.Name)]
 public class SharedSnapshotEncodingTests
 {
     private readonly ITestOutputHelper _output;

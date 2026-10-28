@@ -15,6 +15,7 @@ namespace Dream.Tests.Integration;
 // monitor). Every instance must be encoded exactly once, every reader must see the same array, and
 // in fault rounds every reader must see the same exception instance. The whole run is bounded at
 // 10 s, so a lost pulse (a deadlock in WaitUntilDone) fails instead of hanging.
+[Collection(TimingSensitiveCollection.Name)]
 public class SharedEncodedPayloadLoadIntegrationTests(ITestOutputHelper output)
 {
     private const int Readers = 64;

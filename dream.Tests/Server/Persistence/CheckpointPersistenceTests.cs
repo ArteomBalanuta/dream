@@ -11,6 +11,7 @@ namespace Dream.Tests.Server.Persistence;
 
 // Regression coverage for the 5-second checkpoint stall: the checkpoint used to write every row
 // on its own connection on the tick thread (about 0.5 s per checkpoint in the 2026-07-05 perf logs).
+[Collection(TimingSensitiveCollection.Name)]
 public sealed class CheckpointPersistenceTests
 {
     private const string Player = "player-one";
