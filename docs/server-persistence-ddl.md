@@ -4,9 +4,39 @@ Document the authoritative SQLite schema that backs player profiles, world state
 
 ## Source Of Truth
 
-The executable bootstrap script lives at [dream/config/player-profiles.init.sql](/G:/workspace/projects/dream/dream/config/player-profiles.init.sql).
+The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file.
+
+[dream/config/player-profiles.init.sql](/G:/workspace/projects/dream/dream/config/player-profiles.init.sql) is frozen. It is the pre-migration schema. It stays as the legacy fixture that tests build old databases from, and because `SqliteSchemaBootstrapper` still takes its path: the migrations directory is found next to it (`Path.Combine(Path.GetDirectoryName(schemaScriptPath), "migrations")`). Do not edit it to change the schema; add a migration.
 
 This document explains the intent behind each table so future runtime and migration work stays aligned with the current denormalized design.
+
+## Schema Versions And Migrations
+
+`SqliteSchemaBootstrapper.EnsureSchema` runs on every startup. It sets `PRAGMA journal_mode=WAL` (outside any transaction), then hands the connection to `SqliteSchemaMigrator` (`dream/Server/Persistence/Migrations/`), which applies the pending migrations.
+
+**Files.** A migration is `dream/config/migrations/NNNN_snake_case.sql`, matching `^(\d{4})_([a-z0-9_]+)\.sql$`. The number is the version: versions start at 1 and are contiguous, and a gap or a duplicate fails startup. The name is the rest of the file name. The existing `config\**\*` copy glob ships the directory with the build. Scripts contain no `BEGIN`, `COMMIT` or `PRAGMA journal_mode`: the migrator owns the transaction and the bootstrapper owns the journal mode.
+
+**`schema_version`.** One row per applied migration:
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_utc TEXT NOT NULL
+);
+```
+
+The current version is the highest `version`; a database without the table is at version 0. A database from before wave A is therefore at 0 and gets `0001_baseline` on its first start.
+
+**One transaction.** All pending migrations run in one transaction, together with their `schema_version` rows. If any of them fails, all of them roll back and the database stays at its old version.
+
+**Backup first.** When migrations are pending and the database already holds user tables (it is not brand new), the migrator copies the file with `SqliteConnection.BackupDatabase` before it applies anything. The copy sits next to the database as `{db}.v{from:D4}-to-v{to:D4}.{yyyyMMddTHHmmssZ}.bak`, for example `world.sqlite.v0000-to-v0001.20261028T120000Z.bak`. A fresh database gets no backup, and neither does a start with nothing pending.
+
+**Too new.** A stored version above the newest migration the build knows means a newer build wrote the database. Startup throws `SchemaTooNewException` and leaves the file untouched.
+
+**The baseline.** `0001_baseline` (`BaselineMigration`) runs the idempotent baseline script (`IF NOT EXISTS` everywhere, `ON CONFLICT DO NOTHING` for the formula seed), then adds the four columns that older files may lack: `player_profiles.experience` and `placed_cube_instances.center_x`, `center_y` and `center_z`. It is the only migration that probes columns, and it runs only from version 0 to 1. Later migrations assume the schema of the version before them.
+
+**Behaviour change: the formula seed runs once.** Before wave A the whole init script ran on every startup, so a deleted `combat_formulas` seed row came back on the next start. The baseline now runs once, so a deleted seed row stays deleted. Edited formulas were already kept (`ON CONFLICT DO NOTHING`), and still are. To restore a deleted default, insert it again, or add a migration that does.
 
 ## Design Notes
 
@@ -66,6 +96,16 @@ Used for:
 - periodic 5-second authoritative checkpoints
 
 Checkpoints are written off the tick thread in one transaction by `SqlitePersistenceCheckpointWriter`. It upserts `player_world_state`, but only updates existing `placed_cube_instances`, `cube_fracture_pieces` and `enemy_instances` rows, plus the profile's `interaction_mode`, `current_hp` and `max_hp`. Inserts and deletes for those tables stay on the immediate gameplay paths: placement, fracture, enemy spawn and death. See `docs/performance-and-optimizations.md`.
+
+**The checkpoint `updated_utc` guard.** A player's leave also writes `player_world_state` and the profile, through the write queue. Before wave A, a checkpoint captured before the leave but written after it overwrote what the leave saved, because the writer stamped every row with its own write time. Since wave A (workstream A4) a checkpoint row carries its capture time, never its write time, and it may overwrite a stored row only when the stored row is strictly older than that capture:
+
+- `player_world_state`: the row's `updated_utc` is the captured `PersistedPlayerWorldState.UpdatedUtc`, and the upsert's conflict branch ends with `WHERE player_world_state.updated_utc < excluded.updated_utc`. A first insert (no row yet) still inserts.
+- Profile vitals (`interaction_mode`, `current_hp`, `max_hp`): `PlayerCheckpointVitals.CapturedUtc` is the capture time, and the update is `... updated_utc = $capturedUtc WHERE player_name = $playerName AND updated_utc < $capturedUtc`. Vitals with the default `CapturedUtc` are unguarded and stamped with the write time, as before. Because the new value is always strictly later, `trg_player_profiles_set_updated_utc` never fires for it.
+- `RepositoryPersistenceCheckpointWriter`, the fallback writer, applies the same rule by reading the stored row first.
+
+Capture and leave both run on the tick thread, so a capture taken before a leave is never newer than the leave's write, and a capture taken after a leave no longer contains the player. `FormatUtc` writes the round-trip ("O") format in UTC, a fixed 28 characters, so comparing the text compares the times. Older `strftime` defaults (3 fractional digits) compare as newer only within the same millisecond, which errs towards keeping the stored row. One edge case is accepted: a profile `Save` queued before a capture but run after it stamps a later time, so the next checkpoint skips that player's vitals once.
+
+The guard covers only these two row kinds. Checkpoint updates of enemies, placed cubes, fracture pieces and `world_time_ticks` are unchanged.
 
 Immediate gameplay writes (placed cubes, fracture pieces, enemies, profiles, inventory) go through an ordered `PersistenceWriteQueue`. It runs on a background worker on the dedicated server, and inline by default for tests and tools. The tick never reads these tables during gameplay: placed-cube identity repair uses an in-memory index loaded at startup and kept current by saves, deletes and checkpoints, and profile lookups use a cache filled at join. Join flushes the queue before reading the joining player's rows.
 
@@ -199,10 +239,11 @@ Important note:
 
 - the client does not authoritatively evaluate these expressions
 - the server loads, validates, and evaluates them through a strict whitelisted arithmetic engine
+- the default rows are seeded once, by the `0001_baseline` migration; a deleted seed row is not restored on restart (see Schema Versions And Migrations)
 
 ## Indexes
 
-The current script adds lookup indexes for:
+The baseline adds lookup indexes for:
 
 - recently updated player profiles
 - recently updated player world state
@@ -225,7 +266,7 @@ These indexes are aimed at:
 
 ## world_metadata
 
-Key/value metadata about the persisted world. It is created additively by `SqliteSchemaBootstrapper.EnsureSchema` (`CREATE TABLE IF NOT EXISTS`), so databases that predate it gain it on their next start.
+Key/value metadata about the persisted world. It is created by the `0001_baseline` migration (`CREATE TABLE IF NOT EXISTS`), so databases that predate it gain it when they migrate to version 1.
 
 - `key TEXT NOT NULL PRIMARY KEY`
 - `value TEXT NOT NULL`
@@ -237,13 +278,13 @@ It holds two rows:
 
 ## player_profile_change_log
 
-Append-only history of profile stat and mode changes (`change_kind`, previous and new `interaction_mode`, `strength`, `attack_speed` and `vitality`, `changed_utc`), keyed by `player_name` with `ON DELETE CASCADE`. The table and its index are created by the init script, but no code or trigger writes to it today, so it stays empty.
+Append-only history of profile stat and mode changes (`change_kind`, previous and new `interaction_mode`, `strength`, `attack_speed` and `vitality`, `changed_utc`), keyed by `player_name` with `ON DELETE CASCADE`. The table and its index are created by the baseline, but no code or trigger writes to it today, so it stays empty.
 
 ## Connection Settings, WAL And Write Path
 
 `SqliteSchemaBootstrapper` (`dream/Server/Persistence/SqliteSchemaBootstrapper.cs`) configures every connection:
 
-- `EnsureSchema` runs `PRAGMA journal_mode=WAL`, which is stored in the database file. Every later connection opens in WAL mode, so readers do not block the writer.
+- `EnsureSchema` runs `PRAGMA journal_mode=WAL` before it migrates. The mode is stored in the database file. Every later connection opens in WAL mode, so readers do not block the writer.
 - Each connection sets `synchronous=NORMAL`, `busy_timeout=5000` and `journal_size_limit=67108864`. `NORMAL` syncs at WAL checkpoints instead of on every commit: a process crash cannot corrupt the database, but a power loss or OS crash can lose the last few commits. That trade-off is accepted for game state. The `-wal` file is truncated back to 64 MB after a checkpoint.
 - The connection string sets `DefaultTimeout = 5`, so a statement on a locked database waits about 5 s rather than the 30 s default.
 
@@ -268,6 +309,8 @@ The gameplay inventory slice uses:
 
 When extending this schema:
 
+- add a new `dream/config/migrations/NNNN_snake_case.sql` with the next version; never edit a migration that has shipped, and never edit `player-profiles.init.sql`
+- write the script for the schema of the version before it, without `BEGIN`, `COMMIT` or a journal-mode pragma
 - prefer additive columns and additive tables
 - keep startup restore queries direct
 - avoid collapsing players, enemies, cubes, and items into one generic entity table
