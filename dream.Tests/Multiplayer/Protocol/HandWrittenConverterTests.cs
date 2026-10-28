@@ -354,15 +354,14 @@ public class HandWrittenConverterTests(ITestOutputHelper output)
         output.WriteLine($"24-actor snapshot decode: {bytes} B.");
     }
 
-    // Measured 824 B after WIRE-10. All of it is ServerSnapshotEnvelope itself, still on the
-    // reflection serializer: the boxed envelope, the WriteStack frame array, and the dictionary,
-    // mutation and damage-event enumerators and records. The actors no longer allocate.
-    private const long SnapshotEncodeBudgetBytes = 896;
+    // Measured 0 B after WIRE-11 (before: 824 B). The envelope is now written by hand too, so
+    // nothing on the encode path allocates.
+    private const long SnapshotEncodeBudgetBytes = 0;
 
-    // Measured 7,016 B after WIRE-10: the exactly sized ActorSnapshot[] (about 2.9 KB), the
-    // session-id and display-name strings, and the envelope's dictionary, lists and message
-    // objects. The doubling List<ActorSnapshot> and per-actor constructor state are gone.
-    private const long SnapshotDecodeBudgetBytes = 7_680;
+    // Measured 5,008 B after WIRE-11 (before: 7,016 B): the exactly sized ActorSnapshot[], the
+    // session-id and display-name strings, and the message objects. Same budget as
+    // ServerSnapshotConverterTests.
+    private const long SnapshotDecodeBudgetBytes = 5_504;
 
     // ---- Helpers -------------------------------------------------------------------------
 
