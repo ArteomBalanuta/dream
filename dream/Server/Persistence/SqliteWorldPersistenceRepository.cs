@@ -15,7 +15,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -50,7 +51,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SavePlayerWorldState(PersistedPlayerWorldState state)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO player_world_state (
@@ -103,7 +105,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -148,7 +151,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SavePlacedCube(PersistedPlacedCube cube)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO placed_cube_instances (
@@ -216,7 +220,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeletePlacedCube(int cubeId)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "DELETE FROM placed_cube_instances WHERE cube_id = $cubeId;";
         command.Parameters.AddWithValue("$cubeId", cubeId);
@@ -225,7 +230,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -266,7 +272,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO cube_fracture_pieces (
@@ -329,7 +336,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteCubeFracturePieces(int sourceCubeId)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "DELETE FROM cube_fracture_pieces WHERE source_cube_id = $sourceCubeId;";
         command.Parameters.AddWithValue("$sourceCubeId", sourceCubeId);
@@ -338,7 +346,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -394,7 +403,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SaveEnemyInstance(PersistedEnemyInstance enemy)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO enemy_instances (
@@ -486,7 +496,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteEnemyInstance(int enemyId)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "DELETE FROM enemy_instances WHERE enemy_id = $enemyId;";
         command.Parameters.AddWithValue("$enemyId", enemyId);
@@ -495,7 +506,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -539,7 +551,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots()
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -566,7 +579,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SaveItemInstance(PersistedItemInstance item)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO item_instances (
@@ -626,7 +640,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteItemInstance(long itemInstanceId)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "DELETE FROM item_instances WHERE item_instance_id = $itemInstanceId;";
         command.Parameters.AddWithValue("$itemInstanceId", itemInstanceId);
@@ -635,7 +650,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SaveInventorySlot(PersistedInventorySlot slot)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO player_inventory_slots (
@@ -663,7 +679,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteInventorySlots(string playerName)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "DELETE FROM player_inventory_slots WHERE player_name = $playerName;";
         command.Parameters.AddWithValue("$playerName", playerName.Trim());

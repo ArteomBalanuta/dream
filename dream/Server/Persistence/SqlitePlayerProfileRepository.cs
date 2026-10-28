@@ -44,7 +44,8 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
 
     public PersistedPlayerProfile? TryGet(string playerName)
     {
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             SELECT
@@ -79,7 +80,8 @@ public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, ID
     public void Save(PersistedPlayerProfile profile)
     {
         DateTime now = DateTime.UtcNow;
-        using SqliteConnection connection = _schema.CreateOpenConnection();
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO player_profiles (
