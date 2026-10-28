@@ -4,8 +4,8 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Server.Persistence;
-using Dream.Server.Rules;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
@@ -1631,7 +1631,7 @@ public sealed class WorldSessionRuntime : IDisposable
     {
         try
         {
-            checkpoint.ImmediateWritesCommitted?.Wait(Dream.Server.BackgroundCheckpointWriter.ImmediateWritesWaitTimeout);
+            checkpoint.ImmediateWritesCommitted?.Wait(PersistenceCheckpoint.ImmediateWritesWaitTimeout);
         }
         catch (AggregateException)
         {

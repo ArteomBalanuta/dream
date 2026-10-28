@@ -2,9 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Server;
-using Dream.Server.Persistence;
-using Dream.Server.Rules;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -273,9 +271,10 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         _ownedDependency?.Dispose();
     }
 
-    // The runtime rolls with the persisted world's seed when the bundle carries one; a host with no
-    // persistence (tests, ephemeral hosts) keeps the deterministic DefaultSimulationSeed.
-    public static RuntimeAuthoritativeSessionHost CreateDefault(ServerPersistenceBundle? persistence = null)
+    // The runtime rolls with the persisted world's seed when the ports carry one; a host with no
+    // persistence (tests, ephemeral hosts) keeps the deterministic DefaultSimulationSeed. The server
+    // builds the ports from its SQLite bundle in ServerBootstrap.CreateRuntimeHost.
+    public static RuntimeAuthoritativeSessionHost CreateDefault(RuntimePersistencePorts? persistence = null)
     {
         SceneEventHub events = new();
         WorldSessionRuntime runtime = new(
@@ -285,10 +284,10 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             playerProfiles: persistence?.PlayerProfiles,
             worldPersistence: persistence?.World,
             combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default,
-            checkpointWriter: persistence != null ? new SqlitePersistenceCheckpointWriter(persistence.Schema) : null,
-            persistenceWrites: persistence != null ? PersistenceWriteQueue.Background() : null,
+            checkpointWriter: persistence?.CheckpointWriter,
+            persistenceWrites: persistence?.PersistenceWrites,
             simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed);
-        return new RuntimeAuthoritativeSessionHost(runtime, persistence);
+        return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner);
     }
 
     private PlayerSessionId ResolveTickControlledSessionId()

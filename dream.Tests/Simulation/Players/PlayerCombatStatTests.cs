@@ -1,6 +1,7 @@
 using Xunit;
 using Dream.Server.Persistence;
-using Dream.Server.Rules;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Players;
 
 namespace Dream.Tests.Simulation.Players;

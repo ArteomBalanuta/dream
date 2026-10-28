@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 
@@ -180,7 +180,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             ],
             Array.Empty<IClientMessageHandler>());
 
-        return new DedicatedServerHost(RuntimeAuthoritativeSessionHost.CreateDefault(persistence), router, deferJoinsToTick);
+        return new DedicatedServerHost(ServerBootstrap.CreateRuntimeHost(persistence), router, deferJoinsToTick);
     }
 
     public IReadOnlyList<IServerToClientMessage> HandleClientMessage(

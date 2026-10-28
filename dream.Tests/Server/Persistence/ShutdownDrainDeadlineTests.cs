@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;

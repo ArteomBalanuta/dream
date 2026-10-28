@@ -1,7 +1,7 @@
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 
-namespace Dream.Server.Rules;
+namespace Dream.Simulation.Rules;
 
 public sealed class CombatFormulaService
 {

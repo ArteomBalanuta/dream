@@ -7,6 +7,7 @@ using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;

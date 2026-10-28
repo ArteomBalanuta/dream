@@ -1,9 +1,8 @@
 using Dream.Simulation.Players;
-using Dream.Simulation.Runtime;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Protocol;
 
-namespace Dream.Server;
+namespace Dream.Simulation.Runtime;
 
 public interface ITickDrivenAuthoritativeSessionHost : IAuthoritativeSessionHost
 {

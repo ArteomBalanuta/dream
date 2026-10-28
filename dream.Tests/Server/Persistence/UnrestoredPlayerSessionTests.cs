@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 

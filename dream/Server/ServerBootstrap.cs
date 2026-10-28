@@ -4,7 +4,9 @@ using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Persistence;
-using Dream.Server.Rules;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Rules;
+using Dream.Simulation.Runtime;
 
 namespace Dream.Server;
 
@@ -33,6 +35,32 @@ public static class ServerBootstrap
     public static DedicatedServerHost CreateAuthoritativeHost(ServerPersistenceBundle? persistence)
     {
         return DedicatedServerHost.CreateRuntimeAttached(persistence, deferJoinsToTick: true);
+    }
+
+    // The authoritative runtime host over the server's SQLite persistence. The bundle's repositories
+    // and formulas become the Simulation-owned RuntimePersistencePorts, with a SQLite checkpoint
+    // writer and a background write queue; the host owns the bundle and disposes it. A null bundle
+    // gives a host that persists nothing.
+    public static RuntimeAuthoritativeSessionHost CreateRuntimeHost(ServerPersistenceBundle? persistence)
+    {
+        return RuntimeAuthoritativeSessionHost.CreateDefault(CreateRuntimePersistencePorts(persistence));
+    }
+
+    public static RuntimePersistencePorts? CreateRuntimePersistencePorts(ServerPersistenceBundle? persistence)
+    {
+        if (persistence == null)
+        {
+            return null;
+        }
+
+        return new RuntimePersistencePorts(
+            PlayerProfiles: persistence.PlayerProfiles,
+            World: persistence.World,
+            FormulaService: persistence.FormulaService,
+            CheckpointWriter: new SqlitePersistenceCheckpointWriter(persistence.Schema),
+            PersistenceWrites: PersistenceWriteQueue.Background(),
+            SimulationSeed: persistence.SimulationSeed,
+            Owner: persistence);
     }
 
     public static int RunServerMode()

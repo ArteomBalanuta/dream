@@ -1,4 +1,4 @@
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 // Where a joining player's persisted-state load stands (WorldSessionRuntime.GetPersistedPlayerLoadState).
 public enum PersistedPlayerLoadState

@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Dream.Client.Networking;
 using Dream.Client.Startup;
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 
 namespace Dream.Application;
 

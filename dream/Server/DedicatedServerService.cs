@@ -3,7 +3,7 @@ using System.Diagnostics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 

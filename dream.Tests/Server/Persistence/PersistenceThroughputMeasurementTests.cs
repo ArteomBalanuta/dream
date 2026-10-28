@@ -5,6 +5,7 @@ using Xunit.Abstractions;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Tests.Load;
 using Dream.Tests.Integration;

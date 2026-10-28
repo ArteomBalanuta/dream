@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 

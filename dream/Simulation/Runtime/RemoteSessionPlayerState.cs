@@ -1,6 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
-using Dream.Server.Rules;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;

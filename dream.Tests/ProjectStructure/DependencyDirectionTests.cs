@@ -26,14 +26,39 @@ public class DependencyDirectionTests
         "OpenTK.Windowing"
     ];
 
+    // ARCH-2: Simulation is the lower layer. The rules, the persistence ports and the tick-driven
+    // host contract live in Simulation; Server implements and composes them.
     private static readonly string[] SimulationForbiddenTokens =
     [
         "Dream.Client",
         "Dream.Rendering",
         "Dream.Application",
+        "Dream.Server",
         "ImGuiNET",
         "OpenTK.Windowing",
         "OpenTK.Graphics"
+    ];
+
+    // The client reaches the server only to host or join one (bootstrap, the integrated and
+    // on-demand local servers, connection options and performance snapshots). Never persistence.
+    private static readonly string[] ClientForbiddenTokens =
+    [
+        "Dream.Server.Persistence",
+        "Dream.Server.Rules",
+        "Dream.Simulation.Persistence"
+    ];
+
+    // Ratchet: the only client files that may reference Dream.Server. A file that stops referencing
+    // it must leave the list (the test fails until it does); never add one.
+    private static readonly string[] ClientFilesAllowedToReferenceServer =
+    [
+        "Networking/RemoteClientOptions.cs",
+        "Networking/RemoteClientSession.cs",
+        "Scenes/PlayScene.cs",
+        "Startup/ILocalServerHandle.cs",
+        "Startup/IntegratedLocalServerHandle.cs",
+        "Startup/NetworkSessionCoordinator.cs",
+        "Startup/OnDemandLocalServerHandle.cs"
     ];
 
     [Fact]
@@ -53,6 +78,26 @@ public class DependencyDirectionTests
     public void SimulationSources_DoNotReferenceClientRenderingOrApplicationNamespaces()
     {
         AssertNoReferences(Path.Combine("dream", "Simulation"), SimulationForbiddenTokens);
+    }
+
+    [Fact]
+    public void ClientSources_DoNotReferencePersistenceOrServerRules()
+    {
+        AssertNoReferences(Path.Combine("dream", "Client"), ClientForbiddenTokens);
+    }
+
+    [Fact]
+    public void ClientSources_ReferenceServerOnlyFromAllowlistedFiles()
+    {
+        string clientRoot = Path.Combine(FindRepoRoot(), "dream", "Client");
+        string[] referencing = Directory
+            .GetFiles(clientRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(file => ReferencesName(File.ReadAllText(file), "Dream.Server"))
+            .Select(file => Path.GetRelativePath(clientRoot, file).Replace(Path.DirectorySeparatorChar, '/'))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(ClientFilesAllowedToReferenceServer.Order(StringComparer.Ordinal), referencing);
     }
 
     // DEC-3 moved the GameSettings coupling out of Simulation.Players; desktop client

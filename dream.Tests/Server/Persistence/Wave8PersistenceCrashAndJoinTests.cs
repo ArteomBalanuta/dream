@@ -4,6 +4,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.World.Geometry;
 

@@ -1,4 +1,4 @@
-namespace Dream.Server.Rules.Expression;
+namespace Dream.Simulation.Rules.Expression;
 
 internal enum CombatExpressionTokenKind
 {

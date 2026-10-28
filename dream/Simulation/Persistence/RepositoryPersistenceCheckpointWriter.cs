@@ -1,4 +1,4 @@
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 // Fallback writer for repositories without a shared SQLite connection (for example in-memory
 // test repositories). It follows the same update-only rules through the repository interfaces.
