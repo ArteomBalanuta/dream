@@ -27,10 +27,16 @@ namespace Dream.Tests.Server;
 //
 // The service-level test blocks a release inside the host (ReleasingSessionForTest) and checks that
 // the shutdown sequence every caller uses (service.DisposeAsync, then host.Dispose) does not finish
-// while that release is still in flight. DedicatedServerHost.Dispose takes the tick lock and sets a
-// disposed flag under it, so this holds on its own: Dispose waits for the in-flight release, and a
-// release, message or tick that comes later leaves the runtime alone. (The service may also await
-// its connection loops before DisposeAsync returns; either way the sequence waits.)
+// while that release is still in flight.
+//
+// Fixed in the wave 8 fix loop, twice over:
+// - DedicatedServerHost.Dispose takes the tick lock and sets a disposed flag under it, so Dispose
+//   waits for an in-flight release, and a release, message or tick that comes later leaves the
+//   runtime alone.
+// - The service tracks every connection loop; RunAsync and DisposeAsync close the loops'
+//   transports and await them (bounded by DedicatedServerService.ConnectionLoopShutdownTimeout)
+//   before returning.
+// The tester's "CurrentlyReturnsWhile..." test, which pinned the bug, is gone; the target is enabled.
 public class Wave8ShutdownReleaseRaceTests
 {
     private static readonly TimeSpan Completion = TimeSpan.FromSeconds(20);

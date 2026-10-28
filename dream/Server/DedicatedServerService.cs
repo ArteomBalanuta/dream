@@ -15,11 +15,23 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // How long a rejection may take to reach a peer before its connection is closed anyway.
     private static readonly TimeSpan RejectionSendTimeout = TimeSpan.FromSeconds(1);
 
+    // How long RunAsync and DisposeAsync wait for the connection loops to finish their cleanup
+    // after closing every connection's transport.
+    public static readonly TimeSpan ConnectionLoopShutdownTimeout = TimeSpan.FromSeconds(5);
+
     private readonly DedicatedServerHost _host;
     private readonly IServerTransport _transport;
     private readonly IProtocolCodec _codec;
     private readonly IMessageFramer _framer;
     private readonly ConcurrentDictionary<string, ServerConnection> _connections = new(StringComparer.Ordinal);
+    // Every running RunConnectionLoopAsync task and its connection. A loop removes itself when it
+    // completes. Shutdown closes the connections' transports and awaits these, so no loop can
+    // call _host.ReleaseConnection after RunAsync or DisposeAsync has returned and the owner
+    // disposes the host.
+    private readonly ConcurrentDictionary<Task, ServerConnection> _connectionLoops = new();
+    // 0 while serving, 1 once shutdown has started; connection loops ending after that are not
+    // reported as errors.
+    private int _stopping;
 
     // Tick-loop scratch. The connection list mirrors _connections and is rebuilt only after a
     // connection is attached or removed.
@@ -193,7 +205,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         NetworkDiagnosticsLog.Write(
             "server.accept",
             $"connection={connection.ConnectionId} connections={_connections.Count}");
-        _ = RunConnectionLoopAsync(connection, cancellationToken);
+        TrackConnectionLoop(connection, RunConnectionLoopAsync(connection, cancellationToken));
         return connection;
     }
 
@@ -334,10 +346,17 @@ public sealed class DedicatedServerService : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        finally
+        {
+            // The tick loop has exited; the connection loops may still be releasing their
+            // seats. Callers dispose the host right after RunAsync returns, so wait for them.
+            await StopConnectionLoopsAsync();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
+        await StopConnectionLoopsAsync();
         foreach (ServerConnection connection in _connections.Values)
         {
             await connection.DisposeAsync();
@@ -346,6 +365,66 @@ public sealed class DedicatedServerService : IAsyncDisposable
         _connections.Clear();
         Volatile.Write(ref _connectionsChanged, 1);
         await _transport.DisposeAsync();
+    }
+
+    // Number of connection loops still running; tests use it to check shutdown.
+    public int RunningConnectionLoopCount => _connectionLoops.Count;
+
+    private void TrackConnectionLoop(ServerConnection connection, Task loop)
+    {
+        _connectionLoops[loop] = connection;
+        // Registered after the add, so the removal can never run before it.
+        _ = loop.ContinueWith(
+            static (completed, state) => ((ConcurrentDictionary<Task, ServerConnection>)state!).TryRemove(completed, out _),
+            _connectionLoops,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    // Closes the transport of every connection that still has a loop running, which ends its
+    // pending receive, then waits (bounded) for the loops, whose cleanup releases each seat in
+    // the host. Idempotent; safe to call from RunAsync and again from DisposeAsync.
+    private async ValueTask StopConnectionLoopsAsync()
+    {
+        Volatile.Write(ref _stopping, 1);
+        if (_connectionLoops.IsEmpty)
+        {
+            return;
+        }
+
+        List<Task> loops = new(_connectionLoops.Count);
+        foreach (KeyValuePair<Task, ServerConnection> entry in _connectionLoops)
+        {
+            loops.Add(entry.Key);
+            try
+            {
+                await entry.Value.CloseTransportAsync();
+            }
+            catch (Exception ex)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.connection.close-failed",
+                    $"connection={entry.Value.ConnectionId} error={ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            // The loops never fault (RunConnectionLoopAsync catches everything).
+            await Task.WhenAll(loops).WaitAsync(ConnectionLoopShutdownTimeout);
+        }
+        catch (TimeoutException)
+        {
+            string line = $"connection loops still running after {ConnectionLoopShutdownTimeout.TotalSeconds:0} s: {_connectionLoops.Count}";
+            NetworkDiagnosticsLog.Write("server.shutdown.timeout", line);
+            Console.Error.WriteLine($"[server.shutdown.timeout] {line}");
+        }
+        catch (Exception ex)
+        {
+            // Not expected: RunConnectionLoopAsync catches everything. Shutdown goes on.
+            NetworkDiagnosticsLog.Write("server.shutdown.loop-error", $"{ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -441,8 +520,26 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
-    // Started fire-and-forget by AcceptNextClientAsync, so it must never end faulted: every error
-    // is logged once and closes only this connection.
+    // The host's answer to an overflow resync request (DedicatedServerHost.RequestWorldResyncIfConnected).
+    // A refused request (the cooldown) is re-armed on a connection that is still live, so a later
+    // tick retries it; nothing is re-armed for a faulted or removed connection. Returns whether it
+    // re-armed.
+    internal bool HandleOverflowResyncResult(ServerConnection connection, bool accepted)
+    {
+        if (accepted ||
+            connection.IsFaulted ||
+            !_connections.TryGetValue(connection.ConnectionId, out ServerConnection? live) ||
+            !ReferenceEquals(live, connection))
+        {
+            return false;
+        }
+
+        connection.RearmOverflowResync();
+        return true;
+    }
+
+    // Started by AcceptNextClientAsync and tracked in _connectionLoops; it must never end
+    // faulted: every error is logged once and closes only this connection.
     private async Task RunConnectionLoopAsync(ServerConnection connection, CancellationToken cancellationToken)
     {
         try
@@ -462,10 +559,15 @@ public sealed class DedicatedServerService : IAsyncDisposable
             ReportConnectionError(connection, "protocol-mismatch", ex.Message, ex);
             await TrySendRejectionAsync(connection, ex.Message);
         }
-        catch (Exception) when (connection.CloseReason is ServerConnectionCloseReason.IdleTimeout or ServerConnectionCloseReason.SendStall)
+        catch (Exception) when (connection.CloseReason != ServerConnectionCloseReason.None)
         {
-            // The tick thread closed this connection for liveness, which aborts the pending
-            // receive; the fault was already logged and counted.
+            // The connection faulted first (liveness, backlog overflow or a writer error) and its
+            // transport was closed, which aborts the pending receive; the fault was already
+            // logged and counted.
+        }
+        catch (Exception) when (Volatile.Read(ref _stopping) != 0)
+        {
+            // Shutdown closed the transport under the pending receive.
         }
         catch (Exception ex)
         {
