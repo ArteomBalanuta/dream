@@ -9,8 +9,6 @@ namespace Dream.Server;
 // still waiting, the older one is dropped because each checkpoint holds the full state.
 public sealed class BackgroundCheckpointWriter : IDisposable
 {
-    private static readonly TimeSpan DisposeFlushTimeout = TimeSpan.FromSeconds(5);
-
     private readonly IPersistenceCheckpointWriter _writer;
     private readonly object _sync = new();
     private PersistenceCheckpoint? _pending;
@@ -101,9 +99,25 @@ public sealed class BackgroundCheckpointWriter : IDisposable
         }
     }
 
+    // Writes the pending checkpoint before returning, so no checkpoint lands in the database after
+    // the host that captured it is disposed (see PersistenceWriteQueue.Dispose).
     public void Dispose()
     {
-        Flush(DisposeFlushTimeout);
+        while (true)
+        {
+            Task worker;
+            lock (_sync)
+            {
+                if (!_running)
+                {
+                    return;
+                }
+
+                worker = _worker;
+            }
+
+            worker.Wait();
+        }
     }
 
     private void DrainPending()

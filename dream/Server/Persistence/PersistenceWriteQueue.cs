@@ -9,8 +9,6 @@ namespace Dream.Server.Persistence;
 // after an action use it.
 public sealed class PersistenceWriteQueue : IDisposable
 {
-    private static readonly TimeSpan DisposeFlushTimeout = TimeSpan.FromSeconds(10);
-
     private readonly bool _background;
     private readonly object _sync = new();
     private readonly Queue<Action> _pending = new();
@@ -88,9 +86,26 @@ public sealed class PersistenceWriteQueue : IDisposable
         }
     }
 
+    // Runs every queued write before returning. A bounded wait here let the worker keep writing
+    // after the runtime and its owner were disposed, so a busy shutdown (a fracture queues one
+    // write per piece) could land rows in the database long after the server stopped.
     public void Dispose()
     {
-        Flush(DisposeFlushTimeout);
+        while (true)
+        {
+            Task worker;
+            lock (_sync)
+            {
+                if (!_running)
+                {
+                    return;
+                }
+
+                worker = _worker;
+            }
+
+            worker.Wait();
+        }
     }
 
     private void DrainPending()
