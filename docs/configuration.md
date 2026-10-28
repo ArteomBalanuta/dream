@@ -261,9 +261,12 @@ Set `DREAM_BULLET_PROFILER_GUARD=0` to leave libbulletc's `btGetCurrentThreadInd
 | Variable | Read in | Effect |
 | --- | --- | --- |
 | `DREAM_DAY_LENGTH_MINUTES` | `ServerBootstrap.ResolveDayLengthMinutes` (called from `ServerBootstrap.CreateRuntimeHost`, so the dedicated and the integrated server) | Real-time minutes per in-game day. Default 30 (115,200 ticks at 64 ticks/s; a new world starts at 08:00). Decimals are accepted; values outside 1–1440 are clamped and an unparsable value falls back to 30, each with a line on standard error. Not persisted: the world keeps its `world_time_ticks`, so changing the day length between runs moves the time of day once. Server-only; clients receive it in the join-accepted world clock anchor. |
-| `DREAM_NIGHT_BRIGHTNESS` | `SkyModelSettings.FromEnvironment` (desktop client) | Up-facing light at night as a fraction of noon's. Default 0.15, clamped to 0–1; an unparsable value uses the default. Client-only presentation; it changes no simulation state. |
+| `DREAM_NIGHT_BRIGHTNESS` | `SkyModelSettings.FromEnvironment` (desktop client) | Up-facing light at night as a fraction of noon's. Default 0.07 (0.15 before wave T2), clamped to 0–1; an unparsable value uses the default. Client-only presentation; it changes no simulation state. Torches and lamps (point lights) are what make the night readable. |
+| `DREAM_DEBUG_POINT_LIGHTS` | desktop client (`Render.PointLights`) | Adds a deterministic ring of N synthetic point lights around the camera, for the perf harness. Default 0 (off), clamped to 0–64. Client-only debug; it changes no simulation state. At most 16 lights reach the shaders per frame, so values above 16 measure the collection and selection cost only. |
 
 The world clock counts authoritative ticks, never wall time, so the time of day stands still while the server is stopped. It is saved with each non-null checkpoint as the `world_time_ticks` row of `world_metadata` (see `docs/server-persistence-ddl.md`): a clean stop loses nothing and a crash loses at most the time since the last committed checkpoint (about a minute in an idle world, whose incremental checkpoints are skipped until the next full sweep).
+
+Since wave T2 the clock is a gameplay input: at night (20:00 to 04:00) the server keeps a second wolf (see `docs/architecture.md`, Update Loop). The phase is derived from ticks only, so the persisted `world_time_ticks`, the `TicksPerDay` from `DREAM_DAY_LENGTH_MINUTES` and the number of ticks run are lockstep inputs: two servers that must produce the same checksums need the same three. Changing `DREAM_DAY_LENGTH_MINUTES` between runs can move a world into or out of night, which adds or removes the night wolf on the first tick.
 
 ## World Simulation Seed
 

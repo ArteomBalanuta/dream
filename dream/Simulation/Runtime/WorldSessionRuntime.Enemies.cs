@@ -6,7 +6,8 @@ using Dream.Simulation.World;
 
 namespace Dream.Simulation.Runtime;
 
-// Enemies: enemy actor id allocation, initial wolf spawning and player/enemy separation.
+// Enemies: enemy actor id allocation, the wolf population step (day and night targets) and
+// player/enemy separation.
 public sealed partial class WorldSessionRuntime
 {
     // Actor id of the first enemy a fresh world spawns; each later spawn takes the next id. Enemy
@@ -20,14 +21,24 @@ public sealed partial class WorldSessionRuntime
     private int _nextEnemyActorId = FirstEnemyActorId;
     private bool _enemyIdsExhaustedLogged;
 
+    // Active wolves the population step keeps: one by day, two at night (WorldDayPhase.Night).
+    public const int DayWolfTarget = 1;
+    public const int NightWolfTarget = 2;
+
+    // The first wolf of a world (restore with no persisted enemy), at the day spawn.
     private void SpawnInitialWolf()
+    {
+        SpawnWolf(WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth));
+    }
+
+    // A new, persisted wolf at spawnPosition with the next enemy id. Allocates (the actor, its
+    // closure, the queued row write), so it only runs on a spawn tick.
+    private void SpawnWolf(Vector3 spawnPosition)
     {
         if (!TryAllocateEnemyActorId(out int actorId))
         {
             return;
         }
-
-        Vector3 spawnPosition = WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth);
 
         EnemyCombatant combatant = new(
             () => spawnPosition,
@@ -53,9 +64,9 @@ public sealed partial class WorldSessionRuntime
         PersistEnemy(wolf);
     }
 
-    // Monotonic and deterministic. A wolf is only spawned when no enemy is active (startup or
-    // EnsureWolfExists), and a restore advances the counter past every persisted enemy, so the
-    // id is never held by a live or persisted enemy.
+    // Monotonic and deterministic. Ids are never reused (a despawned or killed wolf's id stays
+    // taken), and a restore advances the counter past every persisted enemy, so the id is never
+    // held by a live or persisted enemy.
     //
     // False once the enemy range (about a billion ids) is exhausted. Spawns run on the tick, where
     // a throw would stop the server, so the spawn is refused (logged once) instead: the world goes
@@ -86,14 +97,65 @@ public sealed partial class WorldSessionRuntime
         _nextEnemyActorId = ReplicatedActorIdRanges.ReserveEnemyId(_nextEnemyActorId, actorId);
     }
 
+    // The wolf population step: authoritative only, once per tick inside the gameplay block, after
+    // WorldClock.Advance and after the enemies acted and the dead were pruned. The clock is a
+    // gameplay input here, so it is a pure function of (persisted world ticks, TicksPerDay, tick
+    // count), which lockstep servers must share. At most one change per tick:
+    // - fewer active wolves than the target (2 at night, else 1): spawn one, at the day spawn when
+    //   none is active, otherwise at the night spawn;
+    // - not night and more than one active: remove the active wolf with the highest actor id, and
+    //   queue its row delete like a kill does (checkpoints never delete rows).
+    // A restore that already holds the night's two wolves therefore spawns no third. Allocates
+    // nothing except on the spawn and despawn ticks.
+    //
+    // Only enemies this runtime owns an id for are removed: ones it spawned or restored, whose ids
+    // are all below the enemy id counter. On a server that is every enemy. An enemy added from
+    // outside with an id the runtime never handed out (a test's scripted target) still counts as
+    // active, so it suppresses a spawn as before, but the dawn step never removes it.
+    // Named for its call site in WorldSessionRuntime.Commands.cs, which this step keeps unchanged.
     private void EnsureWolfExists()
     {
-        if (_enemies.HasActiveActors)
+        int activeWolves = 0;
+        int ownedWolves = 0;
+        int highestOwnedActorId = 0;
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
+        for (int i = 0; i < enemies.Count; i++)
         {
+            EnemyActor enemy = enemies[i];
+            if (!enemy.IsActive)
+            {
+                continue;
+            }
+
+            activeWolves++;
+            int actorId = enemy.Combatant.Actor.Id;
+            if (actorId < ReplicatedActorIdRanges.FirstEnemyId || actorId >= _nextEnemyActorId)
+            {
+                continue;
+            }
+
+            if (ownedWolves == 0 || actorId > highestOwnedActorId)
+            {
+                highestOwnedActorId = actorId;
+            }
+
+            ownedWolves++;
+        }
+
+        bool night = WorldClock.Phase == WorldDayPhase.Night;
+        int target = night ? NightWolfTarget : DayWolfTarget;
+        if (activeWolves < target)
+        {
+            SpawnWolf(activeWolves == 0
+                ? WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth)
+                : WolfSpawnPolicy.ResolveNightSpawn(Map.Width, Map.Depth));
             return;
         }
 
-        SpawnInitialWolf();
+        if (!night && ownedWolves > DayWolfTarget && _enemies.Remove(highestOwnedActorId))
+        {
+            DeletePersistedEnemy(highestOwnedActorId);
+        }
     }
 
     private void ResolvePlayerEnemySeparation(List<IAuthoritativePlayerTarget> playerTargets)

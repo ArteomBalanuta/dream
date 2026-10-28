@@ -16,14 +16,20 @@ using static Dream.Tests.Integration.PersistentWorldSeedDeterminismIntegrationTe
 
 namespace Dream.Tests.Integration;
 
-// Wave T1 tester: the world clock is presentation state. After the merge it must not reach the
-// lockstep checksums, the snapshot bytes or the tick's allocations; only the join grows.
+// Wave T1 tester: the world clock itself must not reach the lockstep checksums, the snapshot bytes or
+// the tick's allocations; only the join grows. Since wave T2 the clock is a gameplay input (a second
+// wolf at night, WaveT2NightSpawnTests), so clocks that differ only within one phase still agree,
+// and a night crossing allocates only on its spawn and despawn ticks.
 public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
 {
     // Two production persistent servers on copies of one world (same stored seed), the second with a
     // very different persisted clock and a 1-minute day, run the wave 13 combat/build/fracture script
     // in lockstep past the periodic checkpoint. Every tick's SimulationStateChecksum and the final
     // WorldStateChecksum match; each database then holds its own clock.
+    //
+    // Wave T2 made the phase a gameplay input (Night adds a wolf), so both clocks are chosen to stay
+    // in Day for the whole run, and the test asserts that they do: the times of day differ, the phase
+    // does not. Day against Night diverges by design (WaveT2NightSpawnTests).
     [Fact]
     public void TwoPersistentServers_WithDifferentClocks_StayInLockstep()
     {
@@ -64,6 +70,8 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         {
             Assert.Equal(first.Seed, second.Seed);
             Assert.NotEqual(first.Runtime.WorldClock.TimeOfDay01, second.Runtime.WorldClock.TimeOfDay01);
+            Assert.Equal(WorldDayPhase.Day, first.Runtime.WorldClock.Phase);
+            Assert.Equal(WorldDayPhase.Day, second.Runtime.WorldClock.Phase);
             Assert.Equal(first.Hash(), second.Hash());
             int firstDivergence = -1;
             for (int tick = 1; tick <= ticks; tick++)
@@ -71,6 +79,8 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
                 ScriptStep step = Script(tick, first);
                 first.Advance(tick, step);
                 second.Advance(tick, step);
+                Assert.Equal(WorldDayPhase.Day, first.Runtime.WorldClock.Phase);
+                Assert.Equal(WorldDayPhase.Day, second.Runtime.WorldClock.Phase);
                 if (firstDivergence < 0 && first.Hash() != second.Hash())
                 {
                     firstDivergence = tick;
@@ -99,8 +109,8 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         }
     }
 
-    // Snapshots carry no clock: two runtimes that differ only in their clock export byte-identical
-    // snapshot payloads every tick.
+    // Snapshots carry no clock: two runtimes that differ only in their clock (both in Day, so the
+    // night wolf is not a difference) export byte-identical snapshot payloads every tick.
     [Fact]
     public void SnapshotBytes_DoNotDependOnTheClock()
     {
@@ -113,6 +123,8 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         {
             Tick(first, tick);
             Tick(second, tick);
+            Assert.Equal(WorldDayPhase.Day, first.WorldClock.Phase);
+            Assert.Equal(WorldDayPhase.Day, second.WorldClock.Phase);
             byte[] left = Encode(codec, first.ExportServerSnapshotEnvelope(), tick);
             byte[] right = Encode(codec, second.ExportServerSnapshotEnvelope(), tick);
             Assert.Equal(left.Length, right.Length);
@@ -145,9 +157,10 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         Assert.Contains(field, System.Text.Encoding.UTF8.GetString(withClock));
     }
 
-    // The 0 B tick (MEM-11) still holds with the clock: a whole 1-minute day of ticks (all four
-    // phase bounds and midnight, each raising PhaseChanged to a subscriber) measured in one window
-    // allocates nothing on the tick thread.
+    // The 0 B tick (MEM-11) still holds with the clock: over a whole 1-minute day of ticks (all four
+    // phase bounds and midnight, each raising PhaseChanged to a subscriber), measured tick by tick,
+    // every tick allocates nothing on the tick thread except the two the night wolf needs: its spawn
+    // on the first Night tick and its despawn (the queued row delete) on the first Dawn tick.
     [Fact]
     public void AWholeDayOfTicks_AcrossEveryPhaseBound_AllocatesNothing()
     {
@@ -173,18 +186,47 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         int changesBefore = phaseChanges;
         long dayBefore = runtime.WorldClock.DayNumber;
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (long i = 0; i < settings.TicksPerDay; i++)
+        int dayTicks = (int)settings.TicksPerDay;
+        long[] tickBytes = new long[dayTicks];
+        WorldDayPhase[] tickPhases = new WorldDayPhase[dayTicks];
+        int[] tickWolves = new int[dayTicks];
+        for (int i = 0; i < dayTicks; i++)
         {
+            long before = GC.GetAllocatedBytesForCurrentThread();
             Tick(runtime, ++tick);
+            tickBytes[i] = GC.GetAllocatedBytesForCurrentThread() - before;
+            tickPhases[i] = runtime.WorldClock.Phase;
+            tickWolves[i] = runtime.Enemies.ActiveActors.Count;
         }
 
-        long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        int spawnTick = -1;
+        int despawnTick = -1;
+        for (int i = 1; i < dayTicks; i++)
+        {
+            if (tickPhases[i] == WorldDayPhase.Night && tickPhases[i - 1] == WorldDayPhase.Dusk)
+            {
+                spawnTick = i;
+            }
+            else if (tickPhases[i] == WorldDayPhase.Dawn && tickPhases[i - 1] == WorldDayPhase.Night)
+            {
+                despawnTick = i;
+            }
+        }
 
-        output.WriteLine($"{settings.TicksPerDay} ticks (one day, {phaseChanges - changesBefore} phase changes): {bytes} B");
+        int[] allocatingTicks = Enumerable.Range(0, dayTicks).Where(i => tickBytes[i] != 0).ToArray();
+        output.WriteLine(
+            $"{settings.TicksPerDay} ticks (one day, {phaseChanges - changesBefore} phase changes): {tickBytes.Sum()} B; " +
+            $"allocating ticks {string.Join(", ", allocatingTicks.Select(i => $"{i} ({tickPhases[i]}, {tickBytes[i]} B)"))}");
         Assert.Equal(4, phaseChanges - changesBefore);
         Assert.Equal(dayBefore + 1, runtime.WorldClock.DayNumber);
-        Assert.Equal(0, bytes);
+        Assert.True(spawnTick > 0 && despawnTick > 0, "the day did not cross nightfall and dawn");
+        Assert.Equal(2, tickWolves[spawnTick]);
+        Assert.Equal(1, tickWolves[spawnTick - 1]);
+        Assert.Equal(1, tickWolves[despawnTick]);
+        Assert.Equal(2, tickWolves[despawnTick - 1]);
+        // The despawn may allocate (its queued row delete) or not; no other tick may.
+        Assert.Contains(spawnTick, allocatingTicks);
+        Assert.All(allocatingTicks, i => Assert.True(i == spawnTick || i == despawnTick, $"tick {i} ({tickPhases[i]}) allocated {tickBytes[i]} B"));
     }
 
     private static byte[] Encode(TransportJsonCodec codec, ServerSnapshotEnvelope snapshot, ulong sequence)
