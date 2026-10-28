@@ -11,8 +11,6 @@ using OpenTK.Mathematics;
 public partial class Render : IDisposable
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
-    private readonly ReusableMatrixBuffer _geometryBlockMatrices = new();
-    private readonly ReusableMatrixBuffer _animatedCubeMatrices = new();
     private readonly StaticTerrainTextureCache _staticTerrainTextures = new();
     private readonly List<WorldActorLabelState> _worldActorLabels = new();
     private readonly ActorHealthLabelCache _actorHealthLabels = new();
