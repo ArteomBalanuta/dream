@@ -39,6 +39,11 @@ public sealed class WorldSessionRuntime : IDisposable
     // tick, session, action sequence and target, so a fixed default keeps runs reproducible.
     public const ulong DefaultSimulationSeed = 0x6472_6561_6D5F_7631UL;
 
+    // A starved seat (no accepted command this tick) repeats its last command for at most this many
+    // ticks (250 ms at 64 Hz), then simulates an idle frame until a command arrives, so a stalled
+    // client stops walking and using instead of repeating its last input until it disconnects.
+    public const int MaxCommandRepeatTicks = 16;
+
     // Ordinal by session id, so per-tick iteration over secondary players never depends on join history.
     private static readonly Comparison<RemoteSessionPlayerState> CompareSecondaryBySessionId =
         static (left, right) => string.CompareOrdinal(left.SessionId.Value, right.SessionId.Value);
@@ -105,6 +110,11 @@ public sealed class WorldSessionRuntime : IDisposable
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
+    // Ticks since the primary seat last accepted a command; see MaxCommandRepeatTicks.
+    private int _primaryTicksSinceCommand;
+    // This tick's secondary seats whose primary use triggered (after their attack-interval gate),
+    // as the frames they simulated, in ordinal session-id order. Reused every tick.
+    private readonly List<PlayerCommandFrame> _triggeredSecondaryUseFrames = [];
     // A primary-seat primary use that triggered this tick but was left for the caller to resolve
     // in its ordinal pass with every other seat (see AdvanceAuthoritativeTick's deferPrimarySeatUse).
     private bool _hasDeferredPrimarySeatUse;
@@ -306,6 +316,7 @@ public sealed class WorldSessionRuntime : IDisposable
         {
             PrimaryRemoteSessionId = null;
             _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
+            _primaryTicksSinceCommand = 0;
             // Without an occupant the primary body would stay as an invisible collider.
             Physics.SetPlayerBodyParked(true);
         }
@@ -354,6 +365,7 @@ public sealed class WorldSessionRuntime : IDisposable
         }
 
         _lastAppliedCommandFrame = context.CommandFrame;
+        _primaryTicksSinceCommand = 0;
         return UpdateAcceptedCommand(
             context.DeltaTime,
             context.CommandFrame,
@@ -373,6 +385,25 @@ public sealed class WorldSessionRuntime : IDisposable
         return taken;
     }
 
+    // The secondary seats whose primary use triggered in the last tick, as the frames they simulated,
+    // in ordinal session-id order. Each seat contributes at most one use per tick, through the same
+    // attack-interval repeat gate as the primary seat. The caller resolves them with
+    // TryCreateCommandPrimaryUseActionMessage in its ordinal pass, merged with the primary seat's.
+    public IReadOnlyList<PlayerCommandFrame> TriggeredSecondaryUseFrames => _triggeredSecondaryUseFrames;
+
+    // The idle form of a starved seat's last command: no movement or one-shot inputs, no look
+    // deltas and no primary use; the facing and the requested mode are kept.
+    public static PlayerCommandFrame CreateStarvedCommandFrame(PlayerCommandFrame lastCommand)
+    {
+        return new PlayerCommandFrame(
+            lastCommand.SessionId,
+            lastCommand.Sequence,
+            lastCommand.RequestedMode,
+            PlayerMoveIntent.None,
+            new PlayerLookIntent(0f, 0f, lastCommand.LookIntent.Facing),
+            PrimaryUsePressed: false);
+    }
+
     private WorldSessionUpdateResult UpdateAcceptedCommand(
         float delta,
         PlayerCommandFrame commandFrame,
@@ -381,6 +412,7 @@ public sealed class WorldSessionRuntime : IDisposable
         bool deferPrimarySeatUse)
     {
         _hasDeferredPrimarySeatUse = false;
+        _triggeredSecondaryUseFrames.Clear();
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
         ApplyInteractionModeSelection(commandFrame.SessionId, interaction);
@@ -421,6 +453,10 @@ public sealed class WorldSessionRuntime : IDisposable
         {
             secondary.AdvanceCombat(delta);
             secondary.Simulate(delta, playerTuning);
+            if (secondary.PrimaryUseTriggered)
+            {
+                _triggeredSecondaryUseFrames.Add(secondary.SimulatedCommand);
+            }
         }
 
         Physics.StepSimulationFixed(delta);
@@ -522,11 +558,21 @@ public sealed class WorldSessionRuntime : IDisposable
             && _sessions.TryAcceptCommand(commandFrame.Value.SessionId, commandFrame.Value.Sequence, out _))
         {
             _lastAppliedCommandFrame = commandFrame.Value;
+            _primaryTicksSinceCommand = 0;
+        }
+
+        // A starved primary seat repeats its last command like a secondary seat does, then decays to idle.
+        PlayerCommandFrame simulatedFrame = _primaryTicksSinceCommand > MaxCommandRepeatTicks
+            ? CreateStarvedCommandFrame(_lastAppliedCommandFrame)
+            : _lastAppliedCommandFrame;
+        if (_primaryTicksSinceCommand < int.MaxValue)
+        {
+            _primaryTicksSinceCommand++;
         }
 
         return UpdateAcceptedCommand(
             deltaTime,
-            _lastAppliedCommandFrame,
+            simulatedFrame,
             playerTuning,
             allowGameplaySimulation,
             deferPrimarySeatUse);
