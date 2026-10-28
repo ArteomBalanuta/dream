@@ -434,9 +434,13 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
-    public void ClientAuthoritativeActionApplier_ApplyActionResult_AppliesAcceptedWorldMutationToRuntime()
+    public void ClientAuthoritativeActionApplier_ApplyActionResult_LeavesAcceptedWorldMutationToTheSnapshotStream()
     {
+        // The accepted build reaches the world only through its sequenced CubePlaced delta, which
+        // carries the material and replicated id; the bare action result must not change the map.
         using ClientWorldSession runtime = CreateRuntime();
+        Assert.Null(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        ulong checksumBefore = WorldStateChecksum.Compute(runtime.Map);
         AuthoritativeActionResult result = new(
             "session-a",
             17,
@@ -449,7 +453,15 @@ public class ClientAuthoritativeStateApplierTests
 
         ClientAuthoritativeActionApplier.ApplyActionResult(runtime, new SceneEventHub(), result);
 
-        Assert.NotNull(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        Assert.Null(runtime.Map.TryGetCubeAtCell(6, 1, 6));
+        Assert.Equal(checksumBefore, WorldStateChecksum.Compute(runtime.Map));
+
+        RemoteWorldMutationApplier.ApplyWorldMutations(
+            runtime.Map,
+            [new WorldMutationDelta(WorldMutationKind.CubePlaced, new Vector3(6f, 1f, 6f), MaterialId: GeometryMaterialId.Stone, Sequence: 1, ActorId: 99)]);
+
+        Assert.Equal(GeometryMaterialId.Stone, runtime.Map.TryGetGeometryCellAtCell(6, 1, 6)?.Definition.MaterialId);
+        Assert.True(runtime.Map.TryGetCubeByReplicatedId(99, out _));
     }
 
     [Fact]

@@ -29,8 +29,8 @@ public class Wave7FloorCubeChecksumLoopbackTests
         _output = output;
     }
 
-    // Fails every run: the floor-supported cube is Dirt on the server and Grass on the client.
-    [Fact(Skip = "bug: ClientAuthoritativeActionApplier re-places an accepted build as a Grass cube after the snapshot placed it with its real material (wave 7 tester report)")]
+    // Used to fail every run: the floor-supported cube was Dirt on the server and Grass on the client.
+    [Fact]
     public async Task Horizontal_Command_Path_Builds_Keep_The_Client_Checksum_In_Sync()
     {
         const string SessionId = "w7-floor-cube";
@@ -155,7 +155,7 @@ public class Wave7FloorCubeChecksumLoopbackTests
     // a WorldMutationDelta without MaterialId or ActorId, and the CubePlaced branch of
     // RemoteWorldMutationApplier defaults the material to Grass, finds the Dirt cube "wrong",
     // removes it and adds a Grass cube with no replicated id.
-    [Fact(Skip = "bug: ClientAuthoritativeActionApplier re-places an accepted build as a Grass cube after the snapshot placed it with its real material (wave 7 tester report)")]
+    [Fact]
     public void Accepted_Build_Result_After_Its_Replicated_Placement_Keeps_The_Material_And_Id()
     {
         using ClientWorldSession clientWorld = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
@@ -187,7 +187,7 @@ public class Wave7FloorCubeChecksumLoopbackTests
         Assert.Equal(replicatedChecksum, WorldStateChecksum.Compute(clientWorld.Map));
     }
 
-    // The other arrival order is already fine: the replicated delta carries the material and wins.
+    // The other arrival order: the result changes nothing and the replicated delta places the cube.
     [Fact]
     public void Accepted_Build_Result_Before_Its_Replicated_Placement_Ends_With_The_Replicated_Material()
     {
@@ -206,6 +206,66 @@ public class Wave7FloorCubeChecksumLoopbackTests
 
         Assert.Equal(GeometryMaterialId.Dirt, clientWorld.Map.TryGetGeometryCellAtCell(x, y, z)?.Definition.MaterialId);
         Assert.True(clientWorld.Map.TryGetCubeByReplicatedId(4242, out _));
+    }
+
+    // Both arrival orders, for every non-default material the server can pick from a support cell:
+    // the client ends with exactly the world the replicated delta alone produces (same material,
+    // same replicated id, same checksum), and the action result never adds an unsequenced cube.
+    [Theory]
+    [InlineData(GeometryMaterialId.Dirt, true)]
+    [InlineData(GeometryMaterialId.Dirt, false)]
+    [InlineData(GeometryMaterialId.Stone, true)]
+    [InlineData(GeometryMaterialId.Stone, false)]
+    [InlineData(GeometryMaterialId.Sand, true)]
+    [InlineData(GeometryMaterialId.Sand, false)]
+    public void Accepted_Build_Result_In_Either_Order_Matches_The_Replicated_Placement_Alone(
+        GeometryMaterialId material,
+        bool snapshotFirst)
+    {
+        const int ActorId = 5151;
+        ulong expectedChecksum;
+        using (ClientWorldSession reference = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub()))
+        {
+            (int rx, int ry, int rz) = FindFreeRaisedCell(reference.Map);
+            RemoteWorldMutationApplier.ApplyWorldMutations(
+                reference.Map,
+                [new WorldMutationDelta(WorldMutationKind.CubePlaced, new Vector3(rx, ry, rz), MaterialId: material, Sequence: 1, ActorId: ActorId)]);
+            expectedChecksum = WorldStateChecksum.Compute(reference.Map);
+        }
+
+        using ClientWorldSession clientWorld = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        (int x, int y, int z) = FindFreeRaisedCell(clientWorld.Map);
+        Vector3 cell = new(x, y, z);
+        ulong checksumBefore = WorldStateChecksum.Compute(clientWorld.Map);
+        int cubesBefore = clientWorld.Map.SolidCubes.Count;
+        AuthoritativeActionResult result = new(
+            "w7-session",
+            ActionSequence: 7,
+            ServerTick: 10,
+            Accepted: true,
+            Payload: new WorldMutationResult(WorldMutationKind.CubePlaced, cell, Applied: true));
+        WorldMutationDelta replicated = new(WorldMutationKind.CubePlaced, cell, MaterialId: material, Sequence: 1, ActorId: ActorId);
+
+        if (snapshotFirst)
+        {
+            RemoteWorldMutationApplier.ApplyWorldMutations(clientWorld.Map, [replicated]);
+            ClientAuthoritativeActionApplier.ApplyActionResult(clientWorld, new SceneEventHub(), result, "w7-session");
+        }
+        else
+        {
+            ClientAuthoritativeActionApplier.ApplyActionResult(clientWorld, new SceneEventHub(), result, "w7-session");
+            // Before its delta arrives the world still matches any checksum the server sent for
+            // earlier sequences: the result itself added nothing.
+            Assert.Equal(checksumBefore, WorldStateChecksum.Compute(clientWorld.Map));
+            Assert.Null(clientWorld.Map.TryGetCubeAtCell(x, y, z));
+            RemoteWorldMutationApplier.ApplyWorldMutations(clientWorld.Map, [replicated]);
+        }
+
+        Assert.Equal(material, clientWorld.Map.TryGetGeometryCellAtCell(x, y, z)?.Definition.MaterialId);
+        Assert.True(clientWorld.Map.TryGetCubeByReplicatedId(ActorId, out Cube? byId) && byId != null);
+        Assert.Same(byId, clientWorld.Map.TryGetCubeAtCell(x, y, z));
+        Assert.Equal(cubesBefore + 1, clientWorld.Map.SolidCubes.Count);
+        Assert.Equal(expectedChecksum, WorldStateChecksum.Compute(clientWorld.Map));
     }
 
     private static (int X, int Y, int Z) FindFreeRaisedCell(Map map)
