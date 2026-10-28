@@ -36,12 +36,21 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     public StaticWorldChunkRenderer(
         Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>>? startBuildTask = null,
-        IRenderFaultSink? faultSink = null,
-        IStaticWorldChunkMeshStore? meshStore = null)
+        IRenderFaultSink? faultSink = null)
+        : this(startBuildTask, faultSink, new GlStaticWorldChunkMeshStore())
     {
+    }
+
+    // Tests substitute a mesh store that needs no GL context.
+    internal StaticWorldChunkRenderer(
+        Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>>? startBuildTask,
+        IRenderFaultSink? faultSink,
+        IStaticWorldChunkMeshStore meshStore)
+    {
+        ArgumentNullException.ThrowIfNull(meshStore);
         _startBuildTask = startBuildTask ?? StartDefaultBuildTask;
         _faultSink = faultSink ?? RenderFaultLog.Shared;
-        _meshStore = meshStore ?? new GlStaticWorldChunkMeshStore();
+        _meshStore = meshStore;
     }
 
     // Runs on the build worker: plans from the request's cell snapshot and signature copy, then
@@ -141,11 +150,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         else if (scheduleChange)
         {
             // ExtractCells reads the mutable Cube positions, so it stays on the render thread; the
-            // worker gets plain cell values and a copy of the applied signatures.
+            // worker gets plain cell values. StartBuild adds the signature snapshot.
             IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
-            Dictionary<StaticWorldChunkMeshKey, int> signatureSnapshot = new(_signatures);
             extractMilliseconds = ElapsedMilliseconds(ref timestamp);
-            ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells, signatureSnapshot));
+            ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells));
         }
 
         StaticWorldChunkSyncStats syncStats = ApplyPendingUploads();
@@ -315,19 +323,17 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         _activeBuildRequest = null;
         _consecutiveBuildFaults = 0;
-        if (_queuedBuildRequest != null &&
-            _queuedBuildRequest.ExportSignature != completed.ExportSignature)
+        // A batch already superseded by the queued request is still uploaded. Dropping it starved
+        // the uploads for as long as an edit arrived every frame and builds took longer than one.
+        // It is at most one export old, and the queued request, planned against the signatures
+        // this batch leaves behind, corrects whatever changed since.
+        _activeUploadBatch = new StaticWorldChunkUploadBatch(completed);
+        if (_queuedBuildRequest != null)
         {
-            // The completed batch is superseded; carry its dirty chunks so empty-chunk removals survive.
-            StaticWorldChunkBuildRequest nextRequest = StaticWorldChunkBuildRequest.MergeDirtyChunks(
-                _queuedBuildRequest,
-                completed.DirtyChunks);
+            StaticWorldChunkBuildRequest nextRequest = _queuedBuildRequest;
             _queuedBuildRequest = null;
             StartBuild(nextRequest);
-            return;
         }
-
-        _activeUploadBatch = new StaticWorldChunkUploadBatch(completed);
     }
 
     // Keeps every existing buffer and never creates an upload batch, so the last good world stays
@@ -431,6 +437,12 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     private void StartBuild(StaticWorldChunkBuildRequest request)
     {
+        // The snapshot is taken when the build starts, not when it was scheduled, and includes the
+        // pending upload batch: a build's result is applied only after that batch completes, so it
+        // may skip only meshes whose signature after that batch matches. A snapshot of a partly
+        // applied batch let a reverted edit skip a non-dirty neighbour mesh that the batch then
+        // overwrote with the edited version.
+        request = request with { CachedSignatures = SnapshotSignaturesAfterPendingUpload() };
         _activeBuildRequest = request;
         try
         {
@@ -440,6 +452,15 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         {
             _activeBuildTask = Task.FromException<StaticWorldChunkBuildBatch>(ex);
         }
+    }
+
+    // The mesh signatures once the pending upload batch, if any, is fully applied, including the
+    // stale-mesh removal it runs on completion.
+    private Dictionary<StaticWorldChunkMeshKey, int> SnapshotSignaturesAfterPendingUpload()
+    {
+        Dictionary<StaticWorldChunkMeshKey, int> snapshot = new(_signatures);
+        _activeUploadBatch?.ApplyRemainingSignaturesTo(snapshot);
+        return snapshot;
     }
 
     private static Task<StaticWorldChunkBuildBatch> StartDefaultBuildTask(StaticWorldChunkBuildRequest request)
@@ -568,6 +589,27 @@ internal sealed class StaticWorldChunkUploadBatch
         ReplacedKeys.Add(output.Key);
         return true;
     }
+
+    // Applies the signature changes the rest of this batch makes: its pending outputs, then the
+    // removal of every mesh of a dirty chunk that the batch does not rebuild.
+    public void ApplyRemainingSignaturesTo(Dictionary<StaticWorldChunkMeshKey, int> signatures)
+    {
+        HashSet<StaticWorldChunkMeshKey> pendingKeys = [];
+        foreach (StaticWorldChunkBuildOutput output in _pendingOutputs)
+        {
+            signatures[output.Key] = output.Signature;
+            pendingKeys.Add(output.Key);
+        }
+
+        foreach (StaticWorldChunkMeshKey staleKey in signatures.Keys
+            .Where(key => DirtyChunks.Contains(key.ChunkKey) &&
+                !ReplacedKeys.Contains(key) &&
+                !pendingKeys.Contains(key))
+            .ToArray())
+        {
+            signatures.Remove(staleKey);
+        }
+    }
 }
 
 public readonly record struct StaticWorldChunkRenderStats(
@@ -589,7 +631,7 @@ public readonly record struct StaticWorldChunkSyncStats(
 
 // Owns the GPU side of the static chunk meshes. The default store keeps one StaticMeshBuffer per
 // mesh key and refills it in place on rebuild; tests substitute a store that needs no GL context.
-public interface IStaticWorldChunkMeshStore
+internal interface IStaticWorldChunkMeshStore
 {
     // Creates the key's buffer, or replaces the contents of the existing one.
     void Upload(StaticWorldChunkMeshKey key, StaticWorldChunkMesh mesh);
@@ -602,7 +644,7 @@ public interface IStaticWorldChunkMeshStore
     void Clear();
 }
 
-public sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
+internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
 {
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
 
