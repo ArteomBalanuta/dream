@@ -281,14 +281,15 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
 
         public int Port => Service.Port;
 
-        public static Task<ServerUnderTest> StartAsync()
+        public static Task<ServerUnderTest> StartAsync(ServerConnectionOptions? connectionOptions = null)
         {
             DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
             DedicatedServerService service = new(
                 host,
                 new TcpServerTransport(IPAddress.Loopback, 0),
                 new TransportJsonCodec(),
-                new LengthPrefixedMessageFramer());
+                new LengthPrefixedMessageFramer(),
+                connectionOptions ?? ServerConnectionOptions.Default);
             service.Start();
             return Task.FromResult(new ServerUnderTest(host, service));
         }

@@ -25,11 +25,28 @@ public sealed class ServerConnection : IAsyncDisposable
     private int _disposeState;
     private readonly string _snapshotTxLogKey;
     private readonly string _commandRxLogKey;
+    // 0 until the transport is disposed, then 1; a faulted connection disposes it early.
+    private int _transportDisposeState;
+
+    // Liveness. Timestamps come from _timeProvider; a limit of 0 turns its check off. The receive
+    // loop writes _lastInboundTimestamp on every complete frame, the sender brackets each socket
+    // write with _sendInFlight, and CheckLiveness (the service's tick thread) reads both.
+    private readonly ServerConnectionOptions _options;
+    private readonly TimeProvider _timeProvider;
+    private readonly long _idleTimeoutTimestampTicks;
+    private readonly long _sendStallTimestampTicks;
+    private long _lastInboundTimestamp;
+    private long _sendStartedTimestamp;
+    private int _sendInFlight;
 
     // Ordered outbound queue drained by one writer task per connection. The tick loop only
     // enqueues, so one slow client can no longer stall the authoritative simulation. A snapshot
     // queued directly behind another unsent snapshot is merged into it (latest actor state,
     // concatenated world mutations and damage), so a lagging client's backlog stays bounded.
+    // The merge appends into a pooled ServerSnapshotCoalesceBuffer, so each merge costs only the
+    // new snapshot's deltas and allocates nothing after warm-up; the writer builds the merged
+    // message when it dequeues the entry. Past the options' delta caps the merged deltas are
+    // dropped and the connection is flagged for a full world resync instead.
     // A broadcast snapshot carries the SharedEncodedPayload of its tick, so its JSON is serialized
     // once for all connections; a merged snapshot drops it and is encoded for this connection.
     public const int MaxPendingOutboundMessages = 512;
@@ -43,6 +60,11 @@ public sealed class ServerConnection : IAsyncDisposable
     private Task? _writerTask;
     private bool _writing;
     private long _coalescedSnapshots;
+    // Merge buffers no longer referenced by a queued or in-flight entry. Guarded by _outboundSync.
+    private readonly Stack<ServerSnapshotCoalesceBuffer> _freeCoalesceBuffers = new();
+    // Set when a merge overflowed the delta caps; taken by the service, which requests a resync.
+    private int _overflowResyncPending;
+    private long _overflowResyncs;
     // Always-on traffic counters (frames include the length prefix). Updated with Interlocked by
     // the writer task and the receive loop, read by DedicatedServerService metrics.
     private long _bytesSent;
@@ -55,11 +77,28 @@ public sealed class ServerConnection : IAsyncDisposable
         DedicatedServerHost host,
         IProtocolCodec codec,
         IMessageFramer framer)
+        : this(transport, host, codec, framer, ServerConnectionOptions.Default)
     {
+    }
+
+    public ServerConnection(
+        ITransportConnection transport,
+        DedicatedServerHost host,
+        IProtocolCodec codec,
+        IMessageFramer framer,
+        ServerConnectionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(options.TimeProvider);
         _transport = transport;
         _host = host;
         _codec = codec;
         _framer = framer;
+        _options = options;
+        _timeProvider = options.TimeProvider;
+        _idleTimeoutTimestampTicks = ToTimestampTicks(options.IdleTimeout, _timeProvider);
+        _sendStallTimestampTicks = ToTimestampTicks(options.SendStallTimeout, _timeProvider);
+        _lastInboundTimestamp = _timeProvider.GetTimestamp();
         _snapshotTxLogKey = $"server.tx.snapshot.{transport.ConnectionId}";
         _commandRxLogKey = $"server.rx.command.{transport.ConnectionId}";
     }
@@ -87,8 +126,65 @@ public sealed class ServerConnection : IAsyncDisposable
 
     public long FramesReceived => Interlocked.Read(ref _framesReceived);
 
-    // Set when the writer failed or the backlog overflowed; the service drops faulted connections.
+    // Set when the writer failed, the backlog overflowed or a liveness check failed; the service
+    // drops faulted connections.
     public bool IsFaulted { get; private set; }
+
+    // Why the connection faulted; None while it has not.
+    public ServerConnectionCloseReason CloseReason { get; private set; }
+
+    public ServerConnectionOptions Options => _options;
+
+    // Merges whose deltas passed the caps and were dropped for a world resync.
+    public long OverflowResyncs => Interlocked.Read(ref _overflowResyncs);
+
+    // Called by the service once per advance, on its tick thread. Faults the connection when no
+    // complete frame arrived within IdleTimeout, or the current socket write has been running for
+    // longer than SendStallTimeout. Returns IsFaulted. Allocation-free while the connection is live.
+    public bool CheckLiveness()
+    {
+        if (IsFaulted)
+        {
+            return true;
+        }
+
+        long now = _timeProvider.GetTimestamp();
+        ServerConnectionCloseReason reason = ServerConnectionCloseReason.None;
+        if (_idleTimeoutTimestampTicks > 0 &&
+            now - Volatile.Read(ref _lastInboundTimestamp) > _idleTimeoutTimestampTicks)
+        {
+            reason = ServerConnectionCloseReason.IdleTimeout;
+        }
+        else if (_sendStallTimestampTicks > 0 &&
+            Volatile.Read(ref _sendInFlight) != 0 &&
+            now - Volatile.Read(ref _sendStartedTimestamp) > _sendStallTimestampTicks)
+        {
+            reason = ServerConnectionCloseReason.SendStall;
+        }
+
+        if (reason == ServerConnectionCloseReason.None)
+        {
+            return false;
+        }
+
+        lock (_outboundSync)
+        {
+            Fault(
+                reason == ServerConnectionCloseReason.IdleTimeout
+                    ? $"no inbound frame for {_options.IdleTimeout.TotalSeconds:0.###} s"
+                    : $"socket write stalled for {_options.SendStallTimeout.TotalSeconds:0.###} s",
+                reason);
+        }
+
+        return true;
+    }
+
+    // True once after a merge overflowed the delta caps: the caller should get this connection a
+    // full world resync, because the merged deltas it would have received were dropped.
+    public bool TryTakeOverflowResync()
+    {
+        return Interlocked.Exchange(ref _overflowResyncPending, 0) != 0;
+    }
 
     public void EnqueueSnapshot(ServerSnapshotMessage snapshotMessage)
     {
@@ -180,9 +276,19 @@ public sealed class ServerConnection : IAsyncDisposable
 
         _writerShutdown.Cancel();
         Task? writerTask;
+        bool faulted;
         lock (_outboundSync)
         {
             writerTask = _writerTask;
+            faulted = IsFaulted;
+        }
+
+        // A faulted connection may have a socket write that never completes (a send stall, or a
+        // transport that ignores cancellation). Closing the transport first aborts that write, so
+        // neither the writer task nor _sendLock below can hold up the caller (the tick thread).
+        if (faulted)
+        {
+            await DisposeTransportAsync();
         }
 
         if (writerTask != null)
@@ -215,7 +321,25 @@ public sealed class ServerConnection : IAsyncDisposable
         // woken by a disposed SemaphoreSlim. It owns no unmanaged handle unless AvailableWaitHandle
         // is read, which this class never does.
         _writerShutdown.Dispose();
-        await _transport.DisposeAsync();
+        await DisposeTransportAsync();
+    }
+
+    private ValueTask DisposeTransportAsync()
+    {
+        return Interlocked.Exchange(ref _transportDisposeState, 1) == 0
+            ? _transport.DisposeAsync()
+            : ValueTask.CompletedTask;
+    }
+
+    private static long ToTimestampTicks(TimeSpan timeout, TimeProvider timeProvider)
+    {
+        if (timeout <= TimeSpan.Zero || timeout == Timeout.InfiniteTimeSpan)
+        {
+            return 0;
+        }
+
+        double ticks = timeout.TotalSeconds * timeProvider.TimestampFrequency;
+        return ticks >= long.MaxValue ? long.MaxValue : Math.Max(1L, (long)ticks);
     }
 
     private void EnqueueSnapshotEntry(OutboundEntry entry)
@@ -225,17 +349,59 @@ public sealed class ServerConnection : IAsyncDisposable
         {
             // A merged snapshot no longer matches any shared payload, so it is encoded for this
             // connection alone. That only happens while this client lags behind the tick rate.
+            // Same rule as ServerSnapshotEnvelope.TryCoalesce: full-world snapshots never merge.
             LinkedListNode<OutboundEntry>? last = _outbound.Last;
-            if (last?.Value.Message is ServerSnapshotMessage pending &&
-                ServerSnapshotEnvelope.TryCoalesce(pending.Snapshot, snapshotMessage.Snapshot, out ServerSnapshotEnvelope merged))
+            if (last != null && ServerSnapshotCoalesceBuffer.CanCoalesce(snapshotMessage.Snapshot))
             {
-                last.Value = new OutboundEntry(new ServerSnapshotMessage(merged), Shared: null);
-                Interlocked.Increment(ref _coalescedSnapshots);
-                return;
+                OutboundEntry pending = last.Value;
+                if (pending.Coalesced != null)
+                {
+                    AppendCoalesced(pending.Coalesced, snapshotMessage.Snapshot);
+                    return;
+                }
+
+                if (pending.Message is ServerSnapshotMessage pendingSnapshot &&
+                    ServerSnapshotCoalesceBuffer.CanCoalesce(pendingSnapshot.Snapshot))
+                {
+                    ServerSnapshotCoalesceBuffer buffer =
+                        _freeCoalesceBuffers.TryPop(out ServerSnapshotCoalesceBuffer? free) ? free : new();
+                    buffer.Begin(pendingSnapshot.Snapshot);
+                    last.Value = new OutboundEntry(pendingSnapshot, Shared: null, buffer);
+                    AppendCoalesced(buffer, snapshotMessage.Snapshot);
+                    return;
+                }
             }
         }
 
         Enqueue(entry);
+    }
+
+    // Caller holds _outboundSync. Past either delta cap the merged deltas (this snapshot's
+    // included) are dropped and a world resync is flagged: the client would otherwise receive an
+    // unbounded backlog, and the resync replaces every delta it missed.
+    private void AppendCoalesced(ServerSnapshotCoalesceBuffer buffer, in ServerSnapshotEnvelope newer)
+    {
+        bool overflow =
+            buffer.WorldMutationCount + (newer.WorldMutations?.Count ?? 0) > _options.MaxCoalescedWorldMutations ||
+            buffer.DamageEventCount + (newer.DamageEvents?.Count ?? 0) > _options.MaxCoalescedDamageEvents;
+        buffer.Append(newer);
+        Interlocked.Increment(ref _coalescedSnapshots);
+        if (!overflow)
+        {
+            return;
+        }
+
+        buffer.DropDeltas();
+        Interlocked.Increment(ref _overflowResyncs);
+        Volatile.Write(ref _overflowResyncPending, 1);
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            return;
+        }
+
+        NetworkDiagnosticsLog.Write(
+            "server.connection.coalesce-overflow",
+            $"connection={ConnectionId} tick={buffer.ServerTick} merged deltas dropped, world resync requested");
     }
 
     private void Enqueue(OutboundEntry entry)
@@ -250,7 +416,7 @@ public sealed class ServerConnection : IAsyncDisposable
 
             if (_outbound.Count >= MaxPendingOutboundMessages)
             {
-                Fault($"outbound backlog exceeded {MaxPendingOutboundMessages} messages");
+                Fault($"outbound backlog exceeded {MaxPendingOutboundMessages} messages", ServerConnectionCloseReason.BacklogOverflow);
                 return;
             }
 
@@ -280,6 +446,7 @@ public sealed class ServerConnection : IAsyncDisposable
                 while (true)
                 {
                     OutboundEntry entry;
+                    IServerToClientMessage message;
                     lock (_outboundSync)
                     {
                         LinkedListNode<OutboundEntry>? first = _outbound.First;
@@ -293,17 +460,27 @@ public sealed class ServerConnection : IAsyncDisposable
                         first.Value = default;
                         _freeNodes.Push(first);
                         _writing = true;
+                        // Dequeued, so no later snapshot merges into this buffer. The merged
+                        // envelope aliases the buffer's lists until the send below is done.
+                        message = entry.Coalesced != null
+                            ? new ServerSnapshotMessage(entry.Coalesced.ToEnvelope())
+                            : entry.Message;
                     }
 
                     try
                     {
-                        await SendMessageAsync(entry.Message, entry.Shared, cancellationToken);
+                        await SendMessageAsync(message, entry.Shared, cancellationToken);
                     }
                     finally
                     {
                         lock (_outboundSync)
                         {
                             _writing = false;
+                            if (entry.Coalesced != null)
+                            {
+                                entry.Coalesced.Reset();
+                                _freeCoalesceBuffers.Push(entry.Coalesced);
+                            }
                         }
                     }
                 }
@@ -320,16 +497,21 @@ public sealed class ServerConnection : IAsyncDisposable
         {
             lock (_outboundSync)
             {
-                Fault($"{ex.GetType().Name}: {ex.Message}");
+                Fault($"{ex.GetType().Name}: {ex.Message}", ServerConnectionCloseReason.Error);
             }
         }
     }
 
     // Shared is set only for a snapshot broadcast unchanged; a merged snapshot is encoded alone.
-    private readonly record struct OutboundEntry(IServerToClientMessage Message, SharedEncodedPayload? Shared);
+    // Coalesced is set once later snapshots were merged into this one; the writer then sends the
+    // buffer's merged envelope instead of Message.
+    private readonly record struct OutboundEntry(
+        IServerToClientMessage Message,
+        SharedEncodedPayload? Shared,
+        ServerSnapshotCoalesceBuffer? Coalesced = null);
 
     // Caller holds _outboundSync.
-    private void Fault(string reason)
+    private void Fault(string reason, ServerConnectionCloseReason closeReason)
     {
         if (IsFaulted)
         {
@@ -337,8 +519,11 @@ public sealed class ServerConnection : IAsyncDisposable
         }
 
         IsFaulted = true;
+        CloseReason = closeReason;
         _outbound.Clear();
-        NetworkDiagnosticsLog.Write("server.connection.fault", $"connection={ConnectionId} reason={reason}");
+        NetworkDiagnosticsLog.Write(
+            "server.connection.fault",
+            $"connection={ConnectionId} kind={closeReason} reason={reason}");
     }
 
     private void FlushInboundFrames()
@@ -346,6 +531,8 @@ public sealed class ServerConnection : IAsyncDisposable
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
             Interlocked.Increment(ref _framesReceived);
+            // Any complete frame, an empty one included, shows the peer is alive.
+            Volatile.Write(ref _lastInboundTimestamp, _timeProvider.GetTimestamp());
             if (payload.IsEmpty)
             {
                 continue;
@@ -395,7 +582,19 @@ public sealed class ServerConnection : IAsyncDisposable
             // frame aliases _frameWriter's pooled buffer. Passing it to the transport is safe only
             // because the send is awaited here, inside _sendLock, before the next encode reuses the
             // buffer; transports must not keep the memory after SendAsync completes.
-            await _transport.SendAsync(frame, cancellationToken);
+            // Bracketed for CheckLiveness: a write in flight for longer than SendStallTimeout
+            // faults the connection.
+            Volatile.Write(ref _sendStartedTimestamp, _timeProvider.GetTimestamp());
+            Volatile.Write(ref _sendInFlight, 1);
+            try
+            {
+                await _transport.SendAsync(frame, cancellationToken);
+            }
+            finally
+            {
+                Volatile.Write(ref _sendInFlight, 0);
+            }
+
             Interlocked.Add(ref _bytesSent, frameLength);
             Interlocked.Increment(ref _framesSent);
         }

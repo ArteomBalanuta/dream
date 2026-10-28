@@ -378,7 +378,8 @@ public class DedicatedServerTickAllocationTests
             new NullTransportConnection(connectionId),
             host,
             new TransportJsonCodec(),
-            new LengthPrefixedMessageFramer()));
+            new LengthPrefixedMessageFramer(),
+            ServerConnectionTestFixtures.WithoutLiveness));
     }
 
     private static PlayerCommandFrame CreateCommand(PlayerSessionId sessionId, ulong sequence)

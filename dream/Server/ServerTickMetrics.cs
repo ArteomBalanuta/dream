@@ -194,7 +194,16 @@ public readonly record struct ServerMetricsSnapshot(
     double MaxCheckpointWriteMilliseconds,
     double MeanCheckpointWriteMilliseconds,
     long PersistenceWritesCompleted,
-    long PersistenceWritesFailed);
+    long PersistenceWritesFailed,
+    // Connections the server closed itself: no inbound frame within the idle timeout, a socket
+    // write stalled past the send-stall timeout, or more unmerged messages queued than
+    // ServerConnection.MaxPendingOutboundMessages.
+    long IdleTimeoutCloses = 0,
+    long SendStallCloses = 0,
+    long BacklogOverflowCloses = 0,
+    // Lagging connections whose merged snapshot deltas passed the cap and were replaced by a
+    // server-requested full world resync.
+    long CoalesceOverflowResyncs = 0);
 
 // Always-on, allocation-free server tick metrics. The tick thread records phase timestamps from
 // Stopwatch.GetTimestamp; readers on other threads copy a ServerTickMetricsSnapshot out under the
@@ -227,6 +236,44 @@ public sealed class ServerTickMetrics
         stopwatchTicks <= 0 ? 0d : stopwatchTicks * 1000d / Stopwatch.Frequency;
 
     public long Version => Volatile.Read(ref _version);
+
+    // Server-side connection closes and overflow resyncs. Monotonic, Interlocked, outside _sync:
+    // they are recorded by whichever thread drops the connection.
+    private long _idleTimeoutCloses;
+    private long _sendStallCloses;
+    private long _backlogOverflowCloses;
+    private long _coalesceOverflowResyncs;
+
+    public long IdleTimeoutCloses => Interlocked.Read(ref _idleTimeoutCloses);
+
+    public long SendStallCloses => Interlocked.Read(ref _sendStallCloses);
+
+    public long BacklogOverflowCloses => Interlocked.Read(ref _backlogOverflowCloses);
+
+    public long CoalesceOverflowResyncs => Interlocked.Read(ref _coalesceOverflowResyncs);
+
+    // Counts a connection the server closed for one of the liveness or backlog reasons; other
+    // reasons are not counted here.
+    public void RecordConnectionClosed(ServerConnectionCloseReason reason)
+    {
+        switch (reason)
+        {
+            case ServerConnectionCloseReason.IdleTimeout:
+                Interlocked.Increment(ref _idleTimeoutCloses);
+                break;
+            case ServerConnectionCloseReason.SendStall:
+                Interlocked.Increment(ref _sendStallCloses);
+                break;
+            case ServerConnectionCloseReason.BacklogOverflow:
+                Interlocked.Increment(ref _backlogOverflowCloses);
+                break;
+        }
+    }
+
+    public void RecordCoalesceOverflowResync()
+    {
+        Interlocked.Increment(ref _coalesceOverflowResyncs);
+    }
 
     // One AdvanceOnceAsync call. The phase durations are Stopwatch ticks; snapshot and broadcast
     // are 0 when nobody was joined. Only calls that executed a tick feed the histogram.
@@ -299,22 +346,6 @@ public sealed class ServerTickMetrics
         }
 
         _version++;
-    }
-
-    public void RecordDroppedTicks(long totalDroppedTicks)
-    {
-        lock (_sync)
-        {
-            _droppedTicks = totalDroppedTicks;
-        }
-    }
-
-    public void RecordWriteQueueDepth(int depth)
-    {
-        lock (_sync)
-        {
-            RecordWriteQueueDepthLocked(depth);
-        }
     }
 
     private void RecordWriteQueueDepthLocked(int depth)

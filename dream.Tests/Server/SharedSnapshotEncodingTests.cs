@@ -367,7 +367,9 @@ public class SharedSnapshotEncodingTests
         for (int index = 0; index < count; index++)
         {
             ITransportConnection transport = createTransport(index);
-            connections[index] = new ServerConnection(transport, host, codec, framer);
+            // These fakes never send inbound frames, and the measurements can run past the idle
+            // timeout on a loaded machine; liveness has its own tests.
+            connections[index] = new ServerConnection(transport, host, codec, framer, ServerConnectionTestFixtures.WithoutLiveness);
             service.AttachConnection(connections[index]);
             host.HandleClientMessage(transport.ConnectionId, new ClientJoinRequestMessage($"session-{index}", $"player-{index}"));
         }
