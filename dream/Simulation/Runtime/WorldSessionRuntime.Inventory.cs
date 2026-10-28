@@ -15,9 +15,6 @@ public sealed partial class WorldSessionRuntime
     // Constructed in the constructor, before RestorePersistedWorldState seeds its item id counter.
     private readonly PlayerInventoryService _inventory;
 
-    // The loaded inventories' slots by player name; a name is a key exactly when its inventory is
-    // loaded. Kept for the join's synchronous fallback (RestorePersistedPlayerState).
-    private IReadOnlyDictionary<string, Dictionary<int, long>> _inventorySlotsByPlayer => _inventory.LoadedSlotsByPlayer;
 
     public PlayerInventorySnapshot? TryCaptureInventorySnapshot(PlayerSessionId sessionId)
     {
