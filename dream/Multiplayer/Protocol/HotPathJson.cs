@@ -4,7 +4,7 @@ using OpenTK.Mathematics;
 namespace Dream.Multiplayer.Protocol;
 
 // Shared reading and writing helpers for the hand-written hot-path converters
-// (PlayerCommandJsonConverters, ActorSnapshotJsonConverter). They reproduce what the reflection
+// (PlayerCommandJsonConverters, ActorSnapshotJsonConverter, ServerSnapshotJsonConverters). They reproduce what the reflection
 // serializer does with the codec's protocol v2 options:
 // - writing: camelCase names in declaration order, numbers through the same Utf8JsonWriter
 //   overloads, enums as their underlying number, and null properties left out;
