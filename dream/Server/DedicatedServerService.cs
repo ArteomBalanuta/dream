@@ -51,11 +51,25 @@ public sealed class DedicatedServerService : IAsyncDisposable
         IServerTransport transport,
         IProtocolCodec codec,
         IMessageFramer framer)
+        : this(host, transport, codec, framer, ServerConnectionOptions.Default)
     {
+    }
+
+    // connectionOptions apply to every connection this service accepts. A connection attached
+    // with AttachConnection keeps the options it was built with.
+    public DedicatedServerService(
+        DedicatedServerHost host,
+        IServerTransport transport,
+        IProtocolCodec codec,
+        IMessageFramer framer,
+        ServerConnectionOptions connectionOptions)
+    {
+        ArgumentNullException.ThrowIfNull(connectionOptions);
         _host = host;
         _transport = transport;
         _codec = codec;
         _framer = framer;
+        ConnectionOptions = connectionOptions;
         _checkpointWrites = host.CheckpointWrites;
         _persistenceWrites = host.Runtime?.PersistenceWrites;
     }
@@ -63,6 +77,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public int Port => _transport.Port;
 
     public int ConnectionCount => _connections.Count;
+
+    public ServerConnectionOptions ConnectionOptions { get; }
 
     public ServerTickMetrics TickMetrics => _metrics;
 
@@ -139,7 +155,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
             _checkpointWrites?.MaxWriteMilliseconds ?? 0d,
             _checkpointWrites?.MeanWriteMilliseconds ?? 0d,
             _persistenceWrites?.CompletedWrites ?? 0,
-            _persistenceWrites?.FailedWrites ?? 0);
+            _persistenceWrites?.FailedWrites ?? 0,
+            _metrics.IdleTimeoutCloses,
+            _metrics.SendStallCloses,
+            _metrics.BacklogOverflowCloses,
+            _metrics.CoalesceOverflowResyncs);
     }
 
     // Raised once for each connection closed by an error, after the error is logged. The handler
@@ -168,7 +188,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public async ValueTask<ServerConnection> AcceptNextClientAsync(CancellationToken cancellationToken = default)
     {
         ITransportConnection accepted = await _transport.AcceptClientAsync(cancellationToken);
-        ServerConnection connection = new(accepted, _host, _codec, _framer);
+        ServerConnection connection = new(accepted, _host, _codec, _framer, ConnectionOptions);
         AttachConnection(connection);
         NetworkDiagnosticsLog.Write(
             "server.accept",
@@ -250,7 +270,12 @@ public sealed class DedicatedServerService : IAsyncDisposable
         SharedEncodedPayload sharedPayload = new(_codec, snapshot);
         for (int i = 0; i < joinedConnections.Count; i++)
         {
-            joinedConnections[i].EnqueueSnapshot(snapshot, sharedPayload);
+            ServerConnection connection = joinedConnections[i];
+            connection.EnqueueSnapshot(snapshot, sharedPayload);
+            if (connection.TryTakeOverflowResync())
+            {
+                RequestOverflowResync(connection);
+            }
         }
 
         long broadcastEnd = ServerTickMetrics.Timestamp();
@@ -372,22 +397,46 @@ public sealed class DedicatedServerService : IAsyncDisposable
         replies.Clear();
     }
 
+    // Also runs each connection's liveness check, so a peer that went silent (idle timeout) or
+    // stopped reading (send stall) is faulted here and released through the same path as any
+    // other faulted connection. A faulted connection closes its transport before waiting for its
+    // writer, so a stalled socket write cannot hold up the tick.
     private async ValueTask DropFaultedConnectionsAsync()
     {
         RefreshConnectionList();
         for (int i = 0; i < _connectionList.Count; i++)
         {
             ServerConnection connection = _connectionList[i];
-            if (!connection.IsFaulted || !TryRemoveConnection(connection))
+            if (!connection.CheckLiveness() || !TryRemoveConnection(connection))
             {
                 continue;
             }
 
+            _metrics.RecordConnectionClosed(connection.CloseReason);
             _host.ReleaseConnection(connection.ConnectionId);
             NetworkDiagnosticsLog.Write(
                 "server.disconnect",
-                $"connection={connection.ConnectionId} reason=faulted connections={_connections.Count}");
+                $"connection={connection.ConnectionId} reason=faulted kind={connection.CloseReason} connections={_connections.Count}");
             await connection.DisposeAsync();
+        }
+    }
+
+    // A lagging connection's merged deltas passed the cap and were dropped. Ask for a full world
+    // through the same path a client's checksum-mismatch request takes (WorldResyncRequestHandler
+    // marks it, the host serves it after the next tick, subject to the per-connection cooldown);
+    // if the cooldown refuses it, the client's own checksum check requests one later.
+    private void RequestOverflowResync(ServerConnection connection)
+    {
+        _metrics.RecordCoalesceOverflowResync();
+        try
+        {
+            _host.HandleClientMessage(connection.ConnectionId, new ClientWorldResyncRequestMessage(ClientChecksum: 0));
+        }
+        catch (Exception ex)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.connection.resync-failed",
+                $"connection={connection.ConnectionId} error={ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -412,6 +461,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
             ReportConnectionError(connection, "protocol-mismatch", ex.Message, ex);
             await TrySendRejectionAsync(connection, ex.Message);
         }
+        catch (Exception) when (connection.CloseReason is ServerConnectionCloseReason.IdleTimeout or ServerConnectionCloseReason.SendStall)
+        {
+            // The tick thread closed this connection for liveness, which aborts the pending
+            // receive; the fault was already logged and counted.
+        }
         catch (Exception ex)
         {
             ReportConnectionError(connection, "error", $"{ex.GetType().Name}: {ex.Message}", ex);
@@ -422,6 +476,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
             {
                 if (TryRemoveConnection(connection))
                 {
+                    if (connection.IsFaulted)
+                    {
+                        _metrics.RecordConnectionClosed(connection.CloseReason);
+                    }
+
                     _host.ReleaseConnection(connection.ConnectionId);
                     NetworkDiagnosticsLog.Write(
                         "server.disconnect",

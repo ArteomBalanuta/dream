@@ -124,12 +124,9 @@ public class ServerTickMetricsTests
         ServerTickMetrics metrics = new();
         long oneMs = Stopwatch.Frequency / 1000;
 
-        metrics.RecordAdvance(0, oneMs, 0, 0, capturedCheckpoint: false);
+        metrics.RecordAdvance(0, oneMs, 0, 0, capturedCheckpoint: false, totalDroppedTicks: 0, writeQueueDepth: 7);
         metrics.RecordAdvance(1, 2 * oneMs, oneMs, oneMs, capturedCheckpoint: false);
-        metrics.RecordAdvance(3, 4 * oneMs, 0, 0, capturedCheckpoint: true);
-        metrics.RecordDroppedTicks(5);
-        metrics.RecordWriteQueueDepth(7);
-        metrics.RecordWriteQueueDepth(2);
+        metrics.RecordAdvance(3, 4 * oneMs, 0, 0, capturedCheckpoint: true, totalDroppedTicks: 5, writeQueueDepth: 2);
 
         ServerTickMetricsSnapshot first = metrics.Capture(resetWindow: true);
         Assert.Equal(3, first.Version);
@@ -167,8 +164,6 @@ public class ServerTickMetricsTests
                 long start = ServerTickMetrics.Timestamp();
                 long elapsed = ServerTickMetrics.Timestamp() - start + tick % 997;
                 metrics.RecordAdvance(1, elapsed, elapsed / 2, elapsed / 3, capturedCheckpoint: tick % 320 == 0);
-                metrics.RecordDroppedTicks(tick / 1000);
-                metrics.RecordWriteQueueDepth((int)(tick % 5));
                 metrics.RecordAdvance(1, elapsed, elapsed / 2, elapsed / 3, capturedCheckpoint: false, tick / 1000, (int)(tick % 7));
             },
             iterations: 1000);

@@ -65,7 +65,7 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
                 actionMessage,
                 serverTick: 0,
-                $"Too many pending player actions; at most {PlayerActionQueue.MaxPendingActionsPerSession} may wait for a tick.")));
+                "Too many pending player actions for this session; wait for the next tick to drain them.")));
         }
     }
 
