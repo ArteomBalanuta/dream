@@ -80,7 +80,9 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
-    private static PlayerCommandFrame Merge(PlayerCommandFrame existing, PlayerCommandFrame incoming)
+    // Folds a newer frame into an older pending one: newer axes, facing, mode and sequence; one-shot
+    // presses ORed; look deltas summed. BufferedPlayerCommandInbox merges ring slots with it too.
+    internal static PlayerCommandFrame Merge(PlayerCommandFrame existing, PlayerCommandFrame incoming)
     {
         PlayerInteractionMode? requestedMode = incoming.RequestedMode.Mode ?? existing.RequestedMode.Mode;
         PlayerMoveIntent moveIntent = new(
