@@ -269,6 +269,12 @@ public class Map
         return false;
     }
 
+    public bool TryGetReplicatedId(Cube cube, out int replicatedId)
+    {
+        ArgumentNullException.ThrowIfNull(cube);
+        return _replicatedIdsByCube.TryGetValue(cube, out replicatedId);
+    }
+
     public bool TryGetCellForCube(Cube cube, out GeometryCellKey key)
     {
         return _cubeCells.TryGetValue(cube, out key);
