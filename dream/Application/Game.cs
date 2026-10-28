@@ -100,17 +100,30 @@ public class Game : GameWindow
     }
 
     // The connection screen, at launch and after a play session ends. Each one gets its own
-    // coordinator over the current local server handle. A loopback endpoint is resolved to the
-    // integrated server's current port (which starts it), as at launch.
+    // coordinator over the current local server handle. At launch (resolveLocalPort) a loopback
+    // endpoint is resolved to the integrated server's current port, which starts it. After a
+    // session to the integrated server ended (relaunchLocalServerFor), a connect to that ended
+    // endpoint starts the new integrated server instead (LocalServerRelaunchConnector).
     [MemberNotNull(nameof(_startupScene))]
     private void ShowStartupScene(
         Vector2i size,
         ClientConnectionOptions options,
         bool resolveLocalPort,
         bool autoConnectUsesInitialOptions,
-        string? sessionEndReason)
+        string? sessionEndReason,
+        RemoteClientOptions? relaunchLocalServerFor = null)
     {
-        NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());
+        IRemoteSessionConnector connector = new RemoteSessionConnector();
+        if (relaunchLocalServerFor != null)
+        {
+            connector = new LocalServerRelaunchConnector(
+                connector,
+                _localServer,
+                relaunchLocalServerFor.Host,
+                relaunchLocalServerFor.Port);
+        }
+
+        NetworkSessionCoordinator coordinator = new(_localServer, connector);
         ClientConnectionOptions initialOptions = resolveLocalPort
             ? coordinator.ResolveInitialOptions(options)
             : options;
@@ -211,12 +224,17 @@ public class Game : GameWindow
         Console.WriteLine(
             $"[session] returned to the connection screen: {reason}" +
             (stoppedLocalServer ? " (local server stopped)" : string.Empty));
+        // The endpoint comes back exactly as it was and nothing starts here: no integrated server
+        // on the update thread, no rebound port, no redirect of a loopback dedicated server that
+        // dropped. Only when the ended session was this game's own integrated server does a
+        // connect to that endpoint start a new one, lazily, on its fresh port.
         ShowStartupScene(
             ClientSize,
-            new ClientConnectionOptions(endedOptions.Host, endedOptions.Port.ToString(), endedOptions.DisplayName),
-            resolveLocalPort: true,
+            PlaySessionEndTransition.ReturnOptions(endedOptions),
+            resolveLocalPort: false,
             autoConnectUsesInitialOptions: false,
-            sessionEndReason: reason);
+            sessionEndReason: reason,
+            relaunchLocalServerFor: stoppedLocalServer ? endedOptions : null);
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
@@ -316,13 +334,11 @@ public class Game : GameWindow
         }
         finally
         {
-            try
+            // Bounded like the session-end teardown: a hung integrated server is abandoned after
+            // PlaySessionEndTransition.LocalServerStopTimeout, and the process exit ends it.
+            if (PlaySessionEndTransition.StopLocalServer(_localServer) is Exception stopFailure)
             {
-                _localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                (failures ??= []).Add(ex);
+                (failures ??= []).Add(stopFailure);
             }
         }
 

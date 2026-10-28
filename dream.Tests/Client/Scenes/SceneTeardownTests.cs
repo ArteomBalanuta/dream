@@ -109,14 +109,16 @@ public class SceneTeardownTests
         int playScene = IndexOf(body, "_playScene?.Dispose();");
         int startupScene = IndexOf(body, "_startupScene?.Dispose();");
         int baseUnload = IndexOf(body, "base.OnUnload();");
-        int localServer = IndexOf(body, "_localServer.DisposeAsync().AsTask().GetAwaiter().GetResult();");
+        // Bounded: a hung integrated server is abandoned rather than freezing the window's close.
+        int localServer = IndexOf(body, "PlaySessionEndTransition.StopLocalServer(_localServer)");
+        Assert.DoesNotContain("GetAwaiter().GetResult()", body);
 
         Assert.True(playScene < baseUnload, "The play scene must be disposed while the GL context is current, before base.OnUnload.");
         Assert.True(startupScene < baseUnload, "The startup scene must be disposed before base.OnUnload.");
         Assert.True(playScene < localServer && startupScene < localServer, "The local server must outlive the scenes' connections.");
         Assert.True(baseUnload < localServer);
         // base.OnUnload may throw; the local server is still disposed, in its own finally.
-        Assert.Matches(@"try\s*\{\s*base\.OnUnload\(\);\s*\}\s*catch\s*\(Exception ex\)\s*\{[^}]*\}\s*finally\s*\{\s*try\s*\{\s*_localServer\.DisposeAsync", body);
+        Assert.Matches(@"try\s*\{\s*base\.OnUnload\(\);\s*\}\s*catch\s*\(Exception ex\)\s*\{[^}]*\}\s*finally\s*\{\s*(//[^\n]*\s*)*if\s*\(PlaySessionEndTransition\.StopLocalServer\(_localServer\)\s*is\s*Exception\s+stopFailure\)\s*\{\s*\(failures\s*\?\?=\s*\[\]\)\.Add\(stopFailure\);", body);
         // Failures are collected: one is rethrown as-is, several as an AggregateException.
         Assert.Contains("ExceptionDispatchInfo.Capture(failures[0]).Throw();", body);
         Assert.Contains("throw new AggregateException(failures);", body);
@@ -174,12 +176,21 @@ public class SceneTeardownTests
         Assert.True(tearDown < startup && startup < reasonArgument, "The connection screen comes back after the teardown, with the reason.");
         // The teardown failures are reported, not thrown out of the frame.
         Assert.DoesNotContain("throw", switchBody);
+        // W9-4: returning to the menu starts no integrated server and keeps the endpoint as it
+        // was; only a session to this game's own integrated server relaunches one, on connect.
+        Assert.Contains("PlaySessionEndTransition.ReturnOptions(endedOptions)", switchBody);
+        Assert.Contains("resolveLocalPort: false", switchBody);
+        Assert.DoesNotContain("resolveLocalPort: true", switchBody);
+        Assert.DoesNotContain("EnsureStarted", switchBody);
+        Assert.Contains("relaunchLocalServerFor: stoppedLocalServer ? endedOptions : null", switchBody);
 
         // Only ShowStartupScene creates a startup scene, at launch and after a session ends.
         string show = ExtractMethodBody(source, "private void ShowStartupScene(");
         Assert.Contains("_startupScene = new StartupConnectionScene(", show);
         Assert.Contains("sessionEndReason);", show);
-        Assert.Contains("NetworkSessionCoordinator coordinator = new(_localServer, new RemoteSessionConnector());", show);
+        Assert.Contains("IRemoteSessionConnector connector = new RemoteSessionConnector();", show);
+        Assert.Matches(@"if \(relaunchLocalServerFor != null\)\s*\{\s*connector = new LocalServerRelaunchConnector\(\s*connector,\s*_localServer,", show);
+        Assert.Contains("NetworkSessionCoordinator coordinator = new(_localServer, connector);", show);
     }
 
     [Fact]

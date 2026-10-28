@@ -64,7 +64,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private int _joinRetryCount;
     private Task? _joinSupervisorTask;
     // Server-silence watchdog (see ServerSilenceWatchdogAsync). _lastInboundTimestamp is a
-    // _timeProvider timestamp written by the receive loop for every complete inbound frame.
+    // _timeProvider timestamp written by the receive loop for every socket read that returned
+    // bytes, so a large frame (a multi-MB world resync on a slow link) that takes longer than
+    // ServerSilenceTimeout to arrive in full still counts as data while it trickles in.
     private readonly TaskCompletionSource _joinAccepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _lastInboundTimestamp;
     private long _inboundFrameCount;
@@ -95,9 +97,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(45);
 
     // The server sends a snapshot every tick or two (32-64 Hz), so a joined session that receives
-    // no frame at all for ServerSilenceTimeout is talking to a hung or vanished server whose socket
+    // no data at all for ServerSilenceTimeout is talking to a hung or vanished server whose socket
     // never closed (a frozen process, a dropped route). The watchdog then ends the session the way
-    // a lost connection does, with ServerSilenceDisconnectReason. Only inbound frames count: the
+    // a lost connection does, with ServerSilenceDisconnectReason. Only inbound bytes count: the
     // client's own keepalives prove nothing about the server. The wait uses the injected
     // TimeProvider.
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
@@ -494,6 +496,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
             return false;
         }
 
+        // Any bytes show the server is alive, even mid-frame; written before a JoinAccepted in
+        // this read releases the watchdog, so its first wait counts from the join.
+        Volatile.Write(ref _lastInboundTimestamp, _timeProvider.GetTimestamp());
         _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
         DrainInboundFrames();
         return true;
@@ -503,9 +508,6 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
-            // Any complete frame shows the server is alive; written before a JoinAccepted below
-            // releases the watchdog, so its first wait counts from the join.
-            Volatile.Write(ref _lastInboundTimestamp, _timeProvider.GetTimestamp());
             Interlocked.Increment(ref _inboundFrameCount);
             if (payload.IsEmpty)
             {
@@ -561,7 +563,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
     }
 
     // Idle until the join is accepted (before that the join supervisor's timeout applies), then
-    // sleeps until ServerSilenceTimeout after the newest inbound frame and re-checks. One timer
+    // sleeps until ServerSilenceTimeout after the newest inbound read and re-checks. One timer
     // wait per wake-up, at most one per ServerSilenceTimeout while frames flow; nothing on the
     // receive path beyond the timestamp write.
     private async Task ServerSilenceWatchdogAsync(CancellationToken cancellationToken)

@@ -94,6 +94,58 @@ public class RemoteClientSessionWatchdogTests
         Assert.True(session.IsConnected, session.DisconnectReason);
     }
 
+    // A frame larger than the link can deliver in 8 s (a multi-MB world resync on a slow link):
+    // every read that returns bytes is data, so a frame trickled in over 12 s of fake time keeps
+    // the session alive, and it arrives whole.
+    [Fact]
+    public async Task DoesNotFire_WhileALargeFrameTricklesIn()
+    {
+        ManualTimerTimeProvider clock = new();
+        SilentServerConnection server = new();
+        await using RemoteClientSession session = CreateSession(server, clock);
+        await JoinAsync(session, server, clock);
+
+        const int Seconds = 12;
+        byte[] frame = server.EncodeFrame(Snapshot(1));
+        Assert.True(frame.Length >= Seconds, "the frame is too small to split");
+        long framesBefore = session.InboundFrameCount;
+        int chunkLength = (frame.Length + Seconds - 1) / Seconds;
+        int offset = 0;
+        for (int second = 1; second <= Seconds; second++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            int length = Math.Min(chunkLength, frame.Length - offset);
+            long readsBefore = server.ReadCount;
+            server.QueueRaw(frame.AsSpan(offset, length).ToArray());
+            offset += length;
+            await WaitUntilAsync(() => server.ReadCount > readsBefore || !session.IsConnected, $"chunk {second}");
+            await Task.Delay(20);
+            Assert.True(session.IsConnected, $"ended {second} s into the frame: {session.DisconnectReason}");
+            if (second < Seconds)
+            {
+                Assert.Equal(framesBefore, session.InboundFrameCount);
+            }
+        }
+
+        Assert.Equal(frame.Length, offset);
+        await WaitUntilAsync(() => session.InboundFrameCount == framesBefore + 1, "the whole frame");
+        Assert.True(session.IsConnected, session.DisconnectReason);
+        Assert.Null(session.DisconnectReason);
+
+        // Silence after the frame still ends the session, within 8 s (plus a step or two) of fake time.
+        int silentSeconds = 0;
+        while (session.IsConnected)
+        {
+            Assert.True(silentSeconds < 10, $"still connected after {silentSeconds} s of silence");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            silentSeconds++;
+            await Task.Delay(20);
+        }
+
+        Assert.True(silentSeconds >= 8, $"ended after only {silentSeconds} s of silence");
+        Assert.Equal(RemoteClientSession.ServerSilenceDisconnectReason, session.DisconnectReason);
+    }
+
     // The client's own keepalives prove nothing about the server, so they must not reset it.
     [Fact]
     public async Task OutboundKeepalives_DoNotResetIt()
@@ -192,12 +244,20 @@ public class RemoteClientSessionWatchdogTests
         private readonly LengthPrefixedMessageFramer _framer = new();
         private int _keepalives;
         private ulong _sequence;
+        private long _reads;
 
         public string ConnectionId => "watchdog-test";
 
         public int KeepaliveCount => Volatile.Read(ref _keepalives);
 
-        public void Queue(IServerToClientMessage message)
+        public long ReadCount => Interlocked.Read(ref _reads);
+
+        public void Queue(IServerToClientMessage message) => _inbound.Writer.TryWrite(EncodeFrame(message));
+
+        // Raw bytes, delivered by one read: part of a frame, say.
+        public void QueueRaw(byte[] bytes) => _inbound.Writer.TryWrite(bytes);
+
+        public byte[] EncodeFrame(IServerToClientMessage message)
         {
             TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, Interlocked.Increment(ref _sequence));
             byte[] payload = message switch
@@ -207,7 +267,7 @@ public class RemoteClientSessionWatchdogTests
                 ServerSnapshotMessage snapshot => _codec.Encode(envelope, snapshot),
                 _ => throw new InvalidOperationException()
             };
-            _inbound.Writer.TryWrite(_framer.Frame(payload));
+            return _framer.Frame(payload);
         }
 
         public void QueueEmptyFrame() => _inbound.Writer.TryWrite(_framer.Frame(Array.Empty<byte>()));
@@ -218,6 +278,7 @@ public class RemoteClientSessionWatchdogTests
             {
                 byte[] frame = await _inbound.Reader.ReadAsync(cancellationToken);
                 frame.CopyTo(buffer);
+                Interlocked.Increment(ref _reads);
                 return frame.Length;
             }
             catch (ChannelClosedException)
