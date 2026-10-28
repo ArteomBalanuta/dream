@@ -534,7 +534,9 @@ public class BufferedPlayerCommandInboxTests(ITestOutputHelper output)
 
     // The client's switch to idle can land a tick or two off the server's (send timing). Within
     // SkipBoundaryToleranceTicks the stall is still skipped as a whole instead of replaying its
-    // 46 idle ticks (whose latency the shed would cut along with fresh walking ticks).
+    // 46 idle ticks (whose latency the shed would cut along with fresh walking ticks). The backlog
+    // arrives as a send-stalled client's outbound queue folds it: the sequence jumps are the
+    // client-side stall that lets the tolerance apply (fix loop 2, S-C).
     [Theory]
     [InlineData(-2)]
     [InlineData(2)]
@@ -549,9 +551,16 @@ public class BufferedPlayerCommandInboxTests(ITestOutputHelper output)
         }
 
         ulong lastWalk = 1 + (ulong)(WorldSessionRuntime.MaxCommandRepeatTicks + switchOffset);
+        Dream.Client.Networking.ClientOutboundCommandQueue outbound = new();
         for (ulong sequence = 2; sequence <= 66; sequence++)
         {
-            inbox.Enqueue(Frame(SessionA, sequence, forward: sequence <= lastWalk || sequence == 66 ? 1f : 0f));
+            outbound.TryEnqueue(Frame(SessionA, sequence, forward: sequence <= lastWalk || sequence == 66 ? 1f : 0f));
+        }
+
+        Assert.True(outbound.MergedCount > 0);
+        while (outbound.TryDequeue(out PlayerCommandFrame sent))
+        {
+            inbox.Enqueue(sent);
         }
 
         Assert.True(inbox.TryPop(SessionA, out PlayerCommandFrame fresh));

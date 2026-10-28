@@ -136,8 +136,9 @@ public class PlayScene : IDisposable
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient ?? throw new ArgumentNullException(nameof(remoteClient));
         // A send stalled past the server's repeat window makes the prediction ticks idle, as the
-        // server does (ClientCommandTickStream).
+        // server does (ClientCommandTickStream); so does an ack lag past the round trip (a network stall).
         _commandTicks.ObserveSendBacklog(() => _remoteClient.IsConnected ? _remoteClient.PendingCommandCount : 0);
+        _commandTicks.ObserveAcknowledgedSequence(() => _remoteClient.IsConnected ? ClientCommandTickStream.AcknowledgedSequence(_clientProtocol.Context.LastSnapshot, _remoteClient.SessionId) : null);
         _renderPerformanceLoggingEnabled = IsRenderPerformanceLoggingEnabled();
         // The desktop scene owns a client world (replicated map + predicted player); the server
         // owns authority. PlayScene remains the composition root for presentation systems.

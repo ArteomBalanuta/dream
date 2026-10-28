@@ -259,6 +259,7 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
         private ulong _lastAcknowledged;
         private Vector3? _firstServerPosition;
         private Vector3 _lastServerPosition;
+        private ulong? _latestAck;
 
         public HeadlessClient(RemoteClientSession session, int floorSize, Vector3 facing)
         {
@@ -270,6 +271,8 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
             // As PlayScene wires it: a send stalled past the server's repeat window makes the
             // prediction ticks idle.
             Ticks.ObserveSendBacklog(() => _session.PendingCommandCount);
+            // And an ack lag past the round trip (a network stall), from the newest snapshot.
+            Ticks.ObserveAcknowledgedSequence(() => _latestAck);
         }
 
         public ClientCommandTickStream Ticks { get; }
@@ -321,6 +324,7 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
                 }
 
                 ServerSnapshotEnvelope snapshot = snapshotMessage.Snapshot;
+                _latestAck = ClientCommandTickStream.AcknowledgedSequence(snapshot, _session.SessionId);
                 Vector3 before = _world.Player.GetWorldPosition();
                 Vector3 pendingBefore = _reconciler.PendingOffset;
                 RemoteWorldMutationApplier.ApplySnapshotToRuntime(_world, snapshot);

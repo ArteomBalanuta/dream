@@ -12,11 +12,14 @@ namespace Dream.Multiplayer.Sessions;
 // one received (at least one, at most MaxTicksPerFrame): a frame the client's outbound queue folded
 // from several ticks during a send stall counts every one of them. When the ring is full, two
 // neighbouring slots merge into one that stands for both (one-shot presses ORed, look deltas
-// summed, newer axes, facing and sequence). The oldest neighbours with the same movement axes are
-// merged first, so a backlog made of runs (walk, then idle) keeps every run's ticks exact; only
-// when no neighbours match do the oldest two merge. A slot that stands for several ticks is popped
-// once per tick with a sequence counted back from its newest one, so the acknowledged sequence
-// never runs ahead of what the seat has simulated; its look deltas apply on the first tick only.
+// summed, newer axes, facing and sequence; at most MaxMergedSlotTicks). The merged slot is popped
+// from the older slot's first tick, so its presses land there: the oldest neighbours with the same
+// movement axes whose newer slot has no unapplied press or mode request merge first, which keeps
+// every run's ticks exact (walk, then idle) and every press at its own tick. Only when no such
+// pair exists do the oldest neighbours with the same axes merge (a press then moves earlier, to the
+// start of the merged slot), and with none of those either, the oldest two. A slot that stands for
+// several ticks is popped once per tick with a sequence counted back from its newest one; its look
+// deltas apply on the first tick only.
 //
 // While the ring is empty nothing is popped and the runtime repeats the last frame for
 // WorldSessionRuntime.MaxCommandRepeatTicks ticks, then idles (NETR-3). Those starved ticks are
@@ -24,16 +27,25 @@ namespace Dream.Multiplayer.Sessions;
 // backlog ticks are skipped while they match what the runtime simulated in their place: the
 // repeated frame's movement axes for the first MaxCommandRepeatTicks starved ticks, no movement
 // for the rest (a client whose send is stalled predicts and sends idle past the repeat window, see
-// ClientCommandTickStream; a client switch within SkipBoundaryToleranceTicks of the server's is
-// accepted). Facing is absolute and applies on the next popped frame, so it is not compared. Once
-// a skip has spent the idle debt, idle commands still above ShedDepthThreshold (the latency the
-// ring held before the stall) are dropped too: they cost no movement, whereas the shed would later
-// fold the walking ticks queued behind them. The newest pending tick is never skipped, so the seat still gets a fresh frame; a frame
-// with a one-shot press (jump, freeze, noclip toggle, mode request) is not skipped either but
-// popped at its own tick, so the press lands where the client predicted it. Debt that a short
-// backlog could not spend is kept for the next frames (up to MaxSkipDebtTicks) and cleared on the
-// first frame that does not match. A skipped frame's primary use and look deltas carry into the
-// next one.
+// ClientCommandTickStream). The match is exact unless the backlog shows a client-side stall (a
+// frame whose sequence jumped, i.e. one the client's outbound queue folded): then a client switch
+// to idle within SkipBoundaryToleranceTicks of the server's is accepted. A pure network delay
+// leaves the client's commands unfolded, and an inexact switch there would skip real movement.
+// Facing is absolute and applies on the next popped frame, so it is not compared. The newest
+// pending tick is never skipped, so the seat still gets a fresh frame; a frame with a one-shot
+// press (jump, freeze, noclip toggle) is not skipped either but popped at its own tick, so the
+// press lands where the client predicted it. A skipped frame's primary use and look deltas carry
+// into the next one. Debt that a short backlog could not spend is kept for the next frames (up to
+// MaxSkipDebtTicks) and cleared as soon as the frame about to be popped does not match, or once
+// Capacity frames have popped without a starved tick in between: frames arriving one per tick
+// never let a skip run, and stale debt would later skip real ticks.
+//
+// The acknowledged sequence (the popped frame's) never runs ahead of the commands the seat has
+// simulated or skipped as already simulated, with two exceptions that drop ticks outright and
+// advance the ack past them: once a skip has spent the idle debt, idle commands still above
+// ShedDepthThreshold (the latency the ring held before the stall) are dropped by TrimIdleStallTail
+// (they cost no movement, whereas the shed would later fold the walking ticks queued behind them),
+// and the shed's MergeDownToOne folds every pending tick into one.
 //
 // Latency stays bounded in two ways:
 // - Elastic shed: once the pending depth has stayed above ShedDepthThreshold for ShedWindowTicks
@@ -45,7 +57,9 @@ namespace Dream.Multiplayer.Sessions;
 //   never climbs past its earlier maximum except when its delivery delay drops. Once that lead rose
 //   on FastSenderEnterTicks of the last 16 ticks, the session coalesces its arrivals into one
 //   pending frame, as LatestPlayerCommandInbox did; it leaves that mode once the lead rose on at
-//   most FastSenderExitTicks of the last 16.
+//   most FastSenderExitTicks of the last 16. A server ticking below 64 Hz (overloaded) sees an
+//   honest per-tick client's lead rise too; such entries, whose sequence advanced no faster than
+//   the wall clock's 64 Hz, are counted in HonestSenderFastModeEntries.
 //
 // Enqueue runs on receive threads and pops on the tick thread, all under one lock. Ring storage is
 // allocated per session on its first frame and pooled across Remove, so steady-state enqueue and
@@ -65,10 +79,64 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
     public const int ServerRepeatTicks = WorldSessionRuntime.MaxCommandRepeatTicks;
     // How far the client's repeat-to-idle switch may sit from the server's and still be skipped.
     public const int SkipBoundaryToleranceTicks = 4;
+    // The most ticks a slot merged on overflow stands for.
+    public const int MaxMergedSlotTicks = MaxTicksPerFrame * Capacity;
+    // A fast-sender entry counts as an honest per-tick client's when its sequence advanced by at
+    // most this many ticks per 64 Hz wall-clock tick (plus HonestSenderSlackTicks): a per-render
+    // sender at 144 Hz advances 2.25.
+    private const double HonestSenderRateLimit = 1.25d;
+    private const double HonestSenderSlackTicks = 2d;
+    private const int SendRateHistoryTicks = 16;
 
     private readonly object _sync = new();
     private readonly Dictionary<PlayerSessionId, SessionRing> _rings = new();
     private readonly Stack<SessionRing> _pool = new();
+    private readonly Func<long> _timestamp;
+    private readonly long _timestampFrequency;
+    private long _fastSenderEntries;
+    private long _honestSenderFastModeEntries;
+
+    public BufferedPlayerCommandInbox()
+        : this(System.Diagnostics.Stopwatch.GetTimestamp, System.Diagnostics.Stopwatch.Frequency)
+    {
+    }
+
+    // The timestamp source (timestampFrequency units per second) only classifies fast-sender
+    // entries for HonestSenderFastModeEntries; tests pass a manual clock.
+    public BufferedPlayerCommandInbox(Func<long> timestamp, long timestampFrequency)
+    {
+        ArgumentNullException.ThrowIfNull(timestamp);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timestampFrequency, 0L);
+        _timestamp = timestamp;
+        _timestampFrequency = timestampFrequency;
+    }
+
+    // Sessions switched into fast-sender (coalescing) mode, over the inbox's lifetime.
+    public long FastSenderEntries
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _fastSenderEntries;
+            }
+        }
+    }
+
+    // Fast-sender entries of sessions whose sequence advanced no faster than the wall clock's
+    // 64 Hz: honest per-tick clients flipped because the server ticked below 64 Hz (overload).
+    // Their frames are then coalesced, as a legacy per-render client's would be. Not yet wired
+    // into server metrics.
+    public long HonestSenderFastModeEntries
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _honestSenderFastModeEntries;
+            }
+        }
+    }
 
     public bool HasPending
     {
@@ -95,7 +163,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         {
             if (!_rings.TryGetValue(commandFrame.SessionId, out SessionRing? ring))
             {
-                ring = _pool.Count > 0 ? _pool.Pop() : new SessionRing();
+                ring = _pool.Count > 0 ? _pool.Pop() : new SessionRing(this);
                 _rings[commandFrame.SessionId] = ring;
             }
 
@@ -219,6 +287,13 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         return move.JumpPressed || move.FreezePressed || move.ToggleNoclipPressed;
     }
 
+    // A one-shot press or a mode request: input whose tick an overflow merge must not move earlier
+    // by folding its frame into an older one.
+    public static bool HasTimedInput(PlayerCommandFrame frame)
+    {
+        return HasOneShotInput(frame) || frame.RequestedMode.Mode.HasValue;
+    }
+
     private struct Slot
     {
         public PlayerCommandFrame Frame;
@@ -227,9 +302,11 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         public bool Started;
     }
 
-    private sealed class SessionRing
+    private sealed class SessionRing(BufferedPlayerCommandInbox owner)
     {
         private readonly Slot[] _slots = new Slot[Capacity];
+        private readonly long[] _rateTimestamps = new long[SendRateHistoryTicks];
+        private readonly ulong[] _rateSequences = new ulong[SendRateHistoryTicks];
         private int _head;
         private bool _hasEnqueued;
         private ulong _lastEnqueuedSequence;
@@ -240,6 +317,12 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         private int _repeatDebt;
         private int _idleDebt;
         private PlayerMoveIntent _repeatedMove;
+        // A frame whose sequence jumped (the client folded ticks during a stall) arrived since the
+        // current skip debt started: the client-side stall that makes the boundary tolerance apply.
+        private bool _sawSequenceJump;
+        private long _rateSamples;
+        // Frames popped since the last starved tick while skip debt was pending.
+        private int _popsWithoutStarve;
         private ulong _ticks;
         private bool _hasLead;
         private long _maxLead;
@@ -270,6 +353,11 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             _repeatDebt = 0;
             _idleDebt = 0;
             _repeatedMove = default;
+            _sawSequenceJump = false;
+            _popsWithoutStarve = 0;
+            Array.Clear(_rateTimestamps);
+            _rateSamples = 0;
+            Array.Clear(_rateSequences);
             _ticks = 0;
             _hasLead = false;
             _maxLead = 0;
@@ -293,6 +381,10 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
                 : 1;
             _hasEnqueued = true;
             _lastEnqueuedSequence = frame.Sequence;
+            if (ticks > 1)
+            {
+                _sawSequenceJump = true;
+            }
 
             if (_fastSender && Count > 0)
             {
@@ -333,6 +425,12 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
 
             SkipSimulatedTicks();
             _starvedTicks = 0;
+            if (SkipDebt > 0 && !MatchesSimulatedTick(SlotAt(0).Frame.MoveIntent))
+            {
+                // The frame about to be popped is not what the starved ticks simulated, so the
+                // debt is stale: a later frame matching it by chance must not be skipped.
+                ClearSkipDebt();
+            }
 
             ref Slot oldest = ref SlotAt(0);
             ulong sequence = oldest.Frame.Sequence - (ulong)(oldest.Ticks - 1);
@@ -346,6 +444,13 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
 
             _lastPopped = frame;
             _hasPopped = true;
+            if (SkipDebt > 0 && ++_popsWithoutStarve >= Capacity)
+            {
+                // A ring's worth of frames popped without the session starving again: the backlog
+                // the debt was waiting for has come and gone.
+                ClearSkipDebt();
+            }
+
             ShedIfLatencyStuck();
             return true;
         }
@@ -354,6 +459,13 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         // MaxCommandRepeatTicks of a starved run, then with no movement (NETR-3).
         private void CountStarvedTick()
         {
+            if (SkipDebt == 0)
+            {
+                // A new stall: only a sequence jump that arrives after it shows a client stall.
+                _sawSequenceJump = false;
+            }
+
+            _popsWithoutStarve = 0;
             if (_starvedTicks < int.MaxValue)
             {
                 _starvedTicks++;
@@ -389,8 +501,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
                 ref Slot oldest = ref SlotAt(0);
                 if (!MatchesSimulatedTick(oldest.Frame.MoveIntent))
                 {
-                    _repeatDebt = 0;
-                    _idleDebt = 0;
+                    ClearSkipDebt();
                     return;
                 }
 
@@ -416,6 +527,14 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             {
                 TrimIdleStallTail();
             }
+        }
+
+        private void ClearSkipDebt()
+        {
+            _repeatDebt = 0;
+            _idleDebt = 0;
+            _sawSequenceJump = false;
+            _popsWithoutStarve = 0;
         }
 
         // The stall's idle commands outnumber the server's idle ticks by the latency the ring held
@@ -458,12 +577,15 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             }
         }
 
-        // Whether the oldest pending tick may stand in for the next starved tick. The client
-        // switches from the repeated movement to idle where it estimates the server did, which
-        // can be off by a few ticks (send timing, a frame already in flight): a switch within
-        // SkipBoundaryToleranceTicks of the server's is accepted (those few ticks diverge, and
-        // the reconciler smooths them out) instead of throwing away the whole debt and replaying
-        // the stall's idle backlog, whose latency the shed would later cut along with fresh ticks.
+        // Whether the oldest pending tick may stand in for the next starved tick. A client whose
+        // send loop stalled switches from the repeated movement to idle where it estimates the
+        // server did, which can be off by a few ticks (send timing, a frame already in flight):
+        // when the backlog shows that stall (a sequence jump), a switch within
+        // SkipBoundaryToleranceTicks of the server's is accepted (those few ticks diverge, and the
+        // reconciler smooths them out) instead of throwing away the whole debt and replaying the
+        // stall's idle backlog. Without that evidence the starvation was the network's: the client
+        // sent what it predicted, so only an exact match is skipped, and a mismatch replays the
+        // backlog (its real movement included) instead of dropping walk ticks.
         private bool MatchesSimulatedTick(PlayerMoveIntent move)
         {
             bool idle = HasSameMovement(move, PlayerMoveIntent.None);
@@ -471,12 +593,12 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             {
                 // The client went idle a little before the server's repeat window ended.
                 return HasSameMovement(move, _repeatedMove)
-                    || (idle && _idleDebt > 0 && _repeatDebt <= SkipBoundaryToleranceTicks);
+                    || (_sawSequenceJump && idle && _idleDebt > 0 && _repeatDebt <= SkipBoundaryToleranceTicks);
             }
 
             // The client kept the repeated movement a little past the server's repeat window.
             return idle
-                || (HasSameMovement(move, _repeatedMove) && RepeatedRunEndsInIdleWithinTolerance());
+                || (_sawSequenceJump && HasSameMovement(move, _repeatedMove) && RepeatedRunEndsInIdleWithinTolerance());
         }
 
         // Pending ticks with the repeated movement, from the oldest, end within the tolerance at
@@ -513,6 +635,26 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         private void TrackSendRate()
         {
             _ticks++;
+            long now = owner._timestamp();
+            // The oldest (wall time, newest sequence) sample of the history: SendRateHistoryTicks
+            // ticks ago, or the first one taken after the first frame arrived.
+            long thenTimestamp = now;
+            ulong thenSequence = _lastEnqueuedSequence;
+            if (_hasEnqueued)
+            {
+                _rateSamples++;
+                int sample = (int)(_rateSamples % SendRateHistoryTicks);
+                if (_rateSamples > 1)
+                {
+                    int oldest = _rateSamples > SendRateHistoryTicks ? sample : 1;
+                    thenTimestamp = _rateTimestamps[oldest];
+                    thenSequence = _rateSequences[oldest];
+                }
+
+                _rateTimestamps[sample] = now;
+                _rateSequences[sample] = _lastEnqueuedSequence;
+            }
+
             bool rose = false;
             if (_hasEnqueued)
             {
@@ -534,12 +676,27 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             if (!_fastSender && risingTicks >= FastSenderEnterTicks)
             {
                 _fastSender = true;
+                owner._fastSenderEntries++;
+                if (IsWallClockRate(now - thenTimestamp, _lastEnqueuedSequence - thenSequence))
+                {
+                    owner._honestSenderFastModeEntries++;
+                }
+
                 MergeDownToOne();
             }
             else if (_fastSender && risingTicks <= FastSenderExitTicks)
             {
                 _fastSender = false;
             }
+        }
+
+        // A sequence that advanced no faster than 64 Hz of wall-clock time over the history: an
+        // honest per-tick client, whose lead rose because the server ticked slower.
+        private bool IsWallClockRate(long elapsedTimestamp, ulong sequenceAdvance)
+        {
+            double wallTicks = (double)elapsedTimestamp * SimulationClock.AuthoritativeTicksPerSecond
+                / owner._timestampFrequency;
+            return sequenceAdvance <= (wallTicks * HonestSenderRateLimit) + HonestSenderSlackTicks;
         }
 
         // Elastic shed: a depth above the threshold that has not drained on its own over a whole
@@ -586,21 +743,35 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             }
         }
 
-        // Overflow: merge the oldest neighbours that move the same way, so the merged slot's ticks
-        // all simulate what the client predicted; with none, the oldest two.
+        // Overflow: merge the oldest neighbours that move the same way and whose newer slot has no
+        // unapplied press or mode request, so the merged slot's ticks all simulate what the client
+        // predicted and its presses stay at their own tick (a merged slot pops from the older
+        // slot's first tick). With no such pair, the oldest neighbours that move the same way;
+        // with none of those, the oldest two.
         private void MergeOldestMatchingNeighbours()
         {
-            int index = 0;
+            int index = FindMergePair(keepTimedInput: true);
+            if (index < 0)
+            {
+                index = FindMergePair(keepTimedInput: false);
+            }
+
+            MergeIntoNext(Math.Max(index, 0));
+        }
+
+        private int FindMergePair(bool keepTimedInput)
+        {
             for (int i = 0; i < Count - 1; i++)
             {
-                if (HasSameMovement(SlotAt(i).Frame.MoveIntent, SlotAt(i + 1).Frame.MoveIntent))
+                ref Slot newer = ref SlotAt(i + 1);
+                if (HasSameMovement(SlotAt(i).Frame.MoveIntent, newer.Frame.MoveIntent)
+                    && !(keepTimedInput && !newer.Started && HasTimedInput(newer.Frame)))
                 {
-                    index = i;
-                    break;
+                    return i;
                 }
             }
 
-            MergeIntoNext(index);
+            return -1;
         }
 
         // Folds the slot at the index into the next one, which then stands for both.
@@ -609,7 +780,15 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             Slot older = SlotAt(index);
             ref Slot next = ref SlotAt(index + 1);
             next.Frame = LatestPlayerCommandInbox.Merge(older.Frame, next.Frame);
-            next.Ticks += older.Ticks;
+            int ticks = next.Ticks + older.Ticks;
+            if (ticks > MaxMergedSlotTicks)
+            {
+                // The ticks past the cap are dropped, and the ack advances past them.
+                PendingTicks -= ticks - MaxMergedSlotTicks;
+                ticks = MaxMergedSlotTicks;
+            }
+
+            next.Ticks = ticks;
             next.Started = older.Started && next.Started;
             for (int i = index; i > 0; i--)
             {

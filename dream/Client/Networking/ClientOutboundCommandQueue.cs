@@ -15,11 +15,16 @@ namespace Dream.Client.Networking;
 // up, and one-shot inputs (jump, freeze, noclip toggle, primary use, a mode request) are kept, so
 // a press made during the stall still reaches the server. The merged frame keeps the newer
 // sequence, and the server counts the sequence jump as that many ticks of the frame's movement
-// (BufferedPlayerCommandInbox), so the oldest neighbours with the same movement axes merge first:
+// (BufferedPlayerCommandInbox), starting at the tick after the previous frame's: the merged frame
+// is simulated from the older frame's tick, and its presses land there. So the oldest neighbours
+// with the same movement axes whose newer frame has no one-shot press or mode request merge first:
 // a stall backlog made of runs (walk for the NETR-3 repeat window, then idle, see
-// ClientCommandTickStream) folds into one frame per run and every tick keeps the movement the
-// client predicted for it. Only when no neighbours match do the oldest two merge. Sequences only
-// ever increase: a frame whose sequence is not newer than the last one queued is ignored.
+// ClientCommandTickStream) folds into one frame per run, every tick keeps the movement the client
+// predicted for it, and a press stays at its own tick (a press frame folds into the frames after
+// it, never into the one before). Only when no such pair exists do the oldest neighbours with the
+// same axes merge (a press then moves earlier, to the start of the merged run), and with none of
+// those, the oldest two. Sequences only ever increase: a frame whose sequence is not newer than the
+// last one queued is ignored.
 //
 // Thread-safe: the render thread enqueues, the send loop dequeues. No allocation after
 // construction.
@@ -100,20 +105,18 @@ public sealed class ClientOutboundCommandQueue
         }
     }
 
-    // Folds the oldest frame whose next neighbour moves the same way into that neighbour (the
-    // merged frame keeps the newer sequence); with no such pair, the oldest frame into the next.
+    // Folds the oldest frame whose next neighbour moves the same way and has no press or mode
+    // request into that neighbour (the merged frame keeps the newer sequence); with no such pair,
+    // the oldest frame whose next neighbour moves the same way; with none, the oldest into the next.
     private void MergeOldestMatchingNeighbours()
     {
-        int index = 0;
-        for (int i = 0; i < _count - 1; i++)
+        int index = FindMergePair(keepTimedInput: true);
+        if (index < 0)
         {
-            if (BufferedPlayerCommandInbox.HasSameMovement(At(i).MoveIntent, At(i + 1).MoveIntent))
-            {
-                index = i;
-                break;
-            }
+            index = FindMergePair(keepTimedInput: false);
         }
 
+        index = Math.Max(index, 0);
         At(index + 1) = Merge(At(index), At(index + 1));
         for (int i = index; i > 0; i--)
         {
@@ -123,6 +126,21 @@ public sealed class ClientOutboundCommandQueue
         _frames[_head] = default;
         _head = (_head + 1) % _frames.Length;
         _count--;
+    }
+
+    private int FindMergePair(bool keepTimedInput)
+    {
+        for (int i = 0; i < _count - 1; i++)
+        {
+            PlayerCommandFrame newer = At(i + 1);
+            if (BufferedPlayerCommandInbox.HasSameMovement(At(i).MoveIntent, newer.MoveIntent)
+                && !(keepTimedInput && BufferedPlayerCommandInbox.HasTimedInput(newer)))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private ref PlayerCommandFrame At(int index)
