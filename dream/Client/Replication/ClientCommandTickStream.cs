@@ -31,15 +31,48 @@ namespace Dream.Client.Replication;
 // walked through the stall and snapped back about 4.5 m when it ended. The backlog is read from
 // the probe given to ObserveSendBacklog (RemoteClientSession.PendingCommandCount: commands queued
 // but not yet handed to the transport; a send blocked by the stall holds the oldest one).
+//
+// A network stall does not show in that backlog: the kernel socket buffer takes seconds of ~150 B
+// command frames, so the managed queue stays near empty while the server starves. The second
+// trigger reads the acknowledgements instead (the probe given to ObserveAcknowledgedSequence: the
+// last command sequence the server accepted, from the newest snapshot). The ack lag, newest
+// prediction tick minus that ack, is the round trip in ticks (uplink, server buffer, downlink,
+// snapshot interval) while commands flow; the client tracks no other RTT, so the lag's own floor
+// is the estimate: AckLagBaselineTicks drops to any lower lag at once and rises toward a higher
+// one by AckLagBaselineRisePerTick (4 ticks per second). When the server stops accepting this
+// client's commands at sequence T-1, the ack stays there and the lag climbs one per tick; once it
+// exceeds the baseline by MaxCommandRepeatTicks, the server has been idling this player since
+// sequence T + MaxCommandRepeatTicks, so the tick predicts and sends no movement, as above. A snapshot
+// that stops arriving freezes the ack the same way, so it triggers too.
+//
+// Trade-off. The baseline margin makes the switch late by the round trip: the client only learns
+// of the stall a round trip after it began, so it still walks for about RTT ticks after the
+// server went idle. Those commands are sent as walking, so the server's skip finds them unmatched
+// and replays them (BufferedPlayerCommandInbox: without a sequence jump the match is exact), and
+// both sides end up with the same walk; the switch can only be early if the lag rises by more than
+// MaxCommandRepeatTicks above the baseline without a stall: a late-snapshot spike of more than
+// 250 ms, a downlink-only stall, a server hitch, or a lasting RTT increase of that size (until the
+// baseline catches up). The client then sends idle commands while the server would have accepted
+// walking ones. Because what is predicted is also what is sent, that costs input for the spike's
+// duration, not a correction; steady play at any constant RTT never triggers it, since the
+// baseline is that RTT.
 public sealed class ClientCommandTickStream
 {
     // Queued commands at which the oldest unsent one (one more, held by the blocked send) is
     // MaxCommandRepeatTicks old when the next command is produced.
     public const int SendStallBacklog = BufferedPlayerCommandInbox.ServerRepeatTicks - 1;
+    // Ack lag above the round-trip baseline at which the server has idled this player.
+    public const int AckStallMarginTicks = BufferedPlayerCommandInbox.ServerRepeatTicks;
+    // How fast the baseline follows a higher ack lag, in ticks per tick (4 ticks per second).
+    public const double AckLagBaselineRisePerTick = 1d / 16d;
 
     private readonly ServerTickRunner _tickRunner;
     private readonly PlayerSessionId _fallbackSessionId;
     private Func<int>? _unsentCommandCount;
+    private Func<ulong?>? _acknowledgedSequence;
+    private bool _hasAckBaseline;
+    private double _ackLagBaseline;
+    private ulong _lastAcknowledged;
     private PlayerCommandFrame _pendingInput;
     private bool _hasPendingInput;
     private PlayerCommandFrame _heldInput;
@@ -62,14 +95,38 @@ public sealed class ClientCommandTickStream
     // Ticks skipped because one advance would have exceeded the cap.
     public long DroppedTicks => _tickRunner.DroppedTicks;
 
-    // Ticks whose command was made idle because the send was stalled past the repeat window.
+    // Ticks whose command was made idle because the send was stalled past the repeat window
+    // (either trigger).
     public long SendStallIdleTicks { get; private set; }
+
+    // Of those, the ticks only the acknowledgement lag flagged (a stall the send backlog missed).
+    public long AckStallIdleTicks { get; private set; }
+
+    // The round-trip estimate the ack trigger compares the lag with, in ticks (0 before an ack).
+    public double AckLagBaselineTicks => _ackLagBaseline;
 
     // Gives the stream the number of commands queued but not yet handed to the transport, read
     // once per tick (no allocation). Null turns send-stall idling off.
     public void ObserveSendBacklog(Func<int>? unsentCommandCount)
     {
         _unsentCommandCount = unsentCommandCount;
+    }
+
+    // Gives the stream the last command sequence the server accepted from this client (null while
+    // none is known), read once per tick (no allocation). Null turns ack-stall idling off.
+    public void ObserveAcknowledgedSequence(Func<ulong?>? lastAcknowledgedSequence)
+    {
+        _acknowledgedSequence = lastAcknowledgedSequence;
+        _hasAckBaseline = false;
+        _ackLagBaseline = 0d;
+    }
+
+    // The session's accepted command sequence in a snapshot, for the ack probe.
+    public static ulong? AcknowledgedSequence(Dream.Simulation.World.ServerSnapshotEnvelope? snapshot, string sessionId)
+    {
+        return snapshot.HasValue && snapshot.Value.LastAcceptedCommandSequences.TryGetValue(sessionId, out ulong sequence)
+            ? sequence
+            : null;
     }
 
     // Merges one render frame's input into the input the next tick consumes. Its sequence is
@@ -118,8 +175,15 @@ public sealed class ClientCommandTickStream
         _heldInput = HoldWithoutOneShots(source);
         _hasHeldInput = true;
         PlayerCommandFrame command = source with { Sequence = tick };
-        if (_unsentCommandCount != null && _unsentCommandCount() >= SendStallBacklog)
+        bool sendBacklogStalled = _unsentCommandCount != null && _unsentCommandCount() >= SendStallBacklog;
+        bool ackStalled = AcknowledgementShowsStall(tick);
+        if (sendBacklogStalled || ackStalled)
         {
+            if (!sendBacklogStalled)
+            {
+                AckStallIdleTicks++;
+            }
+
             // The server idles this player past its repeat window; predict and send the same.
             PlayerMoveIntent move = command.MoveIntent;
             command = command with
@@ -130,6 +194,42 @@ public sealed class ClientCommandTickStream
         }
 
         return command;
+    }
+
+    // Whether the ack lag says the server has idled this player (see the class comment). Updates
+    // the baseline every tick.
+    private bool AcknowledgementShowsStall(ulong tick)
+    {
+        if (_acknowledgedSequence == null)
+        {
+            return false;
+        }
+
+        ulong? acknowledged = _acknowledgedSequence();
+        if (!acknowledged.HasValue || acknowledged.Value >= tick)
+        {
+            return false;
+        }
+
+        if (_hasAckBaseline && acknowledged.Value < _lastAcknowledged)
+        {
+            // A new session or server timeline: its round trip starts over.
+            _hasAckBaseline = false;
+        }
+
+        _lastAcknowledged = acknowledged.Value;
+        double lag = tick - acknowledged.Value;
+        if (!_hasAckBaseline)
+        {
+            _hasAckBaseline = true;
+            _ackLagBaseline = lag;
+            return false;
+        }
+
+        _ackLagBaseline = lag <= _ackLagBaseline
+            ? lag
+            : Math.Min(lag, _ackLagBaseline + AckLagBaselineRisePerTick);
+        return lag > _ackLagBaseline + AckStallMarginTicks;
     }
 
     // What a tick without fresh input repeats: the held axes, facing and primary use, without the

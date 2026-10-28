@@ -76,16 +76,20 @@ public class RemoteClientSessionOutboundTests
         PlayerCommandFrame[] commands = connection.Sent.OfType<PlayerCommandMessage>().Select(message => message.CommandFrame).ToArray();
         Assert.Equal(1 + ClientOutboundCommandQueue.DefaultCapacity, commands.Length);
         Assert.Equal(1ul, commands[0].Sequence);
-        // Commands 2..26 merged into one; 27..41 follow unmerged.
-        ulong firstUnmerged = last - (ulong)ClientOutboundCommandQueue.DefaultCapacity + 2;
-        Assert.Equal(firstUnmerged - 1, commands[1].Sequence);
-        Assert.True(commands[1].MoveIntent.JumpPressed);
-        Assert.True(commands[1].PrimaryUsePressed);
+        // Command 2 stays alone: folding the jump frame (3) into it would move the jump a tick
+        // earlier (wave 8 fix loop 2, S-A). Commands 3..27 merged into one that starts at the jump's
+        // tick and keeps the jump and primary use; 28..41 follow unmerged.
+        ulong firstUnmerged = last - (ulong)ClientOutboundCommandQueue.DefaultCapacity + 3;
+        Assert.Equal(2ul, commands[1].Sequence);
+        Assert.False(commands[1].MoveIntent.JumpPressed || commands[1].PrimaryUsePressed);
+        Assert.Equal(firstUnmerged - 1, commands[2].Sequence);
+        Assert.True(commands[2].MoveIntent.JumpPressed);
+        Assert.True(commands[2].PrimaryUsePressed);
         Assert.Equal(
             Enumerable.Range((int)firstUnmerged, (int)(last - firstUnmerged + 1)).Select(value => (ulong)value),
-            commands.Skip(2).Select(command => command.Sequence));
-        Assert.All(commands.Skip(2), command => Assert.False(command.MoveIntent.JumpPressed || command.PrimaryUsePressed));
-        Assert.Equal((long)(firstUnmerged - 3), session.MergedCommandCount);
+            commands.Skip(3).Select(command => command.Sequence));
+        Assert.All(commands.Skip(3), command => Assert.False(command.MoveIntent.JumpPressed || command.PrimaryUsePressed));
+        Assert.Equal((long)(last - 1 - (ulong)ClientOutboundCommandQueue.DefaultCapacity), session.MergedCommandCount);
     }
 
     [Fact]

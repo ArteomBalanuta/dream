@@ -35,6 +35,12 @@ namespace Dream.Tests.Integration;
 // - 1 s send stall: 0.000 m, no snap (48 idle ticks, wire jump 34).
 // - 1 s frame stall: 0.741-0.834 m, no snap (unchanged: the client drops the stalled ticks).
 // - Hitchy loop: 0.466 m, no snap.
+//
+// Wave 8 fix loop 2 adds the network stall (reviewer S-D): the transport accepts every send at once
+// and holds it for a second, as a kernel socket buffer does when the network stalls, so the
+// client's send queue never grows and only the ack lag (ClientCommandTickStream's second trigger,
+// wired here as PlayScene wires it) can tell the client the server is idling it. And steady play
+// over a constant 200 ms uplink delay, which must never trigger the idle mirror.
 public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 {
     private const int WalkTicksBeforeStall = 32;
@@ -80,6 +86,35 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("frame"));
     }
 
+    // S-D: a one-second network stall that the send queue never sees. The ack lag idles the client
+    // about a round trip after the server's repeat window ended; the server replays the walk ticks
+    // between the two switches, so the correction stays well below the snap distance.
+    [Fact]
+    public async Task NetworkStall_OneSecond_NoLocalBacklog_AckLagIdles_CorrectsBelowSnapDistance()
+    {
+        StallReport report = await RunAsync(Scenario.NetworkStall, "w8-net");
+        output.WriteLine(report.Describe("1 s network stall"));
+
+        Assert.True(report.MaxPendingDuringStall < ClientCommandTickStream.SendStallBacklog, report.Describe("the local send queue grew"));
+        Assert.True(report.AckStallIdleTicks > 0, report.Describe("the ack lag never idled the client"));
+        // Nothing folded on the client: the wire carries consecutive sequences.
+        Assert.Equal(1UL, report.LargestSequenceJump);
+        Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("network"));
+        Assert.Equal(0, report.SnapsAfter);
+    }
+
+    // S-D: steady play over a constant 200 ms delay never idles the player.
+    [Fact]
+    public async Task SteadyPlayOver200MsDelay_NeverTriggersTheIdleMirror()
+    {
+        StallReport report = await RunAsync(Scenario.Steady200Ms, "w8-rtt200");
+        output.WriteLine(report.Describe("steady 200 ms uplink delay"));
+
+        Assert.Equal(0L, report.SendStallIdleTicks);
+        Assert.Equal(0, report.SnapsAfter);
+        Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("steady"));
+    }
+
     [Fact]
     public async Task HitchyLoop_SteadyWalk_CorrectsBelowSnapDistance()
     {
@@ -94,7 +129,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
     {
         SendStall,
         FrameStall,
-        Hitchy
+        Hitchy,
+        NetworkStall,
+        Steady200Ms
     }
 
     private async Task<StallReport> RunAsync(Scenario scenario, string sessionId)
@@ -113,6 +150,15 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             transport);
         await using (session)
         {
+            if (scenario == Scenario.NetworkStall)
+            {
+                transport.Connection!.UseDelayLine(TimeSpan.Zero);
+            }
+            else if (scenario == Scenario.Steady200Ms)
+            {
+                transport.Connection!.UseDelayLine(TimeSpan.FromMilliseconds(200));
+            }
+
             using HeadlessClient client = new(session, floorSize, facing);
             Random random = new(1234);
             Stopwatch clock = Stopwatch.StartNew();
@@ -144,6 +190,13 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                             case Scenario.SendStall:
                                 transport.Connection!.Stall();
                                 break;
+                            case Scenario.NetworkStall:
+                                transport.Connection!.Hold();
+                                break;
+                            case Scenario.Steady200Ms:
+                                stallDone = true;
+                                client.StallEndTick = client.Ticks.LastTick;
+                                break;
                             case Scenario.Hitchy:
                                 stallDone = true;
                                 client.StallEndTick = client.Ticks.LastTick;
@@ -152,7 +205,12 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                         }
                     }
 
-                    if (scenario == Scenario.SendStall && stalled && !stallDone && walked >= WalkTicksBeforeStall + StallTicks)
+                    if (scenario == Scenario.NetworkStall && stalled && !stallDone)
+                    {
+                        client.MaxPendingDuringStall = Math.Max(client.MaxPendingDuringStall, session.PendingCommandCount);
+                    }
+
+                    if ((scenario == Scenario.SendStall || scenario == Scenario.NetworkStall) && stalled && !stallDone && walked >= WalkTicksBeforeStall + StallTicks)
                     {
                         transport.Connection!.Resume();
                         stallDone = true;
@@ -166,7 +224,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                         client.StallEndTick = client.StallStartTick + 1;
                     }
 
-                    int after = scenario == Scenario.Hitchy ? TicksAfterStall * 3 : TicksAfterStall;
+                    int after = scenario is Scenario.Hitchy or Scenario.Steady200Ms ? TicksAfterStall * 3 : TicksAfterStall;
                     if (stallDone && client.Ticks.LastTick >= client.StallEndTick + (ulong)after)
                     {
                         break;
@@ -250,11 +308,13 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         long SendStallIdleTicks,
         ulong StallStartTick,
         ulong MaxCorrectionAck,
-        ulong MaxCorrectionTick)
+        ulong MaxCorrectionTick,
+        long AckStallIdleTicks,
+        int MaxPendingDuringStall)
     {
         public string Describe(string label) =>
             $"{label}: max correction after {MaxCorrectionAfter:F3} m (largest smooth {MaxSmoothAfter:F3} m, snaps {SnapsAfter}); " +
-            $"send-stall idle ticks {SendStallIdleTicks}; stall start tick {StallStartTick}, max correction at ack {MaxCorrectionAck} (client tick {MaxCorrectionTick}); " +
+            $"send-stall idle ticks {SendStallIdleTicks} (ack-lag only {AckStallIdleTicks}), max unsent during stall {MaxPendingDuringStall}; stall start tick {StallStartTick}, max correction at ack {MaxCorrectionAck} (client tick {MaxCorrectionTick}); " +
             $"stall end tick {StallEndTick}, last ack {LastAcknowledged}, dropped ticks {DroppedTicks}, merged commands {MergedCommands}, " +
             $"largest sequence jump {LargestSequenceJump}, commands sent {CommandsSent}, server walked {ServerWalked:F2} m since stall start, " +
             $"client walked {ClientWalked:F2} m since stall start";
@@ -276,6 +336,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         private Vector3? _serverAtStallStart;
         private Vector3 _lastServerPosition;
         private Vector3 _clientAtEnd;
+        private ulong? _latestAck;
 
         public HeadlessClient(RemoteClientSession session, int floorSize, Vector3 facing)
         {
@@ -284,9 +345,14 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             _facing = facing;
             _world = new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             Ticks = new ClientCommandTickStream(_world.LocalPlayerSessionId);
-            // As PlayScene wires it: a send stalled past the repeat window idles the prediction.
+            // As PlayScene wires it: a send stalled past the repeat window idles the prediction, and
+            // so does an ack lag past the round trip (the newest snapshot's ack, as
+            // ClientRoutingContext.LastSnapshot holds it).
             Ticks.ObserveSendBacklog(() => _session.PendingCommandCount);
+            Ticks.ObserveAcknowledgedSequence(() => _latestAck);
         }
+
+        public int MaxPendingDuringStall { get; set; }
 
         public ClientCommandTickStream Ticks { get; }
 
@@ -341,6 +407,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 }
 
                 ServerSnapshotEnvelope snapshot = snapshotMessage.Snapshot;
+                _latestAck = ClientCommandTickStream.AcknowledgedSequence(snapshot, _session.SessionId);
                 Vector3 before = _world.Player.GetWorldPosition();
                 Vector3 pendingBefore = _reconciler.PendingOffset;
                 RemoteWorldMutationApplier.ApplySnapshotToRuntime(_world, snapshot);
@@ -411,7 +478,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 Ticks.SendStallIdleTicks,
                 StallStartTick,
                 _maxCorrectionAck,
-                _maxCorrectionTick);
+                _maxCorrectionTick,
+                Ticks.AckStallIdleTicks,
+                MaxPendingDuringStall);
         }
     }
 
@@ -427,12 +496,23 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         }
     }
 
+    // Stall blocks SendAsync (a stalled send loop: the session's queue backs up). With the delay
+    // line on, SendAsync returns at once and a pump forwards each payload, in order, once its delay
+    // has passed; Hold keeps the pump from forwarding until Resume (a network stall: the bytes
+    // wait in the kernel buffer, the session's queue stays empty).
     private sealed class StallableConnection(ITransportConnection inner) : ITransportConnection
     {
         private readonly TransportJsonCodec _codec = new();
         private readonly LengthPrefixedMessageFramer _framer = new();
         private readonly List<ulong> _sentCommands = [];
+        private readonly Queue<(long Due, byte[] Payload)> _line = new();
+        private readonly SemaphoreSlim _lineSignal = new(0);
+        private readonly CancellationTokenSource _pumpStop = new();
         private volatile TaskCompletionSource? _gate;
+        private volatile TaskCompletionSource? _hold;
+        private long _lineDelayTimestamp;
+        private volatile bool _delayLine;
+        private Task? _pump;
 
         public string ConnectionId => inner.ConnectionId;
 
@@ -441,9 +521,59 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             _gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
+        public void UseDelayLine(TimeSpan delay)
+        {
+            _lineDelayTimestamp = (long)(delay.TotalSeconds * Stopwatch.Frequency);
+            _pump ??= Task.Run(PumpAsync);
+            _delayLine = true;
+        }
+
+        public void Hold()
+        {
+            _hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
         public void Resume()
         {
             _gate?.TrySetResult();
+            _hold?.TrySetResult();
+        }
+
+        private async Task PumpAsync()
+        {
+            CancellationToken token = _pumpStop.Token;
+            try
+            {
+                while (true)
+                {
+                    await _lineSignal.WaitAsync(token);
+                    (long Due, byte[] Payload) entry;
+                    lock (_line)
+                    {
+                        entry = _line.Dequeue();
+                    }
+
+                    TaskCompletionSource? hold = _hold;
+                    if (hold != null)
+                    {
+                        await hold.Task.WaitAsync(token);
+                    }
+
+                    long remaining = entry.Due - Stopwatch.GetTimestamp();
+                    if (remaining > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency), token);
+                    }
+
+                    await inner.SendAsync(entry.Payload, token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception) when (token.IsCancellationRequested)
+            {
+            }
         }
 
         public IReadOnlyList<ulong> SentCommandSequences()
@@ -473,6 +603,17 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 }
             }
 
+            if (_delayLine)
+            {
+                lock (_line)
+                {
+                    _line.Enqueue((Stopwatch.GetTimestamp() + _lineDelayTimestamp, payload.ToArray()));
+                }
+
+                _lineSignal.Release();
+                return;
+            }
+
             await inner.SendAsync(payload, cancellationToken);
         }
 
@@ -481,10 +622,16 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             return inner.ReceiveAsync(buffer, cancellationToken);
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             Resume();
-            return inner.DisposeAsync();
+            _pumpStop.Cancel();
+            if (_pump != null)
+            {
+                await _pump;
+            }
+
+            await inner.DisposeAsync();
         }
     }
 }
