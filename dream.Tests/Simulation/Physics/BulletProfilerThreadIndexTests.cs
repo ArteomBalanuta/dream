@@ -34,6 +34,14 @@ public class BulletProfilerThreadIndexTests
             return;
         }
 
+        if (BulletProfilerGuard.Status == BulletProfilerGuardStatus.Disabled)
+        {
+            // DREAM_BULLET_PROFILER_GUARD=0, the documented switch for reproducing the crash: the
+            // function is located but deliberately left alone, so each thread gets a real index.
+            Assert.InRange(BulletProfilerGuard.ReadCurrentThreadIndexForTest(), 0, BulletProfilerGuard.DisabledThreadIndex - 1);
+            return;
+        }
+
         Assert.Equal(BulletProfilerGuardStatus.Patched, BulletProfilerGuard.Status);
         // Every thread now gets the out-of-range index, so quickprof's Start/Stop_Profile return
         // before touching the shared per-index profile trees.

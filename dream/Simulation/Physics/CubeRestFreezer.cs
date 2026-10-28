@@ -30,10 +30,13 @@ namespace Dream.Simulation.Physics;
 //     when it rides on top of the mover. Cubes the mover stands on are supports and stay frozen;
 //     so standing, walking on and landing on a carpet wake nothing. Each woken cube passes the
 //     push on with the mover's velocity, so a pushed row or stack wakes in the same tick.
-//   - Wake: every frozen cube touching a map body that is removed from the world (a broken or
-//     moved cube, a rebuilt cell), so nothing is left floating.
+//   - Wake: every frozen cube resting on a map body that is removed from the world (a broken or
+//     moved cube, a rebuilt cell), or on a player body that leaves the world (a disconnect, a
+//     parked seat, a detach) or is teleported, so nothing is left floating (WakeRidersOf).
 //   - Wake: a frozen body that anything else activated (Activate(true) after a teleport or a
-//     reset), so existing callers keep their meaning.
+//     reset), so existing callers keep their meaning. If it was moved, the cubes resting on its
+//     old place are woken too. Callers that move a support in place (WorldPhysicsBinder's
+//     compatibility move) also wake its riders before the move, which covers unfrozen supports.
 // Only bodies whose user object is (Cube, Vector3) are frozen: fracture rubble never touches
 // players and sleeps in its own islands.
 public sealed class CubeRestFreezer
@@ -132,7 +135,7 @@ public sealed class CubeRestFreezer
             {
                 if (state != ActivationState.IslandSleeping)
                 {
-                    Unfreeze(frozenCell);
+                    UnfreezeActivated(body, frozenCell);
                 }
 
                 continue;
@@ -274,7 +277,7 @@ public sealed class CubeRestFreezer
     }
 
     // Called before a map body leaves the world: drops it if it is frozen, otherwise wakes every
-    // frozen cube touching it (whatever rested on it falls; side neighbours refreeze at rest).
+    // frozen cube resting on it (whatever rested on it falls; side neighbours stay frozen).
     internal void OnBodyRemoving(RigidBody body)
     {
         if (_cellByBody.Count == 0)
@@ -289,14 +292,29 @@ public sealed class CubeRestFreezer
             _byCell.Remove(cell);
         }
 
+        WakeRidersOf(body);
+    }
+
+    // Wakes every frozen cube resting on the body where it is now (and the stacks on them). Call
+    // it before a body that can carry cubes stops supporting them without moving under them: it
+    // leaves the world (a player disconnects, a seat is parked, a body is detached) or is moved
+    // in place (a teleport, a server correction, a compatibility move). A teleport zeroes the
+    // body's velocity, so the mover rule would never see it carry anything away.
+    public void WakeRidersOf(RigidBody body)
+    {
         if (!_enabled || _cellByBody.Count == 0 || !body.IsInWorld)
         {
             return;
         }
 
-        // Cubes cannot rotate (angular factor 0), so only the cubes resting on the removed body,
-        // and the stacks on them, lose support; side neighbours and the cubes below stay frozen.
         body.GetAabb(out Vector3 min, out Vector3 max);
+        WakeRidersAbove(min, max);
+    }
+
+    // Cubes cannot rotate (angular factor 0), so only the cubes resting on a box, and the stacks
+    // on them, lose support when it goes; side neighbours and the cubes below stay frozen.
+    private void WakeRidersAbove(Vector3 min, Vector3 max)
+    {
         Vector3 slop = new(ContactSlop, ContactSlop, ContactSlop);
         _wakeQueue.Clear();
         _wakeQueue.Add(new WakeSource(min, max));
@@ -387,6 +405,20 @@ public sealed class CubeRestFreezer
         return true;
     }
 
+    // A frozen body that something else activated. A frozen body never moves on its own, so a box
+    // that differs from the one it froze with means it was teleported (a sync reset, a map move):
+    // the cubes resting on its old place lost their support and are woken too.
+    private void UnfreezeActivated(RigidBody body, long cell)
+    {
+        FrozenCube entry = _byCell[cell];
+        Unfreeze(cell);
+        body.GetAabb(out Vector3 min, out Vector3 max);
+        if (min != entry.Min || max != entry.Max)
+        {
+            WakeRidersAbove(entry.Min, entry.Max);
+        }
+    }
+
     private void Unfreeze(long cell)
     {
         if (!_byCell.Remove(cell, out FrozenCube entry))
@@ -453,7 +485,14 @@ public sealed class CubeRestFreezer
         if (entry.Max.Y <= moverMin.Y + SupportTolerance)
         {
             // It supports the mover: standing, walking or landing on it needs nothing from it,
-            // except at a flush seam (below).
+            // except at a flush seam (below). Only a support the mover sinks into counts: the
+            // snag needs vertical penetration. A mover resting with a positive gap above its
+            // supports has no box-box contact with them at all (btBoxBoxDetector reports none
+            // for boxes separated along any axis), so the seam is no wall; once gravity settles
+            // it in, the next tick's pass sees the penetration and wakes the seam then. Counting
+            // a gap within ContactSlop as well was tried: every woken cube passes the push on
+            // with this rule, so on cell-aligned stacks it cascaded through whole carpets
+            // (Smoke8 awake placed cubes p99 980 against 40).
             return entry.Max.Y > moverMin.Y && IsFlushSeamAhead(entry, moverMin, moverMax, velocity);
         }
 
@@ -483,7 +522,19 @@ public sealed class CubeRestFreezer
     // yielded to that push (the row ahead slid a little and the box got over); a static one
     // would stop it for good. So a support-level cube exactly flush ahead is woken like a pushed
     // one, and passes the push on along its row as before.
+    //
+    // "Exactly flush" is up to float rounding of the faces, which grows with the coordinate: one
+    // ulp is 2.4e-4 at 2048 and 3.9e-3 at 32768. So the tolerance is the larger of an absolute
+    // floor and a few ulps of the coordinates compared.
     private const float FlushTolerance = 1e-4f;
+
+    // Four ulps (float epsilon is 2^-23 relative).
+    private const float RelativeFlushTolerance = 4f * 1.1920929e-7f;
+
+    private static float FlushToleranceAt(float a, float b)
+    {
+        return MathF.Max(FlushTolerance, MathF.Max(MathF.Abs(a), MathF.Abs(b)) * RelativeFlushTolerance);
+    }
 
     private static bool IsFlushSeamAhead(in FrozenCube entry, Vector3 moverMin, Vector3 moverMax, Vector3 velocity)
     {
@@ -511,7 +562,8 @@ public sealed class CubeRestFreezer
 
         float gap = speed > 0f ? entryMin - moverMax : moverMin - entryMax;
         float crossOverlap = MathF.Min(entryCrossMax, moverCrossMax) - MathF.Max(entryCrossMin, moverCrossMin);
-        return MathF.Abs(gap) <= FlushTolerance && crossOverlap >= -FlushTolerance;
+        return MathF.Abs(gap) <= FlushToleranceAt(entryMin, entryMax) &&
+            crossOverlap >= -FlushToleranceAt(entryCrossMin, entryCrossMax);
     }
 
     private static bool Overlaps(in FrozenCube entry, Vector3 queryMin, Vector3 queryMax)

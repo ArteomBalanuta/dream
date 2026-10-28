@@ -574,6 +574,10 @@ public class PhysicsSyncSystem
         return (previous - current).LengthSquared > 0.000001f;
     }
 
+    // A frozen body reset here is unfrozen by the integrator's next CubeRestFreezer pass, which
+    // sees it activated away from the box it froze with and wakes the cubes resting on its old
+    // place (CubeRestFreezer.UnfreezeActivated), so nothing floats where it stood. This class has
+    // no integrator to wake them here.
     private static void ResetBodyToCenter(RigidBody body, Vector3 center)
     {
         Matrix transform = Matrix.Translation(center.ToBullet());

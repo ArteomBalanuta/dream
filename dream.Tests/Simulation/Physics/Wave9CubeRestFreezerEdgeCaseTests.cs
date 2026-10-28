@@ -17,9 +17,10 @@ namespace Dream.Tests.Simulation.Physics;
 //
 // The freezer wakes a frozen cube when a mover pushes or carries it, when a map body it rests on
 // leaves the world (PhysicsIntegrator.RemoveMapBodyFromWorld), or when something calls Activate.
-// Player bodies are movers, but they are not map bodies: a player body that leaves the world
-// (RemoveSessionPlayerBody, SetPlayerBodyParked) or is teleported (Player.SetWorldPosition) wakes
-// nothing, so a cube frozen on top of an idle player stays where it is.
+// Player bodies are movers, but they are not map bodies. Before fix loop 1 (W9-1) a player body
+// that left the world (RemoveSessionPlayerBody, SetPlayerBodyParked) or was teleported
+// (Player.SetWorldPosition) woke nothing, so a cube frozen on top of an idle player floated where
+// it stood; those paths now wake the cubes resting on the body (CubeRestFreezer.WakeRidersOf).
 public class Wave9CubeRestFreezerEdgeCaseTests
 {
     private const float TickSeconds = 1f / 64f;
@@ -98,20 +99,16 @@ public class Wave9CubeRestFreezerEdgeCaseTests
 
     // A player body that leaves the world (RemoveSessionPlayerBody on a disconnect or seat release,
     // RemoteSessionPlayerState) or is teleported (Player.SetWorldPosition: a respawn, a server
-    // correction) is not a map body, so the freezer wakes nothing. Measured (64 ticks after the
-    // exit, the cube had rested on the head for 2.5 s):
-    //   Disconnect: y 2.500 frozen, y 2.500 dynamic (pre-existing: the dynamic cube had reached
-    //               WANTS_DEACTIVATION, and alone in its island Bullet put it to sleep at once).
-    //   Teleport:   y 2.500 frozen, y 1.500 dynamic (the dynamic cube falls to the floor).
-    // Without freezing a cube floats only if it rested >= 2 s (gDeactivationTime) and the exit
-    // left it alone in its island; with freezing it floats after 0.5 s of rest, every time.
-    // BUG W9-1: PHYS-2 regression for the teleport case, wider window for the disconnect case.
-    // This test pins the measured behaviour; FrozenCubeOnAPlayersHead_FallsWhenThePlayerLeaves is
-    // the expected one.
+    // correction). Measured (64 ticks after the exit, the cube had rested on the head for 2.5 s):
+    //   Disconnect: y 1.500 frozen, y 2.500 dynamic (pre-existing without freezing: the dynamic
+    //               cube had reached WANTS_DEACTIVATION, and alone in its island Bullet put it
+    //               to sleep at once).
+    //   Teleport:   y 1.500 frozen, y 1.500 dynamic (the cube falls to the floor).
+    // Before the W9-1 fix the frozen cube stayed at y 2.500 in both cases.
     [Theory]
-    [InlineData(PlayerExit.Disconnect, true, 2.5f)]
+    [InlineData(PlayerExit.Disconnect, true, 1.5f)]
     [InlineData(PlayerExit.Disconnect, false, 2.5f)]
-    [InlineData(PlayerExit.Teleport, true, 2.5f)]
+    [InlineData(PlayerExit.Teleport, true, 1.5f)]
     [InlineData(PlayerExit.Teleport, false, 1.5f)]
     public void CubeOnAPlayersHead_AfterThePlayerLeaves_MeasuredHeight(PlayerExit exit, bool freeze, float expectedY)
     {
@@ -119,9 +116,11 @@ public class Wave9CubeRestFreezerEdgeCaseTests
         Assert.InRange(endY, expectedY - 0.05f, expectedY + 0.05f);
     }
 
-    [Theory(Skip = "W9-1: the freezer does not wake a cube frozen on a player body that is removed or teleported")]
+    [Theory]
     [InlineData(PlayerExit.Disconnect)]
     [InlineData(PlayerExit.Teleport)]
+    [InlineData(PlayerExit.Park)]
+    [InlineData(PlayerExit.Detach)]
     public void FrozenCubeOnAPlayersHead_FallsWhenThePlayerLeaves(PlayerExit exit)
     {
         float endY = RunCubeOnPlayersHead(exit, freeze: true);
@@ -131,20 +130,33 @@ public class Wave9CubeRestFreezerEdgeCaseTests
     private float RunCubeOnPlayersHead(PlayerExit exit, bool freeze)
     {
         using Scene scene = Scene.Create(freeze);
-        Player player = scene.AddPlayer(new TkVector3(8.5f, 1.54f, 8.5f));
+        bool primary = exit is PlayerExit.Park or PlayerExit.Detach;
+        Player player = scene.AddPlayer(new TkVector3(8.5f, 1.54f, 8.5f), primary);
         scene.AddPlayer(new TkVector3(2.5f, 1.54f, 2.5f));
         scene.Run(SettleTicks, TkVector3.Zero);
         RigidBody rider = scene.AddCube(8, 2, 8);
         scene.Run(SettleTicks, TkVector3.Zero);
         Assert.InRange(rider.WorldTransform.Origin.Y, 2.45f, 2.7f);
         Assert.Equal(freeze, scene.Physics.CubeRest.IsFrozen(rider));
-        if (exit == PlayerExit.Disconnect)
+        switch (exit)
         {
-            scene.RemovePlayer(player);
-        }
-        else
-        {
-            player.SetWorldPosition(new TkVector3(16.5f, 1.54f, 16.5f));
+            case PlayerExit.Disconnect:
+                scene.RemovePlayer(player);
+                break;
+            case PlayerExit.Teleport:
+                player.SetWorldPosition(new TkVector3(16.5f, 1.54f, 16.5f));
+                break;
+            case PlayerExit.Park:
+                // WorldSessionRuntime parks the primary body while its seat is empty.
+                scene.StopDriving(player);
+                scene.Physics.SetPlayerBodyParked(true);
+                break;
+            case PlayerExit.Detach:
+                scene.StopDriving(player);
+                RigidBody detached = scene.Physics.DetachPlayerBody();
+                Assert.Same(player.PhysicsBody, detached);
+                detached.Dispose();
+                break;
         }
 
         scene.Run(64, TkVector3.Zero);
@@ -156,7 +168,248 @@ public class Wave9CubeRestFreezerEdgeCaseTests
     public enum PlayerExit
     {
         Disconnect,
-        Teleport
+        Teleport,
+        Park,
+        Detach
+    }
+
+    // Only what rests on the player's top wakes: a cube frozen beside the player's head (on a
+    // pedestal next to it) and the floor cubes around the player stay frozen.
+    [Fact]
+    public void PlayerTeleport_WakesOnlyTheCubeOnItsHead()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        Player player = scene.AddPlayer(new TkVector3(8.5f, 1.54f, 8.5f));
+        RigidBody pedestal = scene.AddCube(10, 1, 8);
+        RigidBody besideHead = scene.AddCube(10, 2, 8);
+        RigidBody floorNeighbour = scene.AddCube(8, 1, 10);
+        scene.Run(SettleTicks, TkVector3.Zero);
+        RigidBody rider = scene.AddCube(8, 2, 8);
+        scene.Run(SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(besideHead));
+        long wokenBefore = scene.Physics.CubeRest.TotalWoken;
+
+        player.SetWorldPosition(new TkVector3(16.5f, 1.54f, 16.5f));
+
+        Assert.False(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(pedestal));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(besideHead));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(floorNeighbour));
+        Assert.Equal(wokenBefore + 1, scene.Physics.CubeRest.TotalWoken);
+    }
+
+    // ---- Moving a frozen support in place ----
+
+    // Map.UpdateCubePosition moves a cube's body in place (WorldPhysicsBinder
+    // .TryMoveCompatibilityCubeBody) with zero velocity, so no mover rule fires; the cube frozen on
+    // top of it must still fall instead of floating over the emptied cell.
+    [Fact]
+    public void MovingAFrozenSupportThroughTheMap_WakesItsRider_WhichFalls()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        RigidBody support = scene.AddCube(8, 1, 8);
+        RigidBody rider = scene.AddCube(8, 2, 8);
+        RigidBody neighbour = scene.AddCube(9, 1, 8);
+        scene.AddPlayer(new TkVector3(2.5f, 1.54f, 2.5f));
+        scene.Run(SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(support));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+        float riderY = rider.WorldTransform.Origin.Y;
+        Cube cube = scene.CubeAt(8, 1, 8);
+
+        scene.Map.UpdateCubePosition(cube, cube.Position + new TkVector3(0f, 0f, 4f));
+
+        Assert.False(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(neighbour));
+        scene.Run(SettleTicks, TkVector3.Zero);
+        float fell = riderY - rider.WorldTransform.Origin.Y;
+        _output.WriteLine($"rider fell {fell:0.000} m; frozen again {scene.Physics.CubeRest.IsFrozen(rider)}");
+        Assert.InRange(fell, 0.9f, 1.1f);
+        Assert.Empty(scene.Map.FindInvariantViolations());
+    }
+
+    // PhysicsSyncSystem.ResetBodyToCenter teleports a body back to its accepted center and
+    // activates it. When the body is a frozen support, the freezer's next pass sees it activated
+    // away from where it froze and wakes the cubes on its old place.
+    [Fact]
+    public void ResettingAFrozenSupportToAnotherCenter_WakesItsRiderBeforeTheNextStep()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        RigidBody support = scene.AddCube(8, 1, 8);
+        RigidBody rider = scene.AddCube(8, 2, 8);
+        RigidBody neighbour = scene.AddCube(9, 1, 8);
+        scene.AddPlayer(new TkVector3(2.5f, 1.54f, 2.5f));
+        scene.Run(SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(support));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+        float riderY = rider.WorldTransform.Origin.Y;
+        BulletSharp.Math.Vector3 origin = support.WorldTransform.Origin;
+        TkVector3 center = new(origin.X, origin.Y, origin.Z + 4f);
+
+        System.Reflection.MethodInfo reset = typeof(PhysicsSyncSystem).GetMethod(
+            "ResetBodyToCenter",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        reset.Invoke(null, [support, center]);
+        scene.Physics.StepSimulationFixed(TickSeconds);
+
+        Assert.False(scene.Physics.CubeRest.IsFrozen(support));
+        Assert.False(scene.Physics.CubeRest.IsFrozen(rider));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(neighbour));
+        for (int tick = 0; tick < SettleTicks; tick++)
+        {
+            scene.Physics.StepSimulationFixed(TickSeconds);
+        }
+
+        float fell = riderY - rider.WorldTransform.Origin.Y;
+        _output.WriteLine($"rider fell {fell:0.000} m");
+        Assert.InRange(fell, 0.9f, 1.1f);
+    }
+
+    // Activate(true) on a frozen cube that did not move still only unfreezes that cube.
+    [Fact]
+    public void ActivatingAFrozenSupportInPlace_LeavesItsRiderFrozen()
+    {
+        using Scene scene = Scene.Create(freezeEnabled: true);
+        RigidBody support = scene.AddCube(8, 1, 8);
+        RigidBody rider = scene.AddCube(8, 2, 8);
+        scene.AddPlayer(new TkVector3(2.5f, 1.54f, 2.5f));
+        scene.Run(SettleTicks, TkVector3.Zero);
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+
+        support.Activate(true);
+        scene.Physics.StepSimulationFixed(TickSeconds);
+
+        Assert.False(scene.Physics.CubeRest.IsFrozen(support));
+        Assert.True(scene.Physics.CubeRest.IsFrozen(rider));
+    }
+
+    // ---- Flush seams at large coordinates, and a mover resting with a positive gap ----
+
+    // A box resting cell-aligned on a frozen row has its front face flush with the next cube's
+    // back face, which the flush-seam rule wakes (CubeRestFreezerTests.PlayerStartingCellAligned).
+    // "Flush" is up to float rounding: at |x| >= 2048 one ulp exceeds the old absolute 1e-4
+    // tolerance, so a face one ulp off was not flush any more and the row stayed a wall. The
+    // mover here is one ulp right of cell-aligned and rests a hair into the row.
+    [Theory]
+    [InlineData(0f, -0.001f)]
+    [InlineData(4096f, -0.001f)]
+    [InlineData(-8192f, -0.001f)]
+    [InlineData(30000f, -0.001f)]
+    [InlineData(30000f, -0.0001f)]
+    public void FlushSeamAhead_WakesTheRow_AtAnyCoordinate(float originX, float verticalGap)
+    {
+        using PhysicsIntegrator physics = new();
+        physics.CubeRest.Enabled = true;
+        RigidBody[] row = FreezeRawRow(physics, originX, count: 3);
+        RigidBody mover = AddRawMover(physics, MathF.BitIncrement(originX + 0.5f), 1.5f + verticalGap, 0.5f);
+        mover.GetAabb(out BulletSharp.Math.Vector3 moverMin, out BulletSharp.Math.Vector3 moverMax);
+        row[1].GetAabb(out BulletSharp.Math.Vector3 aheadMin, out _);
+        float seamGap = aheadMin.X - moverMax.X;
+        _output.WriteLine($"x {originX}: seam gap {seamGap:E2}, mover bottom {moverMin.Y:0.0000}");
+        Assert.True(MathF.Abs(seamGap) < 0.01f);
+        if (MathF.Abs(originX) >= 4096f)
+        {
+            // The case the absolute tolerance missed.
+            Assert.True(MathF.Abs(seamGap) > 1e-4f, $"seam gap {seamGap}");
+        }
+
+        mover.LinearVelocity = new BulletSharp.Math.Vector3(4f, 0f, 0f);
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+
+        Assert.True(physics.CubeRest.IsFrozen(row[0]), "the cube under the mover is a support");
+        Assert.False(physics.CubeRest.IsFrozen(row[1]));
+        Assert.False(physics.CubeRest.IsFrozen(row[2]));
+    }
+
+    // A mover flush with the seam but a centimetre above the row has no box-box contact with it
+    // (Bullet reports none for separated boxes), so the seam is no wall yet and nothing wakes;
+    // once it has settled into the row, the next pass wakes the seam. Waking on the gap already
+    // cascaded through cell-aligned stacks (see CubeRestFreezer.IsPushedOrCarried).
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(4096f)]
+    public void FlushSeamAhead_OfAMoverWithAPositiveGap_WakesOnceItSettlesIn(float originX)
+    {
+        using PhysicsIntegrator physics = new();
+        physics.CubeRest.Enabled = true;
+        RigidBody[] row = FreezeRawRow(physics, originX, count: 3);
+        float x = MathF.BitIncrement(originX + 0.5f);
+        RigidBody mover = AddRawMover(physics, x, 1.51f, 0.5f);
+        mover.LinearVelocity = new BulletSharp.Math.Vector3(4f, 0f, 0f);
+
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+        Assert.All(row, body => Assert.True(physics.CubeRest.IsFrozen(body)));
+
+        mover.WorldTransform = BulletSharp.Math.Matrix.Translation(x, 1.499f, 0.5f);
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+        Assert.True(physics.CubeRest.IsFrozen(row[0]));
+        Assert.False(physics.CubeRest.IsFrozen(row[1]));
+        Assert.False(physics.CubeRest.IsFrozen(row[2]));
+    }
+
+    // The tolerance stays a few ulps: a mover two centimetres short of the seam does not wake the
+    // row, at small or large coordinates.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(4096f)]
+    [InlineData(30000f)]
+    public void SeamAheadWithARealGap_StaysFrozen_AtAnyCoordinate(float originX)
+    {
+        using PhysicsIntegrator physics = new();
+        physics.CubeRest.Enabled = true;
+        RigidBody[] row = FreezeRawRow(physics, originX, count: 3);
+        RigidBody mover = AddRawMover(physics, originX + 0.48f, 1.499f, 0.5f);
+        mover.LinearVelocity = new BulletSharp.Math.Vector3(0.2f, 0f, 0f);
+
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+
+        Assert.All(row, body => Assert.True(physics.CubeRest.IsFrozen(body)));
+    }
+
+    // A row of unit cubes along +x from (originX, 0, 0), frozen where they are placed (no gravity,
+    // so their boxes are exactly the placed ones).
+    private static RigidBody[] FreezeRawRow(PhysicsIntegrator physics, float originX, int count)
+    {
+        physics.World.Gravity = BulletSharp.Math.Vector3.Zero;
+        RigidBody[] row = new RigidBody[count];
+        for (int i = 0; i < count; i++)
+        {
+            TkVector3 center = new(originX + 0.5f + i, 0.5f, 0.5f);
+            BoxShape shape = new(0.5f) { Margin = 0f };
+            BulletSharp.Math.Vector3 inertia = shape.CalculateLocalInertia(1f);
+            using RigidBodyConstructionInfo info = new(
+                1f,
+                new DefaultMotionState(BulletSharp.Math.Matrix.Translation(center.X, center.Y, center.Z)),
+                shape,
+                inertia);
+            RigidBody body = new(info)
+            {
+                UserObject = (new Cube(isEmpty: false, isSolid: true) { Position = center }, center),
+                AngularFactor = BulletSharp.Math.Vector3.Zero
+            };
+            body.SetSleepingThresholds(0.05f, 0.05f);
+            physics.AddMapBodyToWorld(body);
+            physics.MapCubeBodies.Add(body);
+            physics.DynamicMapCubeBodies.Add(body);
+            row[i] = body;
+        }
+
+        for (int tick = 0; tick < 48; tick++)
+        {
+            physics.StepSimulationFixed(TickSeconds);
+        }
+
+        Assert.All(row, body => Assert.True(physics.CubeRest.IsFrozen(body)));
+        return row;
+    }
+
+    // A player body added after the row froze and never stepped, so it is exactly where it is put.
+    private static RigidBody AddRawMover(PhysicsIntegrator physics, float x, float y, float z)
+    {
+        RigidBody mover = new PhysicsFactory().CreatePlayerBody(new BulletSharp.Math.Vector3(x, y, z));
+        physics.AddSessionPlayerBody(mover);
+        return mover;
     }
 
     // ---- Jumping ----
@@ -441,10 +694,18 @@ public class Wave9CubeRestFreezerEdgeCaseTests
             return Assert.IsType<Cube>(Map.Cubes[x, y, z]);
         }
 
-        public Player AddPlayer(TkVector3 position)
+        public Player AddPlayer(TkVector3 position, bool primary = false)
         {
             RigidBody body = new PhysicsFactory().CreatePlayerBody(position.ToBullet());
-            Physics.AddSessionPlayerBody(body);
+            if (primary)
+            {
+                Physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);
+            }
+            else
+            {
+                Physics.AddSessionPlayerBody(body);
+            }
+
             Player player = new(Map, Physics, body, position);
             _players.Add(player);
             return player;
@@ -457,6 +718,14 @@ public class Wave9CubeRestFreezerEdgeCaseTests
             _players.Remove(player);
             player.Dispose();
             Physics.RemoveSessionPlayerBody(player.PhysicsBody);
+        }
+
+        // Stops updating the player (its body is parked or detached); the integrator keeps or
+        // hands back the body.
+        public void StopDriving(Player player)
+        {
+            _players.Remove(player);
+            player.Dispose();
         }
 
         public void Run(int ticks, TkVector3 direction, bool jump = false)
