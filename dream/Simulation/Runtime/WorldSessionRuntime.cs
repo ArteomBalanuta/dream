@@ -61,7 +61,6 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // bounded by the registry however many session ids connect.
     private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
-    private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
     private readonly IPlayerProfileRepository? _playerProfiles;
     private readonly IWorldPersistenceRepository? _worldPersistence;
     private readonly IPersistenceCheckpointWriter? _checkpointWriter;
@@ -69,16 +68,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // identity/profile lookups the tick needs are served from memory, so gameplay actions no
     // longer read whole tables or commit on the simulation thread.
     private readonly PersistenceWriteQueue? _writes;
-    // Profiles by player name: every active player's, plus those of the players who left most
-    // recently (see MarkProfileDeparted), so it is bounded however many names clients make up.
-    private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _knownProfileNames = new(StringComparer.OrdinalIgnoreCase);
-    // Sessions whose join failed before their saved state was restored (RestorePersistedPlayerState);
-    // their in-memory stats are defaults, so PersistPlayerProfile must not save them over the row.
-    // Keyed by session, not display name, so another session sharing the name still saves; an
-    // entry goes when the session restores or is detached.
-    private readonly HashSet<PlayerSessionId> _unrestoredPlayerSessions = [];
-    private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
+    // World restore, join prefetch, profile cache, write-through and checkpoints (ARCH-3 step B).
+    private readonly RuntimePersistenceBridge _persistence;
     private readonly CombatFormulaService _combatFormulaService;
     private PlayerCommandFrame _lastAppliedCommandFrame;
     // Ticks since the primary seat last accepted a command; see MaxCommandRepeatTicks.
@@ -127,6 +118,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
         _worldObjects = new WorldObjectRegistry();
         _enemies = new EnemyRegistry();
+        _persistence = new RuntimePersistenceBridge(
+            this, _playerProfiles, _worldPersistence, _checkpointWriter, _writes, _worldObjects, _enemies, _events);
         SubscribeReplicationExports();
 
         RestorePersistedWorldState();
