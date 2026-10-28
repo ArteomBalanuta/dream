@@ -194,7 +194,7 @@ public sealed class WorldTransferServiceFixTests(ITestOutputHelper output)
             host.HandleClientMessage("connection-old", new ClientJoinRequestMessage("session-a", "Player A"));
             await AdvanceUntilAsync(service, () => host.IsConnectionJoined("connection-old"));
 
-            clock.Advance(TimeSpan.FromSeconds(2.5));
+            clock.Advance(DedicatedServerHost.SameSessionTakeoverSilence + TimeSpan.FromSeconds(0.5));
             host.HandleClientMessage("connection-new", new ClientJoinRequestMessage("session-a", "Player A"));
             await AdvanceUntilAsync(service, () => service.ConnectionCount == 1);
             Assert.True(oldTransport.IsDisposed);

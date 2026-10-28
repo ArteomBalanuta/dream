@@ -213,10 +213,14 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
             host.HandleClientMessage("slow-link", new ClientJoinRequestMessage("session-a", "Player A"));
             Assert.True(host.IsConnectionJoined("slow-link"));
 
-            // Phase 1: 8 s of a busy world over the slow link.
+            // Phase 1: at least 8 s of a busy world over the slow link, extended (up to a 30 s safety
+            // deadline) until a second resync has been served. Since overflow resyncs are deferred while
+            // a transfer is in flight, how many finish inside a fixed window depends on scheduling, so
+            // the phase waits for the condition the assertions below need instead of a fixed time.
             System.Diagnostics.Stopwatch phase = System.Diagnostics.Stopwatch.StartNew();
             int maxQueuedWorlds = 0;
-            while (phase.Elapsed < TimeSpan.FromSeconds(8))
+            while (phase.Elapsed < TimeSpan.FromSeconds(8)
+                || (authority.WorldResyncs < 2 && phase.Elapsed < TimeSpan.FromSeconds(30)))
             {
                 await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
                 maxQueuedWorlds = Math.Max(maxQueuedWorlds, authority.WorldResyncs - (int)connection.WorldTransfers);
