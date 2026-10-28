@@ -42,6 +42,20 @@ Shader compilation and linking are handled by `Shader.cs`, which reads vertex an
 Runtime shader file paths are provided through `AssetPaths.cs`.
 `Shader.cs` now caches uniform locations after first lookup so repeated render-path uniform updates do not keep calling `GL.GetUniformLocation`.
 
+### Frame lighting
+
+- **Include mechanism.** `Shader.ResolveIncludes` replaces each line `#include "file.glsl"` with that file from the shader's own folder. It runs on both stages before the MASK define is inserted. It goes one level only: a nested `#include`, a `#version` in an included file, a path outside the folder, or a missing file throws.
+- **One lighting model.** `cubeFragment.glsl` and `enemyFragment.glsl` both include `shaders/lighting.glsl`. That file declares the std140 uniform block `FrameLighting` and the helpers `dreamAmbient` (hemisphere ambient), `dreamDirect` (sun plus moon), `dreamExpose` and `dreamApplyFog` (exp2-squared fog starting at `CameraPosition.w`). The hard-coded point lights are gone.
+  - Terrain, cubes, models and the view model use `(ambient + direct) * base`.
+  - Actors (the `enemy` program) use `ambient × 3.25 + direct × 0.75`, floored at `Params.y × base`.
+- **The C# side.** `Rendering/Lighting/FrameLighting.cs` mirrors the block member for member: 144 bytes, binding point 0. GL 3.3 has no `layout(binding)` on a block, so after link `Shader` calls `FrameLightingBuffer.BindProgramBlock`. That runs `GL.UniformBlockBinding` for every program that declares the block.
+- **Uploading.** `FrameLightingBuffer` owns one uniform buffer with two ranges:
+  - the world range, at offset 0;
+  - the view-model range, at 144 rounded up to `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT`. It holds eye-space sun and moon directions, the camera at the origin, and ambient floored at 0.08. The view model draws with view = identity.
+  - `WorldRenderer.DrawWorld(WorldSessionPresentationState)` calls `Render.UploadFrameLighting(camera)` once per frame. It writes both ranges with `BufferSubData` of a stack struct (0 B allocated) and binds the world range. `ViewModelRenderer.Draw` binds the view-model range and restores the world range afterwards.
+  - The scene picks the lighting with `Render.SetFrameLighting`. It defaults to `FrameLighting.ReferenceNoon`, which reproduces the old cube point light at spawn, with fog density 0.
+  - `FrameLightingContractTests` pins the layout, the GLSL member order, the include rules and the noon match against the old formulas.
+
 ## Cube Rendering Paths
 
 `Render.DrawCube()` builds a centered visual model matrix (`CubeTransforms.CreateCenteredVisualModelMatrix`) from the cube position, side length and the model's asset scale, then resolves the model from `Cube.MaterialId` through `CubeMaterialModelCatalog.Resolve`. It chooses one of two paths:

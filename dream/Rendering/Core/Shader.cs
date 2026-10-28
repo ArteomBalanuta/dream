@@ -1,3 +1,4 @@
+using Dream.Rendering.Lighting;
 using Dream.Rendering.Models;
 
 namespace Dream.Rendering.Core;
@@ -37,9 +38,10 @@ public sealed class Shader : IDisposable
     {
         GLUtils.AssertRenderThread("Shader creation");
 
-        // Load sources from file.
-        string vertexSource = File.ReadAllText(vertexPath);
-        string fragmentSource = File.ReadAllText(fragmentPath);
+        // Load sources from file. Includes resolve before the define goes in, so the define still
+        // lands right after the shader's own #version.
+        string vertexSource = ResolveIncludes(File.ReadAllText(vertexPath), DirectoryOf(vertexPath));
+        string fragmentSource = ResolveIncludes(File.ReadAllText(fragmentPath), DirectoryOf(fragmentPath));
         if (fragmentDefine != null)
         {
             fragmentSource = InsertDefine(fragmentSource, fragmentDefine);
@@ -110,6 +112,10 @@ public sealed class Shader : IDisposable
         _modelLocation = GetUniformLocation(ModelUniformName);
         _normalMatrixLocation = GetUniformLocation(NormalMatrixUniformName);
         _alphaCutoffLocation = GetUniformLocation(AlphaCutoffUniformName);
+        // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
+        // lighting.glsl) is pointed at its binding point here, once per program. Programs that do
+        // not declare it are left alone.
+        FrameLightingBuffer.BindProgramBlock(program);
         GLUtils.CheckGLError("Shader creation");
     }
 
@@ -146,6 +152,81 @@ public sealed class Shader : IDisposable
             ? $"{source}\n#define {define}\n"
             : source.Insert(lineEnd + 1, $"#define {define}\n");
     }
+
+    // Replaces each line `#include "file.glsl"` with the text of that file, read from `directory`
+    // (the including shader's own folder). One level only: an included file may not contain an
+    // #include or a #version, and a missing file throws. Other lines, and their line endings, are
+    // kept as they are.
+    public static string ResolveIncludes(string source, string directory)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(directory);
+        if (!source.Contains("#include", StringComparison.Ordinal))
+        {
+            return source;
+        }
+
+        System.Text.StringBuilder resolved = new(source.Length);
+        int lineStart = 0;
+        while (lineStart < source.Length)
+        {
+            int newline = source.IndexOf('\n', lineStart);
+            int lineEnd = newline < 0 ? source.Length : newline + 1;
+            string line = source.Substring(lineStart, lineEnd - lineStart);
+            if (TryParseInclude(line, out string? fileName))
+            {
+                resolved.Append(ReadInclude(fileName, directory));
+                resolved.Append('\n');
+            }
+            else
+            {
+                resolved.Append(line);
+            }
+
+            lineStart = lineEnd;
+        }
+
+        return resolved.ToString();
+    }
+
+    private static bool TryParseInclude(string line, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? fileName)
+    {
+        System.Text.RegularExpressions.Match match = IncludePattern.Match(line);
+        fileName = match.Success ? match.Groups[1].Value : null;
+        return match.Success;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex IncludePattern =
+        new(@"^﻿?[ \t]*#[ \t]*include[ \t]+""([^""]+)""[ \t]*\r?\n?$");
+
+    private static readonly System.Text.RegularExpressions.Regex DirectivePattern =
+        new(@"^[ \t]*#[ \t]*(include|version)\b", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+    private static string ReadInclude(string fileName, string directory)
+    {
+        if (fileName != Path.GetFileName(fileName))
+        {
+            throw new InvalidOperationException($"Shader include \"{fileName}\" must name a file in the shader's own directory.");
+        }
+
+        string path = Path.Combine(directory, fileName);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"Shader include \"{fileName}\" not found in {directory}.", path);
+        }
+
+        string text = File.ReadAllText(path).TrimStart('﻿');
+        System.Text.RegularExpressions.Match directive = DirectivePattern.Match(text);
+        if (directive.Success)
+        {
+            throw new InvalidOperationException(
+                $"Shader include \"{fileName}\" contains #{directive.Groups[1].Value}; includes are one level and have no #version.");
+        }
+
+        return text.EndsWith('\n') ? text[..^1] : text;
+    }
+
+    private static string DirectoryOf(string path) => Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
 
     public void Use()
     {

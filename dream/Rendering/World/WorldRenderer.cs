@@ -93,6 +93,9 @@ public class WorldRenderer : IDisposable
 
     public WorldRenderStats DrawWorld(WorldSessionPresentationState state)
     {
+        // The frame's lighting goes up once, before any world draw; actors, the view model and
+        // later passes this frame read the same buffer.
+        _render.UploadFrameLighting(state.Camera);
         return DrawWorld(state.Camera, state.VisibleWorld);
     }
 
