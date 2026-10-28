@@ -21,7 +21,10 @@ public struct FrameLighting
     [FieldOffset(112)] public Vector4 CameraPosition; // xyz eye in fragPos space (set at upload), w fog start
     [FieldOffset(128)] public Vector4 Params;         // x exposure, y actor brightness floor, z actor ambient scale, w 0
 
-    // Today's look matched at the spawn point (5,0.5,5): direction = normalize(lightPos(4,2,2) - spawn).
+    // The frozen legacy look: the pre-T1 point lights matched at the spawn point (5,0.5,5), direction =
+    // normalize(lightPos(4,2,2) - spawn), a sun only about 25 degrees high. It is the renderer's value
+    // before the first sky evaluation and the reference of the shader-equivalence tests. The day/night
+    // noon is SkyModelKeyframes.Noon (T2d): the same azimuth, a 60 degree sun, retuned ambient.
     public static FrameLighting ReferenceNoon => new()
     {
         SunDirection = new Vector4(-0.28571430f, 0.42857143f, -0.85714287f, 1f),

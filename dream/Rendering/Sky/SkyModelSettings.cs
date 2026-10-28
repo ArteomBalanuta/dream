@@ -2,10 +2,11 @@ using System.Globalization;
 
 namespace Dream.Rendering.Sky;
 
-// NightBrightness: up-facing light at night as a fraction of noon's. T1 keeps "moonlit silhouettes"; T2d lowers it.
+// NightBrightness: up-facing light at midnight as a fraction of noon's. The default 0.07 is a dark blue
+// night (terrain about 7% of noon) in which torches and lamps carry the light; T1 used 0.15.
 public readonly record struct SkyModelSettings(float NightBrightness)
 {
-    public const float DefaultNightBrightness = 0.15f;
+    public const float DefaultNightBrightness = 0.07f;
     public const string NightBrightnessEnvironmentVariable = "DREAM_NIGHT_BRIGHTNESS";
 
     public static SkyModelSettings Default { get; } = new(DefaultNightBrightness);

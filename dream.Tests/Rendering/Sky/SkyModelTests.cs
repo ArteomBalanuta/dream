@@ -25,6 +25,16 @@ public class SkyModelTests
         return Luminance(light) * l.Params.X;
     }
 
+    // The same for any face normal: hemisphere ambient plus sun and moon.
+    private static float FaceLuminance(in FrameLighting l, Vector3 n)
+    {
+        Vector3 ambient = Vector3.Lerp(l.AmbientGround.Xyz, l.AmbientSky.Xyz, n.Y * 0.5f + 0.5f);
+        Vector3 light = ambient
+            + MathF.Max(Vector3.Dot(n, l.SunDirection.Xyz), 0f) * l.SunDirection.W * l.SunColor.Xyz
+            + MathF.Max(Vector3.Dot(n, l.MoonDirection.Xyz), 0f) * l.MoonDirection.W * l.MoonColor.Xyz;
+        return Luminance(light) * l.Params.X;
+    }
+
     // Fog amount from lighting.glsl: 1 - exp2(-k^2), k = density * max(d - start, 0).
     private static float FogAmount(in FrameLighting l, float distance)
     {
@@ -32,29 +42,67 @@ public class SkyModelTests
         return 1f - Math.Clamp(MathF.Pow(2f, -k * k), 0f, 1f);
     }
 
+    // Until T2d this test said "noon equals FrameLighting.ReferenceNoon". That kept the pre-T1 look: a
+    // sun only about 25 degrees high, so every day looked like late afternoon and walls facing -Z were
+    // lit more than the ground. T2d deliberately moves the noon sun to 60 degrees and retunes the light,
+    // so noon is now pinned to SkyModelKeyframes.Noon. ReferenceNoon stays the frozen legacy look, and
+    // FrameLightingContractTests still feeds it to the shader mirrors directly.
     [Fact]
-    public void Noon_EqualsReferenceNoonForSunAmbientAndParams()
+    public void Noon_EqualsTheNoonKeyframe_NotTheLegacyReferenceNoon()
     {
-        FrameLighting reference = FrameLighting.ReferenceNoon;
+        FrameLighting expected = SkyModelKeyframes.Noon;
         FrameLighting noon = SkyModel.Evaluate(Noon).Lighting;
 
-        Assert.Equal(reference.SunDirection, noon.SunDirection);
-        Assert.Equal(reference.SunColor, noon.SunColor);
-        Assert.Equal(reference.AmbientSky, noon.AmbientSky);
-        Assert.Equal(reference.AmbientGround, noon.AmbientGround);
-        Assert.Equal(reference.Params, noon.Params);
-        Assert.Equal(reference.FogColor.Xyz, noon.FogColor.Xyz);
-        Assert.Equal(reference.MoonDirection.Xyz, noon.MoonDirection.Xyz);
+        Assert.Equal(expected.SunDirection, noon.SunDirection);
+        Assert.Equal(expected.SunColor, noon.SunColor);
+        Assert.Equal(expected.MoonDirection, noon.MoonDirection);
+        Assert.Equal(expected.AmbientSky, noon.AmbientSky);
+        Assert.Equal(expected.AmbientGround, noon.AmbientGround);
+        Assert.Equal(expected.FogColor, noon.FogColor);
+        Assert.Equal(expected.CameraPosition, noon.CameraPosition);
+        Assert.Equal(expected.Params, noon.Params);
         Assert.Equal(0f, noon.MoonDirection.W);
-        Assert.Equal(Vector3.Zero, noon.CameraPosition.Xyz);
         Assert.True(noon.FogColor.W > 0f);
+
+        // What did not change: the fog colour, the actor params and the sun's azimuth.
+        FrameLighting legacy = FrameLighting.ReferenceNoon;
+        Assert.Equal(legacy.FogColor.Xyz, noon.FogColor.Xyz);
+        Assert.Equal(legacy.Params, noon.Params);
+        Vector2 legacyAzimuth = Vector2.Normalize(new Vector2(legacy.SunDirection.X, legacy.SunDirection.Z));
+        Vector2 noonAzimuth = Vector2.Normalize(new Vector2(noon.SunDirection.X, noon.SunDirection.Z));
+        Assert.Equal(legacyAzimuth.X, noonAzimuth.X, 5);
+        Assert.Equal(legacyAzimuth.Y, noonAzimuth.Y, 5);
+
+        // What did: the sun is about 60 degrees high instead of about 25.
+        Assert.InRange(MathHelper.RadiansToDegrees(MathF.Asin(legacy.SunDirection.Y)), 25f, 26f);
+        Assert.Equal(60f, MathHelper.RadiansToDegrees(MathF.Asin(noon.SunDirection.Y)), 2);
+    }
+
+    // A bright midday: an up-facing surface gets 0.85-0.95 (luma, after exposure), and a wall facing
+    // -Z (toward the noon sun's azimuth) is lit less than the ground, unlike the legacy low sun.
+    [Fact]
+    public void Noon_UpFacingLightIsABrightMidday_AndAMinusZWallIsNoBrighterThanTheGround()
+    {
+        FrameLighting noon = SkyModel.Evaluate(Noon).Lighting;
+        float up = UpFacingLuminance(noon);
+        float wall = FaceLuminance(noon, -Vector3.UnitZ);
+
+        Assert.InRange(up, 0.85f, 0.95f);
+        Assert.Equal(SkyModelKeyframes.NoonUpFacingLuminance(), up, 4);
+        Assert.True(wall <= up, $"-Z wall {wall} is brighter than the ground {up}");
+        Assert.True(
+            FaceLuminance(FrameLighting.ReferenceNoon, -Vector3.UnitZ) > UpFacingLuminance(FrameLighting.ReferenceNoon),
+            "the legacy noon is the case this guards against");
+        Assert.True(noon.SunColor.X >= noon.SunColor.Z && noon.SunColor.Z > 0.9f, "the noon sun is near white");
+        Assert.True(noon.AmbientSky.Z > noon.AmbientSky.X, "the sky ambient is cool");
+        Assert.True(noon.AmbientGround.X > noon.AmbientGround.Z, "the ground bounce is warm");
     }
 
     [Fact]
     public void Night_SunIsOffMoonIsCoolAndUpFacingLightIsTheNightFloor()
     {
-        float noonUp = UpFacingLuminance(FrameLighting.ReferenceNoon);
-        Assert.Equal(0.2f + 0.42857143f, noonUp, 4);
+        float noonUp = UpFacingLuminance(SkyModelKeyframes.Noon);
+        Assert.Equal(0.07f, SkyModelSettings.DefaultNightBrightness);
 
         FrameLighting night = SkyModel.Evaluate(Midnight).Lighting;
         Assert.Equal(0f, night.SunDirection.W);
@@ -63,9 +111,11 @@ public class SkyModelTests
         Assert.True(night.AmbientSky.Z > night.AmbientSky.X, "night ambient must be cool (b > r)");
         Assert.True(night.FogColor.Z > night.FogColor.X, "night horizon must be cool (b > r)");
         Assert.Equal(SkyModelSettings.DefaultNightBrightness * noonUp, UpFacingLuminance(night), 4);
-        Assert.True(night.Params.Y < FrameLighting.ReferenceNoon.Params.Y * 0.5f, "actor floor must drop at night");
+        Assert.True(night.Params.Y < SkyModelKeyframes.Noon.Params.Y * 0.5f, "actor floor must drop at night");
         Assert.Equal(SkyModelKeyframes.NightActorAmbientScale, night.Params.Z);
-        Assert.True(night.Params.Z < FrameLighting.ReferenceNoon.Params.Z * 0.5f, "actor ambient scale must drop at night");
+        Assert.True(night.Params.Z < SkyModelKeyframes.Noon.Params.Z * 0.5f, "actor ambient scale must drop at night");
+        // Most of the night light is the moon, not ambient, so side faces fall off into silhouettes.
+        Assert.True(Luminance(night.AmbientSky.Xyz) < 0.5f * UpFacingLuminance(night), "night light is mostly ambient");
 
         // Every night sample, not just midnight, has the sun off and stays at or below the floor.
         for (float h = 20.5f; h < 27.5f; h += 0.25f)
@@ -85,7 +135,7 @@ public class SkyModelTests
     public void NightFloor_FollowsTheSetting(float nightBrightness)
     {
         SkyModelSettings settings = new(nightBrightness);
-        float noonUp = UpFacingLuminance(FrameLighting.ReferenceNoon);
+        float noonUp = UpFacingLuminance(SkyModelKeyframes.Noon);
 
         FrameLighting night = SkyModel.Evaluate(Midnight, settings).Lighting;
 
@@ -94,7 +144,7 @@ public class SkyModelTests
         // The actor ambient scale is a ratio on an ambient that already follows the setting.
         Assert.Equal(SkyModelKeyframes.NightActorAmbientScale, night.Params.Z);
         // The setting does not touch the day.
-        Assert.Equal(FrameLighting.ReferenceNoon.AmbientSky, SkyModel.Evaluate(Noon, settings).Lighting.AmbientSky);
+        Assert.Equal(SkyModelKeyframes.Noon.AmbientSky, SkyModel.Evaluate(Noon, settings).Lighting.AmbientSky);
     }
 
     [Fact]
@@ -108,7 +158,7 @@ public class SkyModelTests
 
         for (float h = 10f; h <= 14f; h += 0.5f)
         {
-            Assert.Equal(FrameLighting.ReferenceNoon.Params.Z, SkyModel.Evaluate(Hour(h)).Lighting.Params.Z);
+            Assert.Equal(SkyModelKeyframes.DayActorAmbientScale, SkyModel.Evaluate(Hour(h)).Lighting.Params.Z);
         }
 
         for (float h = 20f; h <= 28f; h += 0.5f)
@@ -143,12 +193,13 @@ public class SkyModelTests
         Assert.Equal(0f, set.Y, 5);
         Assert.Equal(-rise.X, set.X, 5);
         Assert.Equal(-rise.Z, set.Z, 5);
-        Assert.Equal(FrameLighting.ReferenceNoon.SunDirection.Xyz, SkyModel.SunDirectionAt(Noon));
+        Assert.Equal(SkyModelKeyframes.NoonSunDirection, SkyModel.SunDirectionAt(Noon));
+        Assert.Equal(1f, SkyModelKeyframes.NoonSunDirection.Length, 5);
         Assert.True(SkyModel.SunDirectionAt(Hour(9f)).Y > 0f);
         Assert.True(SkyModel.SunDirectionAt(Hour(21f)).Y < 0f);
 
         // A great circle: every point is perpendicular to the plane normal rise x noon.
-        Vector3 normal = Vector3.Normalize(Vector3.Cross(rise, FrameLighting.ReferenceNoon.SunDirection.Xyz));
+        Vector3 normal = Vector3.Normalize(Vector3.Cross(rise, SkyModelKeyframes.NoonSunDirection));
         for (int i = 0; i < 96; i++)
         {
             Assert.Equal(0f, Vector3.Dot(normal, SkyModel.SunDirectionAt(i / 96f)), 5);

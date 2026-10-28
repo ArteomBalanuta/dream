@@ -1,3 +1,4 @@
+using Dream.Rendering.Lighting;
 using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Sky;
@@ -55,12 +56,16 @@ internal readonly struct SkyKeyframe
 
 // The authored day. Colors are linear-ish display RGB, chosen for a stylised voxel look:
 //
-//   00:00 / 04:00 / 20:00  Night      deep navy zenith, slate-blue horizon, cool blue moonlight, full stars.
-//                                     Up-facing ambient + moon at midnight is exactly NightBrightness x noon.
+//   00:00 / 04:00 / 20:00  Night      deep navy zenith, dark blue horizon, cool blue moonlight, full stars.
+//                                     Up-facing ambient + moon at midnight is exactly NightBrightness x noon;
+//                                     most of it is the moon, so side faces fall off into silhouettes.
 //   05:00                  Blue hour  violet zenith, dusky rose horizon, stars fading, moon dimming.
 //   06:00                  Sunrise    warm orange horizon, low orange sun on side faces, warm ground bounce.
 //   07:30                  Morning    pale peach horizon settling to day, sun slightly warm.
-//   10:00 - 14:00          Day        FrameLighting.ReferenceNoon (white sun, 0.2 grey ambient, 0.62/0.74/0.88 fog).
+//   10:00 - 14:00          Day        Noon: a high (60 degree) near-white sun, cool sky / warm bounce ambient,
+//                                     0.62/0.74/0.88 fog. Up-facing light about 0.92; a -Z wall gets less than
+//                                     the ground. (T1 used FrameLighting.ReferenceNoon, a 25 degree sun that made
+//                                     every day look like late afternoon; ReferenceNoon is now the frozen legacy look.)
 //   16:30                  Afternoon  slightly warmer and hazier.
 //   18:00                  Sunset     saturated orange horizon, red-orange sun, warm bounce.
 //   19:00                  Dusk       mauve horizon under an indigo zenith, first stars.
@@ -76,10 +81,25 @@ internal static class SkyModelKeyframes
     public static readonly Vector3 NoonZenith = new(0.25f, 0.45f, 0.85f);
     public static readonly Vector3 NoonHorizon = new(0.62f, 0.74f, 0.88f);
 
-    public static readonly Vector3 NightZenith = new(0.010f, 0.016f, 0.042f);
-    public static readonly Vector3 NightHorizon = new(0.045f, 0.060f, 0.105f);
-    public static readonly Vector3 NightAmbientSky = new(0.040f, 0.055f, 0.095f);
-    public static readonly Vector3 NightAmbientGround = new(0.016f, 0.020f, 0.034f);
+    // The noon sun: NoonSunElevationDegrees above the horizon, on ReferenceNoon's azimuth (the old light
+    // seen from spawn), so the sun still rises in the same east and sets in the same west.
+    public const float NoonSunElevationDegrees = 60f;
+    public static readonly Vector3 NoonSunDirection = ComputeNoonSunDirection();
+
+    public static readonly Vector3 DaySunColor = new(1.00f, 0.98f, 0.94f);
+    public const float DaySunIntensity = 0.82f;
+    public static readonly Vector3 DayAmbientSky = new(0.20f, 0.22f, 0.26f);
+    public static readonly Vector3 DayAmbientGround = new(0.17f, 0.16f, 0.14f);
+    public const float DayFogDensity = 0.066f;
+    public const float DayFogStart = 18f;
+    public const float DayActorFloor = 0.35f;
+
+    // Dark blue: the horizon (and fog) sits just above lit night terrain, so distant ground fades into
+    // the sky instead of glowing.
+    public static readonly Vector3 NightZenith = new(0.008f, 0.013f, 0.036f);
+    public static readonly Vector3 NightHorizon = new(0.028f, 0.040f, 0.080f);
+    public static readonly Vector3 NightAmbientSky = new(0.016f, 0.024f, 0.048f);
+    public static readonly Vector3 NightAmbientGround = new(0.006f, 0.007f, 0.013f);
     public static readonly Vector3 MoonTint = new(0.60f, 0.70f, 1.00f);
     public static readonly Vector3 MoonDisc = new(0.86f, 0.89f, 0.96f);
 
@@ -98,19 +118,36 @@ internal static class SkyModelKeyframes
 
     public static readonly SkyKeyframe[] Table = BuildTable();
 
-    public static float NoonUpFacingLuminance()
+    // SkyModel.Evaluate(0.5).Lighting: the Day keyframe with the noon sun. Built from the constants
+    // above, not by evaluating, so it can be read during SkyModel's own static initialisation.
+    public static FrameLighting Noon => new()
     {
-        Vector4 sun = Dream.Rendering.Lighting.FrameLighting.ReferenceNoon.SunDirection;
-        Vector3 ambient = Dream.Rendering.Lighting.FrameLighting.ReferenceNoon.AmbientSky.Xyz;
-        Vector3 sunColor = Dream.Rendering.Lighting.FrameLighting.ReferenceNoon.SunColor.Xyz;
-        return Luminance(ambient + sunColor * (sun.Y * sun.W));
+        SunDirection = new Vector4(NoonSunDirection, DaySunIntensity),
+        SunColor = new Vector4(DaySunColor, 0f),
+        MoonDirection = new Vector4(-NoonSunDirection, 0f),
+        MoonColor = new Vector4(MoonTint, 0f),
+        AmbientSky = new Vector4(DayAmbientSky, 0f),
+        AmbientGround = new Vector4(DayAmbientGround, 0f),
+        FogColor = new Vector4(NoonHorizon, DayFogDensity),
+        CameraPosition = new Vector4(0f, 0f, 0f, DayFogStart),
+        Params = new Vector4(1f, DayActorFloor, DayActorAmbientScale, 0f),
+    };
+
+    public static float NoonUpFacingLuminance() =>
+        Luminance(DayAmbientSky + DaySunColor * (NoonSunDirection.Y * DaySunIntensity));
+
+    private static Vector3 ComputeNoonSunDirection()
+    {
+        Vector3 legacy = FrameLighting.ReferenceNoon.SunDirection.Xyz;
+        Vector3 azimuth = Vector3.Normalize(new Vector3(legacy.X, 0f, legacy.Z));
+        float elevation = MathHelper.DegreesToRadians(NoonSunElevationDegrees);
+        return Vector3.Normalize(azimuth * MathF.Cos(elevation) + Vector3.UnitY * MathF.Sin(elevation));
     }
 
     private static float ComputeNightMoonIntensity()
     {
         float target = SkyModelSettings.DefaultNightBrightness * NoonUpFacingLuminance();
-        float moonElevation = Dream.Rendering.Lighting.FrameLighting.ReferenceNoon.SunDirection.Y;
-        return (target - Luminance(NightAmbientSky)) / (moonElevation * Luminance(MoonTint));
+        return (target - Luminance(NightAmbientSky)) / (NoonSunDirection.Y * Luminance(MoonTint));
     }
 
     private static SkyKeyframe Night(float hour) => new(
@@ -124,11 +161,11 @@ internal static class SkyModelKeyframes
 
     private static SkyKeyframe Day(float hour) => new(
         hour,
-        zenith: NoonZenith, horizon: NoonHorizon, fogDensity: 0.066f, fogStart: 18f,
-        sunColor: Vector3.One, sunIntensity: 1f, sunDisc: new Vector3(1.00f, 0.95f, 0.85f),
+        zenith: NoonZenith, horizon: NoonHorizon, fogDensity: DayFogDensity, fogStart: DayFogStart,
+        sunColor: DaySunColor, sunIntensity: DaySunIntensity, sunDisc: new Vector3(1.00f, 0.95f, 0.85f),
         moonColor: MoonTint, moonIntensity: 0f,
-        ambientSky: new Vector3(0.2f), ambientGround: new Vector3(0.2f),
-        exposure: 1f, actorFloor: 0.35f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f);
+        ambientSky: DayAmbientSky, ambientGround: DayAmbientGround,
+        exposure: 1f, actorFloor: DayActorFloor, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f);
 
     private static SkyKeyframe[] BuildTable() =>
     [
@@ -151,7 +188,7 @@ internal static class SkyModelKeyframes
         new(7.5f, // morning
             zenith: new Vector3(0.250f, 0.430f, 0.780f), horizon: new Vector3(0.800f, 0.760f, 0.760f),
             fogDensity: 0.064f, fogStart: 17f,
-            sunColor: new Vector3(1.00f, 0.90f, 0.78f), sunIntensity: 0.95f, sunDisc: new Vector3(1.00f, 0.88f, 0.72f),
+            sunColor: new Vector3(1.00f, 0.90f, 0.78f), sunIntensity: 0.80f, sunDisc: new Vector3(1.00f, 0.88f, 0.72f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.195f, 0.190f, 0.190f), ambientGround: new Vector3(0.180f, 0.170f, 0.160f),
             exposure: 1f, actorFloor: 0.32f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f),
@@ -160,7 +197,7 @@ internal static class SkyModelKeyframes
         new(16.5f, // afternoon
             zenith: new Vector3(0.260f, 0.430f, 0.780f), horizon: new Vector3(0.740f, 0.740f, 0.760f),
             fogDensity: 0.065f, fogStart: 17f,
-            sunColor: new Vector3(1.00f, 0.88f, 0.72f), sunIntensity: 0.95f, sunDisc: new Vector3(1.00f, 0.86f, 0.68f),
+            sunColor: new Vector3(1.00f, 0.88f, 0.72f), sunIntensity: 0.80f, sunDisc: new Vector3(1.00f, 0.86f, 0.68f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.200f, 0.190f, 0.180f), ambientGround: new Vector3(0.190f, 0.175f, 0.160f),
             exposure: 1f, actorFloor: 0.32f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f),
