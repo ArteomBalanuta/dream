@@ -123,15 +123,86 @@ public sealed class RuntimePersistenceBridgeTests
         Rig rig = new(new FakeWorld(), profiles);
         PlayerSessionId session = new("s1");
         rig.Host.Sessions.Register(session, actorId: 5, isLocal: false, displayName: "half-joined");
-        rig.Bridge.UnrestoredPlayerSessions.Add(session);
+        rig.Bridge.MarkSessionUnrestored(session);
         PlayerCombatant combatant = new(() => Vector3.Zero, actorId: 5);
 
         rig.Bridge.PersistPlayerProfile(session, combatant);
         Assert.Empty(profiles.Saved);
 
-        rig.Bridge.UnrestoredPlayerSessions.Remove(session);
+        rig.Bridge.ForgetUnrestoredSession(session);
         rig.Bridge.PersistPlayerProfile(session, combatant);
         Assert.Equal(["half-joined"], profiles.Saved.Select(saved => saved.PlayerName));
+    }
+
+    [Fact]
+    public void PersistPlayerWorldState_SavesTheLeavingPlayersState_AndSkipsAnUnrestoredSession()
+    {
+        FakeWorld world = new();
+        Rig rig = new(world, new FakeProfiles());
+        PlayerSessionId session = new("s1");
+        rig.Host.Sessions.Register(session, actorId: 5, isLocal: false, displayName: "bob");
+        rig.Bridge.TryLoadPlayerForRestore(session, "bob", out _, out _, out _);
+        rig.Host.PlayerStates[session] = (new Vector3(3f, 1.5f, 4f), Vector3.UnitX, 42, 100);
+
+        rig.Bridge.MarkSessionUnrestored(session);
+        rig.Bridge.PersistPlayerWorldState(session);
+        Assert.Empty(world.SavedWorldStates);
+
+        rig.Bridge.ForgetUnrestoredSession(session);
+        Assert.Equal(0, rig.Bridge.UnrestoredPlayerSessionCount);
+        rig.Bridge.PersistPlayerWorldState(session);
+        PersistedPlayerWorldState saved = Assert.Single(world.SavedWorldStates);
+        Assert.Equal(("bob", new Vector3(3f, 1.5f, 4f), Vector3.UnitX, 42), (saved.PlayerName, saved.Position, saved.Facing, saved.CurrentHealth));
+    }
+
+    // A join whose read predates the leave's queued write (a reconnect) still gets the state the
+    // player left with; once used, the row is authoritative again.
+    [Fact]
+    public void TryLoadPlayerForRestore_PrefersTheWorldStateSavedOnLeave_OverAnOlderRow()
+    {
+        FakeWorld world = new();
+        Rig rig = new(world, new FakeProfiles());
+        PlayerSessionId session = new("s1");
+        rig.Host.Sessions.Register(session, actorId: 5, isLocal: false, displayName: "bob");
+        rig.Bridge.TryLoadPlayerForRestore(session, "bob", out _, out _, out _);
+        rig.Host.PlayerStates[session] = (new Vector3(3f, 1.5f, 4f), Vector3.UnitX, 42, 100);
+        rig.Bridge.PersistPlayerWorldState(session);
+        world.StoredWorldState = new PersistedPlayerWorldState("bob", Vector3.Zero, Vector3.UnitZ, 100, 0, DateTime.UtcNow.AddMinutes(-1));
+
+        rig.Bridge.TryLoadPlayerForRestore(new PlayerSessionId("s2"), "bob", out _, out PersistedPlayerWorldState? rejoined, out _);
+        Assert.Equal(42, rejoined?.CurrentHealth);
+        Assert.Equal(new Vector3(3f, 1.5f, 4f), rejoined?.Position);
+
+        rig.Bridge.TryLoadPlayerForRestore(new PlayerSessionId("s3"), "bob", out _, out PersistedPlayerWorldState? again, out _);
+        Assert.Equal(100, again?.CurrentHealth);
+    }
+
+    [Fact]
+    public void TheWorldStateSavedOnLeave_IsEvictedWithTheDepartedProfile()
+    {
+        FakeWorld world = new();
+        Rig rig = new(world, new FakeProfiles());
+        rig.Bridge.MaxDepartedProfiles = 1;
+        foreach (string name in new[] { "a", "b" })
+        {
+            PlayerSessionId session = new(name);
+            rig.Host.Sessions.Register(session, actorId: name == "a" ? 5 : 6, isLocal: false, displayName: name);
+            rig.Bridge.TryLoadPlayerForRestore(session, name, out _, out _, out _);
+            rig.Host.PlayerStates[session] = (new Vector3(3f, 1.5f, 4f), Vector3.UnitX, 42, 100);
+            rig.Bridge.PersistPlayerWorldState(session);
+            Assert.True(rig.Host.Sessions.TryGet(session, out ConnectedPlayer? player));
+            player!.MarkDespawned();
+        }
+
+        rig.Bridge.MarkProfileDeparted("a");
+        rig.Bridge.MarkProfileDeparted("b");
+
+        // "a" was evicted: its join reads the row (here the older one) again.
+        world.StoredWorldState = new PersistedPlayerWorldState("a", Vector3.Zero, Vector3.UnitZ, 100, 0, DateTime.UtcNow);
+        rig.Bridge.TryLoadPlayerForRestore(new PlayerSessionId("a2"), "a", out _, out PersistedPlayerWorldState? evicted, out _);
+        Assert.Equal(100, evicted?.CurrentHealth);
+        rig.Bridge.TryLoadPlayerForRestore(new PlayerSessionId("b2"), "b", out _, out PersistedPlayerWorldState? kept, out _);
+        Assert.Equal(42, kept?.CurrentHealth);
     }
 
     [Fact]
@@ -189,7 +260,7 @@ public sealed class RuntimePersistenceBridgeTests
         PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
         Rig rig = new(new FakeWorld(), new FakeProfiles(), writer, writes);
 
-        FinalCheckpoint? final = rig.Bridge.WriteFinalCheckpoint();
+        PendingFinalCheckpoint? final = rig.Bridge.WriteFinalCheckpoint();
         writes.Dispose();
         final?.WriteIfDropped(writes);
 
@@ -387,11 +458,14 @@ public sealed class RuntimePersistenceBridgeTests
 
         public int InventoryLoads { get; private set; }
 
-        public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName) => null;
+        public List<PersistedPlayerWorldState> SavedWorldStates { get; } = [];
 
-        public void SavePlayerWorldState(PersistedPlayerWorldState state)
-        {
-        }
+        // What TryGetPlayerWorldState returns (a row a read made before the latest save).
+        public PersistedPlayerWorldState? StoredWorldState { get; set; }
+
+        public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName) => StoredWorldState;
+
+        public void SavePlayerWorldState(PersistedPlayerWorldState state) => SavedWorldStates.Add(state);
 
         public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => Cubes;
 

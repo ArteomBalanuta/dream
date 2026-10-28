@@ -94,10 +94,10 @@ internal sealed partial class RuntimePersistenceBridge
     // passes instead of adding its own barrier timeout and busy_timeout before the drain starts.
     // A healthy backlog that merely outlasts the deadline must not cost the final checkpoint,
     // though: the read is queued last, so it is the first thing such a drain drops. The returned
-    // FinalCheckpoint then writes it on this thread once the queue has stopped (still after every
+    // PendingFinalCheckpoint then writes it on this thread once the queue has stopped (still after every
     // immediate write that ran), unless the drain saw a lock episode. The caller disposes the
-    // write queue between this call and FinalCheckpoint.WriteIfDropped.
-    public FinalCheckpoint? WriteFinalCheckpoint()
+    // write queue between this call and PendingFinalCheckpoint.WriteIfDropped.
+    public PendingFinalCheckpoint? WriteFinalCheckpoint()
     {
         if (!WriteCheckpointOnDispose || _worldPersistence == null || _checkpointWriter == null ||
             _writes is { IsClosed: true })
@@ -117,7 +117,7 @@ internal sealed partial class RuntimePersistenceBridge
             if (_writes is { IsBackground: true } writes)
             {
                 writes.BeginShutdownDrain();
-                FinalCheckpoint queued = new(writer, checkpoint);
+                PendingFinalCheckpoint queued = new(writer, checkpoint);
                 if (writes.EnqueueRead(queued.WriteFromQueue))
                 {
                     return queued;
@@ -128,7 +128,7 @@ internal sealed partial class RuntimePersistenceBridge
         }
         catch (Exception ex)
         {
-            FinalCheckpoint.LogError(ex);
+            PendingFinalCheckpoint.LogError(ex);
         }
 
         return null;
@@ -336,6 +336,12 @@ internal sealed partial class RuntimePersistenceBridge
                 continue;
             }
 
+            if (_departedWorldStates.Count > 0)
+            {
+                // Another session under this name is attached, so its state is now the newer one.
+                _departedWorldStates.Remove(player.DisplayName);
+            }
+
             playerVitals.Add(new PlayerCheckpointVitals(
                 player.DisplayName,
                 _host.GetSessionInteractionMode(player.SessionId),
@@ -458,7 +464,7 @@ internal sealed partial class RuntimePersistenceBridge
 // The final checkpoint queued as a read (RuntimePersistenceBridge.WriteFinalCheckpoint). Whichever
 // of the queue worker (WriteFromQueue) and the dispose thread (WriteIfDropped, after the queue
 // stopped) claims it first writes it, once.
-internal sealed class FinalCheckpoint(IPersistenceCheckpointWriter writer, PersistenceCheckpoint checkpoint)
+internal sealed class PendingFinalCheckpoint(IPersistenceCheckpointWriter writer, PersistenceCheckpoint checkpoint)
 {
     private int _claimed;
 

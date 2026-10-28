@@ -42,6 +42,13 @@ internal sealed partial class RuntimePersistenceBridge
     // Keyed by session, not display name, so another session sharing the name still saves; an
     // entry goes when the session restores or is detached.
     private readonly HashSet<PlayerSessionId> _unrestoredPlayerSessions = [];
+    // The world state each departed player left with (PersistPlayerWorldState), by player name. Its
+    // write is queued, but a join prefetch started before the leave was applied (a reconnect whose
+    // old connection is released after the new one asked to join) read the row before that write,
+    // so TryLoadPlayerForRestore prefers this newer copy, as it prefers the cached profile. Bounded
+    // like the profile cache: an entry goes when its name rejoins, is captured attached by a
+    // checkpoint, or has its profile evicted.
+    private readonly Dictionary<string, PersistedPlayerWorldState> _departedWorldStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
 
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
@@ -74,9 +81,16 @@ internal sealed partial class RuntimePersistenceBridge
 
     public IPersistenceCheckpointWriter? CheckpointWriter => _checkpointWriter;
 
-    // Sessions whose failed join left default stats that must not be saved. DetachRemoteSession
-    // removes a leaving session.
-    public HashSet<PlayerSessionId> UnrestoredPlayerSessions => _unrestoredPlayerSessions;
+    public IWorldPersistenceRepository? WorldPersistence => _worldPersistence;
+
+    // Sessions whose failed join left default stats that must not be saved (tests).
+    public int UnrestoredPlayerSessionCount => _unrestoredPlayerSessions.Count;
+
+    // A leaving session's unrestored mark goes with it (DetachRemoteSession).
+    public void ForgetUnrestoredSession(PlayerSessionId sessionId) => _unrestoredPlayerSessions.Remove(sessionId);
+
+    // Marks a session unrestored, as a failed synchronous join read does (tests).
+    internal void MarkSessionUnrestored(PlayerSessionId sessionId) => _unrestoredPlayerSessions.Add(sessionId);
 
     // Starts loading a joining player's persisted profile, world state and inventory on the persistence
     // worker, so the join itself (applied on the tick) does no database I/O. Called by the host
@@ -247,6 +261,12 @@ internal sealed partial class RuntimePersistenceBridge
             }
         }
 
+        // The newest written world state wins: one saved on leave is newer than any row a prefetch read.
+        if (_departedWorldStates.Remove(playerName, out PersistedPlayerWorldState departed))
+        {
+            worldState = departed;
+        }
+
         _unrestoredPlayerSessions.Remove(sessionId);
         MarkProfileActive(playerName);
         CacheProfile(playerName, profile);
@@ -395,6 +415,47 @@ internal sealed partial class RuntimePersistenceBridge
         });
     }
 
+    // Saves a leaving player's position, facing and HP (player_world_state), queued in order behind
+    // its profile save. Without it a leave lost everything since the last periodic checkpoint
+    // (checkpoints capture only attached players), so leaving and rejoining healed the player and
+    // rolled back their position, and a player who left within one checkpoint interval of first
+    // joining had no world-state row at all. The server's shutdown detaches every session before
+    // the final checkpoint, so this also covers a shutdown. Called before the session is
+    // despawned, while its target still resolves; an unrestored session (default state) is skipped.
+    public void PersistPlayerWorldState(PlayerSessionId sessionId)
+    {
+        if (_playerProfiles == null
+            || _worldPersistence == null
+            || !_host.Sessions.TryGet(sessionId, out ConnectedPlayer? player)
+            || player == null
+            || player.IsLocal
+            || _unrestoredPlayerSessions.Contains(sessionId)
+            || !_host.TryGetPlayerCheckpointState(
+                sessionId,
+                out Vector3 position,
+                out Vector3 facing,
+                out int currentHealth,
+                out _))
+        {
+            return;
+        }
+
+        PersistedPlayerWorldState state = new(
+            player.DisplayName,
+            position,
+            facing,
+            CurrentHealth: currentHealth,
+            CurrentEnergy: 0,
+            UpdatedUtc: DateTime.UtcNow);
+        if (_profileCache.ContainsKey(player.DisplayName))
+        {
+            // Only names the profile LRU tracks, so EvictDepartedPlayerState bounds this cache.
+            _departedWorldStates[player.DisplayName] = state;
+        }
+
+        EnqueueWorldWrite(world => world.SavePlayerWorldState(state));
+    }
+
     public void PersistPlacedCube(WorldObjectRecord record, GeometryMaterialId materialId)
     {
         if (_worldPersistence == null || record.SourceObject is not Cube cube)
@@ -530,7 +591,7 @@ internal sealed partial class RuntimePersistenceBridge
     }
 
     // Also evicts the name's inventory and its _knownProfileNames entry. Inventory is written
-    // through (every change queues its write when it happens, see PersistInventorySlot), and a later
+    // through (every change queues its write when it happens, see PlayerInventoryService.PersistSlot), and a later
     // join reads the queued writes back through its prefetch (ordered behind them) or the
     // synchronous fallback (which flushes them first). The queue drops a write that fails, though,
     // so an inventory whose writes may have failed is kept (or restored on the next load) instead
@@ -556,6 +617,7 @@ internal sealed partial class RuntimePersistenceBridge
     private void EvictDepartedPlayerState(string playerName)
     {
         _knownProfileNames.Remove(playerName);
+        _departedWorldStates.Remove(playerName);
         _host.EvictPlayerInventory(playerName);
     }
 

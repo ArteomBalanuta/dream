@@ -14,7 +14,7 @@ namespace Dream.Simulation.Combat;
 // What the combat resolver needs from its host, beyond the world it hits: the attacker's combatant
 // for kill experience, and the persistence writes a hit causes. WorldSessionRuntime implements it
 // over its persistence bridge; a test can record the calls.
-public interface IAuthoritativeCombatHost
+internal interface IAuthoritativeCombatHost
 {
     // The combatant of a spawned (or local) session's player, for kill experience; false when the
     // session has none.
@@ -38,7 +38,7 @@ public interface IAuthoritativeCombatHost
 // hits, the damage and death events, cube fracture and kill experience. It holds no runtime
 // reference; the tick is passed per call, the map is read through a delegate (the runtime rebuilds
 // it on a floor-size change), and persistence and player lookups go through the host.
-public sealed class AuthoritativeCombatResolver
+internal sealed class AuthoritativeCombatResolver
 {
     private readonly ulong _simulationSeed;
     private readonly Func<Map> _map;

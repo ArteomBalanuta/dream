@@ -15,21 +15,22 @@ using Dream.Tests.Server.Persistence;
 namespace Dream.Tests.Integration;
 
 // Wave 13 tester, found while checking RuntimePersistenceBridge end to end: a player's world state
-// (player_world_state: position, facing and current HP) is written only by checkpoints, and only
-// for players that are still attached. DetachRemoteSession saves the profile (level, XP, profile
+// (player_world_state: position, facing and current HP) was written only by checkpoints, and only
+// for players that are still attached. DetachRemoteSession saved the profile (level, XP, profile
 // HP) but not the world state, and the server's shutdown (DedicatedServerService dispose, then the
 // host's final checkpoint) detaches every session before that final checkpoint runs. On the next
-// join TryLoadPlayerForRestore prefers the world-state row's HP over the profile's, so a player who
-// takes damage and leaves (or is on the server when it shuts down) within a checkpoint interval
-// comes back where the last checkpoint saw it, with the HP it had then. Pre-existing (identical on
-// the wave-12 tip 91449a7), not a wave-13 regression.
+// join the world-state row's HP is preferred over the profile's, so a player who took damage and
+// left (or was on the server when it shut down) within a checkpoint interval came back where the
+// last checkpoint saw it, with the HP it had then (or, with no checkpoint yet, at the spawn with
+// the profile's HP). Pre-existing (identical on the wave-12 tip 91449a7). Fixed in the wave 13 fix
+// loop: DetachRemoteSession writes the world state (RuntimePersistenceBridge.PersistPlayerWorldState).
 public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
 {
     private const string Anchor = "w13-ws-anchor";
     private const string Bob = "w13-ws-bob";
 
-    // Measured unskipped: left at (6.5, 1.5, 11.5) with 83 HP; back at (6.5, 1.5, 7.0) with 100 HP.
-    [Fact(Skip = "BUG (pre-existing): leaving discards the player's position and HP since the last checkpoint; see the class comment.")]
+    // Before the fix: left at (6.5, 1.5, 11.5) with 83 HP; back at (6.5, 1.5, 7.0) with 100 HP.
+    [Fact]
     public async Task LeaveAfterTheLastCheckpoint_ThenRejoin_KeepsThePositionAndHpTheyLeftWith()
     {
         using PersistenceTestDatabase database = new();
@@ -45,8 +46,8 @@ public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
         Assert.True((back.Position - position).Length < 0.05f, $"back at {back.Position}, left at {position}");
     }
 
-    // Measured unskipped: shut down at (6.5, 1.5, 11.5) with 83 HP; back at (6.5, 1.5, 7.0) with 100 HP.
-    [Fact(Skip = "BUG (pre-existing): the shutdown detaches every session before the final checkpoint; see the class comment.")]
+    // Before the fix: shut down at (6.5, 1.5, 11.5) with 83 HP; back at (6.5, 1.5, 7.0) with 100 HP.
+    [Fact]
     public async Task ShutdownAfterTheLastCheckpoint_ThenRestart_KeepsThePositionAndHpAtShutdown()
     {
         using PersistenceTestDatabase database = new();
@@ -72,15 +73,48 @@ public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
         }
     }
 
-    // Bob (a secondary seat) idles until a periodic checkpoint saved his world state, then walks
-    // and is hit by an enemy. Returns his position and HP after that.
-    private async Task<(Vector3 Position, int Health)> PlayAfterACheckpointAsync(Wave12DeltaActorLoopbackTests.Rig rig, PersistenceTestDatabase database)
+    // A player who leaves before the first periodic checkpoint (5 s) has no world-state row yet;
+    // the leave itself must write it.
+    [Fact]
+    public async Task LeaveBeforeTheFirstCheckpoint_ThenRejoin_KeepsThePositionAndHpTheyLeftWith()
+    {
+        using PersistenceTestDatabase database = new();
+        await using Wave12DeltaActorLoopbackTests.Rig rig = await StartAsync(database);
+        ulong joinTick = rig.Tick;
+        (Vector3 position, int health) = await PlayAsync(rig, database, waitForCheckpoint: false);
+        Assert.True(
+            rig.Tick - joinTick < 5 * SimulationClock.AuthoritativeTicksPerSecond,
+            $"{rig.Tick - joinTick} ticks played; the run must stay within the first checkpoint interval");
+        Assert.True(rig.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
+        Assert.Equal(0, database.Count(WorldStateRows));
+
+        await rig.DisconnectAsync(rig.Peers.Single(peer => peer.SessionId == Bob));
+        Assert.True(rig.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
+        Assert.Equal(1, database.Count(WorldStateRows));
+        Assert.Equal(health, database.Count($"SELECT current_hp FROM player_world_state WHERE player_name = 'Name {Bob}';"));
+        Assert.Equal(health, database.Count($"SELECT current_hp FROM player_profiles WHERE player_name = 'Name {Bob}';"));
+
+        await rig.JoinAsync(Bob);
+        ActorSnapshot back = BobOf(rig.Runtime);
+        output.WriteLine($"left at {position} with {health} HP; back at {back.Position} with {back.CurrentHealth} HP");
+        Assert.Equal(health, back.CurrentHealth);
+        Assert.True((back.Position - position).Length < 0.05f, $"back at {back.Position}, left at {position}");
+    }
+
+    private static readonly string WorldStateRows = $"SELECT COUNT(*) FROM player_world_state WHERE player_name = 'Name {Bob}';";
+
+    private Task<(Vector3 Position, int Health)> PlayAfterACheckpointAsync(Wave12DeltaActorLoopbackTests.Rig rig, PersistenceTestDatabase database) =>
+        PlayAsync(rig, database, waitForCheckpoint: true);
+
+    // Bob (a secondary seat) idles until a periodic checkpoint saved his world state (when asked),
+    // then is hit by an enemy and walks. Returns his position and HP after that.
+    private async Task<(Vector3 Position, int Health)> PlayAsync(Wave12DeltaActorLoopbackTests.Rig rig, PersistenceTestDatabase database, bool waitForCheckpoint)
     {
         WorldSessionRuntime runtime = rig.Runtime;
         await rig.JoinAsync(Anchor);
         Wave12DeltaActorLoopbackTests.Peer bob = await rig.JoinAsync(Bob);
-        string worldStateRows = $"SELECT COUNT(*) FROM player_world_state WHERE player_name = 'Name {Bob}';";
-        for (int i = 0; i < 1000 && database.Count(worldStateRows) == 0; i++)
+        string worldStateRows = WorldStateRows;
+        for (int i = 0; waitForCheckpoint && i < 1000 && database.Count(worldStateRows) == 0; i++)
         {
             await rig.StepAsync();
             if (i % 64 == 63)
@@ -89,7 +123,7 @@ public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
             }
         }
 
-        Assert.Equal(1, database.Count(worldStateRows));
+        Assert.Equal(waitForCheckpoint ? 1 : 0, database.Count(worldStateRows));
         ActorSnapshot atCheckpoint = BobOf(runtime);
 
         // A hard-hitting stationary enemy beside Bob; it is removed once Bob has lost some HP.

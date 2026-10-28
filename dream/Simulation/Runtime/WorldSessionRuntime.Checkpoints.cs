@@ -52,6 +52,6 @@ public sealed partial class WorldSessionRuntime
     }
 
     // See RuntimePersistenceBridge.WriteFinalCheckpoint; Dispose then drains the queue and calls
-    // FinalCheckpoint.WriteIfDropped.
-    private FinalCheckpoint? WriteFinalCheckpoint() => _persistence.WriteFinalCheckpoint();
+    // PendingFinalCheckpoint.WriteIfDropped.
+    private PendingFinalCheckpoint? WriteFinalCheckpoint() => _persistence.WriteFinalCheckpoint();
 }

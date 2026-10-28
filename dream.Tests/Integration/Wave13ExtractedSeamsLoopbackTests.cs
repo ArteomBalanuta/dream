@@ -51,6 +51,11 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             runtime.MaxDepartedProfiles = 1;
             Driver alpha = new(rig, await rig.JoinAsync(Alpha));
             List<AuthoritativeActionResult> results = Collect(alpha.Peer);
+            // The default wolf aggroes on Alpha and closes in from wherever the join's tick count
+            // left it; within 0.9 of a combat ray and 4 m it takes the hit before a nearer cube
+            // (AuthoritativeCombatResolver checks enemies first), so the attack phases below hit it
+            // or not depending on timing. Park it out of aggro range for the whole run instead.
+            ParkWolfAwayFrom(runtime, alpha.Position());
             await alpha.StepAsync(PlayerInteractionMode.Building, Vector3.UnitZ, attack: false);
 
             Assert.Equal(1, database.Count($"SELECT COUNT(*) FROM player_profiles WHERE player_name = 'Name {Alpha}';"));
@@ -109,7 +114,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             for (int i = 0; i < 400 && target.Combatant.Health.IsAlive; i++)
             {
                 Vector3 facing = DirectionFrom(alpha.Eye(), target.Combatant.GetCombatAnchorWorldPosition());
-                await alpha.StepAsync(PlayerInteractionMode.Combat, facing, attack: i % 4 != 3);
+                await alpha.StepAsync(PlayerInteractionMode.Combat, facing, attack: true);
             }
 
             Assert.False(target.Combatant.Health.IsAlive, $"the target enemy survived with {target.Combatant.Health.CurrentHealth} HP");
@@ -127,12 +132,20 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             // Hit the -X cube a few times (damaged, still standing), then break the +X cube.
             int damagedCubeId = CubeIdAt(runtime, damagedCell);
             int fracturedCubeId = CubeIdAt(runtime, fractureCell);
+            // The damage roll is seeded by the tick, and how many ticks the join and the kill take
+            // depends on timing, so one maul hit (a high or critical roll, after the kill's level-up)
+            // sometimes broke the 100 HP -X cube outright: it then fractured instead of standing
+            // damaged, and its record was gone. Give it enough health that no single hit breaks it.
+            int sturdyHealth = 10 * MaxHealthOf(runtime, damagedCubeId)!.Value;
+            Assert.True(WorldObjects(runtime).TryGetByActorId(damagedCubeId, out WorldObjectRecord damagedRecord));
+            damagedRecord.Health.SetAuthoritativeState(sturdyHealth, sturdyHealth);
             for (int i = 0; i < 200 && HealthOf(runtime, damagedCubeId) is int health && health == MaxHealthOf(runtime, damagedCubeId); i++)
             {
-                await alpha.StepAsync(PlayerInteractionMode.Combat, -Vector3.UnitX, attack: i % 4 != 3);
+                await alpha.StepAsync(PlayerInteractionMode.Combat, -Vector3.UnitX, attack: true);
             }
 
             await alpha.StepAsync(PlayerInteractionMode.Combat, -Vector3.UnitX, attack: false);
+            Assert.True(HealthOf(runtime, damagedCubeId).HasValue, $"the -X cube {damagedCubeId} at {damagedCell} broke");
             Assert.True(
                 HealthOf(runtime, damagedCubeId) < MaxHealthOf(runtime, damagedCubeId),
                 $"the -X cube {damagedCubeId} at {damagedCell} took no damage; Alpha at {alpha.Position()}; enemies " +
@@ -143,7 +156,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             GeometryCellKey fractureKey = new((int)fractureCell.X, 1, (int)fractureCell.Z);
             for (int i = 0; i < 800 && runtime.Map.TryGetRubbleAtCell(fractureKey) == null; i++)
             {
-                await alpha.StepAsync(PlayerInteractionMode.Combat, Vector3.UnitX, attack: i % 4 != 3);
+                await alpha.StepAsync(PlayerInteractionMode.Combat, Vector3.UnitX, attack: true);
             }
 
             await alpha.StepAsync(PlayerInteractionMode.Combat, Vector3.UnitZ, attack: false);
@@ -154,7 +167,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             Assert.Equal(livePieces, database.CountAfterFlush(runtime, $"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {fracturedCubeId};"));
             Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {fracturedCubeId};"));
 
-            // A few more ticks so the rubble settles under physics and the wolf (if near) acts.
+            // A few more ticks so the rubble settles under physics.
             for (int i = 0; i < 32; i++)
             {
                 await alpha.StepAsync(PlayerInteractionMode.Combat, Vector3.UnitZ, attack: false);
@@ -176,6 +189,8 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             // (Not TryCaptureInventorySnapshot: it loads the inventory of a departed session it still knows.)
             Assert.False(IsInventoryLoaded(runtime, $"Name {Alpha}"), "Alpha's inventory survived the LRU eviction");
             Assert.True(runtime.DepartedProfileCount <= 1, $"{runtime.DepartedProfileCount} departed profiles cached with an LRU of 1");
+            // The visitors spawned beside Alpha's spot; the wolf must still be idle and far away.
+            AssertWolfParked(runtime);
 
             // Rejoin: everything comes back from the database.
             alpha = new Driver(rig, await rig.JoinAsync(Alpha));
@@ -215,12 +230,30 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             PlayerState rejoined = Capture(runtime, Alpha);
             output.WriteLine($"alpha before restart: {alphaBeforeRestart}");
             output.WriteLine($"alpha after restart:  {rejoined}");
-            // Not the position: the service's dispose detaches every session before the host's
-            // final checkpoint runs, so player_world_state keeps only the last periodic
-            // checkpoint (none in this short run). See Wave13PlayerWorldStateOnLeaveTests.
-            AssertSamePlayer(alphaBeforeRestart, rejoined, comparePosition: false);
+            // The position too: the service's dispose detaches every session before the host's
+            // final checkpoint runs, and each detach writes the player's world state.
+            AssertSamePlayer(alphaBeforeRestart, rejoined, comparePosition: true);
             await alpha.StepAsync(PlayerInteractionMode.Building, Vector3.UnitZ, attack: false);
         }
+    }
+
+    // Far corner, beyond the wolf's aggro range from Alpha (and from where the visitors spawn).
+    private static void ParkWolfAwayFrom(WorldSessionRuntime runtime, Vector3 alphaPosition)
+    {
+        EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "Wolf");
+        Vector3 corner = new(runtime.Map.Width - 1.5f, wolf.Position.Y, runtime.Map.Depth - 1.5f);
+        wolf.SetPosition(corner);
+        Vector3 offset = corner - alphaPosition;
+        offset.Y = 0f;
+        Assert.True(offset.Length > wolf.AggroRange + 4f, $"the wolf parked at {corner} is {offset.Length} from Alpha at {alphaPosition}");
+        AssertWolfParked(runtime);
+    }
+
+    private static void AssertWolfParked(WorldSessionRuntime runtime)
+    {
+        EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "Wolf");
+        Vector3 corner = new(runtime.Map.Width - 1.5f, wolf.Position.Y, runtime.Map.Depth - 1.5f);
+        Assert.True((wolf.Position - corner).Length < 1e-3f, $"the wolf left its parking spot: {wolf.Position}");
     }
 
     private static void AssertSamePlayer(PlayerState expected, PlayerState actual, bool comparePosition)
@@ -365,16 +398,21 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
     }
 
     // Drives one loopback peer: every tick it sends a full command frame (mode, look, attack)
-    // and waits until the server has read it before the tick runs. Attack loops release the
-    // button every fourth tick: how many idle ticks a join spends (and so the command inbox's
-    // repeat debt) depends on timing, and a press held across a cooldown rejection was seen to
-    // stop repeating under parallel load.
+    // and waits until the server has queued it before the tick runs. PlayerCommandHandler sets
+    // LastCommandMessage before it enqueues the frame, so a tick run as soon as LastCommandMessage
+    // moves could miss the frame (a starved tick that repeats the previous one); the driver also
+    // waits for the frame in the command inbox. Only this peer sends commands in this test.
     private sealed class Driver(Wave12DeltaActorLoopbackTests.Rig rig, Wave12DeltaActorLoopbackTests.Peer peer)
     {
         private ulong _commandSequence;
         private ulong _actionSequence;
 
         public Wave12DeltaActorLoopbackTests.Peer Peer => peer;
+
+        private static BufferedPlayerCommandInbox CommandInbox(Wave12DeltaActorLoopbackTests.Rig rig) =>
+            (BufferedPlayerCommandInbox)typeof(DedicatedServerHost)
+                .GetField("_commandInbox", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(rig.Host)!;
 
         public ulong NextActionSequence() => ++_actionSequence;
 
@@ -396,7 +434,9 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
                 () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context)
                     && context?.LastCommandMessage?.CommandFrame.Sequence >= sequence,
                 $"the server to read {peer.SessionId}'s command {sequence}");
+            await rig.WaitUntilAsync(() => CommandInbox(rig).HasPending, $"{peer.SessionId}'s command {sequence} to be queued");
             await rig.StepAsync();
+            Assert.False(CommandInbox(rig).HasPending, $"a command frame was left in the inbox after the tick for {sequence}");
             await rig.DrainAllAsync();
         }
     }
