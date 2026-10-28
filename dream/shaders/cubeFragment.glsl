@@ -27,6 +27,7 @@ struct Material {
 uniform Material material;
 
 #include "lighting.glsl"
+#include "pointLights.glsl"
 
 void main()
 {
@@ -43,8 +44,9 @@ void main()
     }
 #endif
 
-    // Frame lighting (lighting.glsl): hemisphere ambient plus sun and moon, then exposure and fog.
+    // Frame lighting (lighting.glsl): hemisphere ambient plus sun and moon, plus the frame's point
+    // lights (pointLights.glsl; none means exactly the T1 look), then exposure and fog.
     vec3 n = normalize(normal);
-    vec3 lit = (dreamAmbient(n) + dreamDirect(n)) * baseColor.rgb;
+    vec3 lit = (dreamAmbient(n) + dreamDirect(n) + dreamPointLights(n, fragPos)) * baseColor.rgb;
     FragColor = vec4(dreamApplyFog(dreamExpose(lit) + material.emissiveFactor, fragPos), baseColor.a);
 }
