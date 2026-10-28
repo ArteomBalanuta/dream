@@ -105,6 +105,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         _events = events;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
+        _inventory = new Dream.Simulation.Inventory.PlayerInventoryService(worldPersistence, _writes);
         _checkpointWriter = checkpointWriter ??
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
