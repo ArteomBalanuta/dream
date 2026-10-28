@@ -21,6 +21,7 @@ internal readonly struct SkyKeyframe
     public readonly Vector3 AmbientGround;
     public readonly float Exposure;
     public readonly float ActorFloor;
+    public readonly float ActorAmbientScale; // not night-scaled: the ambient it multiplies already is
     public readonly float Stars;
     public readonly float NightScaled;      // 0 or 1; blended like everything else
 
@@ -30,7 +31,7 @@ internal readonly struct SkyKeyframe
         Vector3 sunColor, float sunIntensity, Vector3 sunDisc,
         Vector3 moonColor, float moonIntensity,
         Vector3 ambientSky, Vector3 ambientGround,
-        float exposure, float actorFloor, float stars, float nightScaled)
+        float exposure, float actorFloor, float actorAmbientScale, float stars, float nightScaled)
     {
         Time01 = hour / 24f;
         Zenith = zenith;
@@ -46,6 +47,7 @@ internal readonly struct SkyKeyframe
         AmbientGround = ambientGround;
         Exposure = exposure;
         ActorFloor = actorFloor;
+        ActorAmbientScale = actorAmbientScale;
         Stars = stars;
         NightScaled = nightScaled;
     }
@@ -81,6 +83,15 @@ internal static class SkyModelKeyframes
     public static readonly Vector3 MoonTint = new(0.60f, 0.70f, 1.00f);
     public static readonly Vector3 MoonDisc = new(0.86f, 0.89f, 0.96f);
 
+    // FrameLighting.Params.z: how much enemyFragment.glsl scales the frame ambient for actors (wolves,
+    // players). Day is today's look (0.2 ambient x 3.25 = 0.65). At night the ambient is a cool blue
+    // and most of the light, so the day scale would make actors glow (about 2.2x terrain on up faces);
+    // 1.5 keeps them about 1.2x terrain at midnight. Twilight keyframes sit in between.
+    public const float DayActorAmbientScale = 3.25f;
+    public const float SunHorizonActorAmbientScale = 2.75f;
+    public const float TwilightActorAmbientScale = 2.0f;
+    public const float NightActorAmbientScale = 1.5f;
+
     // Moon intensity that puts the up-facing light at exactly DefaultNightBrightness x noon's up-facing light
     // when the moon is at its highest (midnight, elevation = noon sun elevation).
     public static readonly float NightMoonIntensity = ComputeNightMoonIntensity();
@@ -108,7 +119,8 @@ internal static class SkyModelKeyframes
         sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
         moonColor: MoonTint, moonIntensity: NightMoonIntensity,
         ambientSky: NightAmbientSky, ambientGround: NightAmbientGround,
-        exposure: 1f, actorFloor: 0.35f * SkyModelSettings.DefaultNightBrightness, stars: 1f, nightScaled: 1f);
+        exposure: 1f, actorFloor: 0.35f * SkyModelSettings.DefaultNightBrightness,
+        actorAmbientScale: NightActorAmbientScale, stars: 1f, nightScaled: 1f);
 
     private static SkyKeyframe Day(float hour) => new(
         hour,
@@ -116,7 +128,7 @@ internal static class SkyModelKeyframes
         sunColor: Vector3.One, sunIntensity: 1f, sunDisc: new Vector3(1.00f, 0.95f, 0.85f),
         moonColor: MoonTint, moonIntensity: 0f,
         ambientSky: new Vector3(0.2f), ambientGround: new Vector3(0.2f),
-        exposure: 1f, actorFloor: 0.35f, stars: 0f, nightScaled: 0f);
+        exposure: 1f, actorFloor: 0.35f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f);
 
     private static SkyKeyframe[] BuildTable() =>
     [
@@ -128,21 +140,21 @@ internal static class SkyModelKeyframes
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
             ambientSky: new Vector3(0.085f, 0.085f, 0.130f), ambientGround: new Vector3(0.036f, 0.034f, 0.052f),
-            exposure: 1f, actorFloor: 0.10f, stars: 0.4f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         new(6f, // sunrise
             zenith: new Vector3(0.220f, 0.320f, 0.560f), horizon: new Vector3(0.950f, 0.540f, 0.270f),
             fogDensity: 0.062f, fogStart: 16f,
             sunColor: new Vector3(1.00f, 0.58f, 0.30f), sunIntensity: 0.85f, sunDisc: new Vector3(1.00f, 0.62f, 0.32f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.170f, 0.145f, 0.140f), ambientGround: new Vector3(0.105f, 0.080f, 0.065f),
-            exposure: 1f, actorFloor: 0.22f, stars: 0f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.22f, actorAmbientScale: SunHorizonActorAmbientScale, stars: 0f, nightScaled: 0f),
         new(7.5f, // morning
             zenith: new Vector3(0.250f, 0.430f, 0.780f), horizon: new Vector3(0.800f, 0.760f, 0.760f),
             fogDensity: 0.064f, fogStart: 17f,
             sunColor: new Vector3(1.00f, 0.90f, 0.78f), sunIntensity: 0.95f, sunDisc: new Vector3(1.00f, 0.88f, 0.72f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.195f, 0.190f, 0.190f), ambientGround: new Vector3(0.180f, 0.170f, 0.160f),
-            exposure: 1f, actorFloor: 0.32f, stars: 0f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.32f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f),
         Day(10f),
         Day(14f),
         new(16.5f, // afternoon
@@ -151,21 +163,21 @@ internal static class SkyModelKeyframes
             sunColor: new Vector3(1.00f, 0.88f, 0.72f), sunIntensity: 0.95f, sunDisc: new Vector3(1.00f, 0.86f, 0.68f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.200f, 0.190f, 0.180f), ambientGround: new Vector3(0.190f, 0.175f, 0.160f),
-            exposure: 1f, actorFloor: 0.32f, stars: 0f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.32f, actorAmbientScale: DayActorAmbientScale, stars: 0f, nightScaled: 0f),
         new(18f, // sunset
             zenith: new Vector3(0.200f, 0.250f, 0.480f), horizon: new Vector3(0.980f, 0.470f, 0.200f),
             fogDensity: 0.062f, fogStart: 16f,
             sunColor: new Vector3(1.00f, 0.50f, 0.24f), sunIntensity: 0.85f, sunDisc: new Vector3(1.00f, 0.55f, 0.25f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.170f, 0.130f, 0.130f), ambientGround: new Vector3(0.110f, 0.075f, 0.060f),
-            exposure: 1f, actorFloor: 0.22f, stars: 0f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.22f, actorAmbientScale: SunHorizonActorAmbientScale, stars: 0f, nightScaled: 0f),
         new(19f, // dusk
             zenith: new Vector3(0.060f, 0.070f, 0.180f), horizon: new Vector3(0.360f, 0.200f, 0.300f),
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
             ambientSky: new Vector3(0.080f, 0.070f, 0.120f), ambientGround: new Vector3(0.034f, 0.030f, 0.048f),
-            exposure: 1f, actorFloor: 0.10f, stars: 0.4f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         Night(20f),
     ];
 }

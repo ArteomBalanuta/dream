@@ -25,10 +25,11 @@ uniform Material material;
 
 #include "lighting.glsl"
 
-// Actors read brighter than terrain: the frame ambient is scaled up, the direct light down, and
-// the result never drops below FrameLighting.Params.y (uLightingParams.y) times the base color.
-// At ReferenceNoon (ambient 0.2) this is today's 0.65 ambient, 0.75 diffuse and 0.35 floor.
-const float ActorAmbientScale = 3.25;
+// Actors read brighter than terrain by day: the frame ambient is scaled by FrameLighting.Params.z
+// (uLightingParams.z, set per time of day by SkyModel), the direct light down, and the result never
+// drops below FrameLighting.Params.y (uLightingParams.y) times the base color. At ReferenceNoon
+// (ambient 0.2, scale 3.25) this is today's 0.65 ambient, 0.75 diffuse and 0.35 floor; at night the
+// scale drops so actors stay close to terrain brightness instead of looking self-lit.
 const float ActorDirectScale = 0.75;
 
 void main()
@@ -47,7 +48,7 @@ void main()
 #endif
 
     vec3 n = normalize(normal);
-    vec3 lit = (dreamAmbient(n) * ActorAmbientScale + dreamDirect(n) * ActorDirectScale) * baseColor.rgb;
+    vec3 lit = (dreamAmbient(n) * uLightingParams.z + dreamDirect(n) * ActorDirectScale) * baseColor.rgb;
     lit = max(lit, baseColor.rgb * uLightingParams.y);
 
     FragColor = vec4(dreamApplyFog(dreamExpose(lit), fragPos), baseColor.a);

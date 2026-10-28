@@ -1,12 +1,13 @@
+using System;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Text.RegularExpressions;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.Models;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Core;
-
-﻿using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
-using System;
-using System.IO;
 
 public sealed class Shader : IDisposable
 {
@@ -189,18 +190,18 @@ public sealed class Shader : IDisposable
         return resolved.ToString();
     }
 
-    private static bool TryParseInclude(string line, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? fileName)
+    private static bool TryParseInclude(string line, [NotNullWhen(true)] out string? fileName)
     {
-        System.Text.RegularExpressions.Match match = IncludePattern.Match(line);
+        Match match = IncludePattern.Match(line);
         fileName = match.Success ? match.Groups[1].Value : null;
         return match.Success;
     }
 
-    private static readonly System.Text.RegularExpressions.Regex IncludePattern =
+    private static readonly Regex IncludePattern =
         new(@"^﻿?[ \t]*#[ \t]*include[ \t]+""([^""]+)""[ \t]*\r?\n?$");
 
-    private static readonly System.Text.RegularExpressions.Regex DirectivePattern =
-        new(@"^[ \t]*#[ \t]*(include|version)\b", System.Text.RegularExpressions.RegexOptions.Multiline);
+    private static readonly Regex DirectivePattern =
+        new(@"^[ \t]*#[ \t]*(include|version)\b", RegexOptions.Multiline);
 
     private static string ReadInclude(string fileName, string directory)
     {
@@ -216,7 +217,7 @@ public sealed class Shader : IDisposable
         }
 
         string text = File.ReadAllText(path).TrimStart('﻿');
-        System.Text.RegularExpressions.Match directive = DirectivePattern.Match(text);
+        Match directive = DirectivePattern.Match(text);
         if (directive.Success)
         {
             throw new InvalidOperationException(

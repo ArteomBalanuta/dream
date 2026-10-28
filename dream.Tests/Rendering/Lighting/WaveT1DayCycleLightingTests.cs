@@ -133,6 +133,34 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         Assert.True(nightLum >= Luminance(fur) * midnight.Params.Y * midnight.Params.X * 0.99f);
     }
 
+    // Actors must not look self-lit at night: with the same base color and position, an up face on a
+    // wolf or player at midnight is at most 1.3x the terrain's (and not darker than it), while at noon
+    // the day ambient scale keeps today's brighter-than-terrain look.
+    [Theory]
+    [InlineData(0.15f)]
+    [InlineData(0.05f)]
+    [InlineData(0.4f)]
+    public void ActorToTerrainLuminance_OnUpFaces_AtMidnight_IsAtMost1Point3(float nightBrightness)
+    {
+        Vector3 fragPos = new(7.5f, 1f, 11f);
+        Vector3 fur = new(0.45f, 0.4f, 0.35f);
+        FrameLighting midnight = FrameLightingBuffer.ForWorld(SkyModel.Evaluate(0f, new SkyModelSettings(nightBrightness)).Lighting, Eye);
+        FrameLighting noon = FrameLightingBuffer.ForWorld(SkyModel.Evaluate(0.5f).Lighting, Eye);
+
+        float nightRatio = Luminance(Enemy(in midnight, Vector3.UnitY, fragPos, fur))
+            / Luminance(Cube(in midnight, Vector3.UnitY, fragPos, fur));
+        float noonRatio = Luminance(Enemy(in noon, Vector3.UnitY, fragPos, fur))
+            / Luminance(Cube(in noon, Vector3.UnitY, fragPos, fur));
+        float sideNightRatio = Luminance(Enemy(in midnight, Vector3.UnitX, fragPos, fur))
+            / Luminance(Cube(in midnight, Vector3.UnitX, fragPos, fur));
+
+        output.WriteLine($"night {nightBrightness}: actor/terrain up {nightRatio:F3}, side +X {sideNightRatio:F3}; noon up {noonRatio:F3}; scale {midnight.Params.Z}");
+        Assert.True(nightRatio <= 1.3f, $"actors at midnight are {nightRatio}x terrain on up faces");
+        Assert.True(nightRatio >= 1f, $"actors at midnight are darker ({nightRatio}x) than terrain on up faces");
+        Assert.True(sideNightRatio <= 2f, $"actors at midnight are {sideNightRatio}x terrain on side faces");
+        Assert.True(noonRatio > 1.3f, $"actors at noon ({noonRatio}x terrain) lost their day look");
+    }
+
     // The view model at midnight never goes black: the ambient floor alone lights it.
     [Fact]
     public void ViewModel_AtMidnight_IsLitAtLeastByTheFloor()
@@ -173,7 +201,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
     private static Vector3 Enemy(in FrameLighting l, Vector3 normal, Vector3 fragPos, Vector3 baseColor)
     {
         Vector3 n = Vector3.Normalize(normal);
-        Vector3 lit = (Ambient(in l, n) * 3.25f + Direct(in l, n) * 0.75f) * baseColor;
+        Vector3 lit = (Ambient(in l, n) * l.Params.Z + Direct(in l, n) * 0.75f) * baseColor;
         lit = Vector3.ComponentMax(lit, baseColor * l.Params.Y);
         return ApplyFog(in l, lit * l.Params.X, fragPos);
     }

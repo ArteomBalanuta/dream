@@ -17,7 +17,8 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
-    // Created on the first frame, on the render thread; disposed with the scene.
+    // Created in the constructor with Render's other GL resources (on the render thread, with the
+    // context current); disposed with the scene, which nulls it.
     private SkyRenderer? _sky;
     private readonly SkyModelSettings _skySettings = SkyModelSettings.FromEnvironment();
 
@@ -32,12 +33,13 @@ public partial class PlayScene
         GpuFrameTimer gpuTimer = _gpuTimer ??= new GpuFrameTimer(GlGpuQueryApi.Instance);
         gpuTimer.BeginFrame();
         ModelAssets.PumpUploads(ModelUploadsPerFrame);
-        long clearStart = Stopwatch.GetTimestamp();
         // The sky for this frame: the replicated time of day, unless the client-local debug override
         // replaces it. Its lighting is what the world pass uploads, and the clear colour is the
         // horizon (== the fog colour), so a pixel nothing covers already matches the distance.
+        // Evaluated before clearStart, so the clear timing stays the clear alone.
         SkyState sky = SkyModel.Evaluate(_render.TimeOfDayOverride.Resolve(WorldTimeOfDay01), _skySettings);
         _render.SetFrameLighting(in sky.Lighting);
+        long clearStart = Stopwatch.GetTimestamp();
         GL.ClearColor(sky.HorizonColor.X, sky.HorizonColor.Y, sky.HorizonColor.Z, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         // The world pass sets its own state rather than inheriting whatever the last pass (the
@@ -98,7 +100,7 @@ public partial class PlayScene
         // Sky pass, still inside the Actors GPU section: after every opaque actor, so it shades only
         // the pixels left at depth 1, and before the debug and viewmodel passes. It restores the
         // world state (DepthFunc Less, depth writes on, blending off) when it is done.
-        SkyRenderer skyRenderer = _sky ??= new SkyRenderer();
+        SkyRenderer skyRenderer = _sky ?? throw new ObjectDisposedException(nameof(PlayScene));
         skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
 
         DedicatedServerPerformanceSnapshot serverPerformance =

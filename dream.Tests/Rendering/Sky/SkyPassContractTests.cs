@@ -212,6 +212,20 @@ public class SkyPassContractTests
     }
 
     [Fact]
+    public void PlayScene_Creates_The_Sky_At_Init_With_Its_Other_GL_Resources()
+    {
+        string source = ReadSource("dream/Client/Scenes/PlayScene.cs");
+        string constructor = Method(source, "public PlayScene(");
+        string render = Method(source, "public void Render(FrameEventArgs args");
+
+        int renderAt = IndexOf(constructor, "_render = new Render(_settings);");
+        int skyAt = IndexOf(constructor, "_sky = new SkyRenderer();");
+        Assert.True(renderAt < skyAt, "The sky renderer is created right after Render's GL resources.");
+        Assert.DoesNotContain("new SkyRenderer(", render);
+        Assert.Single(Regex.Matches(source, @"new SkyRenderer\("));
+    }
+
+    [Fact]
     public void Time_Of_Day_Override_Stays_On_This_Client()
     {
         string hud = ReadSource("dream/Rendering/Core/Render.HudPanels.cs");
