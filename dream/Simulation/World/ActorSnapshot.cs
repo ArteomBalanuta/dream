@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 
 namespace Dream.Simulation.World;
@@ -13,6 +14,11 @@ namespace Dream.Simulation.World;
 // prediction StarvedTicks ticks after the ack (ClientPredictionReconciler). Zero in the common
 // case, and left off the wire then (also by the reflection contract, which the hand-written
 // converter matches byte for byte).
+//
+// HeldLight (T2f, protocol v6) is the light a player's equipped item casts, so other clients can
+// draw a remote player's torch. It is derived from the inventory, so it stays out of
+// SimulationStateChecksum. None, the common case, is left off the wire the same way, so a world
+// with no light equipped keeps its v5 snapshot bytes.
 public readonly record struct ActorSnapshot(
     int ActorId,
     CreatureKind Kind,
@@ -27,4 +33,5 @@ public readonly record struct ActorSnapshot(
     string? DisplayName = null,
     PlayerProgressionSnapshot? Progression = null,
     EnemyBehaviorState? EnemyBehaviorState = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int StarvedTicks = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int StarvedTicks = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] HeldLightKind HeldLight = HeldLightKind.None);

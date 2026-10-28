@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 
 namespace Dream.Simulation.World;
@@ -44,7 +45,14 @@ public enum ActorFieldGroups
     Progression = 64,
     // StarvedTicks (W9-2).
     Starved = 128,
-    All = Full | Position | Facing | Health | Mode | Combat | Progression | Starved
+    // Every group a Full record always carries. Equipment is not part of it.
+    All = Full | Position | Facing | Health | Mode | Combat | Progression | Starved,
+    // HeldLight (T2f, protocol v6). Not implied by Full: a delta record sets it when the held
+    // light differs from the base, a Full record only when the held light is not None, so a world
+    // with no light equipped keeps its v5 bytes. A Full record without it means None.
+    Equipment = 256,
+    // Every bit a record may carry.
+    Valid = All | Equipment
 }
 
 // Transforms are quantized at 1/4096 m, the step the compact world format already uses for moved
@@ -116,7 +124,8 @@ public readonly record struct ActorWireRecord(
     EnemyBehaviorState? EnemyBehaviorState = null,
     PlayerCombatStatsSnapshot? CombatStats = null,
     PlayerProgressionSnapshot? Progression = null,
-    int StarvedTicks = 0)
+    int StarvedTicks = 0,
+    HeldLightKind HeldLight = HeldLightKind.None)
 {
     public bool IsFull => (Groups & ActorFieldGroups.Full) != 0;
 
@@ -142,14 +151,17 @@ public readonly record struct ActorWireRecord(
             DisplayName,
             Progression,
             EnemyBehaviorState,
-            StarvedTicks);
+            StarvedTicks,
+            HeldLight);
     }
 
     public static ActorWireRecord Full(in ActorSnapshot actor)
     {
         return new ActorWireRecord(
             actor.ActorId,
-            ActorFieldGroups.All,
+            actor.HeldLight == HeldLightKind.None
+                ? ActorFieldGroups.All
+                : ActorFieldGroups.All | ActorFieldGroups.Equipment,
             actor.Kind,
             actor.SessionId,
             actor.DisplayName,
@@ -166,7 +178,8 @@ public readonly record struct ActorWireRecord(
             actor.EnemyBehaviorState,
             actor.CombatStats,
             actor.Progression,
-            actor.StarvedTicks);
+            actor.StarvedTicks,
+            actor.HeldLight);
     }
 
     // The record that turns baseActor (as the client holds it) into actor. Transforms compare by
@@ -225,6 +238,11 @@ public readonly record struct ActorWireRecord(
             groups |= ActorFieldGroups.Starved;
         }
 
+        if (actor.HeldLight != baseActor.HeldLight)
+        {
+            groups |= ActorFieldGroups.Equipment;
+        }
+
         return new ActorWireRecord(
             actor.ActorId,
             groups,
@@ -241,7 +259,8 @@ public readonly record struct ActorWireRecord(
             EnemyBehaviorState: actor.EnemyBehaviorState,
             CombatStats: actor.CombatStats,
             Progression: actor.Progression,
-            StarvedTicks: actor.StarvedTicks);
+            StarvedTicks: actor.StarvedTicks,
+            HeldLight: actor.HeldLight);
     }
 }
 

@@ -264,7 +264,8 @@ public sealed class ActorStateCache
                 actor.DisplayName,
                 (groups & ActorFieldGroups.Progression) != 0 ? record.Progression : actor.Progression,
                 mode ? record.EnemyBehaviorState : actor.EnemyBehaviorState,
-                (groups & ActorFieldGroups.Starved) != 0 ? record.StarvedTicks : actor.StarvedTicks);
+                (groups & ActorFieldGroups.Starved) != 0 ? record.StarvedTicks : actor.StarvedTicks,
+                (groups & ActorFieldGroups.Equipment) != 0 ? record.HeldLight : actor.HeldLight);
         }
     }
 }

@@ -207,7 +207,9 @@ public sealed partial class WorldSessionRuntime
                     playerTarget.Combatant.Level,
                     playerTarget.Combatant.Experience,
                     EvaluateSnapshotExperienceToNextLevel(playerTarget.Combatant)),
-                StarvedTicks: CaptureStarvedTicks(playerTarget.SessionId)));
+                StarvedTicks: CaptureStarvedTicks(playerTarget.SessionId),
+                // T2f: derived from the inventory (allocation-free), so not in the checksum.
+                HeldLight: _inventory.ResolveEquippedHeldLight(displayName)));
         }
 
         _snapshotPlayerTargets.Clear();
