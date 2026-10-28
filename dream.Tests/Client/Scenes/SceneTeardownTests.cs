@@ -109,8 +109,10 @@ public class SceneTeardownTests
         int playScene = IndexOf(body, "_playScene?.Dispose();");
         int startupScene = IndexOf(body, "_startupScene?.Dispose();");
         int baseUnload = IndexOf(body, "base.OnUnload();");
-        // Bounded: a hung integrated server is abandoned rather than freezing the window's close.
-        int localServer = IndexOf(body, "PlaySessionEndTransition.StopLocalServer(_localServer)");
+        // Bounded by the persistence drain deadline plus busy_timeout, and it also waits for any
+        // earlier integrated server still saving (the shutdown gate), so the final checkpoint is
+        // not cut off; only a server hung past that is abandoned.
+        int localServer = IndexOf(body, "PlaySessionEndTransition.StopLocalServerForExit(_localServer, _localServerShutdown)");
         Assert.DoesNotContain("GetAwaiter().GetResult()", body);
 
         Assert.True(playScene < baseUnload, "The play scene must be disposed while the GL context is current, before base.OnUnload.");
@@ -118,7 +120,7 @@ public class SceneTeardownTests
         Assert.True(playScene < localServer && startupScene < localServer, "The local server must outlive the scenes' connections.");
         Assert.True(baseUnload < localServer);
         // base.OnUnload may throw; the local server is still disposed, in its own finally.
-        Assert.Matches(@"try\s*\{\s*base\.OnUnload\(\);\s*\}\s*catch\s*\(Exception ex\)\s*\{[^}]*\}\s*finally\s*\{\s*(//[^\n]*\s*)*if\s*\(PlaySessionEndTransition\.StopLocalServer\(_localServer\)\s*is\s*Exception\s+stopFailure\)\s*\{\s*\(failures\s*\?\?=\s*\[\]\)\.Add\(stopFailure\);", body);
+        Assert.Matches(@"try\s*\{\s*base\.OnUnload\(\);\s*\}\s*catch\s*\(Exception ex\)\s*\{[^}]*\}\s*finally\s*\{\s*(//[^\n]*\s*)*if\s*\(PlaySessionEndTransition\.StopLocalServerForExit\(_localServer,\s*_localServerShutdown\)\s*is\s*Exception\s+stopFailure\)\s*\{\s*\(failures\s*\?\?=\s*\[\]\)\.Add\(stopFailure\);", body);
         // Failures are collected: one is rethrown as-is, several as an AggregateException.
         Assert.Contains("ExceptionDispatchInfo.Capture(failures[0]).Throw();", body);
         Assert.Contains("throw new AggregateException(failures);", body);
@@ -166,7 +168,11 @@ public class SceneTeardownTests
         int clearScene = IndexOf(switchBody, "_playScene = null;");
         int captureServer = IndexOf(switchBody, "ILocalServerHandle endedLocalServer = _localServer;");
         int replaceServer = IndexOf(switchBody, "_localServer = CreateLocalServerHandle();");
-        int tearDown = IndexOf(switchBody, "PlaySessionEndTransition.TearDown(endedScene, endedLocalServer)");
+        // The ended server's stop is tracked in the shutdown gate, so the next one waits for it.
+        int tearDown = IndexOf(switchBody, "PlaySessionEndTransition.TearDown(endedScene, endedLocalServer, shutdownGate: _localServerShutdown)");
+        // Whether the session was on the integrated server is decided before its teardown.
+        int relaunchTarget = IndexOf(switchBody, "RemoteClientOptions? relaunchFor = PlaySessionEndTransition.RelaunchTarget(endedLocalServer, endedOptions);");
+        Assert.True(replaceServer < relaunchTarget && relaunchTarget < tearDown);
         int startup = IndexOf(switchBody, "ShowStartupScene(");
         int reasonArgument = IndexOf(switchBody, "sessionEndReason: reason");
 
@@ -182,7 +188,12 @@ public class SceneTeardownTests
         Assert.Contains("resolveLocalPort: false", switchBody);
         Assert.DoesNotContain("resolveLocalPort: true", switchBody);
         Assert.DoesNotContain("EnsureStarted", switchBody);
-        Assert.Contains("relaunchLocalServerFor: stoppedLocalServer ? endedOptions : null", switchBody);
+        Assert.Contains("relaunchLocalServerFor: relaunchFor", switchBody);
+        // A handle that was merely started (a loopback config starts it at launch) no longer
+        // decides the relaunch.
+        Assert.DoesNotContain("stoppedLocalServer ? endedOptions", switchBody);
+        // Every new integrated server starts after the stops the gate tracks.
+        Assert.Contains("startAfter: () => _localServerShutdown.Pending", ExtractMethodBody(source, "private ILocalServerHandle CreateLocalServerHandle()"));
 
         // Only ShowStartupScene creates a startup scene, at launch and after a session ends.
         string show = ExtractMethodBody(source, "private void ShowStartupScene(");
