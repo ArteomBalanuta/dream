@@ -31,7 +31,7 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v1; this client uses v2.", error.Message);
+        Assert.Equal("Server uses protocol v1; this client uses v3.", error.Message);
         Assert.Equal(1, error.PeerVersion);
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, error.LocalVersion);
         await server.WaitForClientMessagesAsync(2);
@@ -40,7 +40,7 @@ public class ProtocolVersionMismatchClientTests
     [Fact]
     public async Task ConnectAsync_WhenTheServerHelloReportsAnotherVersion_FailsWithAProtocolMismatch()
     {
-        await using FakeServer server = FakeServer.Start(FakeServer.V2EnvelopeHelloFrame(reportedVersion: 3));
+        await using FakeServer server = FakeServer.Start(FakeServer.V2EnvelopeHelloFrame(reportedVersion: 4));
 
         ProtocolVersionMismatchException error = await Assert.ThrowsAsync<ProtocolVersionMismatchException>(async () =>
         {
@@ -48,8 +48,26 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v3; this client uses v2.", error.Message);
-        Assert.Equal(3, error.PeerVersion);
+        Assert.Equal("Server uses protocol v4; this client uses v3.", error.Message);
+        Assert.Equal(4, error.PeerVersion);
+    }
+
+    // SCALE-1 moved the wire to protocol v3; a v2 server (a v2 envelope with a v2 hello, written
+    // with the v2 options) is refused with both versions named, before any world is read.
+    [Fact]
+    public async Task ConnectAsync_AgainstAV2Server_FailsWithAProtocolMismatch()
+    {
+        await using FakeServer server = FakeServer.Start(FakeServer.V2HelloFrame());
+
+        ProtocolVersionMismatchException error = await Assert.ThrowsAsync<ProtocolVersionMismatchException>(async () =>
+        {
+            await using RemoteClientSession session = await RemoteClientSession.ConnectAsync(
+                new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
+        }).WaitAsync(Timeout);
+
+        Assert.Equal("Server uses protocol v2; this client uses v3.", error.Message);
+        Assert.Equal(2, error.PeerVersion);
+        Assert.Equal(3, error.LocalVersion);
     }
 
     [Fact]
@@ -76,7 +94,7 @@ public class ProtocolVersionMismatchClientTests
         await coordinator.WaitForPendingConnectionAsync().WaitAsync(Timeout);
 
         Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
-        Assert.Equal("Server uses protocol v1; this client uses v2.", coordinator.StatusMessage);
+        Assert.Equal("Server uses protocol v1; this client uses v3.", coordinator.StatusMessage);
         Assert.False(coordinator.TryTakeConnectedSession(out _));
     }
 
@@ -98,7 +116,7 @@ public class ProtocolVersionMismatchClientTests
             await Task.Delay(10);
         }
 
-        Assert.Equal("Server uses protocol v1; this client uses v2.", session.DisconnectReason);
+        Assert.Equal("Server uses protocol v1; this client uses v3.", session.DisconnectReason);
         Assert.False(session.TryDequeueInbound(out _));
         // The receive loop ended normally, so disposing does not resurface the decode error.
         await session.DisposeAsync();
@@ -172,6 +190,16 @@ public class ProtocolVersionMismatchClientTests
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(
                 new { protocolVersion = 1, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
                 ProtocolWireOptions.V1);
+            return new LengthPrefixedMessageFramer().Frame(payload);
+        }
+
+        // What a protocol v2 server sends: v2 options, protocolVersion 2, a hello reporting 2.
+        public static byte[] V2HelloFrame()
+        {
+            ServerHelloMessage hello = new("legacy-v2-server", ProtocolVersion: 2, CurrentServerTick: 0);
+            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(
+                new { protocolVersion = 2, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
+                ProtocolWireOptions.V2);
             return new LengthPrefixedMessageFramer().Frame(payload);
         }
 

@@ -30,7 +30,7 @@ namespace Dream.Tests.Integration;
 // scratch state in them (a static buffer, the pooled actor array of the list reader) would
 // corrupt output only under concurrency. Here 16 threads encode and decode the same large
 // snapshots and command frames at once, through one shared codec, private codecs and shared
-// payloads, and every result is compared with the reflection reference (ProtocolWireOptions.V2).
+// payloads, and every result is compared with the reflection reference (ProtocolWireOptions.V3).
 // A real loopback run with three TCP clients then checks the wire end to end; it lives in
 // HandWrittenConverterLoopbackIntegrationTests so the two run in parallel, using the helpers here.
 public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper output)
@@ -57,7 +57,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             int actorCount = i switch { 0 => 0, 1 => 1, 2 => 32, 3 => 33, _ => random.Next(40, 600) };
             snapshots[i] = new ServerSnapshotMessage(SnapshotWith((ulong)(1000 + i), RandomActors(random, actorCount)));
             snapshotEnvelopes[i] = new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, snapshots[i].MessageKind, (ulong)(i + 1));
-            expectedSnapshotPayloads[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V2);
+            expectedSnapshotPayloads[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V3);
             ArrayBufferWriter<byte> frame = new();
             sharedCodec.WriteEnvelope(snapshotEnvelopes[i], expectedSnapshotPayloads[i], frame);
             expectedSnapshotFrames[i] = frame.WrittenSpan.ToArray();
@@ -69,7 +69,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         for (int i = 0; i < Commands; i++)
         {
             commands[i] = new PlayerCommandMessage(RandomFrame(random));
-            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(commands[i], ProtocolWireOptions.V2);
+            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(commands[i], ProtocolWireOptions.V3);
             ArrayBufferWriter<byte> frame = new();
             sharedCodec.WriteEnvelope(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, commands[i].MessageKind, (ulong)i), payload, frame);
             expectedCommandFrames[i] = frame.WrittenSpan.ToArray();
@@ -113,7 +113,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
                             ServerSnapshotMessage message = Assert.IsType<ServerSnapshotMessage>(decoded.Message);
                             Expect(message.Snapshot.Actors.SequenceEqual(snapshots[i].Snapshot.Actors), $"snapshot {i}: decoded actors differ");
                             Expect(
-                                JsonSerializer.SerializeToUtf8Bytes(message, ProtocolWireOptions.V2).AsSpan().SequenceEqual(expectedSnapshotPayloads[i]),
+                                JsonSerializer.SerializeToUtf8Bytes(message, ProtocolWireOptions.V3).AsSpan().SequenceEqual(expectedSnapshotPayloads[i]),
                                 $"snapshot {i}: decoded snapshot re-encodes differently through the reference");
                             Interlocked.Increment(ref decodes);
                         }
@@ -163,7 +163,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
     internal static void AssertMatchesReference(Frame frame)
     {
         IProtocolMessage message = frame.Decoded.Message;
-        byte[] reference = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V2);
+        byte[] reference = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V3);
         Assert.True(
             reference.AsSpan().SequenceEqual(frame.PayloadJson),
             $"{frame.Decoded.Envelope.MessageKind}#{frame.Decoded.Envelope.Sequence}: wire payload differs from the reference.\n" +

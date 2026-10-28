@@ -18,14 +18,14 @@ namespace Dream.Tests.Multiplayer.Protocol;
 
 // WIRE-11: TransportJsonCodec writes ServerSnapshotMessage, its envelope, the world mutations
 // (with their fracture pieces) and the damage events with hand-written converters.
-// ProtocolWireOptions.V2 has none of them, so it stays the reflection reference: every encode must
+// ProtocolWireOptions.V3 has none of them, so it stays the reflection reference: every encode must
 // match it byte for byte, and every decode, however the payload is reordered, padded or trimmed,
 // must produce what the reference produces.
 public class ServerSnapshotConverterTests(ITestOutputHelper output)
 {
     private const int RandomCases = 300;
 
-    private static readonly JsonSerializerOptions Reference = ProtocolWireOptions.V2;
+    private static readonly JsonSerializerOptions Reference = ProtocolWireOptions.V3;
 
     // ---- Byte identity -------------------------------------------------------------------
 
@@ -380,7 +380,8 @@ public class ServerSnapshotConverterTests(ITestOutputHelper output)
     [InlineData("""{"snapshot":{"lastAcceptedCommandSequences":{"a":{}}}}""")]
     [InlineData("""{"snapshot":{"actors":{}}}""")]
     [InlineData("""{"snapshot":{"world":[]}}""")]
-    [InlineData("""{"snapshot":{"world":{"width":"1"}}}""")]
+    [InlineData("""{"snapshot":{"world":{"w":"1"}}}""")]
+    [InlineData("""{"snapshot":{"world":{"p":[1,2]}}}""")]
     [InlineData("""{"snapshot":{"worldMutations":{}}}""")]
     [InlineData("""{"snapshot":{"worldMutations":[null]}}""")]
     [InlineData("""{"snapshot":{"worldMutations":[3]}}""")]

@@ -64,6 +64,8 @@ public class Wave7LateJoinFractureResyncLoopbackTests(ITestOutputHelper output)
         await using WireLoopbackClient late = await server.ConnectAndJoinAsync(LateJoiner);
         using ClientWorldSession world = new(serverMap.Width, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         int frameIndex = 0;
+        WorldTransferReassembler transfers = new();
+        List<IServerToClientMessage> delivered = [];
         Stopwatch lastRequest = new();
         PhaseResult joinPhase = await RunUntilStableAsync();
         output.WriteLine($"fracture at tick {fractureTick}; join phase: {joinPhase}");
@@ -106,52 +108,59 @@ public class Wave7LateJoinFractureResyncLoopbackTests(ITestOutputHelper output)
                 IReadOnlyList<WireFrame> frames = late.Frames;
                 for (; frameIndex < frames.Count; frameIndex++)
                 {
-                    switch (frames[frameIndex].Decoded.Message)
+                    // Protocol v3: a join or resync world arrives in chunks; the reassembler hands the
+                    // messages on in the order RemoteClientSession delivers them.
+                    delivered.Clear();
+                    transfers.Accept((IServerToClientMessage)frames[frameIndex].Decoded.Message, delivered.Add);
+                    foreach (IServerToClientMessage message in delivered)
                     {
-                        case JoinAcceptedMessage accepted:
-                            ClientJoinAcceptedApplier.ApplyToRuntime(world, accepted);
-                            break;
-                        case ServerSnapshotMessage { Snapshot: var snapshot }:
-                            if (snapshot.World != null)
-                            {
-                                resyncSnapshots++;
-                            }
-
-                            RemoteWorldMutationApplier.ApplySnapshotToRuntime(world, snapshot);
-                            if (!snapshot.WorldChecksum.HasValue)
-                            {
+                        switch (message)
+                        {
+                            case JoinAcceptedMessage accepted:
+                                ClientJoinAcceptedApplier.ApplyToRuntime(world, accepted);
                                 break;
-                            }
-
-                            checksums++;
-                            if (!RemoteWorldMutationApplier.IsWorldOutOfSync(world, snapshot))
-                            {
-                                firstMatchTick ??= tick;
-                                break;
-                            }
-
-                            mismatches++;
-                            if (firstMatchTick.HasValue)
-                            {
-                                mismatchesAfterFirstMatch++;
-                            }
-
-                            // PlayScene's own 2 s request cooldown.
-                            if (!lastRequest.IsRunning || lastRequest.Elapsed.TotalSeconds >= 2d)
-                            {
-                                lastRequest.Restart();
-                                requests++;
-                                await late.SendAsync(new ClientWorldResyncRequestMessage(WorldStateChecksum.Compute(world.Map)));
-                                if (extraRequestAfterFirst && requests == 1)
+                            case ServerSnapshotMessage { Snapshot: var snapshot }:
+                                if (snapshot.World != null)
                                 {
-                                    // Inside the server cooldown: dropped, must not cancel the first.
-                                    await late.SendAsync(new ClientWorldResyncRequestMessage(WorldStateChecksum.Compute(world.Map)));
+                                    resyncSnapshots++;
                                 }
 
-                                await Task.Delay(20);
-                            }
+                                RemoteWorldMutationApplier.ApplySnapshotToRuntime(world, snapshot);
+                                if (!snapshot.WorldChecksum.HasValue)
+                                {
+                                    break;
+                                }
 
-                            break;
+                                checksums++;
+                                if (!RemoteWorldMutationApplier.IsWorldOutOfSync(world, snapshot))
+                                {
+                                    firstMatchTick ??= tick;
+                                    break;
+                                }
+
+                                mismatches++;
+                                if (firstMatchTick.HasValue)
+                                {
+                                    mismatchesAfterFirstMatch++;
+                                }
+
+                                // PlayScene's own 2 s request cooldown.
+                                if (!lastRequest.IsRunning || lastRequest.Elapsed.TotalSeconds >= 2d)
+                                {
+                                    lastRequest.Restart();
+                                    requests++;
+                                    await late.SendAsync(new ClientWorldResyncRequestMessage(WorldStateChecksum.Compute(world.Map)));
+                                    if (extraRequestAfterFirst && requests == 1)
+                                    {
+                                        // Inside the server cooldown: dropped, must not cancel the first.
+                                        await late.SendAsync(new ClientWorldResyncRequestMessage(WorldStateChecksum.Compute(world.Map)));
+                                    }
+
+                                    await Task.Delay(20);
+                                }
+
+                                break;
+                        }
                     }
                 }
 

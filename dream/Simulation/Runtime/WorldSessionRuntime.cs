@@ -1065,63 +1065,71 @@ public sealed class WorldSessionRuntime : IDisposable
         return required;
     }
 
+    // The world for a join or resync: a WorldSnapshot over a pooled capture (CaptureWorldSnapshot).
     public WorldSnapshot ExportWorldSnapshot()
     {
-        List<Vector3> placedCubeCells = [];
-        List<PlacedCubeSnapshot> placedCubes = [];
-        List<Vector3> fracturedCubeCells = [];
-        List<FracturedCubeSnapshot> fracturedCubes = [];
-        List<Vector3> authoredSubcellCells = [];
+        return CaptureWorldSnapshot().ToWorldSnapshot();
+    }
 
-        foreach (GeometryCellRecord cell in Map.GeometryCells.Values)
+    // SCALE-1: the join and resync world, captured on the tick into pooled flat arrays in one pass
+    // over the map, with no LINQ and no per-cube objects. The compact encode runs later on the
+    // connection writer, which releases the capture once it has written the last chunk.
+    public WorldSnapshotCapture CaptureWorldSnapshot()
+    {
+        IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> geometryCells = Map.GeometryCells;
+        IReadOnlyDictionary<GeometryCellKey, GeometryCellRecord> rubbleCells = Map.RubbleCells;
+        WorldSnapshotCapture capture = WorldSnapshotCapture.Rent(
+            Map.Width,
+            Map.Height,
+            Map.Depth,
+            LastWorldMutationSequence,
+            cubeCapacity: geometryCells.Count,
+            subcellCapacity: 64,
+            rubbleCapacity: rubbleCells.Count,
+            pieceCapacity: rubbleCells.Count * 6);
+
+        foreach (GeometryCellRecord cell in geometryCells.Values)
         {
             if (cell.Key.Y == 0)
             {
                 continue;
             }
 
-            Vector3 cellPosition = new(cell.Key.X, cell.Key.Y, cell.Key.Z);
-            if (cell.SubdivisionState == null)
+            if (cell.SubdivisionState != null)
             {
-                Cube? cube = Map.TryGetCubeAtCell(cell.Key.X, cell.Key.Y, cell.Key.Z);
-                Vector3 centerPosition = cube?.Position ??
-                    new Vector3(cell.Key.X + 0.5f, cell.Key.Y + 0.5f, cell.Key.Z + 0.5f);
-                Vector3 authoritativeCell = ToCellPosition(centerPosition);
-                placedCubeCells.Add(authoritativeCell);
-                placedCubes.Add(new PlacedCubeSnapshot(
-                    authoritativeCell,
-                    centerPosition,
-                    cell.Definition.MaterialId,
-                    cube != null ? _worldObjects.TryGet(cube)?.Actor.Id : null));
+                capture.AddSubcell(cell.Key.X, cell.Key.Y, cell.Key.Z);
+                continue;
             }
-            else
-            {
-                authoredSubcellCells.Add(cellPosition);
-            }
+
+            Cube? cube = Map.TryGetCubeAtCell(cell.Key.X, cell.Key.Y, cell.Key.Z);
+            Vector3 centerPosition = cube?.Position ??
+                new Vector3(cell.Key.X + 0.5f, cell.Key.Y + 0.5f, cell.Key.Z + 0.5f);
+            Vector3 authoritativeCell = ToCellPosition(centerPosition);
+            capture.AddCube(
+                (int)authoritativeCell.X,
+                (int)authoritativeCell.Y,
+                (int)authoritativeCell.Z,
+                cell.Definition.MaterialId,
+                cube != null ? _worldObjects.TryGet(cube)?.Actor.Id : null,
+                centerPosition);
         }
 
-        foreach (GeometryCellRecord rubble in Map.RubbleCells.Values)
+        foreach (GeometryCellRecord rubble in rubbleCells.Values)
         {
-            Vector3 originCell = new(rubble.Key.X, rubble.Key.Y, rubble.Key.Z);
-            fracturedCubeCells.Add(originCell);
-            fracturedCubes.Add(new FracturedCubeSnapshot(
-                originCell,
-                rubble.Definition.MaterialId,
-                rubble.FracturePieces!
-                    .Where(GeometryFracturePiece.IsValid)
-                    .ToArray()));
+            capture.BeginRubble(rubble.Key.X, rubble.Key.Y, rubble.Key.Z, rubble.Definition.MaterialId);
+            IReadOnlyList<GeometryFracturePiece> pieces = rubble.FracturePieces!;
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                if (pieces[i].IsValid())
+                {
+                    capture.AddPiece(pieces[i]);
+                }
+            }
+
+            capture.EndRubble();
         }
 
-        return new WorldSnapshot(
-            Map.Width,
-            Map.Height,
-            Map.Depth,
-            placedCubeCells,
-            fracturedCubeCells,
-            authoredSubcellCells,
-            placedCubes,
-            fracturedCubes,
-            LastWorldMutationSequence);
+        return capture;
     }
 
     // A client-sent action: its sequence must be newer than every action already accepted for the

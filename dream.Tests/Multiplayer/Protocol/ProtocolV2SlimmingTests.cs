@@ -18,13 +18,13 @@ namespace Dream.Tests.Multiplayer.Protocol;
 public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 {
     [Fact]
-    public void CurrentProtocolVersion_IsTwo_AndServerHelloAdvertisesIt()
+    public void CurrentProtocolVersion_IsThree_AndServerHelloAdvertisesIt()
     {
         ServerRoutingContext context = new("connection-a");
 
         new ClientHelloHandler().Handle(context, new ClientHelloMessage("client-a"));
 
-        Assert.Equal(2, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(3, TransportEnvelope.CurrentProtocolVersion);
         ServerHelloMessage hello = Assert.IsType<ServerHelloMessage>(Assert.Single(context.OutboundMessages));
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, hello.ProtocolVersion);
     }
@@ -130,11 +130,11 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     public void MissingProperty_DecodesLikeExplicitNull(IProtocolMessage message)
     {
         TransportJsonCodec codec = new();
-        string v1Payload = JsonSerializer.Serialize(message, message.GetType(), ProtocolWireOptions.V1);
-        string json = $"{{\"protocolVersion\":2,\"messageKind\":\"{message.MessageKind}\",\"sequence\":1,\"payload\":{v1Payload}}}";
+        string v1Payload = JsonSerializer.Serialize(message, message.GetType(), ProtocolWireOptions.V1WithV3World);
+        string json = $"{{\"protocolVersion\":3,\"messageKind\":\"{message.MessageKind}\",\"sequence\":1,\"payload\":{v1Payload}}}";
 
         IProtocolMessage fromExplicitNulls = codec.Decode(Encoding.UTF8.GetBytes(json)).Message;
-        IProtocolMessage fromSlim = codec.Decode(Encode(codec, new TransportEnvelope(2, message.MessageKind, 1), message)).Message;
+        IProtocolMessage fromSlim = codec.Decode(Encode(codec, new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message)).Message;
 
         AssertSameRecord(fromExplicitNulls, fromSlim);
         AssertSameRecord(message, fromSlim);
@@ -145,7 +145,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     {
         DecodedProtocolMessage decoded = DecodeJson(
             """
-            {"protocolVersion":2,"messageKind":"server.snapshot","sequence":9,"payload":{"snapshot":{
+            {"protocolVersion":3,"messageKind":"server.snapshot","sequence":9,"payload":{"snapshot":{
               "serverTick":120,
               "lastAcceptedCommandSequences":{"session-a":4},
               "actors":[
@@ -162,7 +162,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
             """);
 
         ServerSnapshotEnvelope snapshot = Assert.IsType<ServerSnapshotMessage>(decoded.Message).Snapshot;
-        Assert.Equal(new TransportEnvelope(2, "server.snapshot", 9), decoded.Envelope);
+        Assert.Equal(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, "server.snapshot", 9), decoded.Envelope);
         Assert.Null(snapshot.World);
         Assert.Null(snapshot.WorldChecksum);
         Assert.Equal((ulong)4, snapshot.LastAcceptedCommandSequences["session-a"]);
@@ -196,7 +196,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     public void Decode_HandWrittenV2JoinAndAction_WithOptionalFieldsOmitted()
     {
         JoinAcceptedMessage join = Assert.IsType<JoinAcceptedMessage>(DecodeJson(
-            """{"protocolVersion":2,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":22}}""").Message);
+            """{"protocolVersion":3,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":22}}""").Message);
 
         Assert.Equal(new JoinAcceptedMessage("session-a", 101, 22, InitialWorld: null), join);
         Assert.Empty(join.EffectiveRoster);
@@ -204,7 +204,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         ServerActionMessage action = Assert.IsType<ServerActionMessage>(DecodeJson(
             """
-            {"protocolVersion":2,"messageKind":"server.action","sequence":2,"payload":{"result":{
+            {"protocolVersion":3,"messageKind":"server.action","sequence":2,"payload":{"result":{
               "sessionId":"session-a","actionSequence":5,"serverTick":6,"accepted":true,
               "payload":{"$type":"combat.resolution","damageApplied":3,"targetDied":false,"currentHealth":7,"maxHealth":10},
               "correction":{"correctedFacing":{"x":0,"y":1,"z":0}}}}}
@@ -223,7 +223,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         PlayerCommandMessage command = Assert.IsType<PlayerCommandMessage>(DecodeJson(
             """
-            {"protocolVersion":2,"messageKind":"player.command","sequence":3,"payload":{"commandFrame":{
+            {"protocolVersion":3,"messageKind":"player.command","sequence":3,"payload":{"commandFrame":{
               "sessionId":{"value":"session-a"},"sequence":8,"requestedMode":{},
               "moveIntent":{"forwardAxis":1,"strafeAxis":0},"lookIntent":{"yawDelta":0,"pitchDelta":0},
               "primaryUsePressed":false}}}
@@ -250,7 +250,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1));
 
-        Assert.Equal("Unsupported protocol version 1. Supported version: 2.", ex.Message);
+        Assert.Equal("Unsupported protocol version 1. Supported version: 3.", ex.Message);
     }
 
     [Fact]
@@ -261,7 +261,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => new TransportJsonCodec().Encode(new TransportEnvelope(1, message.MessageKind, 1), message));
 
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 2.", ex.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 3.", ex.Message);
     }
 
     [Fact]
@@ -285,14 +285,13 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
         Assert.Contains("\"actors\":[]", snapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"worldMutations\":[]", snapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"damageEvents\":[]", snapshotJson, StringComparison.Ordinal);
-        Assert.Contains("\"placedCubeCells\":[]", snapshotJson, StringComparison.Ordinal);
-        Assert.Contains("\"fracturedCubeCells\":[]", snapshotJson, StringComparison.Ordinal);
-        Assert.DoesNotContain("authoredSubcellCells", snapshotJson, StringComparison.Ordinal);
+        // Protocol v3: an empty world is its dimensions alone; empty sections are left out.
+        Assert.Contains("\"world\":{\"w\":2,\"h\":2,\"d\":2}", snapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"roster\":[]", joinJson, StringComparison.Ordinal);
         Assert.Contains("\"initialActors\":[]", joinJson, StringComparison.Ordinal);
 
         ServerSnapshotEnvelope decodedSnapshot = Assert.IsType<ServerSnapshotMessage>(
-            codec.Decode(Encode(codec, new TransportEnvelope(2, snapshot.MessageKind, 1), snapshot)).Message).Snapshot;
+            codec.Decode(Encode(codec, new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, snapshot.MessageKind, 1), snapshot)).Message).Snapshot;
         Assert.NotNull(decodedSnapshot.LastAcceptedCommandSequences);
         Assert.Empty(decodedSnapshot.LastAcceptedCommandSequences);
         Assert.NotNull(decodedSnapshot.Actors);
@@ -301,12 +300,15 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
         Assert.NotNull(decodedSnapshot.DamageEvents);
         Assert.True(decodedSnapshot.World.HasValue);
         WorldSnapshot world = decodedSnapshot.World.Value;
-        Assert.NotNull(world.PlacedCubeCells);
-        Assert.NotNull(world.FracturedCubeCells);
-        Assert.Null(world.AuthoredSubcellCells);
+        // A decoded v3 world always has every list, empty when the section was left out.
+        Assert.Empty(world.PlacedCubeCells);
+        Assert.Empty(world.FracturedCubeCells!);
+        Assert.Empty(world.AuthoredSubcellCells!);
+        Assert.Empty(world.PlacedCubes!);
+        Assert.Empty(world.FracturedCubes!);
 
         JoinAcceptedMessage decodedJoin = Assert.IsType<JoinAcceptedMessage>(
-            codec.Decode(Encode(codec, new TransportEnvelope(2, join.MessageKind, 1), join)).Message);
+            codec.Decode(Encode(codec, new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, join.MessageKind, 1), join)).Message);
         Assert.NotNull(decodedJoin.Roster);
         Assert.Empty(decodedJoin.Roster);
         Assert.NotNull(decodedJoin.InitialActors);
@@ -453,7 +455,17 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
             "session-0",
             100,
             48213,
-            InitialWorld: new WorldSnapshot(16, 8, 16, [Vector3.Zero, Vector3.UnitX], MutationSequence: 804),
+            // Protocol v3 carries one consistent world: the placed cubes with their cells.
+            InitialWorld: new WorldSnapshot(
+                16,
+                8,
+                16,
+                [Vector3.Zero, Vector3.UnitX],
+                FracturedCubeCells: [],
+                AuthoredSubcellCells: [],
+                PlacedCubes: [new PlacedCubeSnapshot(Vector3.Zero, new Vector3(0.5f)), new PlacedCubeSnapshot(Vector3.UnitX, new Vector3(1.5f, 0.5f, 0.5f))],
+                FracturedCubes: [],
+                MutationSequence: 804),
             Roster:
             [
                 new PlayerRosterEntry("session-0", 100, "Player 0"),

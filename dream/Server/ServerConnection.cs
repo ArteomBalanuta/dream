@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
@@ -75,6 +76,23 @@ public sealed class ServerConnection : IAsyncDisposable
     private long _bytesReceived;
     private long _framesReceived;
 
+    // SCALE-1 chunked world transfer. A queued JoinAccepted with a world, or a queued world
+    // snapshot (a resync), is sent as its carrier (the message without the world, with a transfer
+    // id) followed by server.world-chunk frames of about WorldChunkBytes, encoded here on the
+    // writer task from the capture the tick took. While a transfer runs, the writer alternates one
+    // chunk and one queued message, so the regular traffic keeps flowing and the backlog stays
+    // bounded. The capture is released after the last chunk. Writer task only (and DisposeAsync
+    // once the writer has ended).
+    private WorldTransferSender? _activeTransfer;
+    private bool _chunkDue;
+    private int _nextWorldTransferId;
+    private long _worldTransfers;
+    private long _worldChunksSent;
+    // The chunk payload is written here first, then wrapped in its envelope in _frameWriter.
+    // Only touched while _sendLock is held, like _frameWriter.
+    private readonly PooledFrameWriter _chunkPayloadWriter = new();
+    private static readonly JsonWriterOptions ChunkPayloadWriterOptions = new();
+
     public ServerConnection(
         ITransportConnection transport,
         DedicatedServerHost host,
@@ -128,6 +146,14 @@ public sealed class ServerConnection : IAsyncDisposable
     public long BytesReceived => Interlocked.Read(ref _bytesReceived);
 
     public long FramesReceived => Interlocked.Read(ref _framesReceived);
+
+    // World transfers started (joins and resyncs) and world chunk frames written.
+    public long WorldTransfers => Interlocked.Read(ref _worldTransfers);
+
+    public long WorldChunksSent => Interlocked.Read(ref _worldChunksSent);
+
+    // The byte budget of one chunk's world fragment (tests shrink it to force many chunks).
+    internal int WorldChunkBytes { get; set; } = WorldChunkMessage.DefaultChunkBytes;
 
     // Set when the writer failed, the backlog overflowed or a liveness check failed; the service
     // drops faulted connections.
@@ -326,6 +352,7 @@ public sealed class ServerConnection : IAsyncDisposable
         try
         {
             _frameWriter.Dispose();
+            _chunkPayloadWriter.Dispose();
         }
         finally
         {
@@ -487,37 +514,60 @@ public sealed class ServerConnection : IAsyncDisposable
                 await _outboundSignal.WaitAsync(cancellationToken);
                 while (true)
                 {
-                    OutboundEntry entry;
-                    IServerToClientMessage message;
+                    OutboundEntry entry = default;
+                    IServerToClientMessage? message = null;
+                    bool sendChunk;
                     lock (_outboundSync)
                     {
                         LinkedListNode<OutboundEntry>? first = _outbound.First;
-                        if (first == null)
+                        // A world transfer in progress alternates with the queue: a chunk after
+                        // every queued message, and chunks back to back while the queue is empty.
+                        // A faulted connection sends nothing more (Fault cleared the queue).
+                        sendChunk = _activeTransfer != null && !IsFaulted && (_chunkDue || first == null);
+                        if (!sendChunk)
                         {
-                            break;
+                            if (first == null)
+                            {
+                                break;
+                            }
+
+                            entry = first.Value;
+                            _outbound.Remove(first);
+                            first.Value = default;
+                            _freeNodes.Push(first);
+                            // Dequeued, so no later snapshot merges into this buffer. The merged
+                            // envelope aliases the buffer's lists until the send below is done.
+                            message = entry.Coalesced != null
+                                ? new ServerSnapshotMessage(entry.Coalesced.ToEnvelope())
+                                : entry.Message;
                         }
 
-                        entry = first.Value;
-                        _outbound.Remove(first);
-                        first.Value = default;
-                        _freeNodes.Push(first);
                         _writing = true;
-                        // Dequeued, so no later snapshot merges into this buffer. The merged
-                        // envelope aliases the buffer's lists until the send below is done.
-                        message = entry.Coalesced != null
-                            ? new ServerSnapshotMessage(entry.Coalesced.ToEnvelope())
-                            : entry.Message;
                     }
 
                     try
                     {
-                        await SendMessageAsync(message, entry.Shared, cancellationToken);
+                        if (sendChunk)
+                        {
+                            await SendNextWorldChunkAsync(cancellationToken);
+                        }
+                        else if (entry.Shared == null && WorldTransfer.TryGetWorld(message!, out WorldSnapshot world))
+                        {
+                            await StartWorldTransferAsync(message!, world, cancellationToken);
+                        }
+                        else
+                        {
+                            await SendMessageAsync(message!, entry.Shared, cancellationToken);
+                            _chunkDue = true;
+                        }
                     }
                     finally
                     {
                         lock (_outboundSync)
                         {
-                            _writing = false;
+                            // A transfer still running keeps the connection busy for
+                            // FlushOutboundAsync even while the queue is empty.
+                            _writing = _activeTransfer != null;
                             if (entry.Coalesced != null)
                             {
                                 entry.Coalesced.Reset();
@@ -541,6 +591,54 @@ public sealed class ServerConnection : IAsyncDisposable
             {
                 Fault($"{ex.GetType().Name}: {ex.Message}", ServerConnectionCloseReason.Error);
             }
+        }
+        finally
+        {
+            // An unfinished transfer's capture goes back to the pool; nothing will send it now.
+            WorldTransferSender? unfinished = _activeTransfer;
+            _activeTransfer = null;
+            unfinished?.ReleaseCapture();
+            lock (_outboundSync)
+            {
+                _writing = false;
+            }
+        }
+    }
+
+    // Sends the carrier and the first chunk. A transfer still running is finished first, so the
+    // client never sees a second carrier before the first transfer's final chunk.
+    private async ValueTask StartWorldTransferAsync(
+        IServerToClientMessage message,
+        WorldSnapshot world,
+        CancellationToken cancellationToken)
+    {
+        while (_activeTransfer != null)
+        {
+            await SendNextWorldChunkAsync(cancellationToken);
+        }
+
+        // A world exported by the runtime is a view over its pooled capture, encoded from the
+        // capture directly; any other world is captured here, off the tick.
+        WorldSnapshotCapture capture = WorldSnapshotCapture.TryGetCapture(world, out WorldSnapshotCapture? captured)
+            ? captured
+            : WorldSnapshotCapture.FromSnapshot(world);
+        int transferId = ++_nextWorldTransferId;
+        _activeTransfer = new WorldTransferSender(transferId, capture, releaseCaptureWhenDone: true);
+        Interlocked.Increment(ref _worldTransfers);
+        await SendMessageAsync(WorldTransfer.ToCarrier(message, transferId), sharedPayload: null, cancellationToken);
+        await SendNextWorldChunkAsync(cancellationToken);
+    }
+
+    private async ValueTask SendNextWorldChunkAsync(CancellationToken cancellationToken)
+    {
+        WorldTransferSender transfer = _activeTransfer
+            ?? throw new InvalidOperationException("No world transfer is in progress.");
+        await SendFrameAsync(message: null, sharedPayload: null, transfer, cancellationToken);
+        Interlocked.Increment(ref _worldChunksSent);
+        _chunkDue = false;
+        if (transfer.IsComplete)
+        {
+            _activeTransfer = null;
         }
     }
 
@@ -602,9 +700,19 @@ public sealed class ServerConnection : IAsyncDisposable
         }
     }
 
-    private async ValueTask SendMessageAsync(
+    private ValueTask SendMessageAsync(
         IServerToClientMessage message,
         SharedEncodedPayload? sharedPayload,
+        CancellationToken cancellationToken)
+    {
+        return SendFrameAsync(message, sharedPayload, worldChunk: null, cancellationToken);
+    }
+
+    // Sends one frame: message, or the next chunk of worldChunk when message is null.
+    private async ValueTask SendFrameAsync(
+        IServerToClientMessage? message,
+        SharedEncodedPayload? sharedPayload,
+        WorldTransferSender? worldChunk,
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
@@ -619,7 +727,7 @@ public sealed class ServerConnection : IAsyncDisposable
             // Disposal may have started while this call waited for the lock; the frame writer is
             // then gone (or about to be), so fail cleanly rather than touch its buffer.
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
-            ReadOnlyMemory<byte> frame = EncodeServerFrame(message, sharedPayload);
+            ReadOnlyMemory<byte> frame = EncodeServerFrame(message, sharedPayload, worldChunk);
             frameLength = frame.Length;
             // frame aliases _frameWriter's pooled buffer. Passing it to the transport is safe only
             // because the send is awaited here, inside _sendLock, before the next encode reuses the
@@ -647,17 +755,35 @@ public sealed class ServerConnection : IAsyncDisposable
             stopwatch?.Stop();
         }
 
-        LogOutbound(message, frameLength, stopwatch);
+        LogOutbound(message, worldChunk, frameLength, stopwatch);
     }
 
     // Caller holds _sendLock. The sequence is consumed only once the frame is fully encoded, so a
     // message that fails to encode leaves no gap.
-    private ReadOnlyMemory<byte> EncodeServerFrame(IServerToClientMessage message, SharedEncodedPayload? sharedPayload)
+    private ReadOnlyMemory<byte> EncodeServerFrame(
+        IServerToClientMessage? message,
+        SharedEncodedPayload? sharedPayload,
+        WorldTransferSender? worldChunk)
     {
         TransportEnvelope envelope = new(
             TransportEnvelope.CurrentProtocolVersion,
-            message.MessageKind,
+            worldChunk != null ? WorldChunkMessage.Kind : message!.MessageKind,
             _nextOutboundSequence);
+
+        if (worldChunk != null)
+        {
+            // The chunk's payload stops at the byte budget, which only a direct write can do; it
+            // is then wrapped like a shared snapshot payload.
+            _chunkPayloadWriter.Reset();
+            Utf8JsonWriter payloadWriter = _chunkPayloadWriter.GetJsonWriter(ChunkPayloadWriterOptions);
+            worldChunk.WriteNextChunk(payloadWriter, WorldChunkBytes);
+            payloadWriter.Flush();
+            _frameWriter.BeginFrame(_framer);
+            _codec.WriteEnvelope(envelope, _chunkPayloadWriter.WrittenMemory.Span, _frameWriter);
+            ReadOnlyMemory<byte> chunkFrame = _frameWriter.CompleteFrame(_framer);
+            _nextOutboundSequence++;
+            return chunkFrame;
+        }
 
         _frameWriter.BeginFrame(_framer);
         if (sharedPayload != null)
@@ -723,10 +849,19 @@ public sealed class ServerConnection : IAsyncDisposable
             $"connection={ConnectionId} seq={envelope.Sequence} kind={message.MessageKind} {detail}");
     }
 
-    private void LogOutbound(IServerToClientMessage message, int byteCount, Stopwatch? stopwatch)
+    private void LogOutbound(IServerToClientMessage? message, WorldTransferSender? worldChunk, int byteCount, Stopwatch? stopwatch)
     {
         if (!NetworkDiagnosticsLog.IsEnabled)
         {
+            return;
+        }
+
+        if (message == null)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.tx",
+                $"connection={ConnectionId} kind={WorldChunkMessage.Kind} bytes={byteCount} sendMs={stopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
+                $"transfer={worldChunk?.TransferId} chunk={worldChunk?.ChunksWritten - 1} final={worldChunk?.IsComplete}");
             return;
         }
 

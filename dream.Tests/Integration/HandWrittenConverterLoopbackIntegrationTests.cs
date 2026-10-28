@@ -108,7 +108,7 @@ public class HandWrittenConverterLoopbackIntegrationTests(ITestOutputHelper outp
                 Frame frame = frames[i % frames.Length];
                 DecodedProtocolMessage again = codec.Decode(frame.Payload);
                 Assert.Equal(frame.Decoded.Envelope, again.Envelope);
-                byte[] reencoded = JsonSerializer.SerializeToUtf8Bytes(again.Message, again.Message.GetType(), ProtocolWireOptions.V2);
+                byte[] reencoded = JsonSerializer.SerializeToUtf8Bytes(again.Message, again.Message.GetType(), ProtocolWireOptions.V3);
                 Assert.True(reencoded.AsSpan().SequenceEqual(frame.PayloadJson), $"frame {frame.Decoded.Envelope.MessageKind}#{frame.Decoded.Envelope.Sequence} re-decoded differently.");
             }
         })).ToArray();

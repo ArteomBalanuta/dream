@@ -15,7 +15,7 @@ namespace Dream.Tests.Integration;
 // SharedEncodedPayload, whose encode runs on whichever writer thread gets there first, into that
 // thread's pooled scratch. Here 16 threads race on fresh shared payloads (all start together, so
 // the once-gate is contended), also encode and decode the same snapshots privately, and every
-// result must equal the reflection reference (ProtocolWireOptions.V2) byte for byte.
+// result must equal the reflection reference (ProtocolWireOptions.V3) byte for byte.
 public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelper output)
 {
     private const int Threads = 16;
@@ -47,7 +47,7 @@ public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelpe
             }
 
             snapshots[i] = new ServerSnapshotMessage(snapshot);
-            expected[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V2);
+            expected[i] = JsonSerializer.SerializeToUtf8Bytes(snapshots[i], ProtocolWireOptions.V3);
         }
 
         string?[] failures = new string?[Threads];
@@ -93,7 +93,7 @@ public class ServerSnapshotConverterConcurrencyIntegrationTests(ITestOutputHelpe
                                 TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, snapshots[i].MessageKind, (ulong)i);
                                 ServerSnapshotMessage decoded = Assert.IsType<ServerSnapshotMessage>(codec.Decode(codec.Encode(envelope, snapshots[i])).Message);
                                 Expect(
-                                    JsonSerializer.SerializeToUtf8Bytes(decoded, ProtocolWireOptions.V2).AsSpan().SequenceEqual(expected[i]),
+                                    JsonSerializer.SerializeToUtf8Bytes(decoded, ProtocolWireOptions.V3).AsSpan().SequenceEqual(expected[i]),
                                     $"snapshot {i}: decoded snapshot re-encodes differently through the reference");
                                 Interlocked.Increment(ref decodes);
                             }

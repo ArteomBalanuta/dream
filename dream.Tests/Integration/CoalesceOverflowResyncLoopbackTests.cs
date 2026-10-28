@@ -104,9 +104,10 @@ public class CoalesceOverflowResyncLoopbackTests(ITestOutputHelper output)
             Assert.Null(slow.ReadFault);
 
             // The resync reached the slow client after it joined.
+            // Protocol v3: the resync arrives as a carrier and chunks, reassembled as the client does.
             Assert.Contains(
-                slow.Snapshots(),
-                frame => frame.Decoded.Message is ServerSnapshotMessage { Snapshot.World: not null } snapshot &&
+                WorldTransferReassembler.Reassemble(slow.Frames.Select(frame => frame.Decoded.Message)),
+                message => message is ServerSnapshotMessage { Snapshot.World: not null } snapshot &&
                     snapshot.Snapshot.ServerTick > slowJoinTick);
 
             ulong serverChecksum = WorldStateChecksum.Compute(host.Runtime!.Map);

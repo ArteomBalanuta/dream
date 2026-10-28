@@ -207,7 +207,12 @@ public class ServerSnapshotCoalescingTests
         transport.Open();
         Assert.True(await connection.FlushOutboundAsync(Deadline));
 
-        ServerSnapshotEnvelope[] sent = Decode(transport.Frames)
+        // Protocol v3: the resync is its carrier snapshot plus a world chunk, reassembled as the
+        // client does.
+        IReadOnlyList<IProtocolMessage> frames = Decode(transport.Frames);
+        Assert.Single(frames, message => message is ServerSnapshotMessage { WorldTransferId: not null });
+        Assert.Single(frames, message => message is WorldChunkMessage { IsFinal: true });
+        ServerSnapshotEnvelope[] sent = WorldTransferReassembler.Reassemble(frames)
             .Select(message => Assert.IsType<ServerSnapshotMessage>(message).Snapshot)
             .ToArray();
         Assert.Equal(4, sent.Length);
@@ -305,6 +310,9 @@ public class ServerSnapshotCoalescingTests
     }
 
     // The frames a connection writes for these messages sent one by one, unmerged.
+    // Each message is sent on its own, so nothing merges. A world snapshot goes through the queue,
+    // like every queued world, as its protocol v3 carrier and chunks (SCALE-1); the rest are sent
+    // directly.
     private static async Task<byte[][]> ReferenceFramesAsync(params IServerToClientMessage[] messages)
     {
         GatedTransport transport = new("reference");
@@ -313,6 +321,10 @@ public class ServerSnapshotCoalescingTests
         {
             switch (message)
             {
+                case ServerSnapshotMessage { Snapshot.World: not null } worldSnapshot:
+                    connection.Enqueue(worldSnapshot);
+                    Assert.True(await connection.FlushOutboundAsync(Deadline));
+                    break;
                 case ServerSnapshotMessage snapshot:
                     await connection.SendSnapshotAsync(snapshot);
                     break;

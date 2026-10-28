@@ -14,11 +14,34 @@ internal static class ProtocolWireOptions
 
     public static readonly JsonSerializerOptions V2 = CreateV2();
 
+    // Protocol v3 (SCALE-1): v2 for everything but the world, whose compact array format has no
+    // reflection equivalent, so its own converter (and the chunk message's) is the reference.
+    public static readonly JsonSerializerOptions V3 = CreateV3();
+
+    // V1 options (explicit nulls, derived properties) with the v3 world, for decoding tests that
+    // need a v1-shaped payload around a world the v3 codec can read.
+    public static readonly JsonSerializerOptions V1WithV3World = CreateV1WithV3World();
+
     // Protocol v1: every property is written, nulls and derived properties included.
     private static JsonSerializerOptions CreateV1()
     {
         JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         options.Converters.Add(new Vector3JsonConverter());
+        return options;
+    }
+
+    private static JsonSerializerOptions CreateV3()
+    {
+        JsonSerializerOptions options = CreateV2();
+        options.Converters.Add(new WorldSnapshotJsonConverter());
+        options.Converters.Add(new WorldChunkMessageJsonConverter());
+        return options;
+    }
+
+    private static JsonSerializerOptions CreateV1WithV3World()
+    {
+        JsonSerializerOptions options = CreateV1();
+        options.Converters.Add(new WorldSnapshotJsonConverter());
         return options;
     }
 

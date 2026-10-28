@@ -76,7 +76,11 @@ public class PersistentWorldSeedLoopbackIntegrationTests(ITestOutputHelper outpu
             Assert.Null(client.ReadFault);
         }
 
-        Assert.Contains(b.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage { Snapshot.World: not null });
+        // Protocol v3: the resync is a carrier snapshot followed by its world chunks.
+        Assert.Contains(b.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage { WorldTransferId: not null });
+        Assert.Contains(
+            WorldTransferReassembler.Reassemble(b.Frames.Select(frame => frame.Decoded.Message)),
+            message => message is ServerSnapshotMessage { Snapshot.World: not null });
         Assert.Contains(a.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage message && message.Snapshot.DamageEvents.Count > 0);
 
         byte[][] needles = SeedRepresentations(seed);
