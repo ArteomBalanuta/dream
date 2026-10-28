@@ -50,27 +50,20 @@ public class Wave9SessionLifecycleLoopbackTests
             new RemoteClientOptions("127.0.0.1", port, "w9-pending", "w9-pending", "w9-test"),
             timeProvider: clock).AsTask();
         using System.Net.Sockets.Socket serverSide = await accept.WaitAsync(Deadline);
-        DateTime deadline = DateTime.UtcNow + Deadline;
-        // The hello timeout runs on the session's (manual) clock. Advance just past it, never
-        // toward JoinTimeout: the clock only moves while ConnectAsync has not returned, and in
-        // total at most the hello timeout plus one step, however slowly the continuation runs.
-        TimeSpan step = TimeSpan.FromMilliseconds(500);
-        TimeSpan advanced = TimeSpan.Zero;
-        while (!connect.IsCompleted)
-        {
-            Assert.True(DateTime.UtcNow < deadline, "ConnectAsync never returned");
-            if (advanced <= RemoteClientSession.DefaultServerHelloTimeout)
-            {
-                clock.Advance(step);
-                advanced += step;
-            }
+        // The hello timeout runs on the session's (manual) clock, and its timer is armed only when
+        // ConnectAsync reaches AwaitCompatibleServerAsync, after the transport connect, the hello
+        // and join sends and the receive loop start. Wait for that timer before moving the clock,
+        // then move it by exactly the hello timeout, never toward JoinTimeout. Advancing on a
+        // wall-clock cadence instead raced that continuation: under load the clock had already
+        // moved past the hello timeout when the timer was armed (due 2 s after that point), the
+        // advancing stopped, and ConnectAsync never returned.
+        await WaitUntilAsync(
+            () => connect.IsCompleted || clock.HasTimerDueIn(RemoteClientSession.DefaultServerHelloTimeout),
+            "the hello timeout to be armed");
+        Assert.False(connect.IsCompleted, "ConnectAsync returned before its hello timeout");
+        clock.Advance(RemoteClientSession.DefaultServerHelloTimeout);
 
-            await Task.Delay(20);
-        }
-
-        Assert.True(advanced < RemoteClientSession.JoinTimeout, $"advanced {advanced}");
-
-        RemoteClientSession session = await connect;
+        RemoteClientSession session = await connect.WaitAsync(Deadline);
         try
         {
             Assert.False(session.IsJoined);
