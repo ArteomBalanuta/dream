@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Persistence;
@@ -9,7 +10,8 @@ namespace Dream.Simulation.Runtime;
 // instances, item ids, equip, starter seeding, per-player load and eviction, failed-write
 // retention, snapshots and equipped-tool modifiers) live in PlayerInventoryService; this partial
 // maps sessions to player names, refreshes combat stats after a change and keeps the forwarders
-// the join and eviction code (WorldSessionRuntime.Persistence.cs) calls.
+// the join code (WorldSessionRuntime.Persistence.cs) calls. Eviction comes from
+// RuntimePersistenceBridge through IRuntimePersistenceHost.EvictPlayerInventory.
 public sealed partial class WorldSessionRuntime
 {
     // Constructed in the constructor, before RestorePersistedWorldState seeds its item id counter.
@@ -45,6 +47,10 @@ public sealed partial class WorldSessionRuntime
                 return CreateRejectedActionResult(message, "Inventory equip rejected because the inventory is still loading.");
             case InventoryEquipOutcome.SlotEmpty:
                 return CreateRejectedActionResult(message, "Inventory equip rejected because the slot is empty.");
+            case InventoryEquipOutcome.Equipped:
+                break;
+            default:
+                throw new UnreachableException();
         }
 
         RefreshAuthoritativePlayerCombatStats(message.SessionId);

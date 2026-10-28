@@ -200,9 +200,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
     {
         Cube cube = Assert.IsType<Cube>(runtime.Map.TryAddCube(cell, materialId: GeometryMaterialId.Dirt));
         WorldObjectRecord record = WorldObjects(runtime).RegisterCube(cube, runtime.Map, ownerPlayerName: PlayerName);
-        IWorldPersistenceRepository world = (IWorldPersistenceRepository)typeof(WorldSessionRuntime)
-            .GetField("_worldPersistence", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(runtime)!;
+        IWorldPersistenceRepository world = runtime.WorldPersistence!;
         world.SavePlacedCube(new PersistedPlacedCube(
             record.Actor.Id,
             PlayerName,

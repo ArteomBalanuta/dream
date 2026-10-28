@@ -47,11 +47,11 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
 
-    // Sessions whose failed join left default stats that must not be saved (tests).
-    internal int UnrestoredPlayerSessionCount => _persistence.UnrestoredPlayerSessions.Count;
+    // The world repository the runtime was given (tests save rows through it directly).
+    internal IWorldPersistenceRepository? WorldPersistence => _persistence.WorldPersistence;
 
-    // DetachRemoteSession forgets a leaving session's unrestored mark through this.
-    private HashSet<PlayerSessionId> _unrestoredPlayerSessions => _persistence.UnrestoredPlayerSessions;
+    // Sessions whose failed join left default stats that must not be saved (tests).
+    internal int UnrestoredPlayerSessionCount => _persistence.UnrestoredPlayerSessionCount;
 
     public void ApplyPersistedPlayerState(
         PlayerSessionId sessionId,
@@ -75,6 +75,9 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
+        // The world-state row is the newest written HP: checkpoints write it with the profile's
+        // vitals, and a leave writes both (DetachRemoteSession), so the two agree after a leave.
+        // The profile's HP is only the fallback for a player without a world-state row.
         int currentHealth = worldState?.CurrentHealth ?? profile.Stats.CurrentHealth;
         int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
 

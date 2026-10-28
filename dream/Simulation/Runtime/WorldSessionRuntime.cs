@@ -5,6 +5,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -63,8 +64,6 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly IPlayerProfileRepository? _playerProfiles;
-    private readonly IWorldPersistenceRepository? _worldPersistence;
-    private readonly IPersistenceCheckpointWriter? _checkpointWriter;
     // Immediate writes go through an ordered queue (background on the dedicated server) and the
     // identity/profile lookups the tick needs are served from memory, so gameplay actions no
     // longer read whole tables or commit on the simulation thread.
@@ -97,9 +96,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _events = events;
         _playerProfiles = playerProfiles;
-        _worldPersistence = worldPersistence;
-        _inventory = new Dream.Simulation.Inventory.PlayerInventoryService(worldPersistence, _writes);
-        _checkpointWriter = checkpointWriter ??
+        _inventory = new PlayerInventoryService(worldPersistence, _writes);
+        IPersistenceCheckpointWriter? resolvedCheckpointWriter = checkpointWriter ??
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
@@ -123,7 +121,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         _enemies = new EnemyRegistry();
         _combatResolver = CreateCombatResolver();
         _persistence = new RuntimePersistenceBridge(
-            this, _playerProfiles, _worldPersistence, _checkpointWriter, _writes, _worldObjects, _enemies, _events);
+            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events);
         SubscribeReplicationExports();
 
         RestorePersistedWorldState();
@@ -227,7 +225,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
         // Shutdown flush: a full checkpoint behind the queued immediate writes, then finish those
         // writes before the owner disposes the repositories.
-        FinalCheckpoint? finalCheckpoint = WriteFinalCheckpoint();
+        PendingFinalCheckpoint? finalCheckpoint = WriteFinalCheckpoint();
         _writes?.Dispose();
         finalCheckpoint?.WriteIfDropped(_writes);
 

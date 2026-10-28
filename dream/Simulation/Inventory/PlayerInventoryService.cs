@@ -20,7 +20,7 @@ public enum InventoryEquipOutcome
 //
 // Its only dependencies are the world repository (reads) and the ordered write queue (writes and
 // the confirming reads); both are null when the runtime has no persistence.
-public sealed class PlayerInventoryService
+internal sealed class PlayerInventoryService
 {
     private readonly IWorldPersistenceRepository? _worldPersistence;
     private readonly PersistenceWriteQueue? _writes;
@@ -48,8 +48,8 @@ public sealed class PlayerInventoryService
         _writes = writes;
     }
 
-    // The loaded inventories' slots by player name (item instance id by slot index).
-    public IReadOnlyDictionary<string, Dictionary<int, long>> LoadedSlotsByPlayer => _slotsByPlayer;
+    // The loaded inventories. slots by player name (item instance id by slot index; tests).
+    internal IReadOnlyDictionary<string, Dictionary<int, long>> LoadedSlotsByPlayer => _slotsByPlayer;
 
     public int LoadedInventoryCount => _slotsByPlayer.Count;
 

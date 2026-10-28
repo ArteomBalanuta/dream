@@ -882,9 +882,7 @@ public sealed class IncrementalCheckpointTests
     {
         public void Save(WorldObjectRecord record, Cube cube)
         {
-            IWorldPersistenceRepository world = (IWorldPersistenceRepository)typeof(WorldSessionRuntime)
-                .GetField("_worldPersistence", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(runtime)!;
+            IWorldPersistenceRepository world = runtime.WorldPersistence!;
             Vector3 cell = new(MathF.Floor(cube.Position.X), MathF.Floor(cube.Position.Y), MathF.Floor(cube.Position.Z));
             world.SavePlacedCube(new PersistedPlacedCube(
                 record.Actor.Id,

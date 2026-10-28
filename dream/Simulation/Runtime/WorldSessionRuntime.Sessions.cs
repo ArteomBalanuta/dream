@@ -134,7 +134,9 @@ public sealed partial class WorldSessionRuntime
             out IAuthoritativePlayerTarget? target)
                 ? target!.Combatant
                 : Player.Combatant);
-        _unrestoredPlayerSessions.Remove(sessionId);
+        // Position, facing and HP, queued behind the profile; checkpoints skip detached players.
+        _persistence.PersistPlayerWorldState(sessionId);
+        _persistence.ForgetUnrestoredSession(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
