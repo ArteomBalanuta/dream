@@ -180,8 +180,9 @@ public class WorldResyncDeferralTests
 
     private static bool IsWorldSnapshot(WireFrame frame)
     {
-        // Join replies carry the world in JoinAccepted, so any snapshot with a world is a resync.
-        return frame.Decoded.Message is ServerSnapshotMessage { Snapshot.World: not null };
+        // Join replies carry the world in JoinAccepted, so any snapshot carrying a world is a
+        // resync. Protocol v3 sends it as a carrier announcing a world transfer, then its chunks.
+        return frame.Decoded.Message is ServerSnapshotMessage { WorldTransferId: not null };
     }
 
     private static async Task<ulong> WaitForCommandAsync(ServerRoutingContext context)

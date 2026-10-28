@@ -186,7 +186,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             Assert.DoesNotContain("effectiveRoster", payload, StringComparison.Ordinal);
             Assert.DoesNotContain("effectiveInitialActors", payload, StringComparison.Ordinal);
             string expectedPrefix =
-                $"{{\"protocolVersion\":2,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},\"payload\":";
+                $"{{\"protocolVersion\":3,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},\"payload\":";
             Assert.Equal(expectedPrefix, Encoding.UTF8.GetString(frame.Payload, 0, frame.PayloadOffset));
             Assert.Equal((byte)'}', frame.Payload[^1]);
             Assert.Equal(frame.Payload.Length - 1, frame.PayloadOffset + frame.PayloadJson.Length);
@@ -458,9 +458,10 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             int verified = 0;
             int mismatches = 0;
             int mutations = 0;
-            foreach (Frame frame in Frames)
+            // Protocol v3: join and resync worlds arrive in chunks, reassembled as the client does.
+            foreach (IServerToClientMessage message in WorldTransferReassembler.Reassemble(Frames.Select(frame => frame.Decoded.Message)))
             {
-                switch (frame.Decoded.Message)
+                switch (message)
                 {
                     case JoinAcceptedMessage accepted:
                         ClientJoinAcceptedApplier.ApplyToRuntime(world, accepted);

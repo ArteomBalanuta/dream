@@ -12,7 +12,11 @@ public sealed record JoinAcceptedMessage(
     IReadOnlyList<PlayerRosterEntry>? Roster = null,
     PlayerInventorySnapshot? Inventory = null,
     IReadOnlyList<ActorSnapshot>? InitialActors = null,
-    ulong? InitialWorldMutationSequence = null) : IServerToClientMessage
+    ulong? InitialWorldMutationSequence = null,
+    // Protocol v3: set on the wire instead of InitialWorld, whose world follows as the
+    // server.world-chunk messages of this transfer (WorldChunkMessage). The client session
+    // reassembles it and delivers this message with InitialWorld set and this left null.
+    int? WorldTransferId = null) : IServerToClientMessage
 {
     public string MessageKind => "server.join-accepted";
 

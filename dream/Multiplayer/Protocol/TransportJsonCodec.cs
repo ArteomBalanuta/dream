@@ -10,7 +10,8 @@ namespace Dream.Multiplayer.Protocol;
 public sealed class TransportJsonCodec : IProtocolCodec
 {
     // Protocol v2: null properties are left out (a missing property decodes to the same default
-    // as an explicit null), and properties derived from others are never written.
+    // as an explicit null), and properties derived from others are never written. Protocol v3
+    // keeps that and adds the compact world and chunked world transfers (SCALE-1).
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -45,6 +46,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
         SerializerOptions.Converters.Add(new ServerSnapshotEnvelopeJsonConverter());
         SerializerOptions.Converters.Add(new WorldMutationDeltaJsonConverter());
         SerializerOptions.Converters.Add(new DamageEventDeltaJsonConverter());
+
+        // Protocol v3 (SCALE-1): the compact world, and the chunks a join or resync world is sent in.
+        SerializerOptions.Converters.Add(new WorldSnapshotJsonConverter());
+        SerializerOptions.Converters.Add(new WorldChunkMessageJsonConverter());
     }
 
     // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on
@@ -286,6 +291,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
             "server.join-rejected" => DeserializeMessage<JoinRejectedMessage>(ref payloadReader, hasPayload),
             "server.snapshot" => DeserializeMessage<ServerSnapshotMessage>(ref payloadReader, hasPayload),
             "server.action" => DeserializeMessage<ServerActionMessage>(ref payloadReader, hasPayload),
+            WorldChunkMessage.Kind => DeserializeMessage<WorldChunkMessage>(ref payloadReader, hasPayload),
             _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
@@ -297,7 +303,8 @@ public sealed class TransportJsonCodec : IProtocolCodec
     private static readonly string[] KnownMessageKinds =
     [
         "server.snapshot", "player.command", "server.action", "player.action", "client.hello",
-        "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected"
+        "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected",
+        WorldChunkMessage.Kind
     ];
 
     private static readonly byte[][] KnownMessageKindsUtf8 = Array.ConvertAll(KnownMessageKinds, System.Text.Encoding.UTF8.GetBytes);

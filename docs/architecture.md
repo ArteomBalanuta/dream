@@ -172,6 +172,12 @@ World mutation deltas carry a server-assigned `Sequence`, and `JoinAcceptedMessa
 - The server drops a same-cell `CubeMoved` from a snapshot batch when a later mutation for the same cube follows (`WorldSessionRuntime.CoalesceSameCellMoves`). Cross-cell moves stay in order.
 - About once a second a snapshot carries `WorldChecksum` (`WorldStateChecksum`: intact raised cube cells and rubble origins with materials). A client whose world no longer matches sends `ClientWorldResyncRequestMessage` (rate-limited to one per 2 s). `WorldResyncRequestHandler` answers that connection only with `ExportWorldResync`: a full world whose `MutationSequence` the client acknowledges. Deltas pending for other clients are not drained.
 - `DedicatedServerService` discards pending deltas on ticks with no joined connection instead of keeping them as a backlog.
+- Join and resync worlds travel as chunked transfers (protocol v3, SCALE-1).
+  - The tick captures the world into pooled flat arrays (`WorldSessionRuntime.CaptureWorldSnapshot`, `WorldSnapshotCapture`); `ExportWorldSnapshot` returns a `WorldSnapshot` whose lists are views over that capture.
+  - `ServerConnection` sends a queued `JoinAccepted` or world snapshot as its carrier (`WorldTransferId` set, no world), then `server.world-chunk` messages (`WorldChunkMessage`) of about 256 KB each, alternating with the queued snapshots and actions. It encodes the chunks on its writer task and releases the capture after the last one.
+  - Worlds use the compact format of `WorldSnapshotJsonConverter`: delta-coded integer cells, material runs, delta-coded ids, centers off the cell center and moved rubble quantized to 1/4096 m, unmoved rubble as its first-pass pattern. That is about 11 B per resting cube against 127 B in v2.
+  - `RemoteClientSession` passes messages through `WorldTransferReassembler`. It holds the carrier and everything after it until the final chunk, then delivers the carrier with the assembled world followed by the held messages, so consumers see the v2 order and the held deltas apply on top of the world.
+  - A v2 peer is refused with a `ProtocolVersionMismatchException` that names both versions.
 - Rubble is client-cosmetic for players. Fracture pieces use the Bullet `DebrisFilter` group and players use `CharacterFilter`, and neither collides with the other on server or client, so locally simulated rubble cannot make prediction diverge.
 
 Every joined session gets the same server-side player.

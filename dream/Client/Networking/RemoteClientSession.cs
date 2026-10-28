@@ -71,6 +71,15 @@ public sealed class RemoteClientSession : IAsyncDisposable
     private long _lastInboundTimestamp;
     private long _inboundFrameCount;
     private Task? _watchdogTask;
+    // SCALE-1 chunked world transfer (receive loop only). A JoinAccepted or world snapshot that
+    // announces a transfer (WorldTransferId) is held with every message after it until the
+    // transfer's final server.world-chunk arrives; then the carrier goes into the inbound queue
+    // with the assembled world, followed by the held messages in arrival order. Consumers so see
+    // the protocol v2 order, and world mutations in the held snapshots apply on top of the world.
+    private readonly WorldTransferReassembler _worldTransfers = new();
+    private readonly Action<IServerToClientMessage> _deliverInbound;
+    private long _worldTransfersCompleted;
+    private long _worldTransferStartedTimestamp;
 
     // How long ConnectAsync waits for the server's hello before returning the session anyway.
     public static readonly TimeSpan DefaultServerHelloTimeout = TimeSpan.FromSeconds(2);
@@ -120,6 +129,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         _commandLogKey = $"client.tx.command.{options.SessionId}";
         _slowCommandLogKey = $"client.tx.command.slow.{options.SessionId}";
         _keepaliveLogKey = $"client.tx.keepalive.{options.SessionId}";
+        _deliverInbound = DeliverInbound;
     }
 
     public RemoteClientOptions Options { get; }
@@ -143,6 +153,12 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
     // Complete inbound frames read so far, empty ones included (tests).
     internal long InboundFrameCount => Interlocked.Read(ref _inboundFrameCount);
+
+    // Chunked world transfers (joins and resyncs) completed and delivered.
+    public long WorldTransfersCompleted => Interlocked.Read(ref _worldTransfersCompleted);
+
+    // True while a world transfer is being received; its carrier and later messages are held.
+    public bool IsReceivingWorld => _worldTransfers.Current != null;
 
     public static async ValueTask<RemoteClientSession> ConnectAsync(
         RemoteClientOptions options,
@@ -540,17 +556,55 @@ public sealed class RemoteClientSession : IAsyncDisposable
             {
                 if (serverMessage is JoinAcceptedMessage)
                 {
+                    // The join is settled (no retry, the watchdog starts) as soon as it arrives,
+                    // even as a carrier whose world is still to come; IsJoined is set when the
+                    // message is delivered (DeliverInbound), with its world.
                     _joinSettled = true;
-                    IsJoined = true;
                     _joinAccepted.TrySetResult();
                 }
 
                 _joinReplies.Writer.TryWrite(serverMessage);
             }
 
-            _inboundMessages.Enqueue(serverMessage);
+            bool wasReceivingWorld = _worldTransfers.Current != null;
+            WorldTransferReceiver? completed = _worldTransfers.Accept(serverMessage, _deliverInbound);
+            if (!wasReceivingWorld && _worldTransfers.Current is WorldTransferReceiver started)
+            {
+                _worldTransferStartedTimestamp = Stopwatch.GetTimestamp();
+                if (NetworkDiagnosticsLog.IsEnabled)
+                {
+                    NetworkDiagnosticsLog.Write(
+                        "client.world-transfer.start",
+                        $"endpoint={Options.EndpointLabel} session={Options.SessionId} transfer={started.TransferId} carrier={serverMessage.MessageKind}");
+                }
+            }
+
+            if (completed != null)
+            {
+                Interlocked.Increment(ref _worldTransfersCompleted);
+                if (NetworkDiagnosticsLog.IsEnabled)
+                {
+                    NetworkDiagnosticsLog.Write(
+                        "client.world-transfer.complete",
+                        $"endpoint={Options.EndpointLabel} session={Options.SessionId} transfer={completed.TransferId} chunks={completed.ChunksReceived} " +
+                        $"held={completed.HeldMessages.Count} ms={Stopwatch.GetElapsedTime(_worldTransferStartedTimestamp).TotalMilliseconds:0.0}");
+                }
+            }
+
             LogInbound(decoded.Envelope, serverMessage);
         }
+    }
+
+    // Where the reassembler hands on messages, in order. A JoinAccepted whose world came in a
+    // transfer marks the session joined only now, when its consumer can see it.
+    private void DeliverInbound(IServerToClientMessage message)
+    {
+        if (message is JoinAcceptedMessage)
+        {
+            IsJoined = true;
+        }
+
+        _inboundMessages.Enqueue(message);
     }
 
     // Also starts the keepalive task, so a connected session stays alive while its owner's loop

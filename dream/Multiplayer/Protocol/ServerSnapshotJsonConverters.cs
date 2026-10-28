@@ -23,16 +23,19 @@ namespace Dream.Multiplayer.Protocol;
 //              "materialId":n?,"fracturePieces":[{"center":v,"sideLength":f},...]?,"sequence":n,
 //              "actorId":n?}
 //   damage:   {"actorId":n,"kind":n,"amount":n,"actorDied":b,"currentHealth":n,"maxHealth":n}
-// The world is only sent on join and resync, so it keeps the reflection contract of the same
-// options (a nested JsonSerializer call writes exactly what the reflection envelope wrote).
+// The world is only sent on join and resync; a nested JsonSerializer call writes it with the
+// options' WorldSnapshotJsonConverter (the protocol v3 compact world). Protocol v3 also adds
+// "worldTransferId":n? after "snapshot" on a resync carrier whose world follows in chunks.
 internal sealed class ServerSnapshotMessageJsonConverter : JsonConverter<ServerSnapshotMessage>
 {
     private static readonly JsonEncodedText Snapshot = JsonEncodedText.Encode("snapshot");
+    private static readonly JsonEncodedText WorldTransferId = JsonEncodedText.Encode("worldTransferId");
 
     public override ServerSnapshotMessage Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         HotPathJson.ExpectStartObject(ref reader, nameof(ServerSnapshotMessage));
         ServerSnapshotEnvelope snapshot = default;
+        int? worldTransferId = null;
         while (HotPathJson.NextProperty(ref reader, nameof(ServerSnapshotMessage)))
         {
             if (reader.ValueTextEquals(Snapshot.EncodedUtf8Bytes))
@@ -40,13 +43,17 @@ internal sealed class ServerSnapshotMessageJsonConverter : JsonConverter<ServerS
                 HotPathJson.ReadValue(ref reader);
                 snapshot = ServerSnapshotEnvelopeJsonConverter.ReadEnvelope(ref reader, options);
             }
+            else if (reader.ValueTextEquals(WorldTransferId.EncodedUtf8Bytes))
+            {
+                worldTransferId = HotPathJson.ReadNullableInt32(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
             }
         }
 
-        return new ServerSnapshotMessage(snapshot);
+        return new ServerSnapshotMessage(snapshot, worldTransferId);
     }
 
     public override void Write(Utf8JsonWriter writer, ServerSnapshotMessage value, JsonSerializerOptions options)
@@ -54,6 +61,11 @@ internal sealed class ServerSnapshotMessageJsonConverter : JsonConverter<ServerS
         writer.WriteStartObject();
         writer.WritePropertyName(Snapshot);
         ServerSnapshotEnvelopeJsonConverter.WriteEnvelope(writer, value.Snapshot, options);
+        if (value.WorldTransferId is int worldTransferId)
+        {
+            writer.WriteNumber(WorldTransferId, worldTransferId);
+        }
+
         writer.WriteEndObject();
     }
 }

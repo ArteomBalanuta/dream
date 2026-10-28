@@ -23,7 +23,7 @@ namespace Dream.Tests.Integration;
 // rejoin under the same session id, combat until the wolf dies and respawns, a built cube broken
 // until it fractures, and a client-requested world resync (a full World snapshot). Every frame
 // any client received must decode, and its payload must re-encode through the reflection
-// reference (ProtocolWireOptions.V2) byte for byte; every client's replayed world must match the
+// reference (ProtocolWireOptions.V3) byte for byte; every client's replayed world must match the
 // server's checksums. The late-joiner regression lives in SnapshotConverterLateJoinerIntegrationTests
 // so the two run in parallel.
 public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper output)
@@ -132,7 +132,10 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
 
             // The session covered what it claims to.
             Assert.True(cubeFractured, "The built cube never fractured.");
-            Assert.Contains(c!.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage { Snapshot.World: not null });
+            Assert.Contains(c!.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage { WorldTransferId: not null });
+            Assert.Contains(
+                WorldTransferReassembler.Reassemble(c.Frames.Select(frame => frame.Decoded.Message)),
+                message => message is ServerSnapshotMessage { Snapshot.World: not null });
             Assert.Contains(a.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage message && message.Snapshot.DamageEvents.Count > 0);
             Assert.Contains(a.Frames, frame => frame.Decoded.Message is ServerSnapshotMessage message &&
                 message.Snapshot.WorldMutations.Any(mutation => mutation.Kind == WorldMutationKind.CubeFractured && mutation.FracturePieces?.Count > 0));
@@ -151,7 +154,7 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
                 foreach (WireFrame frame in client.Frames)
                 {
                     IProtocolMessage message = frame.Decoded.Message;
-                    byte[] reference = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V2);
+                    byte[] reference = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V3);
                     Assert.True(
                         reference.AsSpan().SequenceEqual(frame.PayloadJson),
                         $"{client.SessionId}: a {frame.Decoded.Envelope.MessageKind} frame (sequence {frame.Decoded.Envelope.Sequence}) " +
@@ -257,9 +260,10 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
         int verified = 0;
         int mismatches = 0;
         int mutations = 0;
-        foreach (WireFrame frame in client.Frames)
+        // Protocol v3: join and resync worlds arrive in chunks, reassembled as the client does.
+        foreach (IServerToClientMessage message in WorldTransferReassembler.Reassemble(client.Frames.Select(frame => frame.Decoded.Message)))
         {
-            switch (frame.Decoded.Message)
+            switch (message)
             {
                 case JoinAcceptedMessage accepted:
                     ClientJoinAcceptedApplier.ApplyToRuntime(world, accepted);

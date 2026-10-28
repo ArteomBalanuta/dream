@@ -20,20 +20,24 @@ using static Dream.Tests.Integration.ProtocolV2SharedSnapshotLoopbackIntegration
 
 namespace Dream.Tests.Integration;
 
-// ProtocolV2SharedSnapshotLoopbackIntegrationTests' v1-client case: the server rejects a v1 client
+// ProtocolV2SharedSnapshotLoopbackIntegrationTests' old-client case: the server rejects a v1 or v2
+// client (protocol v3 changed the world wire format, SCALE-1)
 // with a logged reason and no unobserved task fault while the other clients keep playing. Its own
 // class so it runs in parallel with the other loopback runs.
 public class ProtocolV2VersionRejectionLoopbackIntegrationTests
 {
-    [Fact]
-    public async Task V1Client_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task OldClient_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying(int legacyVersion)
     {
-        const string ExpectedReason = "Client uses protocol v1; this server uses v2.";
+        Assert.Equal(3, TransportEnvelope.CurrentProtocolVersion);
+        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v3.";
         List<Exception> unobserved = [];
         EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
         {
             // The handler is process-wide; keep only faults caused by this test's v1 frame.
-            if (args.Exception.Flatten().InnerExceptions.Any(inner => inner.ToString().Contains("protocol version 1", StringComparison.OrdinalIgnoreCase)))
+            if (args.Exception.Flatten().InnerExceptions.Any(inner => inner.ToString().Contains($"protocol version {legacyVersion}", StringComparison.OrdinalIgnoreCase)))
             {
                 lock (unobserved)
                 {
@@ -63,14 +67,15 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
                 Assert.True(await server.FlushAllAsync());
             }
 
-            // A protocol v1 client: v1 serializer options (explicit nulls and messageKind in the
-            // payload) and protocolVersion 1 in the envelope, framed exactly like a v2 frame.
-            ClientHelloMessage hello = new("legacy-v1-client");
+            // A protocol v1 or v2 client: that version's serializer options (v1: explicit nulls and
+            // messageKind in the payload) and its protocolVersion in the envelope, framed exactly
+            // like a v3 frame.
+            ClientHelloMessage hello = new($"legacy-v{legacyVersion}-client");
             byte[] v1Hello = JsonSerializer.SerializeToUtf8Bytes(
-                new { protocolVersion = 1, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
-                ProtocolWireOptions.V1);
+                new { protocolVersion = legacyVersion, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
+                legacyVersion == 1 ? ProtocolWireOptions.V1 : ProtocolWireOptions.V2);
             InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-            Assert.Equal("Unsupported protocol version 1. Supported version: 2.", versionError.Message);
+            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 3.", versionError.Message);
 
             using TcpClient legacy = new();
             await legacy.ConnectAsync(IPAddress.Loopback, server.Port);
@@ -117,7 +122,7 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
             Assert.Equal(1UL, rejection.Envelope.Sequence);
             Assert.Equal(ExpectedReason, Assert.IsType<JoinRejectedMessage>(rejection.Message).Reason);
 
-            await WaitUntilAsync(() => server.Service.ConnectionCount == 2, "the v1 connection was never dropped");
+            await WaitUntilAsync(() => server.Service.ConnectionCount == 2, $"the v{legacyVersion} connection was never dropped");
             Assert.False(server.Host.IsConnectionJoined(legacyConnection.ConnectionId));
 
             // The server logged the reason once, for that connection only (its id is the remote
@@ -130,7 +135,7 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
                 Assert.Equal("protocol-mismatch", logged.Kind);
                 Assert.Equal(ExpectedReason, logged.Reason);
                 ProtocolVersionMismatchException mismatch = Assert.IsType<ProtocolVersionMismatchException>(logged.Exception);
-                Assert.Equal(1, mismatch.PeerVersion);
+                Assert.Equal(legacyVersion, mismatch.PeerVersion);
                 Assert.Equal(versionError.Message, mismatch.InnerException!.Message);
             }
 

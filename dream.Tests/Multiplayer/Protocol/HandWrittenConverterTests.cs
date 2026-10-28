@@ -15,14 +15,14 @@ using Dream.Tests.Utilities;
 namespace Dream.Tests.Multiplayer.Protocol;
 
 // TransportJsonCodec writes PlayerCommandFrame (with its nested intents) and ActorSnapshot with
-// hand-written converters. ProtocolWireOptions.V2 has no such converters, so it is the
+// hand-written converters. ProtocolWireOptions.V3 has no such converters, so it is the
 // reflection reference: every encode must match it byte for byte, and every decode, however the
 // properties are ordered, padded or trimmed, must produce what the reference produces.
 public class HandWrittenConverterTests(ITestOutputHelper output)
 {
     private const int RandomCases = 400;
 
-    private static readonly JsonSerializerOptions Reference = ProtocolWireOptions.V2;
+    private static readonly JsonSerializerOptions Reference = ProtocolWireOptions.V3;
 
     private static readonly float[] EdgeFloats =
     [

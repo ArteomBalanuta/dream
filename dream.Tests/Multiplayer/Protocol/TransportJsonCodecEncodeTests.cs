@@ -44,7 +44,7 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
                 16,
                 8,
                 16,
-                [Vector3.Zero, new Vector3(1f, 2f, 3f)],
+                [Vector3.One],
                 FracturedCubeCells: [new Vector3(4f, 0f, 4f)],
                 AuthoredSubcellCells: [],
                 PlacedCubes: [new PlacedCubeSnapshot(Vector3.One, new Vector3(1.5f, 1.5f, 1.5f), GeometryMaterialId.Stone, 7)],
@@ -229,18 +229,18 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
         InvalidOperationException version = Assert.Throws<InvalidOperationException>(
             () => codec.Encode(new TransportEnvelope(1, message.MessageKind, 1), message, buffer));
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 2.", version.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 3.", version.Message);
 
         InvalidOperationException kind = Assert.Throws<InvalidOperationException>(
-            () => codec.Encode(new TransportEnvelope(2, "server.hello", 1), message));
+            () => codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, "server.hello", 1), message));
         Assert.Equal("Envelope message kind 'server.hello' does not match payload kind 'client.hello'.", kind.Message);
 
         InvalidOperationException envelopeVersion = Assert.Throws<InvalidOperationException>(
             () => codec.WriteEnvelope(new TransportEnvelope(0, message.MessageKind, 1), "{}"u8, buffer));
-        Assert.Equal("Cannot encode protocol version 0. Supported version: 2.", envelopeVersion.Message);
+        Assert.Equal("Cannot encode protocol version 0. Supported version: 3.", envelopeVersion.Message);
 
         Assert.Throws<ArgumentException>(
-            () => codec.WriteEnvelope(new TransportEnvelope(2, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));
+            () => codec.WriteEnvelope(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));
         Assert.Equal(0, buffer.WrittenCount);
     }
 
@@ -503,8 +503,9 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
     // The encode path TransportJsonCodec used before the single-pass writer: the payload is
     // serialized to a JsonElement, wrapped in a WireEnvelope and serialized a second time. It uses
-    // independently built protocol v2 options, so it is a byte-identity reference for the codec.
-    private static readonly JsonSerializerOptions LegacyOptions = ProtocolWireOptions.V2;
+    // independently built protocol v3 options (v2 plus the compact world), so it is a
+    // byte-identity reference for the codec.
+    private static readonly JsonSerializerOptions LegacyOptions = ProtocolWireOptions.V3;
 
     private static byte[] LegacyEncode<TMessage>(TransportEnvelope envelope, TMessage message)
         where TMessage : IProtocolMessage

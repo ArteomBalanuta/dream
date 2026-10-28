@@ -124,22 +124,90 @@ internal static class ServerSnapshotSamples
         return events;
     }
 
+    // Protocol v3 encodes worlds in a compact integer form (WorldSnapshotJsonConverter), so the
+    // random values are mapped onto what a world can hold: integer cells, centers and rubble
+    // within reach of their cell, valid piece sizes. The random stream is consumed exactly as
+    // before, so every sample after a world is unchanged.
     public static WorldSnapshot RandomWorld(Random random)
     {
+        int width = random.Next(1, 64);
+        int height = random.Next(1, 32);
+        int depth = random.Next(1, 64);
+        Vector3[] placedCells = ToCells(RandomVectors(random, random.Next(0, 6)));
+        Vector3[]? fracturedCells = random.Next(2) == 0 ? null : ToCells(RandomVectors(random, random.Next(0, 4)));
+        Vector3[]? subcells = random.Next(2) == 0 ? null : ToCells(RandomVectors(random, random.Next(0, 4)));
+        PlacedCubeSnapshot[]? placed = null;
+        if (random.Next(2) != 0)
+        {
+            Vector3 cell = ToCell(RandomVector(random));
+            Vector3 center = cell + new Vector3(0.5f) + ToOffset(RandomVector(random));
+            placed = [new PlacedCubeSnapshot(cell, center, (GeometryMaterialId)random.Next(0, 8), random.Next(2) == 0 ? null : random.Next())];
+        }
+
+        FracturedCubeSnapshot[]? fractured = null;
+        if (random.Next(2) != 0)
+        {
+            Vector3 cell = ToCell(RandomVector(random));
+            GeometryFracturePiece[] pieces = RandomPieces(random, random.Next(0, 4));
+            for (int i = 0; i < pieces.Length; i++)
+            {
+                pieces[i] = new GeometryFracturePiece(
+                    cell + new Vector3(0.5f) + ToOffset(pieces[i].Center),
+                    0.05f + (Fraction(pieces[i].SideLength) * 0.9f));
+            }
+
+            fractured = [new FracturedCubeSnapshot(cell, GeometryMaterialId.Stone, pieces)];
+        }
+
+        ulong? sequence = random.Next(2) == 0 ? null : (ulong)random.NextInt64();
+        // One consistent world: the cell lists are the cubes' and the rubble's cells.
         return new WorldSnapshot(
-            random.Next(1, 64),
-            random.Next(1, 32),
-            random.Next(1, 64),
-            RandomVectors(random, random.Next(0, 6)),
-            random.Next(2) == 0 ? null : RandomVectors(random, random.Next(0, 4)),
-            random.Next(2) == 0 ? null : RandomVectors(random, random.Next(0, 4)),
-            random.Next(2) == 0
-                ? null
-                : [new PlacedCubeSnapshot(RandomVector(random), RandomVector(random), (GeometryMaterialId)random.Next(0, 8), random.Next(2) == 0 ? null : random.Next())],
-            random.Next(2) == 0
-                ? null
-                : [new FracturedCubeSnapshot(RandomVector(random), GeometryMaterialId.Stone, RandomPieces(random, random.Next(0, 4)))],
-            random.Next(2) == 0 ? null : (ulong)random.NextInt64());
+            width,
+            height,
+            depth,
+            placed == null ? placedCells : [.. placed.Select(cube => cube.CellPosition)],
+            fractured == null ? fracturedCells : [.. fractured.Select(rubble => rubble.CellPosition)],
+            subcells,
+            placed,
+            fractured,
+            sequence);
+    }
+
+    // A whole cell in [-1000, 1000] on each axis (non-finite values land on 0).
+    private static Vector3 ToCell(Vector3 value)
+    {
+        return new Vector3(MathF.Floor(Clamp(value.X)), MathF.Floor(Clamp(value.Y)), MathF.Floor(Clamp(value.Z)));
+    }
+
+    private static Vector3[] ToCells(Vector3[] values)
+    {
+        return Array.ConvertAll(values, ToCell);
+    }
+
+    // An offset inside the cell, on the 1/4096 m grid the compact world quantizes to.
+    private static Vector3 ToOffset(Vector3 value)
+    {
+        return new Vector3(
+            MathF.Round((Fraction(value.X) - 0.5f) * 4096f) / 4096f,
+            MathF.Round((Fraction(value.Y) - 0.5f) * 4096f) / 4096f,
+            MathF.Round((Fraction(value.Z) - 0.5f) * 4096f) / 4096f);
+    }
+
+    private static float Clamp(float value)
+    {
+        return float.IsFinite(value) ? Math.Clamp(value, -1000f, 1000f) : 0f;
+    }
+
+    // A value in [0, 1) derived from any float.
+    private static float Fraction(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            return 0f;
+        }
+
+        double fraction = Math.Abs((double)value) % 1d;
+        return (float)Math.Min(fraction, 0.999d);
     }
 
     public static ActorSnapshot[] RandomActors(Random random, int count, bool roundTrippable = false)
