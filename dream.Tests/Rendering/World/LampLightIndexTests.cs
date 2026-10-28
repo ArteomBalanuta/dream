@@ -1,8 +1,11 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Client.Presentation;
+using Dream.Client.Scenes;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.World.Geometry;
 using Dream.Tests.Utilities;
 
@@ -12,6 +15,8 @@ namespace Dream.Tests.Rendering.World;
 // lamps are rescanned only when the static content version changes; dynamic lamps every frame.
 public class LampLightIndexTests
 {
+    private static readonly Vector3 Camera = new(2f, 1.6f, 2f);
+
     [Fact]
     public void Collect_AddsOneLightPerStaticAndDynamicLamp_AtTheCubeCenter()
     {
@@ -24,7 +29,7 @@ public class LampLightIndexTests
         LampLightIndex index = new();
         LightCollector lights = new();
 
-        index.Collect(export, lights);
+        index.Collect(export, Camera, lights);
 
         Assert.Equal(2, lights.Count);
         Assert.Equal(2, index.LastLampCount);
@@ -42,7 +47,7 @@ public class LampLightIndexTests
         LightCollector lights = new();
 
         lights.Clear();
-        index.Collect(CreateExport(version: 1, staticCubes, [movingLamp]), lights);
+        index.Collect(CreateExport(version: 1, staticCubes, [movingLamp]), Camera, lights);
         Assert.Equal(1, index.StaticRescanCount);
 
         // Same version: a static lamp added behind the index's back is not seen (no rescan), and the
@@ -50,20 +55,20 @@ public class LampLightIndexTests
         staticCubes.Add(CreateCube(new Vector3(8.5f, 1.5f, 8.5f), GeometryMaterialId.Lamp));
         movingLamp.Position = new Vector3(5f, 1.5f, 4.5f);
         lights.Clear();
-        index.Collect(CreateExport(version: 1, staticCubes, [movingLamp]), lights);
+        index.Collect(CreateExport(version: 1, staticCubes, [movingLamp]), Camera, lights);
         Assert.Equal(1, index.StaticRescanCount);
         Assert.Equal(2, lights.Count);
         Assert.Equal(movingLamp.Position, lights.Lights[1].Position);
 
         // New version: rescanned, both static lamps now light.
         lights.Clear();
-        index.Collect(CreateExport(version: 2, staticCubes, []), lights);
+        index.Collect(CreateExport(version: 2, staticCubes, []), Camera, lights);
         Assert.Equal(2, index.StaticRescanCount);
         Assert.Equal(2, lights.Count);
 
         // Version 0 is unknown content: rescanned every frame.
-        index.Collect(CreateExport(version: 0, staticCubes, []), lights);
-        index.Collect(CreateExport(version: 0, staticCubes, []), lights);
+        index.Collect(CreateExport(version: 0, staticCubes, []), Camera, lights);
+        index.Collect(CreateExport(version: 0, staticCubes, []), Camera, lights);
         Assert.Equal(4, index.StaticRescanCount);
     }
 
@@ -73,8 +78,8 @@ public class LampLightIndexTests
         LampLightIndex index = new();
         LightCollector lights = new();
 
-        index.Collect(CreateExport(version: 3, [CreateCube(Vector3.One, GeometryMaterialId.Stone)], []), lights);
-        index.Collect(new GeometryRenderExport([], [], [], []), lights);
+        index.Collect(CreateExport(version: 3, [CreateCube(Vector3.One, GeometryMaterialId.Stone)], []), Camera, lights);
+        index.Collect(new GeometryRenderExport([], [], [], []), Camera, lights);
 
         Assert.Equal(0, lights.Count);
         Assert.Equal(0, index.LastLampCount);
@@ -87,19 +92,19 @@ public class LampLightIndexTests
         List<Cube> dynamicCubes = [];
         for (int i = 0; i < 200; i++)
         {
-            staticCubes.Add(CreateCube(new Vector3(i + 0.5f, 0.5f, 0.5f), i % 10 == 0 ? GeometryMaterialId.Lamp : GeometryMaterialId.Grass));
-            dynamicCubes.Add(CreateCube(new Vector3(i + 0.5f, 1.5f, 2.5f), i % 7 == 0 ? GeometryMaterialId.Lamp : GeometryMaterialId.Stone));
+            staticCubes.Add(CreateCube(new Vector3((i * 0.25f) + 0.5f, 0.5f, 0.5f), i % 10 == 0 ? GeometryMaterialId.Lamp : GeometryMaterialId.Grass));
+            dynamicCubes.Add(CreateCube(new Vector3((i * 0.25f) + 0.5f, 1.5f, 2.5f), i % 7 == 0 ? GeometryMaterialId.Lamp : GeometryMaterialId.Stone));
         }
 
         GeometryRenderExport export = CreateExport(version: 9, staticCubes, dynamicCubes);
         LampLightIndex index = new();
         LightCollector lights = new();
-        index.Collect(export, lights);
+        index.Collect(export, Camera, lights);
 
         long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
         {
             lights.Clear();
-            index.Collect(export, lights);
+            index.Collect(export, Camera, lights);
         });
 
         Assert.Equal(0, bytes);
@@ -118,11 +123,113 @@ public class LampLightIndexTests
         for (int frame = 0; frame < 3; frame++)
         {
             lights.Clear();
-            index.Collect(map.CapturePresentationGeometryRenderExport(lamp.Position, 32f), lights);
+            index.Collect(map.CapturePresentationGeometryRenderExport(lamp.Position, 32f), lamp.Position, lights);
             Assert.Contains(lights.Lights.ToArray(), light => light.Position == lamp.Position);
         }
 
         Assert.Equal(1, index.StaticRescanCount);
+    }
+
+    [Fact]
+    public void Collect_SkipsLampsBeyondTheCollectDistance()
+    {
+        Assert.Equal(WorldVisibility.MaxRenderDistance + LampLightIndex.LampRadius, LampLightIndex.CollectDistance);
+        Cube near = CreateCube(Camera + new Vector3(LampLightIndex.CollectDistance - 0.5f, 0f, 0f), GeometryMaterialId.Lamp);
+        Cube far = CreateCube(Camera + new Vector3(0f, 0f, LampLightIndex.CollectDistance + 0.5f), GeometryMaterialId.Lamp);
+        Cube farDynamic = CreateCube(Camera - new Vector3(LampLightIndex.CollectDistance + 0.5f, 0f, 0f), GeometryMaterialId.Lamp);
+        LampLightIndex index = new();
+        LightCollector lights = new();
+
+        index.Collect(CreateExport(version: 5, [near, far], [farDynamic]), Camera, lights);
+
+        Assert.Equal(2, index.StaticLampCount);
+        Assert.Equal(1, index.LastLampCount);
+        Assert.Equal(near.Position, Assert.Single(lights.Lights.ToArray()).Position);
+    }
+
+    // The scene's order (PlayScene.CollectFrameLights): held lights first, then lamps. 2,000 lamps
+    // around the camera overflow the 1,024-slot collector, and the torch keeps its slot.
+    [Fact]
+    public void TwoThousandLamps_DoNotDropAHeldTorch()
+    {
+        List<Cube> lamps = [];
+        for (int i = 0; i < 2000; i++)
+        {
+            lamps.Add(CreateCube(new Vector3((i % 40) + 0.5f, 1.5f, (i / 40) + 0.5f), GeometryMaterialId.Lamp));
+        }
+
+        LampLightIndex index = new();
+        LightCollector lights = new();
+        Vector3 camera = new(20f, 1.6f, 25f);
+        Vector3 front = -Vector3.UnitZ;
+        PlayScene.LocalHeldLight torch = new(HeldLightKind.Torch, ActorId: 1, FirstPerson: true, camera, front);
+
+        PlayScene.AddHeldLights(lights, in torch, camera, front, Vector3.UnitX, Vector3.UnitY, [], timeSeconds: 0.0);
+        index.Collect(CreateExport(version: 1, lamps, []), camera, lights);
+
+        Assert.Equal(LightCollector.Capacity, lights.Count);
+        Assert.True(lights.Dropped > 0);
+        Assert.Equal(HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY), lights.Lights[0].Position);
+        Assert.Equal(HeldLightCatalog.TorchRadius, lights.Lights[0].Radius);
+    }
+
+    [Fact]
+    public void PartlyMinedLamp_StillLights_FromItsSolidSubcells_AndAFullyMinedOneDoesNot()
+    {
+        Map map = new(width: 8, depth: 8);
+        Cube lamp = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Lamp));
+        GeometryCellKey key = new(3, 1, 3);
+        LampLightIndex index = new();
+        LightCollector lights = new();
+
+        // Mine the subcell at the cell's minimum corner: the lamp is subdivided, so it leaves the
+        // coarse cubes, and the light moves to the centroid of what is left (away from that corner).
+        map.ApplyGeometrySubcellSolid(key, new GeometrySubcellKey(0, 0, 0), isSolid: false);
+        GeometryRenderExport export = map.CapturePresentationGeometryRenderExport(lamp.Position, 32f);
+        Assert.DoesNotContain(export.CompatibilityCubes, cube => cube.MaterialId == GeometryMaterialId.Lamp);
+        Assert.DoesNotContain(export.DynamicCompatibilityCubes, cube => cube.MaterialId == GeometryMaterialId.Lamp);
+
+        index.Collect(export, lamp.Position, lights);
+        PointLight light = Assert.Single(lights.Lights.ToArray());
+        Assert.Equal(LampLightIndex.LampRadius, light.Radius);
+        Vector3 offset = light.Position - lamp.Position;
+        Assert.True(offset.X > 0f && offset.Y > 0f && offset.Z > 0f, $"centroid {light.Position} should move away from the mined corner");
+        Assert.True(offset.Length < 0.5f);
+
+        // Mine every remaining subcell: no light.
+        GeometryCellRecord record = Assert.IsType<GeometryCellRecord>(map.TryGetGeometryCellAtCell(3, 1, 3));
+        int resolution = record.Definition.SubdivisionResolution;
+        for (int x = 0; x < resolution; x++)
+        {
+            for (int y = 0; y < resolution; y++)
+            {
+                for (int z = 0; z < resolution; z++)
+                {
+                    map.ApplyGeometrySubcellSolid(key, new GeometrySubcellKey(x, y, z), isSolid: false);
+                }
+            }
+        }
+
+        lights.Clear();
+        index.Collect(map.CapturePresentationGeometryRenderExport(lamp.Position, 32f), lamp.Position, lights);
+        Assert.Equal(0, lights.Count);
+        Assert.Equal(0, index.LastLampCount);
+    }
+
+    [Fact]
+    public void Collect_UsesStaticCells_FromTheReferenceCaptureToo()
+    {
+        Map map = new(width: 8, depth: 8);
+        Cube lamp = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false, materialId: GeometryMaterialId.Lamp));
+        map.ApplyGeometrySubcellSolid(new GeometryCellKey(3, 1, 3), new GeometrySubcellKey(1, 1, 1), isSolid: false);
+        LampLightIndex index = new();
+        LightCollector lights = new();
+
+        GeometryRenderExport export = map.CaptureFullGeometryRenderExport();
+        Assert.NotNull(export.StaticCells);
+        index.Collect(export, lamp.Position, lights);
+
+        Assert.Equal(1, lights.Count);
     }
 
     private static GeometryRenderExport CreateExport(long version, IReadOnlyList<Cube> staticCubes, IReadOnlyList<Cube> dynamicCubes)

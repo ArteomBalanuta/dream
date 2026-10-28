@@ -81,7 +81,7 @@ public partial class Render : IWorldInstanceDrawTarget
         Shader shader = GetShader("cube");
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
-        shader.SetVector3("material.emissiveFactor", material.Emissive);
+        shader.SetEmissiveFactor(material.Emissive);
         // Terrain is opaque: it always draws with the base "cube" program, which has no discard
         // (only its alpha-mask variant has one).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
@@ -185,7 +185,7 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
-        shader.SetVector3("material.emissiveFactor", material.Emissive);
+        shader.SetEmissiveFactor(material.Emissive);
         // Terrain is opaque: it always draws with the base "cube" program, which has no discard
         // (only its alpha-mask variant has one).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);

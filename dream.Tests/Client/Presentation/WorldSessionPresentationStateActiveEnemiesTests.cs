@@ -92,6 +92,8 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // GPU-5 added seven fields to FramePerformanceSnapshot (GPU world/actors/HUD ms as doubles,
         // GL_PRIMITIVES_GENERATED as a long, and draw/program/uniform counts as ints): 44 B, padded
         // to 48 B in the same single state allocation (696 B -> 744 B).
+        // Wave T2 fix loop 1 added GeometryRenderExport.StaticCells (one reference) to the export
+        // carried inside the same state allocation: +8 B (744 B -> 752 B), not a new allocation.
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -99,7 +101,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            744,
+            752,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 

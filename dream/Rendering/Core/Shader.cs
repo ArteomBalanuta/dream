@@ -20,6 +20,7 @@ public sealed class Shader : IDisposable
     public const string ModelUniformName = "model";
     public const string NormalMatrixUniformName = "normalMatrix";
     public const string AlphaCutoffUniformName = "material.alphaCutoff";
+    public const string EmissiveFactorUniformName = "material.emissiveFactor";
 
     // Defined in the fragment source of a world program's MASK variant only. The cutoff discard
     // sits behind it: a fragment shader that can discard loses early depth optimizations even when
@@ -30,10 +31,15 @@ public sealed class Shader : IDisposable
     private int _modelLocation = -1;
     private int _normalMatrixLocation = -1;
     private int _alphaCutoffLocation = -1;
+    private int _emissiveFactorLocation = -1;
 
     // Last cutoff uploaded. Uniform values live in the program, so a value already there is not
     // uploaded again. Unknown until the first upload.
     private float _uploadedAlphaCutoff = float.NaN;
+
+    // Last emissive factor uploaded, cached the same way. Almost every material is non-emissive
+    // (0), so binding one after another uploads nothing. Unknown (NaN) until the first upload.
+    private Vector3 _uploadedEmissiveFactor = new(float.NaN);
 
     public Shader(string vertexPath, string fragmentPath, string? fragmentDefine = null)
     {
@@ -113,6 +119,7 @@ public sealed class Shader : IDisposable
         _modelLocation = GetUniformLocation(ModelUniformName);
         _normalMatrixLocation = GetUniformLocation(NormalMatrixUniformName);
         _alphaCutoffLocation = GetUniformLocation(AlphaCutoffUniformName);
+        _emissiveFactorLocation = GetUniformLocation(EmissiveFactorUniformName);
         // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
         // lighting.glsl) and the LightList block (pointLights.glsl) are pointed at their binding
         // points here, once per program. Programs that do not declare a block are left alone.
@@ -327,6 +334,20 @@ public sealed class Shader : IDisposable
         _uploadedAlphaCutoff = alphaCutoff;
     }
 
+    // The material emissive (`material.emissiveFactor`, both world fragment shaders). A value
+    // already in the program is not uploaded again; a program without it uploads nothing.
+    public void SetEmissiveFactor(Vector3 emissiveFactor)
+    {
+        if (_emissiveFactorLocation < 0 || emissiveFactor.Equals(_uploadedEmissiveFactor))
+        {
+            return;
+        }
+
+        GL.Uniform3(_emissiveFactorLocation, emissiveFactor);
+        RenderCounters.CountUniformUpload();
+        _uploadedEmissiveFactor = emissiveFactor;
+    }
+
     public void SetVector4(string uniformName, Vector4 vector)
     {
         int location = GetUniformLocation(uniformName);
@@ -424,6 +445,7 @@ public sealed class Shader : IDisposable
             _modelLocation = -1;
             _normalMatrixLocation = -1;
             _alphaCutoffLocation = -1;
+            _emissiveFactorLocation = -1;
         }
     }
     #endregion
