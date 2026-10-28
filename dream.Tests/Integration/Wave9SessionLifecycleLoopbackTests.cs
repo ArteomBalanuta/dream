@@ -145,27 +145,142 @@ public class Wave9SessionLifecycleLoopbackTests
         Assert.True(handleGrowth <= 60, $"handles grew by {handleGrowth}");
     }
 
-    // TearDown runs on the render thread and waits for the local server handle without a bound.
-    // An integrated server whose tick is stuck (the case the watchdog reports in local mode: the
-    // server stopped sending, its socket open) would freeze the window there. Pinned behaviour:
-    // TearDown does not return while the handle's disposal does not complete. See W9 report.
+    // W9-3: TearDown runs on the render thread. An integrated server whose tick is stuck (the case
+    // the watchdog reports in local mode: the server stopped sending, its socket open) used to
+    // freeze the window there for good. Now the handle stops on a background task and TearDown
+    // waits for it at most its timeout, logs, and abandons it; the scene is still disposed first,
+    // on the calling thread, and the abandoned disposal can still finish later.
     [Fact]
-    public async Task TearDown_WaitsForTheLocalServerHandle_WithoutABound()
+    public async Task TearDown_AbandonsAHungLocalServer_AfterItsTimeout()
     {
+        Assert.Equal(TimeSpan.FromSeconds(5), PlaySessionEndTransition.LocalServerStopTimeout);
         TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         HangingLocalServer server = new(release.Task);
-        Task<IReadOnlyList<Exception>> tearDown = Task.Run(() => PlaySessionEndTransition.TearDown(new NoopScene(), server));
+        NoopScene scene = new();
+        List<string> log = [];
+        int callingThread = -1;
+        TimeSpan timeout = TimeSpan.FromMilliseconds(500);
+        Stopwatch elapsed = Stopwatch.StartNew();
+        Task<IReadOnlyList<Exception>> tearDown = Task.Run(() =>
+        {
+            callingThread = Environment.CurrentManagedThreadId;
+            return PlaySessionEndTransition.TearDown(scene, server, timeout, line => { lock (log) { log.Add(line); } });
+        });
         try
         {
-            await Task.Delay(1000);
-            Assert.False(tearDown.IsCompleted, "TearDown returned while the server handle was still disposing");
+            IReadOnlyList<Exception> failures = await tearDown.WaitAsync(Deadline);
+            elapsed.Stop();
+            _output.WriteLine($"TearDown returned after {elapsed.ElapsedMilliseconds} ms");
+            Assert.Empty(failures);
+            Assert.True(elapsed.Elapsed >= timeout - TimeSpan.FromMilliseconds(50), $"returned before the timeout: {elapsed.Elapsed}");
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"waited too long: {elapsed.Elapsed}");
+            Assert.Equal(callingThread, scene.DisposeThread);
+            Assert.Equal(1, server.DisposeCount);
+            lock (log)
+            {
+                Assert.Contains(log, line => line.Contains("did not stop within", StringComparison.Ordinal) && line.Contains("abandoning", StringComparison.Ordinal));
+            }
         }
         finally
         {
             release.TrySetResult();
         }
+    }
 
-        Assert.Empty(await tearDown.WaitAsync(Deadline));
+    // An abandoned server's late failure is observed and logged, not left unobserved.
+    [Fact]
+    public async Task TearDown_LogsTheLateFailure_OfAnAbandonedLocalServer()
+    {
+        TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        HangingLocalServer server = new(release.Task);
+        List<string> log = [];
+        IReadOnlyList<Exception> failures = PlaySessionEndTransition.TearDown(
+            new NoopScene(), server, TimeSpan.FromMilliseconds(100), line => { lock (log) { log.Add(line); } });
+        Assert.Empty(failures);
+
+        release.TrySetException(new InvalidOperationException("stuck tick"));
+        await WaitUntilAsync(() => { lock (log) { return log.Any(line => line.Contains("stuck tick", StringComparison.Ordinal)); } }, "the late failure to be logged");
+    }
+
+    // A new integrated server never collides with one that was abandoned still running: each
+    // takes a fresh ephemeral port, and both serve at once.
+    [Fact]
+    public async Task NewIntegratedServer_TakesAFreshPort_WhileAnAbandonedOneStillRuns()
+    {
+        IntegratedLocalServerHandle abandoned = await IntegratedLocalServerHandle.StartAsync(
+            0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null));
+        try
+        {
+            Assert.True(abandoned.IsReady, abandoned.ErrorMessage);
+            OnDemandLocalServerHandle fresh = new(() => IntegratedLocalServerHandle
+                .StartAsync(0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null))
+                .AsTask().GetAwaiter().GetResult());
+            await using (fresh)
+            {
+                fresh.EnsureStarted();
+                Assert.True(fresh.IsReady, fresh.ErrorMessage);
+                Assert.NotEqual(abandoned.BoundPort, fresh.BoundPort);
+
+                NetworkSessionCoordinator coordinator = new(fresh, new RemoteSessionConnector());
+                coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", fresh.BoundPort.ToString(), "w9-fresh"));
+                await coordinator.WaitForPendingConnectionAsync().WaitAsync(Deadline);
+                Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session), coordinator.StatusMessage);
+                await using (session!)
+                {
+                    await WaitUntilAsync(() => session!.IsJoined, "the join to the fresh server");
+                }
+            }
+        }
+        finally
+        {
+            await abandoned.DisposeAsync().AsTask().WaitAsync(Deadline);
+        }
+    }
+
+    // W9-4: after a session to Game's own integrated server ends, the connection screen keeps the
+    // ended endpoint and starts nothing; a connect to that endpoint starts the new integrated
+    // server through the fresh handle and joins it on its own, fresh port.
+    [Fact]
+    public async Task ReturnToMenu_AfterTheIntegratedServerSession_StartsTheNewServerOnlyOnConnect()
+    {
+        OnDemandLocalServerHandle first = new(() => IntegratedLocalServerHandle
+            .StartAsync(0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null))
+            .AsTask().GetAwaiter().GetResult());
+        NetworkSessionCoordinator firstCoordinator = new(first, new RemoteSessionConnector());
+        ClientConnectionOptions firstOptions = firstCoordinator.UseLocalServerDefaults("w9-relaunch");
+        firstCoordinator.BeginConnect(firstOptions);
+        await firstCoordinator.WaitForPendingConnectionAsync().WaitAsync(Deadline);
+        Assert.True(firstCoordinator.TryTakeConnectedSession(out RemoteClientSession? firstSession), firstCoordinator.StatusMessage);
+        await WaitUntilAsync(() => firstSession!.IsJoined, "the first join");
+        RemoteClientOptions endedOptions = firstSession!.Options;
+        int firstPort = first.BoundPort;
+        Assert.True(first.IsStarted);
+        Assert.Empty(PlaySessionEndTransition.TearDown(new SessionScene(firstSession), first));
+
+        OnDemandLocalServerHandle second = new(() => IntegratedLocalServerHandle
+            .StartAsync(0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null))
+            .AsTask().GetAwaiter().GetResult());
+        await using (second)
+        {
+            ClientConnectionOptions shown = PlaySessionEndTransition.ReturnOptions(endedOptions);
+            NetworkSessionCoordinator coordinator = new(
+                second,
+                new LocalServerRelaunchConnector(new RemoteSessionConnector(), second, endedOptions.Host, endedOptions.Port));
+            Assert.Equal(firstOptions.Host, shown.Host);
+            Assert.Equal(firstPort.ToString(), shown.PortText);
+            Assert.False(second.IsStarted, "the menu started the integrated server before a connect");
+
+            coordinator.BeginConnect(shown);
+            Assert.True(second.IsStarted);
+            await coordinator.WaitForPendingConnectionAsync().WaitAsync(Deadline);
+            Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session), coordinator.StatusMessage);
+            await using (session!)
+            {
+                await WaitUntilAsync(() => session!.IsJoined, "the join to the relaunched server");
+                Assert.Equal(second.BoundPort, session!.Options.Port);
+                Assert.NotEqual(firstPort, second.BoundPort);
+            }
+        }
     }
 
     private static void ForceCollection()
@@ -198,13 +313,18 @@ public class Wave9SessionLifecycleLoopbackTests
 
     private sealed class NoopScene : IDisposable
     {
+        public int DisposeThread { get; private set; } = -1;
+
         public void Dispose()
         {
+            DisposeThread = Environment.CurrentManagedThreadId;
         }
     }
 
     private sealed class HangingLocalServer(Task disposal) : ILocalServerHandle
     {
+        private int _disposeCount;
+
         public bool IsReady => true;
 
         public int BoundPort => 1;
@@ -213,6 +333,12 @@ public class Wave9SessionLifecycleLoopbackTests
 
         public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
 
-        public ValueTask DisposeAsync() => new(disposal);
+        public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            return new(disposal);
+        }
     }
 }

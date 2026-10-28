@@ -1,5 +1,6 @@
 using Xunit;
 using Dream.Application;
+using Dream.Client.Networking;
 using Dream.Client.Scenes;
 using Dream.Client.Startup;
 using Dream.Server;
@@ -111,6 +112,126 @@ public class PlaySessionEndTransitionTests
         Assert.False(handle.IsStarted);
     }
 
+    // A handle whose disposal completes within the timeout is waited for, not abandoned.
+    [Fact]
+    public void StopLocalServer_WaitsForADisposalThatFinishesInTime()
+    {
+        TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        FakeLocalServer server = new() { Disposal = release.Task };
+        List<string> log = [];
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100);
+            release.SetResult();
+        });
+
+        Exception? failure = PlaySessionEndTransition.StopLocalServer(server, TimeSpan.FromSeconds(10), log.Add);
+
+        Assert.Null(failure);
+        Assert.True(release.Task.IsCompleted);
+        Assert.Empty(log);
+    }
+
+    [Fact]
+    public void StopLocalServer_ReturnsTheDisposalFailure_Unwrapped()
+    {
+        FakeLocalServer server = new() { ThrowOnDispose = new InvalidOperationException("server") };
+
+        Assert.Same(server.ThrowOnDispose, PlaySessionEndTransition.StopLocalServer(server, TimeSpan.FromSeconds(10), _ => { }));
+    }
+
+    // W9-4: the connection screen after a session ends shows the ended endpoint as it was.
+    [Fact]
+    public void ReturnOptions_KeepTheEndedEndpointExactly()
+    {
+        RemoteClientOptions ended = new("127.0.0.1", 5057, "session-1", "player-1", "client-1");
+
+        ClientConnectionOptions options = PlaySessionEndTransition.ReturnOptions(ended);
+
+        Assert.Equal("127.0.0.1", options.Host);
+        Assert.Equal("5057", options.PortText);
+        Assert.Equal("player-1", options.PlayerName);
+    }
+
+    // Constructing the relaunch connector (as Game does when it shows the connection screen)
+    // starts nothing; a connect elsewhere passes through untouched and still starts nothing.
+    [Fact]
+    public async Task RelaunchConnector_PassesOtherEndpointsThrough_AndStartsNothing()
+    {
+        int starts = 0;
+        OnDemandLocalServerHandle handle = new(() =>
+        {
+            starts++;
+            return new FakeLocalServer();
+        });
+        RecordingConnector inner = new();
+        LocalServerRelaunchConnector connector = new(inner, handle, "127.0.0.1", 50123);
+        NetworkSessionCoordinator coordinator = new(handle, connector);
+        Assert.Equal(0, starts);
+
+        // A loopback dedicated server on another port, and a remote host on the same port.
+        coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", "5057", "player"));
+        await coordinator.WaitForPendingConnectionAsync();
+        coordinator.BeginConnect(new ClientConnectionOptions("10.0.0.2", "50123", "player"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(0, starts);
+        Assert.False(handle.IsStarted);
+        Assert.Equal([("127.0.0.1", 5057), ("10.0.0.2", 50123)], inner.Targets);
+    }
+
+    // A connect to the ended integrated server's endpoint starts the new one then, and goes to
+    // its port.
+    [Fact]
+    public async Task RelaunchConnector_StartsTheLocalServerOnConnect_AndUsesItsPort()
+    {
+        int starts = 0;
+        OnDemandLocalServerHandle handle = new(() =>
+        {
+            starts++;
+            return new FakeLocalServer();
+        });
+        RecordingConnector inner = new();
+        NetworkSessionCoordinator coordinator = new(handle, new LocalServerRelaunchConnector(inner, handle, "127.0.0.1", 50123));
+        Assert.False(handle.IsStarted);
+
+        coordinator.BeginConnect(new ClientConnectionOptions(" 127.0.0.1 ", "50123", "player"));
+        await coordinator.WaitForPendingConnectionAsync();
+        coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", "50123", "player"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(1, starts);
+        Assert.True(handle.IsStarted);
+        Assert.Equal([("127.0.0.1", 6123), ("127.0.0.1", 6123)], inner.Targets);
+    }
+
+    [Fact]
+    public async Task RelaunchConnector_ReportsALocalServerThatFailsToStart()
+    {
+        OnDemandLocalServerHandle handle = new(() => new FakeLocalServer { Ready = false, Error = "port in use" });
+        RecordingConnector inner = new();
+        NetworkSessionCoordinator coordinator = new(handle, new LocalServerRelaunchConnector(inner, handle, "127.0.0.1", 50123));
+
+        coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", "50123", "player"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Empty(inner.Targets);
+        Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
+        Assert.Contains("port in use", coordinator.StatusMessage);
+    }
+
+    // Records each target and fails the connect: no socket is opened.
+    private sealed class RecordingConnector : IRemoteSessionConnector
+    {
+        public List<(string Host, int Port)> Targets { get; } = [];
+
+        public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
+        {
+            Targets.Add((options.Host, options.Port));
+            return ValueTask.FromException<RemoteClientSession>(new InvalidOperationException("no server in this test"));
+        }
+    }
+
     private sealed class FakePlayScene(string? reason, List<string>? order = null) : ISessionEndSource, IDisposable
     {
         public string? Reason { get; set; } = reason;
@@ -134,15 +255,21 @@ public class PlaySessionEndTransitionTests
 
     private sealed class FakeLocalServer(List<string>? order = null) : ILocalServerHandle
     {
-        public bool IsReady => true;
+        public bool Ready { get; init; } = true;
 
-        public int BoundPort => 6123;
+        public string? Error { get; init; }
 
-        public string? ErrorMessage => null;
+        public bool IsReady => Ready;
+
+        public int BoundPort => Ready ? 6123 : 0;
+
+        public string? ErrorMessage => Error;
 
         public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
 
         public Exception? ThrowOnDispose { get; init; }
+
+        public Task? Disposal { get; init; }
 
         public int DisposeCount { get; private set; }
 
@@ -150,7 +277,9 @@ public class PlaySessionEndTransitionTests
         {
             DisposeCount++;
             order?.Add("server");
-            return ThrowOnDispose != null ? ValueTask.FromException(ThrowOnDispose) : ValueTask.CompletedTask;
+            return ThrowOnDispose != null
+                ? ValueTask.FromException(ThrowOnDispose)
+                : Disposal != null ? new ValueTask(Disposal) : ValueTask.CompletedTask;
         }
     }
 }
