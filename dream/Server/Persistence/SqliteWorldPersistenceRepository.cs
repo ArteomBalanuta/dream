@@ -505,6 +505,19 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         command.ExecuteNonQuery();
     }
 
+    // One UPDATE of the primary key: atomic on its own, and under the write queue's savepoint
+    // when it runs in a group. A taken newEnemyId fails the primary key and changes nothing.
+    public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
+    {
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "UPDATE enemy_instances SET enemy_id = $newEnemyId WHERE enemy_id = $oldEnemyId;";
+        command.Parameters.AddWithValue("$oldEnemyId", oldEnemyId);
+        command.Parameters.AddWithValue("$newEnemyId", newEnemyId);
+        command.ExecuteNonQuery();
+    }
+
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances()
     {
         using SqliteConnectionLease lease = _schema.OpenConnection();

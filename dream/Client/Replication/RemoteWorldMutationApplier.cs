@@ -273,8 +273,11 @@ public static class RemoteWorldMutationApplier
 
             case WorldMutationKind.CubeIdentified:
                 // The server keyed the cube in this cell to a replicated id (a terrain cube's first
-                // hit); key the client's cube the same way so both checksum it by id. A cell with
-                // no cube is a divergence the world checksum and resync already handle.
+                // hit); key the client's cube the same way, so later deltas that name the cube by
+                // id (CubeMoved, CubeDestroyed) resolve to the same cube. The
+                // wire WorldStateChecksum has no ids (cells and materials only); only the server's
+                // SimulationStateChecksum keys cubes by id. A cell with no cube is a divergence the
+                // world checksum and resync already handle.
                 if (mutation.ActorId is int identifiedId && map.TryGetCubeAtCell(x, y, z) is Cube identifiedCube)
                 {
                     map.AssignReplicatedCubeId(identifiedCube, identifiedId);

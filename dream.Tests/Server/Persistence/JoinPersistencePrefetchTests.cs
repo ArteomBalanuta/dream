@@ -516,6 +516,8 @@ public sealed class JoinPersistencePrefetchTests
 
         public void DeleteEnemyInstance(int enemyId) => Call(nameof(DeleteEnemyInstance), () => inner.DeleteEnemyInstance(enemyId));
 
+        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Call(nameof(ReassignEnemyId), () => inner.ReassignEnemyId(oldEnemyId, newEnemyId));
+
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Call(nameof(LoadItemInstances), inner.LoadItemInstances);
 
         public void SaveItemInstance(PersistedItemInstance item) => Call(nameof(SaveItemInstance), () => inner.SaveItemInstance(item));

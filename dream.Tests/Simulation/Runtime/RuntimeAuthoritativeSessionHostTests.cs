@@ -1319,6 +1319,10 @@ public class RuntimeAuthoritativeSessionHostTests
         {
         }
 
+        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
+        {
+        }
+
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
         public void SaveItemInstance(PersistedItemInstance item)

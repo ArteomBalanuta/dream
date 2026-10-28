@@ -193,6 +193,8 @@ public sealed class PersistenceOffTickTests
 
         public void DeleteEnemyInstance(int enemyId) => Write(() => Inner.DeleteEnemyInstance(enemyId));
 
+        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Write(() => Inner.ReassignEnemyId(oldEnemyId, newEnemyId));
+
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Read(Inner.LoadItemInstances);
 
         public void SaveItemInstance(PersistedItemInstance item) => Write(() => Inner.SaveItemInstance(item));

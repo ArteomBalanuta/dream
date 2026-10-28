@@ -318,6 +318,66 @@ public class ReplicatedIdIntegrationTests
         Assert.False(ReplicatedActorIdRanges.IsWorldObjectId(ReplicatedActorIdRanges.FirstEnemyId));
         Assert.True(ReplicatedActorIdRanges.IsEnemyId(ReplicatedActorIdRanges.FirstOverflowWorldObjectId - 1));
         Assert.False(ReplicatedActorIdRanges.IsEnemyId(ReplicatedActorIdRanges.FirstOverflowWorldObjectId));
+        Assert.Throws<InvalidOperationException>(() => ReplicatedActorIdRanges.NextWorldObjectId(ReplicatedActorIdRanges.LastWorldObjectId));
+    }
+
+    // Reserving the last id of a range saturates the counter; only handing out an id from the
+    // exhausted counter fails. The last id itself can still be handed out once.
+    [Fact]
+    public void Counters_SaturateOnReserve_AndFailOnlyWhenAllocatingFromAnExhaustedRange()
+    {
+        const int Exhausted = ReplicatedActorIdRanges.ExhaustedCounter;
+        Assert.Equal(Exhausted, ReplicatedActorIdRanges.ReserveWorldObjectId(1000, ReplicatedActorIdRanges.LastWorldObjectId));
+        Assert.Equal(Exhausted, ReplicatedActorIdRanges.ReserveEnemyId(2000, ReplicatedActorIdRanges.LastEnemyId));
+        // An exhausted counter stays exhausted whatever is reserved after it.
+        Assert.Equal(Exhausted, ReplicatedActorIdRanges.ReserveWorldObjectId(Exhausted, 1500));
+        Assert.Equal(Exhausted, ReplicatedActorIdRanges.ReserveEnemyId(Exhausted, 2500));
+        // Ids of other kinds leave a counter alone.
+        Assert.Equal(1000, ReplicatedActorIdRanges.ReserveWorldObjectId(1000, int.MaxValue));
+        Assert.Equal(2000, ReplicatedActorIdRanges.ReserveEnemyId(2000, 5));
+
+        int cubes = ReplicatedActorIdRanges.LastWorldObjectId;
+        Assert.Equal(ReplicatedActorIdRanges.LastWorldObjectId, ReplicatedActorIdRanges.TakeWorldObjectId(ref cubes));
+        Assert.Equal(Exhausted, cubes);
+        Assert.Throws<InvalidOperationException>(() => ReplicatedActorIdRanges.TakeWorldObjectId(ref cubes));
+
+        int enemies = ReplicatedActorIdRanges.LastEnemyId;
+        Assert.Equal(ReplicatedActorIdRanges.LastEnemyId, ReplicatedActorIdRanges.TakeEnemyId(ref enemies));
+        Assert.Equal(Exhausted, enemies);
+        Assert.Throws<InvalidOperationException>(() => ReplicatedActorIdRanges.TakeEnemyId(ref enemies));
+
+        int low = 1999;
+        Assert.Equal(1999, ReplicatedActorIdRanges.TakeWorldObjectId(ref low));
+        Assert.Equal(ReplicatedActorIdRanges.FirstOverflowWorldObjectId, low);
+    }
+
+    // A world whose persisted ids are the last of their ranges still restores (the server starts).
+    // A later enemy spawn on the tick is refused instead of throwing; an explicit-id cube still
+    // registers, and only an allocation from the exhausted cube range fails.
+    [Fact]
+    public void Restore_WithTheLastIdOfEachRange_StartsAndRefusesFurtherEnemySpawns()
+    {
+        DateTime now = DateTime.UtcNow;
+        InMemoryWorldPersistence world = new();
+        world.SavePlacedCube(LegacyCube(ReplicatedActorIdRanges.LastWorldObjectId, new Vector3(7f, 1f, 5f), now));
+        world.SaveEnemyInstance(LegacyEnemy(ReplicatedActorIdRanges.LastEnemyId, now));
+
+        using WorldSessionRuntime runtime = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost host);
+        using (host)
+        {
+            WorldObjectRegistry registry = GetWorldObjects(runtime);
+            Assert.Equal(ReplicatedActorIdRanges.ExhaustedCounter, registry.NextActorId);
+            Assert.Equal(ReplicatedActorIdRanges.LastEnemyId, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
+
+            runtime.Enemies.Clear();
+            Tick(runtime, 1);
+            Assert.Empty(runtime.Enemies.ActiveActors);
+            Assert.Equal([ReplicatedActorIdRanges.LastEnemyId], world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).ToArray());
+
+            Cube cube = Assert.IsType<Cube>(runtime.Map.TryAddCube(new Vector3(5f, 1f, 7f), withPhysics: false));
+            Assert.Throws<InvalidOperationException>(() => registry.RegisterCube(cube, runtime.Map, actorId: null));
+            Assert.Equal(1500, registry.RegisterCube(cube, runtime.Map, actorId: 1500).Actor.Id);
+        }
     }
 
     private static PersistedPlacedCube LegacyCube(int id, Vector3 cell, DateTime now)
@@ -489,6 +549,19 @@ public class ReplicatedIdIntegrationTests
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.EnemyId] = enemy;
 
         public void DeleteEnemyInstance(int enemyId) => _enemies.Remove(enemyId);
+
+        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
+        {
+            if (_enemies.ContainsKey(newEnemyId))
+            {
+                throw new InvalidOperationException($"Enemy id {newEnemyId} is already taken.");
+            }
+
+            if (_enemies.Remove(oldEnemyId, out PersistedEnemyInstance enemy))
+            {
+                _enemies[newEnemyId] = enemy with { EnemyId = newEnemyId };
+            }
+        }
 
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
