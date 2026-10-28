@@ -131,12 +131,16 @@ public sealed class WorldSessionRuntime : IDisposable
     // in its ordinal pass with every other seat (see AdvanceAuthoritativeTick's deferPrimarySeatUse).
     private bool _hasDeferredPrimarySeatUse;
     private PlayerCommandFrame _deferredPrimarySeatUseFrame;
+    // Secondary player actor ids (see AllocateRemoteActorId): the next never-used id, and the ids
+    // released by detached sessions, reused lowest first. Player ids are not persisted.
     private int _nextRemoteActorId = 2;
+    private readonly SortedSet<int> _releasedRemoteActorIds = [];
     // Every spawned enemy gets a fresh actor id, so a respawn is a different actor on the wire
     // and a client drops the dead enemy's interpolation buffer instead of sliding it to the new
     // spawn. Part of simulation state: same-seed servers with the same history allocate the same
     // ids. Persisted enemies advance it past their ids when the world is restored.
     private int _nextEnemyActorId = FirstEnemyActorId;
+    private bool _enemyIdsExhaustedLogged;
     // Set while a cube registration must not export a CubeIdentified delta (see OnCubeIdAssigned).
     private bool _suppressCubeIdExports;
     private long _nextItemInstanceId = 1;
@@ -247,6 +251,12 @@ public sealed class WorldSessionRuntime : IDisposable
 
             if (!_secondaryRemotePlayers.ContainsKey(existing.SessionId))
             {
+                // Its id was released when it detached; another join may have taken it since.
+                if (!_releasedRemoteActorIds.Remove(existing.ActorId))
+                {
+                    return RegisterSecondarySession(existing.SessionId, existing.DisplayName);
+                }
+
                 CreateSecondaryPlayer(existing.SessionId, existing.ActorId);
             }
 
@@ -341,6 +351,7 @@ public sealed class WorldSessionRuntime : IDisposable
         {
             RebuildOrderedSecondaryRemotePlayers();
             _experienceToNextLevelByActor.Remove(secondary.ActorId);
+            ReleaseRemoteActorId(secondary.ActorId);
             secondary.Dispose();
         }
     }
@@ -1983,12 +1994,17 @@ public sealed class WorldSessionRuntime : IDisposable
 
     private void SpawnInitialWolf()
     {
+        if (!TryAllocateEnemyActorId(out int actorId))
+        {
+            return;
+        }
+
         Vector3 spawnPosition = WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth);
 
         EnemyCombatant combatant = new(
             () => spawnPosition,
             _events,
-            actorId: AllocateEnemyActorId(),
+            actorId: actorId,
             maxHealth: 100,
             attackDamage: 12,
             attackIntervalSeconds: 1.05f,
@@ -2012,21 +2028,34 @@ public sealed class WorldSessionRuntime : IDisposable
     // Monotonic and deterministic. A wolf is only spawned when no enemy is active (startup or
     // EnsureWolfExists), and a restore advances the counter past every persisted enemy, so the
     // id is never held by a live or persisted enemy.
-    private int AllocateEnemyActorId()
+    //
+    // False once the enemy range (about a billion ids) is exhausted. Spawns run on the tick, where
+    // a throw would stop the server, so the spawn is refused (logged once) instead: the world goes
+    // on without that enemy.
+    private bool TryAllocateEnemyActorId(out int actorId)
     {
-        int actorId = _nextEnemyActorId;
-        _nextEnemyActorId = ReplicatedActorIdRanges.NextEnemyId(actorId);
-        return actorId;
+        if (_nextEnemyActorId == ReplicatedActorIdRanges.ExhaustedCounter)
+        {
+            if (!_enemyIdsExhaustedLogged)
+            {
+                _enemyIdsExhaustedLogged = true;
+                NetworkDiagnosticsLog.Write("server.ids.enemy-exhausted", "the replicated enemy id range is exhausted; enemy spawns are refused");
+            }
+
+            actorId = 0;
+            return false;
+        }
+
+        actorId = ReplicatedActorIdRanges.TakeEnemyId(ref _nextEnemyActorId);
+        return true;
     }
 
     // Keeps later enemy spawns past an id in the enemy range that is already taken: a persisted
-    // enemy, or a legacy cube saved before the id ranges were partitioned.
+    // enemy, or a legacy cube saved before the id ranges were partitioned. Reserving the last enemy
+    // id saturates the counter instead of failing, so a restore never fails on a persisted id.
     private void ReserveEnemyActorId(int actorId)
     {
-        if (ReplicatedActorIdRanges.IsEnemyId(actorId))
-        {
-            _nextEnemyActorId = Math.Max(_nextEnemyActorId, ReplicatedActorIdRanges.NextEnemyId(actorId));
-        }
+        _nextEnemyActorId = ReplicatedActorIdRanges.ReserveEnemyId(_nextEnemyActorId, actorId);
     }
 
     private void EnsureWolfExists()
@@ -2239,7 +2268,10 @@ public sealed class WorldSessionRuntime : IDisposable
     // A cube got a replicated id outside a placement: most often a generated terrain cube on its
     // first hit, which clients only knew by cell. The delta carries the id in the same sequenced
     // stream as the hit's other world deltas (and before a fracture or destroy of that cube), so
-    // the client keys its cube by the id before the next world checksum is compared.
+    // the client keys its cube by the id before a later delta names the cube by it (CubeMoved,
+    // CubeDestroyed).
+    // The wire WorldStateChecksum has no ids (cells and materials only); ids are covered only by
+    // the server-side SimulationStateChecksum, which clients never compute.
     private void OnCubeIdAssigned(Map map, Cube cube, int actorId)
     {
         if (_suppressCubeIdExports || !ReferenceEquals(map, Map))
@@ -2580,10 +2612,18 @@ public sealed class WorldSessionRuntime : IDisposable
             {
                 // A world saved before the id ranges were partitioned can hold an enemy and a
                 // placed cube under one id. The cube keeps it; the enemy is re-identified in the
-                // enemy range and its row moved to the new id.
-                restored = enemy with { EnemyId = AllocateEnemyActorId() };
-                DeletePersistedEnemy(enemy.EnemyId);
-                EnqueueWorldWrite(world => world.SaveEnemyInstance(restored));
+                // enemy range and its row moved to the new id. The move is one queued write (one
+                // UPDATE, under one savepoint), so a failure or crash leaves the row under exactly
+                // one id: the old one, re-identified again on the next restore, or the new one.
+                if (!TryAllocateEnemyActorId(out int newEnemyId))
+                {
+                    // No enemy id left: leave the row as it is and restore the world without it.
+                    continue;
+                }
+
+                int oldEnemyId = enemy.EnemyId;
+                restored = enemy with { EnemyId = newEnemyId };
+                EnqueueWorldWrite(world => world.ReassignEnemyId(oldEnemyId, newEnemyId));
             }
 
             _enemies.Add(CreatePersistedEnemy(restored));
@@ -3073,11 +3113,34 @@ public sealed class WorldSessionRuntime : IDisposable
         return true;
     }
 
+    // A secondary player's actor id, always in the player range (ReplicatedActorIdRanges): the
+    // lowest id a detached session released, else the next never-used id. A client picks a fresh
+    // session id on every connect, so without reuse a long-running server would hand out an id
+    // per join and reach the cube range after about a thousand joins. Deterministic: the same join
+    // and leave sequence allocates the same ids. The primary seat keeps Player's own id.
     private int AllocateRemoteActorId()
     {
+        if (_releasedRemoteActorIds.Count > 0)
+        {
+            int reused = _releasedRemoteActorIds.Min;
+            _releasedRemoteActorIds.Remove(reused);
+            return reused;
+        }
+
         int actorId = Math.Max(_nextRemoteActorId, Player.Combatant.Actor.Id + 1);
-        _nextRemoteActorId = actorId + 1;
+        _nextRemoteActorId = ReplicatedActorIdRanges.NextPlayerId(actorId);
         return actorId;
+    }
+
+    // A detached secondary session's id becomes free for the next join. Its ConnectedPlayer keeps
+    // the id, so a later reattach of that session reclaims it only if no one took it meanwhile
+    // (see AttachRemoteSession).
+    private void ReleaseRemoteActorId(int actorId)
+    {
+        if (actorId != Player.Combatant.Actor.Id)
+        {
+            _releasedRemoteActorIds.Add(actorId);
+        }
     }
 
     private Vector3 ResolveSecondaryRemoteSpawnPosition(int remoteIndex)

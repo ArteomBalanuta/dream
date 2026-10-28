@@ -313,7 +313,11 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource
 
     private RemotePlayerEntry GetOrCreateEntry(int actorId, string sessionId)
     {
-        if (_remotePlayers.TryGetValue(actorId, out RemotePlayerEntry? entry))
+        // The server reuses a player actor id once its session leaves. An entry under this id from
+        // another session is that earlier player: start the new one from an empty buffer instead
+        // of sliding the old avatar to the new player.
+        if (_remotePlayers.TryGetValue(actorId, out RemotePlayerEntry? entry) &&
+            string.Equals(entry.SessionId, sessionId, StringComparison.Ordinal))
         {
             return entry;
         }

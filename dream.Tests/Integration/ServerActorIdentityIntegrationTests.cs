@@ -414,6 +414,19 @@ public class ServerActorIdentityIntegrationTests
 
         public void DeleteEnemyInstance(int enemyId) => _enemies.Remove(enemyId);
 
+        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
+        {
+            if (_enemies.ContainsKey(newEnemyId))
+            {
+                throw new InvalidOperationException($"Enemy id {newEnemyId} is already taken.");
+            }
+
+            if (_enemies.Remove(oldEnemyId, out PersistedEnemyInstance enemy))
+            {
+                _enemies[newEnemyId] = enemy with { EnemyId = newEnemyId };
+            }
+        }
+
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
         public void SaveItemInstance(PersistedItemInstance item)

@@ -32,13 +32,11 @@ public sealed class WorldObjectRegistry
 
     // Keeps later allocations past a world-object id that is already taken (a persisted cube or
     // fracture group). Ids outside the world-object ranges are ignored: the allocator never
-    // reaches them.
+    // reaches them. Reserving the last world-object id saturates the counter instead of failing,
+    // so a restore never fails on a persisted id; only a later allocation then fails.
     public void ReserveActorId(int actorId)
     {
-        if (ReplicatedActorIdRanges.IsWorldObjectId(actorId))
-        {
-            _nextActorId = Math.Max(_nextActorId, ReplicatedActorIdRanges.NextWorldObjectId(actorId));
-        }
+        _nextActorId = ReplicatedActorIdRanges.ReserveWorldObjectId(_nextActorId, actorId);
     }
 
     public void EnableCheckpointTracking()
@@ -120,7 +118,9 @@ public sealed class WorldObjectRegistry
             _detachedCubeRecords.Remove(cube);
         }
 
-        int resolvedActorId = actorId ?? _nextActorId;
+        // Allocating from an exhausted range throws: it takes about a billion cube ids, which no
+        // world reaches, and every caller would otherwise have to handle a cube without an id.
+        int resolvedActorId = actorId ?? ReplicatedActorIdRanges.TakeWorldObjectId(ref _nextActorId);
         ReserveActorId(resolvedActorId);
 
         WorldObjectRecord record = new(
