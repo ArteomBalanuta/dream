@@ -3,6 +3,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
@@ -399,7 +400,13 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
 
     private static float Horizontal(Vector3 delta) => new Vector2(delta.X, delta.Z).Length;
 
-    private static Vector3 FindOpenFacing(bool walkerIsPrimary)
+    // The probe's answer depends only on the seat, so it runs once per seat for the class
+    // (ARCH-1c: it built up to four runtimes in every one of the twelve theory cases).
+    private static readonly ProbeCache<bool, Vector3> OpenFacings = new(ProbeOpenFacing);
+
+    private static Vector3 FindOpenFacing(bool walkerIsPrimary) => OpenFacings.Get(walkerIsPrimary);
+
+    private static Vector3 ProbeOpenFacing(bool walkerIsPrimary)
     {
         foreach (Vector3 facing in new[] { Vector3.UnitX, -Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitZ })
         {

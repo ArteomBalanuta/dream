@@ -9,6 +9,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Client.Replication;
 
@@ -259,8 +260,13 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
         return positions;
     }
 
-    // The startup terrain blocks some directions; walk along the most open axis.
-    private static Vector3 MostOpenFacing(int ticks)
+    // The startup terrain blocks some directions; walk along the most open axis. Probed once per
+    // walk length for the class (ARCH-1c): the probe is deterministic set-up.
+    private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeMostOpenFacing);
+
+    private static Vector3 MostOpenFacing(int ticks) => OpenFacings.Get(ticks);
+
+    private static Vector3 ProbeMostOpenFacing(int ticks)
     {
         return new[] { Vector3.UnitZ, -Vector3.UnitZ, Vector3.UnitX, -Vector3.UnitX }
             .OrderByDescending(direction =>

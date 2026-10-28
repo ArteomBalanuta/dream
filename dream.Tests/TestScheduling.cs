@@ -36,6 +36,11 @@ namespace Dream.Tests;
 //
 // Measured on 16 logical CPUs (Debug): 78.6 s of test time before, about 37 s after, with the
 // parallel phase CPU-bound (testhost CPU ~360-410 s). Server GC no longer makes a difference.
+//
+// ARCH-1c (wave 12): waves 10-11 grew the suite back to about 110 s. The parallel phase ended on
+// unsplit classes that started late (Wave9StarveInputChangeTests alone ran 27-43 s serially), and
+// the serial TimingSensitive phase had grown to about 50 s. Those classes are split and ranked
+// below; the serial phase keeps only what reads process-wide state or measures the clock.
 public static class TestScheduling
 {
     // Classes whose test cases each run as their own collection; see the header. Measured alone
@@ -74,6 +79,17 @@ public static class TestScheduling
         "Dream.Tests.Server.LiveServerDeferredJoinLoopbackTests",
         "Dream.Tests.Server.WorldResyncDeferralTests",
         "Dream.Tests.Rendering.World.StaticWorldChunkRendererUploadPipelineTests",
+        // ARCH-1c: long classes from waves 9-11, each test independent (no shared mutable static
+        // state, no fixture; the facing probes they share are deterministic and cached).
+        "Dream.Tests.Simulation.Runtime.Wave9StarveInputChangeTests",
+        "Dream.Tests.Simulation.Runtime.Wave9StarvedTickAckTests",
+        "Dream.Tests.Integration.WorldTransferLoopbackTests",
+        "Dream.Tests.Server.StaleSessionTakeoverTests",
+        "Dream.Tests.Simulation.Physics.CubeRestFreezerTests",
+        "Dream.Tests.Integration.SnapshotIntervalLoopbackTests",
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
+        "Dream.Tests.Integration.Wave9SessionLifecycleLoopbackTests",
+        "Dream.Tests.Integration.Wave11SessionChurnLoopbackTests",
     };
 
     // Classes whose tests run a real-time loop and assert on how it went: a headless client that
@@ -88,6 +104,8 @@ public static class TestScheduling
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
         "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Integration.ClientCommandStallLoopbackTests",
+        // ARCH-1c: 8 s of a slow link played in real time (it was in the serial phase).
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
     };
 
     // The collections that took longest in a full parallel run (after splitting; a split class at
@@ -105,13 +123,19 @@ public static class TestScheduling
         "Dream.Tests.Multiplayer.Transport.MultiClientLoopbackSmokeTests",
         "Dream.Tests.Integration.Wave8IdleTimeoutClientStallLoopbackTests",
         "Dream.Tests.Simulation.Runtime.BufferedInboxStallReplayTests",
+        "Dream.Tests.Integration.WorldTransferLoopbackTests",
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
         "Dream.Tests.Integration.AnimatedModelPoseSharpGltfKeyframeParityShard2IntegrationTests",
         "Dream.Tests.Integration.AnimatedModelPoseSharpGltfPlaybackParityIntegrationTests",
         "Dream.Tests.Integration.Wave7LateJoinFractureResyncLoopbackTests",
         "Dream.Tests.Simulation.Runtime.Wave7StarvationReconciliationTests",
+        "Dream.Tests.Simulation.Runtime.Wave9StarveInputChangeTests",
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
         "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Client.Replication.ClientJoinAcceptedSubcellApplierTests",
+        "Dream.Tests.Client.Networking.RemoteClientSessionJoinTests",
+        "Dream.Tests.Simulation.Runtime.Wave9StarvedTickAckTests",
+        "Dream.Tests.Integration.SnapshotIntervalLoopbackTests",
         "Dream.Tests.Integration.CoalesceOverflowResyncLoopbackTests",
         "Dream.Tests.Integration.PresentationExportAliasingIntegrationTests",
         "Dream.Tests.Integration.Wave7FloorCubeChecksumLoopbackTests",

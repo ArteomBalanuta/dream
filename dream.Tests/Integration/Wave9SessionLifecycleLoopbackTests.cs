@@ -18,12 +18,14 @@ namespace Dream.Tests.Integration;
 // - a session that ends while its join is still pending;
 // - the local-mode cycle Game runs: start the integrated server on demand, play, end the session
 //   (TearDown order: scene, then server), take a fresh handle, start a new local session;
-// - repeated connect / end cycles leak no physics world, thread or handle.
-// The leak test reads process-wide counters, so it runs alone (TimingSensitive).
-[Collection(TimingSensitiveCollection.Name)]
+// - repeated connect / end cycles leak no physics world, thread or handle
+//   (Wave9SessionLeakLoopbackTests below).
+// ARCH-1c: only the leak test reads process-wide counters, so only it runs alone (TimingSensitive);
+// it is its own class because a named collection holds whole classes. The rest of these tests run
+// in the parallel pool, one collection each (TestScheduling.SplitClasses).
 public class Wave9SessionLifecycleLoopbackTests
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
 
     private readonly ITestOutputHelper _output;
 
@@ -91,70 +93,6 @@ public class Wave9SessionLifecycleLoopbackTests
             _output.WriteLine($"session disposed in {dispose.ElapsedMilliseconds} ms");
             Assert.True(dispose.Elapsed < TimeSpan.FromSeconds(6), $"dispose took {dispose.Elapsed}");
         }
-    }
-
-    // Game's local cycle, ten times: each local session ends (half with the server stopping first,
-    // as when the integrated server goes away, half in TearDown's order: the session first, then
-    // the server), and the next one starts on a fresh handle. Every integrated server takes a fresh
-    // ephemeral port (StartAsync() with port 0), the physics world count returns to its baseline
-    // after every cycle, and threads and OS handles do not grow from cycle to cycle.
-    [Fact]
-    public async Task RepeatedLocalSessions_ReuseNothingStale_AndLeakNothing()
-    {
-        const int Cycles = 10;
-        long liveBaseline = PhysicsIntegrator.LiveCount;
-        List<int> ports = [];
-        List<(long Live, int Threads, int Handles)> samples = [];
-        for (int cycle = 0; cycle < Cycles; cycle++)
-        {
-            OnDemandLocalServerHandle handle = new(() => IntegratedLocalServerHandle
-                .StartAsync(0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null))
-                .AsTask().GetAwaiter().GetResult());
-            NetworkSessionCoordinator coordinator = new(handle, new RemoteSessionConnector());
-            ClientConnectionOptions options = coordinator.ResolveInitialOptions(new ClientConnectionOptions("127.0.0.1", "7777", $"w9-cycle-{cycle}"));
-            Assert.True(handle.IsReady, handle.ErrorMessage);
-            Assert.Equal(handle.BoundPort.ToString(), options.PortText);
-            ports.Add(handle.BoundPort);
-
-            coordinator.BeginConnect(options);
-            await coordinator.WaitForPendingConnectionAsync().WaitAsync(Deadline);
-            Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session), coordinator.StatusMessage);
-            await WaitUntilAsync(() => session!.IsJoined, "the join");
-            Assert.True(PhysicsIntegrator.LiveCount > liveBaseline, "the running server's world is not counted");
-            long frames = session!.InboundFrameCount;
-            await WaitUntilAsync(() => session.InboundFrameCount > frames + 3, "snapshots");
-
-            if (cycle % 2 == 0)
-            {
-                // The server goes away first; the session notices and ends with a reason.
-                await handle.DisposeAsync();
-                await WaitUntilAsync(() => !session.IsConnected, "the session end");
-                Assert.NotNull(session.DisconnectReason);
-                await session.DisposeAsync();
-            }
-            else
-            {
-                // TearDown's order: the scene (which owns the session), then the server.
-                IReadOnlyList<Exception> failures = PlaySessionEndTransition.TearDown(new SessionScene(session), handle);
-                Assert.Empty(failures);
-            }
-
-            ForceCollection();
-            using Process process = Process.GetCurrentProcess();
-            process.Refresh();
-            samples.Add((PhysicsIntegrator.LiveCount, process.Threads.Count, process.HandleCount));
-            _output.WriteLine($"cycle {cycle}: port {ports[^1]}, live integrators {samples[^1].Live} (baseline {liveBaseline}), threads {samples[^1].Threads}, handles {samples[^1].Handles}");
-            Assert.Equal(liveBaseline, PhysicsIntegrator.LiveCount);
-        }
-
-        Assert.Equal(Cycles, ports.Distinct().Count());
-        // Warm-up (pools, the JIT, the first socket) is over after a few cycles; from there on
-        // nothing may grow with the number of cycles.
-        int threadGrowth = samples[^1].Threads - samples[3].Threads;
-        int handleGrowth = samples[^1].Handles - samples[3].Handles;
-        _output.WriteLine($"cycles 3..{Cycles - 1}: thread growth {threadGrowth}, handle growth {handleGrowth}");
-        Assert.True(threadGrowth <= 8, $"threads grew by {threadGrowth}");
-        Assert.True(handleGrowth <= 60, $"handles grew by {handleGrowth}");
     }
 
     // W9-3: TearDown runs on the render thread. An integrated server whose tick is stuck (the case
@@ -295,7 +233,7 @@ public class Wave9SessionLifecycleLoopbackTests
         }
     }
 
-    private static void ForceCollection()
+    internal static void ForceCollection()
     {
         for (int i = 0; i < 3; i++)
         {
@@ -304,7 +242,7 @@ public class Wave9SessionLifecycleLoopbackTests
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, string what)
+    internal static async Task WaitUntilAsync(Func<bool> condition, string what)
     {
         DateTime deadline = DateTime.UtcNow + Deadline;
         while (!condition())
@@ -315,7 +253,7 @@ public class Wave9SessionLifecycleLoopbackTests
     }
 
     // Stands in for PlayScene: its Dispose disposes the network session it owns.
-    private sealed class SessionScene(RemoteClientSession session) : IDisposable
+    internal sealed class SessionScene(RemoteClientSession session) : IDisposable
     {
         public void Dispose()
         {
@@ -353,4 +291,88 @@ public class Wave9SessionLifecycleLoopbackTests
             return new(disposal);
         }
     }
+}
+
+// The leak test of Wave9SessionLifecycleLoopbackTests: it reads PhysicsIntegrator.LiveCount and the
+// process's thread and handle counts, which any other test running at the same time would move,
+// so it runs alone (TimingSensitive).
+[Collection(TimingSensitiveCollection.Name)]
+public class Wave9SessionLeakLoopbackTests
+{
+    private static readonly TimeSpan Deadline = Wave9SessionLifecycleLoopbackTests.Deadline;
+
+    private readonly ITestOutputHelper _output;
+
+    public Wave9SessionLeakLoopbackTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    // Game's local cycle, ten times: each local session ends (half with the server stopping first,
+    // as when the integrated server goes away, half in TearDown's order: the session first, then
+    // the server), and the next one starts on a fresh handle. Every integrated server takes a fresh
+    // ephemeral port (StartAsync() with port 0), the physics world count returns to its baseline
+    // after every cycle, and threads and OS handles do not grow from cycle to cycle.
+    [Fact]
+    public async Task RepeatedLocalSessions_ReuseNothingStale_AndLeakNothing()
+    {
+        const int Cycles = 10;
+        long liveBaseline = PhysicsIntegrator.LiveCount;
+        List<int> ports = [];
+        List<(long Live, int Threads, int Handles)> samples = [];
+        for (int cycle = 0; cycle < Cycles; cycle++)
+        {
+            OnDemandLocalServerHandle handle = new(() => IntegratedLocalServerHandle
+                .StartAsync(0, () => DedicatedServerHost.CreateRuntimeAttached(persistence: null))
+                .AsTask().GetAwaiter().GetResult());
+            NetworkSessionCoordinator coordinator = new(handle, new RemoteSessionConnector());
+            ClientConnectionOptions options = coordinator.ResolveInitialOptions(new ClientConnectionOptions("127.0.0.1", "7777", $"w9-cycle-{cycle}"));
+            Assert.True(handle.IsReady, handle.ErrorMessage);
+            Assert.Equal(handle.BoundPort.ToString(), options.PortText);
+            ports.Add(handle.BoundPort);
+
+            coordinator.BeginConnect(options);
+            await coordinator.WaitForPendingConnectionAsync().WaitAsync(Deadline);
+            Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session), coordinator.StatusMessage);
+            await WaitUntilAsync(() => session!.IsJoined, "the join");
+            Assert.True(PhysicsIntegrator.LiveCount > liveBaseline, "the running server's world is not counted");
+            long frames = session!.InboundFrameCount;
+            await WaitUntilAsync(() => session.InboundFrameCount > frames + 3, "snapshots");
+
+            if (cycle % 2 == 0)
+            {
+                // The server goes away first; the session notices and ends with a reason.
+                await handle.DisposeAsync();
+                await WaitUntilAsync(() => !session.IsConnected, "the session end");
+                Assert.NotNull(session.DisconnectReason);
+                await session.DisposeAsync();
+            }
+            else
+            {
+                // TearDown's order: the scene (which owns the session), then the server.
+                IReadOnlyList<Exception> failures = PlaySessionEndTransition.TearDown(new Wave9SessionLifecycleLoopbackTests.SessionScene(session), handle);
+                Assert.Empty(failures);
+            }
+
+            ForceCollection();
+            using Process process = Process.GetCurrentProcess();
+            process.Refresh();
+            samples.Add((PhysicsIntegrator.LiveCount, process.Threads.Count, process.HandleCount));
+            _output.WriteLine($"cycle {cycle}: port {ports[^1]}, live integrators {samples[^1].Live} (baseline {liveBaseline}), threads {samples[^1].Threads}, handles {samples[^1].Handles}");
+            Assert.Equal(liveBaseline, PhysicsIntegrator.LiveCount);
+        }
+
+        Assert.Equal(Cycles, ports.Distinct().Count());
+        // Warm-up (pools, the JIT, the first socket) is over after a few cycles; from there on
+        // nothing may grow with the number of cycles.
+        int threadGrowth = samples[^1].Threads - samples[3].Threads;
+        int handleGrowth = samples[^1].Handles - samples[3].Handles;
+        _output.WriteLine($"cycles 3..{Cycles - 1}: thread growth {threadGrowth}, handle growth {handleGrowth}");
+        Assert.True(threadGrowth <= 8, $"threads grew by {threadGrowth}");
+        Assert.True(handleGrowth <= 60, $"handles grew by {handleGrowth}");
+    }
+
+    private static void ForceCollection() => Wave9SessionLifecycleLoopbackTests.ForceCollection();
+
+    private static Task WaitUntilAsync(Func<bool> condition, string what) => Wave9SessionLifecycleLoopbackTests.WaitUntilAsync(condition, what);
 }

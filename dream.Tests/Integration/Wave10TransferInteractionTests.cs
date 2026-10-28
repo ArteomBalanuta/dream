@@ -24,7 +24,10 @@ namespace Dream.Tests.Integration;
 //  - SCALE-1 x NETR-8: a takeover while the old connection's world transfer is unfinished.
 //  - SCALE-1 x ID-1: a CubeIdentified produced while the join world is still in flight.
 //  - SCALE-1 x NETR-1: overflow resyncs requested while a transfer is in flight.
-[Collection(TimingSensitiveCollection.Name)]
+// ARCH-1c: nothing here reads process-wide state or measures the clock against a budget. The
+// overflow test plays 8 s of a slow link in real time and waits on progress, so it needs a
+// responsive thread pool, not the machine to itself: the class runs in the real-time lane
+// (TestScheduling.RealTimeClasses), one collection per test, instead of the serial phase.
 public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
 {
     private static readonly FieldInfo ActiveTransferField =

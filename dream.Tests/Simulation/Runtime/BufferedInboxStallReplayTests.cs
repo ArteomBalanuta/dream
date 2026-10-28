@@ -6,6 +6,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -144,7 +145,12 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
         return new Vector2(delta.X, delta.Z).Length;
     }
 
-    private static Vector3 FindOpenFacing(bool walkerIsPrimary)
+    // Once per seat for the class (ARCH-1c): the probe is deterministic set-up.
+    private static readonly ProbeCache<bool, Vector3> OpenFacings = new(ProbeOpenFacing);
+
+    private static Vector3 FindOpenFacing(bool walkerIsPrimary) => OpenFacings.Get(walkerIsPrimary);
+
+    private static Vector3 ProbeOpenFacing(bool walkerIsPrimary)
     {
         // The startup terrain blocks some directions; walk along the most open axis.
         int ticks = WalkTicks + StallTicks + 16;
