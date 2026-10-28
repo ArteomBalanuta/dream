@@ -45,7 +45,10 @@ public class DisposeRobustnessStructuralTests
     public void AnimatedModel_AlwaysAppliesAMaterial_IncludingDefaultForMissingIndex()
     {
         string source = Read("dream/Rendering/Models/AnimatedModel.cs");
-        Assert.Equal(2, Regex.Matches(source, @"SetMaterialProperties\(shader, ResolveMaterial\(primitive\.MaterialIndex\)\)").Count);
+        // Each draw path (plain and instanced) resolves the primitive's material, falling back to
+        // the default, and applies it to the program that draws the primitive.
+        Assert.Equal(2, Regex.Matches(source, @"MaterialData material = ResolveMaterial\(primitive\.MaterialIndex\);").Count);
+        Assert.Equal(2, Regex.Matches(source, @"SetMaterialProperties\(program, material\);").Count);
         Assert.DoesNotContain("if (TryGetMaterial(primitive.MaterialIndex", source);
         Assert.Contains("TryGetMaterial(materialIndex, out MaterialData? material) ? material : DefaultMaterial", source);
         Assert.Matches(new Regex(@"DefaultMaterial = new\(\)\s*\{[^}]*BaseColorFactor = Vector4\.One"), source);
