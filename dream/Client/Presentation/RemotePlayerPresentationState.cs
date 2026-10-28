@@ -1,3 +1,5 @@
+using Dream.Simulation.Inventory;
+
 namespace Dream.Client.Presentation;
 
 public readonly record struct RemotePlayerPresentationState(
@@ -8,4 +10,5 @@ public readonly record struct RemotePlayerPresentationState(
     int CurrentHealth,
     int MaxHealth,
     bool IsAlive,
-    bool IsMoving = false);
+    bool IsMoving = false,
+    HeldLightKind HeldLight = HeldLightKind.None);

@@ -9,5 +9,8 @@ public readonly record struct StaticTerrainMaterial(
     Vector4 BaseColor,
     string TexturePath)
 {
+    // Linear RGB added after exposure and before fog (cubeFragment.glsl). Zero means not emissive.
+    public Vector3 Emissive { get; init; }
+
     public bool HasTexture => !string.IsNullOrWhiteSpace(TexturePath);
 }

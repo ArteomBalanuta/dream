@@ -6,4 +6,5 @@ public readonly record struct ToolDefinition(
     string Description,
     string VisualId,
     IReadOnlyList<string> DetailLines,
-    ToolStatModifier StatModifier);
+    ToolStatModifier StatModifier,
+    HeldLightKind HeldLight = HeldLightKind.None);
