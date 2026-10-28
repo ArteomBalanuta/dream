@@ -82,7 +82,7 @@ public partial class Map
         int x = key.X;
         int y = key.Y;
         int z = key.Z;
-        _geometryCells.Remove(key);
+        RemoveGeometryCell(key);
         _renderBlocksByCell.Remove(key);
         _collisionBodiesByCell.Remove(key);
         _staticPhysicsCells.Remove(key);
@@ -174,7 +174,7 @@ public partial class Map
             _physicsBinder.TryMoveCompatibilityCubeBody(cube, oldKey, newKey, position);
         bool rebuildPhysics = syncPhysics && _physicsBinder != null && !bodyMoved;
 
-        _geometryCells.Remove(oldKey);
+        RemoveGeometryCell(oldKey);
         _renderBlocksByCell.Remove(oldKey, out IReadOnlyList<GeometryRenderBlockDescriptor>? movedRenderBlocks);
         _collisionBodiesByCell.Remove(oldKey, out IReadOnlyList<GeometryCollisionBodyDescriptor>? movedCollisionBodies);
         _staticPhysicsCells.Remove(oldKey);
@@ -192,7 +192,7 @@ public partial class Map
             oldCell.SubdivisionState,
             oldCell.FracturePieces);
 
-        _geometryCells[newKey] = movedCell;
+        SetGeometryCell(newKey, movedCell);
         _cubeCells[cube] = newKey;
         Cubes[newKey.X, newKey.Y, newKey.Z] = cube;
         if (!syncPhysics)
@@ -230,7 +230,11 @@ public partial class Map
                 RemovedCells: Array.Empty<GeometryCellKey>());
         }
 
+        // The first carve activates the record's subdivision in place, which takes an intact solid
+        // cube out of the world checksum; re-hash the record around the change.
+        UntrackChecksum(record);
         GeometryMutationResult result = _geometryMutations.SetChildSolid(record, child, isSolid);
+        TrackChecksum(record);
         foreach (GeometryCellKey dirtyCell in result.ChangedCells)
         {
             RebuildGeometryCellArtifacts(dirtyCell, syncPhysics: _physicsBinder != null);
@@ -252,10 +256,10 @@ public partial class Map
             return true;
         }
 
-        _geometryCells[cell] = _generator.CreateGeometryCell(
+        SetGeometryCell(cell, _generator.CreateGeometryCell(
             new Vector3(cell.X, cell.Y, cell.Z),
             isFloor: false,
-            existingCell.Definition.MaterialId);
+            existingCell.Definition.MaterialId));
         RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         return true;
     }
@@ -289,7 +293,7 @@ public partial class Map
 
                 if (_geometryCells.ContainsKey(generatedCell.Key))
                 {
-                    _geometryCells[generatedCell.Key] = generatedCell;
+                    SetGeometryCell(generatedCell.Key, generatedCell);
                     RebuildGeometryCellArtifacts(generatedCell.Key, syncPhysics: _physicsBinder != null);
                     restoredCount++;
                     continue;
@@ -322,7 +326,7 @@ public partial class Map
         int y = geometryCell.Key.Y;
         int z = geometryCell.Key.Z;
         Cubes[x, y, z] = cube;
-        _geometryCells[geometryCell.Key] = geometryCell;
+        SetGeometryCell(geometryCell.Key, geometryCell);
         _cubeCells[cube] = geometryCell.Key;
         _solidCubes.Add(cube);
         if (y > 0)

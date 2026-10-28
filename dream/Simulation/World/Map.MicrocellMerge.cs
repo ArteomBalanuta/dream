@@ -25,6 +25,11 @@ public partial class Map
 
     private void RebuildMergedStaticSubcellRenderBlocks()
     {
+        if (IsHeadless)
+        {
+            return;
+        }
+
         GeometryCellRecord[] records = _geometryCells.Values
             .Where(ShouldUseMergedSubcellRender)
             .ToArray();

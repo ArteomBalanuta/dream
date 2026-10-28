@@ -95,9 +95,11 @@ public sealed partial class WorldSessionRuntime : IDisposable
         CombatFormulaService? combatFormulaService = null,
         IPersistenceCheckpointWriter? checkpointWriter = null,
         PersistenceWriteQueue? persistenceWrites = null,
-        ulong simulationSeed = DefaultSimulationSeed)
+        ulong simulationSeed = DefaultSimulationSeed,
+        bool headlessMap = true)
     {
         SimulationSeed = simulationSeed;
+        _headlessMap = headlessMap;
         _writes = persistenceWrites ??
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _events = events;
@@ -136,13 +138,20 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     public ulong LastWorldMutationSequence { get; private set; }
 
+    // The runtime is the authoritative server's simulation and never renders (clients render their
+    // own ClientWorldSession map), so its map is headless by default: it skips render block
+    // descriptors, merged render blocks and render-dirty tracking. headlessMap: false keeps them,
+    // for tests that inspect the server map's render export.
+    private readonly bool _headlessMap;
+
     private Map CreateMap(int floorSize)
     {
         return new Map(
             Physics,
             generateStartupTerrain: true,
             width: floorSize,
-            depth: floorSize);
+            depth: floorSize,
+            headless: _headlessMap);
     }
 
     public PhysicsIntegrator Physics { get; }

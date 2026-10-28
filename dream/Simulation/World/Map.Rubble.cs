@@ -128,7 +128,7 @@ public partial class Map
         Cube? compatibilityCube = Cubes[cell.X, cell.Y, cell.Z];
         if (compatibilityCube == null || !RemoveCube(compatibilityCube))
         {
-            _geometryCells.Remove(cell);
+            RemoveGeometryCell(cell);
             RebuildGeometryCellArtifacts(cell, syncPhysics: _physicsBinder != null);
         }
 
@@ -165,7 +165,7 @@ public partial class Map
 
     public bool RemoveRubble(GeometryCellKey cell)
     {
-        if (!_rubbleCells.Remove(cell))
+        if (!RemoveRubbleCell(cell))
         {
             return false;
         }
@@ -198,14 +198,18 @@ public partial class Map
         }
 
         rubble.SetFracturePieces(pieces);
-        _rubbleCells[cell] = rubble;
+        SetRubbleCell(cell, rubble);
         RebuildRubbleArtifacts(cell, syncPhysics);
     }
 
     private void RebuildRubbleArtifacts(GeometryCellKey cell, bool syncPhysics)
     {
         _checkpointDirtyRubbleCells?.Add(cell);
-        _pendingRenderDirtyCells.Add(cell);
+        if (!IsHeadless)
+        {
+            _pendingRenderDirtyCells.Add(cell);
+        }
+
         _pendingCollisionDirtyCells.Add(cell);
         if (!_rubbleCells.TryGetValue(cell, out GeometryCellRecord? rubble))
         {
@@ -219,9 +223,13 @@ public partial class Map
             return;
         }
 
-        _rubbleRenderBlocks.TryGetValue(cell, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousBlocks);
+        if (!IsHeadless)
+        {
+            _rubbleRenderBlocks.TryGetValue(cell, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousBlocks);
+            _rubbleRenderBlocks[cell] = BuildRenderBlocks(rubble, previousBlocks);
+        }
+
         _rubbleCollisionBodies.TryGetValue(cell, out IReadOnlyList<GeometryCollisionBodyDescriptor>? previousBodies);
-        _rubbleRenderBlocks[cell] = BuildRenderBlocks(rubble, previousBlocks);
         IReadOnlyList<GeometryCollisionBodyDescriptor> bodies = BuildCollisionBodies(rubble, previousBodies);
         _rubbleCollisionBodies[cell] = bodies;
         if (syncPhysics)

@@ -32,12 +32,14 @@ public partial class Map
             return;
         }
 
-        _renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousRenderBlocks);
-        _collisionBodiesByCell.TryGetValue(key, out IReadOnlyList<GeometryCollisionBodyDescriptor>? previousCollisionBodies);
-        IReadOnlyList<GeometryRenderBlockDescriptor> renderBlocks = BuildRenderBlocks(geometryCell, previousRenderBlocks);
-        IReadOnlyList<GeometryCollisionBodyDescriptor> collisionBodies = BuildCollisionBodies(geometryCell, previousCollisionBodies);
+        if (!IsHeadless)
+        {
+            _renderBlocksByCell.TryGetValue(key, out IReadOnlyList<GeometryRenderBlockDescriptor>? previousRenderBlocks);
+            _renderBlocksByCell[key] = BuildRenderBlocks(geometryCell, previousRenderBlocks);
+        }
 
-        _renderBlocksByCell[key] = renderBlocks;
+        _collisionBodiesByCell.TryGetValue(key, out IReadOnlyList<GeometryCollisionBodyDescriptor>? previousCollisionBodies);
+        IReadOnlyList<GeometryCollisionBodyDescriptor> collisionBodies = BuildCollisionBodies(geometryCell, previousCollisionBodies);
         _collisionBodiesByCell[key] = collisionBodies;
         MarkRenderDirty(key);
         _pendingCollisionDirtyCells.Add(key);
@@ -194,6 +196,11 @@ public partial class Map
     // contributed before and after, so removing or converting static content still invalidates it.
     private void MarkRenderDirty(GeometryCellKey key)
     {
+        if (IsHeadless)
+        {
+            return;
+        }
+
         _pendingRenderDirtyCells.Add(key);
         bool wasStatic = _staticRenderCells.Contains(key);
         bool isStatic = _geometryCells.TryGetValue(key, out GeometryCellRecord? record) &&

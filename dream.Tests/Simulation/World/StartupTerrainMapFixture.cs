@@ -17,7 +17,7 @@ public sealed class StartupTerrainMapFixture : IDisposable
     {
         Map = new Map(width: 56, height: 8, depth: 56, generateStartupTerrain: true);
         _builtStaticContentVersion = Map.StaticContentVersion;
-        _builtChecksum = WorldStateChecksum.Compute(Map);
+        _builtChecksum = WorldStateChecksum.ComputeFull(Map);
         _builtCellCount = Map.GeometryCells.Count;
     }
 
@@ -27,6 +27,6 @@ public sealed class StartupTerrainMapFixture : IDisposable
     {
         Assert.Equal(_builtStaticContentVersion, Map.StaticContentVersion);
         Assert.Equal(_builtCellCount, Map.GeometryCells.Count);
-        Assert.Equal(_builtChecksum, WorldStateChecksum.Compute(Map));
+        Assert.Equal(_builtChecksum, WorldStateChecksum.ComputeFull(Map));
     }
 }
