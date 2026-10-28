@@ -3,6 +3,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
@@ -268,12 +269,17 @@ public class Wave9StarvedTickAckTests
     private static Vector3 Position(WorldSessionRuntime runtime) =>
         Assert.Single(runtime.CaptureActorSnapshots(), actor => actor.SessionId == Session).Position;
 
-    // A facing whose 40-tick walk stays on the floor and is not blocked.
-    private static Vector3 OpenFacing(WorldSessionRuntime template)
+    // A facing whose 40-tick walk stays on the floor and is not blocked. It depends only on the
+    // floor size, so it is probed once per size for the class (ARCH-1c).
+    private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeOpenFacing);
+
+    private static Vector3 OpenFacing(WorldSessionRuntime template) => OpenFacings.Get(template.Map.Width);
+
+    private static Vector3 ProbeOpenFacing(int floorSize)
     {
         foreach (Vector3 facing in new[] { Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitX, -Vector3.UnitZ })
         {
-            WorldSessionRuntime probe = new(template.Map.Width, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+            WorldSessionRuntime probe = new(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             using RuntimeAuthoritativeSessionHost host = new(probe);
             host.JoinSession(Session, Session);
             probe.Enemies.Clear();

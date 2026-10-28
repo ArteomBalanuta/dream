@@ -14,6 +14,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Integration;
 
@@ -185,8 +186,13 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
     }
 
     // The startup terrain blocks some directions; walk along the most open one, probed on the
-    // same startup world the server runs.
-    private static Vector3 MostOpenFacing(int floorSize)
+    // same startup world the server runs. Probed once per floor size for the class (ARCH-1c): the
+    // probe is deterministic set-up, and both stall tests ask for the same one.
+    private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeMostOpenFacing);
+
+    private static Vector3 MostOpenFacing(int floorSize) => OpenFacings.Get(floorSize);
+
+    private static Vector3 ProbeMostOpenFacing(int floorSize)
     {
         const int ProbeTicks = WalkTicksBeforeStall + StallTicks + TicksAfterStall + 16;
         return new[] { Vector3.UnitZ, -Vector3.UnitZ, Vector3.UnitX, -Vector3.UnitX }

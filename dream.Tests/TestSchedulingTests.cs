@@ -119,6 +119,50 @@ public class TestSchedulingTests
     public void The_Running_Gate_Stays_Within_The_Pool_Minimum()
     {
         Assert.InRange(TestScheduling.MaxRunningCollections, 1, Environment.ProcessorCount * TestAssemblyInitializer.ThreadsPerCore);
+        Assert.InRange(TestScheduling.WidenedRunningCollections, TestScheduling.MaxRunningCollections, Environment.ProcessorCount * TestAssemblyInitializer.ThreadsPerCore);
+    }
+
+    // After the real-time lane drains the gate widens to one slot per logical CPU, never below the
+    // normal count and never past the pool minimum; a configured count is kept for the whole run.
+    [Theory]
+    [InlineData(null, 16, 16)]
+    [InlineData("", 16, 16)]
+    [InlineData("abc", 16, 16)]
+    [InlineData("0", 16, 16)]
+    [InlineData("8", 16, 8)]
+    [InlineData("64", 16, 64)]
+    [InlineData(null, 64, 64)]
+    [InlineData(null, 2, 4)]
+    [InlineData(null, 1, 4)]
+    public void WidenedRunningCollections_Is_One_Per_Cpu_Unless_Configured(string? configured, int processorCount, int expected)
+    {
+        int widened = TestScheduling.ResolveWidenedRunningCollections(configured, processorCount);
+
+        Assert.Equal(expected, widened);
+        Assert.InRange(widened, TestScheduling.ResolveMaxRunningCollections(configured, processorCount), processorCount * TestAssemblyInitializer.ThreadsPerCore);
+    }
+
+    // AddSlots admits queued waiters in priority order first and keeps the rest of the slots free.
+    [Fact]
+    public void OrderedGate_AddSlots_Admits_Waiters_By_Priority_Then_Frees_The_Rest()
+    {
+        TestScheduling.OrderedGate gate = new(1);
+        Assert.True(gate.EnterAsync(0).IsCompleted);
+        Task late = gate.EnterAsync(5);
+        Task early = gate.EnterAsync(1);
+        Task last = gate.EnterAsync(9);
+
+        gate.AddSlots(2);
+
+        Assert.True(early.IsCompleted);
+        Assert.True(late.IsCompleted);
+        Assert.False(last.IsCompleted);
+
+        gate.AddSlots(2);
+
+        Assert.True(last.IsCompleted);
+        Assert.True(gate.EnterAsync(0).IsCompleted);
+        Assert.False(gate.EnterAsync(0).IsCompleted);
     }
 
     // xUnit's own discovery, as the runner does it: the default (collection per class) factory

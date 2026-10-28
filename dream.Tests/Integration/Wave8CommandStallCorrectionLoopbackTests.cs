@@ -14,6 +14,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Integration;
 
@@ -156,7 +157,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 : null);
         Assert.True(server.IsReady, server.ErrorMessage);
         int floorSize = host!.Runtime!.Map.Width;
-        Vector3 facing = MostOpenFacing(floorSize, sessionId);
+        Vector3 facing = OpenFacings.Get(floorSize);
 
         StallableTransport transport = new();
         RemoteClientSession session = await RemoteClientSession.ConnectAsync(
@@ -266,6 +267,12 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             return client.CreateReport(transport.Connection.SentCommandSequences(), session.MergedCommandCount);
         }
     }
+
+    // The probe walks a fresh runtime's first remote session, which always takes the primary seat at
+    // the runtime player's spawn: the walk depends on the floor size, not on the session id. So it
+    // runs once per floor size for every scenario of both classes (ARCH-1c) instead of building
+    // four startup-world runtimes in each of them, all at the start of the run.
+    private static readonly ProbeCache<int, Vector3> OpenFacings = new(floorSize => MostOpenFacing(floorSize, "w8-probe"));
 
     private static Vector3 MostOpenFacing(int floorSize, string sessionId)
     {
@@ -678,6 +685,11 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 // collection cannot hold a SplitClasses class, and serialising all of
 // Wave8CommandStallCorrectionLoopbackTests would add its ~77 s of real-time scenarios to the
 // serial phase; this test is ~19 s.
+//
+// ARCH-1c: the two rates run side by side, each on its own integrated server, instead of one after
+// the other. The serial phase leaves the machine to this test, so two real-time sessions still
+// never wait for a core, and both rates now see the same conditions. The facing probe comes from
+// the shared cache. About 7 s instead of 17-19 s of the serial phase.
 [Collection(TimingSensitiveCollection.Name)]
 public class Wave8SnapshotRateCorrectionLoopbackTests(ITestOutputHelper output)
 {
@@ -688,10 +700,13 @@ public class Wave8SnapshotRateCorrectionLoopbackTests(ITestOutputHelper output)
     public async Task SteadyPlay_At32HzSnapshots_CorrectsLikeAt64Hz()
     {
         Wave8CommandStallCorrectionLoopbackTests harness = new(output);
-        Wave8CommandStallCorrectionLoopbackTests.StallReport perTick =
-            await harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 1);
-        Wave8CommandStallCorrectionLoopbackTests.StallReport everyOther =
-            await harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 2);
+        Task<Wave8CommandStallCorrectionLoopbackTests.StallReport> perTickRun =
+            harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 1);
+        Task<Wave8CommandStallCorrectionLoopbackTests.StallReport> everyOtherRun =
+            harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 2);
+        await Task.WhenAll(perTickRun, everyOtherRun);
+        Wave8CommandStallCorrectionLoopbackTests.StallReport perTick = await perTickRun;
+        Wave8CommandStallCorrectionLoopbackTests.StallReport everyOther = await everyOtherRun;
         output.WriteLine(perTick.Describe("64 Hz snapshots"));
         output.WriteLine(everyOther.Describe("32 Hz snapshots"));
 

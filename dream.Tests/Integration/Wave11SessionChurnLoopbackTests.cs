@@ -23,79 +23,18 @@ namespace Dream.Tests.Integration;
 // To reach the LRU's eviction in a few hundred cycles, the churn tests swap the runtime's registry
 // for one with a small departed capacity before any client connects (the runtime reads the
 // registry only through its _sessions field, and the swap carries over its SessionForgotten hook).
-[Collection(TimingSensitiveCollection.Name)]
+// ARCH-1c: only the churn test that measures the tick (Wave11SessionChurnTickLoopbackTests below)
+// runs alone; these assert on the registry alone and run in the parallel pool, one collection each
+// (TestScheduling.SplitClasses).
 public class Wave11SessionChurnLoopbackTests
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
 
     private readonly ITestOutputHelper _output;
 
     public Wave11SessionChurnLoopbackTests(ITestOutputHelper output)
     {
         _output = output;
-    }
-
-    [Fact]
-    public async Task TwoHundredConnectDisconnectCycles_KeepTheRegistryBounded_AndTheTickFlat()
-    {
-        const int Cycles = 200;
-        const int BatchSize = 50;
-        const int MaxDeparted = 32;
-        await using LoopbackServer server = await LoopbackServer.StartAsync(MaxDeparted);
-        PlayerSessionRegistry registry = server.Runtime.Sessions;
-
-        // A primary stays connected, so every churning session takes a secondary seat and an id
-        // from the released-id pool.
-        await using RemoteClientSession primary = await server.JoinAsync("w11-primary");
-        int activeBaseline = registry.ActiveCount;
-        Assert.Equal(2, activeBaseline);
-
-        int maxCount = 0;
-        int maxActive = 0;
-        List<(double TickP50, double TickP99, double AdvanceP50, double AdvanceP99)> batches = [];
-        server.Service.CaptureMetrics(resetWindow: true);
-        for (int cycle = 0; cycle < Cycles; cycle++)
-        {
-            string sessionId = Guid.NewGuid().ToString("N");
-            RemoteClientSession session = await server.JoinAsync(sessionId);
-            maxActive = Math.Max(maxActive, registry.ActiveCount);
-            await session.DisposeAsync();
-            await server.WaitForDepartureAsync(sessionId);
-            await WaitUntilAsync(() => registry.ActiveCount == activeBaseline, "the active count to return to its baseline");
-            maxCount = Math.Max(maxCount, registry.Count);
-
-            if ((cycle + 1) % BatchSize == 0)
-            {
-                ServerMetricsSnapshot metrics = server.Service.CaptureMetrics(resetWindow: true);
-                batches.Add((
-                    metrics.Tick.TickWindow.P50Milliseconds,
-                    metrics.Tick.TickWindow.P99Milliseconds,
-                    metrics.Tick.AdvancePerTick.P50Milliseconds,
-                    metrics.Tick.AdvancePerTick.P99Milliseconds));
-                _output.WriteLine(
-                    $"cycles {cycle + 1 - BatchSize}..{cycle}: registry count {registry.Count} (active {registry.ActiveCount}, departed {registry.DepartedCount}), " +
-                    $"interaction modes {InteractionModeCount(server.Runtime)}, released ids {ReleasedActorIdCount(server.Runtime)}, next id {NextRemoteActorId(server.Runtime)}, " +
-                    $"tick p50 {batches[^1].TickP50:0.000} ms p99 {batches[^1].TickP99:0.000} ms, advance/tick p50 {batches[^1].AdvanceP50:0.000} ms p99 {batches[^1].AdvanceP99:0.000} ms");
-            }
-        }
-
-        _output.WriteLine($"max registry count {maxCount}, max active {maxActive}, diagnostics rate-limiter keys {RateLimiterKeyCount()}");
-
-        // Bounded: the active sessions plus at most MaxDeparted departed ones, whatever the churn.
-        Assert.Equal(MaxDeparted, registry.DepartedCount);
-        Assert.True(maxCount <= MaxDeparted + activeBaseline + 1, $"registry count reached {maxCount}");
-        Assert.True(maxActive <= activeBaseline + 1, $"active count reached {maxActive}");
-        // Actor ids are recycled, not minted per session.
-        Assert.True(NextRemoteActorId(server.Runtime) <= 4, $"next remote actor id {NextRemoteActorId(server.Runtime)}");
-        Assert.True(ReleasedActorIdCount(server.Runtime) <= 2, $"{ReleasedActorIdCount(server.Runtime)} released ids pooled");
-        Assert.True(RateLimiterKeyCount() <= NetworkDiagnosticsRateLimiter.MaxEntries);
-
-        // Flat tick: the last batch's median per-tick cost is no worse than twice the first's plus
-        // half a millisecond of noise (the joins' world transfers run on the tick in every batch).
-        double first = batches[0].AdvanceP50;
-        double last = batches[^1].AdvanceP50;
-        Assert.True(last <= (first * 2d) + 0.5d, $"advance per tick p50 grew from {first:0.000} ms to {last:0.000} ms");
-        Assert.True(primary.IsConnected, primary.DisconnectReason);
     }
 
     // The same session id comes back: while the registry remembers it, the join goes through its
@@ -215,22 +154,22 @@ public class Wave11SessionChurnLoopbackTests
         Assert.Equal(MaxDeparted, server.Runtime.Sessions.DepartedCount);
     }
 
-    private static int InteractionModeCount(WorldSessionRuntime runtime)
+    internal static int InteractionModeCount(WorldSessionRuntime runtime)
     {
         return ((System.Collections.ICollection)PrivateField(runtime, "_sessionInteractionModes")).Count;
     }
 
-    private static int ReleasedActorIdCount(WorldSessionRuntime runtime)
+    internal static int ReleasedActorIdCount(WorldSessionRuntime runtime)
     {
         return ((SortedSet<int>)PrivateField(runtime, "_releasedRemoteActorIds")).Count;
     }
 
-    private static int NextRemoteActorId(WorldSessionRuntime runtime)
+    internal static int NextRemoteActorId(WorldSessionRuntime runtime)
     {
         return (int)PrivateField(runtime, "_nextRemoteActorId");
     }
 
-    private static int RateLimiterKeyCount()
+    internal static int RateLimiterKeyCount()
     {
         FieldInfo field = typeof(NetworkDiagnosticsLog).GetField("RateLimiter", BindingFlags.NonPublic | BindingFlags.Static)!;
         return ((NetworkDiagnosticsRateLimiter)field.GetValue(null)!).Count;
@@ -243,7 +182,7 @@ public class Wave11SessionChurnLoopbackTests
         return field.GetValue(runtime)!;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, string what)
+    internal static async Task WaitUntilAsync(Func<bool> condition, string what)
     {
         DateTime deadline = DateTime.UtcNow + Deadline;
         while (!condition())
@@ -253,7 +192,7 @@ public class Wave11SessionChurnLoopbackTests
         }
     }
 
-    private sealed class LoopbackServer : IAsyncDisposable
+    internal sealed class LoopbackServer : IAsyncDisposable
     {
         private readonly CancellationTokenSource _shutdown = new();
         private Task _run = Task.CompletedTask;
@@ -346,4 +285,95 @@ public class Wave11SessionChurnLoopbackTests
             _shutdown.Dispose();
         }
     }
+}
+
+// The churn test of Wave11SessionChurnLoopbackTests that measures the tick: its last batch's
+// median tick cost is compared with its first, which only means something when nothing else runs,
+// so it runs alone (TimingSensitive).
+//
+// ARCH-1c: 100 cycles instead of 200. The LRU still fills after 32 departures and then evicts on
+// every one of the other 68 (the departed count is asserted to sit at its cap and the registry
+// count never to pass it), and the tick is still compared across two batches of 50 cycles.
+[Collection(TimingSensitiveCollection.Name)]
+public class Wave11SessionChurnTickLoopbackTests
+{
+    private readonly ITestOutputHelper _output;
+
+    public Wave11SessionChurnTickLoopbackTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [Fact]
+    public async Task HundredConnectDisconnectCycles_KeepTheRegistryBounded_AndTheTickFlat()
+    {
+        const int Cycles = 100;
+        const int BatchSize = 50;
+        const int MaxDeparted = 32;
+        await using Wave11SessionChurnLoopbackTests.LoopbackServer server = await Wave11SessionChurnLoopbackTests.LoopbackServer.StartAsync(MaxDeparted);
+        PlayerSessionRegistry registry = server.Runtime.Sessions;
+
+        // A primary stays connected, so every churning session takes a secondary seat and an id
+        // from the released-id pool.
+        await using RemoteClientSession primary = await server.JoinAsync("w11-primary");
+        int activeBaseline = registry.ActiveCount;
+        Assert.Equal(2, activeBaseline);
+
+        int maxCount = 0;
+        int maxActive = 0;
+        List<(double TickP50, double TickP99, double AdvanceP50, double AdvanceP99)> batches = [];
+        server.Service.CaptureMetrics(resetWindow: true);
+        for (int cycle = 0; cycle < Cycles; cycle++)
+        {
+            string sessionId = Guid.NewGuid().ToString("N");
+            RemoteClientSession session = await server.JoinAsync(sessionId);
+            maxActive = Math.Max(maxActive, registry.ActiveCount);
+            await session.DisposeAsync();
+            await server.WaitForDepartureAsync(sessionId);
+            await WaitUntilAsync(() => registry.ActiveCount == activeBaseline, "the active count to return to its baseline");
+            maxCount = Math.Max(maxCount, registry.Count);
+
+            if ((cycle + 1) % BatchSize == 0)
+            {
+                ServerMetricsSnapshot metrics = server.Service.CaptureMetrics(resetWindow: true);
+                batches.Add((
+                    metrics.Tick.TickWindow.P50Milliseconds,
+                    metrics.Tick.TickWindow.P99Milliseconds,
+                    metrics.Tick.AdvancePerTick.P50Milliseconds,
+                    metrics.Tick.AdvancePerTick.P99Milliseconds));
+                _output.WriteLine(
+                    $"cycles {cycle + 1 - BatchSize}..{cycle}: registry count {registry.Count} (active {registry.ActiveCount}, departed {registry.DepartedCount}), " +
+                    $"interaction modes {InteractionModeCount(server.Runtime)}, released ids {ReleasedActorIdCount(server.Runtime)}, next id {NextRemoteActorId(server.Runtime)}, " +
+                    $"tick p50 {batches[^1].TickP50:0.000} ms p99 {batches[^1].TickP99:0.000} ms, advance/tick p50 {batches[^1].AdvanceP50:0.000} ms p99 {batches[^1].AdvanceP99:0.000} ms");
+            }
+        }
+
+        _output.WriteLine($"max registry count {maxCount}, max active {maxActive}, diagnostics rate-limiter keys {RateLimiterKeyCount()}");
+
+        // Bounded: the active sessions plus at most MaxDeparted departed ones, whatever the churn.
+        Assert.Equal(MaxDeparted, registry.DepartedCount);
+        Assert.True(maxCount <= MaxDeparted + activeBaseline + 1, $"registry count reached {maxCount}");
+        Assert.True(maxActive <= activeBaseline + 1, $"active count reached {maxActive}");
+        // Actor ids are recycled, not minted per session.
+        Assert.True(NextRemoteActorId(server.Runtime) <= 4, $"next remote actor id {NextRemoteActorId(server.Runtime)}");
+        Assert.True(ReleasedActorIdCount(server.Runtime) <= 2, $"{ReleasedActorIdCount(server.Runtime)} released ids pooled");
+        Assert.True(RateLimiterKeyCount() <= NetworkDiagnosticsRateLimiter.MaxEntries);
+
+        // Flat tick: the last batch's median per-tick cost is no worse than twice the first's plus
+        // half a millisecond of noise (the joins' world transfers run on the tick in every batch).
+        double first = batches[0].AdvanceP50;
+        double last = batches[^1].AdvanceP50;
+        Assert.True(last <= (first * 2d) + 0.5d, $"advance per tick p50 grew from {first:0.000} ms to {last:0.000} ms");
+        Assert.True(primary.IsConnected, primary.DisconnectReason);
+    }
+
+    private static Task WaitUntilAsync(Func<bool> condition, string what) => Wave11SessionChurnLoopbackTests.WaitUntilAsync(condition, what);
+
+    private static int InteractionModeCount(WorldSessionRuntime runtime) => Wave11SessionChurnLoopbackTests.InteractionModeCount(runtime);
+
+    private static int ReleasedActorIdCount(WorldSessionRuntime runtime) => Wave11SessionChurnLoopbackTests.ReleasedActorIdCount(runtime);
+
+    private static int NextRemoteActorId(WorldSessionRuntime runtime) => Wave11SessionChurnLoopbackTests.NextRemoteActorId(runtime);
+
+    private static int RateLimiterKeyCount() => Wave11SessionChurnLoopbackTests.RateLimiterKeyCount();
 }

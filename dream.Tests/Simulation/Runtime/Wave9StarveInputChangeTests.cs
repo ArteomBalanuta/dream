@@ -3,6 +3,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
@@ -64,9 +65,9 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     public void InputChangeDuringAStarve_IsNotCorrectedBackAndForth(bool walkerIsPrimary, int snapshotIntervalTicks)
     {
         Vector3 facing = FindOpenFacing(walkerIsPrimary);
-        static float Forward(int tick) => tick > StartTick ? 1f : 0f;
-        List<ServerSample> predicted = Run(walkerIsPrimary, facing, Forward, stalled: false, Arrival.WithNewest);
-        List<ServerSample> server = Run(walkerIsPrimary, facing, Forward, stalled: true, Arrival.WithNewest);
+        static float Forward(int tick) => ForwardOf(Input.IdleThenWalk, tick);
+        List<ServerSample> predicted = SharedRun(walkerIsPrimary, facing, Input.IdleThenWalk, stalled: false, Arrival.WithNewest);
+        List<ServerSample> server = SharedRun(walkerIsPrimary, facing, Input.IdleThenWalk, stalled: true, Arrival.WithNewest);
 
         Assert.Equal(StallTicks, server[StartTick + StallTicks - 1].StarvedTicks);
 
@@ -99,9 +100,9 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     public void CarriedSkipDebt_IsCountedInStarvedTicks_AndNotCorrected(bool walkerIsPrimary, int snapshotIntervalTicks)
     {
         Vector3 facing = FindOpenFacing(walkerIsPrimary);
-        static float Forward(int tick) => 1f;
-        List<ServerSample> predicted = Run(walkerIsPrimary, facing, Forward, stalled: false, Arrival.WithNewest);
-        List<ServerSample> server = Run(walkerIsPrimary, facing, Forward, stalled: true, Arrival.WithoutNewest);
+        static float Forward(int tick) => ForwardOf(Input.Walk, tick);
+        List<ServerSample> predicted = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: false, Arrival.WithNewest);
+        List<ServerSample> server = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: true, Arrival.WithoutNewest);
 
         int resumeIndex = StartTick + StallTicks;
         ServerSample resumed = server[resumeIndex];
@@ -140,9 +141,9 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     public void CarriedSkipDebt_SpentByACatchUp_IsNeverCorrected(bool walkerIsPrimary, int snapshotIntervalTicks)
     {
         Vector3 facing = FindOpenFacing(walkerIsPrimary);
-        static float Forward(int tick) => 1f;
-        List<ServerSample> predicted = Run(walkerIsPrimary, facing, Forward, stalled: false, Arrival.WithNewest);
-        List<ServerSample> server = Run(walkerIsPrimary, facing, Forward, stalled: true, Arrival.WithoutNewestThenCatchUp);
+        static float Forward(int tick) => ForwardOf(Input.Walk, tick);
+        List<ServerSample> predicted = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: false, Arrival.WithNewest);
+        List<ServerSample> server = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: true, Arrival.WithoutNewestThenCatchUp);
 
         Assert.Equal(predicted[^1].Position, server[^1].Position);
         Assert.Equal(predicted[^1].Ack, server[^1].Ack);
@@ -399,11 +400,17 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
 
     private static float Horizontal(Vector3 delta) => new Vector2(delta.X, delta.Z).Length;
 
-    private static Vector3 FindOpenFacing(bool walkerIsPrimary)
+    // The probe's answer depends only on the seat, so it runs once per seat for the class
+    // (ARCH-1c: it built up to four runtimes in every one of the twelve theory cases).
+    private static readonly ProbeCache<bool, Vector3> OpenFacings = new(ProbeOpenFacing);
+
+    private static Vector3 FindOpenFacing(bool walkerIsPrimary) => OpenFacings.Get(walkerIsPrimary);
+
+    private static Vector3 ProbeOpenFacing(bool walkerIsPrimary)
     {
         foreach (Vector3 facing in new[] { Vector3.UnitX, -Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitZ })
         {
-            List<ServerSample> probe = Run(walkerIsPrimary, facing, static _ => 1f, stalled: false, Arrival.WithNewest);
+            List<ServerSample> probe = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: false, Arrival.WithNewest);
             Vector3 moved = probe[^1].Position - probe[0].Position;
             if (Horizontal(moved) > 2.5f && MathF.Abs(moved.Y) < 0.1f)
             {
@@ -413,6 +420,27 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
 
         throw new InvalidOperationException("No open walk from the spawn.");
     }
+
+    // The walker's input: idle at the ack and walking from the tick after it (S1), or walking
+    // throughout (S2, and the facing probe).
+    private enum Input
+    {
+        IdleThenWalk,
+        Walk,
+    }
+
+    private static float ForwardOf(Input input, int tick) => input == Input.Walk || tick > StartTick ? 1f : 0f;
+
+    // Run is deterministic in its inputs, and the theory cases differ in what they assert, not in
+    // what they simulate: both snapshot rates of a scenario reconcile the same two runs, S2 and S3
+    // share their prediction, and that prediction is the facing probe's walk. So each distinct run
+    // is simulated once for the class (ARCH-1c: 10 runtimes instead of up to 32). The lists are
+    // shared between tests and read only.
+    private static readonly ProbeCache<(bool WalkerIsPrimary, Vector3 Facing, Input Input, bool Stalled, Arrival Arrival), List<ServerSample>> Runs =
+        new(key => Run(key.WalkerIsPrimary, key.Facing, tick => ForwardOf(key.Input, tick), key.Stalled, key.Arrival));
+
+    private static List<ServerSample> SharedRun(bool walkerIsPrimary, Vector3 facing, Input input, bool stalled, Arrival arrival) =>
+        Runs.Get((walkerIsPrimary, facing, input, stalled, arrival));
 
     // The walker produces frame N on tick N. Unstalled, it arrives that tick. Stalled, frames
     // StartTick+1 .. StartTick+StallTicks are held and arrive on the tick after the last of them,

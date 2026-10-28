@@ -36,6 +36,15 @@ namespace Dream.Tests;
 //
 // Measured on 16 logical CPUs (Debug): 78.6 s of test time before, about 37 s after, with the
 // parallel phase CPU-bound (testhost CPU ~360-410 s). Server GC no longer makes a difference.
+//
+// ARCH-1c (wave 12): waves 10-11 grew the suite back to about 110 s. The parallel phase ended on
+// unsplit classes that started late (Wave9StarveInputChangeTests alone ran 27-43 s serially; it
+// now simulates each distinct run once), and
+// the serial TimingSensitive phase had grown to about 50 s. Those classes are split and ranked
+// below; the serial phase keeps only what reads process-wide state or measures the clock. The
+// gate also widens to one slot per logical CPU once every real-time collection has finished: the
+// quarter of the machine it held back was there for them, and after them the parallel phase is
+// CPU-bound collections only, so those cores sat idle for the rest of the phase.
 public static class TestScheduling
 {
     // Classes whose test cases each run as their own collection; see the header. Measured alone
@@ -74,6 +83,20 @@ public static class TestScheduling
         "Dream.Tests.Server.LiveServerDeferredJoinLoopbackTests",
         "Dream.Tests.Server.WorldResyncDeferralTests",
         "Dream.Tests.Rendering.World.StaticWorldChunkRendererUploadPipelineTests",
+        // ARCH-1c: long classes from waves 9-11, each test independent (no shared mutable static
+        // state, no fixture; the facing probes they share are deterministic and cached).
+        // Wave9StarveInputChangeTests is deliberately not here: its theory cases now share their
+        // simulated runs, so split they would mostly hold slots waiting on each other; unsplit it
+        // is one collection of a few seconds, ranked early in LongestFirst.
+        "Dream.Tests.Simulation.Runtime.Wave9StarvedTickAckTests",
+        "Dream.Tests.Integration.WorldTransferLoopbackTests",
+        "Dream.Tests.Server.StaleSessionTakeoverTests",
+        "Dream.Tests.Simulation.Physics.CubeRestFreezerTests",
+        "Dream.Tests.Integration.SnapshotIntervalLoopbackTests",
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
+        "Dream.Tests.Integration.Wave9SessionLifecycleLoopbackTests",
+        "Dream.Tests.Integration.Wave11SessionChurnLoopbackTests",
+        "Dream.Tests.Multiplayer.Protocol.WorldTransferProtocolTests",
     };
 
     // Classes whose tests run a real-time loop and assert on how it went: a headless client that
@@ -88,6 +111,8 @@ public static class TestScheduling
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
         "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Integration.ClientCommandStallLoopbackTests",
+        // ARCH-1c: 8 s of a slow link played in real time (it was in the serial phase).
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
     };
 
     // The collections that took longest in a full parallel run (after splitting; a split class at
@@ -102,9 +127,12 @@ public static class TestScheduling
         "Dream.Tests.Integration.ClientCommandStallLoopbackTests",
         "Dream.Tests.Integration.AnimatedModelPoseSharpGltfKeyframeParityShard0IntegrationTests",
         "Dream.Tests.Client.Replication.ClientReplayReconciliationTests",
+        "Dream.Tests.Simulation.Runtime.Wave9StarveInputChangeTests",
         "Dream.Tests.Multiplayer.Transport.MultiClientLoopbackSmokeTests",
         "Dream.Tests.Integration.Wave8IdleTimeoutClientStallLoopbackTests",
         "Dream.Tests.Simulation.Runtime.BufferedInboxStallReplayTests",
+        "Dream.Tests.Integration.WorldTransferLoopbackTests",
+        "Dream.Tests.Integration.Wave10TransferInteractionTests",
         "Dream.Tests.Integration.AnimatedModelPoseSharpGltfKeyframeParityShard2IntegrationTests",
         "Dream.Tests.Integration.AnimatedModelPoseSharpGltfPlaybackParityIntegrationTests",
         "Dream.Tests.Integration.Wave7LateJoinFractureResyncLoopbackTests",
@@ -112,6 +140,10 @@ public static class TestScheduling
         "Dream.Tests.Server.Persistence.PersistenceWriteQueueLockRetryTests",
         "Dream.Tests.Server.Persistence.ShutdownDrainDeadlineTests",
         "Dream.Tests.Client.Replication.ClientJoinAcceptedSubcellApplierTests",
+        "Dream.Tests.Client.Networking.RemoteClientSessionJoinTests",
+        "Dream.Tests.Simulation.Runtime.Wave9StarvedTickAckTests",
+        "Dream.Tests.Integration.SnapshotIntervalLoopbackTests",
+        "Dream.Tests.Multiplayer.Protocol.WorldTransferProtocolTests",
         "Dream.Tests.Integration.CoalesceOverflowResyncLoopbackTests",
         "Dream.Tests.Integration.PresentationExportAliasingIntegrationTests",
         "Dream.Tests.Integration.Wave7FloorCubeChecksumLoopbackTests",
@@ -205,21 +237,38 @@ public static class TestScheduling
     {
         private readonly OrderedGate _gate = new(MaxRunningCollections);
         private Dictionary<string, int> _order = [];
+        private int _realTimeRemaining;
 
         protected override Task<RunSummary> RunTestCollectionsAsync(IMessageBus messageBus, CancellationTokenSource cancellationTokenSource)
         {
-            _order = OrderTestCollections()
-                .Select((pair, index) => (pair.Item1.UniqueID, index))
+            List<ITestCollection> ordered = OrderTestCollections().Select(pair => pair.Item1).ToList();
+            _order = ordered
+                .Select((collection, index) => (collection.UniqueID, index))
                 .ToDictionary(entry => entry.UniqueID.ToString("N"), entry => entry.index);
+            _realTimeRemaining = ordered.Count(IsRealTime);
+            if (_realTimeRemaining == 0)
+            {
+                WidenGate();
+            }
+
             return base.RunTestCollectionsAsync(messageBus, cancellationTokenSource);
         }
 
         protected override async Task<RunSummary> RunTestCollectionAsync(IMessageBus messageBus, ITestCollection testCollection, IEnumerable<IXunitTestCase> testCases, CancellationTokenSource cancellationTokenSource)
         {
-            string? className = ClassOf(testCollection);
-            if (className != null && RealTimeClasses.Contains(className))
+            if (IsRealTime(testCollection))
             {
-                return await base.RunTestCollectionAsync(messageBus, testCollection, testCases, cancellationTokenSource);
+                try
+                {
+                    return await base.RunTestCollectionAsync(messageBus, testCollection, testCases, cancellationTokenSource);
+                }
+                finally
+                {
+                    if (Interlocked.Decrement(ref _realTimeRemaining) == 0)
+                    {
+                        WidenGate();
+                    }
+                }
             }
 
             int priority = _order.TryGetValue(testCollection.UniqueID.ToString("N"), out int index) ? index : int.MaxValue;
@@ -233,6 +282,17 @@ public static class TestScheduling
                 _gate.Exit();
             }
         }
+
+        private static bool IsRealTime(ITestCollection collection)
+        {
+            string? className = ClassOf(collection);
+            return className != null && RealTimeClasses.Contains(className);
+        }
+
+        private void WidenGate()
+        {
+            _gate.AddSlots(WidenedRunningCollections - MaxRunningCollections);
+        }
     }
 
     // How many gated collections run at once. About one per core: the CPU-bound collections then
@@ -242,6 +302,24 @@ public static class TestScheduling
     // more slots than pool threads would bring back the injection delay the gate exists to avoid.
     internal static int MaxRunningCollections { get; } =
         ResolveMaxRunningCollections(Environment.GetEnvironmentVariable("DREAM_TEST_MAX_COLLECTIONS"), Environment.ProcessorCount);
+
+    // How many gated collections run at once after the last real-time collection finished (ARCH-1c):
+    // one per logical CPU, still within the pool minimum, never fewer than MaxRunningCollections.
+    // A DREAM_TEST_MAX_COLLECTIONS experiment keeps its fixed count for the whole run.
+    internal static int WidenedRunningCollections { get; } =
+        ResolveWidenedRunningCollections(Environment.GetEnvironmentVariable("DREAM_TEST_MAX_COLLECTIONS"), Environment.ProcessorCount);
+
+    internal static int ResolveWidenedRunningCollections(string? configured, int processorCount)
+    {
+        int running = ResolveMaxRunningCollections(configured, processorCount);
+        if (int.TryParse(configured, out int value) && value > 0)
+        {
+            return running;
+        }
+
+        int poolMinimum = Math.Max(1, processorCount * TestAssemblyInitializer.ThreadsPerCore);
+        return Math.Max(running, Math.Min(poolMinimum, processorCount));
+    }
 
     internal static int ResolveMaxRunningCollections(string? configured, int processorCount)
     {
@@ -282,6 +360,31 @@ public static class TestScheduling
                 TaskCompletionSource waiter = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 _waiters.Enqueue(waiter, (priority, _arrivals++));
                 return waiter.Task;
+            }
+        }
+
+        // Adds slots, admitting waiters (lowest priority value first) for as many as are queued.
+        public void AddSlots(int count)
+        {
+            List<TaskCompletionSource> admitted = [];
+            lock (_waiters)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (_waiters.TryDequeue(out TaskCompletionSource? next, out _))
+                    {
+                        admitted.Add(next);
+                    }
+                    else
+                    {
+                        _free++;
+                    }
+                }
+            }
+
+            foreach (TaskCompletionSource waiter in admitted)
+            {
+                waiter.SetResult();
             }
         }
 
