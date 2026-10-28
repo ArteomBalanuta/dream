@@ -167,4 +167,72 @@ public class InsertionOrderedSetTests
         Assert.Equal(0, bytes);
         Assert.True(sum > 0);
     }
+
+    // Like List<T>: a mutation during enumeration fails loudly instead of silently skipping or
+    // repeating items. Compaction counts, because it moves items under the enumerator.
+    [Theory]
+    [InlineData("add")]
+    [InlineData("remove")]
+    [InlineData("remove-last")]
+    [InlineData("clear")]
+    [InlineData("compacting-index")]
+    public void MutationDuringEnumeration_Throws(string mutation)
+    {
+        InsertionOrderedSet<Item> set = new();
+        Item[] items = Enumerable.Range(0, 8).Select(i => new Item(i)).ToArray();
+        foreach (Item item in items)
+        {
+            set.Add(item);
+        }
+
+        // Leaves a tombstone, so the next indexed read compacts.
+        set.Remove(items[2]);
+
+        InsertionOrderedSet<Item>.Enumerator enumerator = set.GetEnumerator();
+        Assert.True(enumerator.MoveNext());
+        switch (mutation)
+        {
+            case "add":
+                set.Add(new Item(100));
+                break;
+            case "remove":
+                set.Remove(items[5]);
+                break;
+            case "remove-last":
+                set.Remove(items[7]);
+                break;
+            case "clear":
+                set.Clear();
+                break;
+            case "compacting-index":
+                _ = set[3];
+                break;
+        }
+
+        Assert.Throws<InvalidOperationException>(() => enumerator.MoveNext());
+        Assert.Throws<InvalidOperationException>(() => enumerator.Reset());
+    }
+
+    [Fact]
+    public void NonMutatingCallsDuringEnumeration_DoNotThrow()
+    {
+        InsertionOrderedSet<Item> set = new();
+        Item[] items = Enumerable.Range(0, 8).Select(i => new Item(i)).ToArray();
+        foreach (Item item in items)
+        {
+            set.Add(item);
+        }
+
+        List<int> seen = [];
+        foreach (Item item in set)
+        {
+            seen.Add(item.Id);
+            Assert.True(set.Contains(item));
+            Assert.False(set.TryAdd(item));
+            Assert.False(set.Remove(new Item(-1)));
+            _ = set[0];
+        }
+
+        Assert.Equal(Enumerable.Range(0, 8), seen);
+    }
 }

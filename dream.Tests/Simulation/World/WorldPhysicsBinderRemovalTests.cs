@@ -98,6 +98,10 @@ public class WorldPhysicsBinderRemovalTests
     // walks every overlapping pair, so it is timed apart, with a harness integrator standing in for
     // the world. Per-removal ratio between a 10x larger and a smaller world, generous bound (the
     // old scan made it about 10x).
+    //
+    // Each size is timed in Repetitions separate windows and the fastest one counts: a window that
+    // a GC, another test or the OS preempts only ever reads slower, so the minimum is the cost of the
+    // removals themselves. One ~0.5 ms window used to read 1407 us per removal under a loaded suite.
     [Fact]
     public void RemoveCube_ManagedCostDoesNotGrowWithTheWorld()
     {
@@ -106,10 +110,13 @@ public class WorldPhysicsBinderRemovalTests
         double smallWithBullet = MeasureRemovalMicroseconds(side: 24, harness: false);
         double largeWithBullet = MeasureRemovalMicroseconds(side: 76, harness: false);
         _output.WriteLine(
-            $"per removal, managed: {small:0.0} us (~576 cubes), {large:0.0} us (~5776 cubes), ratio {large / small:0.00}; " +
+            $"per removal (fastest of {Repetitions} windows), managed: {small:0.0} us (~576 cubes), {large:0.0} us (~5776 cubes), ratio {large / small:0.00}; " +
             $"with Bullet: {smallWithBullet:0.0} us, {largeWithBullet:0.0} us");
         Assert.True(large < small * 4d + 20d, $"small={small:0.0}us large={large:0.0}us");
     }
+
+    private const int Repetitions = 7;
+    private const int RemovalsPerWindow = 40;
 
     private static double MeasureRemovalMicroseconds(int side, bool harness)
     {
@@ -134,15 +141,21 @@ public class WorldPhysicsBinderRemovalTests
             map.RemoveCube(order[i]);
         }
 
-        const int removals = 300;
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        for (int i = 20; i < 20 + removals; i++)
+        double fastest = double.MaxValue;
+        int next = 20;
+        for (int repetition = 0; repetition < Repetitions; repetition++)
         {
-            map.RemoveCube(order[i]);
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            for (int i = 0; i < RemovalsPerWindow; i++)
+            {
+                map.RemoveCube(order[next++]);
+            }
+
+            stopwatch.Stop();
+            fastest = Math.Min(fastest, stopwatch.Elapsed.TotalMilliseconds * 1000d / RemovalsPerWindow);
         }
 
-        stopwatch.Stop();
-        return stopwatch.Elapsed.TotalMilliseconds * 1000d / removals;
+        return fastest;
     }
 
     private static void DisposeBody(RigidBody body)

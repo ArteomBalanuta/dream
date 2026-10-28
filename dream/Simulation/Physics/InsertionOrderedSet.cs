@@ -21,6 +21,9 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
     private readonly Dictionary<T, int> _slots;
     private int _end;
     private int _tombstones;
+    // Bumped by every change an enumerator cannot survive: Add, Remove, Clear and Compact (which
+    // moves items under it). An enumerator throws when it sees a different stamp, like List<T>'s.
+    private int _version;
 
     public InsertionOrderedSet()
         : this(0)
@@ -91,6 +94,7 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
         _sequences[_end] = NextSequence++;
         _slots.Add(item, _end);
         _end++;
+        _version++;
         return true;
     }
 
@@ -107,6 +111,7 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
         }
 
         RemovedCount++;
+        _version++;
         if (slot == _end - 1)
         {
             // Removing the tail needs no tombstone.
@@ -134,6 +139,7 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
         _slots.Clear();
         _end = 0;
         _tombstones = 0;
+        _version++;
     }
 
     // The item in physical slot `slot` (0 <= slot < SlotCount), or null for a tombstone, with its
@@ -206,18 +212,27 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
         Array.Clear(_items, write, _end - write);
         _end = write;
         _tombstones = 0;
+        _version++;
     }
 
-    // Skips tombstones. Like List<T>'s enumerator it must not outlive a mutation of the set.
+    private static void ThrowModifiedDuringEnumeration()
+    {
+        throw new InvalidOperationException("The set was modified; enumeration operation may not execute.");
+    }
+
+    // Skips tombstones. Like List<T>'s enumerator it must not outlive a mutation of the set: Add,
+    // Remove, Clear, or an indexed read that compacts, make the next MoveNext or Reset throw.
     public struct Enumerator : IEnumerator<T>
     {
         private readonly InsertionOrderedSet<T> _set;
+        private readonly int _version;
         private int _slot;
         private T? _current;
 
         internal Enumerator(InsertionOrderedSet<T> set)
         {
             _set = set;
+            _version = set._version;
             _slot = -1;
             _current = null;
         }
@@ -228,6 +243,11 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
 
         public bool MoveNext()
         {
+            if (_version != _set._version)
+            {
+                ThrowModifiedDuringEnumeration();
+            }
+
             T?[] items = _set._items;
             int end = _set._end;
             while (++_slot < end)
@@ -246,6 +266,11 @@ public sealed class InsertionOrderedSet<T> : IReadOnlyList<T>
 
         public void Reset()
         {
+            if (_version != _set._version)
+            {
+                ThrowModifiedDuringEnumeration();
+            }
+
             _slot = -1;
             _current = null;
         }

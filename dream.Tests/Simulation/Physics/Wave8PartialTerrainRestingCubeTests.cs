@@ -13,19 +13,20 @@ namespace Dream.Tests.Simulation.Physics;
 // The enriched startup terrain has sculpture cells (WorldGenerator.CreateStartupSculptureCells):
 // cells whose GeometrySubdivisionState holds only some solid microcells. Each one is materialized
 // as a compatibility Cube in Map.Cubes (Map.MaterializeGeometryCell), so for cell transitions it is
-// a full, occupied cell (Map.CanTransitionCubeToCell, Map.cs:1607-1618), while its collision is only
-// the solid microcells. (26, 2, 13) belongs to the low rubble cluster ellipsoid centred at
+// a full, occupied cell (Map.CanTransitionCubeToCell), while its own collision is only the solid
+// microcells. (26, 2, 13) belongs to the low rubble cluster ellipsoid centred at
 // (27.2, 1.45, 14.4) with a vertical radius of 0.7: only its bottom ~0.15 m is solid.
 //
-// A cube placed on top of it, at (26, 3, 13), has nothing under it but that sliver: physics lets it
-// fall into (26, 2, 13), the map rejects the transition every sync, and after
-// PhysicsSyncSystem.RejectionsBeforeReset (8) rejections ResetBodyToCenter (PhysicsSyncSystem.cs:571)
-// teleports it back to the last accepted center (y = 3.0 + epsilon, the lowest point still inside
-// (26, y=3, 13)), zeroes its velocity and calls Activate(true). It falls again. Measured: a reset
-// every 8 ticks (free fall of ~0.08 m between resets, it never reaches the sliver), forever; the
-// body never sleeps, and with SCALE-5 it (and everything in its contact island) is synced every
-// tick. No mutation is exported (the map center stays at y = 3.0008), so it is invisible on the
-// wire and only costs server CPU and keeps islands awake.
+// Before the fix, a cube placed on top of it, at (26, 3, 13), had nothing under it but that
+// sliver: physics let it fall into (26, 2, 13), the map rejected the transition every sync, and
+// after PhysicsSyncSystem.RejectionsBeforeReset (8) rejections ResetBodyToCenter teleported it back
+// to the last accepted center (y = 3.0 + epsilon), zeroed its velocity and called Activate(true).
+// It fell again: a reset every 8 ticks, forever. The body never slept, and with SCALE-5 it (and
+// everything in its contact island) was synced every tick.
+//
+// The fix gives every occupied partial static cell a support (WorldPhysicsBinder.SyncCellSupportBody):
+// a full-cell static box that only dynamic map cubes collide with, so physics blocks exactly the
+// cell the map treats as occupied and the cube rests on the cell top as it would on a full cube.
 public class Wave8PartialTerrainRestingCubeTests
 {
     private const float TickSeconds = 1f / 64f;
@@ -38,25 +39,23 @@ public class Wave8PartialTerrainRestingCubeTests
         _output = output;
     }
 
-    // Current behaviour, asserted so a fix shows up as a failure here and the skipped target below
-    // can be enabled.
     [Fact]
-    public void CubeOnPartialSculptureCell_CurrentlyCyclesRejectResetAndNeverSleeps()
+    public void CubeOnPartialSculptureCell_RestsOnTheCellTopWithoutResets()
     {
         CycleReport report = Run();
         _output.WriteLine(report.ToString());
 
         Assert.True(report.PartialCellOccupied, "(26, 2, 13) should be a materialized sculpture cell");
         Assert.True(report.PartialCellHasSubdivision, "(26, 2, 13) should carry a subdivision state");
-        Assert.True(report.Resets >= 10, report.ToString());
-        Assert.True(report.ResetsInLastHalf >= 5, report.ToString());
-        Assert.Equal(0, report.SleepingTicksInLastHalf);
+        Assert.True(report.PartialCellHasSupport, "(26, 2, 13) should have a cell support");
+        Assert.Equal(0, report.Resets);
+        Assert.Equal(0, report.TicksBelowAcceptedCell);
+        Assert.Equal(new GeometryCellKey(26, 3, 13), report.FinalMapCell);
+        // Resting on the support's top (y = 3) puts the center mid-cell, as on a full cube.
+        Assert.InRange(report.MinBodyY, 3.45f, 3.55f);
     }
 
-    [Fact(Skip = "bug: SCALE-5 x partial terrain. A cube resting on a partial sculpture cell (26,2,13) falls into the cell, " +
-                 "Map.CanTransitionCubeToCell rejects it (the cell is a materialized compatibility cube), and PhysicsSyncSystem " +
-                 "resets it to the unsupported center above with Activate(true) every RejectionsBeforeReset ticks, forever. " +
-                 "Target: the cube settles (no resets) and its body sleeps within 5 s.")]
+    [Fact]
     public void CubeOnPartialSculptureCell_TargetSettlesAndSleeps()
     {
         CycleReport report = Run();
@@ -74,6 +73,7 @@ public class Wave8PartialTerrainRestingCubeTests
         GeometryCellRecord? record = map.TryGetGeometryCellAtCell(26, 2, 13);
         bool occupied = partial != null;
         bool hasSubdivision = record?.SubdivisionState != null;
+        bool hasSupport = map.HasCellSupportBody(new GeometryCellKey(26, 2, 13));
         Assert.Null(map.Cubes[26, 3, 13]);
 
         Cube cube = Assert.IsType<Cube>(map.TryAddCube(new TkVector3(26f, 3f, 13f), withPhysics: true));
@@ -116,12 +116,13 @@ public class Wave8PartialTerrainRestingCubeTests
         }
 
         map.TryGetCellForCube(cube, out GeometryCellKey finalCell);
-        return new CycleReport(occupied, hasSubdivision, resets, resetsInLastHalf, sleepingInLastHalf, rejectedTicks, minY, finalCell);
+        return new CycleReport(occupied, hasSubdivision, hasSupport, resets, resetsInLastHalf, sleepingInLastHalf, rejectedTicks, minY, finalCell);
     }
 
     private sealed record CycleReport(
         bool PartialCellOccupied,
         bool PartialCellHasSubdivision,
+        bool PartialCellHasSupport,
         int Resets,
         int ResetsInLastHalf,
         int SleepingTicksInLastHalf,

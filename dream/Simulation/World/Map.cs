@@ -129,6 +129,16 @@ public class Map
             {
                 _physicsBinder.SyncCellCollisionBodies(cellGroup.Key, cellGroup.ToArray());
             }
+
+            // Supports of the startup cells (see NeedsCellSupport). The cell dictionary's order is
+            // the same for every map built from the same terrain, so the bodies are added identically.
+            foreach (GeometryCellKey key in _geometryCells.Keys)
+            {
+                if (NeedsCellSupport(key))
+                {
+                    _physicsBinder.SyncCellSupportBody(key, needed: true);
+                }
+            }
         }
 
         for (int x = 0; x < Width; x++)
@@ -240,6 +250,7 @@ public class Map
         _placedCubeSpatialIndex.Remove(cube);
         _physicsBinder?.RemoveCellCollisionBodies(key);
         _physicsBinder?.RemoveCompatibilityCubeBodies(cube);
+        _physicsBinder?.SyncCellSupportBody(key, needed: false);
         return true;
     }
 
@@ -353,6 +364,9 @@ public class Map
         _collisionBodiesByCell.Remove(oldKey, out IReadOnlyList<GeometryCollisionBodyDescriptor>? movedCollisionBodies);
         _staticPhysicsCells.Remove(oldKey);
         Cubes[oldKey.X, oldKey.Y, oldKey.Z] = null;
+        // The vacated cell is no longer occupied, so it no longer supports anything; the moved
+        // cube is dynamic in its new cell and gets no support there.
+        _physicsBinder?.SyncCellSupportBody(oldKey, needed: false);
         RebuildGeometryCellArtifacts(oldKey, syncPhysics: rebuildPhysics);
 
         // The record is keyed by cell, so a cell change allocates a new one. The old cell's
@@ -1365,6 +1379,7 @@ public class Map
             if (syncPhysics)
             {
                 _physicsBinder?.RemoveCellCollisionBodies(key);
+                _physicsBinder?.SyncCellSupportBody(key, needed: false);
             }
 
             RebuildMergedStaticSubcellRenderBlocksIfNeeded(wasMergedStaticSubcellRenderCell, needsMergedStaticSubcellRender: false);
@@ -1389,6 +1404,11 @@ public class Map
         if (syncPhysics && geometryCell.Key.Y > 0 && !needsMergedStaticSubcellCollision)
         {
             _physicsBinder?.SyncCellCollisionBodies(key, collisionBodies);
+        }
+
+        if (syncPhysics)
+        {
+            _physicsBinder?.SyncCellSupportBody(key, NeedsCellSupport(key));
         }
 
         RebuildMergedStaticSubcellRenderBlocksIfNeeded(
@@ -1619,6 +1639,28 @@ public class Map
 
         return true;
     }
+
+    // A cell the map treats as fully occupied (CanTransitionCubeToCell rejects any other cube)
+    // whose static collision is only its solid microcells needs a support, so dynamic cubes are
+    // blocked by the whole cell (WorldPhysicsBinder.SyncCellSupportBody). Floor cells (y == 0)
+    // sit inside the floor body, and fractured cells are left to their dynamic pieces.
+    private bool NeedsCellSupport(GeometryCellKey key)
+    {
+        return key.Y > 0 &&
+            _staticPhysicsCells.Contains(key) &&
+            Cubes[key.X, key.Y, key.Z] != null &&
+            _geometryCells.TryGetValue(key, out GeometryCellRecord? record) &&
+            record.SubdivisionState != null &&
+            record.FracturePieces is not { Count: > 0 };
+    }
+
+    // Test hook: whether the cell currently has a support body.
+    internal bool HasCellSupportBody(GeometryCellKey key)
+    {
+        return _physicsBinder != null && _physicsBinder.TryGetCellSupportBody(key, out _);
+    }
+
+    internal int CellSupportBodyCount => _physicsBinder?.CellSupportBodyCount ?? 0;
 
     private bool IsStaticCompatibilityRender(GeometryCellKey key)
     {
