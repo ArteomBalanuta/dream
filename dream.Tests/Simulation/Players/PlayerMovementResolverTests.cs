@@ -96,7 +96,24 @@ public class PlayerMovementResolverTests
     }
 
     [Fact]
-    public void CreateMovementCommand_Matches_PlayerController_Forwarder_And_Reference_Bit_For_Bit()
+    public void CreateMovementCommand_Walking_Camera_Looking_Straight_Up_Gives_Finite_Direction()
+    {
+        Camera camera = CreateCamera(Vector3.UnitY);
+
+        MovementCommand command = PlayerMovementResolver.CreateMovementCommand(
+            camera,
+            noclipEnabled: false,
+            new PlayerMoveIntent(1f, 0f, 0f, JumpPressed: true, FreezePressed: true, ToggleNoclipPressed: false));
+
+        Assert.False(float.IsNaN(command.WorldDirection.X));
+        Assert.False(float.IsNaN(command.WorldDirection.Y));
+        Assert.False(float.IsNaN(command.WorldDirection.Z));
+        Assert.True(command.JumpPressed);
+        Assert.True(command.FreezePressed);
+    }
+
+    [Fact]
+    public void CreateMovementCommand_Matches_Reference_Bit_For_Bit()
     {
         float[] yaws = [-3.1f, -MathHelper.PiOver2, -0.7f, 0f, 0.3f, 1f, MathHelper.PiOver2, 2.4f, MathHelper.Pi];
         float[] pitches = [-MathHelper.PiOver2, -1.2f, -0.4f, 0f, 0.25f, 0.9f, MathHelper.PiOver2];
@@ -126,11 +143,9 @@ public class PlayerMovementResolverTests
                                     PlayerMoveIntent intent = new(forward, strafe, vertical, button, !button, button);
 
                                     MovementCommand resolved = PlayerMovementResolver.CreateMovementCommand(camera, noclip, intent);
-                                    MovementCommand forwarded = PlayerController.CreateMovementCommand(camera, noclip, intent);
                                     MovementCommand reference = CreateReferenceMovementCommand(camera, noclip, intent);
 
                                     AssertBitIdentical(reference, resolved);
-                                    AssertBitIdentical(forwarded, resolved);
                                     comparisons++;
                                 }
                             }
