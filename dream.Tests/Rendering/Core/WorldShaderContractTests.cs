@@ -88,6 +88,18 @@ public class WorldShaderContractTests
         string setAlphaCutoff = MethodBody(shader, "public void SetAlphaCutoff(float alphaCutoff)");
         Assert.DoesNotContain("GetUniformLocation", setAlphaCutoff);
         Assert.Single(Regex.Matches(setAlphaCutoff, @"RenderCounters\.CountUniformUpload\(\);"));
+
+        // Fix loop T2: the emissive is cached per program like the cutoff, so the non-emissive
+        // materials bound one after another upload it once, and every caller goes through it.
+        string setEmissive = MethodBody(shader, "public void SetEmissiveFactor(Vector3 emissiveFactor)");
+        Assert.DoesNotContain("GetUniformLocation", setEmissive);
+        Assert.Contains("emissiveFactor.Equals(_uploadedEmissiveFactor)", setEmissive);
+        Assert.Single(Regex.Matches(setEmissive, @"RenderCounters\.CountUniformUpload\(\);"));
+        string rendering = Path.Combine(RepoRoot(), "dream", "Rendering");
+        foreach (string file in Directory.EnumerateFiles(rendering, "*.cs", SearchOption.AllDirectories))
+        {
+            Assert.DoesNotContain("\"material.emissiveFactor\"", File.ReadAllText(file).Replace("EmissiveFactorUniformName = \"material.emissiveFactor\"", string.Empty));
+        }
     }
 
     [Theory]

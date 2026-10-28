@@ -111,8 +111,9 @@ public class RenderCountersTests
             }
         }
 
-        // Matrix4, Matrix3 (normal matrix), the MASK alpha cutoff, and the six by-name setters.
-        Assert.Equal(9, uniformCalls);
+        // Matrix4, Matrix3 (normal matrix), the MASK alpha cutoff, the cached material emissive,
+        // and the six by-name setters.
+        Assert.Equal(10, uniformCalls);
     }
 
     [Fact]

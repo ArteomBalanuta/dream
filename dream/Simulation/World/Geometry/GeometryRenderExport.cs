@@ -34,6 +34,11 @@ public readonly record struct GeometryRenderExport
     public IReadOnlyList<Cube> DynamicCompatibilityCubes { get; init; }
     public IReadOnlyList<GeometryRenderBlockDescriptor> DynamicBlocks { get; init; }
 
+    // The static subset of Cells (coarse static cubes and intact subdivided cells, never fracture
+    // pieces or dynamic cubes), as one list the consumer can scan once per StaticContentVersion.
+    // Map's captures always set it; null means the producer did not split Cells (hand-built exports).
+    public IReadOnlyList<GeometryRenderCell>? StaticCells { get; init; }
+
     // Identifies the static content (CompatibilityCubes, Blocks and the static Cells) of the map
     // that produced this export: equal non-zero versions mean identical static content. 0 means
     // unknown, so consumers must inspect the content itself.

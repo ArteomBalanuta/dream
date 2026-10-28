@@ -120,7 +120,9 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
         // FramePerformanceSnapshot inside the one presentation-state allocation: +48 B, not a new
         // allocation. See WorldSessionPresentationStateActiveEnemiesTests.
         const int Gpu5SnapshotGrowthBytes = 48;
-        long budget = 776 + Gpu5SnapshotGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
+        // Wave T2 fix loop 1: GeometryRenderExport.StaticCells, one reference in the same state.
+        const int StaticCellsExportGrowthBytes = 8;
+        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
             captureBytes <= budget,
             $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");

@@ -9,7 +9,8 @@ layout(std140) uniform LightList {
 
 vec3 dreamPointLights(vec3 n, vec3 fragPos) {
     vec3 sum = vec3(0.0);
-    for (int i = 0; i < uPointLightCount.x; ++i) {
+    int count = min(uPointLightCount.x, 16); // never index past the array, whatever the buffer says
+    for (int i = 0; i < count; ++i) {
         vec3 toLight = uPointLightPositionRadius[i].xyz - fragPos;
         float r = uPointLightPositionRadius[i].w;
         float d2 = dot(toLight, toLight);

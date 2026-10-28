@@ -573,7 +573,7 @@ public class AnimatedModel : IDisposable
         shader.SetVector4("material.baseColorFactor", material.BaseColorFactor);
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
         shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
-        shader.SetVector3("material.emissiveFactor", material.EmissiveFactor);
+        shader.SetEmissiveFactor(material.EmissiveFactor);
         // Only the alpha-mask program declares the cutoff; elsewhere this uploads nothing.
         shader.SetAlphaCutoff(material.AlphaCutoff);
 

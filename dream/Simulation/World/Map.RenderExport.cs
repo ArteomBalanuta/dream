@@ -99,7 +99,8 @@ public partial class Map
             dynamicBlocks: dynamicBlocks,
             staticDirtyCells: staticDirtyCells)
         {
-            StaticContentVersion = StaticContentVersion
+            StaticContentVersion = StaticContentVersion,
+            StaticCells = _cachedStaticRenderCells
         };
     }
 
@@ -190,6 +191,7 @@ public partial class Map
         Func<GeometryRenderBlockDescriptor, bool> includeDynamicBlock)
     {
         List<GeometryRenderCell> cells = new();
+        List<GeometryRenderCell> staticCells = new();
         List<GeometryRenderBlockDescriptor> blocks = new();
         List<GeometryRenderBlockDescriptor> dynamicBlocks = new();
         List<Cube> compatibilityCubes = new();
@@ -225,6 +227,11 @@ public partial class Map
             }
 
             cells.Add(new GeometryRenderCell(key, cell, cube));
+            if (IsStaticRenderContent(cell))
+            {
+                staticCells.Add(new GeometryRenderCell(key, cell, cube));
+            }
+
             if (usesCoarseCompatibilityRender)
             {
                 if (IsStaticCompatibilityRender(key))
@@ -300,7 +307,10 @@ public partial class Map
             CompatibilityCubes: compatibilityCubes,
             dynamicCompatibilityCubes: dynamicCompatibilityCubes,
             dynamicBlocks: dynamicBlocks,
-            staticDirtyCells: staticDirtyCells);
+            staticDirtyCells: staticDirtyCells)
+        {
+            StaticCells = staticCells
+        };
     }
 
     private static bool IsGeometryBlockWithinRadius(
