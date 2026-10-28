@@ -6,7 +6,8 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.Runtime;
 
-// Building: build use actions and build placement material resolution.
+// Building: build use actions and build placement material resolution (the session's building
+// menu selection, else the supporting cell's material; see BuildMaterialCatalog).
 public sealed partial class WorldSessionRuntime
 {
     private const float MaxAuthoritativeBuildDistance = 3f;
@@ -27,7 +28,9 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Build placement rejected because the target is out of range.");
         }
 
-        GeometryMaterialId placementMaterial = ResolveBuildPlacementMaterial(intent.PlacementTarget);
+        GeometryMaterialId placementMaterial = BuildMaterialCatalog.ResolvePlacement(
+            ResolveSelectedBuildMaterial(message.SessionId),
+            ResolveBuildSupportMaterial(intent.PlacementTarget));
         Cube? placedCube = Map.TryAddCube(
             intent.PlacementTarget,
             materialId: placementMaterial);
@@ -67,13 +70,14 @@ public sealed partial class WorldSessionRuntime
                 Applied: true));
     }
 
-    private GeometryMaterialId ResolveBuildPlacementMaterial(Vector3 placementTarget)
+    // The supporting cell's material, or null over the ground plane (no cell below).
+    private GeometryMaterialId? ResolveBuildSupportMaterial(Vector3 placementTarget)
     {
         Vector3 belowCell = new(
             MathF.Floor(placementTarget.X + 1e-6f),
             MathF.Floor(placementTarget.Y - 1f + 1e-6f),
             MathF.Floor(placementTarget.Z + 1e-6f));
         GeometryCellRecord? supportCell = Map.TryGetGeometryCellAtCell((int)belowCell.X, (int)belowCell.Y, (int)belowCell.Z);
-        return supportCell?.Definition.MaterialId ?? GeometryMaterialId.Grass;
+        return supportCell?.Definition.MaterialId;
     }
 }

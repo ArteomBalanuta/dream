@@ -15,6 +15,8 @@ public static class CubeMaterialModelCatalog
             GeometryMaterialId.Dirt => ModelAssets.DirtCubePath,
             GeometryMaterialId.Stone => ModelAssets.StoneCubePath,
             GeometryMaterialId.Grass => ModelAssets.GrassCubePath,
+            // Lamp (and every other material) has no model: the fallback cube draws it with the
+            // catalog's base color and emissive (StaticTerrainMaterialCatalog).
             _ => null
         };
 

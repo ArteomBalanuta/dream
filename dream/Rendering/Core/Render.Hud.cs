@@ -7,6 +7,7 @@ using Dream.Rendering.Hud;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
+using Dream.Simulation.World.Geometry;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -75,6 +76,10 @@ public partial class Render
     // every frame before the HUD pass (a plain struct field, so nothing per frame grows the
     // presentation or performance snapshots); WorldTransferHudState.None hides the line.
     public WorldTransferHudState WorldTransferHud { get; set; }
+
+    // The building menu's current pick (null is Auto), shown by the "Build" window. The scene sets
+    // it when it sends a new selection (PlayScene.HudRequests.cs), not per frame.
+    public GeometryMaterialId? BuildMaterialSelection { get; set; }
 
     public HudFrameResult DrawHUD(
         FrameEventArgs args,

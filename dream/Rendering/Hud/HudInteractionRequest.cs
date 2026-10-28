@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Application;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Rendering.Hud;
 
@@ -18,7 +19,8 @@ public readonly record struct HudInteractionRequest(
     float? AttackSpeed,
     int? Vitality,
     FloatingCombatTextTuning? FloatingCombatText,
-    int? EquipInventorySlotIndex)
+    int? EquipInventorySlotIndex,
+    BuildMaterialChoice? BuildMaterial = null)
 {
     public static HudInteractionRequest None => new(
         null,
@@ -36,3 +38,7 @@ public readonly record struct HudInteractionRequest(
         null,
         null);
 }
+
+// A building menu pick. MaterialId null is Auto, so the request wraps it to tell "Auto picked"
+// from "nothing picked".
+public readonly record struct BuildMaterialChoice(GeometryMaterialId? MaterialId);

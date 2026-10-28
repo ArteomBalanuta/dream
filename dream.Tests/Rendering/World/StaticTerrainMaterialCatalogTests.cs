@@ -47,11 +47,33 @@ public class StaticTerrainMaterialCatalogTests
     [InlineData(GeometryMaterialId.Snow)]
     [InlineData(GeometryMaterialId.Rock)]
     [InlineData(GeometryMaterialId.GrassPath)]
+    [InlineData(GeometryMaterialId.Lamp)]
     public void ResolveRolesKeepsNonGrassMaterialsSingleTexture(GeometryMaterialId materialId)
     {
         IReadOnlyList<StaticTerrainMaterialRole> roles = StaticTerrainMaterialCatalog.ResolveRoles(materialId);
 
         Assert.Equal([StaticTerrainMaterialRole.Single], roles);
+    }
+
+    [Fact]
+    public void Lamp_IsUntexturedWarmAndEmissive_AndTheOnlyEmissiveMaterial()
+    {
+        StaticTerrainMaterial lamp = StaticTerrainMaterialCatalog.Resolve(GeometryMaterialId.Lamp);
+
+        Assert.Equal(GeometryMaterialId.Lamp, lamp.MaterialId);
+        Assert.False(lamp.HasTexture);
+        Assert.Equal(new OpenTK.Mathematics.Vector4(1f, 0.85f, 0.6f, 1f), lamp.BaseColor);
+        Assert.Equal(new OpenTK.Mathematics.Vector3(0.9f, 0.75f, 0.5f), lamp.Emissive);
+        Assert.Equal(StaticTerrainMaterialCatalog.KnownMaterialCount, Enum.GetValues<GeometryMaterialId>().Length);
+        Assert.Equal(StaticTerrainMaterialCatalog.KnownMaterialCount - 1, (int)GeometryMaterialId.Lamp);
+        for (int slot = 0; slot < StaticTerrainMaterialCatalog.MaterialSlotCount; slot++)
+        {
+            StaticTerrainMaterial material = StaticTerrainMaterialCatalog.GetBySlot(slot);
+            if (material.MaterialId != GeometryMaterialId.Lamp)
+            {
+                Assert.Equal(OpenTK.Mathematics.Vector3.Zero, material.Emissive);
+            }
+        }
     }
 
     [Fact]
