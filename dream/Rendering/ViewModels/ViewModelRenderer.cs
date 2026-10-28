@@ -60,7 +60,17 @@ public class ViewModelRenderer
     // The slot's clip advances here only, once per frame; Draw only starts clips and draws.
     private static bool UpdateSlot(ViewModelSlotState slotState, ViewModelSlotAnimation animation, float deltaTime)
     {
-        return TryResolveModel(slotState, out AnimatedModel? model) && animation.Bind(model).Update(deltaTime);
+        return TryResolveModel(slotState, out AnimatedModel? model) && AdvanceSlot(model, slotState, animation, deltaTime);
+    }
+
+    // Binds the slot's instance and starts the requested clip BEFORE advancing, so the first frame
+    // after a slot swap or model reload already poses the clip instead of the rest pose. Starting a
+    // clip that is already playing is a no-op, so this does not restart it each frame.
+    internal static bool AdvanceSlot(AnimatedModel model, ViewModelSlotState slotState, ViewModelSlotAnimation animation, float deltaTime)
+    {
+        AnimatedModelInstance instance = animation.Bind(model);
+        ApplyAnimation(instance, slotState);
+        return instance.Update(deltaTime);
     }
 
     private void DrawSlot(ViewModelSlotState slotState, ViewModelSlotAnimation animation)
@@ -95,7 +105,7 @@ public class ViewModelRenderer
         model.EndRender();
     }
 
-    private static void ApplyAnimation(AnimatedModelInstance instance, ViewModelSlotState slotState)
+    internal static void ApplyAnimation(AnimatedModelInstance instance, ViewModelSlotState slotState)
     {
         string? clipName = slotState.AnimationRequest == ViewModelAnimationRequest.Use
             ? slotState.Definition.UseAnimation

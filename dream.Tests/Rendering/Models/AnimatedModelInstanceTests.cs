@@ -248,7 +248,8 @@ public class AnimatedModelInstanceTests
     public void Enemy_State_Rebinds_When_The_Model_Is_Reloaded()
     {
         AnimatedModelSkeleton first = Wolf.Value.Skeleton;
-        AnimatedModelSkeleton reloaded = new(ModelRoot.Load(WolfAssetDefinition.ModelPath), Wolf.Value.Animations, Wolf.Value.SkinJoints);
+        AnimatedModelSkeleton reloaded = AnimatedModelData.Load(WolfAssetDefinition.ModelPath).Skeleton;
+        Assert.NotSame(first, reloaded);
         EnemyVisualStateCache cache = new();
         EnemyVisualState state = cache.GetOrAdd(1, first);
         EnemyRenderer.AdvanceInstance(state, WolfAssetDefinition.MoveClip, 0.2f);
@@ -257,6 +258,11 @@ public class AnimatedModelInstanceTests
 
         Assert.Same(reloaded, state.Instance!.Skeleton);
         Assert.Null(state.CurrentClipName);
+        // The rebound instance really animates over the reloaded skeleton.
+        EnemyRenderer.AdvanceInstance(state, WolfAssetDefinition.MoveClip, 0.1f);
+        state.Instance.Update(0.1f);
+        Assert.Equal(WolfAssetDefinition.MoveClip, state.Instance.CurrentClipName);
+        Assert.True(state.Instance.TimeSeconds > 0f);
         // The stale instance is not handed to an enemy of the reloaded model.
         Assert.Same(reloaded, cache.GetOrAdd(2, reloaded).Instance!.Skeleton);
     }
