@@ -83,9 +83,9 @@ public sealed record LoadScenario(
         RubbleCells: 1_000,
         FloorSize: 100,
         Duration: TimeSpan.FromSeconds(30),
-        // The JoinAccepted world for 10k cubes is larger than the old symmetric 1 MB frame limit:
-        // with it no bot could join (measured 2026-10-28: 0/8). The directional limits (NETR-7:
-        // 32 MB server to client) fit it; SCALE-1's chunked world transfer is the real fix.
+        // The JoinAccepted world for 10k cubes was larger than the old symmetric 1 MB frame limit
+        // (measured 2026-10-28: 0/8 bots joined). Since protocol v3 (SCALE-1) the world travels as
+        // 64 KB chunks, so it fits the default 8 MB server-to-client limit with room to spare.
         LoadActionMix.Default);
 
     public static LoadScenario Soak { get; } = new(

@@ -39,7 +39,7 @@ public static class LoadRunner
         string databasePath = Path.Combine(workDirectory, "world.sqlite");
         string schemaPath = Path.Combine(repoRoot, "dream", "config", "player-profiles.init.sql");
         // A scenario limit applies to both directions; otherwise the production directional
-        // limits (FrameLimitOptions: the server reads 64 KB and writes 32 MB, bots the reverse).
+        // limits (FrameLimitOptions: the server reads 64 KB and writes 8 MB, bots the reverse).
         IMessageFramer serverFramer = scenario.MaxFramePayloadBytes is { } maxPayload
             ? new LengthPrefixedMessageFramer(maxPayload)
             : FrameLimitOptions.Default.CreateServerFramer();
