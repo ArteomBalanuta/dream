@@ -54,7 +54,7 @@ public class DependencyDirectionTests
     [
         "Networking/RemoteClientOptions.cs",
         "Networking/RemoteClientSession.cs",
-        "Scenes/PlayScene.cs",
+        "Scenes/PlayScene.Render.cs",
         "Startup/ILocalServerHandle.cs",
         "Startup/IntegratedLocalServerHandle.cs",
         "Startup/NetworkSessionCoordinator.cs",

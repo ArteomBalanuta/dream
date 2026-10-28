@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Dream.Application;
 using Dream.Client.Scenes;
 using Dream.Client.Startup;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Client.Scenes;
@@ -254,7 +255,7 @@ public class SceneTeardownTests
 
     private static string ReadSource(params string[] relativePath)
     {
-        return File.ReadAllText(Path.Combine([FindRepoRoot(), .. relativePath]));
+        return PartialClassSource.Read(Path.Combine([FindRepoRoot(), .. relativePath]));
     }
 
     private static string FindRepoRoot()

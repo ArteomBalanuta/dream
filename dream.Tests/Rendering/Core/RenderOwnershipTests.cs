@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.World;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Rendering.Core;
@@ -40,7 +41,7 @@ public class RenderOwnershipTests
     [MemberData(nameof(Owners))]
     public void Owner_Disposes_Every_Owned_Disposable_Field(Type owner, string relativePath)
     {
-        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), relativePath));
+        string source = PartialClassSource.Read(Path.Combine(FindRepoRoot(), relativePath));
         List<string> ownedFields = [];
         List<string> missing = [];
 
@@ -106,7 +107,7 @@ public class RenderOwnershipTests
     [Fact]
     public void Render_Disposes_Debug_Cube_Buffers_And_Destroys_Its_ImGui_Context()
     {
-        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
+        string source = PartialClassSource.Read(Path.Combine(FindRepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
 
         Assert.Contains("GL.DeleteBuffer(_vertexBufferObject)", source);
         Assert.Contains("GL.DeleteVertexArray(_vertexArrayObject)", source);
