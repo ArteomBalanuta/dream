@@ -48,7 +48,7 @@ public static class SkyModel
             AmbientGround = new Vector4(k.AmbientGround * lightScale, 0f),
             FogColor = new Vector4(k.Horizon, k.FogDensity),
             CameraPosition = new Vector4(0f, 0f, 0f, k.FogStart),
-            Params = new Vector4(k.Exposure, k.ActorFloor * lightScale, 0f, 0f),
+            Params = new Vector4(k.Exposure, k.ActorFloor * lightScale, k.ActorAmbientScale, 0f),
         };
 
         return new SkyState
@@ -123,6 +123,7 @@ public static class SkyModel
         ambientGround: Lerp(a.AmbientGround, b.AmbientGround, s),
         exposure: Lerp(a.Exposure, b.Exposure, s),
         actorFloor: Lerp(a.ActorFloor, b.ActorFloor, s),
+        actorAmbientScale: Lerp(a.ActorAmbientScale, b.ActorAmbientScale, s),
         stars: Lerp(a.Stars, b.Stars, s),
         nightScaled: Lerp(a.NightScaled, b.NightScaled, s));
 

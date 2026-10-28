@@ -19,9 +19,10 @@ The current frame order is:
 2. world-space animated enemies
 3. local player model when third-person view is enabled
 4. world-space remote player models
-5. collision/debug overlays
-6. first-person viewmodels when first-person view is enabled
-7. HUD and ImGui
+5. the sky (only the pixels nothing covered; see Sky and time of day)
+6. collision/debug overlays
+7. first-person viewmodels when first-person view is enabled
+8. HUD and ImGui
 
 That ordering keeps enemy actors in the same depth-tested world layer as cubes, keeps the hands and held item visually above the world, and still lets the HUD render last.
 
@@ -47,14 +48,28 @@ Runtime shader file paths are provided through `AssetPaths.cs`.
 - **Include mechanism.** `Shader.ResolveIncludes` replaces each line `#include "file.glsl"` with that file from the shader's own folder. It runs on both stages before the MASK define is inserted. It goes one level only: a nested `#include`, a `#version` in an included file, a path outside the folder, or a missing file throws.
 - **One lighting model.** `cubeFragment.glsl` and `enemyFragment.glsl` both include `shaders/lighting.glsl`. That file declares the std140 uniform block `FrameLighting` and the helpers `dreamAmbient` (hemisphere ambient), `dreamDirect` (sun plus moon), `dreamExpose` and `dreamApplyFog` (exp2-squared fog starting at `CameraPosition.w`). The hard-coded point lights are gone.
   - Terrain, cubes, models and the view model use `(ambient + direct) * base`.
-  - Actors (the `enemy` program) use `ambient × 3.25 + direct × 0.75`, floored at `Params.y × base`.
+  - Actors (the `enemy` program) use `ambient × Params.z + direct × 0.75`, floored at `Params.y × base`. `Params.z`, the actor ambient scale, comes from the sky: 3.25 by day (today's 0.65 actor ambient at noon), 1.5 at night, and values in between at twilight, so wolves and players do not look self-lit at night (about 1.2× terrain on up faces at midnight).
 - **The C# side.** `Rendering/Lighting/FrameLighting.cs` mirrors the block member for member: 144 bytes, binding point 0. GL 3.3 has no `layout(binding)` on a block, so after link `Shader` calls `FrameLightingBuffer.BindProgramBlock`. That runs `GL.UniformBlockBinding` for every program that declares the block.
 - **Uploading.** `FrameLightingBuffer` owns one uniform buffer with two ranges:
   - the world range, at offset 0;
   - the view-model range, at 144 rounded up to `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT`. It holds eye-space sun and moon directions, the camera at the origin, and ambient floored at 0.08. The view model draws with view = identity.
   - `WorldRenderer.DrawWorld(WorldSessionPresentationState)` calls `Render.UploadFrameLighting(camera)` once per frame. It writes both ranges with `BufferSubData` of a stack struct (0 B allocated) and binds the world range. `ViewModelRenderer.Draw` binds the view-model range and restores the world range afterwards.
-  - The scene picks the lighting with `Render.SetFrameLighting`. It defaults to `FrameLighting.ReferenceNoon`, which reproduces the old cube point light at spawn, with fog density 0.
+  - The scene picks the lighting with `Render.SetFrameLighting`. Until the first call, `Render` holds `FrameLighting.ReferenceNoon`, which reproduces the old cube point light at spawn with fog density 0. In play, `PlayScene` sets the `SkyModel` lighting every frame, so fog is always on (see Sky and time of day).
   - `FrameLightingContractTests` pins the layout, the GLSL member order, the include rules and the noon match against the old formulas.
+
+### Sky and time of day
+
+- **`SkyModel`** (`Rendering/Sky/SkyModel.cs`) maps a time of day in [0, 1) to a `SkyState`: the frame lighting, zenith and horizon colours, sun and moon directions and disc colours, and star visibility. It is pure (no GL) and allocates nothing per call.
+- **Keyframes.** `SkyModelKeyframes` holds the authored day: night (00:00, 04:00, 20:00), blue hour (05:00), sunrise (06:00), morning (07:30), day (10:00–14:00, equal to `ReferenceNoon`), afternoon (16:30), sunset (18:00) and dusk (19:00). `SkyModel` blends neighbouring keyframes with a smoothstep. Every value blends, including the actor floor (`Params.y`) and the actor ambient scale (`Params.z`). Noon matches `ReferenceNoon` bit for bit.
+- **Sun path.** The sun moves on a great circle through `ReferenceNoon.SunDirection` at 12:00. It rises in the east at 06:00 and sets in the west at 18:00. The moon is always opposite the sun, so at midnight it is where the noon sun is. Direct light fades in over a small elevation band around the horizon.
+- **Night brightness.** `DREAM_NIGHT_BRIGHTNESS` (`SkyModelSettings`, default 0.15, clamped to [0, 1]) sets the up-facing light at midnight as a fraction of noon's. It scales the night keyframes' ambient, moonlight and actor floor. Twilight and day keyframes keep their authored values.
+- **Fog.** Each keyframe has its own exp2 fog density and start distance. Fog is at least 90% at 48 units (the render distance) and at most 10% at 16 units at every time of day.
+- **Clear colour = horizon = fog.** `PlayScene.Render` evaluates the sky once per frame, before the clear. It passes the lighting to `Render.SetFrameLighting` and clears to `SkyState.HorizonColor`, which equals `FogColor.rgb`. A pixel that nothing covers therefore already matches the fogged distance.
+- **The sky pass.** `SkyRenderer` (`skyVertex.glsl` and `skyFragment.glsl`) draws one fullscreen triangle at depth 1 with `DepthFunc(Lequal)` and depth writes off. It shades only the pixels that nothing covered: a zenith-to-horizon gradient, sun and moon discs, a sun glow and hashed stars. Then it restores the world state. `PlayScene` creates it in its constructor, right after `Render`, and disposes it in its own dispose step.
+- **Frame order.** The sky (step 5 of the frame order in Rendering Overview) draws after the remote players and before the collision and debug overlays and the view model, inside the `Actors` GPU timer section.
+- **Debug override.** The Settings window has a "Time Of Day (debug, this client only)" section. Its checkbox and `Hour` slider (`Render.TimeOfDayOverride`) replace the replicated time of day on this client only. Nothing is sent to the server. The slider stops at 23:59, because 24:00 wraps to midnight.
+- **Time source.** Without the override, the time comes from the replicated world clock (`ClientWorldClock`), read at the remote-player render tick.
+- `SkyModelTests`, `SkyPassContractTests` and `WaveT1DayCycleLightingTests` pin the noon match, the night floor, the fog bounds, the continuity over the whole day, the pass order and state, and the midnight actor-to-terrain ratio.
 
 ## Cube Rendering Paths
 

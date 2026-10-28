@@ -383,6 +383,10 @@ public partial class Render
 
     // Client-local and debug only: it changes what this client renders and nothing else. Collapsed
     // by default so it stays out of the way.
+    // The slider stops one minute short of 24 h: 24 h wraps to 0 (midnight), so dragging to the
+    // right end would jump the sky back to the start of the day.
+    private const float SliderMaxHours = TimeOfDayOverride.HoursPerDay - 1f / 60f;
+
     private static void DrawTimeOfDayControls(TimeOfDayOverride timeOfDay)
     {
         if (!ImGui.CollapsingHeader("Time Of Day (debug, this client only)"))
@@ -397,7 +401,7 @@ public partial class Render
         }
 
         float hours = timeOfDay.Hours;
-        if (ImGui.SliderFloat("Hour", ref hours, 0f, TimeOfDayOverride.HoursPerDay, "%.2f h"))
+        if (ImGui.SliderFloat("Hour", ref hours, 0f, SliderMaxHours, "%.2f h"))
         {
             timeOfDay.Hours = hours;
         }

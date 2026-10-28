@@ -4,6 +4,7 @@
 // bound to FrameLighting.BindingPoint after link. FrameLightingBuffer uploads it once per frame:
 // the world range holds world-space directions and the camera position; the view-model range
 // holds eye-space directions with the camera at the origin.
+// uLightingParams: x exposure, y actor brightness floor, z actor ambient scale (enemyFragment.glsl), w 0.
 layout(std140) uniform FrameLighting {
     vec4 uSunDirection; vec4 uSunColor; vec4 uMoonDirection; vec4 uMoonColor;
     vec4 uAmbientSky; vec4 uAmbientGround; vec4 uFogColor; vec4 uCameraPosition; vec4 uLightingParams;

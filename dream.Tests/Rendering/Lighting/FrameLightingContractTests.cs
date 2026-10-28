@@ -75,14 +75,15 @@ public class FrameLightingContractTests
     }
 
     [Fact]
-    public void Enemy_Shader_Names_Its_Actor_Constants_And_Floors_Before_Exposure()
+    public void Enemy_Shader_Takes_Its_Ambient_Scale_From_The_Frame_And_Floors_Before_Exposure()
     {
         string source = File.ReadAllText(Path.Combine(ShaderDirectory(), "enemyFragment.glsl"));
 
-        Assert.Contains("const float ActorAmbientScale = 3.25;", source);
+        // The actor ambient scale is FrameLighting.Params.z, set per time of day, not a constant.
+        Assert.DoesNotContain("const float ActorAmbientScale", source);
         Assert.Contains("const float ActorDirectScale = 0.75;", source);
         Assert.Matches(
-            @"lit = \(dreamAmbient\(n\) \* ActorAmbientScale \+ dreamDirect\(n\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\), fragPos\), baseColor\.a\);",
+            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ dreamDirect\(n\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\), fragPos\), baseColor\.a\);",
             source);
     }
 
@@ -212,6 +213,9 @@ public class FrameLightingContractTests
 
         Assert.Equal(0f, noon.FogColor.W);
         Assert.Equal(1f, noon.Params.X);
+        // Today's actor ambient: 0.2 x 3.25 = 0.65.
+        Assert.Equal(3.25f, noon.Params.Z);
+        Assert.Equal(0f, noon.Params.W);
         Assert.Equal(1f, noon.SunDirection.Xyz.Length, 5);
         // The sun is where the old cube point light was, seen from spawn.
         Vector3 legacy = Vector3.Normalize(new Vector3(4f, 2f, 2f) - Spawn);
@@ -364,7 +368,7 @@ public class FrameLightingContractTests
     private static Vector3 Enemy(in FrameLighting l, Vector3 normal, Vector3 fragPos, Vector3 baseColor)
     {
         Vector3 n = Vector3.Normalize(normal);
-        Vector3 lit = (Ambient(in l, n) * 3.25f + Direct(in l, n) * 0.75f) * baseColor;
+        Vector3 lit = (Ambient(in l, n) * l.Params.Z + Direct(in l, n) * 0.75f) * baseColor;
         lit = Vector3.ComponentMax(lit, baseColor * l.Params.Y);
         return ApplyFog(in l, Expose(in l, lit), fragPos);
     }

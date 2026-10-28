@@ -11,6 +11,7 @@ using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Sky;
 using Dream.Rendering.ViewModels;
 
 namespace Dream.Client.Scenes;
@@ -53,6 +54,7 @@ public partial class PlayScene
 
         _scenePresenter = new ClientScenePresenter(_remoteClient.SessionId);
         _render = new Render(_settings);
+        _sky = new SkyRenderer();
         PreloadModels();
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);

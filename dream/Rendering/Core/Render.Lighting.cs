@@ -1,5 +1,6 @@
 using Dream.Rendering.Lighting;
 using Dream.Simulation.Players;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Core;
 
@@ -32,7 +33,7 @@ public partial class Render
     private void InitializeFrameLighting()
     {
         _frameLightingBuffer = new FrameLightingBuffer();
-        _frameLightingBuffer.Upload(in _frameLighting, OpenTK.Mathematics.Vector3.Zero, OpenTK.Mathematics.Matrix4.Identity);
+        _frameLightingBuffer.Upload(in _frameLighting, Vector3.Zero, Matrix4.Identity);
     }
 
     private void DisposeFrameLighting()

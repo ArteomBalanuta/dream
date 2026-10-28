@@ -64,6 +64,8 @@ public class SkyModelTests
         Assert.True(night.FogColor.Z > night.FogColor.X, "night horizon must be cool (b > r)");
         Assert.Equal(SkyModelSettings.DefaultNightBrightness * noonUp, UpFacingLuminance(night), 4);
         Assert.True(night.Params.Y < FrameLighting.ReferenceNoon.Params.Y * 0.5f, "actor floor must drop at night");
+        Assert.Equal(SkyModelKeyframes.NightActorAmbientScale, night.Params.Z);
+        Assert.True(night.Params.Z < FrameLighting.ReferenceNoon.Params.Z * 0.5f, "actor ambient scale must drop at night");
 
         // Every night sample, not just midnight, has the sun off and stays at or below the floor.
         for (float h = 20.5f; h < 27.5f; h += 0.25f)
@@ -89,8 +91,36 @@ public class SkyModelTests
 
         Assert.Equal(nightBrightness * noonUp, UpFacingLuminance(night), 4);
         Assert.Equal(0.35f * nightBrightness, night.Params.Y, 5);
+        // The actor ambient scale is a ratio on an ambient that already follows the setting.
+        Assert.Equal(SkyModelKeyframes.NightActorAmbientScale, night.Params.Z);
         // The setting does not touch the day.
         Assert.Equal(FrameLighting.ReferenceNoon.AmbientSky, SkyModel.Evaluate(Noon, settings).Lighting.AmbientSky);
+    }
+
+    [Fact]
+    public void ActorAmbientScale_IsTheDayValueByDay_TheNightValueAtNight_AndInBetweenAtTwilight()
+    {
+        for (int i = 0; i < Samples; i++)
+        {
+            float z = SkyModel.Evaluate(i / (float)Samples).Lighting.Params.Z;
+            Assert.InRange(z, SkyModelKeyframes.NightActorAmbientScale, SkyModelKeyframes.DayActorAmbientScale);
+        }
+
+        for (float h = 10f; h <= 14f; h += 0.5f)
+        {
+            Assert.Equal(FrameLighting.ReferenceNoon.Params.Z, SkyModel.Evaluate(Hour(h)).Lighting.Params.Z);
+        }
+
+        for (float h = 20f; h <= 28f; h += 0.5f)
+        {
+            Assert.Equal(SkyModelKeyframes.NightActorAmbientScale, SkyModel.Evaluate(Hour(h % 24f)).Lighting.Params.Z);
+        }
+
+        foreach (float h in new[] { 5f, 6f, 18f, 19f })
+        {
+            float z = SkyModel.Evaluate(Hour(h)).Lighting.Params.Z;
+            Assert.True(z > SkyModelKeyframes.NightActorAmbientScale && z < SkyModelKeyframes.DayActorAmbientScale, $"{h}:00 scale {z}");
+        }
     }
 
     [Theory]
