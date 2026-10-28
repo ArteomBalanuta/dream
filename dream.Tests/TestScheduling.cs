@@ -16,7 +16,7 @@ namespace Dream.Tests;
 // waits cannot be faked, so each test in them is seconds of wall clock that no CPU can shorten.
 // Run serially they were the suite's critical path (71 s and 55 s of a 78 s run).
 //
-// Two changes, both scheduling only (no test, assertion or budget changes):
+// Scheduling only (no test, assertion or budget changes):
 //
 // - SplitClasses: every test case of these classes gets a collection of its own, so their
 //   scenarios run in parallel with each other. Only classes whose tests share no mutable static
@@ -24,13 +24,18 @@ namespace Dream.Tests;
 //   its own class instance, and a class fixture is created per test case). Listing a class here
 //   does not touch its file, so it works for files other work streams own.
 //
-// - LongestFirst: collections start in the order the orderer returns them, and the parallel phase
-//   is bounded by the thread pool (sync tests block a pool thread each), so a long collection that
-//   happens to start late ends the phase late. Known long collections start first (longest
-//   processing time first); the rest keep xUnit's default order.
+// - The slot gate (AssemblyRunner): at most MaxRunningCollections collections run at once, so sync
+//   tests no longer fill the thread pool and starve the Task.Run work that running tests wait on.
+//   RealTimeClasses skip the gate.
 //
-// Neither touches the non-parallel collections (TimingSensitive, RenderThreadAffinity): xUnit still
-// runs those alone after the parallel phase.
+// - LongestFirst: slots go to known long collections first (longest processing time first), so
+//   none of them starts late and ends the phase late; the rest keep xUnit's default order.
+//
+// None of this touches the non-parallel collections (TimingSensitive, RenderThreadAffinity): xUnit
+// still runs those alone after the parallel phase.
+//
+// Measured on 16 logical CPUs (Debug): 78.6 s of test time before, about 37 s after, with the
+// parallel phase CPU-bound (testhost CPU ~360-410 s). Server GC no longer makes a difference.
 public static class TestScheduling
 {
     // Classes whose test cases each run as their own collection; see the header. Measured alone
