@@ -184,18 +184,12 @@ public partial class Map
             new Vector3(cell.X, cell.Y, cell.Z),
             isFloor: false,
             materialId);
-        GeometrySubdivisionState subdivision = rubble.EnsureSubdivisionState();
-        int resolution = rubble.Definition.SubdivisionResolution;
-        for (int x = 0; x < resolution; x++)
-        {
-            for (int y = 0; y < resolution; y++)
-            {
-                for (int z = 0; z < resolution; z++)
-                {
-                    subdivision.SetChildSolid(new GeometrySubcellKey(x, y, z), isSolid: false);
-                }
-            }
-        }
+        // Rubble keeps a subdivision state with every child empty: it marks the cell as no longer an
+        // intact solid cube (render, collision and checksum paths branch on its presence). The
+        // all-empty flag stands in for the 1000 per-child overrides it used to store, which
+        // nothing reads for rubble (the fracture-piece paths win) and which cost about 107 KB
+        // allocated per fracture and 30 KB retained per rubble cell.
+        rubble.EnsureSubdivisionState().SetAllChildrenEmpty();
 
         rubble.SetFracturePieces(pieces);
         SetRubbleCell(cell, rubble);
