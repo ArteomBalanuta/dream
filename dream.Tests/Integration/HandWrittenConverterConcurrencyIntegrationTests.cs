@@ -20,6 +20,7 @@ using Dream.Tests.Multiplayer.Protocol;
 using RawClient = Dream.Tests.Integration.ProtocolV2SharedSnapshotLoopbackIntegrationTests.RawClient;
 using Frame = Dream.Tests.Integration.ProtocolV2SharedSnapshotLoopbackIntegrationTests.Frame;
 using ClientWorldReplay = Dream.Tests.Integration.ProtocolV2SharedSnapshotLoopbackIntegrationTests.ClientWorldReplay;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Integration;
 
@@ -30,14 +31,15 @@ namespace Dream.Tests.Integration;
 // corrupt output only under concurrency. Here 16 threads encode and decode the same large
 // snapshots and command frames at once, through one shared codec, private codecs and shared
 // payloads, and every result is compared with the reflection reference (ProtocolWireOptions.V2).
-// A real loopback run with three TCP clients then checks the wire end to end.
+// A real loopback run with three TCP clients then checks the wire end to end; it lives in
+// HandWrittenConverterLoopbackIntegrationTests so the two run in parallel, using the helpers here.
 public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper output)
 {
-    private const int Threads = 16;
-    private const int Snapshots = 48;
-    private const int Commands = 256;
-    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan NetTimeout = TimeSpan.FromSeconds(30);
+    internal const int Threads = 16;
+    internal const int Snapshots = 48;
+    internal const int Commands = 256;
+    internal static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan NetTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public void SixteenThreads_EncodeAndDecodeLargeSnapshotsAndCommands_ThroughCodecAndSharedPayload_MatchTheReference()
@@ -156,86 +158,9 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             $"largest snapshot {snapshots.Max(s => s.Snapshot.Actors.Count)} actors, {expectedSnapshotPayloads.Max(p => p.Length)} B");
     }
 
-    [Fact]
-    public async Task ThreeTcpClients_TwoHundredTicks_EverySnapshotDecodes_MatchesTheReference_AndWorldsConverge()
-    {
-        await using LoopbackServer server = LoopbackServer.Start();
-        await using RawClient primary = await server.ConnectAndJoinAsync("session-m");
-        await using RawClient early = await server.ConnectAndJoinAsync("session-z");
-        await using RawClient late = await server.ConnectAndJoinAsync("session-b");
-        RawClient[] clients = [primary, early, late];
-        Vector3[] buildCells =
-        [
-            new(7f, 1f, 5f), new(3f, 1f, 5f), new(5f, 1f, 7f), new(5f, 1f, 3f),
-            new(7f, 1f, 6f), new(3f, 1f, 4f), new(6f, 1f, 7f), new(4f, 1f, 3f)
-        ];
-
-        const int Ticks = 200;
-        int builds = 0;
-        for (int i = 0; i < Ticks; i++)
-        {
-            await primary.SendCommandAsync(walking: false);
-            await early.SendCommandAsync(walking: i % 40 < 15);
-            await late.SendCommandAsync(walking: i % 30 < 8);
-            if (i % 20 == 3 && builds < buildCells.Length)
-            {
-                await primary.SendActionAsync(new BuildUseIntent(buildCells[builds++]));
-            }
-
-            await server.TickAsync();
-            Assert.True(await server.FlushAllAsync(), "A connection did not drain its queue.");
-        }
-
-        ulong lastTick = server.Host.Runtime!.CurrentServerTick;
-        foreach (RawClient client in clients)
-        {
-            await client.WaitForSnapshotTickAsync(lastTick);
-        }
-
-        Assert.True(primary.AcceptedActions > 0, "No build was accepted.");
-        ulong serverChecksum = WorldStateChecksum.Compute(server.Host.Runtime!.Map);
-        List<Frame> allFrames = [];
-        foreach (RawClient client in clients)
-        {
-            // The client's read loop decoded every frame while the other two decoded theirs.
-            Assert.Null(client.ReadFault);
-            List<Frame> snapshots = client.Snapshots().ToList();
-            Assert.True(snapshots.Count >= Ticks - 5, $"{client.SessionId} received {snapshots.Count} snapshots.");
-            Assert.All(snapshots, frame => Assert.True(((ServerSnapshotMessage)frame.Decoded.Message).Snapshot.Actors.Count >= 3));
-            foreach (Frame frame in client.Frames)
-            {
-                AssertMatchesReference(frame);
-            }
-
-            ClientWorldReplay replay = client.Replay(server.Host.Runtime!.Map.Width);
-            Assert.True(replay.ChecksumsVerified >= 2, $"{client.SessionId} verified {replay.ChecksumsVerified} checksums.");
-            Assert.Equal(0, replay.ChecksumMismatches);
-            Assert.Equal(serverChecksum, replay.FinalChecksum);
-            allFrames.AddRange(client.Frames);
-        }
-
-        // Decode every received frame again on 16 threads at once.
-        TransportJsonCodec codec = new();
-        Frame[] frames = allFrames.ToArray();
-        Task[] workers = Enumerable.Range(0, Threads).Select(worker => Task.Run(() =>
-        {
-            for (int i = worker; i < frames.Length * 2; i += Threads)
-            {
-                Frame frame = frames[i % frames.Length];
-                DecodedProtocolMessage again = codec.Decode(frame.Payload);
-                Assert.Equal(frame.Decoded.Envelope, again.Envelope);
-                byte[] reencoded = JsonSerializer.SerializeToUtf8Bytes(again.Message, again.Message.GetType(), ProtocolWireOptions.V2);
-                Assert.True(reencoded.AsSpan().SequenceEqual(frame.PayloadJson), $"frame {frame.Decoded.Envelope.MessageKind}#{frame.Decoded.Envelope.Sequence} re-decoded differently.");
-            }
-        })).ToArray();
-        Assert.True(Task.WaitAll(workers, Bound), "Concurrent re-decode did not finish.");
-
-        output.WriteLine($"ticks={lastTick} builds={primary.AcceptedActions} frames={frames.Length}");
-    }
-
     // The frame's payload bytes are what the server's hand-written converters wrote; the
     // reflection reference must write exactly the same bytes for the decoded message.
-    private static void AssertMatchesReference(Frame frame)
+    internal static void AssertMatchesReference(Frame frame)
     {
         IProtocolMessage message = frame.Decoded.Message;
         byte[] reference = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V2);
@@ -245,7 +170,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             $"wire: {Encoding.UTF8.GetString(frame.PayloadJson)}\nref:  {Encoding.UTF8.GetString(reference)}");
     }
 
-    private static void Expect(bool condition, string message)
+    internal static void Expect(bool condition, string message)
     {
         if (!condition)
         {
@@ -253,7 +178,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         }
     }
 
-    private static ServerSnapshotEnvelope SnapshotWith(ulong tick, IReadOnlyList<ActorSnapshot> actors)
+    internal static ServerSnapshotEnvelope SnapshotWith(ulong tick, IReadOnlyList<ActorSnapshot> actors)
     {
         Dictionary<string, ulong> sequences = new(StringComparer.Ordinal);
         foreach (ActorSnapshot actor in actors)
@@ -276,7 +201,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             WorldChecksumSequence: tick);
     }
 
-    private static ActorSnapshot[] RandomActors(Random random, int count)
+    internal static ActorSnapshot[] RandomActors(Random random, int count)
     {
         ActorSnapshot[] actors = new ActorSnapshot[count];
         for (int i = 0; i < count; i++)
@@ -301,7 +226,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         return actors;
     }
 
-    private static PlayerCommandFrame RandomFrame(Random random)
+    internal static PlayerCommandFrame RandomFrame(Random random)
     {
         PlayerInteractionMode? mode = random.Next(3) switch
         {
@@ -320,7 +245,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
     }
 
     // Round-trippable strings only (a lone surrogate is written as U+FFFD), with escapes.
-    private static string RandomString(Random random)
+    internal static string RandomString(Random random)
     {
         return random.Next(5) switch
         {
@@ -332,7 +257,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         };
     }
 
-    private static float RandomFloat(Random random)
+    internal static float RandomFloat(Random random)
     {
         return random.Next(6) switch
         {
@@ -343,13 +268,13 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
         };
     }
 
-    private static Vector3 RandomVector(Random random)
+    internal static Vector3 RandomVector(Random random)
     {
         return new Vector3(RandomFloat(random), RandomFloat(random), RandomFloat(random));
     }
 
     // The real service over loopback TCP, ticked by the test (as in the WIRE-5 loopback test).
-    private sealed class LoopbackServer : IAsyncDisposable
+    internal sealed class LoopbackServer : IAsyncDisposable
     {
         private readonly List<ServerConnection> _connections = [];
 
@@ -377,7 +302,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
 
         public async Task<RawClient> ConnectAndJoinAsync(string sessionId)
         {
-            Task<ServerConnection> accept = Service.AcceptNextClientAsync().AsTask();
+            Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
             RawClient client = await RawClient.ConnectAsync(Service.Port, sessionId, receiveBufferSize: null);
             ServerConnection connection = await accept.WaitAsync(NetTimeout);
             _connections.Add(connection);
@@ -411,7 +336,7 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             bool flushed = true;
             foreach (ServerConnection connection in _connections)
             {
-                flushed &= await connection.FlushOutboundAsync(NetTimeout);
+                flushed &= await OutboundDrain.FlushAsync(connection, NetTimeout);
             }
 
             return flushed;

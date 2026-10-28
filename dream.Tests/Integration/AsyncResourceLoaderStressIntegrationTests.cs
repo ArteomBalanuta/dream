@@ -16,7 +16,6 @@ namespace Dream.Tests.Integration;
 // - every uploaded resource is disposed exactly once, by its handle's owner or by the loader;
 // - a failed key is never decoded again;
 // - nothing deadlocks (the whole run is bounded).
-[Collection(TimingSensitiveCollection.Name)]
 public class AsyncResourceLoaderStressIntegrationTests(ITestOutputHelper output)
 {
     private const string Source = "stress-loader";

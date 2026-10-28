@@ -13,7 +13,8 @@ namespace Dream.Tests.Rendering.Core;
 public class AsyncResourceLoaderTests
 {
     private const string Source = "test-loader";
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    // A safety deadline only: every wait below returns as soon as the decodes it waits for finish.
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public void TryGet_Is_False_Until_A_Pump_Uploads_The_Decoded_Resource()
@@ -396,6 +397,9 @@ public class AsyncResourceLoaderTests
 
     private sealed class Harness : IDisposable
     {
+        // Released once per finished decode, so waits wake on progress instead of sleep-polling.
+        private static readonly TimeSpan ProgressSlice = TimeSpan.FromMilliseconds(5);
+        private readonly SemaphoreSlim _progress = new(0);
         private int _decodes;
         private int _uploads;
 
@@ -421,6 +425,7 @@ public class AsyncResourceLoaderTests
                     finally
                     {
                         Interlocked.Increment(ref _decodes);
+                        _progress.Release();
                     }
                 },
                 data =>
@@ -462,13 +467,18 @@ public class AsyncResourceLoaderTests
             Loader.Dispose();
         }
 
-        private static void WaitFor(Func<bool> condition, string what)
+        private void WaitFor(Func<bool> condition, string what)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
             while (!condition())
             {
-                Assert.True(stopwatch.Elapsed < Timeout, $"Timed out waiting for {what}.");
-                Thread.Sleep(1);
+                TimeSpan remaining = Timeout - stopwatch.Elapsed;
+                Assert.True(remaining > TimeSpan.Zero, $"Timed out waiting for {what}.");
+
+                // Wakes as soon as a decode finishes. A decode signals from inside its delegate and
+                // the loader's task completes just after the delegate returns, so the wait is also
+                // capped at a short slice to re-check a condition that lagged its signal.
+                _progress.Wait(remaining < ProgressSlice ? remaining : ProgressSlice);
             }
         }
     }

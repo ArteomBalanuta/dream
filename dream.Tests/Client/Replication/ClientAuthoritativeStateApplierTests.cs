@@ -17,7 +17,9 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Client.Replication;
 
-
+// The join-accepted cases that rebuild a full startup world live in
+// ClientJoinAcceptedStartupTerrainApplierTests and ClientJoinAcceptedSubcellApplierTests so they
+// run in parallel with this class; they use the helpers here.
 public class ClientAuthoritativeStateApplierTests
 {
     [Fact]
@@ -414,102 +416,6 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
-    public void ClientJoinAcceptedApplier_ApplyToRuntime_RebuildsClientFloorFromInitialWorld()
-    {
-        using ClientWorldSession runtime = CreateRuntime();
-        ClientScenePresenter presenter = new(localSessionId: "session-a");
-        JoinAcceptedMessage joinAccepted = new(
-            "session-a",
-            101,
-            0,
-            new WorldSnapshot(
-                10,
-                runtime.Map.Height,
-                10,
-                Array.Empty<Vector3>()),
-            [
-                new PlayerRosterEntry("session-a", 101, "Player A")
-            ]);
-
-        ClientJoinAcceptedApplier.ApplyToRuntime(runtime, joinAccepted);
-        ClientJoinAcceptedApplier.ApplyToPresenter(presenter, joinAccepted);
-
-        Assert.Equal(10, runtime.Map.Width);
-        Assert.Equal(10, runtime.Map.Depth);
-        Assert.True(runtime.Physics.MapCubeBodies.Count >= 1);
-        PlayerRosterEntry rosterEntry = Assert.Single(presenter.BuildPlayerRoster());
-        Assert.Equal("Player A", rosterEntry.DisplayName);
-    }
-
-    [Fact]
-    public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeStartupTerrain()
-    {
-        using ClientWorldSession clientRuntime = CreateRuntime();
-        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
-        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
-
-        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
-
-        GeometryCellRecord bridgeCell = Assert.IsType<GeometryCellRecord>(
-            clientRuntime.Map.TryGetGeometryCellAtCell(7, 1, 5));
-        GeometryCellRecord islandSupportCell = Assert.IsType<GeometryCellRecord>(
-            clientRuntime.Map.TryGetGeometryCellAtCell(12, 1, 8));
-        GeometryRenderExport renderExport = clientRuntime.Map.CaptureGeometryRenderExport(
-            new Vector3(8f, 1f, 6f),
-            radius: 8f);
-
-        Assert.Equal(WorldDefaults.StartupFloorSize, clientRuntime.Map.Width);
-        Assert.Equal(WorldDefaults.StartupFloorSize, clientRuntime.Map.Depth);
-        Assert.Equal(GeometryMaterialId.Dirt, bridgeCell.Definition.MaterialId);
-        Assert.Equal(GeometryMaterialId.Stone, islandSupportCell.Definition.MaterialId);
-        Assert.Contains(
-            renderExport.CompatibilityCubes,
-            cube => cube.Position == new Vector3(7.5f, 1.5f, 5.5f));
-    }
-
-    [Fact]
-    public void ClientJoinAcceptedApplier_ApplyToRuntime_PreservesAuthoritativeSubcellStartupShapes()
-    {
-        using ClientWorldSession clientRuntime = CreateRuntime();
-        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
-        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
-
-        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
-
-        GeometryCellRecord pyramidCell = Assert.IsType<GeometryCellRecord>(
-            clientRuntime.Map.TryGetGeometryCellAtCell(18, 1, 16));
-        GeometryRenderExport renderExport = clientRuntime.Map.CaptureGeometryRenderExport(
-            new Vector3(18.5f, 1.5f, 16.5f),
-            radius: 4f);
-
-        Assert.NotNull(pyramidCell.SubdivisionState);
-        Assert.Null(pyramidCell.FracturePieces);
-        Assert.DoesNotContain(
-            renderExport.CompatibilityCubes,
-            cube => cube.Position == new Vector3(18.5f, 1.5f, 16.5f));
-        Assert.Contains(
-            renderExport.Blocks,
-            block => IntersectsCell(block, new GeometryCellKey(18, 1, 16)) &&
-                block.SideLength <= WorldMicroGrid.MicroCellSize + 0.0001f);
-    }
-
-    [Fact]
-    public void ClientJoinAcceptedApplier_ApplyToRuntime_BatchesAuthoritativeSubcellRestore()
-    {
-        using ClientWorldSession clientRuntime = CreateRuntime();
-        using RuntimeAuthoritativeSessionHost serverHost = RuntimeAuthoritativeSessionHost.CreateDefault();
-        JoinAcceptedMessage joinAccepted = serverHost.JoinSession("session-a", "Player A");
-
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        ClientJoinAcceptedApplier.ApplyToRuntime(clientRuntime, joinAccepted);
-        stopwatch.Stop();
-
-        Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(15),
-            $"Expected join world application to avoid per-cell global rebuilds, but it took {stopwatch.Elapsed}.");
-    }
-
-    [Fact]
     public void ClientCorrectionApplier_ApplySnapshotMetadata_UpdatesAuthoritativeInteractionMode()
     {
         FakeReplicatedSessionStateTarget target = new();
@@ -838,7 +744,7 @@ public class ClientAuthoritativeStateApplierTests
         Assert.Equal((ulong)25, diagnostics.RecordedResults[0].ActionSequence);
     }
 
-    private static ClientWorldSession CreateRuntime()
+    internal static ClientWorldSession CreateRuntime()
     {
         return new ClientWorldSession(
             floorSize: 10,
@@ -847,7 +753,7 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     // The map shape WorldSessionRuntime builds: startup terrain and locally simulated cube bodies.
-    private static Map CreateSimulatedMap(PhysicsIntegrator physics)
+    internal static Map CreateSimulatedMap(PhysicsIntegrator physics)
     {
         return new Map(
             physics,
@@ -856,7 +762,7 @@ public class ClientAuthoritativeStateApplierTests
             depth: 10);
     }
 
-    private static bool IntersectsCell(GeometryRenderBlockDescriptor block, GeometryCellKey cell)
+    internal static bool IntersectsCell(GeometryRenderBlockDescriptor block, GeometryCellKey cell)
     {
         Vector3 blockMin = block.Center - (block.Size * 0.5f);
         Vector3 blockMax = block.Center + (block.Size * 0.5f);
@@ -868,21 +774,21 @@ public class ClientAuthoritativeStateApplierTests
             blockMin.Z < cellMax.Z && blockMax.Z > cellMin.Z;
     }
 
-    private static void AssertVector3(Vector3 expected, Vector3 actual)
+    internal static void AssertVector3(Vector3 expected, Vector3 actual)
     {
         Assert.Equal(expected.X, actual.X, 3);
         Assert.Equal(expected.Y, actual.Y, 3);
         Assert.Equal(expected.Z, actual.Z, 3);
     }
 
-    private static bool ApproximatelyEqual(Vector3 left, Vector3 right)
+    internal static bool ApproximatelyEqual(Vector3 left, Vector3 right)
     {
         return MathF.Abs(left.X - right.X) < 0.001f &&
             MathF.Abs(left.Y - right.Y) < 0.001f &&
             MathF.Abs(left.Z - right.Z) < 0.001f;
     }
 
-    private sealed class FakeReplicatedPlayerTarget : IReplicatedPlayerTarget
+    internal sealed class FakeReplicatedPlayerTarget : IReplicatedPlayerTarget
     {
         public Vector3 Position { get; private set; }
 
@@ -903,7 +809,7 @@ public class ClientAuthoritativeStateApplierTests
         }
     }
 
-    private sealed class FakeReplicatedSessionStateTarget : IReplicatedSessionStateTarget
+    internal sealed class FakeReplicatedSessionStateTarget : IReplicatedSessionStateTarget
     {
         public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionMode.Building;
 
@@ -913,7 +819,7 @@ public class ClientAuthoritativeStateApplierTests
         }
     }
 
-    private sealed class RecordingDiagnosticsSink : IMultiplayerDiagnosticsSink
+    internal sealed class RecordingDiagnosticsSink : IMultiplayerDiagnosticsSink
     {
         public List<AuthoritativeActionResult> RecordedResults { get; } = [];
 

@@ -15,9 +15,12 @@ using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
 
-[Collection(TimingSensitiveCollection.Name)]
 public class SharedSnapshotEncodingTests
 {
+    // A safety deadline, not a performance bound: a flush returns as soon as every writer has
+    // drained (or a connection faulted). It only has to outlast a busy parallel test run.
+    private static readonly TimeSpan FlushDeadline = TimeSpan.FromSeconds(30);
+
     private readonly ITestOutputHelper _output;
 
     public SharedSnapshotEncodingTests(ITestOutputHelper output)
@@ -60,16 +63,16 @@ public class SharedSnapshotEncodingTests
         // Back to back, the writers fall behind and some snapshots are merged on the tick thread.
         long backToBackBytes = AllocationAssert.MeasureBytesPerIteration(
             () => service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds).GetAwaiter().GetResult());
-        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
-        long drainedBytes = await MeasureTickWithDrainedQueuesAsync(service);
+        Assert.True(await service.FlushOutboundAsync(FlushDeadline));
+        long drainedBytes = await MeasureTickWithDrainedQueuesAsync(service, connections);
 
         const int countedTicks = 10;
-        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(await DrainAndFlushAsync(service, connections));
         codec.ResetCounts();
         for (int tick = 0; tick < countedTicks; tick++)
         {
             await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
-            Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(await DrainAndFlushAsync(service, connections));
         }
 
         _output.WriteLine(
@@ -106,7 +109,7 @@ public class SharedSnapshotEncodingTests
         for (int tick = 0; tick < ticks; tick++)
         {
             await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
-            Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(await service.FlushOutboundAsync(FlushDeadline));
         }
 
         Assert.Equal(ticks, codec.EncodePayloadCalls);
@@ -129,7 +132,7 @@ public class SharedSnapshotEncodingTests
         for (int tick = 0; tick < ticks; tick++)
         {
             await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
-            Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(await service.FlushOutboundAsync(FlushDeadline));
         }
 
         Assert.Equal(ticks, authority.Exported.Count);
@@ -187,12 +190,12 @@ public class SharedSnapshotEncodingTests
         SharedEncodedPayload thirdShared = new(codec, third);
 
         connection.EnqueueSnapshot(first, firstShared);
-        Assert.True(transport.FirstSendStarted.Wait(TimeSpan.FromSeconds(5)));
+        Assert.True(transport.FirstSendStarted.Wait(FlushDeadline));
         connection.EnqueueSnapshot(second, secondShared);
         connection.EnqueueSnapshot(third, thirdShared);
         Assert.Equal(1, connection.CoalescedSnapshots);
         transport.Release();
-        Assert.True(await connection.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(await connection.FlushOutboundAsync(FlushDeadline));
 
         Assert.True(firstShared.IsEncoded);
         Assert.False(secondShared.IsEncoded);
@@ -218,7 +221,7 @@ public class SharedSnapshotEncodingTests
         ServerConnection[] connections = AttachJoined(service, host, codec, framer, 3, index => new RecordingConnection($"recording-{index}"));
 
         await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
-        Assert.False(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(await service.FlushOutboundAsync(FlushDeadline));
 
         Assert.All(connections, connection => Assert.True(connection.IsFaulted));
         Assert.Equal(1, codec.EncodePayloadCalls);
@@ -329,18 +332,27 @@ public class SharedSnapshotEncodingTests
 
     // One tick at a time, each started after every writer has drained its queue, so no snapshot
     // is merged; the smallest tick is the steady-state cost of the tick path itself.
-    private static async Task<long> MeasureTickWithDrainedQueuesAsync(DedicatedServerService service)
+    private static async Task<long> MeasureTickWithDrainedQueuesAsync(DedicatedServerService service, ServerConnection[] connections)
     {
         long best = long.MaxValue;
         for (int round = 0; round < 200; round++)
         {
-            Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(await DrainAndFlushAsync(service, connections));
             long before = GC.GetAllocatedBytesForCurrentThread();
             service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds).GetAwaiter().GetResult();
             best = Math.Min(best, GC.GetAllocatedBytesForCurrentThread() - before);
         }
 
         return best;
+    }
+
+    // Waits for each writer's progress before the service flush, so the flush (which re-checks
+    // on a 15 ms timer tick) usually finds every queue drained at its first check. The service
+    // flush still decides the result.
+    private static async Task<bool> DrainAndFlushAsync(DedicatedServerService service, ServerConnection[] connections)
+    {
+        Assert.True(await OutboundDrain.FlushAllAsync(connections, FlushDeadline));
+        return await service.FlushOutboundAsync(FlushDeadline);
     }
 
     private static ServerConnection[] AttachJoined(

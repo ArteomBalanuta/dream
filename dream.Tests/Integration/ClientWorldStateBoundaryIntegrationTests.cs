@@ -20,7 +20,6 @@ namespace Dream.Tests.Integration;
 // DEC-7 took IClientWorldState (and its replication-ack state) off the authoritative
 // WorldSessionRuntime. The client must still get all of its world state through
 // ClientWorldSession, which is now the interface's only implementation.
-[Collection(TimingSensitiveCollection.Name)]
 public class ClientWorldStateBoundaryIntegrationTests
 {
     [Fact]
@@ -66,6 +65,8 @@ public class ClientWorldStateBoundaryIntegrationTests
         await using RemoteClientSession client = await RemoteClientSession.ConnectAsync(
             new RemoteClientOptions("127.0.0.1", server.BoundPort, SessionId, "Dec Seven", "dec7-test"));
 
+        // A safety deadline only: the loop exits as soon as every condition below has been seen.
+        TimeSpan deadline = TimeSpan.FromSeconds(30);
         Stopwatch clock = Stopwatch.StartNew();
         bool joined = false;
         int snapshots = 0;
@@ -76,8 +77,10 @@ public class ClientWorldStateBoundaryIntegrationTests
         ulong actionSequence = 0;
         bool buildsSent = false;
         int acceptedBuilds = 0;
+        int buildResults = 0;
+        int buildsRequested = 0;
         SceneEventHub clientEvents = new();
-        while (clock.Elapsed < TimeSpan.FromSeconds(8))
+        while (clock.Elapsed < deadline)
         {
             commandSequence++;
             await client.SendCommandFrameAsync(PlayerCommandFrame.CreateIdle(new PlayerSessionId(SessionId), commandSequence));
@@ -91,6 +94,7 @@ public class ClientWorldStateBoundaryIntegrationTests
                         break;
                     case ServerActionMessage actionMessage:
                         ClientAuthoritativeActionApplier.ApplyActionResult(world, clientEvents, actionMessage.Result, SessionId);
+                        buildResults++;
                         if (actionMessage.Result.Accepted && actionMessage.Result.Payload is WorldMutationResult { Applied: true })
                         {
                             acceptedBuilds++;
@@ -131,6 +135,7 @@ public class ClientWorldStateBoundaryIntegrationTests
                 ];
                 foreach (Vector3 offset in offsets)
                 {
+                    buildsRequested++;
                     actionSequence++;
                     await client.SendPlayerActionAsync(new PlayerActionMessage(
                         new PlayerSessionId(SessionId),
@@ -141,11 +146,14 @@ public class ClientWorldStateBoundaryIntegrationTests
                 buildsSent = true;
             }
 
-            if (buildsSent && acceptedBuilds > 0 &&
+            // Exit on progress, not on elapsed time: every build has been answered (so no accepted
+            // build can still arrive), the accepted ones are all replicated into the client world,
+            // and enough snapshots and checksums have been seen for the assertions below.
+            if (buildsSent && buildResults >= buildsRequested && acceptedBuilds > 0 &&
                 clientWorld.Map.SolidCubes.Count(cube => cube.Position.Y > 1f) == placedBefore + acceptedBuilds &&
                 clientWorld.LastAppliedReplicatedWorldMutationSequence > 0 &&
-                checksumsVerified > 3 &&
-                clock.Elapsed > TimeSpan.FromSeconds(3))
+                snapshots > 10 &&
+                checksumsVerified > 3)
             {
                 break;
             }

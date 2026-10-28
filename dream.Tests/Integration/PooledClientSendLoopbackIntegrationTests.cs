@@ -19,7 +19,6 @@ namespace Dream.Tests.Integration;
 // large strings, including frames over PooledFrameWriter.RetainedCapacityLimit so the writer's
 // shrink path runs between ordinary frames. The receiving side decodes with the server's codec and
 // framer and checks every frame: order, gap-free sequences, and bytes identical to the byte[] path.
-[Collection(TimingSensitiveCollection.Name)]
 public class PooledClientSendLoopbackIntegrationTests
 {
     private const int CommandCount = 500;
@@ -66,12 +65,23 @@ public class PooledClientSendLoopbackIntegrationTests
         List<PlayerCommandFrame> commands = Enumerable.Range(1, CommandCount).Select(CreateCommand).ToList();
         List<PlayerActionMessage> actions = Enumerable.Range(1, ActionCount).Select(CreateAction).ToList();
         using Barrier start = new(2);
+        // Both callers start together, but on a busy machine one can still finish its whole stream
+        // before the other is scheduled. The command caller therefore waits, halfway through, for
+        // the action caller's first send to complete; sends take the client's send lock in call
+        // order, so the rest of the command stream is on the wire after that action and the two
+        // streams overlap however the threads are scheduled.
+        TaskCompletionSource firstActionSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Task commandTask = Task.Run(async () =>
         {
             start.SignalAndWait();
-            foreach (PlayerCommandFrame command in commands)
+            for (int i = 0; i < commands.Count; i++)
             {
-                await client.SendCommandFrameAsync(command);
+                if (i == commands.Count / 2)
+                {
+                    await firstActionSent.Task.WaitAsync(Timeout);
+                }
+
+                await client.SendCommandFrameAsync(commands[i]);
             }
         });
         Task actionTask = Task.Run(async () =>
@@ -81,6 +91,7 @@ public class PooledClientSendLoopbackIntegrationTests
             for (int i = 0; i < actions.Count; i++)
             {
                 await client.SendPlayerActionAsync(actions[i]);
+                firstActionSent.TrySetResult();
                 if (i % 10 == 5 && joinsSent < ExtraJoinRequests)
                 {
                     // A frame over the retained capacity, interleaved with the command stream.
@@ -161,7 +172,7 @@ public class PooledClientSendLoopbackIntegrationTests
         bool joined = false;
         string? echoedName = null;
         ulong sequence = 0;
-        while (clock.Elapsed < TimeSpan.FromSeconds(10) && (!joined || echoedName == null))
+        while (clock.Elapsed < Timeout && (!joined || echoedName == null))
         {
             sequence++;
             await client.SendCommandFrameAsync(PlayerCommandFrame.CreateIdle(new PlayerSessionId("escaped-session"), sequence));

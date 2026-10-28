@@ -14,13 +14,14 @@ namespace Dream.Tests.Integration;
 // that reaches it while it is unencoded (the winner encodes, the rest spin and then wait on the
 // monitor). Every instance must be encoded exactly once, every reader must see the same array, and
 // in fault rounds every reader must see the same exception instance. The whole run is bounded at
-// 10 s, so a lost pulse (a deadlock in WaitUntilDone) fails instead of hanging.
-[Collection(TimingSensitiveCollection.Name)]
+// 30 s, so a lost pulse (a deadlock in WaitUntilDone) fails instead of hanging.
 public class SharedEncodedPayloadLoadIntegrationTests(ITestOutputHelper output)
 {
     private const int Readers = 64;
     private const int Rounds = 10_000;
-    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
+    // A deadlock bound, not a performance budget: the run normally takes a few seconds, and it
+    // shares the machine with the rest of the parallel test run.
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
     [Fact]
     public void SixtyFourThreadPoolReaders_TenThousandFreshPayloads_OneEncodeEach_SameArray_NoDeadlock()

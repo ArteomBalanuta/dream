@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RootNamespace>Dream.Tests</RootNamespace>
+    <!-- The suite runs hundreds of allocation-heavy tests at once (SharpGLTF samplers, world
+         generation, JSON); the workstation GC stops every test thread for each gen0 collection.
+         Server GC collects per core in parallel. Allocation tests read per-thread counters, which
+         the GC mode does not change. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +21,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\dream\dream.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- xUnit reads its runner settings (parallel algorithm, thread count) from the output folder. -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="CopyDreamNativeRuntime" AfterTargets="Build">
