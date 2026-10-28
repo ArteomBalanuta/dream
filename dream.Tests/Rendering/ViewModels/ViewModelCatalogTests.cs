@@ -7,6 +7,22 @@ namespace Dream.Tests.Rendering.ViewModels;
 public class ViewModelCatalogTests
 {
     [Fact]
+    public void DefaultCatalog_ResolvesTheTorch_AndEveryStarterItemsVisual()
+    {
+        ViewModelCatalog catalog = ViewModelCatalog.CreateDefault();
+
+        ViewModelDefinition torch = catalog.GetDefinition("held.tool.torch");
+        Assert.Equal(ViewModelSlot.HeldItem, torch.Slot);
+        Assert.Equal(ViewModelAssets.TorchToolDefinition, torch);
+
+        foreach (string itemKind in Dream.Simulation.Inventory.ToolCatalog.StarterItemKinds)
+        {
+            string visualId = Dream.Simulation.Inventory.ToolCatalog.Resolve(itemKind).VisualId;
+            Assert.Equal(ViewModelSlot.HeldItem, catalog.GetDefinition(visualId).Slot);
+        }
+    }
+
+    [Fact]
     public void DefaultLoadout_UsesRegisteredHandsAndHeldItem()
     {
         ViewModelCatalog catalog = ViewModelCatalog.CreateDefault();

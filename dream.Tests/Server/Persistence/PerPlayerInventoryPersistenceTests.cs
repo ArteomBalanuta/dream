@@ -287,7 +287,7 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
         Assert.Equal(1, world.Calls(nameof(IWorldPersistenceRepository.GetMaxItemInstanceId)));
         Assert.Equal(0, runtime.LoadedInventoryCount);
-        Assert.Equal(94, runtime.NextItemInstanceId);
+        Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count, runtime.NextItemInstanceId);
 
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("stored", "Stored");
@@ -295,7 +295,9 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadItemInstances)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadInventorySlots)));
         Assert.Equal(1, runtime.LoadedInventoryCount);
-        Assert.Equal(new HashSet<long> { 40, 41, 42, 43 }, ItemIds(Capture(runtime, "stored")));
+        Assert.Equal(
+            Enumerable.Range(40, ToolCatalog.StarterItemKinds.Count).Select(id => (long)id).ToHashSet(),
+            ItemIds(Capture(runtime, "stored")));
         // The stored inventory was applied, not re-seeded.
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.SaveItemInstance)));
     }
@@ -449,9 +451,9 @@ public sealed class PerPlayerInventoryPersistenceTests
         return snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId;
     }
 
-    private static PersistedItemInstance Item(long id, string owner)
+    private static PersistedItemInstance Item(long id, string owner, string? itemKind = null)
     {
-        ToolDefinition definition = ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[0]);
+        ToolDefinition definition = ToolCatalog.Resolve(itemKind ?? ToolCatalog.StarterItemKinds[0]);
         return new PersistedItemInstance(
             id,
             definition.ItemKind,
@@ -515,7 +517,9 @@ public sealed class PerPlayerInventoryPersistenceTests
         {
             for (int i = 0; i < ToolCatalog.StarterItemKinds.Count; i++)
             {
-                _items[firstItemId + i] = Item(firstItemId + i, playerName);
+                // One item of each starter kind, like a seeded inventory, so Ensure's starter
+                // top-up (wave T2) finds nothing missing.
+                _items[firstItemId + i] = Item(firstItemId + i, playerName, ToolCatalog.StarterItemKinds[i]);
                 _slots[(playerName, i)] = new PersistedInventorySlot(playerName, i, firstItemId + i, DateTime.UtcNow);
             }
 

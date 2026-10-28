@@ -66,6 +66,17 @@ public static class ViewModelAssets
         new Vector3(4f, 36f, -8f),
         0.24f);
 
+    // Wave T2: reuses the debug held item until a torch model exists.
+    public static readonly ViewModelDefinition TorchToolDefinition = new(
+        "held.tool.torch",
+        ViewModelSlot.HeldItem,
+        AssetPaths.Animation("viewmodels/DebugHeldItem.gltf"),
+        "Idle",
+        "Use",
+        new Vector3(0.14f, -0.10f, -0.32f),
+        new Vector3(-6f, 12f, -4f),
+        0.26f);
+
     public static readonly IReadOnlyList<ViewModelDefinition> BuiltInDefinitions =
         Array.AsReadOnly(new[]
         {
@@ -74,7 +85,8 @@ public static class ViewModelAssets
             BuilderToolDefinition,
             BladeToolDefinition,
             MaulToolDefinition,
-            LanternToolDefinition
+            LanternToolDefinition,
+            TorchToolDefinition
         });
 
     public static readonly ViewModelLoadout DefaultLoadout = new(
