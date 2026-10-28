@@ -179,7 +179,13 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
             await late.SendCommandAsync(walking: i % 30 < 8);
             if (i % 20 == 3 && builds < buildCells.Length)
             {
-                await primary.SendActionAsync(new BuildUseIntent(buildCells[builds++]));
+                // Build use is server-originated only (NETR-6 rejects it over player.action); the
+                // placed cube still reaches every client through the snapshots.
+                Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
+                    new PlayerSessionId("session-m"),
+                    (ulong)(builds + 1),
+                    new BuildUseIntent(buildCells[builds]))));
+                builds++;
             }
 
             await server.TickAsync();

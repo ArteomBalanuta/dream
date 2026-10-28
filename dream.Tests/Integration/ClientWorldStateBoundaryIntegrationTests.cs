@@ -73,14 +73,34 @@ public class ClientWorldStateBoundaryIntegrationTests
         int checksumMismatches = 0;
         Vector3? serverPosition = null;
         ulong commandSequence = 0;
-        ulong actionSequence = 0;
         bool buildsSent = false;
+        int buildFrames = 0;
         int acceptedBuilds = 0;
         SceneEventHub clientEvents = new();
+        // Build use reaches the server only as command-frame primary use (NETR-6 rejects
+        // BuildUseIntent over player.action). The client holds primary use in Building mode while
+        // turning through these facings; each placement lands CubePlacementDistance ahead of its eye.
+        // Tilted up, like the old wire targets above the floor, so no placement rests on the floor.
+        Vector3[] buildFacings =
+        [
+            new Vector3(1f, 0.75f, 0f).Normalized(), new Vector3(-1f, 0.75f, 0f).Normalized(),
+            new Vector3(0f, 0.75f, 1f).Normalized(), new Vector3(0f, 0.75f, -1f).Normalized()
+        ];
+        const int FramesPerFacing = 10;
         while (clock.Elapsed < TimeSpan.FromSeconds(8))
         {
             commandSequence++;
-            await client.SendCommandFrameAsync(PlayerCommandFrame.CreateIdle(new PlayerSessionId(SessionId), commandSequence));
+            PlayerSessionId session = new(SessionId);
+            PlayerCommandFrame frame = buildsSent && buildFrames < buildFacings.Length * FramesPerFacing
+                ? new PlayerCommandFrame(
+                    session,
+                    commandSequence,
+                    new PlayerModeSwitchIntent(PlayerInteractionMode.Building),
+                    PlayerMoveIntent.None,
+                    new PlayerLookIntent(0f, 0f, buildFacings[buildFrames++ / FramesPerFacing]),
+                    PrimaryUsePressed: true)
+                : PlayerCommandFrame.CreateIdle(session, commandSequence);
+            await client.SendCommandFrameAsync(frame);
             while (client.TryDequeueInbound(out IServerToClientMessage? message) && message != null)
             {
                 switch (message)
@@ -120,28 +140,14 @@ public class ClientWorldStateBoundaryIntegrationTests
                 }
             }
 
-            if (!buildsSent && serverPosition is Vector3 origin && snapshots > 5)
+            if (!buildsSent && serverPosition.HasValue && snapshots > 5)
             {
-                // A few targets within build range above the floor; any accepted one makes the
-                // server replicate a CubePlaced mutation to this client.
-                Vector3[] offsets =
-                [
-                    new(1.5f, 0.5f, 0f), new(-1.5f, 0.5f, 0f), new(0f, 0.5f, 1.5f), new(0f, 0.5f, -1.5f),
-                    new(1.5f, 1.5f, 0f), new(-1.5f, 1.5f, 0f), new(0f, 1.5f, 1.5f), new(0f, 1.5f, -1.5f)
-                ];
-                foreach (Vector3 offset in offsets)
-                {
-                    actionSequence++;
-                    await client.SendPlayerActionAsync(new PlayerActionMessage(
-                        new PlayerSessionId(SessionId),
-                        actionSequence,
-                        new BuildUseIntent(origin + offset)));
-                }
-
+                // Any accepted placement makes the server replicate a CubePlaced mutation to this
+                // client; the build frames above start on the next iteration.
                 buildsSent = true;
             }
 
-            if (buildsSent && acceptedBuilds > 0 &&
+            if (buildsSent && buildFrames >= buildFacings.Length * FramesPerFacing && acceptedBuilds > 0 &&
                 clientWorld.Map.SolidCubes.Count(cube => cube.Position.Y > 1f) == placedBefore + acceptedBuilds &&
                 clientWorld.LastAppliedReplicatedWorldMutationSequence > 0 &&
                 checksumsVerified > 3 &&

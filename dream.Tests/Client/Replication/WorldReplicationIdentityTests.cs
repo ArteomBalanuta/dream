@@ -147,11 +147,15 @@ public class WorldReplicationIdentityTests
 
             handler.Handle(context, new ClientWorldResyncRequestMessage(1));
             Assert.Empty(context.OutboundMessages);
+            Assert.False(context.WorldResyncPending);
 
+            // NETR-6: the handler only marks the joined connection; DedicatedServerHost exports the
+            // world after its next tick (covered in WorldResyncDeferralTests).
             context.LastJoinRequest = new ClientJoinRequestMessage("session-a", "A");
             handler.Handle(context, new ClientWorldResyncRequestMessage(1));
-            ServerSnapshotMessage reply = Assert.IsType<ServerSnapshotMessage>(Assert.Single(context.OutboundMessages));
-            Assert.NotNull(reply.Snapshot.World);
+            Assert.Empty(context.OutboundMessages);
+            Assert.True(context.WorldResyncPending);
+            Assert.NotNull(host.ExportWorldResync().World);
         }
     }
 

@@ -235,7 +235,13 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
             if (tick % 20 == 2 && builds < buildCells.Length)
             {
-                await a.SendActionAsync(new BuildUseIntent(buildCells[builds++]));
+                // Build use is server-originated only (NETR-6 rejects it over player.action); its
+                // action result still reaches client a over the wire after the tick.
+                Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
+                    new PlayerSessionId(a.SessionId),
+                    (ulong)(builds + 1),
+                    new BuildUseIntent(buildCells[builds]))));
+                builds++;
             }
 
             if (tick == 150)
@@ -552,7 +558,9 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             {
                 ulong sequence = _actionSequences.TryGetValue(session, out ulong last) ? last + 1 : 1;
                 _actionSequences[session] = sequence;
-                _host.HandleClientMessage($"connection-{session}", new PlayerActionMessage(new PlayerSessionId(session), sequence, payload));
+                // Build use is server-originated only (NETR-6 rejects it over player.action), so the
+                // script queues it on the host's tick-drained action queue directly.
+                Assert.True(_host.TryEnqueueServerAction(new PlayerActionMessage(new PlayerSessionId(session), sequence, payload)));
             }
 
             Assert.Equal(1, AdvanceOneTick());

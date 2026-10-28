@@ -88,7 +88,11 @@ public class SnapshotConverterLoopbackSessionIntegrationTests(ITestOutputHelper 
 
                 if (iteration == BuildAt)
                 {
-                    await a.SendActionAsync(new BuildUseIntent(buildCell));
+                    // Build use is server-originated only (NETR-6 rejects it over player.action).
+                    Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
+                        new PlayerSessionId(a.SessionId),
+                        1,
+                        new BuildUseIntent(buildCell))));
                 }
 
                 if (iteration == ResyncAt && c != null)

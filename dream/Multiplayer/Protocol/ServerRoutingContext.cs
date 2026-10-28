@@ -37,6 +37,47 @@ public sealed class ServerRoutingContext
 
     public List<IServerToClientMessage> OutboundMessages { get; } = [];
 
+    // A connection gets at most one world resync per cooldown; requests inside it are dropped.
+    public static readonly TimeSpan WorldResyncCooldown = TimeSpan.FromSeconds(2);
+
+    private bool _hasAcceptedWorldResync;
+    private long _lastAcceptedWorldResyncTimestamp;
+
+    // Set by WorldResyncRequestHandler and cleared by the host when it serves the resync after a
+    // tick. Both run under the host's tick lock.
+    public bool WorldResyncPending { get; private set; }
+
+    // Marks the connection as wanting a world resync unless one was accepted within the cooldown.
+    // Timestamps are TimeProvider/Stopwatch ticks at the given frequency.
+    public bool TryRequestWorldResync(long nowTimestamp, long timestampFrequency)
+    {
+        if (_hasAcceptedWorldResync)
+        {
+            long cooldownTicks = (long)(WorldResyncCooldown.TotalSeconds * timestampFrequency);
+            if (nowTimestamp - _lastAcceptedWorldResyncTimestamp < cooldownTicks)
+            {
+                return false;
+            }
+        }
+
+        _hasAcceptedWorldResync = true;
+        _lastAcceptedWorldResyncTimestamp = nowTimestamp;
+        WorldResyncPending = true;
+        return true;
+    }
+
+    // Returns whether a resync was pending, and clears it.
+    public bool TryTakeWorldResyncRequest()
+    {
+        if (!WorldResyncPending)
+        {
+            return false;
+        }
+
+        WorldResyncPending = false;
+        return true;
+    }
+
     public void ClearOutboundMessages()
     {
         OutboundMessages.Clear();

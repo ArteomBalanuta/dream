@@ -92,18 +92,19 @@ public class DedicatedServerHostTickTests
     }
 
     [Fact]
-    public void RuntimeAttachedHost_QueuesCombatActionsAndDrainsThemOnTick()
+    public void RuntimeAttachedHost_QueuesClientActionsAndDrainsThemOnTick()
     {
         FakeTickDrivenAuthority authority = new();
         using DedicatedServerHost host = CreateHost(authority);
 
         host.HandleClientMessage("connection-1", new ClientJoinRequestMessage("session-a", "player-a"));
+        // Combat use is no longer client-sendable over player.action (NETR-6); an equip still queues.
         IReadOnlyList<IServerToClientMessage> replies = host.HandleClientMessage(
             "connection-1",
             new PlayerActionMessage(
                 new PlayerSessionId("session-a"),
                 9,
-                new CombatUseIntent(OpenTK.Mathematics.Vector3.Zero, -OpenTK.Mathematics.Vector3.UnitZ)));
+                new InventoryEquipIntent(3)));
 
         Assert.Empty(replies);
         Assert.Empty(authority.ProcessedActions);

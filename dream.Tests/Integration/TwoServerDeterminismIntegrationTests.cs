@@ -339,9 +339,10 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
             {
                 ulong sequence = _actionSequences.TryGetValue(session, out ulong last) ? last + 1 : 1;
                 _actionSequences[session] = sequence;
-                _host.HandleClientMessage(
-                    _connectionBySession[session],
-                    new PlayerActionMessage(new PlayerSessionId(session), sequence, payload));
+                // Build use is server-originated only (NETR-6 rejects it over player.action), so the
+                // script queues it on the host's tick-drained action queue directly.
+                Assert.True(_host.TryEnqueueServerAction(
+                    new PlayerActionMessage(new PlayerSessionId(session), sequence, payload)));
             }
 
             Assert.Equal(1, AdvanceOneTick());
