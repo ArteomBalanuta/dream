@@ -65,7 +65,7 @@ public sealed class Wave10TransferInteractionTests(ITestOutputHelper output)
             Assert.False(oldTransfer.Capture.IsReleased);
             Assert.Equal(1, oldTransfer.TransferId);
 
-            clock.Advance(DedicatedServerHost.SameSessionTakeoverSilence);
+            clock.Advance(DedicatedServerHost.TakeoverSilence);
             host.HandleClientMessage("connection-new", new ClientJoinRequestMessage("session-a", "Player A"));
             await AdvanceUntilAsync(service, () => service.ConnectionCount == 1 && newConnection.WorldTransfers == 1);
             Assert.True(await newConnection.FlushOutboundAsync(Deadline));
