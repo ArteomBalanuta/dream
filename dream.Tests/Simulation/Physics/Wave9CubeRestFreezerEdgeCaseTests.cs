@@ -290,17 +290,14 @@ public class Wave9CubeRestFreezerEdgeCaseTests
     // back face, which the flush-seam rule wakes (CubeRestFreezerTests.PlayerStartingCellAligned).
     // "Flush" is up to float rounding: at |x| >= 2048 one ulp exceeds the old absolute 1e-4
     // tolerance, so a face one ulp off was not flush any more and the row stayed a wall. The
-    // mover here is one ulp right of cell-aligned; it rests either a hair into the row or a hair
-    // above it (a positive gap within the contact slop).
+    // mover here is one ulp right of cell-aligned and rests a hair into the row.
     [Theory]
     [InlineData(0f, -0.001f)]
-    [InlineData(0f, 0.01f)]
     [InlineData(4096f, -0.001f)]
-    [InlineData(4096f, 0.01f)]
     [InlineData(-8192f, -0.001f)]
     [InlineData(30000f, -0.001f)]
-    [InlineData(30000f, 0.01f)]
-    public void FlushSeamAhead_WakesTheRow_AtAnyCoordinateAndWithASmallGap(float originX, float verticalGap)
+    [InlineData(30000f, -0.0001f)]
+    public void FlushSeamAhead_WakesTheRow_AtAnyCoordinate(float originX, float verticalGap)
     {
         using PhysicsIntegrator physics = new();
         physics.CubeRest.Enabled = true;
@@ -321,6 +318,32 @@ public class Wave9CubeRestFreezerEdgeCaseTests
         physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
 
         Assert.True(physics.CubeRest.IsFrozen(row[0]), "the cube under the mover is a support");
+        Assert.False(physics.CubeRest.IsFrozen(row[1]));
+        Assert.False(physics.CubeRest.IsFrozen(row[2]));
+    }
+
+    // A mover flush with the seam but a centimetre above the row has no box-box contact with it
+    // (Bullet reports none for separated boxes), so the seam is no wall yet and nothing wakes;
+    // once it has settled into the row, the next pass wakes the seam. Waking on the gap already
+    // cascaded through cell-aligned stacks (see CubeRestFreezer.IsPushedOrCarried).
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(4096f)]
+    public void FlushSeamAhead_OfAMoverWithAPositiveGap_WakesOnceItSettlesIn(float originX)
+    {
+        using PhysicsIntegrator physics = new();
+        physics.CubeRest.Enabled = true;
+        RigidBody[] row = FreezeRawRow(physics, originX, count: 3);
+        float x = MathF.BitIncrement(originX + 0.5f);
+        RigidBody mover = AddRawMover(physics, x, 1.51f, 0.5f);
+        mover.LinearVelocity = new BulletSharp.Math.Vector3(4f, 0f, 0f);
+
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+        Assert.All(row, body => Assert.True(physics.CubeRest.IsFrozen(body)));
+
+        mover.WorldTransform = BulletSharp.Math.Matrix.Translation(x, 1.499f, 0.5f);
+        physics.CubeRest.WakeTouchedBy(mover, TickSeconds);
+        Assert.True(physics.CubeRest.IsFrozen(row[0]));
         Assert.False(physics.CubeRest.IsFrozen(row[1]));
         Assert.False(physics.CubeRest.IsFrozen(row[2]));
     }

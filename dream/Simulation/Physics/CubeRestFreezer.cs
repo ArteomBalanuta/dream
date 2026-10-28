@@ -485,9 +485,15 @@ public sealed class CubeRestFreezer
         if (entry.Max.Y <= moverMin.Y + SupportTolerance)
         {
             // It supports the mover: standing, walking or landing on it needs nothing from it,
-            // except at a flush seam (below). A mover resting a hair above its supports (a
-            // positive gap within the contact slop) still meets the seam once it settles.
-            return entry.Max.Y > moverMin.Y - ContactSlop && IsFlushSeamAhead(entry, moverMin, moverMax, velocity);
+            // except at a flush seam (below). Only a support the mover sinks into counts: the
+            // snag needs vertical penetration. A mover resting with a positive gap above its
+            // supports has no box-box contact with them at all (btBoxBoxDetector reports none
+            // for boxes separated along any axis), so the seam is no wall; once gravity settles
+            // it in, the next tick's pass sees the penetration and wakes the seam then. Counting
+            // a gap within ContactSlop as well was tried: every woken cube passes the push on
+            // with this rule, so on cell-aligned stacks it cascaded through whole carpets
+            // (Smoke8 awake placed cubes p99 980 against 40).
+            return entry.Max.Y > moverMin.Y && IsFlushSeamAhead(entry, moverMin, moverMax, velocity);
         }
 
         if (entry.Min.Y >= moverMax.Y - SupportTolerance)
