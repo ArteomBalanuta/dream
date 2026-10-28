@@ -217,11 +217,12 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 useCommand = secondaryUses[secondaryIndex++];
             }
 
-            PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(useCommand);
-            if (actionMessage != null)
+            // Server-synthesized from an already-accepted command, so not through the client
+            // action-sequence gate: a held use repeating from one command frame is not stale.
+            if (Runtime.TryProcessCommandPrimaryUse(useCommand, out AuthoritativeActionResult? useResult))
             {
                 synthesizedCommandActions ??= [];
-                synthesizedCommandActions.Add(Runtime.ProcessAuthoritativeAction(actionMessage));
+                synthesizedCommandActions.Add(useResult);
             }
         }
 

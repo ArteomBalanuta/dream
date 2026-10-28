@@ -547,7 +547,7 @@ public class RuntimeAuthoritativeSessionHostTests
         host.ProcessAction(new PlayerActionMessage(
             sessionId,
             2,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: PlayerCombatStats.MaxStrength, AttackSpeed: 2f, Vitality: 10))));
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
         runtime.Player.SetWorldPosition(new Vector3(5f, 1.5f, 7.5f));
         runtime.Player.SetFacing(Vector3.UnitX);
@@ -633,7 +633,7 @@ public class RuntimeAuthoritativeSessionHostTests
         host.ProcessAction(new PlayerActionMessage(
             sessionId,
             2,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: PlayerCombatStats.MaxStrength, AttackSpeed: 2f, Vitality: 10))));
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
 
         Vector3 origin = new(8.25f, 1.5f, 10.5f);
@@ -696,7 +696,7 @@ public class RuntimeAuthoritativeSessionHostTests
         host.ProcessAction(new PlayerActionMessage(
             sessionId,
             2,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: PlayerCombatStats.MaxStrength, AttackSpeed: 2f, Vitality: 10))));
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
 
         Vector3 origin = new(8.25f, 1.5f, 10.5f);
@@ -769,7 +769,7 @@ public class RuntimeAuthoritativeSessionHostTests
         host.ProcessAction(new PlayerActionMessage(
             sessionId,
             3,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: 100, AttackSpeed: 2f, Vitality: 10))));
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(Strength: PlayerCombatStats.MaxStrength, AttackSpeed: 2f, Vitality: 10))));
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
 
         Vector3 origin = new(8.8f, 1.5f, 10.5f);
