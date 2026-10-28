@@ -25,6 +25,8 @@ struct Material {
 // Declare the uniform variable
 uniform Material material;
 
+#include "lighting.glsl"
+
 void main()
 {
     vec4 baseColor = material.baseColorFactor;
@@ -40,21 +42,8 @@ void main()
     }
 #endif
 
-    // Lighting
-    vec3 lightPos = vec3(4.0, 2.0, 2.0);
-    vec3 lightColor = vec3(1.0);
-    vec3 norm = normalize(normal);
-    vec3 lightDir = normalize(lightPos - fragPos);
-    
-    // Ambient lighting
-    float ambientStrength = 0.2;  // Adjust for more/less ambient light
-    vec3 ambient = ambientStrength * lightColor;
-
-    // Diffuse lighting
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor;
-    
-    // Final color calculation
-    vec3 result = (ambient + diffuse) * baseColor.rgb;
-    FragColor = vec4(result, baseColor.a);
+    // Frame lighting (lighting.glsl): hemisphere ambient plus sun and moon, then exposure and fog.
+    vec3 n = normalize(normal);
+    vec3 lit = dreamExpose((dreamAmbient(n) + dreamDirect(n)) * baseColor.rgb);
+    FragColor = vec4(dreamApplyFog(lit, fragPos), baseColor.a);
 }

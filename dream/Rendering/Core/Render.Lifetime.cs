@@ -30,6 +30,7 @@ public partial class Render
         RunDisposeStep(_localPlayerRenderer.Dispose, ref failures);
         RunDisposeStep(_remotePlayerRenderer.Dispose, ref failures);
         RunDisposeStep(_shaders.DisposeAll, ref failures);
+        RunDisposeStep(DisposeFrameLighting, ref failures);
         RunDisposeStep(DeleteDebugCubeBuffers, ref failures);
         RunDisposeStep(_fallbackCubeBuffer.Dispose, ref failures);
         RunDisposeStep(_fallbackInstances.Dispose, ref failures);
@@ -120,6 +121,7 @@ public partial class Render
         GL.Enable(EnableCap.DepthTest);
 
         InitializeShaders();
+        InitializeFrameLighting();
 
         UpdateProjectionForSettings(settings);
 

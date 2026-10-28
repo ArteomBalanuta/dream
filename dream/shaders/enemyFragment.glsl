@@ -23,6 +23,14 @@ struct Material {
 
 uniform Material material;
 
+#include "lighting.glsl"
+
+// Actors read brighter than terrain: the frame ambient is scaled up, the direct light down, and
+// the result never drops below FrameLighting.Params.y (uLightingParams.y) times the base color.
+// At ReferenceNoon (ambient 0.2) this is today's 0.65 ambient, 0.75 diffuse and 0.35 floor.
+const float ActorAmbientScale = 3.25;
+const float ActorDirectScale = 0.75;
+
 void main()
 {
     vec4 baseColor = material.baseColorFactor;
@@ -38,20 +46,9 @@ void main()
     }
 #endif
 
-    vec3 lightPos = vec3(4.0, 4.0, 2.0);
-    vec3 lightColor = vec3(1.0);
-    vec3 norm = normalize(normal);
-    vec3 lightDir = normalize(lightPos - fragPos);
+    vec3 n = normalize(normal);
+    vec3 lit = (dreamAmbient(n) * ActorAmbientScale + dreamDirect(n) * ActorDirectScale) * baseColor.rgb;
+    lit = max(lit, baseColor.rgb * uLightingParams.y);
 
-    float ambientStrength = 0.65;
-    vec3 ambient = ambientStrength * lightColor;
-
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor * 0.75;
-
-    float brightnessFloor = 0.35;
-    vec3 litColor = (ambient + diffuse) * baseColor.rgb;
-    vec3 boostedColor = max(litColor, baseColor.rgb * brightnessFloor);
-
-    FragColor = vec4(boostedColor, baseColor.a);
+    FragColor = vec4(dreamApplyFog(dreamExpose(lit), fragPos), baseColor.a);
 }

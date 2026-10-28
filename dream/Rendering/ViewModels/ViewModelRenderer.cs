@@ -48,8 +48,19 @@ public class ViewModelRenderer
         // Clearing only depth preserves color while preventing world geometry from clipping the first-person pass.
         GL.Clear(ClearBufferMask.DepthBufferBit);
 
-        DrawSlot(frameState.Value.Hands, _handsAnimation);
-        DrawSlot(frameState.Value.HeldItem, _heldItemAnimation);
+        // The view model draws with view = identity, so its fragPos is in eye space: it reads the
+        // view-model lighting range (eye-space directions, camera at the origin). The world range
+        // is rebound afterwards, even if a draw throws.
+        _render.BindViewModelLighting();
+        try
+        {
+            DrawSlot(frameState.Value.Hands, _handsAnimation);
+            DrawSlot(frameState.Value.HeldItem, _heldItemAnimation);
+        }
+        finally
+        {
+            _render.BindWorldLighting();
+        }
     }
 
     // A model that is still loading reports "not finished", so a Use request simply waits: the
