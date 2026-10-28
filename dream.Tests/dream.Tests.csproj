@@ -6,11 +6,11 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RootNamespace>Dream.Tests</RootNamespace>
-    <!-- The suite runs hundreds of allocation-heavy tests at once (SharpGLTF samplers, world
-         generation, JSON); the workstation GC stops every test thread for each gen0 collection.
-         Server GC collects per core in parallel. Allocation tests read per-thread counters, which
-         the GC mode does not change. -->
-    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- Deliberately NOT ServerGarbageCollection: the test host uses the same GC mode as production
+         (dream.csproj sets nothing, so workstation concurrent GC). The load harness reports GC
+         counts, managed memory and tick percentiles, which only mean something under that mode. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
