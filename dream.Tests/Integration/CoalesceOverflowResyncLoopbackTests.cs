@@ -31,7 +31,8 @@ public class CoalesceOverflowResyncLoopbackTests(ITestOutputHelper output)
         {
             MaxCoalescedWorldMutations = 1,
             IdleTimeout = TimeSpan.Zero,
-            SendStallTimeout = TimeSpan.Zero
+            SendStallTimeout = TimeSpan.Zero,
+            SnapshotIntervalTicks = 1
         };
         DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
         try

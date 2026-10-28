@@ -58,7 +58,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         ServerConnectionOptions? connectionOptions = null)
     {
         hostFactory ??= ServerBootstrap.CreateAuthoritativeHost;
-        connectionOptions ??= DefaultConnectionOptions;
+        // DREAM_SNAPSHOT_INTERVAL_TICKS applies to the integrated server as to the dedicated one;
+        // options passed in are used as given.
+        connectionOptions ??= DefaultConnectionOptions.WithEnvironmentOverrides(static line => Console.Error.WriteLine(line));
         DedicatedServerHost? host = null;
         try
         {
@@ -68,7 +70,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 host,
                 transport,
                 new TransportJsonCodec(),
-                new LengthPrefixedMessageFramer(),
+                // Directional limits (FrameLimitOptions): it reads small client frames and writes
+                // snapshots and worlds up to the server-to-client cap.
+                FrameLimitOptions.FromEnvironment(static line => Console.Error.WriteLine(line)).CreateServerFramer(),
                 connectionOptions);
             service.Start();
 

@@ -39,6 +39,17 @@ public class ServerLoadTests
         AssertTickP99(report, loopP99Milliseconds: 60d, perTickP99Milliseconds: 30d);
     }
 
+    // NETR-7: compares snapshot intervals (DREAM_SNAPSHOT_INTERVAL_TICKS=1 or 2) where the loop
+    // runs about one tick per iteration. Guards as Smoke8's.
+    [LoadFact]
+    public async Task Light8()
+    {
+        LoadReport report = await RunAsync(LoadScenario.Light8);
+
+        AssertHealthy(report, minimumTicksPerSecond: RealTimeTicksPerSecond * 0.9d);
+        AssertTickP99(report, loopP99Milliseconds: 60d, perTickP99Milliseconds: 30d);
+    }
+
     // Baseline: loop p99 ~35 ms, per-tick advance p99 ~14 ms, 64 ticks/s, ~725 KB/s per client.
     [LoadFact]
     public async Task Players32()

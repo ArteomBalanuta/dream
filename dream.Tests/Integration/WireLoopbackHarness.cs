@@ -46,7 +46,9 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             host,
             new TcpServerTransport(IPAddress.Loopback, 0),
             new TransportJsonCodec(),
-            new LengthPrefixedMessageFramer());
+            new LengthPrefixedMessageFramer(),
+            // Tests step the server one tick at a time and wait for that tick's snapshot.
+            PerTickSnapshots.Options);
         service.Start();
         return Task.FromResult(new WireLoopbackServer(host, service));
     }

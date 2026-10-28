@@ -31,7 +31,7 @@ public class ProtocolV2SlowClientLoopbackIntegrationTests(ITestOutputHelper outp
     {
         // The slow client deliberately stops reading (and never sends); on a loaded machine that
         // can pass the send-stall timeout, which is not what this test is about.
-        await using ServerUnderTest server = await ServerUnderTest.StartAsync(Dream.Tests.Server.ServerConnectionTestFixtures.WithoutLiveness);
+        await using ServerUnderTest server = await ServerUnderTest.StartAsync(PerTickSnapshots.With(Dream.Tests.Server.ServerConnectionTestFixtures.WithoutLiveness));
         await using RawClient primary = await server.ConnectAndJoinAsync(PrimarySession);
         await using RawClient fast = await server.ConnectAndJoinAsync(EarlySecondary);
         // A tiny receive window and a paused reader: the server's writer for this connection

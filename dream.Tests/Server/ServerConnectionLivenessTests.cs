@@ -16,7 +16,9 @@ public class ServerConnectionLivenessTests
     {
         IdleTimeout = TimeSpan.FromSeconds(10),
         SendStallTimeout = TimeSpan.FromSeconds(5),
-        TimeProvider = clock
+        TimeProvider = clock,
+        // One snapshot per manual tick, as these tests count writes per tick.
+        SnapshotIntervalTicks = 1
     };
 
     [Fact]
@@ -164,7 +166,8 @@ public class ServerConnectionLivenessTests
         {
             IdleTimeout = TimeSpan.Zero,
             SendStallTimeout = TimeSpan.Zero,
-            TimeProvider = clock
+            TimeProvider = clock,
+            SnapshotIntervalTicks = 1
         };
         DedicatedServerHost host = CreateHost(new MutatingAuthority());
         await using DedicatedServerService service = new(host, new NoopServerTransport(), new TransportJsonCodec(), new LengthPrefixedMessageFramer(), options);

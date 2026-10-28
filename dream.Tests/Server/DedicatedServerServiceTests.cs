@@ -7,6 +7,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
 
@@ -21,7 +22,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
         FakeTransportConnection connection = new();
         ServerConnection serverConnection = new(connection, host, codec, framer);
         service.AttachConnection(serverConnection);
@@ -44,7 +45,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
         FakeTransportConnection connection = new();
         service.AttachConnection(new ServerConnection(connection, host, codec, framer));
 
@@ -63,7 +64,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
 
         int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
 
@@ -79,7 +80,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
         FakeTransportConnection connection = new();
         ServerConnection serverConnection = new(connection, host, codec, framer);
         service.AttachConnection(serverConnection);
@@ -111,7 +112,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
         FakeTransportConnection connection = new();
         ServerConnection serverConnection = new(connection, host, codec, framer);
         service.AttachConnection(serverConnection);
@@ -133,7 +134,7 @@ public class DedicatedServerServiceTests
         FakeTickDrivenAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
         await using FakeServerTransport transport = new();
-        await using DedicatedServerService service = new(host, transport, codec, framer);
+        await using DedicatedServerService service = new(host, transport, codec, framer, PerTickSnapshots.Options);
         FakeTransportConnection connection = new();
         service.AttachConnection(new ServerConnection(connection, host, codec, framer));
 

@@ -7,6 +7,7 @@ using Dream.Server;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
 
@@ -20,7 +21,7 @@ public class ServerOutboundQueueTests
         TransportJsonCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
         DedicatedServerHost host = CreateHost(new SequencedAuthority());
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         RecordingConnection healthy = new("healthy");
         StalledConnection stalled = new("stalled");
         ServerConnection healthyConnection = new(healthy, host, codec, framer);
@@ -84,7 +85,7 @@ public class ServerOutboundQueueTests
         TransportJsonCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
         DedicatedServerHost host = CreateHost(new SequencedAuthority());
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         StalledConnection stalled = new("stalled");
         ServerConnection connection = new(stalled, host, codec, framer);
         service.AttachConnection(connection);
