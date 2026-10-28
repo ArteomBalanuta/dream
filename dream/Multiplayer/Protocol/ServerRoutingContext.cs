@@ -37,6 +37,33 @@ public sealed class ServerRoutingContext
 
     public List<IServerToClientMessage> OutboundMessages { get; } = [];
 
+    // Liveness for stale-session takeover (NETR-8): the host's TimeProvider timestamp of the last
+    // inbound frame seen from this connection. The host marks it for every routed message (receive
+    // thread, under the tick lock); the service also reports the transport's frame count, which
+    // includes the client's empty keepalive frames, through ObserveInboundFrameCount (tick thread).
+    private long _lastInboundTimestamp;
+    private long _observedInboundFrameCount;
+
+    public long LastInboundTimestamp => Volatile.Read(ref _lastInboundTimestamp);
+
+    public void MarkInbound(long timestamp)
+    {
+        Volatile.Write(ref _lastInboundTimestamp, timestamp);
+    }
+
+    // Marks the connection alive when its transport's received-frame count moved since the last
+    // observation. Returns whether it did. Allocation-free.
+    public bool ObserveInboundFrameCount(long framesReceived, long timestamp)
+    {
+        if (Interlocked.Exchange(ref _observedInboundFrameCount, framesReceived) == framesReceived)
+        {
+            return false;
+        }
+
+        MarkInbound(timestamp);
+        return true;
+    }
+
     // A connection gets at most one world resync per cooldown; requests inside it are dropped. It
     // is shorter than the client's 2 s retry interval (PlayScene), which runs on a different clock,
     // so a retry that arrives a little early because of jitter is still served.

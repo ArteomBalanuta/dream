@@ -32,6 +32,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // 0 while serving, 1 once shutdown has started; connection loops ending after that are not
     // reported as errors.
     private int _stopping;
+    // Connections the service closed because a rejoin took over their session; their loops end on
+    // the closed transport, which is not reported as an error. A loop removes its own entry.
+    private readonly ConcurrentDictionary<ServerConnection, byte> _takenOverConnections = new();
 
     // Tick-loop scratch. The connection list mirrors _connections and is rebuilt only after a
     // connection is attached or removed.
@@ -90,6 +93,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
         SnapshotIntervalTicks = Math.Clamp(connectionOptions.SnapshotIntervalTicks, 1, SnapshotDueTicks);
         _checkpointWrites = host.CheckpointWrites;
         _persistenceWrites = host.Runtime?.PersistenceWrites;
+        // Stale-session takeover measures silence on the same clock as the idle timeout.
+        host.TimeProvider = connectionOptions.TimeProvider;
     }
 
     public int Port => _transport.Port;
@@ -210,6 +215,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public void AttachConnection(ServerConnection connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
+        _host.ForgetTakenOverConnection(connection.ConnectionId);
         _connections[connection.ConnectionId] = connection;
         Volatile.Write(ref _connectionsChanged, 1);
     }
@@ -516,12 +522,22 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // stopped reading (send stall) is faulted here and released through the same path as any
     // other faulted connection. A faulted connection closes its transport before waiting for its
     // writer, so a stalled socket write cannot hold up the tick.
+    //
+    // It first closes the connections whose session a rejoin took over (NETR-8; the host already
+    // released them), and reports every connection's received-frame count to the host, so the
+    // client's empty keepalive frames count as liveness for the takeover check too.
     private async ValueTask DropFaultedConnectionsAsync()
     {
+        while (_host.TryTakeTakenOverConnection(out string takenOverId))
+        {
+            await CloseTakenOverConnectionAsync(takenOverId);
+        }
+
         RefreshConnectionList();
         for (int i = 0; i < _connectionList.Count; i++)
         {
             ServerConnection connection = _connectionList[i];
+            _host.ObserveInboundFrames(connection.ConnectionId, connection.FramesReceived);
             if (!connection.CheckLiveness() || !TryRemoveConnection(connection))
             {
                 continue;
@@ -534,6 +550,37 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 $"connection={connection.ConnectionId} reason=faulted kind={connection.CloseReason} connections={_connections.Count}");
             await connection.DisposeAsync();
         }
+    }
+
+    // A connection whose session a rejoin took over: it was silent past the takeover window, so
+    // its transport is closed before its writer is awaited (a dead peer may hold a socket write).
+    // The host already released it, so its release here finds nothing left. A connection the
+    // service already removed (its loop ended, or a liveness fault) is left to that path.
+    private async ValueTask CloseTakenOverConnectionAsync(string connectionId)
+    {
+        if (!_connections.TryGetValue(connectionId, out ServerConnection? connection)
+            || !TryRemoveConnection(connection))
+        {
+            return;
+        }
+
+        _takenOverConnections[connection] = 0;
+        try
+        {
+            await connection.CloseTransportAsync();
+        }
+        catch (Exception ex)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.connection.close-failed",
+                $"connection={connectionId} error={ex.GetType().Name}: {ex.Message}");
+        }
+
+        _host.ReleaseConnection(connectionId);
+        NetworkDiagnosticsLog.Write(
+            "server.disconnect",
+            $"connection={connectionId} reason=session-taken-over connections={_connections.Count}");
+        await connection.DisposeAsync();
     }
 
     // A lagging connection's merged deltas passed the cap and were dropped. Ask for a full world
@@ -612,12 +659,17 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             // Shutdown closed the transport under the pending receive.
         }
+        catch (Exception) when (_takenOverConnections.ContainsKey(connection))
+        {
+            // A rejoin took over this connection's session and the service closed its transport.
+        }
         catch (Exception ex)
         {
             ReportConnectionError(connection, "error", $"{ex.GetType().Name}: {ex.Message}", ex);
         }
         finally
         {
+            _takenOverConnections.TryRemove(connection, out _);
             try
             {
                 if (TryRemoveConnection(connection))

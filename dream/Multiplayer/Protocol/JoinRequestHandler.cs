@@ -20,6 +20,7 @@ public sealed class JoinRequestHandler : IServerMessageHandler
             && !context.SessionClaims.TryClaimSession(
                 context.ConnectionId,
                 joinRequest.RequestedSessionId,
+                joinRequest.DisplayName,
                 out string? rejectionReason))
         {
             context.OutboundMessages.Add(new JoinRejectedMessage(
