@@ -1,3 +1,4 @@
+using Dream.Simulation.Persistence;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;

@@ -1,4 +1,4 @@
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 public readonly record struct PersistedCreatureStats(
     int CurrentHealth,

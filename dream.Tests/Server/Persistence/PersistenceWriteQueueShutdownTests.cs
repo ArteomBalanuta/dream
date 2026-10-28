@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Xunit;
 using Xunit.Abstractions;
 using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 
 namespace Dream.Tests.Server.Persistence;
 

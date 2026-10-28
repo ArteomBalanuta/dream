@@ -1,7 +1,7 @@
-using Dream.Server.Persistence;
-using Dream.Server.Rules.Expression;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Rules.Expression;
 
-namespace Dream.Server.Rules;
+namespace Dream.Simulation.Rules;
 
 public sealed class CombatFormulaSet
 {

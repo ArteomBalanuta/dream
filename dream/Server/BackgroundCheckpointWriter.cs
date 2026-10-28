@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using Dream.Multiplayer.Diagnostics;
-using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 
 namespace Dream.Server;
 
@@ -15,7 +15,7 @@ public sealed class BackgroundCheckpointWriter : IDisposable
     // How long a write waits for its checkpoint's immediate-writes barrier before going ahead
     // anyway (the queue is closed, or stuck). At shutdown the wait is also bounded by the write
     // queue's drain deadline; see WaitForImmediateWrites.
-    public static readonly TimeSpan ImmediateWritesWaitTimeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan ImmediateWritesWaitTimeout = PersistenceCheckpoint.ImmediateWritesWaitTimeout;
 
     // Poll interval for a barrier wait that can be cut short by shutdown (a lock episode or the
     // drain deadline). Only a write whose barrier is still pending polls.

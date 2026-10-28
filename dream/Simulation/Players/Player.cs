@@ -4,7 +4,7 @@ using OpenTK.Mathematics;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using System.Text;
 using Dream.Multiplayer.Diagnostics;
-using Dream.Server.Rules;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;

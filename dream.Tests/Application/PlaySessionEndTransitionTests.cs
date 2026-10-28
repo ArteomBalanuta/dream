@@ -534,7 +534,7 @@ public class PlaySessionEndTransitionTests
             .GetRawConstantValue()!;
         Assert.Contains($"busy_timeout={(int)PlaySessionEndTransition.PersistenceBusyTimeout.TotalMilliseconds};", pragmas);
 
-        TimeSpan floor = Dream.Server.Persistence.PersistenceWriteQueue.DefaultDisposeDrainDeadline
+        TimeSpan floor = Dream.Simulation.Persistence.PersistenceWriteQueue.DefaultDisposeDrainDeadline
             + PlaySessionEndTransition.PersistenceBusyTimeout;
         Assert.True(PlaySessionEndTransition.LocalServerExitTimeout >= floor);
         Assert.True(PlaySessionEndTransition.LocalServerExitTimeout <= floor + TimeSpan.FromSeconds(5));

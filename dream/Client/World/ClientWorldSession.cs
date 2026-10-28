@@ -5,7 +5,7 @@ using Dream.Client.Input;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Sessions;
-using Dream.Server.Rules;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Physics;

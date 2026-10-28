@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace Dream.Server.Rules.Expression;
+namespace Dream.Simulation.Rules.Expression;
 
 internal static class CombatExpressionTokenizer
 {

@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Dream.Server.Rules.Expression;
+namespace Dream.Simulation.Rules.Expression;
 
 internal sealed class CombatExpressionCompiler
 {

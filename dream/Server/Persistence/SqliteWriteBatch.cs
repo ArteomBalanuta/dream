@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Runtime.CompilerServices;
+using Dream.Simulation.Persistence;
 
 namespace Dream.Server.Persistence;
 
@@ -34,9 +36,19 @@ public readonly struct SqliteConnectionLease : IDisposable
 // apart from taking its connection through SqliteSchemaBootstrapper.OpenConnection.
 //
 // Not thread-safe: one worker thread owns a batch, and the ambient slot is per thread.
-internal sealed class SqliteWriteBatch : IDisposable
+internal sealed class SqliteWriteBatch : IPersistenceWriteBatch
 {
     private const string SavepointName = "dream_write";
+
+    // PersistenceWriteQueue (Simulation) only knows the IPersistenceWriteBatch port; this installs
+    // the SQLite batch as its default when the assembly loads, before any queue can start a worker.
+#pragma warning disable CA2255 // The dream executable owns this registration; it is not a library.
+    [ModuleInitializer]
+#pragma warning restore CA2255
+    internal static void RegisterAsDefault()
+    {
+        PersistenceWriteQueue.WriteBatchFactory = static () => new SqliteWriteBatch();
+    }
 
     [ThreadStatic]
     private static SqliteWriteBatch? t_current;
@@ -70,6 +82,8 @@ internal sealed class SqliteWriteBatch : IDisposable
     {
         t_current = null;
     }
+
+    void IPersistenceWriteBatch.Deactivate() => Deactivate();
 
     // The ambient batch's connection for this schema's database, opened and enlisted in the batch's
     // transaction on first use; null when no batch is active on this thread.

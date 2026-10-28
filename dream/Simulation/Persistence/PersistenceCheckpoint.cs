@@ -1,6 +1,6 @@
 using Dream.Simulation.Players;
 
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 // In-memory copy of the volatile authoritative state saved every checkpoint. It is captured on
 // the tick thread without any database access and written later by an IPersistenceCheckpointWriter.
@@ -37,9 +37,13 @@ public sealed record PersistenceCheckpoint(
     // signal. The writer waits for it, so a checkpoint update never reaches the database ahead of
     // the insert of a row it updates. It never completes when the queue drops it (closed, or the
     // shutdown drain deadline passed); waiters are bounded by
-    // BackgroundCheckpointWriter.ImmediateWritesWaitTimeout and, at shutdown, by the queue's drain
-    // deadline. Null: nothing to wait for.
+    // ImmediateWritesWaitTimeout and, at shutdown, by the queue's drain deadline. Null: nothing to
+    // wait for.
     public Task? ImmediateWritesCommitted { get; init; }
+
+    // How long a write waits for a checkpoint's ImmediateWritesCommitted barrier before going ahead
+    // anyway (the queue is closed, or stuck). BackgroundCheckpointWriter.ImmediateWritesWaitTimeout.
+    public static readonly TimeSpan ImmediateWritesWaitTimeout = TimeSpan.FromSeconds(10);
 
     // Rows a writer updates for this checkpoint (tombstones excluded).
     public int RowCount =>

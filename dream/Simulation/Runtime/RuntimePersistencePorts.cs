@@ -1,0 +1,17 @@
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Rules;
+
+namespace Dream.Simulation.Runtime;
+
+// The persistence a RuntimeAuthoritativeSessionHost runs with, as Simulation-owned ports. The
+// server builds it from its SQLite bundle (ServerBootstrap.CreateRuntimeHost); a host created
+// without one (tests, ephemeral hosts) persists nothing.
+public sealed record RuntimePersistencePorts(
+    IPlayerProfileRepository? PlayerProfiles,
+    IWorldPersistenceRepository? World,
+    CombatFormulaService? FormulaService,
+    IPersistenceCheckpointWriter? CheckpointWriter,
+    PersistenceWriteQueue? PersistenceWrites,
+    ulong? SimulationSeed,
+    // Disposed with the host, after its runtime (the server's persistence bundle).
+    IDisposable? Owner);

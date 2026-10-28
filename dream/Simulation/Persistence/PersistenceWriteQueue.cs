@@ -1,6 +1,6 @@
 using Dream.Multiplayer.Diagnostics;
 
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 // Ordered queue for the runtime's immediate persistence writes (placements, fractures, enemy
 // spawn/death, profile and inventory saves). In background mode one worker runs them in
@@ -9,10 +9,10 @@ namespace Dream.Server.Persistence;
 // after an action use it.
 //
 // Group commit: the worker takes every write queued so far (up to MaxWritesPerGroup) and runs them
-// inside one SqliteWriteBatch, so the SQLite repositories they call share one open connection and
-// one transaction, with a savepoint per write. A failing write is rolled back to its savepoint and
-// counted as failed; the writes around it still commit. A fracture's ten writes cost one commit
-// instead of ten autocommits.
+// inside one IPersistenceWriteBatch (the server's SqliteWriteBatch), so the SQLite repositories they
+// call share one open connection and one transaction, with a savepoint per write. A failing write
+// is rolled back to its savepoint and counted as failed; the writes around it still commit. A
+// fracture's ten writes cost one commit instead of ten autocommits.
 //
 // Reads (EnqueueRead) end a group: the writes queued before a read are committed first, and the
 // read then runs outside any transaction, so it only ever sees committed rows.
@@ -37,6 +37,12 @@ public sealed class PersistenceWriteQueue : IDisposable
     // Each attempt itself already waits up to busy_timeout for the lock.
     public static readonly TimeSpan InitialLockRetryDelay = TimeSpan.FromMilliseconds(100);
     public static readonly TimeSpan MaxLockRetryDelay = TimeSpan.FromSeconds(2);
+
+    // Creates the batch each background worker runs its groups in. Server persistence installs the
+    // SQLite group-commit batch when the assembly loads (SqliteWriteBatch.RegisterAsDefault); with
+    // nothing installed each write runs on its own.
+    internal static Func<IPersistenceWriteBatch> WriteBatchFactory { get; set; } =
+        static () => new PassThroughPersistenceWriteBatch();
 
     private readonly bool _background;
     private readonly TimeSpan _disposeDrainDeadline;
@@ -331,7 +337,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     {
         List<QueuedWrite> group = new(Math.Min(MaxWritesPerGroup, 64));
         List<QueuedWrite> requeue = [];
-        using SqliteWriteBatch batch = new();
+        using IPersistenceWriteBatch batch = WriteBatchFactory();
         batch.Activate();
         try
         {
@@ -389,7 +395,7 @@ public sealed class PersistenceWriteQueue : IDisposable
                 {
                     if (isRead)
                     {
-                        RunRead(group[0]);
+                        RunRead(batch, group[0]);
                     }
                     else
                     {
@@ -419,7 +425,7 @@ public sealed class PersistenceWriteQueue : IDisposable
         }
         finally
         {
-            SqliteWriteBatch.Deactivate();
+            batch.Deactivate();
         }
     }
 
@@ -509,10 +515,9 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     // Outside any transaction: the group before it has committed (or failed), and the repositories
     // open their own connection because no batch is active on this thread while the read runs.
-    private static void RunRead(QueuedWrite read)
+    private static void RunRead(IPersistenceWriteBatch batch, QueuedWrite read)
     {
-        SqliteWriteBatch? batch = SqliteWriteBatch.Current;
-        SqliteWriteBatch.Deactivate();
+        batch.Deactivate();
         try
         {
             read.Action();
@@ -523,7 +528,7 @@ public sealed class PersistenceWriteQueue : IDisposable
         }
         finally
         {
-            batch?.Activate();
+            batch.Activate();
         }
     }
 
@@ -535,7 +540,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     // puts them back at the head of the queue; the writes before it still commit. Once the dispose
     // deadline has passed, or when the transaction fails to start for another reason, the rest of
     // the group fails at once instead of waiting busy_timeout once per write.
-    private GroupOutcome RunGroup(SqliteWriteBatch batch, List<QueuedWrite> group, List<QueuedWrite> requeue)
+    private GroupOutcome RunGroup(IPersistenceWriteBatch batch, List<QueuedWrite> group, List<QueuedWrite> requeue)
     {
         bool[]? failed = null;
         bool transactionStartFailed = false;

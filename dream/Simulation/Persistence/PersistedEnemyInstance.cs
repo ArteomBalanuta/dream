@@ -1,6 +1,6 @@
 using OpenTK.Mathematics;
 
-namespace Dream.Server.Persistence;
+namespace Dream.Simulation.Persistence;
 
 public readonly record struct PersistedEnemyInstance(
     int EnemyId,

@@ -1,5 +1,5 @@
 using Dream.Simulation.Inventory;
-using Dream.Server.Rules;
+using Dream.Simulation.Rules;
 
 namespace Dream.Simulation.Players;
 
