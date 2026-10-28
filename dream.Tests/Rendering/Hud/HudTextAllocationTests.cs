@@ -230,7 +230,14 @@ public class HudTextAllocationTests(ITestOutputHelper output)
                 PreDrawMilliseconds: 0.7,
                 PreDrawClearMilliseconds: 0.1,
                 PreDrawCaptureMilliseconds: 0.4,
-                PreDrawRemoteStatesMilliseconds: 0.2),
+                PreDrawRemoteStatesMilliseconds: 0.2,
+                GpuWorldMilliseconds: 3.75,
+                GpuActorsMilliseconds: 1.125,
+                GpuHudMilliseconds: 0.5,
+                GpuPrimitives: 1234567,
+                DrawCalls: 812,
+                ProgramBinds: 41,
+                UniformUploads: 2048),
             FramePerformanceSnapshot.Empty,
             new(
                 RenderExportMilliseconds: 12345.675,
@@ -246,7 +253,14 @@ public class HudTextAllocationTests(ITestOutputHelper output)
                 WorldDrawMilliseconds: 999999.999,
                 HudDrawMilliseconds: double.NaN,
                 ServerTickMilliseconds: double.PositiveInfinity,
-                ServerSnapshotMilliseconds: double.NegativeInfinity)
+                ServerSnapshotMilliseconds: double.NegativeInfinity,
+                GpuWorldMilliseconds: 999999.999,
+                GpuActorsMilliseconds: double.NaN,
+                GpuHudMilliseconds: -0.004,
+                GpuPrimitives: long.MaxValue,
+                DrawCalls: int.MinValue,
+                ProgramBinds: int.MaxValue,
+                UniformUploads: -1)
         ];
     }
 

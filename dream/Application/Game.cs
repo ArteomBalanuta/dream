@@ -30,6 +30,16 @@ public class Game : GameWindow
     private StartupConnectionScene? _startupScene;
     private PlayScene? _playScene;
 
+    // DEBUG drains the GL error flags after every frame. Release builds check less often, which is
+    // enough to notice GL_OUT_OF_MEMORY or GL_CONTEXT_LOST and close instead of drawing garbage.
+#if DEBUG
+    internal const int GLErrorCheckIntervalFrames = 1;
+#else
+    internal const int GLErrorCheckIntervalFrames = 60;
+#endif
+    private int _framesSinceGLErrorCheck;
+    private bool _closingForGLFault;
+
     private double _lastTime;
     private int _frameCount;
     public int FPS { get; private set; }
@@ -37,7 +47,11 @@ public class Game : GameWindow
     public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
     {
         ClientSize = new Vector2i(1440, 1024),
-        Title = GameWindowTitleBuilder.BaseTitle
+        Title = GameWindowTitleBuilder.BaseTitle,
+#if DEBUG
+        // KHR_debug messages are only guaranteed in a debug context.
+        Flags = ContextFlags.Debug,
+#endif
     })
     {
         GLUtils.BindRenderThread();
@@ -77,6 +91,17 @@ public class Game : GameWindow
             PersistConnectionOptions,
             autoConnectUsesInitialOptions);
         CursorState = _startupScene.DesiredCursorState;
+    }
+
+    protected override void OnLoad()
+    {
+        base.OnLoad();
+#if DEBUG
+        bool installed = GLUtils.InstallDebugOutput(RenderFaultLog.Shared);
+        Console.WriteLine(installed
+            ? "[startup] GL debug output: high and medium severity"
+            : "[startup] GL debug output: unavailable (no KHR_debug)");
+#endif
     }
 
     public void UpdateFPS()
@@ -145,8 +170,32 @@ public class Game : GameWindow
             frameStopwatch.Elapsed.TotalMilliseconds,
             swapStopwatch.Elapsed.TotalMilliseconds);
 
+        CheckGLErrorsAfterFrame();
+
         UpdateFPS();
         _windowTitle.Set(GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint));
+    }
+
+    private void CheckGLErrorsAfterFrame()
+    {
+        if (_closingForGLFault || ++_framesSinceGLErrorCheck < GLErrorCheckIntervalFrames)
+        {
+            return;
+        }
+
+        _framesSinceGLErrorCheck = 0;
+        if (GLUtils.CheckGLError("frame end") != GLFaultKind.Fatal)
+        {
+            return;
+        }
+
+        // Out of memory or a lost context leaves GL state undefined. The error is already in the
+        // fault log; close through the normal path so OnUnload still releases the scenes.
+        _closingForGLFault = true;
+        RenderFaultLog.Shared.Report(
+            "gl-fatal",
+            new InvalidOperationException("Closing the window after a fatal OpenGL error (out of memory or context lost)."));
+        Close();
     }
 
     protected override void OnResize(ResizeEventArgs e)

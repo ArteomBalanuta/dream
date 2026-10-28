@@ -11,7 +11,8 @@ namespace Dream.Tests.Rendering.Hud;
 // remote-player states). Before GFX-4 it was only appended to the render-perf log line.
 public class FramePerformanceSnapshotPreDrawTests(ITestOutputHelper output)
 {
-    private const int PreDrawLineIndex = FramePerformanceSnapshot.HudLineCount - 1;
+    // The pre-draw line was last until GPU-5 appended the GPU line after it, so the index is fixed.
+    private const int PreDrawLineIndex = 13;
 
     private static readonly FramePerformanceSnapshot Snapshot = new(
         RenderExportMilliseconds: 0,
@@ -37,6 +38,7 @@ public class FramePerformanceSnapshotPreDrawTests(ITestOutputHelper output)
 
         Assert.Equal(FramePerformanceSnapshot.HudLineCount, lines.Length);
         Assert.Equal("Pre-draw: 1.38 ms, clear 0.13 ms, capture 1.00 ms, remote states 0.25 ms", lines[PreDrawLineIndex]);
+        Assert.Equal(lines[PreDrawLineIndex], Snapshot.FormatHudLine(PreDrawLineIndex));
     }
 
     [Fact]

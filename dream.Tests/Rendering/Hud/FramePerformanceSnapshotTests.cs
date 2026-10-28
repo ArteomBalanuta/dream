@@ -46,7 +46,14 @@ public class FramePerformanceSnapshotTests
             PreDrawMilliseconds: 0.7,
             PreDrawClearMilliseconds: 0.1,
             PreDrawCaptureMilliseconds: 0.4,
-            PreDrawRemoteStatesMilliseconds: 0.2);
+            PreDrawRemoteStatesMilliseconds: 0.2,
+            GpuWorldMilliseconds: 3.75,
+            GpuActorsMilliseconds: 1.125,
+            GpuHudMilliseconds: 0.5,
+            GpuPrimitives: 1234567,
+            DrawCalls: 812,
+            ProgramBinds: 41,
+            UniformUploads: 2048);
 
         string[] lines = snapshot.ToHudLines().ToArray();
 
@@ -63,5 +70,6 @@ public class FramePerformanceSnapshotTests
         Assert.Contains("Collision Bodies: 900", lines);
         Assert.Contains("Server: tick 4.30 ms, snapshot 5.40 ms, broadcast 6.50 ms", lines);
         Assert.Contains("Pre-draw: 0.70 ms, clear 0.10 ms, capture 0.40 ms, remote states 0.20 ms", lines);
+        Assert.Contains("GPU: world 3.75 ms, actors 1.13 ms, hud 0.50 ms, prims 1234567, draws 812, programs 41, uniforms 2048", lines);
     }
 }

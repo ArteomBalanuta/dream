@@ -80,6 +80,10 @@ public class PlayScene : IDisposable
     private double _lastPresentedFrameMilliseconds;
     private double _lastSwapBuffersMilliseconds;
     private double _lastHudDrawMilliseconds;
+    // GPU time per section, read back a few frames late (created on the first Render, with the
+    // context current), and the GL call counts of the previous complete frame.
+    private GpuFrameTimer? _gpuTimer;
+    private RenderCounterSnapshot _lastFrameCounters;
     private PlayerInventorySnapshot? _inventory;
     private bool _disposed;
 
@@ -263,6 +267,10 @@ public class PlayScene : IDisposable
         // this path still applies scene-owned runtime requests such as floor rebuilds today.
         // Uploads a few background-decoded models before anything draws this frame; draws only
         // poll the model cache, so a model never loads synchronously inside a draw call.
+        // The counters cover the previous frame from here to here, HUD included.
+        _lastFrameCounters = RenderCounters.CaptureAndReset();
+        GpuFrameTimer gpuTimer = _gpuTimer ??= new GpuFrameTimer(GlGpuQueryApi.Instance);
+        gpuTimer.BeginFrame();
         ModelAssets.PumpUploads(ModelUploadsPerFrame);
         long clearStart = Stopwatch.GetTimestamp();
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -277,7 +285,11 @@ public class PlayScene : IDisposable
             RemotePlayerRenderTick);
 
         long worldDrawStart = Stopwatch.GetTimestamp();
+        gpuTimer.BeginSection(GpuTimerSection.World);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        // Actors runs from the enemies through the debug and viewmodel draws, up to the HUD.
+        // BeginSection ends the open section first, so the timer queries never nest.
+        gpuTimer.BeginSection(GpuTimerSection.Actors);
         long enemyDrawStart = Stopwatch.GetTimestamp();
         _render.Enemies.DrawAtRenderTick(
             presentation.Camera,
@@ -345,7 +357,14 @@ public class PlayScene : IDisposable
             PreDrawMilliseconds = _lastClearMilliseconds + _lastPresentationCaptureMilliseconds + _lastRemotePlayerStatesMilliseconds,
             PreDrawClearMilliseconds = _lastClearMilliseconds,
             PreDrawCaptureMilliseconds = _lastPresentationCaptureMilliseconds,
-            PreDrawRemoteStatesMilliseconds = _lastRemotePlayerStatesMilliseconds
+            PreDrawRemoteStatesMilliseconds = _lastRemotePlayerStatesMilliseconds,
+            GpuWorldMilliseconds = gpuTimer.Latest.WorldMilliseconds,
+            GpuActorsMilliseconds = gpuTimer.Latest.ActorsMilliseconds,
+            GpuHudMilliseconds = gpuTimer.Latest.HudMilliseconds,
+            GpuPrimitives = gpuTimer.Latest.PrimitivesGenerated,
+            DrawCalls = _lastFrameCounters.DrawCalls,
+            ProgramBinds = _lastFrameCounters.ProgramBinds,
+            UniformUploads = _lastFrameCounters.UniformUploads
         };
         if (_settings.ShowCollisionGeometry)
         {
@@ -372,6 +391,7 @@ public class PlayScene : IDisposable
         }
 
         long hudDrawStart = Stopwatch.GetTimestamp();
+        gpuTimer.BeginSection(GpuTimerSection.Hud);
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -388,6 +408,7 @@ public class PlayScene : IDisposable
                 performance,
                 _scenePresenter,
                 RemotePlayerRenderTick);
+        gpuTimer.EndFrame();
         _lastHudDrawMilliseconds = Stopwatch.GetElapsedTime(hudDrawStart).TotalMilliseconds;
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
@@ -418,6 +439,7 @@ public class PlayScene : IDisposable
 
         List<Exception>? failures = null;
         RunDisposeStep(_render.Dispose, ref failures);
+        RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
         RunDisposeStep(_combatFeedback.Dispose, ref failures);
         RunDisposeStep(_actionFeedback.Dispose, ref failures);
@@ -435,6 +457,12 @@ public class PlayScene : IDisposable
         }
 
         throw new AggregateException(failures);
+    }
+
+    private void DisposeGpuTimer()
+    {
+        _gpuTimer?.Dispose();
+        _gpuTimer = null;
     }
 
     private static void RunDisposeStep(Action step, ref List<Exception>? failures)

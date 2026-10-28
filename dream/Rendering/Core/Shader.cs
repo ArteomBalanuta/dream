@@ -86,7 +86,11 @@ public sealed class Shader : IDisposable
         GLUtils.CheckGLError("Shader creation");
     }
 
-    public void Use() => GL.UseProgram(Handle);
+    public void Use()
+    {
+        GL.UseProgram(Handle);
+        RenderCounters.CountProgramBind();
+    }
 
     #region Uniform Setters
     private int GetUniformLocation(string uniformName)
@@ -126,47 +130,55 @@ public sealed class Shader : IDisposable
     {
         int location = GetUniformLocation(uniformName);
         GL.UniformMatrix4(location, false, ref matrix);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetMatrix4(int location, Matrix4 matrix)
     {
         GL.UniformMatrix4(location, false, ref matrix);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetVector4(string uniformName, Vector4 vector)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform4(location, vector);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetVector3(string uniformName, Vector3 vector)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform3(location, vector);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetVector2(string uniformName, Vector2 vector)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform2(location, vector);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetFloat(string uniformName, float value)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetInt(string uniformName, int value)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value);
+        RenderCounters.CountUniformUpload();
     }
 
     public void SetBool(string uniformName, bool value)
     {
         int location = GetUniformLocation(uniformName);
         GL.Uniform1(location, value ? 1 : 0);
+        RenderCounters.CountUniformUpload();
     }
     #endregion
 
