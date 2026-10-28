@@ -27,6 +27,15 @@ public sealed class SqliteSchemaBootstrapper
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = script;
         command.ExecuteNonQuery();
+        // Additive: databases created before the world_metadata table existed gain it here, and
+        // SqliteWorldMetadataRepository fills in the simulation seed on their first load.
+        using (SqliteCommand metadata = connection.CreateCommand())
+        {
+            metadata.CommandText =
+                "CREATE TABLE IF NOT EXISTS world_metadata (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL);";
+            metadata.ExecuteNonQuery();
+        }
+
         EnsureColumnExists(
             connection,
             tableName: "player_profiles",

@@ -178,6 +178,19 @@ Set `DREAM_RENDER_PERF_LOG=1` to print one render-performance line per second wh
 
 Set `DREAM_NET_DIAGNOSTICS=1` to enable rate-limited multiplayer visibility and timing diagnostics. The log prints to the console and appends to `logs/network-diagnostics.log` under the application output folder by default. Set `DREAM_NET_DIAGNOSTICS_PATH` to write the diagnostics file somewhere else. This is intended for multi-client debugging: it records connect/join facts, session and actor snapshots, snapshot send/receive timing, client presenter state, remote-player draw counts, and slow command-send warnings.
 
+## World Simulation Seed
+
+Seeded server rolls (combat damage and the other `Seed.Combine(SimulationSeed, tick, session, actionSequence, targetId)` draws) start from the world runtime's `SimulationSeed`. Where that seed comes from depends on the host:
+
+- **Persistent servers** (the dedicated server and the integrated server, both built by `ServerBootstrap.CreateAuthoritativeHost()`): each world has its own seed, stored in the SQLite database next to the rest of the world as the `simulation_seed` row of the `world_metadata` table (`key TEXT PRIMARY KEY, value TEXT`, the seed as a decimal unsigned 64-bit integer). When a world is created, `SqliteWorldMetadataRepository` generates the seed once with `RandomNumberGenerator` (it never picks `DefaultSimulationSeed`); every later load reads the stored value. A stored value that is not a valid unsigned 64-bit integer stops the server from starting rather than being silently replaced.
+- **Hosts without persistence** (tests, `CreateAuthoritativeHost(null)`, `DedicatedServerHost.CreateRuntimeAttached(null)`, `RuntimeAuthoritativeSessionHost.CreateDefault()`): keep the fixed public `WorldSessionRuntime.DefaultSimulationSeed`, so determinism tests and ephemeral runs stay reproducible.
+
+`SqliteSchemaBootstrapper.EnsureSchema` creates `world_metadata` with `CREATE TABLE IF NOT EXISTS`, so the change is additive. **An existing database that predates the table gets a freshly generated seed on its first load and keeps it from then on. That changes the rolls of an existing world once: the same tick, session, action and target roll differently than they did under the old shared default seed.** Persisted state (profiles, cubes, enemies, items) is not affected.
+
+Set `DREAM_SIMULATION_SEED` to override the world's seed for one server run, for example to reproduce a world's rolls from a copy of its database or to pin rolls while debugging. It accepts a decimal (`12345`) or `0x`-prefixed hexadecimal (`0x6472...`) unsigned 64-bit integer. The override is applied for that run only and is never written back to `world_metadata`. An invalid value is ignored with a log line on standard error and the stored seed is used. The server logs that a seed was generated or overridden, never the seed value. The variable only affects persistent servers; hosts without persistence always use `DefaultSimulationSeed`.
+
+The seed is server-only. No protocol message carries it (a reflection test in `WorldSimulationSeedTests` walks every `IProtocolMessage` type and its nested payload types for seed-like members), so clients cannot precompute rolls.
+
 ## Project Content Layout
 
 The project file includes:
