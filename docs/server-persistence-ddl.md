@@ -223,6 +223,15 @@ These indexes are aimed at:
 
 `trg_player_profiles_set_updated_utc` keeps `player_profiles.updated_utc` fresh on update when callers do not explicitly change the timestamp value.
 
+## world_metadata
+
+Key/value metadata about the persisted world. It is created additively by `SqliteSchemaBootstrapper.EnsureSchema` (`CREATE TABLE IF NOT EXISTS`), so databases that predate it gain it on their next start.
+
+- `key TEXT NOT NULL PRIMARY KEY`
+- `value TEXT NOT NULL`
+
+Today it holds one row: `simulation_seed`, the world's simulation seed stored as a decimal unsigned 64-bit number. `SqliteWorldMetadataRepository` inserts it once with `INSERT OR IGNORE` and a non-numeric value is treated as a startup error.
+
 ## Current Inventory Convention
 
 The gameplay inventory slice uses:

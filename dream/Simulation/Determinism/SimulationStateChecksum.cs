@@ -21,8 +21,8 @@ namespace Dream.Simulation.Determinism;
 //     (Map.TryGetReplicatedId) and by its cell otherwise, with its position quantized to
 //     PositionQuantum, plus the cube count. This catches a physics-driven cube that moves
 //     within its cell, and two servers that gave the same cube different replicated ids, which
-//     WorldStateChecksum cannot see. The id and cell keys use distinct salts so they cannot
-//     collide; a cell holds at most one cube and an id maps to one cube, so each key is unique;
+//     WorldStateChecksum cannot see. The id and cell keys use distinct salts so a collision is
+//     improbable (they are 64-bit mixes, not injective); a cell holds at most one cube and an id maps to one cube, so each key is unique;
 //   - WorldMutationSequence: the last world mutation sequence.
 // Quantizing positions absorbs most float noise below PositionQuantum, so tiny differences that
 // would not change gameplay usually leave the checksum unchanged. It is not a guarantee: two
@@ -151,7 +151,7 @@ public static class SimulationStateChecksum
             : Seed.Combine(combat, 0UL);
     }
 
-    // Key kinds are salted so a replicated-id key, a cell key and a position key can never collide.
+    // Key kinds are salted so a collision between a replicated-id key, a cell key and a position key is improbable (64-bit mixes, not injective).
     private const ulong CubeIdSalt = 0x637562652D696421UL; // "cube-id!"
     private const ulong CubeCellSalt = 0x637562652D63656CUL; // "cube-cel"
     private const ulong CubeUnindexedSalt = 0x637562652D6E6F78UL; // "cube-nox"
