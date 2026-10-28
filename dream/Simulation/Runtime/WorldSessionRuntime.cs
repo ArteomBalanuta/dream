@@ -349,7 +349,8 @@ public sealed class WorldSessionRuntime : IDisposable
     public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
-        if (_playerProfiles == null)
+        // A join request read while the server shuts down must not restart the drained write queue.
+        if (_playerProfiles == null || Volatile.Read(ref _disposed))
         {
             return null;
         }
