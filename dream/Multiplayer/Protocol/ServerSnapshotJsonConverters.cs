@@ -26,7 +26,7 @@ namespace Dream.Multiplayer.Protocol;
 // The world is only sent on join and resync; a nested JsonSerializer call writes it with the
 // options' WorldSnapshotJsonConverter (the protocol v3 compact world). Protocol v3 also adds
 // "worldTransferId":n? after "snapshot" on a resync carrier whose world follows in chunks.
-// SCALE-2 (still protocol v3): a broadcast export's actors go out as "actorFrame":{...} in the
+// SCALE-2 (protocol v4): a broadcast export's actors go out as "actorFrame":{...} in the
 // place of "actors" (ActorFrameJson: delta records against the previous broadcast, or a keyframe),
 // and a shared broadcast body (ServerSnapshotMessage.SharedBody) leaves out
 // "lastAcceptedCommandSequences", which each connection then gets in its envelope header.

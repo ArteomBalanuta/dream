@@ -107,6 +107,11 @@ public sealed class Wave12InventoryLoopbackTests(ITestOutputHelper output)
                 // Keep the anchor's chain and silence watchdog fed.
                 await rig.StepAsync();
                 await rig.VerifyAllAsync();
+                // The rig keeps every verified snapshot on the peer (actors, wire frame): about
+                // 1.5 snapshots, ~1 KB, per churned player. Wave 13 traced the "unattributed"
+                // ~1.4 KB per departed player of wave 12 to exactly this list (a heap walk from
+                // every static root and the rig found no other growth), so keep only the last.
+                anchor.Received.RemoveRange(0, anchor.Received.Count - 1);
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
@@ -133,6 +138,12 @@ public sealed class Wave12InventoryLoopbackTests(ITestOutputHelper output)
         double growthMb = (last.Bytes - full.Bytes) / 1048576d;
         output.WriteLine($"managed growth from {full.Players} to {last.Players} players: {growthMb:0.00} MB");
         Assert.True(growthMb < 8d, $"managed memory grew {growthMb:0.0} MB between {full.Players} and {last.Players} players");
+        // Bounded growth past the LRU's fill: measured flat (-12 KB over 750 departed players)
+        // once the rig's own snapshot history is trimmed; the old 1.4 KB per departed player
+        // would be 1 MB here.
+        Assert.True(
+            last.Bytes - full.Bytes < 512 * 1024,
+            $"managed memory grew {(last.Bytes - full.Bytes) / 1024d:0} KB over {last.Players - full.Players} departed players ({(last.Bytes - full.Bytes) / (double)(last.Players - full.Players):0} B each)");
     }
 
     // Collections reachable from obj's fields (two levels deep) with more than 1100 entries.

@@ -20,19 +20,20 @@ using static Dream.Tests.Integration.ProtocolV2SharedSnapshotLoopbackIntegration
 
 namespace Dream.Tests.Integration;
 
-// ProtocolV2SharedSnapshotLoopbackIntegrationTests' old-client case: the server rejects a v1 or v2
-// client (protocol v3 changed the world wire format, SCALE-1)
-// with a logged reason and no unobserved task fault while the other clients keep playing. Its own
+// ProtocolV2SharedSnapshotLoopbackIntegrationTests' old-client case: the server rejects a v1, v2
+// or v3 client (protocol v3 changed the world wire format, SCALE-1; v4 the snapshot actors and
+// the envelope header, SCALE-2) with a logged reason and no unobserved task fault while the other clients keep playing. Its own
 // class so it runs in parallel with the other loopback runs.
 public class ProtocolV2VersionRejectionLoopbackIntegrationTests
 {
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
+    [InlineData(3)]
     public async Task OldClient_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying(int legacyVersion)
     {
-        Assert.Equal(3, TransportEnvelope.CurrentProtocolVersion);
-        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v3.";
+        Assert.Equal(4, TransportEnvelope.CurrentProtocolVersion);
+        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v4.";
         List<Exception> unobserved = [];
         EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
         {
@@ -67,15 +68,20 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
                 Assert.True(await server.FlushAllAsync());
             }
 
-            // A protocol v1 or v2 client: that version's serializer options (v1: explicit nulls and
-            // messageKind in the payload) and its protocolVersion in the envelope, framed exactly
-            // like a v3 frame.
+            // A protocol v1, v2 or v3 client: that version's serializer options (v1: explicit nulls
+            // and messageKind in the payload; a v3 hello is shaped like a v4 one) and its
+            // protocolVersion in the envelope, framed exactly like a v4 frame.
             ClientHelloMessage hello = new($"legacy-v{legacyVersion}-client");
             byte[] v1Hello = JsonSerializer.SerializeToUtf8Bytes(
                 new { protocolVersion = legacyVersion, messageKind = hello.MessageKind, sequence = 1UL, payload = hello },
-                legacyVersion == 1 ? ProtocolWireOptions.V1 : ProtocolWireOptions.V2);
+                legacyVersion switch
+                {
+                    1 => ProtocolWireOptions.V1,
+                    2 => ProtocolWireOptions.V2,
+                    _ => ProtocolWireOptions.V3,
+                });
             InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 3.", versionError.Message);
+            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 4.", versionError.Message);
 
             using TcpClient legacy = new();
             await legacy.ConnectAsync(IPAddress.Loopback, server.Port);
