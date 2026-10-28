@@ -7,6 +7,7 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.World;
 
+[Collection(TimingSensitiveCollection.Name)]
 public class StaticWorldChunkMeshBuilderTests
 {
     [Fact]

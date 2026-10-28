@@ -14,6 +14,7 @@ namespace Dream.Tests.Server;
 // the test so several join requests are read before the same tick. Joins that land in one tick
 // must give the same seats, actor ids and spawns whatever order the server read them in, and a
 // client must hear its JoinAccepted before its first snapshot.
+[Collection(TimingSensitiveCollection.Name)]
 public class LiveServerDeferredJoinLoopbackTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);

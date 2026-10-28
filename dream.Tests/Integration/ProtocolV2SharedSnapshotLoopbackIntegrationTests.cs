@@ -26,6 +26,7 @@ namespace Dream.Tests.Integration;
 // connection's own envelope, slimmed to v2, with actors in canonical order. Every client also
 // applies what it receives into a ClientWorldSession, like PlayScene, and checks the world
 // checksums the server sends.
+[Collection(TimingSensitiveCollection.Name)]
 public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper output)
 {
     private const string SnapshotKind = "server.snapshot";
