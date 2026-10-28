@@ -2,6 +2,7 @@ using Dream.Application;
 using Dream.Client.Networking;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Hud;
 
 namespace Dream.Client.Scenes;
 
@@ -20,6 +21,17 @@ public partial class PlayScene : ISessionEndSource
     // The endpoint and name this scene's session used, so the connection screen Game returns to
     // after the session ends is filled in for a reconnect.
     public RemoteClientOptions SessionOptions => _remoteClient.Options;
+
+    // The HUD's view of a world transfer in progress (a join or a resync). Remote actors freeze
+    // until it ends, because every message is held until its final chunk; local input and
+    // prediction deliberately carry on, as they already work against the held state. Read once
+    // per frame; allocates nothing.
+    internal static WorldTransferHudState CaptureWorldTransferHudState(RemoteClientSession session)
+    {
+        return session.TryGetWorldTransferProgress(out long bytesReceived, out int chunksReceived, out TimeSpan elapsed)
+            ? new WorldTransferHudState(true, bytesReceived, chunksReceived, elapsed)
+            : WorldTransferHudState.None;
+    }
 
     private void DrainRemoteTransportMessages()
     {

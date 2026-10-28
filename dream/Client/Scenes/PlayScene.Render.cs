@@ -151,6 +151,7 @@ public partial class PlayScene
 
         long hudDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.Hud);
+        _render.WorldTransferHud = CaptureWorldTransferHudState(_remoteClient);
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
