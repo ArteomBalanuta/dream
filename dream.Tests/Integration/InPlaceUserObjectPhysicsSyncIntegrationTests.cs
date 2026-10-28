@@ -67,13 +67,13 @@ public class InPlaceUserObjectPhysicsSyncIntegrationTests(ITestOutputHelper outp
         Assert.True(stats.RubbleBodyChecks > 0);
     }
 
-    // Found by the scenario above: PhysicsSyncSystem reports a move only when the center moved
-    // more than 1 mm since the previous tick (HasMeaningfulMovement compares with the previous
-    // tick's center, not with the last center it reported). A cube creeping slower than 1 mm per
-    // tick changes the server map every tick without a single CubeMoved delta, so the mirror
-    // drifts without bound and, once the creep crosses a cell boundary, holds the cube in the
-    // wrong cell (world checksum mismatch, and later deltas name a source cell the mirror lacks).
-    [Fact(Skip = "Pre-existing replication gap (not wave 5): PhysicsSyncSystem.HasMeaningfulMovement (dream/Simulation/Physics/PhysicsSyncSystem.cs:284, used at :124) compares each tick with the previous tick's center, so a sub-1 mm/tick creep moves the server cube across a cell with no CubeMoved delta.")]
+    // Found by the scenario above: PhysicsSyncSystem used to report a move only when the center
+    // moved more than 1 mm since the previous tick, not since the last center it reported. A cube
+    // creeping slower than 1 mm per tick changed the server map every tick without a single
+    // CubeMoved delta, so the mirror drifted without bound and, once the creep crossed a cell
+    // boundary, held the cube in the wrong cell (world checksum mismatch, and later deltas named
+    // a source cell the mirror lacked).
+    [Fact]
     public void SubMillimetreCreepAcrossACellBoundary_IsReportedAsAMove()
     {
         using PhysicsIntegrator physics = new();
@@ -115,9 +115,9 @@ public class InPlaceUserObjectPhysicsSyncIntegrationTests(ITestOutputHelper outp
         List<Cube> chainA = PlaceChain(server, client.Map, i => new Vector3(chainAStartX + i, 1f, chainAZ), GeometryMaterialId.Stone);
         List<Cube> chainB = PlaceChain(server, client.Map, i => new Vector3(chainBX, 1f, chainBStartZ + i), GeometryMaterialId.Dirt);
         List<Cube> tracked = [.. chainA, .. chainB];
-        // What the client was last told about each server cube. Moves under 1 mm per tick are not
-        // replicated (PhysicsSyncSystem.HasMeaningfulMovement), so this, not the server's current
-        // center, is what the mirror must hold.
+        // What the client was last told about each server cube. A cube is reported only once it
+        // has moved 1 mm from its last reported center or changed cell, so this, not the server's
+        // current center, is what the mirror must hold.
         Dictionary<Cube, Vector3> replicated = new(ReferenceEqualityComparer.Instance);
         foreach (Cube cube in tracked)
         {

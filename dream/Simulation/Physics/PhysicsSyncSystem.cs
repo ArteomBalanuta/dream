@@ -21,6 +21,14 @@ public class PhysicsSyncSystem
 
     private readonly Dictionary<RigidBody, int> _rejectionStreaks = new();
 
+    // The center last reported (in a PhysicsCubeMoveDelta) for each live dynamic cube. Moves are
+    // measured from it rather than from the previous tick's center, so a cube creeping less than
+    // the movement threshold per tick is still reported once its accumulated drift passes the
+    // threshold. A cube's first sync seeds it with the center its body already stores, which
+    // the placement that created the cube replicated. Entries for cubes that no longer have a
+    // dynamic body (removed, fractured) are pruned.
+    private readonly Dictionary<Cube, Vector3> _lastReportedCenters = new();
+
     // Per-call scratch state, cleared on each sync so steady-state ticks allocate nothing here.
     private readonly List<RigidBody> _bodies = [];
     private readonly List<PendingCubeSync> _pendingCubeSyncs = [];
@@ -35,6 +43,12 @@ public class PhysicsSyncSystem
     private readonly HashSet<int> _acceptedPieceIndices = [];
     private readonly HashSet<RigidBody> _liveBodies = [];
     private readonly List<RigidBody> _staleStreakBodies = [];
+    private readonly HashSet<Cube> _liveCubes = [];
+    private readonly List<Cube> _staleBaselineCubes = [];
+
+    // Number of cubes with a last-reported center; bounded by the live dynamic cube bodies after
+    // each sync.
+    public int TrackedCubeBaselineCount => _lastReportedCenters.Count;
 
     // The returned MovedCubes belongs to the caller and stays valid across later syncs: it is a
     // new array when cubes moved and a shared empty array otherwise.
@@ -63,6 +77,7 @@ public class PhysicsSyncSystem
             if (body.UserObject is ValueTuple<Cube, Vector3> cubeBody && cubeBody.Item1 is Cube cube)
             {
                 body.MotionState.GetWorldTransform(out Matrix transform);
+                _lastReportedCenters.TryAdd(cube, cubeBody.Item2);
                 pendingCubeSyncs.Add(new PendingCubeSync(
                     body,
                     cube,
@@ -84,6 +99,7 @@ public class PhysicsSyncSystem
         }
 
         PruneRejectionStreaks(bodies);
+        PruneLastReportedCenters(pendingCubeSyncs);
         HashSet<GeometryCellKey> reservedTargetCells = _reservedTargetCells;
         reservedTargetCells.Clear();
 
@@ -121,8 +137,10 @@ public class PhysicsSyncSystem
 
                 if (hadPreviousCell &&
                     map.TryGetCellForCube(pendingSync.Cube, out GeometryCellKey currentCell) &&
-                    HasMeaningfulMovement(pendingSync.PreviousCenter, pendingSync.Position))
+                    (currentCell != previousCell ||
+                        HasMeaningfulMovement(_lastReportedCenters[pendingSync.Cube], pendingSync.Position)))
                 {
+                    _lastReportedCenters[pendingSync.Cube] = pendingSync.Position;
                     movedCubes.Add(new PhysicsCubeMoveDelta(
                         pendingSync.Cube,
                         new Vector3(previousCell.X, previousCell.Y, previousCell.Z),
@@ -269,6 +287,40 @@ public class PhysicsSyncSystem
         }
 
         _staleStreakBodies.Clear();
+        live.Clear();
+    }
+
+    // Every cube synced this call has a baseline, so the dictionary holds stale cubes only when
+    // it is larger than this call's cube count; the scan runs only then.
+    private void PruneLastReportedCenters(List<PendingCubeSync> pendingCubeSyncs)
+    {
+        if (_lastReportedCenters.Count <= pendingCubeSyncs.Count)
+        {
+            return;
+        }
+
+        HashSet<Cube> live = _liveCubes;
+        live.Clear();
+        for (int i = 0; i < pendingCubeSyncs.Count; i++)
+        {
+            live.Add(pendingCubeSyncs[i].Cube);
+        }
+
+        _staleBaselineCubes.Clear();
+        foreach (Cube cube in _lastReportedCenters.Keys)
+        {
+            if (!live.Contains(cube))
+            {
+                _staleBaselineCubes.Add(cube);
+            }
+        }
+
+        for (int i = 0; i < _staleBaselineCubes.Count; i++)
+        {
+            _lastReportedCenters.Remove(_staleBaselineCubes[i]);
+        }
+
+        _staleBaselineCubes.Clear();
         live.Clear();
     }
 
