@@ -30,6 +30,10 @@ namespace Dream.Tests.Integration;
 //
 // The distances are reported, not asserted: they depend on the server inbox (latest-only today,
 // NETR-5's buffered inbox later). The assertions cover the command stream itself.
+//
+// Wave 8 fix loop 1 (the harness now calls ObserveSendBacklog as PlayScene does), Debug, loopback,
+// three runs: send stall 0.000 m after the stall, no snap (was 5.7-8.2 m before the client idled
+// past the repeat window); frame stall 0.834 m smoothed, no snap.
 public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
 {
     private const string SessionId = "stall-walker";
@@ -43,11 +47,13 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
     {
         StallReport report = await RunAsync(StallKind.Send);
 
-        output.WriteLine(report.Describe("1 s send stall"));
+        output.WriteLine(report.Describe("1 s send stall") + $"; wire sequence gaps {CountGaps(report.SentSequences)}");
         Assert.True(report.MaxCorrectionBefore < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("send"));
-        // Strictly increasing on the wire; the only gap is the one merged command of the stall.
+        // Strictly increasing on the wire. The stall overflows the outbound queue, which folds runs
+        // of equal movement: once the client idles past the repeat window the backlog is one folded
+        // walk frame plus folded idle frames, so at most two sequence jumps.
         AssertIncreasing(report.SentSequences);
-        Assert.InRange(CountGaps(report.SentSequences), 1, 1);
+        Assert.InRange(CountGaps(report.SentSequences), 1, 2);
         Assert.True(report.MergedCommands > 0, "The stall never overflowed the outbound queue.");
         Assert.True(report.LastAcknowledged >= report.StallEndTick, "No snapshot acknowledged a command sent after the stall.");
         Assert.True(report.ServerWalked > 1f, $"The walker only moved {report.ServerWalked} m on the server.");
@@ -261,6 +267,9 @@ public class ClientCommandStallLoopbackTests(ITestOutputHelper output)
             _facing = facing;
             _world = new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             Ticks = new ClientCommandTickStream(_world.LocalPlayerSessionId);
+            // As PlayScene wires it: a send stalled past the server's repeat window makes the
+            // prediction ticks idle.
+            Ticks.ObserveSendBacklog(() => _session.PendingCommandCount);
         }
 
         public ClientCommandTickStream Ticks { get; }
