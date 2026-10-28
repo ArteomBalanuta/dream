@@ -169,6 +169,7 @@ public sealed partial class WorldSessionRuntime
         }
 
         _unrestoredPlayerSessions.Remove(sessionId);
+        MarkProfileActive(playerName);
         CacheProfile(playerName, profile);
         ApplyPersistedPlayerState(sessionId, profile, worldState);
         EnsurePlayerInventory(profile.PlayerName);
@@ -443,6 +444,83 @@ public sealed partial class WorldSessionRuntime
         _profileCache[profile.PlayerName] = profile;
         _knownProfileNames.Add(playerName);
         _knownProfileNames.Add(profile.PlayerName);
+    }
+
+    // The profile cache keeps every active player's profile and, past that, only the most recently
+    // departed players' (an LRU MaxDepartedProfiles long), because a client chooses its player name
+    // and a long-running server would otherwise cache one profile per name ever seen. Eviction
+    // loses nothing: DetachRemoteSession saved the profile (queued before the eviction) and a later
+    // join reads it back through its prefetch or the synchronous fallback, both ordered after the
+    // queued writes. An active player's profile is never evicted: GetCachedProfile's fallback
+    // reads the repository directly and could miss a save still on the queue.
+    internal const int DefaultMaxDepartedProfiles = PlayerSessionRegistry.DefaultMaxDepartedSessions;
+
+    private readonly LinkedList<string> _departedProfileNames = new();
+    private readonly Dictionary<string, LinkedListNode<string>> _departedProfileNodes = new(StringComparer.OrdinalIgnoreCase);
+
+    // Settable for tests.
+    internal int MaxDepartedProfiles { get; set; } = DefaultMaxDepartedProfiles;
+
+    internal int ProfileCacheCount => _profileCache.Count;
+
+    internal int DepartedProfileCount => _departedProfileNames.Count;
+
+    // The name's player is attached again: its profile leaves the eviction order.
+    private void MarkProfileActive(string playerName)
+    {
+        if (_departedProfileNodes.Remove(playerName, out LinkedListNode<string>? node))
+        {
+            _departedProfileNames.Remove(node);
+        }
+    }
+
+    // The name's last active session left: its cached profile becomes the newest eviction candidate.
+    private void MarkProfileDeparted(string playerName)
+    {
+        if (!_profileCache.ContainsKey(playerName) || IsProfileNameActive(playerName))
+        {
+            return;
+        }
+
+        MarkProfileActive(playerName);
+        _departedProfileNodes[playerName] = _departedProfileNames.AddLast(playerName);
+        while (_departedProfileNames.Count > MaxDepartedProfiles)
+        {
+            string oldest = _departedProfileNames.First!.Value;
+            _departedProfileNames.RemoveFirst();
+            _departedProfileNodes.Remove(oldest);
+            EvictCachedProfile(oldest);
+        }
+    }
+
+    private void EvictCachedProfile(string playerName)
+    {
+        if (_profileCache.Remove(playerName, out PersistedPlayerProfile profile)
+            && !string.Equals(profile.PlayerName, playerName, StringComparison.OrdinalIgnoreCase)
+            && !IsProfileNameActive(profile.PlayerName))
+        {
+            // CacheProfile also stores the profile under the repository's own name for it.
+            _profileCache.Remove(profile.PlayerName);
+        }
+
+        // A prefetch already loaded for this name may predate the save the cache held; with the
+        // cache entry gone a join would apply it, so drop it and let the join load afresh.
+        _playerPrefetches.TryRemove(playerName, out _);
+    }
+
+    private bool IsProfileNameActive(string playerName)
+    {
+        foreach (ConnectedPlayer player in _sessions.Players)
+        {
+            if (!player.IsLocal
+                && player.IsSpawned
+                && string.Equals(player.DisplayName, playerName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void SaveProfile(string playerName, PersistedPlayerProfile profile)

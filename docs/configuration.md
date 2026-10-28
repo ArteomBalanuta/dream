@@ -114,8 +114,8 @@ Runtime assets are now treated as project-owned content and resolved relative to
 
 Current consumers include:
 
-- `Render.cs` for shader file paths
-- `Map.cs` for the `GrassTextureCube.gltf` model path
+- `Render.InitializeShaders` (`dream/Rendering/Core/Render.Shaders.cs`) for the world shader paths; the HUD and ImGui shader paths are in `Render.Hud.cs` and `Render.ImGui.cs`
+- `GrassCubeAssetDefinition.ModelPath` (`dream/Rendering/Models/GrassCubeAssetDefinition.cs`) for the `GrassTextureCube.gltf` model path
 - `Game.cs` for `config/viewmodel-rig.txt`
 - `Game.cs` for `config/desktop-client.txt`
 

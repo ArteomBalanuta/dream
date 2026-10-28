@@ -50,11 +50,13 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         if (Runtime.Sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
             // A session that left stays registered (DetachRemoteSession only despawns it) while it
-            // is among the registry's most recently left sessions (PlayerSessionRegistry
-            // .MaxDepartedSessions), so a reconnect lands here; an older one joins as new. It must go through AttachRemoteSession like a first join: that
-            // recreates the secondary player DetachRemoteSession disposed, re-seats a returning former
-            // primary (or gives it its own seat when the primary seat was taken) and invalidates the
-            // cached player targets. For a session that is still attached it creates nothing.
+            // is among the registry's most recently left sessions
+            // (PlayerSessionRegistry.MaxDepartedSessions), so a reconnect lands here; an older one
+            // joins as new. It must go through AttachRemoteSession like a first join: that
+            // recreates the secondary player DetachRemoteSession disposed, re-seats a returning
+            // former primary (or gives it its own seat when the primary seat was taken) and
+            // invalidates the cached player targets. For a session that is still attached it
+            // creates nothing.
             bool returning = !existing.IsSpawned;
             if (existing.IsLocal)
             {
