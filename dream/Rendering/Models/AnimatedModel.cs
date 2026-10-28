@@ -58,6 +58,9 @@ public class AnimatedModel : IDisposable
     private readonly ReusableMatrixBuffer _instanceNodeMatrices = new();
     private int _instanceModelBuffer;
     private readonly AnimatedModelSkeleton _skeleton;
+    // The view and projection of the current BeginRender, for a switch to an alpha-mask program.
+    private Matrix4 _renderView = Matrix4.Identity;
+    private Matrix4 _renderProjection = Matrix4.Identity;
     // The rest pose, drawn when no instance is given; never animated.
     private readonly AnimatedModelPose _pose;
     // Joint matrices of the rest pose, filled per skinned node when no instance is given.
@@ -273,6 +276,9 @@ public class AnimatedModel : IDisposable
         shader.SetMatrix4("projection", projection);
         shader.SetBool("useSkinning", false);
         shader.SetBool("useInstancing", false);
+        // Kept for a switch to the program's alpha-mask variant in the middle of this render.
+        _renderView = view;
+        _renderProjection = projection;
     }
 
     // Draws the rest pose.
@@ -406,17 +412,28 @@ public class AnimatedModel : IDisposable
         // are the model and normal matrices, which every primitive of the node shares.
         bool jointsComposed = false;
         shader.SetModelMatrix(modelMatrix);
+        Shader bound = shader;
         foreach (var primitive in primitives)
         {
-            ApplySkinning(shader, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed);
+            MaterialData material = ResolveMaterial(primitive.MaterialIndex);
+            Shader program = SelectProgram(shader, material);
+            if (!ReferenceEquals(program, bound))
+            {
+                BindProgram(program, instanced: false, modelMatrix);
+                bound = program;
+            }
 
-            SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
+            ApplySkinning(program, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed);
+
+            SetMaterialProperties(program, material);
 
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
                 DrawElementsType.UnsignedInt, 0);
             RenderCounters.CountDraw();
         }
+
+        RestoreProgram(shader, bound);
     }
 
     private void RenderNodeInstanced(
@@ -430,11 +447,20 @@ public class AnimatedModel : IDisposable
         // Instanced draws read the model matrix from the per-instance attribute and derive the
         // normal matrix from it in the shader, so `model` and `normalMatrix` are not uploaded.
         shader.SetBool("useInstancing", true);
+        Shader bound = shader;
         foreach (MeshBuffers primitive in primitives)
         {
-            ApplySkinning(shader, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed);
+            MaterialData material = ResolveMaterial(primitive.MaterialIndex);
+            Shader program = SelectProgram(shader, material);
+            if (!ReferenceEquals(program, bound))
+            {
+                BindProgram(program, instanced: true, Matrix4.Identity);
+                bound = program;
+            }
 
-            SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
+            ApplySkinning(program, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed);
+
+            SetMaterialProperties(program, material);
 
             GL.BindVertexArray(primitive.VAO);
             UploadInstanceModelMatrices(modelMatrices, count);
@@ -446,6 +472,41 @@ public class AnimatedModel : IDisposable
                 count);
             // One instanced call counts as one draw.
             RenderCounters.CountDraw();
+        }
+
+        RestoreProgram(shader, bound);
+    }
+
+    // MASK materials draw with the program's alpha-mask variant (the only program with the cutoff
+    // discard); everything else, and any program without a variant, draws with the base program.
+    private static Shader SelectProgram(Shader shader, MaterialData material) =>
+        UsesAlphaMaskProgram(material.AlphaMode) && shader.AlphaMaskVariant is { } maskProgram
+            ? maskProgram
+            : shader;
+
+    public static bool UsesAlphaMaskProgram(AlphaMode alphaMode) =>
+        ToWorldAlphaMode(alphaMode) == WorldAlphaMode.Mask;
+
+    // Switches programs in the middle of a node: the per-render state BeginRender gave the base
+    // program is uploaded to the new one. Skinning flags, joints and material follow per primitive.
+    private void BindProgram(Shader program, bool instanced, Matrix4 modelMatrix)
+    {
+        program.Use();
+        program.SetMatrix4("view", _renderView);
+        program.SetMatrix4("projection", _renderProjection);
+        program.SetBool("useInstancing", instanced);
+        if (!instanced)
+        {
+            program.SetModelMatrix(modelMatrix);
+        }
+    }
+
+    // Callers keep drawing with the program they passed in, so it is rebound after a switch.
+    private static void RestoreProgram(Shader shader, Shader bound)
+    {
+        if (!ReferenceEquals(bound, shader))
+        {
+            shader.Use();
         }
     }
 
@@ -538,7 +599,8 @@ public class AnimatedModel : IDisposable
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
         shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
         shader.SetVector3("material.emissiveFactor", material.EmissiveFactor);
-        shader.SetMaterialAlpha(ToWorldAlphaMode(material.AlphaMode), material.AlphaCutoff);
+        // Only the alpha-mask program declares the cutoff; elsewhere this uploads nothing.
+        shader.SetAlphaCutoff(material.AlphaCutoff);
 
         // Set texture presence flags
         shader.SetBool("material.hasBaseColorTexture", material.HasBaseColorTexture);
@@ -557,7 +619,7 @@ public class AnimatedModel : IDisposable
 
 
     // Maps a glTF alpha mode onto the world pass's. Blending is off there and there is no sorted
-    // transparency, so BLEND (like OPAQUE) is drawn opaque; only MASK reaches the cutoff discard.
+    // transparency, so BLEND (like OPAQUE) is drawn opaque; only MASK uses the alpha-mask program.
     public static int ToWorldAlphaMode(AlphaMode alphaMode) => alphaMode == AlphaMode.MASK
         ? WorldAlphaMode.Mask
         : WorldAlphaMode.Opaque;

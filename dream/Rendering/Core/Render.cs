@@ -275,11 +275,11 @@ public class Render : IDisposable
             AssetPaths.Shader("vertexShader.glsl"),
             AssetPaths.Shader("fragmentShader.glsl"));
 
-        LoadShader("cube",
+        LoadWorldShader("cube",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("cubeFragment.glsl"));
 
-        LoadShader("enemy",
+        LoadWorldShader("enemy",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("enemyFragment.glsl"));
     }
@@ -666,6 +666,26 @@ public class Render : IDisposable
     public void LoadShader(string name, string vertexPath, string fragmentPath)
     {
         Shader shader = new(vertexPath, fragmentPath);
+        _shaders.Replace(name, shader);
+    }
+
+    // A world-pass program: the opaque program plus its glTF MASK variant (the same sources with
+    // Shader.AlphaMaskDefine), which AnimatedModel switches to only for MASK materials. The variant
+    // is owned and disposed by the opaque program. Like LoadShader, a failed compile of either
+    // keeps the previous pair.
+    public void LoadWorldShader(string name, string vertexPath, string fragmentPath)
+    {
+        Shader shader = new(vertexPath, fragmentPath);
+        try
+        {
+            shader.AttachAlphaMaskVariant(new Shader(vertexPath, fragmentPath, Shader.AlphaMaskDefine));
+        }
+        catch
+        {
+            shader.Dispose();
+            throw;
+        }
+
         _shaders.Replace(name, shader);
     }
 
@@ -1337,9 +1357,8 @@ public class Render : IDisposable
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
-        // Terrain is opaque. The cube program is shared with glTF models, so the mode a MASK
-        // model left behind must not leak into terrain (the upload is skipped when unchanged).
-        shader.SetMaterialAlpha(WorldAlphaMode.Opaque, 0f);
+        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
+        // (only its alpha-mask variant has one).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {

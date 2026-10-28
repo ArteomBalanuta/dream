@@ -12,7 +12,7 @@ using Xunit;
 namespace Dream.Tests.Rendering.Core;
 
 // GPU-7: the world-pass shaders compute no per-vertex inverse, the CPU uploads a normal matrix
-// once per draw through cached locations, and the fragment shaders discard only for glTF MASK.
+// once per draw through cached locations, and only the MASK variant of a world program discards.
 public class WorldShaderContractTests
 {
     private static readonly string[] WorldFragmentShaders = ["cubeFragment.glsl", "enemyFragment.glsl"];
@@ -60,7 +60,7 @@ public class WorldShaderContractTests
         // A node's primitives share one model matrix, so it is uploaded once per node, before the
         // primitive loop, rather than per primitive.
         Assert.Matches(
-            @"shader\.SetModelMatrix\(modelMatrix\);\s*foreach \(var primitive in primitives\)",
+            @"shader\.SetModelMatrix\(modelMatrix\);\s*Shader bound = shader;\s*foreach \(var primitive in primitives\)",
             animatedModel);
     }
 
@@ -71,7 +71,6 @@ public class WorldShaderContractTests
 
         Assert.Single(Regex.Matches(shader, @"GetUniformLocation\(ModelUniformName\)"));
         Assert.Single(Regex.Matches(shader, @"GetUniformLocation\(NormalMatrixUniformName\)"));
-        Assert.Single(Regex.Matches(shader, @"GetUniformLocation\(AlphaModeUniformName\)"));
         Assert.Single(Regex.Matches(shader, @"GetUniformLocation\(AlphaCutoffUniformName\)"));
         Assert.Matches(
             @"Handle = program;\s*_modelLocation = GetUniformLocation\(ModelUniformName\);\s*_normalMatrixLocation = GetUniformLocation\(NormalMatrixUniformName\);",
@@ -86,33 +85,100 @@ public class WorldShaderContractTests
         string setMatrix3 = MethodBody(shader, "public void SetMatrix3(int location, Matrix3 matrix)");
         Assert.Contains("GL.UniformMatrix3(location, false, ref matrix);", setMatrix3);
         Assert.Contains("RenderCounters.CountUniformUpload();", setMatrix3);
-        string setMaterialAlpha = MethodBody(shader, "public void SetMaterialAlpha(int alphaMode, float alphaCutoff)");
-        Assert.DoesNotContain("GetUniformLocation", setMaterialAlpha);
-        Assert.Equal(2, Regex.Matches(setMaterialAlpha, @"RenderCounters\.CountUniformUpload\(\);").Count);
+        string setAlphaCutoff = MethodBody(shader, "public void SetAlphaCutoff(float alphaCutoff)");
+        Assert.DoesNotContain("GetUniformLocation", setAlphaCutoff);
+        Assert.Single(Regex.Matches(setAlphaCutoff, @"RenderCounters\.CountUniformUpload\(\);"));
     }
 
     [Theory]
     [InlineData("cubeFragment.glsl")]
     [InlineData("enemyFragment.glsl")]
-    public void World_Fragment_Shaders_Discard_Only_Below_The_Cutoff_For_Mask(string fileName)
+    public void World_Fragment_Shaders_Discard_Below_The_Cutoff_Only_In_The_Mask_Variant(string fileName)
     {
         string shader = StripComments(File.ReadAllText(Path.Combine(ShaderDirectory(), fileName)));
 
-        Assert.Matches(@"struct Material \{[^}]*\bint alphaMode;[^}]*\bfloat alphaCutoff;[^}]*\};", shader);
-        Assert.Equal(WorldAlphaMode.Opaque, ReadIntConstant(shader, "ALPHA_MODE_OPAQUE"));
-        Assert.Equal(WorldAlphaMode.Mask, ReadIntConstant(shader, "ALPHA_MODE_MASK"));
+        Assert.Matches(@"struct Material \{[^}]*\bfloat alphaCutoff;[^}]*\};", shader);
         Assert.Single(Regex.Matches(shader, @"\bdiscard\b"));
+        // The one discard is compiled only into the MASK variant, so an opaque program has none.
         Assert.Matches(
-            @"if \(material\.alphaMode == ALPHA_MODE_MASK && baseColor\.a < material\.alphaCutoff\) \{\s*discard;\s*\}",
+            $@"#ifdef {Shader.AlphaMaskDefine}\s*if \(baseColor\.a < material\.alphaCutoff\) \{{\s*discard;\s*\}}\s*#endif",
             shader);
+        string opaqueProgram = Regex.Replace(
+            shader,
+            $@"#ifdef {Shader.AlphaMaskDefine}.*?#endif",
+            string.Empty,
+            RegexOptions.Singleline);
+        Assert.DoesNotMatch(@"\bdiscard\b", opaqueProgram);
+        Assert.DoesNotContain("#else", shader);
     }
 
     [Fact]
-    public void Terrain_Draws_Reset_The_Shared_Cube_Program_To_Opaque()
+    public void World_Programs_Are_Loaded_With_Their_Mask_Variant_And_Terrain_Uses_The_Opaque_One()
     {
         string render = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
 
-        Assert.Contains("shader.SetMaterialAlpha(WorldAlphaMode.Opaque, 0f);", render);
+        Assert.Matches(@"LoadWorldShader\(""cube"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""cubeFragment\.glsl""\)\);", render);
+        Assert.Matches(@"LoadWorldShader\(""enemy"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""enemyFragment\.glsl""\)\);", render);
+        Assert.Contains("shader.AttachAlphaMaskVariant(new Shader(vertexPath, fragmentPath, Shader.AlphaMaskDefine));", render);
+        // Terrain binds the base "cube" program and never the variant.
+        string bindTerrain = MethodBody(render, "private void BindTerrainMaterial(");
+        Assert.Contains("Shader shader = GetShader(\"cube\");", bindTerrain);
+        Assert.DoesNotContain("AlphaMaskVariant", bindTerrain);
+    }
+
+    [Fact]
+    public void Animated_Models_Switch_To_The_Mask_Program_Per_Primitive_And_Switch_Back()
+    {
+        string animatedModel = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Models", "AnimatedModel.cs"));
+
+        foreach (string method in new[] { "private void RenderNode(", "private void RenderNodeInstanced(" })
+        {
+            string body = MethodBody(animatedModel, method);
+            Assert.Contains("Shader program = SelectProgram(shader, material);", body);
+            Assert.Contains("ApplySkinning(program,", body);
+            Assert.Contains("SetMaterialProperties(program, material);", body);
+            Assert.Contains("RestoreProgram(shader, bound);", body);
+        }
+
+        string bindProgram = MethodBody(animatedModel, "private void BindProgram(");
+        Assert.Contains("program.Use();", bindProgram);
+        Assert.Contains("program.SetMatrix4(\"view\", _renderView);", bindProgram);
+        Assert.Contains("program.SetMatrix4(\"projection\", _renderProjection);", bindProgram);
+        Assert.Contains("program.SetModelMatrix(modelMatrix);", bindProgram);
+    }
+
+    [Theory]
+    [InlineData(AlphaMode.OPAQUE, false)]
+    [InlineData(AlphaMode.MASK, true)]
+    [InlineData(AlphaMode.BLEND, false)]
+    public void Only_Mask_Materials_Use_The_Alpha_Mask_Program(AlphaMode gltfMode, bool expected)
+    {
+        Assert.Equal(expected, AnimatedModel.UsesAlphaMaskProgram(gltfMode));
+    }
+
+    [Fact]
+    public void A_Define_Goes_On_The_Line_After_The_Version_Directive()
+    {
+        string source = "﻿#version 330 core\r\n\r\nout vec4 FragColor;\r\n";
+
+        string defined = Shader.InsertDefine(source, Shader.AlphaMaskDefine);
+
+        Assert.Equal($"﻿#version 330 core\r\n#define {Shader.AlphaMaskDefine}\n\r\nout vec4 FragColor;\r\n", defined);
+        Assert.Equal($"#version 330 core\n#define X\n", Shader.InsertDefine("#version 330 core", "X"));
+        Assert.Equal($"#define X\nvoid main() {{}}", Shader.InsertDefine("void main() {}", "X"));
+    }
+
+    [Theory]
+    [InlineData("cubeFragment.glsl")]
+    [InlineData("enemyFragment.glsl")]
+    public void The_Mask_Define_Lands_Right_After_The_Real_Shader_Version(string fileName)
+    {
+        string source = File.ReadAllText(Path.Combine(ShaderDirectory(), fileName));
+
+        string[] lines = Shader.InsertDefine(source, Shader.AlphaMaskDefine).Split('\n');
+
+        Assert.StartsWith("#version 330 core", lines[0].TrimStart('﻿'));
+        Assert.Equal($"#define {Shader.AlphaMaskDefine}", lines[1]);
     }
 
     [Theory]
@@ -236,13 +302,6 @@ public class WorldShaderContractTests
 
         Assert.Equal(0, bytes);
         GC.KeepAlive(sink);
-    }
-
-    private static int ReadIntConstant(string shader, string name)
-    {
-        Match match = Regex.Match(shader, $@"const int {name} = (\d+);");
-        Assert.True(match.Success, $"{name} not declared.");
-        return int.Parse(match.Groups[1].Value);
     }
 
     // The body of the method whose signature line is given, up to its matching closing brace.
