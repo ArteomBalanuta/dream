@@ -18,10 +18,11 @@ namespace Dream.Tests.Integration;
 // - the tick does not slow down as sessions come and go;
 // - a session that reconnects with the same session id reclaims its registry entry and actor id
 //   (the desktop client picks a fresh guid per connect, so only an explicit id exercises this);
-// - known gap: WorldSessionRuntime._sessionInteractionModes keeps an entry per session id ever seen.
+// - WorldSessionRuntime._sessionInteractionModes follows the registry (fix loop 1: it used to keep
+//   an entry per session id ever seen).
 // To reach the LRU's eviction in a few hundred cycles, the churn tests swap the runtime's registry
 // for one with a small departed capacity before any client connects (the runtime reads the
-// registry only through its _sessions field).
+// registry only through its _sessions field, and the swap carries over its SessionForgotten hook).
 [Collection(TimingSensitiveCollection.Name)]
 public class Wave11SessionChurnLoopbackTests
 {
@@ -186,12 +187,12 @@ public class Wave11SessionChurnLoopbackTests
         }
     }
 
-    // Known gap (SCALE-7 follow-up): AttachRemoteSession / RegisterSecondarySession add an entry to
-    // WorldSessionRuntime._sessionInteractionModes for every session id (WorldSessionRuntime.Sessions.cs
-    // lines 29, 65, 89, 172), and nothing removes it: not DetachRemoteSession, not the registry's LRU
-    // eviction. With a fresh session id per connect, the dictionary grows by one entry per connect
-    // for the life of the server, while the registry stays bounded.
-    [Fact(Skip = "bug: WorldSessionRuntime._sessionInteractionModes gains an entry per session id and is never trimmed (not on detach, not on registry eviction): 42 entries for 10 remembered sessions after 40 churn cycles.")]
+    // Regression (wave 11 fix loop 1): AttachRemoteSession / RegisterSecondarySession add an entry to
+    // WorldSessionRuntime._sessionInteractionModes for every session id, and nothing removed it, so
+    // with a fresh session id per connect the dictionary grew by one entry per connect for the life
+    // of the server while the registry stayed bounded (42 entries for 10 remembered sessions after
+    // 40 cycles). The registry's eviction now drops the mode too.
+    [Fact]
     public async Task InteractionModes_StayBoundedWithTheRegistry_UnderChurn()
     {
         const int MaxDeparted = 8;
@@ -210,6 +211,8 @@ public class Wave11SessionChurnLoopbackTests
         int registered = server.Runtime.Sessions.Count;
         _output.WriteLine($"interaction modes {modes}, registry count {registered}");
         Assert.True(modes <= registered, $"{modes} interaction-mode entries for {registered} remembered sessions after {Cycles} churn cycles");
+        Assert.Equal(server.Runtime.SessionInteractionModeCount, modes);
+        Assert.Equal(MaxDeparted, server.Runtime.Sessions.DepartedCount);
     }
 
     private static int InteractionModeCount(WorldSessionRuntime runtime)
@@ -278,7 +281,11 @@ public class Wave11SessionChurnLoopbackTests
                 PlayerSessionRegistry original = runtime.Sessions;
                 Assert.True(original.TryGet(runtime.LocalPlayerSessionId, out ConnectedPlayer? local));
                 Assert.Equal(1, original.Count);
-                PlayerSessionRegistry small = new(maxDepartedSessions);
+                PlayerSessionRegistry small = new(maxDepartedSessions)
+                {
+                    SessionForgotten = original.SessionForgotten
+                };
+                Assert.NotNull(small.SessionForgotten);
                 small.Register(local!.SessionId, local.ActorId, isLocal: true, displayName: local.DisplayName);
                 typeof(WorldSessionRuntime)
                     .GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)!

@@ -3,6 +3,8 @@ using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 
@@ -212,5 +214,149 @@ public sealed class PlayerSessionRegistryRetentionTests
         Assert.Equal(playerActorIds.Length, playerActorIds.Distinct().Count());
         Assert.Contains(recentId, playerActorIds);
         Assert.Contains(lowId, playerActorIds);
+    }
+
+    // Fix loop 1: whoever keeps state per session id learns when the registry drops an entry,
+    // both for an LRU eviction and for a replacement under the same id.
+    [Fact]
+    public void SessionForgotten_ReportsEvictionsAndReplacements()
+    {
+        List<string> forgotten = [];
+        PlayerSessionRegistry registry = new(maxDepartedSessions: 1)
+        {
+            SessionForgotten = player => forgotten.Add(player.SessionId.Value)
+        };
+        ConnectedPlayer a = registry.Register(new PlayerSessionId("a"), 2, isLocal: false);
+        ConnectedPlayer b = registry.Register(new PlayerSessionId("b"), 3, isLocal: false);
+        a.MarkDespawned();
+        Assert.Empty(forgotten);
+        b.MarkDespawned();
+        Assert.Equal(["a"], forgotten);
+
+        ConnectedPlayer b2 = registry.Register(new PlayerSessionId("b"), 4, isLocal: false);
+        Assert.Equal(["a", "b"], forgotten);
+        Assert.True(registry.TryGet(new PlayerSessionId("b"), out ConnectedPlayer? current));
+        Assert.Same(b2, current);
+    }
+
+    // Fix loop 1 (reviewer S1): the runtime's per-session interaction modes follow the registry, so
+    // they stay bounded however many session ids come and go.
+    [Fact]
+    public void ThousandsOfVisitors_KeepTheRuntimeInteractionModesBoundedByTheRegistry()
+    {
+        using WorldSessionRuntime runtime = new(32, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("primary", "Primary");
+        int visitors = PlayerSessionRegistry.DefaultMaxDepartedSessions + 300;
+        for (int i = 0; i < visitors; i++)
+        {
+            string session = $"client-{i:D5}";
+            host.JoinSession(session, $"Visitor {i}");
+            host.ReleaseSession(session);
+        }
+
+        PlayerSessionRegistry sessions = runtime.Sessions;
+        Assert.Equal(PlayerSessionRegistry.DefaultMaxDepartedSessions, sessions.DepartedCount);
+        // One mode per remembered session (the local player, the primary and the departed ones).
+        Assert.Equal(sessions.Count, runtime.SessionInteractionModeCount);
+
+        // A remembered visitor comes back on its entry; a forgotten one joins anew.
+        host.JoinSession($"client-{visitors - 1:D5}", $"Visitor {visitors - 1}");
+        host.JoinSession("client-00000", "Visitor 0");
+        Assert.True(sessions.Count <= PlayerSessionRegistry.DefaultMaxDepartedSessions + sessions.ActiveCount);
+        Assert.Equal(sessions.Count, runtime.SessionInteractionModeCount);
+    }
+
+    // Fix loop 1: the profile cache is keyed by player name, which the client chooses, so it keeps
+    // every active player's profile and only the most recently departed players' beyond that. An
+    // evicted profile was saved on detach; a later join of that name reads it from the repository.
+    [Fact]
+    public void ProfileCache_KeepsActivePlayers_AndAnLruOfDepartedNames()
+    {
+        const int MaxDeparted = 4;
+        ProfileRepository profiles = new();
+        using WorldSessionRuntime runtime = new(32, new Vector3(5f, 1.5f, 5f), new SceneEventHub(), playerProfiles: profiles)
+        {
+            MaxDepartedProfiles = MaxDeparted
+        };
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        profiles.Save(Profile("Visitor 0", strength: 13, PlayerInteractionMode.Combat));
+        host.JoinSession("primary", "Primary");
+
+        for (int i = 0; i < 20; i++)
+        {
+            host.JoinSession($"client-{i:D2}", $"Visitor {i}");
+            host.ReleaseSession($"client-{i:D2}");
+        }
+
+        Assert.Equal(MaxDeparted, runtime.DepartedProfileCount);
+        // The primary (active, never evicted) and the last MaxDeparted visitors.
+        Assert.Equal(1 + MaxDeparted, runtime.ProfileCacheCount);
+
+        // Visitor 0 was saved on detach (nothing lost) and evicted since.
+        PersistedPlayerProfile saved = profiles.TryGet("Visitor 0")!.Value;
+        Assert.Equal(13, saved.Stats.Strength);
+        Assert.Equal(PlayerInteractionMode.Combat, saved.InteractionMode);
+
+        // Its next join reads the repository, not a stale cached copy.
+        profiles.Save(saved with { Stats = saved.Stats with { Strength = 14 } });
+        host.JoinSession("client-back", "Visitor 0");
+        // Two active profiles plus the departed ones.
+        Assert.Equal(MaxDeparted, runtime.DepartedProfileCount);
+        Assert.Equal(2 + MaxDeparted, runtime.ProfileCacheCount);
+        host.ReleaseSession("client-back");
+        PersistedPlayerProfile resaved = profiles.TryGet("Visitor 0")!.Value;
+        Assert.Equal(14, resaved.Stats.Strength);
+        Assert.Equal(PlayerInteractionMode.Combat, resaved.InteractionMode);
+        Assert.Equal(MaxDeparted, runtime.DepartedProfileCount);
+        Assert.Equal(1 + MaxDeparted, runtime.ProfileCacheCount);
+
+        // The primary stayed cached through the churn; once it leaves it joins the LRU.
+        host.ReleaseSession("primary");
+        Assert.NotNull(profiles.TryGet("Primary"));
+        Assert.Equal(MaxDeparted, runtime.DepartedProfileCount);
+        Assert.Equal(MaxDeparted, runtime.ProfileCacheCount);
+
+        // A remembered name that joins again leaves the eviction order while it is active.
+        host.JoinSession("primary-again", "Primary");
+        Assert.Equal(MaxDeparted - 1, runtime.DepartedProfileCount);
+        Assert.Equal(MaxDeparted, runtime.ProfileCacheCount);
+    }
+
+    private static PersistedPlayerProfile Profile(string name, int strength, PlayerInteractionMode mode)
+    {
+        return new PersistedPlayerProfile(
+            name,
+            name,
+            mode,
+            new PersistedCreatureStats(100, 100, strength, 10, 10, 10, 6f, 2f, 1),
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+    }
+
+    private sealed class ProfileRepository : IPlayerProfileRepository
+    {
+        private readonly Dictionary<string, PersistedPlayerProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
+
+        public PersistedPlayerProfile GetOrCreate(string playerName)
+        {
+            if (!_profiles.TryGetValue(playerName, out PersistedPlayerProfile profile))
+            {
+                profile = PersistedPlayerProfile.CreateDefault(playerName, DateTime.UtcNow);
+                _profiles[playerName] = profile;
+            }
+
+            return profile;
+        }
+
+        public PersistedPlayerProfile? TryGet(string playerName)
+        {
+            return _profiles.TryGetValue(playerName, out PersistedPlayerProfile profile) ? profile : null;
+        }
+
+        public void Save(PersistedPlayerProfile profile)
+        {
+            _profiles[profile.PlayerName] = profile;
+        }
     }
 }

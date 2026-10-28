@@ -31,7 +31,7 @@ The current shader dictionary is populated with:
 
 - `default`: built from `vertexShader.glsl` and `fragmentShader.glsl`
 - `cube`: built from `cubeVertex.glsl` and `cubeFragment.glsl`, with an alpha MASK variant (`Render.LoadWorldShader`)
-- `enemy`: built from `cubeVertex.glsl` and `enemyFragment.glsl`, with an alpha MASK variant (`Render.cs:282`)
+- `enemy`: built from `cubeVertex.glsl` and `enemyFragment.glsl`, with an alpha MASK variant (`Render.InitializeShaders` / `Render.LoadWorldShader` in `Render.Shaders.cs`)
 
 Separate shader objects are also created for:
 

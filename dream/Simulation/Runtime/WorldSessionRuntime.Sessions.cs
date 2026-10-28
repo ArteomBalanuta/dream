@@ -21,6 +21,14 @@ public sealed partial class WorldSessionRuntime
 
     public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
     {
+        ConnectedPlayer attached = AttachRemoteSessionCore(sessionId, displayName);
+        // An attached player's cached profile is never evicted (MarkProfileDeparted).
+        MarkProfileActive(attached.DisplayName);
+        return attached;
+    }
+
+    private ConnectedPlayer AttachRemoteSessionCore(PlayerSessionId sessionId, string? displayName)
+    {
         _primaryPlayerTarget = null;
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null && !existing.IsLocal)
         {
@@ -129,6 +137,9 @@ public sealed partial class WorldSessionRuntime
         _unrestoredPlayerSessions.Remove(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
+        // After MarkDespawned, so the leaving session no longer counts as holding its name. The
+        // profile was just saved, so the cached copy may now be evicted.
+        MarkProfileDeparted(player.DisplayName);
         _primaryPlayerTarget = null;
 
         if (PrimaryRemoteSessionId == sessionId)
@@ -154,6 +165,18 @@ public sealed partial class WorldSessionRuntime
     {
         return string.IsNullOrWhiteSpace(displayName) ? requestedSessionId : displayName.Trim();
     }
+
+    // The registry dropped this session (LRU eviction of a departed session, or an entry replaced
+    // under the same id, which the caller re-seeds right after). Its mode goes with it, so
+    // _sessionInteractionModes stays bounded by the registry. A remembered session keeps its mode
+    // across a reattach (AttachRemoteSession's TryAdd).
+    private void OnSessionForgotten(ConnectedPlayer player)
+    {
+        _sessionInteractionModes.Remove(player.SessionId);
+    }
+
+    // Sessions with a stored interaction mode (tests): at most the registry's Count.
+    internal int SessionInteractionModeCount => _sessionInteractionModes.Count;
 
     private PlayerInteractionMode GetSessionInteractionMode(PlayerSessionId sessionId)
     {

@@ -18,6 +18,10 @@ namespace Dream.Multiplayer.Sessions;
 // forgotten. A forgotten session that returns joins like a new one: its persisted profile is
 // restored by player name as for any join, and it takes an id from the released-id pool (its old
 // id went back to that pool when it left, so ids stay bounded either way).
+//
+// State other layers keep per session id (WorldSessionRuntime's interaction modes) must follow
+// the registry, or it grows by one entry per connect while the registry stays bounded: such an
+// owner sets SessionForgotten and drops the session's state there.
 public sealed class PlayerSessionRegistry
 {
     // How many sessions that left are remembered for a reattach. Large enough to cover every
@@ -28,7 +32,9 @@ public sealed class PlayerSessionRegistry
     private readonly Dictionary<PlayerSessionId, ConnectedPlayer> _players = new();
 
     // Active sessions in first-registration order (the order the old single dictionary iterated
-    // in), so the tick walks and the checkpoint keep their order.
+    // in), so the tick walks and the checkpoint keep their order. The order holds only among
+    // remembered sessions: a session the registry forgot and that comes back registers anew, so it
+    // goes after every session registered before its return.
     private readonly List<ConnectedPlayer> _active = [];
 
     // Sessions that left, oldest departure first; the nodes live on the players and are reused.
@@ -47,9 +53,19 @@ public sealed class PlayerSessionRegistry
 
     public int MaxDepartedSessions { get; }
 
+    // Called when the registry drops an entry: a departed session evicted from the LRU
+    // (TrimDeparted), or an entry replaced by Register under the same session id (the replaced
+    // object is passed; the id is registered again right after the call returns). One owner sets
+    // it: WorldSessionRuntime, which drops the session's interaction mode. Runs on the thread
+    // that drives the registry (the server tick), inside Register or a spawn-state change, so it
+    // must not touch the registry.
+    internal Action<ConnectedPlayer>? SessionForgotten { get; set; }
+
     // The active sessions: spawned remote players and the local player. A foreach uses the list's
     // struct enumerator, so the tick walk does not allocate. Sessions that left are not listed;
-    // TryGet still finds the ones the registry remembers.
+    // TryGet still finds the ones the registry remembers. The view is live: registering a session
+    // or changing one's spawn state while enumerating it throws InvalidOperationException (the
+    // list enumerator's version check), so a walk that may do either copies the view first.
     public ConnectedPlayerView Players => _activeView;
 
     // Every remembered session, active or departed.
@@ -179,6 +195,7 @@ public sealed class PlayerSessionRegistry
     {
         Untrack(player);
         player.Registry = null;
+        SessionForgotten?.Invoke(player);
     }
 
     private void TrimDeparted()
@@ -189,6 +206,7 @@ public sealed class PlayerSessionRegistry
             _departed.RemoveFirst();
             _players.Remove(oldest.SessionId);
             oldest.Registry = null;
+            SessionForgotten?.Invoke(oldest);
         }
     }
 

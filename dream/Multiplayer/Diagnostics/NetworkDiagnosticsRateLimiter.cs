@@ -7,9 +7,11 @@ namespace Dream.Multiplayer.Diagnostics;
 // ("server.rx.command.<connection>"), so on a long-running process the set of keys is unbounded
 // (SCALE-7). A key is forgotten once its last log is older than the longest interval ever asked
 // for: by then ShouldLog would let it through anyway, so forgetting it changes nothing. Expired
-// keys are swept when a new key is added to a table that has grown to the next sweep size, and
-// the table never holds more than MaxEntries keys (past that the oldest are dropped, which at
-// worst lets one extra line through for a key still in use).
+// keys are swept when a new key is added to a table that has grown to the next sweep size, and a
+// sweep that still finds MaxEntries keys or more drops the oldest (which at worst lets one extra
+// line through for a key still in use). So the table stays near MaxEntries rather than strictly
+// under it: a sweep runs only when a key is added and no other sweep is running, so concurrent
+// adds can briefly push the count past MaxEntries before the next sweep trims it.
 public sealed class NetworkDiagnosticsRateLimiter
 {
     internal const int MaxEntries = 4096;

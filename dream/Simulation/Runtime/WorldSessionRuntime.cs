@@ -56,6 +56,9 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private readonly HashSet<int> _coalescedLaterActors = [];
     // Last experience-to-next-level answer per player actor id; see EvaluateSnapshotExperienceToNextLevel.
     private readonly Dictionary<int, (int Level, int Experience, int Required)> _experienceToNextLevelByActor = [];
+    // Per-session interaction mode, kept while the registry remembers the session (a returning
+    // session keeps its mode) and dropped when it forgets it (OnSessionForgotten), so the map is
+    // bounded by the registry however many session ids connect.
     private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _sessionInteractionModes = new();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
@@ -66,6 +69,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // identity/profile lookups the tick needs are served from memory, so gameplay actions no
     // longer read whole tables or commit on the simulation thread.
     private readonly PersistenceWriteQueue? _writes;
+    // Profiles by player name: every active player's, plus those of the players who left most
+    // recently (see MarkProfileDeparted), so it is bounded however many names clients make up.
     private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _knownProfileNames = new(StringComparer.OrdinalIgnoreCase);
     // Sessions whose join failed before their saved state was restored (RestorePersistedPlayerState);
@@ -109,6 +114,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         Physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
         Player = new Player(Map, Physics, playerBody, playerStartPosition, _events, _combatFormulaService);
         LocalPlayerSessionId = PlayerSessionId.LocalDefault;
+        _sessions.SessionForgotten = OnSessionForgotten;
         _sessions.Register(
             LocalPlayerSessionId,
             Player.Combatant.Actor.Id,
