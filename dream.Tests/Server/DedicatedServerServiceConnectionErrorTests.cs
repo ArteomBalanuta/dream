@@ -17,7 +17,8 @@ public class DedicatedServerServiceConnectionErrorTests
     [Fact]
     public async Task MalformedFrame_IsLoggedAsAnError_AndClosesOnlyThatConnection_WithoutAReply()
     {
-        DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
+        // The host owns a native physics world, so it is disposed (after the service).
+        using DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
         await using DedicatedServerService service = new(
             host,
             new TcpServerTransport(IPAddress.Loopback, 0),

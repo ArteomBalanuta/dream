@@ -21,7 +21,8 @@ public class Wave7ServiceMetricsAcrossConnectionsTests
         TransportJsonCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
         ScriptedServerTransport transport = new();
-        DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
+        // The host owns a native physics world, so it is disposed (after the service).
+        using DedicatedServerHost host = DedicatedServerHost.CreateRuntimeAttached(persistence: null);
         await using DedicatedServerService service = new(host, transport, codec, framer);
         service.Start();
 
