@@ -12,7 +12,13 @@ public readonly record struct WorldClockAnchor(ulong ServerTick, long WorldTicks
             return WorldClockSettings.StartTimeOfDay01;
         }
 
-        double days = (WorldTicksAt(serverTick) + StartOffsetTicks) / TicksPerDay;
+        double days = DaysAt(serverTick);
         return days - Math.Floor(days);
     }
+
+    // Whole days since day 0, counted like WorldClock.DayNumber ((W + S) / T), so a new world is on day 0.
+    public long DayNumberAt(double serverTick) =>
+        TicksPerDay <= 0 ? 0L : (long)Math.Floor(DaysAt(serverTick));
+
+    private double DaysAt(double serverTick) => (WorldTicksAt(serverTick) + StartOffsetTicks) / TicksPerDay;
 }
