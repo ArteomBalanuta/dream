@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.Serialization;
+using System.Linq;
 using SharpGLTF.Schema2;
 using Xunit;
 using Dream.Rendering.Models;
@@ -112,49 +112,65 @@ public class AnimationPlaybackStateTests
         Assert.Equal(state, next);
     }
 
+    // Playback state lives in the per-actor AnimatedModelInstance (GPU-4); the shared
+    // AnimatedModel holds none.
     [Fact]
     public void StopAnimation_ClearsIdleFallbackState()
     {
-        AnimatedModel model = CreateAnimatedModelForPlaybackTests();
-        SetField(model, "_idleClipName", "Idle");
-        SetField(model, "_playback", new AnimationPlaybackState("Use", AnimationPlaybackMode.OneShot, 0f, true));
+        AnimatedModelInstance instance = CreateInstanceForPlaybackTests();
+        SetField(instance, "_idleClipName", "Idle");
+        SetField(instance, "_playback", new AnimationPlaybackState("Use", AnimationPlaybackMode.OneShot, 0f, true));
 
-        model.StopAnimation();
+        instance.StopAnimation();
 
-        Assert.Equal(AnimationPlaybackState.Stopped, GetField<AnimationPlaybackState>(model, "_playback"));
-        Assert.Null(GetField<string?>(model, "_idleClipName"));
+        Assert.Equal(AnimationPlaybackState.Stopped, GetField<AnimationPlaybackState>(instance, "_playback"));
+        Assert.Null(GetField<string?>(instance, "_idleClipName"));
     }
 
     [Fact]
     public void Update_InvalidClip_ClearsPlaybackState()
     {
-        AnimatedModel model = CreateAnimatedModelForPlaybackTests();
-        SetField(model, "_playback", new AnimationPlaybackState("Missing", AnimationPlaybackMode.OneShot, 0f, true));
+        AnimatedModelInstance instance = CreateInstanceForPlaybackTests();
+        SetField(instance, "_playback", new AnimationPlaybackState("Missing", AnimationPlaybackMode.OneShot, 0f, true));
 
-        bool finished = model.Update(0.1f);
+        bool finished = instance.Update(0.1f);
 
         Assert.False(finished);
-        Assert.Equal(AnimationPlaybackState.Stopped, GetField<AnimationPlaybackState>(model, "_playback"));
+        Assert.Equal(AnimationPlaybackState.Stopped, GetField<AnimationPlaybackState>(instance, "_playback"));
     }
 
-    private static AnimatedModel CreateAnimatedModelForPlaybackTests()
+    [Fact]
+    public void AnimatedModel_Holds_No_Playback_State()
     {
-#pragma warning disable SYSLIB0050
-        AnimatedModel model = (AnimatedModel)FormatterServices.GetUninitializedObject(typeof(AnimatedModel));
-#pragma warning restore SYSLIB0050
-        SetField(model, "_animations", new Dictionary<string, Animation>());
-        return model;
+        string[] fields = typeof(AnimatedModel)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .Select(field => field.Name)
+            .ToArray();
+
+        Assert.DoesNotContain("_playback", fields);
+        Assert.DoesNotContain("_idleClipName", fields);
+        Assert.Null(typeof(AnimatedModel).GetMethod("Update"));
+        Assert.Null(typeof(AnimatedModel).GetMethod("PlayLoop"));
+        Assert.Null(typeof(AnimatedModel).GetMethod("PlayOneShot"));
     }
 
-    private static T GetField<T>(AnimatedModel model, string fieldName)
+    // A one-node glTF with no clips registered: every clip name is missing.
+    private static AnimatedModelInstance CreateInstanceForPlaybackTests()
     {
-        FieldInfo field = typeof(AnimatedModel).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)!;
-        return (T)field.GetValue(model)!;
+        ModelRoot root = ModelRoot.CreateModel();
+        root.UseScene("scene").CreateNode("node");
+        return new AnimatedModelInstance(new AnimatedModelSkeleton(root, new Dictionary<string, Animation>(), skinJoints: null));
     }
 
-    private static void SetField<T>(AnimatedModel model, string fieldName, T value)
+    private static T GetField<T>(AnimatedModelInstance instance, string fieldName)
     {
-        FieldInfo field = typeof(AnimatedModel).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)!;
-        field.SetValue(model, value);
+        FieldInfo field = typeof(AnimatedModelInstance).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return (T)field.GetValue(instance)!;
+    }
+
+    private static void SetField<T>(AnimatedModelInstance instance, string fieldName, T value)
+    {
+        FieldInfo field = typeof(AnimatedModelInstance).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)!;
+        field.SetValue(instance, value);
     }
 }

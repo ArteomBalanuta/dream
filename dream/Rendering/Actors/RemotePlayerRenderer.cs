@@ -12,17 +12,19 @@ namespace Dream.Rendering.Actors;
 
 public sealed class RemotePlayerRenderer : IDisposable
 {
-    // Model streaming: a remote player's per-instance model is requested once the player is within
-    // ModelRequestDistance (render distance plus a margin, so it is usually ready before it comes
-    // into view) and released once the player is beyond the larger ModelReleaseDistance. The gap
-    // between the two is hysteresis, so a player hovering at the edge never re-requests every frame.
-    // At most MaxPendingModelRequests decodes are in flight; further requests wait for a free slot.
+    // Model streaming: a remote player's animation instance handle is requested once the player is
+    // within ModelRequestDistance (render distance plus a margin, so it is usually ready before it
+    // comes into view) and released once the player is beyond the larger ModelReleaseDistance. The
+    // gap between the two is hysteresis, so a player hovering at the edge never re-requests every
+    // frame. Every handle shares one decode and upload of the player model; while it is still
+    // loading at most MaxPendingModelRequests handles wait on it, and further requests wait for a
+    // free slot.
     public const float ModelRequestDistance = WorldVisibility.MaxRenderDistance * 1.25f;
     public const float ModelReleaseDistance = WorldVisibility.MaxRenderDistance * 1.5f;
     public const int MaxPendingModelRequests = 4;
 
     private readonly Render _render;
-    private readonly Dictionary<int, AsyncResourceHandle<AnimatedModel>> _playerModels = [];
+    private readonly Dictionary<int, AnimatedModelInstanceHandle> _playerModels = [];
     private readonly PlayerAnimationClipTracker _clipTracker = new();
     private readonly HashSet<int> _activeActorIds = [];
     private readonly List<int> _staleActorIds = [];
@@ -34,7 +36,7 @@ public sealed class RemotePlayerRenderer : IDisposable
         _render = render;
     }
 
-    // Instance requests still decoding or waiting for upload, as of the last Draw.
+    // Instance handles whose shared model is still decoding or waiting for upload, as of the last Draw.
     public int PendingModelCount { get; private set; }
 
     public RemotePlayerRenderStats Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
@@ -48,21 +50,22 @@ public sealed class RemotePlayerRenderer : IDisposable
         {
             RemotePlayerPresentationState remotePlayer = _visiblePlayers[i];
             PlayerRenderState renderState = PlayerRenderState.CreateRemote(remotePlayer);
-            // The actor's model is requested in RequestMissingModels and loads in the background.
-            // Until it is uploaded the actor is skipped (its name label is drawn by the HUD), and
-            // no clip is recorded, so the current clip is applied on the first drawn frame.
-            if (!_playerModels.TryGetValue(remotePlayer.ActorId, out AsyncResourceHandle<AnimatedModel>? handle) ||
-                !handle.TryGet(out AnimatedModel? model))
+            // The actor's instance is requested in RequestMissingModels; the shared player model
+            // loads in the background. Until it is uploaded the actor is skipped (its name label is
+            // drawn by the HUD), and no clip is recorded, so the current clip is applied on the
+            // first drawn frame. Each player advances its own instance once per frame.
+            if (!_playerModels.TryGetValue(remotePlayer.ActorId, out AnimatedModelInstanceHandle? handle) ||
+                !handle.TryGet(out AnimatedModel? model, out AnimatedModelInstance? instance))
             {
                 continue;
             }
 
-            _clipTracker.TryApplyClip(remotePlayer.ActorId, renderState.ClipName, model);
-            model.Update(deltaTime);
+            _clipTracker.TryApplyClip(remotePlayer.ActorId, renderState.ClipName, instance);
+            instance.Update(deltaTime);
 
             Shader shader = _render.GetShader(renderState.ShaderName);
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-            model.RenderPrepared(shader, renderState.ModelMatrix, renderState.NodeOverrides);
+            model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
             model.EndRender();
         }
 
@@ -228,13 +231,13 @@ public sealed class RemotePlayerRenderer : IDisposable
     }
 
     public static void CountModelStates(
-        Dictionary<int, AsyncResourceHandle<AnimatedModel>> cachedModels,
+        Dictionary<int, AnimatedModelInstanceHandle> cachedModels,
         out int ready,
         out int pending)
     {
         ready = 0;
         pending = 0;
-        foreach (AsyncResourceHandle<AnimatedModel> handle in cachedModels.Values)
+        foreach (AnimatedModelInstanceHandle handle in cachedModels.Values)
         {
             AsyncResourceState state = handle.State;
             if (state == AsyncResourceState.Ready)
@@ -254,15 +257,15 @@ public sealed class RemotePlayerRenderer : IDisposable
         for (int i = 0; i < _modelActorIds.Count; i++)
         {
             int actorId = _modelActorIds[i];
-            AsyncResourceHandle<AnimatedModel> handle = _playerModels[actorId];
+            AnimatedModelInstanceHandle handle = _playerModels[actorId];
             _playerModels.Remove(actorId);
             handle.Dispose();
             NetworkDiagnosticsLog.Write("client.render.remote.model", $"released far actor={actorId} cached={_playerModels.Count}");
         }
     }
 
-    // Requests a per-instance model for each actor within ModelRequestDistance that has none,
-    // while fewer than MaxPendingModelRequests requests are still loading.
+    // Requests an instance handle for each actor within ModelRequestDistance that has none, while
+    // fewer than MaxPendingModelRequests handles are still waiting for the shared model.
     private void RequestMissingModels(Vector3 cameraPosition, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
     {
         CountModelStates(_playerModels, out _, out int pending);
@@ -281,16 +284,16 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
     }
 
-    // Disposes the per-instance model handles that are still cached; pruning and far release
-    // already disposed the others. The handles are per-instance requests, so this renderer owns
-    // them; disposing a handle releases its model or discards its pending decode. A second call
-    // finds the cache empty, and a handle the model cache's teardown already released is a no-op.
+    // Disposes the instance handles that are still cached; pruning and far release already
+    // disposed the others. The handles are per-instance requests, so this renderer owns them;
+    // disposing a handle drops its instance (the shared player model stays the loader's). A second
+    // call finds the cache empty, and disposing a handle after the loader's teardown is a no-op.
     public void Dispose()
     {
         _activeActorIds.Clear();
 
         List<Exception>? failures = null;
-        foreach (AsyncResourceHandle<AnimatedModel> model in _playerModels.Values)
+        foreach (AnimatedModelInstanceHandle model in _playerModels.Values)
         {
             try
             {

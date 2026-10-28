@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dream.Rendering.Models;
 using Dream.Simulation.Players;
 
@@ -6,16 +7,17 @@ namespace Dream.Rendering.Core;
 // The game's model cache. Models decode on the thread pool and upload on the render thread in
 // PumpUploads, which PlayScene calls once per frame before drawing; nothing here loads a model
 // synchronously. Callers poll TryGet (shared models) or a handle from RequestPlayerInstance
-// (per-instance player models) and skip drawing until the model is ready.
+// (a player's own animation instance) and skip drawing until the model is ready.
 //
 // Ownership:
-// - Shared models (cubes, wolf, viewmodels) belong to the loader. Callers only borrow them for a
-//   draw and never dispose them.
+// - Every model (cubes, wolf, player, viewmodels) is decoded and uploaded once and belongs to the
+//   loader. Callers only borrow it for a draw and never dispose it. Actors never animate the
+//   shared model itself: each owns an AnimatedModelInstance over its skeleton.
 // - A handle from RequestPlayerInstance belongs to the caller, which disposes it when the actor
-//   leaves or the renderer is disposed. Disposing a handle is idempotent.
-// - DisposeAll disposes the loader: every shared model, and any instance handle still alive (so a
-//   renderer that was not disposed cannot leak GL). A handle its owner already disposed is skipped,
-//   and a handle disposed after DisposeAll does nothing, so nothing is disposed twice. A fresh
+//   leaves or the renderer is disposed. It holds the actor's AnimatedModelInstance over the shared
+//   player model; it owns no GL resources, and disposing it is idempotent.
+// - DisposeAll disposes the loader: every shared model, exactly once. Handles from that loader
+//   then report Disposed and draw nothing; disposing them afterwards does nothing. A fresh
 //   loader replaces the old one, so a later scene loads the models again.
 //
 // The blocking Get(path) was removed: after DEC-5 every draw path polls instead, and nothing
@@ -65,10 +67,10 @@ public static class ModelAssets
     // Render thread only, once per frame before drawing.
     public static int PumpUploads(int maxPerFrame) => Loader.PumpUploads(maxPerFrame);
 
-    // A player model with its own pose; each call decodes the file again. The caller owns the
-    // handle and must dispose it.
-    public static AsyncResourceHandle<AnimatedModel> RequestPlayerInstance() =>
-        Loader.RequestInstance(PlayerPath);
+    // A player's own animation instance over the shared player model, which is decoded and
+    // uploaded once for every player. The caller owns the handle and must dispose it.
+    public static AnimatedModelInstanceHandle RequestPlayerInstance() =>
+        new(Loader, PlayerPath);
 
     /// <summary>
     /// Releases every shared model and every per-instance model still alive, and starts a fresh
@@ -82,4 +84,61 @@ public static class ModelAssets
 
     private static AsyncResourceLoader<AnimatedModelData, AnimatedModel> CreateLoader() =>
         new(AnimatedModelData.Load, static data => new AnimatedModel(data), RenderFaultLog.Shared, FaultSource);
+}
+
+// One actor's animation instance over a shared ModelAssets model. The model is requested from the
+// loader (one decode and one upload, however many handles exist); the instance is created on the
+// first TryGet after the model is uploaded and kept for the handle's life. The handle owns no GL
+// resources: the model stays the loader's. Render thread only.
+public sealed class AnimatedModelInstanceHandle : IDisposable
+{
+    private readonly AsyncResourceLoader<AnimatedModelData, AnimatedModel> _loader;
+    private AnimatedModelInstance? _instance;
+    private bool _disposed;
+
+    internal AnimatedModelInstanceHandle(AsyncResourceLoader<AnimatedModelData, AnimatedModel> loader, string path)
+    {
+        ArgumentNullException.ThrowIfNull(loader);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        _loader = loader;
+        Path = path;
+        loader.Request(path);
+    }
+
+    public string Path { get; }
+
+    // The shared model's state, or Disposed once this handle or its loader was disposed.
+    public AsyncResourceState State =>
+        _disposed || _loader.IsDisposed ? AsyncResourceState.Disposed : _loader.GetState(Path);
+
+    public bool IsReady => State == AsyncResourceState.Ready;
+
+    // The shared model and this actor's instance, once the model is uploaded. Allocates only the
+    // first time it succeeds (the instance).
+    public bool TryGet(
+        [NotNullWhen(true)] out AnimatedModel? model,
+        [NotNullWhen(true)] out AnimatedModelInstance? instance)
+    {
+        instance = null;
+        if (_disposed || _loader.IsDisposed || !_loader.TryGet(Path, out model))
+        {
+            model = null;
+            return false;
+        }
+
+        if (_instance is null || !ReferenceEquals(_instance.Skeleton, model.Skeleton))
+        {
+            _instance = model.CreateInstance();
+        }
+
+        instance = _instance;
+        return true;
+    }
+
+    // Drops the instance; the shared model is the loader's and is never disposed here.
+    public void Dispose()
+    {
+        _disposed = true;
+        _instance = null;
+    }
 }
