@@ -16,6 +16,13 @@ namespace Dream.Server.Persistence;
 //
 // Reads (EnqueueRead) end a group: the writes queued before a read are committed first, and the
 // read then runs outside any transaction, so it only ever sees committed rows.
+//
+// Locked database: when a group's transaction cannot start because another connection holds the
+// write lock past busy_timeout (the checkpoint writer, a DB browser, a backup), the writes it did
+// not run go back to the head of the queue in order and the worker backs off (100 ms doubling to
+// 2 s) before retrying, so a long lock delays writes instead of dropping them. A read queued behind
+// them still runs after them. Only once Dispose's drain deadline has passed does a locked database
+// fail the rest of the group at once, so shutdown stays bounded.
 public sealed class PersistenceWriteQueue : IDisposable
 {
     // Bounds how long one transaction holds the database's write lock (the checkpoint writer waits
@@ -25,6 +32,11 @@ public sealed class PersistenceWriteQueue : IDisposable
     // How long Dispose lets the worker drain before it drops what is still queued. Generous: a
     // normal shutdown drains in milliseconds; this only bounds a database that stays locked.
     public static readonly TimeSpan DefaultDisposeDrainDeadline = TimeSpan.FromSeconds(30);
+
+    // Backoff between retries of a group whose transaction could not start on a locked database.
+    // Each attempt itself already waits up to busy_timeout for the lock.
+    public static readonly TimeSpan InitialLockRetryDelay = TimeSpan.FromMilliseconds(100);
+    public static readonly TimeSpan MaxLockRetryDelay = TimeSpan.FromSeconds(2);
 
     private readonly bool _background;
     private readonly TimeSpan _disposeDrainDeadline;
@@ -40,7 +52,12 @@ public sealed class PersistenceWriteQueue : IDisposable
     private long _completedWrites;
     private long _failedWrites;
     private long _committedGroups;
+    private long _lockRetries;
     private int _pendingCount;
+    // Worker-thread state for the current lock episode (database locked until a group runs again).
+    private bool _lockEpisode;
+    private TimeSpan _lockRetryDelay = InitialLockRetryDelay;
+    private Exception? _lockCause;
 
     private PersistenceWriteQueue(bool background, TimeSpan disposeDrainDeadline)
     {
@@ -85,6 +102,10 @@ public sealed class PersistenceWriteQueue : IDisposable
     // Database transactions the worker committed (background mode). A burst of writes queued faster
     // than the worker drains them commits in a few groups instead of one transaction per write.
     public long CommittedGroups => Interlocked.Read(ref _committedGroups);
+
+    // Times a group's transaction could not start on a locked database and its unrun writes were
+    // put back at the head of the queue to retry (each retry is one busy_timeout wait plus backoff).
+    public long LockRetries => Interlocked.Read(ref _lockRetries);
 
     // Writes queued but not yet started (always 0 in inline mode). A counter kept beside the queue,
     // so the server tick reads it without taking the writer's lock.
@@ -165,7 +186,13 @@ public sealed class PersistenceWriteQueue : IDisposable
             return;
         }
 
-        _cancelled = true;
+        lock (_sync)
+        {
+            _cancelled = true;
+            // Wakes a worker backing off from a locked database.
+            Monitor.PulseAll(_sync);
+        }
+
         NetworkDiagnosticsLog.Write(
             "server.persistence.dispose-timeout",
             $"drain deadline {_disposeDrainDeadline.TotalSeconds:0.#}s passed with {PendingCount} queued; dropping the rest");
@@ -240,6 +267,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     private void DrainPending()
     {
         List<QueuedWrite> group = new(Math.Min(MaxWritesPerGroup, 64));
+        List<QueuedWrite> requeue = [];
         using SqliteWriteBatch batch = new();
         batch.Activate();
         try
@@ -292,15 +320,17 @@ public sealed class PersistenceWriteQueue : IDisposable
                     continue;
                 }
 
+                requeue.Clear();
+                bool isRead = group.Count == 1 && !group[0].CountsAsWrite;
                 try
                 {
-                    if (group.Count == 1 && !group[0].CountsAsWrite)
+                    if (isRead)
                     {
                         RunRead(group[0]);
                     }
                     else
                     {
-                        RunGroup(batch, group);
+                        RunGroup(batch, group, requeue);
                     }
                 }
                 catch (Exception ex)
@@ -310,12 +340,76 @@ public sealed class PersistenceWriteQueue : IDisposable
                     batch.Abandon();
                     NetworkDiagnosticsLog.Write("server.persistence.error", $"group failed: {ex.GetType().Name}: {ex.Message}");
                 }
+
+                if (requeue.Count > 0)
+                {
+                    // Close this queue's connection while it backs off, so it holds nothing open
+                    // on the locked database.
+                    batch.Abandon();
+                    RequeueAndBackOff(requeue);
+                }
+                else if (!isRead)
+                {
+                    EndLockEpisode();
+                }
             }
         }
         finally
         {
             SqliteWriteBatch.Deactivate();
         }
+    }
+
+    // Puts the writes a locked database kept from running back at the head of the queue, in their
+    // order and ahead of anything (a read included) queued behind them, then waits out the backoff.
+    // Logs once per lock episode, not once per retry.
+    private void RequeueAndBackOff(List<QueuedWrite> requeue)
+    {
+        Interlocked.Increment(ref _lockRetries);
+        if (!_lockEpisode)
+        {
+            _lockEpisode = true;
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.locked",
+                $"database locked; retrying writes={requeue.Count} with backoff up to {MaxLockRetryDelay.TotalSeconds:0.#}s: {_lockCause?.GetType().Name}: {_lockCause?.Message}");
+        }
+
+        TimeSpan delay = _lockRetryDelay;
+        _lockRetryDelay = TimeSpan.FromTicks(Math.Min(MaxLockRetryDelay.Ticks, _lockRetryDelay.Ticks * 2));
+        lock (_sync)
+        {
+            int behind = _pending.Count;
+            for (int i = 0; i < requeue.Count; i++)
+            {
+                _pending.Enqueue(requeue[i]);
+            }
+
+            // Rotate what was already queued behind the requeued writes back to the end.
+            for (int i = 0; i < behind; i++)
+            {
+                _pending.Enqueue(_pending.Dequeue());
+            }
+
+            Interlocked.Add(ref _pendingCount, requeue.Count);
+            if (!_cancelled)
+            {
+                // Dispose pulses on cancel; a spurious wake only retries early.
+                Monitor.Wait(_sync, delay);
+            }
+        }
+    }
+
+    private void EndLockEpisode()
+    {
+        if (!_lockEpisode)
+        {
+            return;
+        }
+
+        _lockEpisode = false;
+        _lockRetryDelay = InitialLockRetryDelay;
+        _lockCause = null;
+        NetworkDiagnosticsLog.Write("server.persistence.locked", $"database unlocked; lockRetries={LockRetries}");
     }
 
     // Called under _sync once the drain deadline passed.
@@ -362,13 +456,17 @@ public sealed class PersistenceWriteQueue : IDisposable
     // One transaction for the whole group. If the commit itself fails (the transaction is lost,
     // not one write), every write is rolled back with it, so each is replayed in a group of its
     // own; the repositories' writes are upserts and deletes, so a replay lands the same rows.
-    // When the transaction cannot even start (the database stays locked past busy_timeout), the
-    // rest of the group fails at once instead of waiting busy_timeout once per write. Returns false
-    // in that case, so a replay loop stops too.
-    private bool RunGroup(SqliteWriteBatch batch, List<QueuedWrite> group)
+    // When the transaction cannot start because the database stays locked past busy_timeout, the
+    // write that hit it and every write after it go to requeue unrun (not counted), and the caller
+    // puts them back at the head of the queue; the writes before it still commit. Once the dispose
+    // deadline has passed, or when the transaction fails to start for another reason, the rest of
+    // the group fails at once instead of waiting busy_timeout once per write.
+    private GroupOutcome RunGroup(SqliteWriteBatch batch, List<QueuedWrite> group, List<QueuedWrite> requeue)
     {
         bool[]? failed = null;
         bool transactionStartFailed = false;
+        // First write left unrun for a retry; group.Count when none.
+        int retryFrom = group.Count;
         try
         {
             for (int i = 0; i < group.Count; i++)
@@ -389,7 +487,16 @@ public sealed class PersistenceWriteQueue : IDisposable
                 catch (Exception ex)
                 {
                     transactionStartFailed = batch.TransactionStartFailed;
+                    bool retry = transactionStartFailed && batch.TransactionStartBusy && !_cancelled;
                     batch.RollBackWrite();
+                    if (retry)
+                    {
+                        // The writes before it (if any) still commit below.
+                        _lockCause = ex;
+                        retryFrom = i;
+                        break;
+                    }
+
                     failed ??= new bool[group.Count];
                     failed[i] = true;
                     ReportFailure(group[i], ex);
@@ -414,15 +521,22 @@ public sealed class PersistenceWriteQueue : IDisposable
                 $"group of {group.Count} not committed, replaying one by one: {ex.GetType().Name}: {ex.Message}");
             if (group.Count == 1)
             {
+                if (retryFrom == 0)
+                {
+                    requeue.Add(group[0]);
+                    return GroupOutcome.Requeued;
+                }
+
                 if (failed == null)
                 {
                     ReportFailure(group[0], ex);
                 }
 
-                return true;
+                return transactionStartFailed ? GroupOutcome.TransactionStartFailed : GroupOutcome.Ran;
             }
 
-            for (int i = 0; i < group.Count; i++)
+            // The writes that ran before the lock (or all of them) were lost with the transaction.
+            for (int i = 0; i < retryFrom; i++)
             {
                 if (failed != null && failed[i])
                 {
@@ -433,28 +547,59 @@ public sealed class PersistenceWriteQueue : IDisposable
                 {
                     failed ??= new bool[group.Count];
                     FailRemaining(group, i, failed, "dispose-deadline", exception: null);
-                    break;
+                    return GroupOutcome.Ran;
                 }
 
-                if (!RunGroup(batch, [group[i]]))
+                GroupOutcome replay = RunGroup(batch, [group[i]], requeue);
+                if (replay == GroupOutcome.Requeued)
+                {
+                    // group[i] is already in requeue; the rest of the group follows it in order.
+                    AppendUnfailed(group, i + 1, failed, requeue);
+                    return GroupOutcome.Requeued;
+                }
+
+                if (replay == GroupOutcome.TransactionStartFailed)
                 {
                     failed ??= new bool[group.Count];
                     failed[i] = true;
                     FailRemaining(group, i + 1, failed, "transaction-start-failed", exception: null);
-                    break;
+                    return GroupOutcome.TransactionStartFailed;
                 }
             }
 
-            return !transactionStartFailed;
+            if (retryFrom < group.Count)
+            {
+                AppendUnfailed(group, retryFrom, failed, requeue);
+                return GroupOutcome.Requeued;
+            }
+
+            return transactionStartFailed ? GroupOutcome.TransactionStartFailed : GroupOutcome.Ran;
         }
 
-        CountCompleted(group, failed);
-        return !transactionStartFailed;
+        CountCompleted(group, failed, retryFrom);
+        if (retryFrom < group.Count)
+        {
+            AppendUnfailed(group, retryFrom, failed, requeue);
+            return GroupOutcome.Requeued;
+        }
+
+        return transactionStartFailed ? GroupOutcome.TransactionStartFailed : GroupOutcome.Ran;
     }
 
-    private void CountCompleted(List<QueuedWrite> group, bool[]? failed)
+    private static void AppendUnfailed(List<QueuedWrite> group, int start, bool[]? failed, List<QueuedWrite> requeue)
     {
-        for (int i = 0; i < group.Count; i++)
+        for (int i = start; i < group.Count; i++)
+        {
+            if (failed == null || !failed[i])
+            {
+                requeue.Add(group[i]);
+            }
+        }
+    }
+
+    private void CountCompleted(List<QueuedWrite> group, bool[]? failed, int end)
+    {
+        for (int i = 0; i < end; i++)
         {
             if (group[i].CountsAsWrite && (failed == null || !failed[i]))
             {
@@ -516,4 +661,13 @@ public sealed class PersistenceWriteQueue : IDisposable
     }
 
     private readonly record struct QueuedWrite(Action Action, bool CountsAsWrite);
+
+    private enum GroupOutcome
+    {
+        Ran,
+        // Its transaction could not start on a locked database; the unrun writes are in requeue.
+        Requeued,
+        // Its transaction could not start and the rest of the group was failed (fail-fast).
+        TransactionStartFailed,
+    }
 }

@@ -52,6 +52,12 @@ internal sealed class SqliteWriteBatch : IDisposable
     // waiting busy_timeout again for every write. Cleared by Commit and Abandon.
     public bool TransactionStartFailed { get; private set; }
 
+    // Set with TransactionStartFailed when the cause was SQLITE_BUSY or SQLITE_LOCKED: another
+    // connection (the checkpoint writer, a DB browser, a backup) held the write lock. That is
+    // transient, so the queue puts the unrun writes back and retries instead of dropping them.
+    // Cleared by Commit and Abandon.
+    public bool TransactionStartBusy { get; private set; }
+
     public static SqliteWriteBatch? Current => t_current;
 
     // Makes this batch the ambient one on the calling thread until Deactivate.
@@ -119,6 +125,7 @@ internal sealed class SqliteWriteBatch : IDisposable
     public void Commit()
     {
         TransactionStartFailed = false;
+        TransactionStartBusy = false;
         for (int i = 0; i < _enlisted.Count; i++)
         {
             Enlisted entry = _enlisted[i];
@@ -144,6 +151,7 @@ internal sealed class SqliteWriteBatch : IDisposable
     {
         _inWrite = false;
         TransactionStartFailed = false;
+        TransactionStartBusy = false;
         for (int i = 0; i < _enlisted.Count; i++)
         {
             Enlisted entry = _enlisted[i];
@@ -207,9 +215,10 @@ internal sealed class SqliteWriteBatch : IDisposable
                 entry.Transaction = entry.Connection.BeginTransaction(deferred: false);
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             TransactionStartFailed = true;
+            TransactionStartBusy = IsBusy(ex);
             throw;
         }
 
@@ -219,6 +228,12 @@ internal sealed class SqliteWriteBatch : IDisposable
         }
 
         return entry.Connection;
+    }
+
+    // SQLITE_BUSY (5) or SQLITE_LOCKED (6), including extended codes such as SQLITE_BUSY_SNAPSHOT.
+    internal static bool IsBusy(Exception ex)
+    {
+        return ex is SqliteException sqlite && (sqlite.SqliteErrorCode & 0xFF) is 5 or 6;
     }
 
     private static void OpenSavepoint(Enlisted entry)
