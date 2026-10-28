@@ -368,9 +368,25 @@ public class StaticWorldChunkRendererUploadPipelineTests
             LiveKeys.Remove(key);
         }
 
-        public bool Draw(Render render, Camera camera, in StaticWorldChunkMeshInfo mesh)
+        public bool Contains(StaticWorldChunkMeshKey key)
         {
-            return LiveKeys.Contains(mesh.Key);
+            return LiveKeys.Contains(key);
+        }
+
+        public void BeginPass(Render render, Camera camera)
+        {
+        }
+
+        public void BindMaterial(Render render, int materialSlot)
+        {
+        }
+
+        public void Draw(Render render, in StaticWorldChunkMeshInfo mesh)
+        {
+        }
+
+        public void EndPass(Render render)
+        {
         }
 
         public void Clear()

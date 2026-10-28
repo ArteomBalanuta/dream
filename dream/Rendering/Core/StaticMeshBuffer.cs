@@ -95,6 +95,25 @@ public sealed class StaticMeshBuffer : IDisposable
         GL.BindVertexArray(0);
     }
 
+    // Draws inside a batched pass: binds this VAO and draws, but leaves the VAO bound, because the
+    // next mesh of the pass binds its own. The pass calls EndBatchedDraws once at its end.
+    public void DrawBatched()
+    {
+        if (_indexCount == 0)
+        {
+            return;
+        }
+
+        GL.BindVertexArray(_vertexArrayObject);
+        GL.DrawElements(PrimitiveType.Triangles, _indexCount, DrawElementsType.UnsignedInt, 0);
+        RenderCounters.CountDraw();
+    }
+
+    public static void EndBatchedDraws()
+    {
+        GL.BindVertexArray(0);
+    }
+
     public void Dispose()
     {
         if (_disposed)

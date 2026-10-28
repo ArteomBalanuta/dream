@@ -745,19 +745,50 @@ public class Render : IDisposable
         }
     }
 
-    public void DrawStaticMesh(
-        Camera camera,
-        StaticMeshBuffer buffer,
-        GeometryMaterialId materialId,
-        StaticTerrainMaterialRole materialRole)
+    // The batched static terrain pass. The static chunk renderer calls Begin once, then
+    // BindStaticTerrainMaterial once per material slot followed by that slot's meshes, then End.
+    // Every static mesh is in world space (model = identity), so the program, the transforms and
+    // the material constants are set once per pass; only the base colour and texture change per
+    // material. Each mesh sees the same uniform values as when it was drawn on its own.
+    public void BeginStaticTerrainPass(Camera camera)
     {
-        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.Resolve(materialId, materialRole);
-        BindTerrainMaterial(camera, Matrix4.Identity, material);
+        Shader shader = GetShader("cube");
+        shader.Use();
+        shader.SetModelMatrix(Matrix4.Identity);
+        shader.SetMatrix4("view", camera.GetViewMatrix());
+        shader.SetMatrix4("projection", _projection);
+        shader.SetBool("useSkinning", false);
+        shader.SetBool("useInstancing", false);
+        shader.SetFloat("material.metallicFactor", 0f);
+        shader.SetFloat("material.roughnessFactor", 1f);
+        shader.SetInt("material.baseColorTexture", 0);
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.Enable(EnableCap.DepthTest);
         // Static terrain meshes are already hidden-face culled. Draw remaining
         // exterior faces double-sided so clipped/edge cameras do not reveal
         // collision-only "transparent" blocks.
         GL.Disable(EnableCap.CullFace);
-        buffer.Draw();
+    }
+
+    // The slot was resolved when the mesh was uploaded; this reads the cached material table.
+    public void BindStaticTerrainMaterial(int materialSlot)
+    {
+        StaticTerrainMaterial material = StaticTerrainMaterialCatalog.GetBySlot(materialSlot);
+        Shader shader = GetShader("cube");
+        int texture = _staticTerrainTextures.GetOrLoad(material);
+        shader.SetVector4("material.baseColorFactor", material.BaseColor);
+        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
+        // (only its alpha-mask variant has one).
+        shader.SetBool("material.hasBaseColorTexture", texture != -1);
+        if (texture != -1)
+        {
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+        }
+    }
+
+    public static void EndStaticTerrainPass()
+    {
+        StaticMeshBuffer.EndBatchedDraws();
     }
 
     public void DrawGeometryBlockBatch(
