@@ -18,6 +18,14 @@ public sealed partial class WorldSessionRuntime
     public const ulong WorldChecksumIntervalTicks = 64;
     private ulong _nextWorldChecksumTick;
 
+    // SCALE-2 actor delta chain: every ExportServerSnapshotEnvelope is the next frame, diffed
+    // against the previous export's actors (which the previous broadcast carried), with a keyframe
+    // every ActorDeltaContext.KeyframeIntervalTicks. A connection that did not get the previous
+    // broadcast is sent the frame's keyframe twin instead (ServerConnection), so the chain is
+    // shared by every connection and the payload is still encoded once. Resync envelopes stay off
+    // the chain (they carry the full actor list).
+    private readonly ActorDeltaChain _actorDeltaChain = new();
+
     public ServerSnapshotEnvelope ExportServerSnapshotEnvelope(bool includeWorldSnapshot = false)
     {
         IReadOnlyList<ActorSnapshot> actors = CaptureActorSnapshots();
@@ -46,7 +54,10 @@ public sealed partial class WorldSessionRuntime
             // The envelope's collections are wire payloads and stay fresh per snapshot.
             _pendingDamageEvents.Count == 0 ? Array.Empty<DamageEventDelta>() : _pendingDamageEvents.ToArray(),
             checksum,
-            checksum.HasValue ? LastWorldMutationSequence : 0);
+            checksum.HasValue ? LastWorldMutationSequence : 0)
+        {
+            ActorDelta = _actorDeltaChain.Next(CurrentServerTick, actors)
+        };
 
         _pendingWorldMutations.Clear();
         _pendingDamageEvents.Clear();

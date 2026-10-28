@@ -30,12 +30,54 @@ internal static class ProtocolWireOptions
         return options;
     }
 
+    // SCALE-2 (still v3) on top: a decoded snapshot whose actors came as a delta frame writes the
+    // frame (its own converter is the reference, like the world's) in the place of "actors", and a
+    // shared broadcast body leaves out lastAcceptedCommandSequences, which travels in the envelope
+    // header instead.
     private static JsonSerializerOptions CreateV3()
     {
         JsonSerializerOptions options = CreateV2();
         options.Converters.Add(new WorldSnapshotJsonConverter());
         options.Converters.Add(new WorldChunkMessageJsonConverter());
+        ((DefaultJsonTypeInfoResolver)options.TypeInfoResolver!).Modifiers.Add(AddActorFrames);
         return options;
+    }
+
+    private static void AddActorFrames(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Type == typeof(ServerSnapshotMessage))
+        {
+            JsonPropertyInfo snapshot = typeInfo.Properties.Single(property => property.Name == "snapshot");
+            Func<object, object?> get = snapshot.Get!;
+            snapshot.Get = owner => owner is ServerSnapshotMessage { SharedBody: true } message
+                ? message.Snapshot with { LastAcceptedCommandSequences = null! }
+                : get(owner);
+            return;
+        }
+
+        if (typeInfo.Type != typeof(Dream.Simulation.World.ServerSnapshotEnvelope))
+        {
+            return;
+        }
+
+        // The envelope's own [JsonIgnore] ActorFrame property is listed (ignored) under the same
+        // name; the reference one below replaces it.
+        for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
+        {
+            if (typeInfo.Properties[i].Name == "actorFrame")
+            {
+                typeInfo.Properties.RemoveAt(i);
+            }
+        }
+
+        int actorsIndex = typeInfo.Properties.IndexOf(typeInfo.Properties.Single(property => property.Name == "actors"));
+        typeInfo.Properties[actorsIndex].ShouldSerialize = (owner, value) =>
+            value != null && ((Dream.Simulation.World.ServerSnapshotEnvelope)owner).ActorFrame == null;
+        JsonPropertyInfo frame = typeInfo.CreateJsonPropertyInfo(typeof(Dream.Simulation.World.ActorWireFrame), "actorFrame");
+        frame.Get = owner => ((Dream.Simulation.World.ServerSnapshotEnvelope)owner).ActorFrame;
+        frame.ShouldSerialize = (_, value) => value != null;
+        frame.CustomConverter = new ActorWireFrameJsonConverter();
+        typeInfo.Properties.Insert(actorsIndex + 1, frame);
     }
 
     private static JsonSerializerOptions CreateV1WithV3World()

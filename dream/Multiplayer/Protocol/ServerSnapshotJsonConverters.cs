@@ -26,6 +26,10 @@ namespace Dream.Multiplayer.Protocol;
 // The world is only sent on join and resync; a nested JsonSerializer call writes it with the
 // options' WorldSnapshotJsonConverter (the protocol v3 compact world). Protocol v3 also adds
 // "worldTransferId":n? after "snapshot" on a resync carrier whose world follows in chunks.
+// SCALE-2 (still protocol v3): a broadcast export's actors go out as "actorFrame":{...} in the
+// place of "actors" (ActorFrameJson: delta records against the previous broadcast, or a keyframe),
+// and a shared broadcast body (ServerSnapshotMessage.SharedBody) leaves out
+// "lastAcceptedCommandSequences", which each connection then gets in its envelope header.
 internal sealed class ServerSnapshotMessageJsonConverter : JsonConverter<ServerSnapshotMessage>
 {
     private static readonly JsonEncodedText Snapshot = JsonEncodedText.Encode("snapshot");
@@ -58,9 +62,22 @@ internal sealed class ServerSnapshotMessageJsonConverter : JsonConverter<ServerS
 
     public override void Write(Utf8JsonWriter writer, ServerSnapshotMessage value, JsonSerializerOptions options)
     {
+        // A shared broadcast body leaves the sequence map to each connection's envelope header;
+        // SharedEncodedPayload's encode marks its message so (and may ask for the keyframe twin).
+        bool sharedBody = value.SharedBody;
+        ServerSnapshotEnvelope snapshot = value.Snapshot;
+        if (SharedSnapshotEncodeScope.Applies(value, out bool keyframe))
+        {
+            sharedBody = true;
+            if (keyframe && snapshot.ActorDelta is ActorDeltaContext context)
+            {
+                snapshot = snapshot with { ActorDelta = context.Keyframe };
+            }
+        }
+
         writer.WriteStartObject();
         writer.WritePropertyName(Snapshot);
-        ServerSnapshotEnvelopeJsonConverter.WriteEnvelope(writer, value.Snapshot, options);
+        ServerSnapshotEnvelopeJsonConverter.WriteEnvelope(writer, snapshot, options, omitSequences: sharedBody);
         if (value.WorldTransferId is int worldTransferId)
         {
             writer.WriteNumber(WorldTransferId, worldTransferId);
@@ -75,6 +92,7 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
     private static readonly JsonEncodedText ServerTick = JsonEncodedText.Encode("serverTick");
     private static readonly JsonEncodedText LastAcceptedCommandSequences = JsonEncodedText.Encode("lastAcceptedCommandSequences");
     private static readonly JsonEncodedText Actors = JsonEncodedText.Encode("actors");
+    private static readonly JsonEncodedText ActorFrame = JsonEncodedText.Encode("actorFrame");
     private static readonly JsonEncodedText InteractionMode = JsonEncodedText.Encode("interactionMode");
     private static readonly JsonEncodedText World = JsonEncodedText.Encode("world");
     private static readonly JsonEncodedText WorldMutations = JsonEncodedText.Encode("worldMutations");
@@ -100,6 +118,7 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
         ulong serverTick = 0;
         IReadOnlyDictionary<string, ulong>? sequences = null;
         IReadOnlyList<ActorSnapshot>? actors = null;
+        ActorWireFrame? actorFrame = null;
         PlayerInteractionMode interactionMode = default;
         WorldSnapshot? world = null;
         IReadOnlyList<WorldMutationDelta>? mutations = null;
@@ -124,6 +143,11 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
                 actors = reader.TokenType == JsonTokenType.Null
                     ? null
                     : ActorListConverter.Read(ref reader, typeof(IReadOnlyList<ActorSnapshot>), options);
+            }
+            else if (reader.ValueTextEquals(ActorFrame.EncodedUtf8Bytes))
+            {
+                HotPathJson.ReadValue(ref reader);
+                actorFrame = reader.TokenType == JsonTokenType.Null ? null : ActorFrameJson.Read(ref reader);
             }
             else if (reader.ValueTextEquals(InteractionMode.EncodedUtf8Bytes))
             {
@@ -161,6 +185,13 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
             }
         }
 
+        // A keyframe carries every actor whole, so its actors are known without any earlier
+        // state; a delta frame's are left null for the client's ActorStateCache to fill in.
+        if (actorFrame != null && actors == null && actorFrame.IsKeyframe)
+        {
+            actors = ActorFrameJson.Materialize(actorFrame);
+        }
+
         return new ServerSnapshotEnvelope(
             serverTick,
             sequences!,
@@ -170,20 +201,40 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
             mutations!,
             damageEvents!,
             worldChecksum,
-            worldChecksumSequence);
+            worldChecksumSequence)
+        {
+            ActorFrame = actorFrame
+        };
     }
 
     internal static void WriteEnvelope(Utf8JsonWriter writer, in ServerSnapshotEnvelope value, JsonSerializerOptions options)
     {
+        WriteEnvelope(writer, value, options, omitSequences: false);
+    }
+
+    // Actors are written as the first of: a decoded frame (written back unchanged), the server's
+    // delta context (a frame built from the full actors), or the legacy full list.
+    internal static void WriteEnvelope(Utf8JsonWriter writer, in ServerSnapshotEnvelope value, JsonSerializerOptions options, bool omitSequences)
+    {
         writer.WriteStartObject();
         writer.WriteNumber(ServerTick, value.ServerTick);
-        if (value.LastAcceptedCommandSequences is IReadOnlyDictionary<string, ulong> sequences)
+        if (!omitSequences && value.LastAcceptedCommandSequences is IReadOnlyDictionary<string, ulong> sequences)
         {
             writer.WritePropertyName(LastAcceptedCommandSequences);
             WriteSequences(writer, sequences);
         }
 
-        if (value.Actors is IReadOnlyList<ActorSnapshot> actors)
+        if (value.ActorFrame is ActorWireFrame frame)
+        {
+            writer.WritePropertyName(ActorFrame);
+            ActorFrameJson.Write(writer, frame);
+        }
+        else if (value.ActorDelta is ActorDeltaContext context && value.Actors is IReadOnlyList<ActorSnapshot> deltaActors)
+        {
+            writer.WritePropertyName(ActorFrame);
+            ActorFrameJson.Write(writer, context, deltaActors);
+        }
+        else if (value.Actors is IReadOnlyList<ActorSnapshot> actors)
         {
             writer.WritePropertyName(Actors);
             ActorListConverter.Write(writer, actors, options);

@@ -1,4 +1,5 @@
 using Dream.Client.Presentation;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
@@ -37,6 +38,7 @@ public class ServerTickInterpolationIntegrationTests(ITestOutputHelper output)
         using RuntimeAuthoritativeSessionHost authority = new(runtime);
         using DedicatedServerHost host = CreateHost(authority);
         TransportJsonCodec codec = new();
+        ActorStateCache actorStates = new();
 
         ClientView viewA = Join(host, "connection-a", "session-a", "Player A");
         ClientView viewB = Join(host, "connection-b", "session-b", "Player B");
@@ -73,7 +75,7 @@ public class ServerTickInterpolationIntegrationTests(ITestOutputHelper output)
 
             ServerSnapshotMessage sent = host.CreateSnapshotMessage();
             Assert.Equal(tick, sent.Snapshot.ServerTick);
-            ServerSnapshotMessage received = RoundTrip(codec, sent, tick);
+            ServerSnapshotMessage received = RoundTrip(codec, actorStates, sent, tick);
             foreach (ActorSnapshot actor in received.Snapshot.Actors)
             {
                 if (actor.SessionId is string sessionId && serverPositions.TryGetValue(sessionId, out List<Vector3>? positions))
@@ -194,10 +196,12 @@ public class ServerTickInterpolationIntegrationTests(ITestOutputHelper output)
         }
     }
 
-    private static ServerSnapshotMessage RoundTrip(TransportJsonCodec codec, ServerSnapshotMessage message, ulong sequence)
+    // Every export is encoded in order, as one connection's stream; the cache rebuilds full actors
+    // from the delta frames as the client session does (SCALE-2).
+    private static ServerSnapshotMessage RoundTrip(TransportJsonCodec codec, ActorStateCache actorStates, ServerSnapshotMessage message, ulong sequence)
     {
         byte[] payload = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, sequence), message);
-        return Assert.IsType<ServerSnapshotMessage>(codec.Decode(payload).Message);
+        return actorStates.Apply(Assert.IsType<ServerSnapshotMessage>(codec.Decode(payload).Message));
     }
 
     private static ClientView Join(DedicatedServerHost host, string connectionId, string sessionId, string displayName)

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Dream.Simulation.Players;
 
 namespace Dream.Simulation.World;
@@ -14,6 +15,18 @@ public readonly record struct ServerSnapshotEnvelope(
     ulong? WorldChecksum = null,
     ulong WorldChecksumSequence = 0)
 {
+    // SCALE-2. Set by the runtime on a broadcast export: the encoder writes the actors as a delta
+    // frame against the previous export (or as a keyframe) instead of the full list. Actors stays
+    // the full list; nothing in memory sees the deltas. Never on the wire as itself.
+    [JsonIgnore]
+    public ActorDeltaContext? ActorDelta { get; init; }
+
+    // SCALE-2. Set by the decoder on a snapshot whose actors came as a frame: the records exactly
+    // as received, so re-encoding writes them back unchanged. Actors is null until the client's
+    // ActorStateCache reconstitutes them (a keyframe decodes with Actors already filled in).
+    [JsonIgnore]
+    public ActorWireFrame? ActorFrame { get; init; }
+
     // Merges two consecutive unsent snapshots for one connection: the newer actor state, tick
     // and interaction mode win, accepted command sequences take the maximum, and world mutations
     // and damage events from both are kept in order so no world change is lost. Snapshots that

@@ -239,30 +239,44 @@ public class SharedSnapshotEncodingTests
         for (int tick = 0; tick < ticks; tick++)
         {
             ServerSnapshotMessage source = new(authority.Exported[tick]);
-            byte[] sourcePayload = EncodePayload(codec, source);
+            // SCALE-2: the shared payload is the broadcast body, without the sequence map; each
+            // connection gets only its own session's sequence, in its envelope header.
+            ServerSnapshotMessage sharedBody = source with { SharedBody = true };
+            byte[] sourcePayload = EncodePayload(codec, sharedBody);
+            Assert.DoesNotContain("lastAcceptedCommandSequences", System.Text.Encoding.UTF8.GetString(sourcePayload), StringComparison.Ordinal);
             ulong sequence = (ulong)tick + 1;
-            TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, source.MessageKind, sequence);
-            byte[] perConnectionFrame = framer.Frame(codec.Encode(envelope, source));
             byte[]? firstPayloadSuffix = null;
 
-            foreach (byte[][] connectionFrames in frames)
+            for (int connectionIndex = 0; connectionIndex < frames.Length; connectionIndex++)
             {
+                byte[][] connectionFrames = frames[connectionIndex];
                 Assert.Equal(ticks, connectionFrames.Length);
                 byte[] frame = connectionFrames[tick];
+                string sessionId = $"session-{connectionIndex}";
+                TransportEnvelope envelope = new(TransportEnvelope.CurrentProtocolVersion, source.MessageKind, sequence)
+                {
+                    Ack = new TransportAck(sessionId, source.Snapshot.LastAcceptedCommandSequences[sessionId])
+                };
 
-                // Byte-identical to the per-connection path the server used before WIRE-5.
-                Assert.Equal(perConnectionFrame, frame);
+                // Byte-identical to encoding the connection's own message (its ack and the shared
+                // body) alone.
+                Assert.Equal(framer.Frame(codec.Encode(envelope, sharedBody)), frame);
 
                 DecodedProtocolMessage decoded = DecodeFrame(codec, framer, frame);
                 Assert.Equal(sequence, decoded.Envelope.Sequence);
+                Assert.Equal(envelope.Ack, decoded.Envelope.Ack);
                 ServerSnapshotMessage received = Assert.IsType<ServerSnapshotMessage>(decoded.Message);
+                Assert.True(received.SharedBody);
                 Assert.Equal(source.Snapshot.ServerTick, received.Snapshot.ServerTick);
-                Assert.Equal(source.Snapshot.LastAcceptedCommandSequences, received.Snapshot.LastAcceptedCommandSequences);
+                KeyValuePair<string, ulong> ack = Assert.Single(received.Snapshot.LastAcceptedCommandSequences);
+                Assert.Equal(sessionId, ack.Key);
+                Assert.Equal(source.Snapshot.LastAcceptedCommandSequences[sessionId], ack.Value);
                 Assert.Equal(source.Snapshot.Actors, received.Snapshot.Actors);
                 Assert.Equal(source.Snapshot.WorldMutations, received.Snapshot.WorldMutations);
                 Assert.Equal(sourcePayload, EncodePayload(codec, received));
 
-                // Everything after the envelope prefix is the shared payload, then the closing brace.
+                // Everything after the envelope prefix is the shared payload, then the closing brace,
+                // identical for every connection.
                 Assert.True(framer.TryReadFrameBounds(frame, out int payloadOffset, out int payloadLength, out _));
                 ReadOnlySpan<byte> body = frame.AsSpan(payloadOffset, payloadLength);
                 byte[] payloadSuffix = body[^(sourcePayload.Length + 1)..].ToArray();

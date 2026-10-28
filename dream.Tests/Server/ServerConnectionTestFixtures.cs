@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
@@ -64,14 +65,18 @@ internal static class ServerConnectionTestFixtures
         return new WorldMutationDelta(kind, new Vector3(sequence % 7, 1f, sequence % 5), Sequence: sequence);
     }
 
+    // One connection's frames, in order, decoded as its client sees them: delta actor frames are
+    // rebuilt into full actors (SCALE-2), as RemoteClientSession does.
     public static IReadOnlyList<IProtocolMessage> Decode(IEnumerable<byte[]> frames)
     {
         TransportJsonCodec codec = new();
         LengthPrefixedMessageFramer framer = new(1 << 26);
+        ActorStateCache actors = new();
         return frames.Select(frame =>
         {
             Assert.True(framer.TryDeframe(frame, out byte[]? payload, out _));
-            return codec.Decode(payload!).Message;
+            IProtocolMessage message = codec.Decode(payload!).Message;
+            return message is ServerSnapshotMessage snapshot ? actors.Apply(snapshot) : message;
         }).ToArray();
     }
 

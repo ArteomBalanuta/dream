@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
 using Dream.Client.Presentation;
+using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
@@ -254,6 +255,9 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         private readonly ITestOutputHelper _output;
         private readonly DedicatedServerHost _host;
         private readonly TransportJsonCodec _codec = new();
+        // Every export is encoded in order, as one connection's stream; the cache rebuilds full
+        // actors from the delta frames as the client session does (SCALE-2).
+        private readonly ActorStateCache _actorStates = new();
         private readonly ClientScenePresenter _presenter = new(Session);
         private readonly ServerTickClock _clock = new();
         private readonly List<(int Tick, int Life, Vector3 Position)> _serverWolf = [];
@@ -492,7 +496,7 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         private ServerSnapshotMessage RoundTrip(ServerSnapshotMessage message)
         {
             byte[] payload = _codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, message.Snapshot.ServerTick), message);
-            return Assert.IsType<ServerSnapshotMessage>(_codec.Decode(payload).Message);
+            return _actorStates.Apply(Assert.IsType<ServerSnapshotMessage>(_codec.Decode(payload).Message));
         }
 
         private void AdvanceOneTick()
