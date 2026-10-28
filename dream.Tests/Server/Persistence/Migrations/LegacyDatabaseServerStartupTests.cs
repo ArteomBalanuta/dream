@@ -42,8 +42,8 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0001\.\d{8}T\d{6}Z\.bak$", backup);
-        Assert.Equal(1L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0002\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
 
@@ -69,6 +69,8 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = 7 AND material_id = 'Stone';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
+        // The pre-T2 player is recorded as having received kit v2, so the torch is granted once.
+        Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, database.Scalar($"SELECT kit_version FROM player_starter_grants WHERE player_name = '{PlayerName}';"));
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
 
         // A second start is a no-op migration (no new backup) and the lamp loads.

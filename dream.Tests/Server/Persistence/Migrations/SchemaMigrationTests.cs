@@ -10,14 +10,19 @@ namespace Dream.Tests.Server.Persistence.Migrations;
 public sealed class SchemaMigrationTests
 {
     [Fact]
-    public void ShippedMigrations_LoadAsTheBaselineOnly()
+    public void ShippedMigrations_AreTheBaseline_ThenTheStarterGrants()
     {
         IReadOnlyList<ISchemaMigration> migrations = SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);
 
-        ISchemaMigration baseline = Assert.Single(migrations);
+        Assert.Equal(2, migrations.Count);
+        ISchemaMigration baseline = migrations[0];
         Assert.IsType<BaselineMigration>(baseline);
         Assert.Equal(1, baseline.Version);
         Assert.Equal("baseline", baseline.Name);
+        Assert.IsType<SqlScriptMigration>(migrations[1]);
+        Assert.Equal(2, migrations[1].Version);
+        Assert.Equal("player_starter_grants", migrations[1].Name);
+        Assert.Equal(2, MigrationTestDatabase.ShippedLatestVersion);
     }
 
     [Fact]
@@ -43,7 +48,8 @@ public sealed class SchemaMigrationTests
         using MigrationTestDatabase database = new();
         List<string> log = [];
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
+        // The baseline alone: later migrations add to today's schema (see the next test).
+        SchemaMigrationResult result = database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator(), log.Add);
 
         Assert.Equal(new SchemaMigrationResult(0, 1, null), result);
         Assert.Empty(database.Backups());
@@ -61,6 +67,65 @@ public sealed class SchemaMigrationTests
     }
 
     [Fact]
+    public void NewDatabase_GetsEveryShippedMigration_TheBaselineThenTheStarterGrants()
+    {
+        using MigrationTestDatabase reference = new();
+        reference.BuildWithPreMigrationBootstrapper();
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0002_player_starter_grants.sql")));
+        using MigrationTestDatabase database = new();
+
+        SchemaMigrationResult result = database.Schema.EnsureSchema();
+
+        Assert.Equal(new SchemaMigrationResult(0, 2, null), result);
+        Assert.Empty(database.Backups());
+        using SqliteConnection expected = reference.Open();
+        using SqliteConnection actual = database.Open();
+        Assert.Equal(SqliteSchemaSnapshot.Capture(expected), SqliteSchemaSnapshot.Capture(actual));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], VersionRows(actual));
+        Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_starter_grants;"));
+    }
+
+    [Fact]
+    public void Migration0002_OnAVersion1DatabaseWithRows_AddsTheGrantsTable_KeepsEveryRow_WithABackup()
+    {
+        using MigrationTestDatabase database = new();
+        database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
+        database.ExecuteScript("""
+            INSERT INTO player_profiles (player_name, display_name) VALUES ('alice', 'Alice');
+            INSERT INTO item_instances (item_instance_id, item_kind, display_name, visual_id, owner_player_name, state)
+                VALUES (1, 'tool.builder-hammer', 'Builder Hammer', 'held.tool.builder', 'alice', 'Inventory');
+            INSERT INTO player_inventory_slots (player_name, slot_index, item_instance_id) VALUES ('alice', 0, 1);
+            INSERT INTO world_metadata (key, value) VALUES ('simulation_seed', '7');
+            """);
+        MigrationTestDatabase.ReleasePooledConnections();
+        IReadOnlyList<string> rowsBefore;
+        using (SqliteConnection connection = database.Open())
+        {
+            rowsBefore = SqliteSchemaSnapshot.DumpRows(connection);
+        }
+
+        List<string> log = [];
+        SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
+
+        Assert.Equal(1, result.FromVersion);
+        Assert.Equal(2, result.ToVersion);
+        string backup = Assert.Single(database.Backups());
+        Assert.Equal(backup, result.BackupPath);
+        Assert.Matches(@"persistence\.sqlite\.v0001-to-v0002\.\d{8}T\d{6}Z\.bak$", backup);
+        using SqliteConnection migrated = database.Open();
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], VersionRows(migrated));
+        // No backfill: the old rows are unchanged and the new table is empty.
+        Assert.Equal(rowsBefore, SqliteSchemaSnapshot.DumpRows(migrated));
+        Assert.Equal(
+            ["player_name|TEXT|1|1", "kit_version|INTEGER|1|0", "updated_utc|TEXT|1|0"],
+            Column(migrated, "SELECT name || '|' || type || '|' || \"notnull\" || '|' || pk FROM pragma_table_info('player_starter_grants') ORDER BY cid;"));
+        Assert.Equal(
+            ["player_profiles|player_name|CASCADE"],
+            Column(migrated, "SELECT \"table\" || '|' || \"to\" || '|' || on_delete FROM pragma_foreign_key_list('player_starter_grants');"));
+        Assert.Equal("wal", database.Scalar("PRAGMA journal_mode;"));
+    }
+
+    [Fact]
     public void SecondEnsureSchema_IsANoOp()
     {
         using MigrationTestDatabase database = new();
@@ -71,11 +136,11 @@ public sealed class SchemaMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
 
-        Assert.Equal(new SchemaMigrationResult(1, 1, null), result);
+        Assert.Equal(new SchemaMigrationResult(2, 2, null), result);
         Assert.Empty(log);
         Assert.Empty(database.Backups());
         using SqliteConnection connection = database.Open();
-        Assert.Equal([(1L, "baseline")], VersionRows(connection));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], VersionRows(connection));
         Assert.Equal("yes", database.Scalar("SELECT value FROM world_metadata WHERE key = 'kept';"));
         // The accepted behaviour change: the baseline runs once, so a deleted seed row stays deleted.
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM combat_formulas WHERE formula_key = 'player.critical_chance';"));
@@ -98,7 +163,7 @@ public sealed class SchemaMigrationTests
 
         MigrationTestDatabase.ReleasePooledConnections();
         Assert.Equal(99, error.StoredVersion);
-        Assert.Equal(1, error.LatestVersion);
+        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, error.LatestVersion);
         Assert.Equal(before, File.ReadAllBytes(database.DatabasePath));
         Assert.Empty(database.Backups());
         Assert.False(File.Exists(database.DatabasePath + "-wal"));
@@ -108,9 +173,9 @@ public sealed class SchemaMigrationTests
     public void FailingMigration_RollsBackEveryPendingStep_KeepsVersion1_AndLeavesTheBackup()
     {
         using MigrationTestDatabase database = new();
-        database.Schema.EnsureSchema();
+        database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
         database.ExecuteScript("INSERT INTO world_metadata (key, value) VALUES ('before', 'v1');");
-        List<ISchemaMigration> migrations = [.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory)];
+        List<ISchemaMigration> migrations = [SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory)[0]];
         migrations.Add(new SqlScriptMigration(2, "adds_a_table", "CREATE TABLE added_by_two (id INTEGER PRIMARY KEY);"));
         migrations.Add(new FailingMigration(3));
         SqliteSchemaMigrator migrator = new(migrations);
@@ -133,8 +198,8 @@ public sealed class SchemaMigrationTests
     public void PendingMigrationsOnAVersionedDatabase_ApplyInOrder_InOneStep()
     {
         using MigrationTestDatabase database = new();
-        database.Schema.EnsureSchema();
-        List<ISchemaMigration> migrations = [.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory)];
+        database.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
+        List<ISchemaMigration> migrations = [SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory)[0]];
         migrations.Add(new SqlScriptMigration(2, "add_a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"));
         migrations.Add(new SqlScriptMigration(3, "add_b", "CREATE TABLE b (a_id INTEGER NOT NULL REFERENCES a(id));"));
 

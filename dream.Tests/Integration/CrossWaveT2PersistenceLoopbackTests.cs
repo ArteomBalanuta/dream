@@ -32,8 +32,9 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
     {
         using TempDatabase database = new();
 
-        // Phase 0: a first join seeds the starter inventory; the torch rows are then removed so the
-        // backpack looks like one written before wave T2 (4 items, hammer equipped).
+        // Phase 0: a first join seeds the starter inventory; the torch rows and the starter grant
+        // record are then removed so the backpack looks like one written before wave T2 (4 items,
+        // hammer equipped, no recorded kit version).
         await using (WireLoopbackServer server = await StartAsync(database))
         {
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
@@ -47,6 +48,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
         Exec(database, """
             DELETE FROM player_inventory_slots WHERE item_instance_id IN (SELECT item_instance_id FROM item_instances WHERE item_kind = 'tool.torch');
             DELETE FROM item_instances WHERE item_kind = 'tool.torch';
+            DELETE FROM player_starter_grants;
             """);
         Assert.Equal(0L, Scalar(database, "SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         Assert.Equal(4L, Scalar(database, "SELECT COUNT(*) FROM item_instances;"));

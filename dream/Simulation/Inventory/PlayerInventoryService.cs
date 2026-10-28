@@ -33,6 +33,10 @@ internal sealed class PlayerInventoryService
     private readonly Dictionary<long, PersistedItemInstance> _itemInstances = [];
     private readonly Dictionary<string, Dictionary<int, long>> _slotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
 
+    // The starter kit version each loaded inventory has received (see GrantStarterKit). A loaded
+    // inventory without an entry has no recorded grant yet.
+    private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.OrdinalIgnoreCase);
+
     private long _nextItemInstanceId = 1;
 
     // Inventory write outcomes, by player name. The write queue drops a write that fails (other than
@@ -107,6 +111,11 @@ internal sealed class PlayerInventoryService
         }
 
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
+        if (inventory.StarterKitVersion is int starterKitVersion)
+        {
+            _starterKitByPlayer[playerName] = starterKitVersion;
+        }
+
         foreach (PersistedItemInstance item in inventory.Items)
         {
             _itemInstances[item.ItemInstanceId] = item;
@@ -120,11 +129,10 @@ internal sealed class PlayerInventoryService
         }
     }
 
-    // Makes sure the player's inventory is loaded and usable: loads it if no join did, equips the
-    // first occupied backpack slot when nothing is equipped, seeds the starter inventory into an
-    // empty one and tops a non-empty one up with the starter kinds it lacks (see
-    // TopUpStarterInventory). False when the inventory could not be loaded yet (see
-    // TryLoadSynchronously).
+    // Makes sure the player's inventory is loaded and usable: loads it if no join did, grants the
+    // starter kinds introduced after the kit version the player has received (the whole kit for a
+    // new player; see GrantStarterKit) and equips the first occupied backpack slot when nothing is
+    // equipped. False when the inventory could not be loaded yet (see TryLoadSynchronously).
     public bool Ensure(string playerName)
     {
         if (!TryLoadSynchronously(playerName))
@@ -133,24 +141,19 @@ internal sealed class PlayerInventoryService
         }
 
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
-        bool hasBackpackContent = slots.Keys.Any(slotIndex => slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount);
+        bool hasBackpackContent = HasBackpackContent(slots);
         if (hasBackpackContent)
         {
-            if (!slots.ContainsKey(InventoryConstants.EquippedSlotIndex))
-            {
-                KeyValuePair<int, long> firstOccupiedSlot = slots
-                    .Where(entry => entry.Key >= 0 && entry.Key < InventoryConstants.BackpackSlotCount)
-                    .OrderBy(entry => entry.Key)
-                    .First();
-                slots[InventoryConstants.EquippedSlotIndex] = firstOccupiedSlot.Value;
-                PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, firstOccupiedSlot.Value);
-            }
-
-            TopUpStarterInventory(playerName, slots);
-            return true;
+            // An existing inventory keeps the item it had first; a new one equips the first kit item.
+            EquipFirstOccupiedSlotIfNone(playerName, slots);
         }
 
-        SeedStarterInventory(playerName, slots);
+        GrantStarterKit(playerName, slots, isTopUp: hasBackpackContent);
+        if (!hasBackpackContent)
+        {
+            EquipFirstOccupiedSlotIfNone(playerName, slots);
+        }
+
         return true;
     }
 
@@ -225,6 +228,9 @@ internal sealed class PlayerInventoryService
             _slotsByPlayer.Remove(playerName);
             tracker.EvictedSlots = slots;
             tracker.EvictedItems = items;
+            tracker.EvictedStarterKitVersion = _starterKitByPlayer.Remove(playerName, out int starterKitVersion)
+                ? starterKitVersion
+                : null;
             if (!writes.EnqueueRead(() => tracker.Settle(failed: writes.FailedWrites > baseline)))
             {
                 tracker.Settle(failed: true);
@@ -241,6 +247,7 @@ internal sealed class PlayerInventoryService
 
         _writeTrackers.Remove(playerName);
         _slotsByPlayer.Remove(playerName);
+        _starterKitByPlayer.Remove(playerName);
         foreach (long itemInstanceId in slots.Values)
         {
             _itemInstances.Remove(itemInstanceId);
@@ -345,8 +352,14 @@ internal sealed class PlayerInventoryService
             _itemInstances[item.ItemInstanceId] = item;
         }
 
+        if (tracker.EvictedStarterKitVersion is int starterKitVersion)
+        {
+            _starterKitByPlayer[playerName] = starterKitVersion;
+        }
+
         tracker.EvictedSlots = null;
         tracker.EvictedItems = null;
+        tracker.EvictedStarterKitVersion = null;
         tracker.Retained = true;
         NetworkDiagnosticsLog.Write(
             "server.persistence.inventory-restored",
@@ -366,35 +379,37 @@ internal sealed class PlayerInventoryService
         }
     }
 
-    private void SeedStarterInventory(string playerName, Dictionary<int, long> slots)
+    // Grants the starter kinds introduced after the kit version the player has received, each into
+    // the lowest free backpack slot, then records the new version. The received version is the
+    // recorded one; without a record, an inventory with backpack items predates kit versions and is
+    // taken to hold ToolCatalog.UnrecordedStarterKitVersion (the pre-T2 kit), and an empty one is a
+    // new player's, which receives the whole kit. So a kind is granted once: an item the player
+    // later gets rid of is not granted again, even into an empty backpack.
+    // - A kind the backpack already holds is not granted again but counts as received (a pre-record
+    //   top-up may have granted it).
+    // - A full backpack receives nothing; the version recorded then stops below the first kind that
+    //   did not fit, so it is granted once a slot is free.
+    // - The grant record is queued after the item and slot writes, so they share the write queue's
+    //   group commit. Writing it only when the version rises makes a second call write nothing.
+    private void GrantStarterKit(string playerName, Dictionary<int, long> slots, bool isTopUp)
     {
-        int slotIndex = 0;
-        long? firstItemInstanceId = null;
-        foreach (string itemKind in ToolCatalog.StarterItemKinds)
+        bool recorded = _starterKitByPlayer.TryGetValue(playerName, out int receivedVersion);
+        if (!recorded)
         {
-            long itemInstanceId = GrantItem(playerName, slots, itemKind, slotIndex);
-            firstItemInstanceId ??= itemInstanceId;
-            slotIndex++;
+            receivedVersion = isTopUp ? ToolCatalog.UnrecordedStarterKitVersion : 0;
         }
 
-        if (firstItemInstanceId.HasValue)
+        if (recorded && receivedVersion >= ToolCatalog.CurrentStarterKitVersion)
         {
-            slots[InventoryConstants.EquippedSlotIndex] = firstItemInstanceId.Value;
-            PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, firstItemInstanceId.Value);
+            return;
         }
-    }
 
-    // Grants each starter kind that no backpack item has into the lowest free backpack slot, with
-    // the same writes as the starter seeding, so a player whose inventory predates a new starter
-    // item (wave T2's torch) receives it. Idempotent: a kind already held is skipped, so a second
-    // call writes nothing. A full backpack receives nothing, and the equipped slot never changes.
-    private void TopUpStarterInventory(string playerName, Dictionary<int, long> slots)
-    {
-        IReadOnlyList<string> starterKinds = ToolCatalog.StarterItemKinds;
-        for (int kindIndex = 0; kindIndex < starterKinds.Count; kindIndex++)
+        int grantedVersion = ToolCatalog.CurrentStarterKitVersion;
+        IReadOnlyList<StarterKitEntry> kit = ToolCatalog.StarterKit;
+        for (int kindIndex = 0; kindIndex < kit.Count; kindIndex++)
         {
-            string itemKind = starterKinds[kindIndex];
-            if (BackpackHoldsKind(slots, itemKind))
+            StarterKitEntry entry = kit[kindIndex];
+            if (entry.IntroducedVersion <= receivedVersion || BackpackHoldsKind(slots, entry.ItemKind))
             {
                 continue;
             }
@@ -402,13 +417,58 @@ internal sealed class PlayerInventoryService
             int freeSlot = FindLowestFreeBackpackSlot(slots);
             if (freeSlot < 0)
             {
-                return;
+                grantedVersion = Math.Min(grantedVersion, entry.IntroducedVersion - 1);
+                continue;
             }
 
-            GrantItem(playerName, slots, itemKind, freeSlot);
-            NetworkDiagnosticsLog.Write(
-                "server.inventory.starter-top-up",
-                $"player={playerName} kind={itemKind} slot={freeSlot}");
+            GrantItem(playerName, slots, entry.ItemKind, freeSlot);
+            if (isTopUp)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.inventory.starter-top-up",
+                    $"player={playerName} kind={entry.ItemKind} slot={freeSlot}");
+            }
+        }
+
+        if (recorded && grantedVersion <= receivedVersion)
+        {
+            return;
+        }
+
+        _starterKitByPlayer[playerName] = grantedVersion;
+        NoteWriteQueued(playerName);
+        EnqueueWorldWrite(world => world.SaveStarterKitGrant(playerName, grantedVersion));
+    }
+
+    private static bool HasBackpackContent(Dictionary<int, long> slots)
+    {
+        foreach (int slotIndex in slots.Keys)
+        {
+            if (slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Equips the item of the lowest occupied backpack slot when nothing is equipped.
+    private void EquipFirstOccupiedSlotIfNone(string playerName, Dictionary<int, long> slots)
+    {
+        if (slots.ContainsKey(InventoryConstants.EquippedSlotIndex))
+        {
+            return;
+        }
+
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            if (slots.TryGetValue(slotIndex, out long itemInstanceId))
+            {
+                slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
+                PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+                return;
+            }
         }
     }
 
@@ -549,6 +609,9 @@ internal sealed class PlayerInventoryService
         public Dictionary<int, long>? EvictedSlots { get; set; }
 
         public List<PersistedItemInstance>? EvictedItems { get; set; }
+
+        // The moved-out inventory's recorded starter kit version, if any.
+        public int? EvictedStarterKitVersion { get; set; }
 
         public InventoryWriteVerdict Verdict => (InventoryWriteVerdict)Volatile.Read(ref _verdict);
 

@@ -1,4 +1,5 @@
 using Dream.Server.Persistence;
+using Dream.Server.Persistence.Migrations;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Tests.Server.Persistence.Migrations;
@@ -22,6 +23,14 @@ internal sealed class MigrationTestDatabase : IDisposable
     public static string InitScriptPath => Path.Combine(ConfigDirectory, "player-profiles.init.sql");
 
     public static string MigrationsDirectory => Path.Combine(ConfigDirectory, "migrations");
+
+    // The newest shipped migration's version.
+    public static int ShippedLatestVersion => SchemaMigrations.LoadFromDirectory(MigrationsDirectory).Count;
+
+    // A migrator that knows only the shipped 0001 baseline, for the tests that pin the baseline
+    // against the pre-migration schema (later migrations add to it).
+    public static SqliteSchemaMigrator BaselineOnlyMigrator() =>
+        new([SchemaMigrations.LoadFromDirectory(MigrationsDirectory)[0]]);
 
     public static string PreCenterExperienceFixturePath => Path.Combine(
         Dream.Tests.Integration.RepoRoot.Find(), "dream.Tests", "Server", "Persistence", "Migrations", "Fixtures",

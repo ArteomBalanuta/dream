@@ -211,6 +211,8 @@ public sealed class PersistenceOffTickTests
 
         public void DeleteInventorySlots(string playerName) => Write(() => Inner.DeleteInventorySlots(playerName));
 
+        public void SaveStarterKitGrant(string playerName, int kitVersion) => Write(() => Inner.SaveStarterKitGrant(playerName, kitVersion));
+
         private T Read<T>(Func<T> read)
         {
             Interlocked.Increment(ref _reads);
