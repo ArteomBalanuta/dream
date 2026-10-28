@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Sessions;
 using Dream.Simulation.World;
 using OpenTK.Mathematics;
 
@@ -117,8 +118,14 @@ public sealed class ClientPredictionReconciler
     }
 
     // The map, when given, is the client's: a replayed path that enters one of its solid cells is
-    // discarded. No allocation.
-    public ClientReconciliationResult Reconcile(ulong? acknowledgedSequence, Vector3 serverPosition, Map? map = null)
+    // discarded. starvedTicks is the snapshot's ActorSnapshot.StarvedTicks: the server simulated
+    // that many ticks after the acknowledged command without a newer one, so the position is
+    // compared with the prediction that many ticks after the ack (W9-2). No allocation.
+    public ClientReconciliationResult Reconcile(
+        ulong? acknowledgedSequence,
+        Vector3 serverPosition,
+        Map? map = null,
+        int starvedTicks = 0)
     {
         // No accepted command means the server is not moving this player from our input.
         if (!acknowledgedSequence.HasValue)
@@ -139,7 +146,7 @@ public sealed class ClientPredictionReconciler
             return new ClientReconciliationResult(ClientReconciliationKind.None, Vector3.Zero, serverPosition);
         }
 
-        Vector3 predicted = _history[sampleIndex].Position;
+        Vector3 predicted = PredictAfterStarvedTicks(sampleIndex, acknowledgedSequence.Value, starvedTicks);
         // Keep the acknowledged sample: the next comparison may need it as the latest at or
         // before its ack.
         _history.RemoveRange(0, sampleIndex);
@@ -244,6 +251,42 @@ public sealed class ClientPredictionReconciler
     {
         Reset();
         return new ClientReconciliationResult(ClientReconciliationKind.Snap, Vector3.Zero, serverPosition);
+    }
+
+    // The prediction to compare a snapshot with: the acknowledged sample, or with starved ticks the
+    // sample that many ticks later. The server simulated those ticks with the acknowledged command
+    // repeated (then idle, BufferedPlayerCommandInbox.ServerRepeatTicks), and the inbox skips the
+    // client's next commands as already simulated when they match it, so the client's own samples
+    // for those ticks are what the server's state stands for. Ticks the client has not predicted
+    // yet are extrapolated from the newest sample with the acknowledged tick's displacement (its
+    // vertical part only once the repeat window has passed and the server idles).
+    private Vector3 PredictAfterStarvedTicks(int acknowledgedIndex, ulong acknowledgedSequence, int starvedTicks)
+    {
+        Vector3 acknowledged = _history[acknowledgedIndex].Position;
+        if (starvedTicks <= 0)
+        {
+            return acknowledged;
+        }
+
+        ulong target = acknowledgedSequence + (ulong)starvedTicks;
+        int index = FindLatestSampleAtOrBefore(target);
+        (ulong sequence, Vector3 position) = _history[index];
+        if (sequence == target)
+        {
+            return position;
+        }
+
+        Vector3 step = acknowledgedIndex > 0 && _history[acknowledgedIndex - 1].Sequence + 1 == _history[acknowledgedIndex].Sequence
+            ? acknowledged - _history[acknowledgedIndex - 1].Position
+            : Vector3.Zero;
+        for (ulong repeat = Math.Max(sequence, acknowledgedSequence) - acknowledgedSequence + 1; repeat <= (ulong)starvedTicks; repeat++)
+        {
+            position += repeat <= (ulong)BufferedPlayerCommandInbox.ServerRepeatTicks
+                ? step
+                : new Vector3(0f, step.Y, 0f);
+        }
+
+        return position;
     }
 
     private int FindLatestSampleAtOrBefore(ulong sequence)

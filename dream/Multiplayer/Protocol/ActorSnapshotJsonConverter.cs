@@ -17,7 +17,10 @@ namespace Dream.Multiplayer.Protocol;
 //   {"actorId":n,"kind":n,"sessionId":s?,"position":v,"facing":v,"currentHealth":n,
 //    "maxHealth":n,"isAlive":b,"interactionMode":n?,
 //    "combatStats":{"strength":n,"attackSpeed":f,"vitality":n}?,"displayName":s?,
-//    "progression":{"level":n,"experience":n,"experienceToNextLevel":n}?,"enemyBehaviorState":n?}
+//    "progression":{"level":n,"experience":n,"experienceToNextLevel":n}?,"enemyBehaviorState":n?,
+//    "starvedTicks":n?}
+// starvedTicks (W9-2) is left out when zero, so a snapshot without starved ticks keeps the bytes it
+// had before the field existed; a reader that predates it skips it as an unknown property.
 internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
 {
     private static readonly JsonEncodedText ActorId = JsonEncodedText.Encode("actorId");
@@ -33,6 +36,7 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
     private static readonly JsonEncodedText DisplayName = JsonEncodedText.Encode("displayName");
     private static readonly JsonEncodedText Progression = JsonEncodedText.Encode("progression");
     private static readonly JsonEncodedText EnemyBehaviorStateName = JsonEncodedText.Encode("enemyBehaviorState");
+    private static readonly JsonEncodedText StarvedTicks = JsonEncodedText.Encode("starvedTicks");
 
     public override ActorSnapshot Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -60,6 +64,7 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
         string? displayName = null;
         PlayerProgressionSnapshot? progression = null;
         EnemyBehaviorState? enemyBehaviorState = null;
+        int starvedTicks = 0;
 
         while (HotPathJson.NextProperty(ref reader, nameof(ActorSnapshot)))
         {
@@ -121,6 +126,10 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
             {
                 enemyBehaviorState = (EnemyBehaviorState?)HotPathJson.ReadNullableInt32(ref reader);
             }
+            else if (reader.ValueTextEquals(StarvedTicks.EncodedUtf8Bytes))
+            {
+                starvedTicks = HotPathJson.ReadInt32(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
@@ -140,7 +149,8 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
             combatStats,
             displayName,
             progression,
-            enemyBehaviorState);
+            enemyBehaviorState,
+            starvedTicks);
     }
 
     internal static void WriteActor(Utf8JsonWriter writer, ActorSnapshot value)
@@ -183,6 +193,11 @@ internal sealed class ActorSnapshotJsonConverter : JsonConverter<ActorSnapshot>
         if (value.EnemyBehaviorState is EnemyBehaviorState enemyBehaviorState)
         {
             writer.WriteNumber(EnemyBehaviorStateName, (int)enemyBehaviorState);
+        }
+
+        if (value.StarvedTicks != 0)
+        {
+            writer.WriteNumber(StarvedTicks, value.StarvedTicks);
         }
 
         writer.WriteEndObject();

@@ -168,6 +168,20 @@ public class DirectionalFrameLimitTests
         Assert.Equal(2, log.Count);
     }
 
+    // W9 nit: an interval long enough to trip the client's watchdog is clamped, with a log line.
+    [Fact]
+    public void SnapshotIntervalOverride_IsClampedToTheMaximum()
+    {
+        List<string> log = [];
+        Assert.Equal(16, ServerConnectionOptions.MaxSnapshotIntervalOverrideTicks);
+        Assert.Equal(16, ServerConnectionOptions.Default.WithSnapshotIntervalOverride("16", log.Add).SnapshotIntervalTicks);
+        Assert.Empty(log);
+        Assert.Equal(16, ServerConnectionOptions.Default.WithSnapshotIntervalOverride("17", log.Add).SnapshotIntervalTicks);
+        Assert.Equal(16, ServerConnectionOptions.Default.WithSnapshotIntervalOverride("600", log.Add).SnapshotIntervalTicks);
+        Assert.Equal(2, log.Count);
+        Assert.Contains("600", log[1], StringComparison.Ordinal);
+    }
+
     private static byte[] Header(int declaredLength)
     {
         byte[] header = new byte[4];

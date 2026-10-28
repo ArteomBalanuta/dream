@@ -56,6 +56,10 @@ namespace Dream.Client.Replication;
 // walking ones. Because what is predicted is also what is sent, that costs input for the spike's
 // duration, not a correction; steady play at any constant RTT never triggers it, since the
 // baseline is that RTT.
+//
+// With acks every 2 ticks (32 Hz snapshots, NETR-7) the lag saw-tooths by one tick between
+// snapshots and the baseline settles on its floor, so the effective false-trigger margin is
+// MaxCommandRepeatTicks - 1 = 15 ticks.
 public sealed class ClientCommandTickStream
 {
     // Queued commands at which the oldest unsent one (one more, held by the blocked send) is
