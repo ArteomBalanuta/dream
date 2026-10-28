@@ -32,7 +32,14 @@ public sealed class ServerConnection : IAsyncDisposable
     // join between keyframes, merged (coalesced) snapshots, a resync in between and a dropped
     // oversized delta, without the client ever having to ask. Under _sendLock, like the sequence.
     private ulong _lastActorFrameSequence;
+    // The actors of that frame (null when _lastActorFrameSequence is 0): the full list the client
+    // holds. Export lists are immutable once exported, so keeping the reference is enough. A
+    // snapshot encoded for this connection alone (merged, or an oversized delta's stripped copy)
+    // whose base the client does not hold is diffed against this list instead of going out as a
+    // keyframe (RebaseActorFrame). Under _sendLock.
+    private IReadOnlyList<ActorSnapshot>? _lastActorFrameActors;
     private long _actorKeyframesForced;
+    private long _actorDeltasRebased;
     // 0 until DisposeAsync starts, then 1. Checked by senders before and after taking _sendLock.
     private int _disposeState;
     private readonly string _snapshotTxLogKey;
@@ -220,6 +227,11 @@ public sealed class ServerConnection : IAsyncDisposable
     // Snapshots sent as their actor frame's keyframe twin because this connection did not hold the
     // frame's delta base (first snapshot after a join, merged snapshots, a resync in between).
     public long ActorKeyframesForced => Interlocked.Read(ref _actorKeyframesForced);
+
+    // Snapshots encoded for this connection alone (merged, or sent directly) whose actor frame was
+    // re-diffed against the frame the client held instead of the frame's own base, so they went
+    // out as deltas rather than keyframes.
+    public long ActorDeltasRebased => Interlocked.Read(ref _actorDeltasRebased);
 
     // Called by the service once per advance, on its tick thread. Faults the connection when no
     // complete frame arrived within IdleTimeout, or the current socket write has been running for
@@ -911,19 +923,28 @@ public sealed class ServerConnection : IAsyncDisposable
         }
 
         _frameWriter.BeginFrame(_framer);
-        // The actor frame the client holds once this frame is written (see _lastActorFrameSequence).
+        // The actor frame the client holds once this frame is written (see _lastActorFrameSequence),
+        // and how this snapshot's actors were encoded: decided once per frame, so the oversized
+        // fallback below reuses the decision and a forced keyframe is counted only when committed.
         ulong sentActorFrame = _lastActorFrameSequence;
+        IReadOnlyList<ActorSnapshot>? sentActors = _lastActorFrameActors;
+        ActorDeltaContext? encodedActorDelta = null;
+        bool forcedKeyframe = false;
+        bool rebasedDelta = false;
         if (sharedPayload != null)
         {
             // The first writer to get here encodes the snapshot for every connection sharing it.
             // The body is the same for everyone; only this connection's own accepted command
             // sequence goes into its envelope header (SCALE-2), so a broadcast costs O(players)
-            // instead of every connection carrying every session's sequence.
+            // instead of every connection carrying every session's sequence. A connection that
+            // does not hold the frame's base gets the shared keyframe twin.
             ServerSnapshotEnvelope shared = sharedPayload.Message.Snapshot;
-            bool keyframe = NeedsActorKeyframe(shared);
+            forcedKeyframe = NeedsActorKeyframe(shared);
+            encodedActorDelta = forcedKeyframe ? shared.ActorDelta!.Value.Keyframe : shared.ActorDelta;
             envelope = envelope with { Ack = ResolveAck(shared) };
-            _codec.WriteEnvelope(envelope, keyframe ? sharedPayload.KeyframeBytes : sharedPayload.Bytes, _frameWriter);
+            _codec.WriteEnvelope(envelope, forcedKeyframe ? sharedPayload.KeyframeBytes : sharedPayload.Bytes, _frameWriter);
             sentActorFrame = shared.ActorDelta?.Sequence ?? 0;
+            sentActors = shared.Actors;
         }
         else
         {
@@ -940,9 +961,13 @@ public sealed class ServerConnection : IAsyncDisposable
                     break;
                 case ServerSnapshotMessage snapshot:
                     // Encoded for this connection alone (merged, a resync, or sent directly): its
-                    // actors go as a keyframe unless the client holds the frame's base.
-                    _codec.Encode(envelope, WithActorKeyframeIfNeeded(snapshot), _frameWriter);
+                    // actors go as a delta against the frame the client holds, or as a keyframe
+                    // when the client holds none.
+                    ServerSnapshotMessage encoded = RebaseActorFrame(snapshot, out forcedKeyframe, out rebasedDelta);
+                    encodedActorDelta = encoded.Snapshot.ActorDelta;
+                    _codec.Encode(envelope, encoded, _frameWriter);
                     sentActorFrame = snapshot.Snapshot.ActorDelta?.Sequence ?? 0;
+                    sentActors = snapshot.Snapshot.Actors;
                     break;
                 case ServerActionMessage action:
                     _codec.Encode(envelope, action, _frameWriter);
@@ -957,16 +982,18 @@ public sealed class ServerConnection : IAsyncDisposable
         // merge caps do not bound) would fault this writer, and with a shared payload every
         // connection's writer at once. It goes out without its deltas instead, and the
         // connection is flagged for a world resync, which the service picks up on its next
-        // broadcast. Only an oversized frame pays for this.
+        // broadcast. Only an oversized frame pays for this. The actors keep the encoding chosen
+        // above (same frame, same base), so the client's chain is not broken.
         if (_frameWriter.WrittenCount - _framer.HeaderLength > _maxWritePayloadBytes &&
             message is ServerSnapshotMessage { Snapshot.World: null } oversized &&
             HasDeltas(oversized.Snapshot))
         {
             int oversizedBytes = _frameWriter.WrittenCount - _framer.HeaderLength;
             _frameWriter.BeginFrame(_framer);
+            ServerSnapshotMessage stripped = WithoutDeltas(oversized);
+            stripped = stripped with { Snapshot = stripped.Snapshot with { ActorDelta = encodedActorDelta } };
             // Encoded for this connection alone, with the full sequence map and no header ack.
-            _codec.Encode(envelope with { Ack = null }, WithActorKeyframeIfNeeded(WithoutDeltas(oversized)), _frameWriter);
-            sentActorFrame = oversized.Snapshot.ActorDelta?.Sequence ?? 0;
+            _codec.Encode(envelope with { Ack = null }, stripped, _frameWriter);
             Interlocked.Increment(ref _oversizedSnapshotFrames);
             FlagOverflowResync();
             NetworkDiagnosticsLog.Write(
@@ -979,28 +1006,56 @@ public sealed class ServerConnection : IAsyncDisposable
         _nextOutboundSequence++;
         // A send that fails after this faults the connection, so nothing later relies on it.
         _lastActorFrameSequence = sentActorFrame;
+        _lastActorFrameActors = sentActorFrame == 0 ? null : sentActors;
+        if (forcedKeyframe)
+        {
+            Interlocked.Increment(ref _actorKeyframesForced);
+        }
+        else if (rebasedDelta)
+        {
+            Interlocked.Increment(ref _actorDeltasRebased);
+        }
+
         return frame;
     }
 
     // Caller holds _sendLock. True when snapshot's actors are a delta against a frame this
-    // connection's client does not hold.
+    // connection's client does not hold. Counts nothing: the caller counts a committed frame.
     private bool NeedsActorKeyframe(in ServerSnapshotEnvelope snapshot)
     {
-        if (snapshot.ActorDelta is not { IsKeyframe: false } delta || delta.BaseSequence == _lastActorFrameSequence)
-        {
-            return false;
-        }
-
-        Interlocked.Increment(ref _actorKeyframesForced);
-        return true;
+        return snapshot.ActorDelta is { IsKeyframe: false } delta && delta.BaseSequence != _lastActorFrameSequence;
     }
 
-    // Caller holds _sendLock. Allocates only on the forced-keyframe path.
-    private ServerSnapshotMessage WithActorKeyframeIfNeeded(ServerSnapshotMessage message)
+    // Caller holds _sendLock. For a snapshot encoded for this connection alone whose actor frame's
+    // base is not the frame the client holds: the frame diffed against the one the client does hold
+    // (a merged snapshot skips the frames merged into it, which the client never received), or the
+    // frame as a keyframe when the client holds none (a join, a resync). Allocates only when the
+    // frame changes.
+    private ServerSnapshotMessage RebaseActorFrame(ServerSnapshotMessage message, out bool forcedKeyframe, out bool rebased)
     {
-        return NeedsActorKeyframe(message.Snapshot)
-            ? message with { Snapshot = message.Snapshot with { ActorDelta = message.Snapshot.ActorDelta!.Value.Keyframe } }
-            : message;
+        forcedKeyframe = false;
+        rebased = false;
+        if (!NeedsActorKeyframe(message.Snapshot))
+        {
+            return message;
+        }
+
+        ActorDeltaContext delta = message.Snapshot.ActorDelta!.Value;
+        ActorDeltaContext encoded;
+        if (_lastActorFrameSequence != 0
+            && _lastActorFrameSequence < delta.Sequence
+            && _lastActorFrameActors is IReadOnlyList<ActorSnapshot> heldActors)
+        {
+            rebased = true;
+            encoded = ActorDeltaContext.CreateDelta(delta.Sequence, _lastActorFrameSequence, heldActors);
+        }
+        else
+        {
+            forcedKeyframe = true;
+            encoded = delta.Keyframe;
+        }
+
+        return message with { Snapshot = message.Snapshot with { ActorDelta = encoded } };
     }
 
     // This connection's own accepted command sequence, read from the snapshot's full map by the

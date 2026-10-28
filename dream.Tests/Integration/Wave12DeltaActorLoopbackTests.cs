@@ -804,7 +804,8 @@ public sealed class Wave12DeltaActorResyncTests(ITestOutputHelper output)
 public sealed class Wave12DeltaActorSlowLinkTests(ITestOutputHelper output)
 {
     // A slow link: every server write to B takes 30 ms, right after B asked for a world resync.
-    // The server's writer falls behind, snapshots merge (sent as keyframes), the world transfer
+    // The server's writer falls behind, snapshots merge (sent as deltas against the frame B holds,
+    // not as keyframes), the world transfer
     // goes out in chunks between them, and B never withholds an actor or shows a stale one. Then
     // the link recovers.
     [Fact]
@@ -850,8 +851,15 @@ public sealed class Wave12DeltaActorSlowLinkTests(ITestOutputHelper output)
         await rig.VerifyAllAsync();
         output.WriteLine(
             $"held {held.Elapsed.TotalSeconds:0.0} s to tick {heldTicks}; coalesced {coalesced} (now {b.Connection.CoalescedSnapshots}), transfers {b.Connection.WorldTransfers}, chunks {b.Connection.WorldChunksSent}, " +
-            $"forced keyframes B={b.Connection.ActorKeyframesForced}, B received {b.Received.Count} snapshots");
+            $"forced keyframes B={b.Connection.ActorKeyframesForced}, rebased deltas B={b.Connection.ActorDeltasRebased}, B received {b.Received.Count} snapshots, {b.Connection.BytesSent} B sent to B");
         Assert.True(b.Connection.CoalescedSnapshots > 0, "The slow link never made the server merge snapshots.");
+        // Merged snapshots go out as deltas against the frame B holds. A keyframe is forced only
+        // where B holds no frame: after each world (the join's and the resync's), never per merge.
+        Assert.True(b.Connection.ActorDeltasRebased > 0, "No merged snapshot was sent as a rebased delta.");
+        Assert.True(
+            b.Connection.ActorKeyframesForced <= b.Connection.WorldTransfers,
+            $"{b.Connection.ActorKeyframesForced} forced keyframes for {b.Connection.WorldTransfers} world transfers");
+        Assert.Equal(0, a.Connection.ActorKeyframesForced);
         Assert.True(b.Session.WorldTransfersCompleted >= 1);
         rig.AssertNoChainBreaksOrWithheldActors();
         // The last snapshot matches the server.

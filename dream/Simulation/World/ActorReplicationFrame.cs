@@ -55,7 +55,10 @@ public static class ActorQuantization
 {
     public const float UnitsPerMeter = 4096f;
 
-    // Half a step: the most a reconstituted transform component differs from the server's.
+    // Half a step: the most a reconstituted transform component differs from the server's. The
+    // bound holds while |value| * UnitsPerMeter < 2^24 (|value| under about 4096 m), where a float
+    // still holds every quantization step exactly; farther out the float spacing of the value
+    // itself exceeds a step and the error grows with it.
     public const float MaxError = 0.5f / UnitsPerMeter;
 
     public static int Quantize(float value)

@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Simulation.World;
 
@@ -13,8 +14,9 @@ namespace Dream.Client.Replication;
 // the last frame applied:
 // - a keyframe replaces the whole cache;
 // - a delta frame applies on top of exactly the frame it names as its base. The server only sends a
-//   delta to a connection that holds that base (ServerConnection), so a mismatch means a frame was
-//   lost or a bug: every cached actor is then marked stale;
+//   delta to a connection that holds that base (ServerConnection): usually the previous broadcast,
+//   and for a merged snapshot the last frame it sent, so the base need not be Sequence - 1. A
+//   mismatch means a frame was lost or a bug: every cached actor is then marked stale;
 // - a stale actor (also one the cache never saw, named by a delta) is left out of the snapshot's
 //   actors, never shown with old values as if they were current, until a full record for it arrives:
 //   the next keyframe (at most ActorDeltaContext.KeyframeIntervalTicks away), or a full record the
@@ -77,9 +79,11 @@ public sealed class ActorStateCache
 
         if (frame.IsKeyframe)
         {
-            ApplyKeyframe(frame);
-            // The decoder already materialized a keyframe's actors.
-            return snapshot.Actors != null
+            // The decoder already materialized a keyframe's actors; the output list is then not
+            // filled at all, so it never holds actors past this call.
+            bool materialized = snapshot.Actors != null;
+            ApplyKeyframe(frame, fillOutput: !materialized);
+            return materialized
                 ? message
                 : message with { Snapshot = snapshot with { Actors = ToArray() } };
         }
@@ -88,7 +92,7 @@ public sealed class ActorStateCache
         return message with { Snapshot = snapshot with { Actors = ToArray() } };
     }
 
-    private void ApplyKeyframe(ActorWireFrame frame)
+    private void ApplyKeyframe(ActorWireFrame frame, bool fillOutput)
     {
         KeyframesApplied++;
         _next.Clear();
@@ -98,7 +102,10 @@ public sealed class ActorStateCache
         {
             Entry entry = Entry.FromFull(records[i]);
             _next[records[i].ActorId] = entry;
-            _output.Add(entry.Actor);
+            if (fillOutput)
+            {
+                _output.Add(entry.Actor);
+            }
         }
 
         Swap(frame.Sequence, stale: 0);
@@ -110,7 +117,12 @@ public sealed class ActorStateCache
         bool chainBroken = frame.BaseSequence != FrameSequence;
         if (chainBroken)
         {
+            // Once per broken frame (never per actor): the server only sends a delta whose base
+            // this cache holds, so this is a lost frame or a bug worth a line in the log.
             ChainBreaks++;
+            NetworkDiagnosticsLog.Write(
+                "client.actor-chain-break",
+                $"frame={frame.Sequence} base={frame.BaseSequence} held={FrameSequence} records={frame.Records.Length}");
         }
 
         _next.Clear();
