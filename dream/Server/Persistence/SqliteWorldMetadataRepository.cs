@@ -10,7 +10,7 @@ public readonly record struct WorldSimulationSeed(ulong Seed, bool Created);
 
 // Key/value metadata about the persisted world, stored in the world_metadata table that
 // SqliteSchemaBootstrapper.EnsureSchema creates: the simulation seed and the world clock.
-public sealed class SqliteWorldMetadataRepository
+public sealed partial class SqliteWorldMetadataRepository
 {
     public const string SimulationSeedKey = "simulation_seed";
 

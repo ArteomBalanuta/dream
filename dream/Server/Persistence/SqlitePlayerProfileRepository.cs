@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
 
-public sealed class SqlitePlayerProfileRepository : IPlayerProfileRepository, IDisposable
+public sealed partial class SqlitePlayerProfileRepository : IPlayerProfileRepository, IDisposable
 {
     private readonly SqliteSchemaBootstrapper _schema;
 
