@@ -236,7 +236,7 @@ public class AnimatedModel : IDisposable
             return false;
         }
 
-        if (!_animations.TryGetValue(_playback.ClipName, out Animation animation))
+        if (!_animations.TryGetValue(_playback.ClipName, out Animation? animation))
         {
             _playback = AnimationPlaybackState.Stopped;
             return false;
@@ -275,7 +275,7 @@ public class AnimatedModel : IDisposable
         if (enableCulling)
         {
             GL.Enable(EnableCap.CullFace);
-            GL.CullFace(CullFaceMode.Back);
+            GL.CullFace(TriangleFace.Back);
         }
         else
         {

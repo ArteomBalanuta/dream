@@ -17,13 +17,16 @@
   </ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="BulletSharp" />
+		<!-- BulletSharp 0.11.1 ships only .NET Framework assets; it runs on net10.0 with the bundled native libbulletc, so NU1701 is expected. -->
+		<PackageReference Include="BulletSharp" NoWarn="NU1701" />
 		<PackageReference Include="ImGui.NET" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="OpenTK" />
 		<PackageReference Include="OpenTK.Windowing.Desktop" />
 		<PackageReference Include="SharpGLTF.Core" />
 		<PackageReference Include="SixLabors.ImageSharp" />
+		<!-- Direct reference so the centrally pinned SQLite native bundle overrides the vulnerable transitive version from Microsoft.Data.Sqlite. -->
+		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
 	</ItemGroup>
 
   <ItemGroup>
