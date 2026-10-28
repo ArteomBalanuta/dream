@@ -1,16 +1,88 @@
+using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
 
-public sealed partial class SqlitePlayerProfileRepository : IPlayerProfileRepository, IDisposable
+public sealed partial class SqlitePlayerProfileRepository
+    : SqliteRepositoryBase, IPlayerProfileRepository, IDisposable
 {
-    private readonly SqliteSchemaBootstrapper _schema;
+    private const string TryGetSql = """
+        SELECT
+            player_name,
+            display_name,
+            interaction_mode,
+            strength,
+            agility,
+            vitality,
+            energy,
+            movement_speed,
+            attack_speed,
+            level,
+            experience,
+            current_hp,
+            max_hp,
+            created_utc,
+            updated_utc
+        FROM player_profiles
+        WHERE player_name = $playerName;
+        """;
+
+    private const string SaveSql = """
+        INSERT INTO player_profiles (
+            player_name,
+            display_name,
+            interaction_mode,
+            strength,
+            agility,
+            vitality,
+            energy,
+            movement_speed,
+            attack_speed,
+            level,
+            experience,
+            current_hp,
+            max_hp,
+            created_utc,
+            updated_utc
+        )
+        VALUES (
+            $playerName,
+            $displayName,
+            $interactionMode,
+            $strength,
+            $agility,
+            $vitality,
+            $energy,
+            $movementSpeed,
+            $attackSpeed,
+            $level,
+            $experience,
+            $currentHealth,
+            $maxHealth,
+            $createdUtc,
+            $updatedUtc
+        )
+        ON CONFLICT(player_name) DO UPDATE SET
+            display_name = excluded.display_name,
+            interaction_mode = excluded.interaction_mode,
+            strength = excluded.strength,
+            agility = excluded.agility,
+            vitality = excluded.vitality,
+            energy = excluded.energy,
+            movement_speed = excluded.movement_speed,
+            attack_speed = excluded.attack_speed,
+            level = excluded.level,
+            experience = excluded.experience,
+            current_hp = excluded.current_hp,
+            max_hp = excluded.max_hp,
+            updated_utc = excluded.updated_utc;
+        """;
 
     public SqlitePlayerProfileRepository(SqliteSchemaBootstrapper schema)
+        : base(new SqliteWorldStore(schema))
     {
-        _schema = schema;
     }
 
     public PersistedPlayerProfile GetOrCreate(string playerName)
@@ -28,119 +100,45 @@ public sealed partial class SqlitePlayerProfileRepository : IPlayerProfileReposi
 
     public PersistedPlayerProfile? TryGet(string playerName)
     {
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT
-                player_name,
-                display_name,
-                interaction_mode,
-                strength,
-                agility,
-                vitality,
-                energy,
-                movement_speed,
-                attack_speed,
-                level,
-                experience,
-                current_hp,
-                max_hp,
-                created_utc,
-                updated_utc
-            FROM player_profiles
-            WHERE player_name = $playerName;
-            """;
-        command.Parameters.AddWithValue("$playerName", playerName.Trim());
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read())
-        {
-            return null;
-        }
-
-        return ReadProfile(reader);
+        return QuerySingle(
+            TryGetSql,
+            playerName,
+            static (command, name) => command.BindText("$playerName", name.Trim()),
+            ReadProfile);
     }
 
     public void Save(PersistedPlayerProfile profile)
     {
         DateTime now = DateTime.UtcNow;
-        using SqliteConnectionLease lease = _schema.OpenConnection();
-        SqliteConnection connection = lease.Connection;
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO player_profiles (
-                player_name,
-                display_name,
-                interaction_mode,
-                strength,
-                agility,
-                vitality,
-                energy,
-                movement_speed,
-                attack_speed,
-                level,
-                experience,
-                current_hp,
-                max_hp,
-                created_utc,
-                updated_utc
-            )
-            VALUES (
-                $playerName,
-                $displayName,
-                $interactionMode,
-                $strength,
-                $agility,
-                $vitality,
-                $energy,
-                $movementSpeed,
-                $attackSpeed,
-                $level,
-                $experience,
-                $currentHealth,
-                $maxHealth,
-                $createdUtc,
-                $updatedUtc
-            )
-            ON CONFLICT(player_name) DO UPDATE SET
-                display_name = excluded.display_name,
-                interaction_mode = excluded.interaction_mode,
-                strength = excluded.strength,
-                agility = excluded.agility,
-                vitality = excluded.vitality,
-                energy = excluded.energy,
-                movement_speed = excluded.movement_speed,
-                attack_speed = excluded.attack_speed,
-                level = excluded.level,
-                experience = excluded.experience,
-                current_hp = excluded.current_hp,
-                max_hp = excluded.max_hp,
-                updated_utc = excluded.updated_utc;
-            """;
-        command.Parameters.AddWithValue("$playerName", profile.PlayerName.Trim());
-        command.Parameters.AddWithValue(
-            "$displayName",
-            string.IsNullOrWhiteSpace(profile.DisplayName)
-                ? profile.PlayerName.Trim()
-                : profile.DisplayName.Trim());
-        command.Parameters.AddWithValue("$interactionMode", profile.InteractionMode.ToString());
-        command.Parameters.AddWithValue("$strength", profile.Stats.Strength);
-        command.Parameters.AddWithValue("$agility", profile.Stats.Agility);
-        command.Parameters.AddWithValue("$vitality", profile.Stats.Vitality);
-        command.Parameters.AddWithValue("$energy", profile.Stats.Energy);
-        command.Parameters.AddWithValue("$movementSpeed", profile.Stats.MovementSpeed);
-        command.Parameters.AddWithValue("$attackSpeed", profile.Stats.AttackSpeed);
-        command.Parameters.AddWithValue("$level", profile.Stats.Level);
-        command.Parameters.AddWithValue("$experience", profile.Stats.Experience);
-        command.Parameters.AddWithValue("$currentHealth", profile.Stats.CurrentHealth);
-        command.Parameters.AddWithValue("$maxHealth", profile.Stats.MaxHealth);
-        command.Parameters.AddWithValue("$createdUtc", SqliteSchemaBootstrapper.FormatUtc(profile.CreatedUtc == default ? now : profile.CreatedUtc));
-        command.Parameters.AddWithValue("$updatedUtc", SqliteSchemaBootstrapper.FormatUtc(now));
-        command.ExecuteNonQuery();
+        Execute(SaveSql, (profile, now), static (command, state) => BindProfile(command, state.profile, state.now));
     }
 
     public void Dispose()
     {
+    }
+
+    private static void BindProfile(SqliteCommand command, PersistedPlayerProfile profile, DateTime now)
+    {
+        string playerName = profile.PlayerName.Trim();
+        command.BindText("$playerName", playerName);
+        command.BindText(
+            "$displayName",
+            string.IsNullOrWhiteSpace(profile.DisplayName)
+                ? playerName
+                : profile.DisplayName.Trim());
+        command.BindText("$interactionMode", profile.InteractionMode.ToString());
+        command.BindInt64("$strength", profile.Stats.Strength);
+        command.BindInt64("$agility", profile.Stats.Agility);
+        command.BindInt64("$vitality", profile.Stats.Vitality);
+        command.BindInt64("$energy", profile.Stats.Energy);
+        command.BindReal("$movementSpeed", profile.Stats.MovementSpeed);
+        command.BindReal("$attackSpeed", profile.Stats.AttackSpeed);
+        command.BindInt64("$level", profile.Stats.Level);
+        command.BindInt64("$experience", profile.Stats.Experience);
+        command.BindInt64("$currentHealth", profile.Stats.CurrentHealth);
+        command.BindInt64("$maxHealth", profile.Stats.MaxHealth);
+        command.BindUtc("$createdUtc", profile.CreatedUtc == default ? now : profile.CreatedUtc);
+        command.BindUtc("$updatedUtc", now);
     }
 
     private static PersistedPlayerProfile ReadProfile(SqliteDataReader reader)
@@ -160,7 +158,7 @@ public sealed partial class SqlitePlayerProfileRepository : IPlayerProfileReposi
                 AttackSpeed: reader.GetFloat(8),
                 Level: reader.GetInt32(9),
                 Experience: reader.GetInt32(10)),
-            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(13)),
-            SqliteSchemaBootstrapper.ParseUtc(reader.GetString(14)));
+            reader.GetUtc(13),
+            reader.GetUtc(14));
     }
 }
