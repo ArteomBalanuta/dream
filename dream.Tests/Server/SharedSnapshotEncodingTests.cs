@@ -56,7 +56,7 @@ public class SharedSnapshotEncodingTests
         CountingCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
         DedicatedServerHost host = CreateHost(new SnapshotAuthority(rebuildEachTick: false));
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         ServerConnection[] connections = AttachJoined(service, host, codec, framer, connectionCount, _ => new NullTransportConnection());
         long snapshotMessageBytes = AllocationAssert.MeasureBytesPerIteration(() => host.CreateSnapshotMessage());
 
@@ -102,7 +102,7 @@ public class SharedSnapshotEncodingTests
         CountingCodec codec = new();
         LengthPrefixedMessageFramer framer = new();
         DedicatedServerHost host = CreateHost(new SnapshotAuthority());
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         AttachJoined(service, host, codec, framer, connectionCount, index => new RecordingConnection($"recording-{index}"));
 
         const int ticks = 4;
@@ -117,6 +117,105 @@ public class SharedSnapshotEncodingTests
         Assert.Equal(0, codec.EncodeCalls);
     }
 
+    // NETR-7: at the default interval of 2 the service exports and encodes a snapshot on every
+    // other tick only; the first joined tick is due at once.
+    [Fact]
+    public async Task Service_DefaultSnapshotInterval_EncodesEveryOtherTick()
+    {
+        CountingCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        SnapshotAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, ServerConnectionTestFixtures.WithoutLiveness);
+        Assert.Equal(2, service.SnapshotIntervalTicks);
+        AttachJoined(service, host, codec, framer, 3, index => new RecordingConnection($"recording-{index}"));
+
+        const int ticks = 8;
+        for (int tick = 0; tick < ticks; tick++)
+        {
+            Assert.Equal(1, await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds));
+            Assert.True(await service.FlushOutboundAsync(FlushDeadline));
+        }
+
+        Assert.Equal(new ulong[] { 1, 3, 5, 7 }, authority.Exported.Select(snapshot => snapshot.ServerTick));
+        Assert.Equal(4, codec.EncodePayloadCalls);
+        Assert.Equal(4 * 3, codec.WriteEnvelopeCalls);
+        Assert.Equal(4, service.SnapshotsBroadcast);
+        Assert.Equal(4, service.SkippedSnapshotAdvances);
+    }
+
+    // The interval counts ticks, not advances: an advance that runs several ticks (a slow loop
+    // iteration) is due whenever its ticks reach the interval.
+    [Theory]
+    [InlineData(1, 1, new ulong[] { 1, 2, 3, 4, 5, 6 })]
+    [InlineData(2, 2, new ulong[] { 2, 4, 6, 8, 10, 12 })]
+    [InlineData(3, 2, new ulong[] { 2, 6, 10 })]
+    [InlineData(4, 1, new ulong[] { 1, 5 })]
+    public async Task Service_SnapshotInterval_CountsTicksAcrossAdvances(int interval, int ticksPerAdvance, ulong[] expectedTicks)
+    {
+        CountingCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        SnapshotAuthority authority = new();
+        DedicatedServerHost host = CreateHost(authority);
+        await using DedicatedServerService service = new(
+            host,
+            new NoopServerTransport(),
+            codec,
+            framer,
+            ServerConnectionTestFixtures.WithoutLiveness with { SnapshotIntervalTicks = interval });
+        AttachJoined(service, host, codec, framer, 2, index => new RecordingConnection($"recording-{index}"));
+
+        int executed = 0;
+        for (int advance = 0; advance < 6; advance++)
+        {
+            int ran = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds * ticksPerAdvance);
+            if (ran < ticksPerAdvance)
+            {
+                // Float accumulation may leave the last tick a hair short.
+                ran += await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds * 0.01);
+            }
+
+            executed += ran;
+            Assert.True(await service.FlushOutboundAsync(FlushDeadline));
+        }
+
+        Assert.Equal(6 * ticksPerAdvance, executed);
+        Assert.Equal(expectedTicks, authority.Exported.Select(snapshot => snapshot.ServerTick));
+        Assert.Equal(expectedTicks.Length, codec.EncodePayloadCalls);
+    }
+
+    // A held-back advance does no snapshot work at all, so the tick stays at 0 B (Release).
+    [Theory]
+    [InlineData(2)]
+    [InlineData(8)]
+    public async Task Service_SkippedSnapshotAdvance_AllocatesNothing(int connectionCount)
+    {
+        CountingCodec codec = new();
+        LengthPrefixedMessageFramer framer = new();
+        DedicatedServerHost host = CreateHost(new SnapshotAuthority(rebuildEachTick: false));
+        await using DedicatedServerService service = new(
+            host,
+            new NoopServerTransport(),
+            codec,
+            framer,
+            ServerConnectionTestFixtures.WithoutLiveness with { SnapshotIntervalTicks = int.MaxValue });
+        ServerConnection[] connections = AttachJoined(service, host, codec, framer, connectionCount, _ => new NullTransportConnection());
+
+        // The first joined advance is due; every later one is held back.
+        await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
+        Assert.True(await DrainAndFlushAsync(service, connections));
+        long skippedBytes = AllocationAssert.MeasureBytesPerIteration(
+            () => service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds).GetAwaiter().GetResult());
+
+        _output.WriteLine($"Skipped-snapshot AdvanceOnceAsync with {connectionCount} joined connections: {skippedBytes} B");
+        Assert.Equal(1, service.SnapshotsBroadcast);
+        Assert.True(service.SkippedSnapshotAdvances > 0);
+        if (!NetworkDiagnosticsLog.IsEnabled)
+        {
+            Assert.True(skippedBytes <= AsyncStateMachineBudgetBytes, $"Allocated {skippedBytes} B per skipped advance.");
+        }
+    }
+
     [Fact]
     public async Task ThreeConnections_ReceiveSharedPayloadInTheirOwnEnvelopes_MatchingThePerConnectionEncoding()
     {
@@ -124,7 +223,7 @@ public class SharedSnapshotEncodingTests
         LengthPrefixedMessageFramer framer = new();
         SnapshotAuthority authority = new();
         DedicatedServerHost host = CreateHost(authority);
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         RecordingConnection[] transports = new RecordingConnection[3];
         AttachJoined(service, host, codec, framer, transports.Length, index => transports[index] = new RecordingConnection($"recording-{index}"));
 
@@ -217,7 +316,7 @@ public class SharedSnapshotEncodingTests
         CountingCodec codec = new() { FailEncodePayload = true };
         LengthPrefixedMessageFramer framer = new();
         DedicatedServerHost host = CreateHost(new SnapshotAuthority());
-        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer);
+        await using DedicatedServerService service = new(host, new NoopServerTransport(), codec, framer, PerTickSnapshots.Options);
         ServerConnection[] connections = AttachJoined(service, host, codec, framer, 3, index => new RecordingConnection($"recording-{index}"));
 
         await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);

@@ -237,7 +237,8 @@ public class LiveServerDeferredJoinLoopbackTests
                 host,
                 new TcpServerTransport(IPAddress.Loopback, 0),
                 new TransportJsonCodec(),
-                new LengthPrefixedMessageFramer());
+                new LengthPrefixedMessageFramer(),
+                PerTickSnapshots.Options);
             service.Start();
             return new ServerUnderTest(host, service);
         }

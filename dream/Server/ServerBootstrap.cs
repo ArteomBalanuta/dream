@@ -44,11 +44,13 @@ public static class ServerBootstrap
     {
         using DedicatedServerHost host = CreateAuthoritativeHost();
         await using IServerTransport transport = new TcpServerTransport(IPAddress.Any, DefaultPort);
+        Action<string> log = static line => Console.Error.WriteLine(line);
         await using DedicatedServerService service = new(
             host,
             transport,
             new TransportJsonCodec(),
-            new LengthPrefixedMessageFramer());
+            FrameLimitOptions.FromEnvironment(log).CreateServerFramer(),
+            ServerConnectionOptions.Default.WithEnvironmentOverrides(log));
 
         using CancellationTokenSource cancellation = new();
         ConsoleCancelEventHandler? cancelHandler = (_, args) =>

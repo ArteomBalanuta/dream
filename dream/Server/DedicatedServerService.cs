@@ -41,6 +41,11 @@ public sealed class DedicatedServerService : IAsyncDisposable
     private readonly List<PendingConnectionReply> _pendingJoinReplies = [];
     private int _connectionsChanged = 1;
     private bool _started;
+    // Ticks run since the last broadcast snapshot (tick thread only). It keeps counting while
+    // nobody is joined and starts "due", so the first joined advance broadcasts at once.
+    private int _ticksSinceSnapshot = SnapshotDueTicks;
+    private long _snapshotsBroadcast;
+    private long _skippedSnapshotAdvances;
 
     // Always-on tick metrics. Dropped ticks are read from the host's tick runner after each advance.
     private readonly ServerTickMetrics _metrics = new();
@@ -82,6 +87,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         _codec = codec;
         _framer = framer;
         ConnectionOptions = connectionOptions;
+        SnapshotIntervalTicks = Math.Clamp(connectionOptions.SnapshotIntervalTicks, 1, SnapshotDueTicks);
         _checkpointWrites = host.CheckpointWrites;
         _persistenceWrites = host.Runtime?.PersistenceWrites;
     }
@@ -91,6 +97,17 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public int ConnectionCount => _connections.Count;
 
     public ServerConnectionOptions ConnectionOptions { get; }
+
+    // The largest snapshot interval; _ticksSinceSnapshot starts and saturates here, so it is always due.
+    private const int SnapshotDueTicks = int.MaxValue / 2;
+
+    // ConnectionOptions.SnapshotIntervalTicks, clamped to 1 .. int.MaxValue / 2.
+    public int SnapshotIntervalTicks { get; }
+
+    // Snapshots broadcast and advances whose snapshot was held back by SnapshotIntervalTicks.
+    public long SnapshotsBroadcast => Interlocked.Read(ref _snapshotsBroadcast);
+
+    public long SkippedSnapshotAdvances => Interlocked.Read(ref _skippedSnapshotAdvances);
 
     public ServerTickMetrics TickMetrics => _metrics;
 
@@ -236,6 +253,12 @@ public sealed class DedicatedServerService : IAsyncDisposable
         int executedTicks = _host.AdvanceTime(elapsedSeconds);
         long advanceTicks = ServerTickMetrics.Timestamp() - advanceStart;
         bool capturedCheckpoint = (_checkpointWrites?.EnqueuedCheckpoints ?? 0) != checkpointsBefore;
+        if (executedTicks > 0)
+        {
+            // Saturates at the largest interval, so it never overflows and stays due once due.
+            _ticksSinceSnapshot = (int)Math.Min((long)_ticksSinceSnapshot + executedTicks, SnapshotDueTicks);
+        }
+
         DeliverPendingJoinReplies();
         if (executedTicks <= 0 || _connections.IsEmpty)
         {
@@ -271,6 +294,19 @@ public sealed class DedicatedServerService : IAsyncDisposable
             return executedTicks;
         }
 
+        // Snapshot interval: the ticks run since the last snapshot stay pending in the runtime
+        // (world mutations, damage events, accepted command sequences) and ride in the next one,
+        // and their action results stay queued in the host until after it, so a skipped advance
+        // loses nothing. Join replies and world resyncs above are never held back.
+        if (_ticksSinceSnapshot < SnapshotIntervalTicks)
+        {
+            Interlocked.Increment(ref _skippedSnapshotAdvances);
+            RecordAdvance(executedTicks, advanceTicks, snapshotTicks: 0, broadcastTicks: 0, capturedCheckpoint);
+            return executedTicks;
+        }
+
+        _ticksSinceSnapshot = 0;
+        Interlocked.Increment(ref _snapshotsBroadcast);
         long snapshotStart = ServerTickMetrics.Timestamp();
         ServerSnapshotMessage snapshot = _host.CreateSnapshotMessage();
         long broadcastStart = ServerTickMetrics.Timestamp();

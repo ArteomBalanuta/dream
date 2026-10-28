@@ -289,7 +289,9 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
                 new TcpServerTransport(IPAddress.Loopback, 0),
                 new TransportJsonCodec(),
                 new LengthPrefixedMessageFramer(),
-                connectionOptions ?? ServerConnectionOptions.Default);
+                // Unless a test passes its own options, the server sends a snapshot every tick: the
+                // tests step it one tick at a time and expect that tick's snapshot.
+                connectionOptions ?? PerTickSnapshots.Options);
             service.Start();
             return Task.FromResult(new ServerUnderTest(host, service));
         }

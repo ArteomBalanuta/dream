@@ -37,9 +37,17 @@ public static class LoadRunner
         Directory.CreateDirectory(workDirectory);
         string databasePath = Path.Combine(workDirectory, "world.sqlite");
         string schemaPath = Path.Combine(repoRoot, "dream", "config", "player-profiles.init.sql");
-        IMessageFramer framer = scenario.MaxFramePayloadBytes is { } maxPayload
+        // A scenario limit applies to both directions; otherwise the production directional
+        // limits (FrameLimitOptions: the server reads 64 KB and writes 32 MB, bots the reverse).
+        IMessageFramer serverFramer = scenario.MaxFramePayloadBytes is { } maxPayload
             ? new LengthPrefixedMessageFramer(maxPayload)
-            : new LengthPrefixedMessageFramer();
+            : FrameLimitOptions.Default.CreateServerFramer();
+        IMessageFramer botFramer = scenario.MaxFramePayloadBytes is { } botMaxPayload
+            ? new LengthPrefixedMessageFramer(botMaxPayload)
+            : FrameLimitOptions.Default.CreateClientFramer();
+        // Production snapshot interval (2), or DREAM_SNAPSHOT_INTERVAL_TICKS for comparisons.
+        ServerConnectionOptions connectionOptions = ServerConnectionOptions.Default.WithEnvironmentOverrides(log);
+        log($"snapshot interval {connectionOptions.SnapshotIntervalTicks} ticks");
 
         try
         {
@@ -66,7 +74,8 @@ public static class LoadRunner
                 host,
                 new TcpServerTransport(IPAddress.Loopback, 0),
                 new TransportJsonCodec(),
-                framer);
+                serverFramer,
+                connectionOptions);
             ConnectionErrorLog connectionErrors = new();
             service.ConnectionError += connectionErrors.Add;
             service.Start();
@@ -76,7 +85,7 @@ public static class LoadRunner
             LoadReport report;
             try
             {
-                report = await DriveAsync(scenario, service, framer, seed, startupResult, databasePath, connectionErrors, log, cancellationToken);
+                report = await DriveAsync(scenario, service, botFramer, seed, startupResult, databasePath, connectionErrors, log, cancellationToken);
             }
             finally
             {

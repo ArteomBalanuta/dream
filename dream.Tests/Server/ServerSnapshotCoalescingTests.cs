@@ -181,7 +181,7 @@ public class ServerSnapshotCoalescingTests
     {
         MutatingAuthority authority = new() { MutationsPerTick = 3 };
         DedicatedServerHost host = CreateHost(authority);
-        ServerConnectionOptions options = new() { MaxCoalescedWorldMutations = 8 };
+        ServerConnectionOptions options = new() { MaxCoalescedWorldMutations = 8, SnapshotIntervalTicks = 1 };
         await using DedicatedServerService service = new(host, new NoopServerTransport(), new TransportJsonCodec(), new LengthPrefixedMessageFramer(), options);
         GatedTransport transport = new("slow");
         ServerConnection connection = new(transport, host, new TransportJsonCodec(), new LengthPrefixedMessageFramer(), options);

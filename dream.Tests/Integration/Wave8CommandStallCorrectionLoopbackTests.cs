@@ -134,12 +134,45 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         Steady200Ms
     }
 
-    private async Task<StallReport> RunAsync(Scenario scenario, string sessionId)
+    // NETR-7: the default snapshot interval is 2 ticks (32 Hz), so the reconciler gets an ack every
+    // other tick instead of every tick. Steady play over the 200 ms delay corrects no worse at
+    // 32 Hz than at 64 Hz.
+    [Fact]
+    public async Task SteadyPlay_At32HzSnapshots_CorrectsLikeAt64Hz()
+    {
+        StallReport perTick = await RunAsync(Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 1);
+        StallReport everyOther = await RunAsync(Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 2);
+        output.WriteLine(perTick.Describe("64 Hz snapshots"));
+        output.WriteLine(everyOther.Describe("32 Hz snapshots"));
+
+        foreach (StallReport report in new[] { perTick, everyOther })
+        {
+            Assert.Equal(0L, report.SendStallIdleTicks);
+            Assert.Equal(0, report.SnapsAfter);
+            Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("steady"));
+        }
+
+        // Similar, not identical: each 32 Hz ack folds two ticks of drift into one correction, so
+        // the mean per ack roughly doubles while the total over the run stays about the same
+        // (measured alone: mean 0.0025 m x 267 acks at 64 Hz, 0.0042 m x 134 acks at 32 Hz). The
+        // largest single correction is the join settle in both (0.56-0.66 m at ack 40). A loaded
+        // Debug run adds client-side dropped ticks, hence the absolute allowance.
+        float perTickTotal = perTick.MeanCorrectionAfter * perTick.CorrectionSamples;
+        float everyOtherTotal = everyOther.MeanCorrectionAfter * everyOther.CorrectionSamples;
+        Assert.True(
+            everyOtherTotal <= (perTickTotal * 2f) + 1f,
+            $"total correction {everyOtherTotal:F3} m at 32 Hz vs {perTickTotal:F3} m at 64 Hz");
+    }
+
+    private async Task<StallReport> RunAsync(Scenario scenario, string sessionId, int? snapshotIntervalTicks = null)
     {
         DedicatedServerHost? host = null;
         await using IntegratedLocalServerHandle server = await IntegratedLocalServerHandle.StartAsync(
             0,
-            () => host = DedicatedServerHost.CreateRuntimeAttached(persistence: null));
+            () => host = DedicatedServerHost.CreateRuntimeAttached(persistence: null),
+            snapshotIntervalTicks is { } interval
+                ? IntegratedLocalServerHandle.DefaultConnectionOptions with { SnapshotIntervalTicks = interval }
+                : null);
         Assert.True(server.IsReady, server.ErrorMessage);
         int floorSize = host!.Runtime!.Map.Width;
         Vector3 facing = MostOpenFacing(floorSize, sessionId);
@@ -310,10 +343,14 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         ulong MaxCorrectionAck,
         ulong MaxCorrectionTick,
         long AckStallIdleTicks,
-        int MaxPendingDuringStall)
+        int MaxPendingDuringStall,
+        // Mean correction per acknowledged snapshot after the stall start, and their count.
+        float MeanCorrectionAfter = 0f,
+        int CorrectionSamples = 0)
     {
         public string Describe(string label) =>
-            $"{label}: max correction after {MaxCorrectionAfter:F3} m (largest smooth {MaxSmoothAfter:F3} m, snaps {SnapsAfter}); " +
+            $"{label}: max correction after {MaxCorrectionAfter:F3} m (largest smooth {MaxSmoothAfter:F3} m, snaps {SnapsAfter}, " +
+            $"mean {MeanCorrectionAfter:F4} m over {CorrectionSamples} acks); " +
             $"send-stall idle ticks {SendStallIdleTicks} (ack-lag only {AckStallIdleTicks}), max unsent during stall {MaxPendingDuringStall}; stall start tick {StallStartTick}, max correction at ack {MaxCorrectionAck} (client tick {MaxCorrectionTick}); " +
             $"stall end tick {StallEndTick}, last ack {LastAcknowledged}, dropped ticks {DroppedTicks}, merged commands {MergedCommands}, " +
             $"largest sequence jump {LargestSequenceJump}, commands sent {CommandsSent}, server walked {ServerWalked:F2} m since stall start, " +
@@ -331,6 +368,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         private ulong _maxCorrectionAck;
         private ulong _maxCorrectionTick;
         private float _maxSmoothAfter;
+        private double _correctionSum;
+        private int _correctionSamples;
         private int _snapsAfter;
         private ulong _lastAcknowledged;
         private Vector3? _serverAtStallStart;
@@ -443,6 +482,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 
                     _maxCorrectionAfter = Math.Max(_maxCorrectionAfter, Math.Max(jump, smooth));
                     _maxSmoothAfter = Math.Max(_maxSmoothAfter, smooth);
+                    _correctionSum += Math.Max(jump, smooth);
+                    _correctionSamples++;
                     if (jump > 0.01f)
                     {
                         _snapsAfter++;
@@ -480,7 +521,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 _maxCorrectionAck,
                 _maxCorrectionTick,
                 Ticks.AckStallIdleTicks,
-                MaxPendingDuringStall);
+                MaxPendingDuringStall,
+                _correctionSamples == 0 ? 0f : (float)(_correctionSum / _correctionSamples),
+                _correctionSamples);
         }
     }
 

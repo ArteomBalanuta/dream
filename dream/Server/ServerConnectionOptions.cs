@@ -31,6 +31,44 @@ public sealed record ServerConnectionOptions
 
     // Clock for the liveness checks; tests pass a fake one.
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    public const int DefaultSnapshotIntervalTicks = 2;
+
+    // Overrides SnapshotIntervalTicks (a positive integer) for one server run.
+    public const string SnapshotIntervalEnvironmentVariable = "DREAM_SNAPSHOT_INTERVAL_TICKS";
+
+    // Service-wide (DedicatedServerService reads it from the options it was built with): the server
+    // simulates every tick but encodes and broadcasts a snapshot only once this many ticks have run
+    // since the last one; 2 at the 64 Hz tick sends 32 snapshots a second. World mutations and
+    // damage events of the skipped ticks stay pending in the runtime and go out merged into the
+    // next snapshot, and action results follow that snapshot, so nothing is lost; acks simply
+    // arrive less often. 1 sends a snapshot after every advance that ran a tick (the behaviour
+    // before NETR-7). Values below 1 are treated as 1.
+    public int SnapshotIntervalTicks { get; init; } = DefaultSnapshotIntervalTicks;
+
+    // Applies DREAM_SNAPSHOT_INTERVAL_TICKS when it is set. An invalid value (not a positive
+    // integer) keeps the current interval with a log line.
+    public ServerConnectionOptions WithEnvironmentOverrides(Action<string>? log = null)
+    {
+        return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log);
+    }
+
+    public ServerConnectionOptions WithSnapshotIntervalOverride(string? value, Action<string>? log = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return this;
+        }
+
+        if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int ticks) &&
+            ticks > 0)
+        {
+            return this with { SnapshotIntervalTicks = ticks };
+        }
+
+        log?.Invoke($"{SnapshotIntervalEnvironmentVariable} is not a positive integer; keeping {SnapshotIntervalTicks} ticks.");
+        return this;
+    }
 }
 
 // Why a connection was closed by the server itself rather than by its peer.

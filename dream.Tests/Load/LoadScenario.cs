@@ -37,7 +37,8 @@ public sealed record LoadScenario(
     TimeSpan? ForcedGcInterval = null,
     TimeSpan? WarmUp = null,
     int Seed = 20261028,
-    // Largest frame payload either side accepts. Null keeps LengthPrefixedMessageFramer's default.
+    // Largest frame payload either side accepts. Null uses the production directional limits
+    // (FrameLimitOptions.Default).
     int? MaxFramePayloadBytes = null,
     int CommandRateHz = 64)
 {
@@ -72,11 +73,10 @@ public sealed record LoadScenario(
         RubbleCells: 1_000,
         FloorSize: 100,
         Duration: TimeSpan.FromSeconds(30),
-        LoadActionMix.Default,
-        // The JoinAccepted world for 10k cubes is larger than the default 1 MB frame limit: with it
-        // no bot can join (measured 2026-10-28: 0/8). 32 MB matches the server write limit NETR-7
-        // plans; SCALE-1's chunked world transfer is the real fix.
-        MaxFramePayloadBytes: 32 * 1024 * 1024);
+        // The JoinAccepted world for 10k cubes is larger than the old symmetric 1 MB frame limit:
+        // with it no bot could join (measured 2026-10-28: 0/8). The directional limits (NETR-7:
+        // 32 MB server to client) fit it; SCALE-1's chunked world transfer is the real fix.
+        LoadActionMix.Default);
 
     public static LoadScenario Soak { get; } = new(
         "Soak",

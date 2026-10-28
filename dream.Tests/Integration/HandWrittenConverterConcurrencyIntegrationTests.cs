@@ -295,7 +295,8 @@ public class HandWrittenConverterConcurrencyIntegrationTests(ITestOutputHelper o
                 host,
                 new TcpServerTransport(IPAddress.Loopback, 0),
                 new TransportJsonCodec(),
-                new LengthPrefixedMessageFramer());
+                new LengthPrefixedMessageFramer(),
+                PerTickSnapshots.Options);
             service.Start();
             return new LoopbackServer(host, service);
         }
