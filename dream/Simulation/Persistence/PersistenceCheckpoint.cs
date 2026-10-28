@@ -32,6 +32,10 @@ public sealed record PersistenceCheckpoint(
     // Fracture groups (by source cube id) whose rubble is gone since the previous capture.
     public IReadOnlyList<int> RemovedFractureSourceCubeIds { get; init; } = [];
 
+    // The world clock (WorldClock.WorldTicks) at the capture; written to world_metadata in the
+    // checkpoint's transaction. Null: leave the stored world time as it is.
+    public long? WorldTimeTicks { get; init; }
+
     // Completes once every immediate write queued before the capture has RUN, whether it committed
     // or failed (see PersistenceWriteQueue.EnqueueRead): it is an ordering barrier, not a success
     // signal. The writer waits for it, so a checkpoint update never reaches the database ahead of
@@ -60,13 +64,17 @@ public sealed record PersistenceCheckpoint(
     // then a no-op) or are no longer captured (a rubble group replaced in the same cell), and
     // dropping them would leave those rows at an older value than a sequential write. The result
     // is full when either input is, since every key changed after the older one is in the newer.
+    // World time is a single value: the newer one wins, and the older one stands in when the newer
+    // checkpoint has none.
     public static PersistenceCheckpoint Merge(PersistenceCheckpoint older, PersistenceCheckpoint newer)
     {
         ArgumentNullException.ThrowIfNull(older);
         ArgumentNullException.ThrowIfNull(newer);
         if (older.RowCount == 0 && older.TombstoneCount == 0)
         {
-            return newer;
+            return newer.WorldTimeTicks.HasValue || !older.WorldTimeTicks.HasValue
+                ? newer
+                : newer with { WorldTimeTicks = older.WorldTimeTicks };
         }
 
         StringComparer names = StringComparer.OrdinalIgnoreCase;
@@ -106,6 +114,7 @@ public sealed record PersistenceCheckpoint(
             RemovedCubeIds = removedCubes,
             RemovedEnemyIds = removedEnemies,
             RemovedFractureSourceCubeIds = removedGroups,
+            WorldTimeTicks = newer.WorldTimeTicks ?? older.WorldTimeTicks,
             // The queue commits in order, so the newer barrier implies the older one.
             ImmediateWritesCommitted = newer.ImmediateWritesCommitted ?? older.ImmediateWritesCommitted
         };

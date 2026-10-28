@@ -102,6 +102,7 @@ public sealed partial class WorldSessionRuntime
         bool deferPrimarySeatUse = false)
     {
         CurrentServerTick = serverTick;
+        WorldClock.Advance();
 
         if (commandFrame.HasValue
             && _sessions.TryAcceptCommand(commandFrame.Value.SessionId, commandFrame.Value.Sequence, out _))

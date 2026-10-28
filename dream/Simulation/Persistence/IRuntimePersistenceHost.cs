@@ -42,4 +42,7 @@ internal interface IRuntimePersistenceHost
     bool IsPlayerInventoryLoaded(string playerName);
 
     void EvictPlayerInventory(string playerName);
+
+    // The world clock's tick count, saved with every non-null checkpoint (WorldClock.WorldTicks).
+    long WorldTicks => 0;
 }
