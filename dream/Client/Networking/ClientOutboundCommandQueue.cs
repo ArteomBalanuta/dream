@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 
 namespace Dream.Client.Networking;
@@ -9,11 +10,16 @@ namespace Dream.Client.Networking;
 // tick. The queue used to be a single latest-wins slot, so a send backlog reached the server as
 // one merged frame and the server lost every tick but the newest.
 //
-// It holds at most Capacity frames. When a send stall overflows it, the two oldest frames merge
+// It holds at most Capacity frames. When a send stall overflows it, two neighbouring frames merge
 // into one instead of one being dropped: the newer axes, facing and sequence win, look deltas add
 // up, and one-shot inputs (jump, freeze, noclip toggle, primary use, a mode request) are kept, so
-// a press made during the stall still reaches the server. Sequences only ever increase: a frame
-// whose sequence is not newer than the last one queued is ignored.
+// a press made during the stall still reaches the server. The merged frame keeps the newer
+// sequence, and the server counts the sequence jump as that many ticks of the frame's movement
+// (BufferedPlayerCommandInbox), so the oldest neighbours with the same movement axes merge first:
+// a stall backlog made of runs (walk for the NETR-3 repeat window, then idle, see
+// ClientCommandTickStream) folds into one frame per run and every tick keeps the movement the
+// client predicted for it. Only when no neighbours match do the oldest two merge. Sequences only
+// ever increase: a frame whose sequence is not newer than the last one queued is ignored.
 //
 // Thread-safe: the render thread enqueues, the send loop dequeues. No allocation after
 // construction.
@@ -66,13 +72,7 @@ public sealed class ClientOutboundCommandQueue
             _lastSequence = frame.Sequence;
             if (_count == _frames.Length)
             {
-                // Fold the oldest frame into the next one; the merged frame keeps the newer sequence.
-                int oldest = _head;
-                int next = (_head + 1) % _frames.Length;
-                _frames[next] = Merge(_frames[oldest], _frames[next]);
-                _frames[oldest] = default;
-                _head = next;
-                _count--;
+                MergeOldestMatchingNeighbours();
                 Interlocked.Increment(ref _mergedCount);
             }
 
@@ -98,6 +98,36 @@ public sealed class ClientOutboundCommandQueue
             _count--;
             return true;
         }
+    }
+
+    // Folds the oldest frame whose next neighbour moves the same way into that neighbour (the
+    // merged frame keeps the newer sequence); with no such pair, the oldest frame into the next.
+    private void MergeOldestMatchingNeighbours()
+    {
+        int index = 0;
+        for (int i = 0; i < _count - 1; i++)
+        {
+            if (BufferedPlayerCommandInbox.HasSameMovement(At(i).MoveIntent, At(i + 1).MoveIntent))
+            {
+                index = i;
+                break;
+            }
+        }
+
+        At(index + 1) = Merge(At(index), At(index + 1));
+        for (int i = index; i > 0; i--)
+        {
+            At(i) = At(i - 1);
+        }
+
+        _frames[_head] = default;
+        _head = (_head + 1) % _frames.Length;
+        _count--;
+    }
+
+    private ref PlayerCommandFrame At(int index)
+    {
+        return ref _frames[(_head + index) % _frames.Length];
     }
 
     // Folds an older frame into a newer one: the newer frame's session, sequence, axes and facing

@@ -21,15 +21,20 @@ namespace Dream.Tests.Integration;
 // merges on overflow) combined with NETR-5 (server BufferedPlayerCommandInbox, ring of 8). Real
 // dedicated server over loopback, headless client running PlayScene's per-tick loop.
 //
-// Measured (Debug, loopback, wave 8 tip e4c6930, three runs each):
-// - 1 s send stall: 4.530 m snap (1 snap), every run. The queue folds 47 stall commands into one frame
-//   whose sequence jumps by 48. The buffered inbox enqueues that frame as ONE slot standing for ONE
-//   tick (Slot.Ticks = 1, BufferedPlayerCommandInbox.cs:229); on the first pop SkipRepeatedTicks
-//   skips 16 leading ticks (the runtime repeated the walk 16 ticks, then idled 48), and the frame
-//   pops with its full jumped sequence (line 253). The ack covers 64 client walk ticks after the
-//   server walked 17 of them: 47 ticks (~4.5 m) behind, so the reconciler snaps.
+// Measured before the fix (Debug, loopback, wave 8 tip e4c6930, three runs each):
+// - 1 s send stall: 4.530 m snap (1 snap), every run. The queue folded 47 stall commands into one
+//   frame whose sequence jumped by 48; the buffered inbox enqueued it as ONE slot standing for ONE
+//   tick, skipped 16 leading ticks and popped it with its full jumped sequence. The ack covered 64
+//   client walk ticks after the server walked 17 of them: 47 ticks (~4.5 m) behind, a snap.
 // - 1 s frame stall: max 0.834 m (smoothed, no snap); the client drops all but 8 catch-up ticks.
 // - Hitchy loop (30-120 ms hitches, every 150-400 ms): max 0.741 m, no snap.
+//
+// After wave 8 fix loop 1 (the client predicts and sends idle past the 16-tick repeat window, the
+// outbound queue folds runs of equal movement, the inbox counts a sequence jump as that many ticks,
+// skips every starved tick and drops the stall's leftover idle tail):
+// - 1 s send stall: 0.000 m, no snap (48 idle ticks, wire jump 34).
+// - 1 s frame stall: 0.741-0.834 m, no snap (unchanged: the client drops the stalled ticks).
+// - Hitchy loop: 0.466 m, no snap.
 public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 {
     private const int WalkTicksBeforeStall = 32;
@@ -37,24 +42,25 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
     private const int TicksAfterStall = 96;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(40);
 
-    // Current behaviour: the send stall ends in a snap. Asserted so a change in either direction is
-    // noticed; the bug test below holds the target.
+    // The mechanism behind the fix: the stall still overflows the outbound queue and the wire still
+    // carries folded frames with sequence jumps, but the client idled past the repeat window and the
+    // server counted and skipped every starved tick, so there is next to no correction instead of
+    // the 4.53 m snap measured before (0.000 m measured).
     [Fact]
-    public async Task SendStall_OneSecond_CurrentlySnapsBecauseTheMergedCommandCountsAsOneServerTick()
+    public async Task SendStall_OneSecond_ClientIdlesPastTheRepeatWindow_AndTheServerSkipsEveryStarvedTick()
     {
         StallReport report = await RunAsync(Scenario.SendStall, "w8-send-a");
         output.WriteLine(report.Describe("1 s send stall"));
 
         Assert.True(report.MergedCommands > 0, "The stall never overflowed the outbound queue.");
         Assert.True(report.LargestSequenceJump > 16, $"largest wire sequence jump {report.LargestSequenceJump}");
-        // Measured 4.530 m in three of three runs: 47 walk ticks the server never simulated.
-        Assert.True(report.MaxCorrectionAfter >= ClientPredictionReconciler.DefaultSnapDistance, report.Describe("send"));
-        Assert.True(report.SnapsAfter >= 1, report.Describe("send"));
+        // 64 stall ticks minus the 16-tick repeat window, give or take the send loop's timing.
+        Assert.InRange(report.SendStallIdleTicks, 40L, 56L);
+        Assert.True(report.MaxCorrectionAfter < 0.5f, report.Describe("send"));
+        Assert.Equal(0, report.SnapsAfter);
     }
 
-    [Fact(Skip = "bug: NETR-4 x NETR-5 send stall. The client FIFO (16) folds the stall into one frame with a sequence jump; " +
-                 "BufferedPlayerCommandInbox enqueues it as one tick (Slot.Ticks = 1) and acks the jump after 16 skipped + 1 simulated tick, so the server is 47 walk ticks " +
-                 "behind and the client snaps 4.53 m. Fix: client predicts (and sends) idle once its oldest unsent command is 16 ticks old; see Wave8SendStallInboxModelTests. Target: a 1 s send stall corrects by less than DefaultSnapDistance.")]
+    [Fact]
     public async Task SendStall_OneSecond_TargetCorrectsBelowSnapDistance()
     {
         StallReport report = await RunAsync(Scenario.SendStall, "w8-send-b");
@@ -240,10 +246,15 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         ulong LargestSequenceJump,
         float ServerWalked,
         float ClientWalked,
-        int CommandsSent)
+        int CommandsSent,
+        long SendStallIdleTicks,
+        ulong StallStartTick,
+        ulong MaxCorrectionAck,
+        ulong MaxCorrectionTick)
     {
         public string Describe(string label) =>
             $"{label}: max correction after {MaxCorrectionAfter:F3} m (largest smooth {MaxSmoothAfter:F3} m, snaps {SnapsAfter}); " +
+            $"send-stall idle ticks {SendStallIdleTicks}; stall start tick {StallStartTick}, max correction at ack {MaxCorrectionAck} (client tick {MaxCorrectionTick}); " +
             $"stall end tick {StallEndTick}, last ack {LastAcknowledged}, dropped ticks {DroppedTicks}, merged commands {MergedCommands}, " +
             $"largest sequence jump {LargestSequenceJump}, commands sent {CommandsSent}, server walked {ServerWalked:F2} m since stall start, " +
             $"client walked {ClientWalked:F2} m since stall start";
@@ -257,6 +268,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         private readonly PlayerSessionId _remoteSessionId;
         private readonly Vector3 _facing;
         private float _maxCorrectionAfter;
+        private ulong _maxCorrectionAck;
+        private ulong _maxCorrectionTick;
         private float _maxSmoothAfter;
         private int _snapsAfter;
         private ulong _lastAcknowledged;
@@ -271,6 +284,8 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             _facing = facing;
             _world = new ClientWorldSession(floorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             Ticks = new ClientCommandTickStream(_world.LocalPlayerSessionId);
+            // As PlayScene wires it: a send stalled past the repeat window idles the prediction.
+            Ticks.ObserveSendBacklog(() => _session.PendingCommandCount);
         }
 
         public ClientCommandTickStream Ticks { get; }
@@ -353,6 +368,12 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 _lastAcknowledged = Math.Max(_lastAcknowledged, acknowledged);
                 if (acknowledged >= StallStartTick)
                 {
+                    if (Math.Max(jump, smooth) > _maxCorrectionAfter)
+                    {
+                        _maxCorrectionAck = acknowledged;
+                        _maxCorrectionTick = Ticks.LastTick;
+                    }
+
                     _maxCorrectionAfter = Math.Max(_maxCorrectionAfter, Math.Max(jump, smooth));
                     _maxSmoothAfter = Math.Max(_maxSmoothAfter, smooth);
                     if (jump > 0.01f)
@@ -386,7 +407,11 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
                 largestJump,
                 serverWalked,
                 clientWalked,
-                sentSequences.Count);
+                sentSequences.Count,
+                Ticks.SendStallIdleTicks,
+                StallStartTick,
+                _maxCorrectionAck,
+                _maxCorrectionTick);
         }
     }
 

@@ -7,25 +7,45 @@ namespace Dream.Multiplayer.Sessions;
 // one. LatestPlayerCommandInbox kept only the newest frame, so a backlog that arrived after a
 // client or network stall moved the seat one tick instead of the whole stall.
 //
-// Each slot stands for a number of ticks. A received frame stands for one; when the ring is full,
-// the oldest two slots merge into one that stands for both (one-shot presses ORed, look deltas
-// summed, newer axes, facing and sequence), so a 64-frame burst still replays 64 ticks of input
-// through 8 slots. A slot that stands for several ticks is popped once per tick with a sequence
-// counted back from its newest one, so the acknowledged sequence never runs ahead of what the
-// seat has simulated; its look deltas apply on the first of those ticks only.
+// Each slot stands for a number of ticks. A command's sequence is its client prediction tick
+// (NETR-4), so a received frame stands for as many ticks as its sequence advanced past the last
+// one received (at least one, at most MaxTicksPerFrame): a frame the client's outbound queue folded
+// from several ticks during a send stall counts every one of them. When the ring is full, two
+// neighbouring slots merge into one that stands for both (one-shot presses ORed, look deltas
+// summed, newer axes, facing and sequence). The oldest neighbours with the same movement axes are
+// merged first, so a backlog made of runs (walk, then idle) keeps every run's ticks exact; only
+// when no neighbours match do the oldest two merge. A slot that stands for several ticks is popped
+// once per tick with a sequence counted back from its newest one, so the acknowledged sequence
+// never runs ahead of what the seat has simulated; its look deltas apply on the first tick only.
 //
-// While the ring is empty nothing is popped and the runtime repeats the last frame for up to
-// WorldSessionRuntime.MaxCommandRepeatTicks, then idles (NETR-3). When frames arrive after such a
-// gap, the repeated ticks have already simulated them: as many leading backlog ticks as were
-// repeated are skipped while they match the repeated frame's axes and facing, so the seat neither
-// overshoots nor loses one-shot presses (a skipped frame's presses carry into the next one).
+// While the ring is empty nothing is popped and the runtime repeats the last frame for
+// WorldSessionRuntime.MaxCommandRepeatTicks ticks, then idles (NETR-3). Those starved ticks are
+// skip debt: they already simulated the commands that arrive next. When frames arrive, leading
+// backlog ticks are skipped while they match what the runtime simulated in their place: the
+// repeated frame's movement axes for the first MaxCommandRepeatTicks starved ticks, no movement
+// for the rest (a client whose send is stalled predicts and sends idle past the repeat window, see
+// ClientCommandTickStream; a client switch within SkipBoundaryToleranceTicks of the server's is
+// accepted). Facing is absolute and applies on the next popped frame, so it is not compared. Once
+// a skip has spent the idle debt, idle commands still above ShedDepthThreshold (the latency the
+// ring held before the stall) are dropped too: they cost no movement, whereas the shed would later
+// fold the walking ticks queued behind them. The newest pending tick is never skipped, so the seat still gets a fresh frame; a frame
+// with a one-shot press (jump, freeze, noclip toggle, mode request) is not skipped either but
+// popped at its own tick, so the press lands where the client predicted it. Debt that a short
+// backlog could not spend is kept for the next frames (up to MaxSkipDebtTicks) and cleared on the
+// first frame that does not match. A skipped frame's primary use and look deltas carry into the
+// next one.
 //
 // Latency stays bounded in two ways:
 // - Elastic shed: once the pending depth has stayed above ShedDepthThreshold for ShedWindowTicks
 //   ticks without draining on its own, the ring merges down to one frame.
-// - Fast senders: a client that sends one frame per render (144 Hz) delivers two or more frames
-//   between most ticks. Once that is true for FastSenderEnterTicks of the last 16 ticks, the
-//   session coalesces its arrivals into one pending frame, as LatestPlayerCommandInbox did.
+// - Fast senders: a legacy client that numbers one frame per render (144 Hz) instead of per tick
+//   pushes its newest sequence ahead of the server's tick count, tick after tick. A per-tick
+//   client (any frame rate, NETR-4) cannot: its sequence is a 64 Hz clock, so however its frames
+//   bunch up (pairs at 30 fps, a burst after a stall), the newest sequence minus the ticks popped
+//   never climbs past its earlier maximum except when its delivery delay drops. Once that lead rose
+//   on FastSenderEnterTicks of the last 16 ticks, the session coalesces its arrivals into one
+//   pending frame, as LatestPlayerCommandInbox did; it leaves that mode once the lead rose on at
+//   most FastSenderExitTicks of the last 16.
 //
 // Enqueue runs on receive threads and pops on the tick thread, all under one lock. Ring storage is
 // allocated per session on its first frame and pooled across Remove, so steady-state enqueue and
@@ -37,6 +57,14 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
     public const int ShedWindowTicks = 32;
     public const int FastSenderEnterTicks = 8;
     public const int FastSenderExitTicks = 3;
+    // The most ticks one received frame stands for, and the most skip debt a session keeps: 4 s.
+    public const int MaxTicksPerFrame = 4 * SimulationClock.AuthoritativeTicksPerSecond;
+    public const int MaxSkipDebtTicks = 4 * SimulationClock.AuthoritativeTicksPerSecond;
+    // Starved ticks the runtime repeats the last command before idling (NETR-3), for clients,
+    // which do not reference the authoritative runtime.
+    public const int ServerRepeatTicks = WorldSessionRuntime.MaxCommandRepeatTicks;
+    // How far the client's repeat-to-idle switch may sit from the server's and still be skipped.
+    public const int SkipBoundaryToleranceTicks = 4;
 
     private readonly object _sync = new();
     private readonly Dictionary<PlayerSessionId, SessionRing> _rings = new();
@@ -134,6 +162,24 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
+    // Starved ticks the session's next frames may still skip.
+    public int GetSkipDebtTicks(PlayerSessionId sessionId)
+    {
+        lock (_sync)
+        {
+            return _rings.TryGetValue(sessionId, out SessionRing? ring) ? ring.SkipDebt : 0;
+        }
+    }
+
+    // Whether the session is treated as a render-rate sender whose arrivals are coalesced.
+    public bool IsFastSender(PlayerSessionId sessionId)
+    {
+        lock (_sync)
+        {
+            return _rings.TryGetValue(sessionId, out SessionRing? ring) && ring.IsFastSender;
+        }
+    }
+
     public bool Contains(PlayerSessionId sessionId)
     {
         lock (_sync)
@@ -142,8 +188,9 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
-    // Drops the released session's frames and sequence state and returns its ring to the pool,
-    // so a reconnect that reuses the session id starts from a fresh sequence.
+    // Drops the released session's frames, sequence, skip debt and send-rate state and returns its
+    // ring to the pool, so a reconnect that reuses the session id starts from a fresh sequence
+    // (including after a stale frame from the old connection recreated the ring).
     public void Remove(PlayerSessionId sessionId)
     {
         lock (_sync)
@@ -156,10 +203,28 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
+    // Same movement axes; facing, presses, look deltas and primary use are not compared.
+    public static bool HasSameMovement(PlayerMoveIntent first, PlayerMoveIntent second)
+    {
+        return first.ForwardAxis == second.ForwardAxis
+            && first.StrafeAxis == second.StrafeAxis
+            && first.VerticalAxis == second.VerticalAxis;
+    }
+
+    // Jump, freeze or noclip toggle: presses a tick consumes once, whose timing moves the player.
+    // A mode request is idempotent (some clients repeat it every frame), so it carries instead.
+    public static bool HasOneShotInput(PlayerCommandFrame frame)
+    {
+        PlayerMoveIntent move = frame.MoveIntent;
+        return move.JumpPressed || move.FreezePressed || move.ToggleNoclipPressed;
+    }
+
     private struct Slot
     {
         public PlayerCommandFrame Frame;
         public int Ticks;
+        // A tick of this slot was popped or skipped, so its presses have been applied.
+        public bool Started;
     }
 
     private sealed class SessionRing
@@ -170,9 +235,15 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         private ulong _lastEnqueuedSequence;
         private bool _hasPopped;
         private PlayerCommandFrame _lastPopped;
+        // Consecutive starved ticks since the last pop, counted like the runtime's NETR-3 window.
         private int _starvedTicks;
-        private int _arrivalsSincePop;
-        private int _arrivalHistory;
+        private int _repeatDebt;
+        private int _idleDebt;
+        private PlayerMoveIntent _repeatedMove;
+        private ulong _ticks;
+        private bool _hasLead;
+        private long _maxLead;
+        private int _leadRiseHistory;
         private bool _fastSender;
         private int _aboveThresholdTicks;
         private int _windowStartDepth;
@@ -180,6 +251,10 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         public int Count { get; private set; }
 
         public int PendingTicks { get; private set; }
+
+        public int SkipDebt => _repeatDebt + _idleDebt;
+
+        public bool IsFastSender => _fastSender;
 
         public void Reset()
         {
@@ -192,8 +267,13 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             _hasPopped = false;
             _lastPopped = default;
             _starvedTicks = 0;
-            _arrivalsSincePop = 0;
-            _arrivalHistory = 0;
+            _repeatDebt = 0;
+            _idleDebt = 0;
+            _repeatedMove = default;
+            _ticks = 0;
+            _hasLead = false;
+            _maxLead = 0;
+            _leadRiseHistory = 0;
             _fastSender = false;
             _aboveThresholdTicks = 0;
             _windowStartDepth = 0;
@@ -207,9 +287,12 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
                 return;
             }
 
+            // The sequence is the client's tick: a jump is a frame folded from several ticks.
+            int ticks = _hasEnqueued
+                ? (int)Math.Min(frame.Sequence - _lastEnqueuedSequence, (ulong)MaxTicksPerFrame)
+                : 1;
             _hasEnqueued = true;
             _lastEnqueuedSequence = frame.Sequence;
-            _arrivalsSincePop++;
 
             if (_fastSender && Count > 0)
             {
@@ -221,25 +304,26 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
 
             if (Count == Capacity)
             {
-                MergeOldestTwo();
+                MergeOldestMatchingNeighbours();
             }
 
             ref Slot slot = ref SlotAt(Count);
             slot.Frame = frame;
-            slot.Ticks = 1;
+            slot.Ticks = ticks;
+            slot.Started = false;
             Count++;
-            PendingTicks++;
+            PendingTicks += ticks;
         }
 
         public bool TryPop(out PlayerCommandFrame frame)
         {
-            TrackArrivalRate();
+            TrackSendRate();
 
             if (Count == 0)
             {
-                if (_hasPopped && _starvedTicks < int.MaxValue)
+                if (_hasPopped)
                 {
-                    _starvedTicks++;
+                    CountStarvedTick();
                 }
 
                 _aboveThresholdTicks = 0;
@@ -247,7 +331,8 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
                 return false;
             }
 
-            SkipRepeatedTicks();
+            SkipSimulatedTicks();
+            _starvedTicks = 0;
 
             ref Slot oldest = ref SlotAt(0);
             ulong sequence = oldest.Frame.Sequence - (ulong)(oldest.Ticks - 1);
@@ -265,60 +350,193 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             return true;
         }
 
-        // Ticks repeated by the runtime while the ring was empty already simulated the leading
-        // backlog frames, as long as those match the repeated frame. The newest pending tick is
-        // never skipped, so the seat still gets a fresh frame.
-        private void SkipRepeatedTicks()
+        // The runtime simulates a starved tick with the last popped frame for the first
+        // MaxCommandRepeatTicks of a starved run, then with no movement (NETR-3).
+        private void CountStarvedTick()
         {
-            int debt = Math.Min(_starvedTicks, WorldSessionRuntime.MaxCommandRepeatTicks);
-            _starvedTicks = 0;
-            while (debt > 0 && PendingTicks > 1 && MatchesRepeated(SlotAt(0).Frame))
+            if (_starvedTicks < int.MaxValue)
             {
-                ref Slot oldest = ref SlotAt(0);
-                if (oldest.Ticks > 1)
+                _starvedTicks++;
+            }
+
+            if (_starvedTicks <= WorldSessionRuntime.MaxCommandRepeatTicks)
+            {
+                if (_repeatDebt > 0 && !HasSameMovement(_repeatedMove, _lastPopped.MoveIntent))
                 {
-                    oldest.Ticks--;
-                    PendingTicks--;
-                    // The skipped tick carried the look deltas; the next one must not apply them again.
-                    oldest.Frame = WithoutLookDeltas(oldest.Frame);
-                }
-                else
-                {
-                    // Carry presses and look deltas into the next frame; it keeps its own sequence.
-                    PlayerCommandFrame skipped = oldest.Frame;
-                    RemoveOldest();
-                    ref Slot next = ref SlotAt(0);
-                    next.Frame = LatestPlayerCommandInbox.Merge(skipped, next.Frame);
+                    // Debt kept from an earlier run repeated other axes; its frames will not match.
+                    _repeatDebt = 0;
                 }
 
-                debt--;
+                _repeatedMove = _lastPopped.MoveIntent;
+                if (SkipDebt < MaxSkipDebtTicks)
+                {
+                    _repeatDebt++;
+                }
+            }
+            else if (SkipDebt < MaxSkipDebtTicks)
+            {
+                _idleDebt++;
             }
         }
 
-        private bool MatchesRepeated(PlayerCommandFrame frame)
+        // Starved ticks already simulated the leading backlog ticks, as long as those match what
+        // the runtime simulated in their place: the repeated axes first, then no movement.
+        private void SkipSimulatedTicks()
         {
-            PlayerMoveIntent move = frame.MoveIntent;
-            PlayerMoveIntent repeated = _lastPopped.MoveIntent;
-            return _hasPopped
-                && move.ForwardAxis == repeated.ForwardAxis
-                && move.StrafeAxis == repeated.StrafeAxis
-                && move.VerticalAxis == repeated.VerticalAxis
-                && frame.LookIntent.Facing == _lastPopped.LookIntent.Facing;
+            bool spentIdleDebt = false;
+            while (SkipDebt > 0 && PendingTicks > 1)
+            {
+                ref Slot oldest = ref SlotAt(0);
+                if (!MatchesSimulatedTick(oldest.Frame.MoveIntent))
+                {
+                    _repeatDebt = 0;
+                    _idleDebt = 0;
+                    return;
+                }
+
+                if (!oldest.Started && HasOneShotInput(oldest.Frame))
+                {
+                    // Pop the press at its own tick; the debt waits for the frames after it.
+                    return;
+                }
+
+                SkipOldestTick();
+                if (_repeatDebt > 0)
+                {
+                    _repeatDebt--;
+                }
+                else
+                {
+                    _idleDebt--;
+                    spentIdleDebt = true;
+                }
+            }
+
+            if (spentIdleDebt && SkipDebt == 0)
+            {
+                TrimIdleStallTail();
+            }
         }
 
-        // A sender that delivers two or more frames between most ticks sends per render frame;
-        // hysteresis keeps a jittery per-tick sender from flapping.
-        private void TrackArrivalRate()
+        // The stall's idle commands outnumber the server's idle ticks by the latency the ring held
+        // before the stall. Left in, they keep the depth above the threshold while the client sends
+        // one command per tick, until the shed merges the backlog down to one tick and loses the
+        // walking ticks queued behind them. Dropping them now costs no movement.
+        private void TrimIdleStallTail()
         {
-            _arrivalHistory = ((_arrivalHistory << 1) | (_arrivalsSincePop >= 2 ? 1 : 0)) & 0xFFFF;
-            _arrivalsSincePop = 0;
-            int fastTicks = System.Numerics.BitOperations.PopCount((uint)_arrivalHistory);
-            if (!_fastSender && fastTicks >= FastSenderEnterTicks)
+            while (PendingTicks > ShedDepthThreshold)
+            {
+                ref Slot oldest = ref SlotAt(0);
+                if (!HasSameMovement(oldest.Frame.MoveIntent, PlayerMoveIntent.None)
+                    || (!oldest.Started && HasOneShotInput(oldest.Frame)))
+                {
+                    return;
+                }
+
+                SkipOldestTick();
+            }
+        }
+
+        private void SkipOldestTick()
+        {
+            ref Slot oldest = ref SlotAt(0);
+            if (oldest.Ticks > 1)
+            {
+                oldest.Ticks--;
+                oldest.Started = true;
+                PendingTicks--;
+                // The skipped tick carried the look deltas; the next one must not apply them again.
+                oldest.Frame = WithoutLookDeltas(oldest.Frame);
+            }
+            else
+            {
+                // Carry primary use and look deltas into the next frame; it keeps its own sequence.
+                PlayerCommandFrame skipped = oldest.Frame;
+                RemoveOldest();
+                ref Slot next = ref SlotAt(0);
+                next.Frame = LatestPlayerCommandInbox.Merge(skipped, next.Frame);
+            }
+        }
+
+        // Whether the oldest pending tick may stand in for the next starved tick. The client
+        // switches from the repeated movement to idle where it estimates the server did, which
+        // can be off by a few ticks (send timing, a frame already in flight): a switch within
+        // SkipBoundaryToleranceTicks of the server's is accepted (those few ticks diverge, and
+        // the reconciler smooths them out) instead of throwing away the whole debt and replaying
+        // the stall's idle backlog, whose latency the shed would later cut along with fresh ticks.
+        private bool MatchesSimulatedTick(PlayerMoveIntent move)
+        {
+            bool idle = HasSameMovement(move, PlayerMoveIntent.None);
+            if (_repeatDebt > 0)
+            {
+                // The client went idle a little before the server's repeat window ended.
+                return HasSameMovement(move, _repeatedMove)
+                    || (idle && _idleDebt > 0 && _repeatDebt <= SkipBoundaryToleranceTicks);
+            }
+
+            // The client kept the repeated movement a little past the server's repeat window.
+            return idle
+                || (HasSameMovement(move, _repeatedMove) && RepeatedRunEndsInIdleWithinTolerance());
+        }
+
+        // Pending ticks with the repeated movement, from the oldest, end within the tolerance at
+        // a pending idle tick.
+        private bool RepeatedRunEndsInIdleWithinTolerance()
+        {
+            int run = 0;
+            for (int i = 0; i < Count; i++)
+            {
+                PlayerMoveIntent move = SlotAt(i).Frame.MoveIntent;
+                if (HasSameMovement(move, PlayerMoveIntent.None))
+                {
+                    return run > 0;
+                }
+
+                if (!HasSameMovement(move, _repeatedMove))
+                {
+                    return false;
+                }
+
+                run += SlotAt(i).Ticks;
+                if (run > SkipBoundaryToleranceTicks)
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        // A per-tick sender's newest sequence minus the ticks popped (its lead) only climbs past
+        // its earlier maximum when its delivery delay drops; a per-render sender's climbs on most
+        // ticks. Hysteresis keeps the mode from flapping.
+        private void TrackSendRate()
+        {
+            _ticks++;
+            bool rose = false;
+            if (_hasEnqueued)
+            {
+                long lead = unchecked((long)_lastEnqueuedSequence - (long)_ticks);
+                if (!_hasLead)
+                {
+                    _hasLead = true;
+                    _maxLead = lead;
+                }
+                else if (lead > _maxLead)
+                {
+                    rose = true;
+                    _maxLead = lead;
+                }
+            }
+
+            _leadRiseHistory = ((_leadRiseHistory << 1) | (rose ? 1 : 0)) & 0xFFFF;
+            int risingTicks = System.Numerics.BitOperations.PopCount((uint)_leadRiseHistory);
+            if (!_fastSender && risingTicks >= FastSenderEnterTicks)
             {
                 _fastSender = true;
                 MergeDownToOne();
             }
-            else if (_fastSender && fastTicks <= FastSenderExitTicks)
+            else if (_fastSender && risingTicks <= FastSenderExitTicks)
             {
                 _fastSender = false;
             }
@@ -358,7 +576,7 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         {
             while (Count > 1)
             {
-                MergeOldestTwo();
+                MergeIntoNext(0);
             }
 
             if (Count == 1)
@@ -368,20 +586,46 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
             }
         }
 
-        private void MergeOldestTwo()
+        // Overflow: merge the oldest neighbours that move the same way, so the merged slot's ticks
+        // all simulate what the client predicted; with none, the oldest two.
+        private void MergeOldestMatchingNeighbours()
         {
-            Slot oldest = SlotAt(0);
-            RemoveOldest();
-            ref Slot next = ref SlotAt(0);
-            next.Frame = LatestPlayerCommandInbox.Merge(oldest.Frame, next.Frame);
-            next.Ticks += oldest.Ticks;
-            PendingTicks += oldest.Ticks;
+            int index = 0;
+            for (int i = 0; i < Count - 1; i++)
+            {
+                if (HasSameMovement(SlotAt(i).Frame.MoveIntent, SlotAt(i + 1).Frame.MoveIntent))
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            MergeIntoNext(index);
+        }
+
+        // Folds the slot at the index into the next one, which then stands for both.
+        private void MergeIntoNext(int index)
+        {
+            Slot older = SlotAt(index);
+            ref Slot next = ref SlotAt(index + 1);
+            next.Frame = LatestPlayerCommandInbox.Merge(older.Frame, next.Frame);
+            next.Ticks += older.Ticks;
+            next.Started = older.Started && next.Started;
+            for (int i = index; i > 0; i--)
+            {
+                SlotAt(i) = SlotAt(i - 1);
+            }
+
+            _slots[_head] = default;
+            _head = (_head + 1) % Capacity;
+            Count--;
         }
 
         private void ConsumeOldestTick()
         {
             ref Slot oldest = ref SlotAt(0);
             oldest.Ticks--;
+            oldest.Started = true;
             PendingTicks--;
             if (oldest.Ticks == 0)
             {
