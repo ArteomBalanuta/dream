@@ -73,7 +73,8 @@ public static class ModelAssets
         new(Loader, PlayerPath);
 
     /// <summary>
-    /// Releases every shared model and every per-instance model still alive, and starts a fresh
+    /// Releases every shared model (instances own no GL resources, so there is nothing else to
+    /// release) and starts a fresh
     /// loader. Only valid at scene teardown, after the last draw that uses them.
     /// </summary>
     public static void DisposeAll()

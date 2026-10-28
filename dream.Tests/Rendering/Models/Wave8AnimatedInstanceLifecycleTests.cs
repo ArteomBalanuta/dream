@@ -109,14 +109,39 @@ public class Wave8AnimatedInstanceLifecycleTests
         Assert.Equal(0.2f, heldSlot.Bind(heldItem).TimeSeconds, 4);
         Assert.Same(handsInstance, handsSlot.Bind(hands));
 
-        // A reload (new skeleton) rebinds to a fresh, stopped instance. ViewModelRenderer.Update runs
-        // before Draw starts the clip, so the first frame after a swap or reload draws the rest pose
-        // (Update returns false on a stopped instance). Cosmetic: one frame.
+        // A reload (new skeleton) rebinds to a fresh instance. ViewModelRenderer.Update starts the
+        // clip at bind time, so the very first frame after a swap or reload already shows the clip.
+        AnimatedModelSkeleton reloadedSkeleton = heldItemReloaded.Skeleton;
         AnimatedModelInstance rebound = heldSlot.Bind(heldItemReloaded);
         Assert.NotSame(heldInstance, rebound);
-        Assert.Same(heldItemReloaded.Skeleton, rebound.Skeleton);
+        Assert.Same(reloadedSkeleton, rebound.Skeleton);
         Assert.Null(rebound.CurrentClipName);
-        Assert.False(rebound.Update(FrameSeconds));
+    }
+
+    [Fact]
+    public void ViewModelSlot_FirstFrameAfterAModelReload_PosesTheClipNotTheRestPose()
+    {
+        AnimatedModel reloaded = ModelWithoutGl(Reload(HeldItem.Value, ViewModelAssets.BuilderToolDefinition.ModelPath));
+        ViewModelSlotAnimation slot = new();
+        ViewModelSlotState idle = new(ViewModelAssets.BuilderToolDefinition, ViewModelAnimationRequest.Idle, default);
+
+        ViewModelRenderer.AdvanceSlot(reloaded, idle, slot, 0.25f);
+
+        AnimatedModelInstance instance = slot.Bind(reloaded);
+        Assert.True(instance.IsPlayingLoop(ViewModelAssets.BuilderToolDefinition.IdleAnimation!));
+        Assert.Equal(0.25f, instance.TimeSeconds, 4);
+        AnimatedModelPose rest = new(reloaded.Skeleton);
+        bool differs = false;
+        for (int i = 0; i < rest.NodeCount && !differs; i++)
+        {
+            differs = rest.GetNodeWorldMatrix(i) != instance.Pose.GetNodeWorldMatrix(i);
+        }
+
+        Assert.True(differs, "the first drawn frame must not be the rest pose");
+
+        // Steady frames keep advancing instead of restarting the clip.
+        ViewModelRenderer.AdvanceSlot(reloaded, idle, slot, 0.25f);
+        Assert.Equal(0.5f, instance.TimeSeconds, 4);
     }
 
     // A real reload: a second decode, so the skeleton, its ModelRoot and its clips are all new.
