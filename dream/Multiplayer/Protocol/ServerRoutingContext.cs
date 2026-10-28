@@ -67,55 +67,34 @@ public sealed class ServerRoutingContext
         return true;
     }
 
-    // Join throttle (NETR-8). After a join from this connection is rejected because its session id
-    // or player name is held by a live connection, further joins from it are dropped unanswered
-    // (answering each would turn join spam into reply spam) until the throttle interval passes.
-    // The interval starts at JoinThrottleInitialInterval and doubles on every further live-holder
-    // rejection up to JoinThrottleMaxInterval; an accepted join resets it. A legitimate client
-    // never meets it: it ends its session on such a rejection and comes back on a new connection.
-    // Everything here runs under the host's tick lock.
+    // Join throttle (NETR-8). After a join is rejected because its session id or player name is
+    // held by a live connection, further joins from the same source (the remote IP address, see
+    // Dream.Server.JoinThrottleTable) for the same contested session id or name are throttled
+    // until the throttle interval passes, across reconnects. The interval starts at
+    // JoinThrottleInitialInterval and doubles on every further live-holder rejection up to
+    // JoinThrottleMaxInterval; an accepted join resets it. A throttled join is never claimed or
+    // queued, so it costs no persisted-player prefetch. A connection that was already answered
+    // with a rejection gets nothing back (answering each would turn join spam into reply spam);
+    // a fresh connection gets one JoinRejected saying when to retry. A legitimate client only
+    // meets it when it rejoins a seat its own still-live old connection holds.
     public static readonly TimeSpan JoinThrottleInitialInterval = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan JoinThrottleMaxInterval = TimeSpan.FromSeconds(10);
 
-    private long _joinThrottleUntilTimestamp;
-    private long _joinThrottleIntervalTicks;
-
     // Set by the claim registry while it handles this connection's join, when a live connection
-    // holds the requested session id or player name. The host reads and clears it after the join.
-    public bool JoinConflictsWithLiveHolder { get; set; }
+    // holds the requested session id (JoinConflictSessionId) or player name (JoinConflictPlayerName).
+    // The host reads and clears both after the join. Under the host's tick lock.
+    public string? JoinConflictSessionId { get; set; }
 
-    // Joins dropped by the current throttle interval.
-    public int DroppedJoinAttempts { get; private set; }
+    public string? JoinConflictPlayerName { get; set; }
 
-    public bool IsJoinThrottled(long nowTimestamp)
+    // Whether this connection has been answered with a join rejection (a live-holder conflict or
+    // a throttle), so further throttled joins from it are dropped unanswered. Under the tick lock.
+    public bool JoinRejectionSent { get; set; }
+
+    public void ClearJoinConflict()
     {
-        return _joinThrottleIntervalTicks != 0 && nowTimestamp < _joinThrottleUntilTimestamp;
-    }
-
-    // Counts a dropped join and returns how many the current interval has dropped so far.
-    public int RecordDroppedJoinAttempt()
-    {
-        return ++DroppedJoinAttempts;
-    }
-
-    // Starts the next throttle interval (doubled, capped) and returns its length in timestamp ticks.
-    public long ThrottleJoins(long nowTimestamp, long timestampFrequency)
-    {
-        long initialTicks = (long)(JoinThrottleInitialInterval.TotalSeconds * timestampFrequency);
-        long maxTicks = (long)(JoinThrottleMaxInterval.TotalSeconds * timestampFrequency);
-        _joinThrottleIntervalTicks = _joinThrottleIntervalTicks == 0
-            ? initialTicks
-            : Math.Min(_joinThrottleIntervalTicks * 2, maxTicks);
-        _joinThrottleUntilTimestamp = nowTimestamp + _joinThrottleIntervalTicks;
-        DroppedJoinAttempts = 0;
-        return _joinThrottleIntervalTicks;
-    }
-
-    public void ResetJoinThrottle()
-    {
-        _joinThrottleIntervalTicks = 0;
-        _joinThrottleUntilTimestamp = 0;
-        DroppedJoinAttempts = 0;
+        JoinConflictSessionId = null;
+        JoinConflictPlayerName = null;
     }
 
     // A connection gets at most one world resync per cooldown; requests inside it are dropped. It

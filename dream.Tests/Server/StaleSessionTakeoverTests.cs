@@ -14,50 +14,78 @@ using static Dream.Tests.Server.ServerConnectionTestFixtures;
 namespace Dream.Tests.Server;
 
 // NETR-8: a client that crashed (or lost its network) and rejoins used to be rejected until the
-// server's 10 s idle timeout released its old connection. A join now takes over a session whose
-// holder has sent nothing for DedicatedServerHost.SameSessionTakeoverSilence (3 s), or a player
-// name whose holder has sent nothing for PlayerNameTakeoverSilence (8 s); a holder heard from
-// inside the window keeps it and the join is rejected, and a connection whose join a live holder
-// rejected has its later joins throttled. Every clock here is a ManualTimeProvider, so silence
-// is exact.
+// server's 10 s idle timeout released its old connection. A join now takes over a session id or
+// a player name whose holder has sent nothing for DedicatedServerHost.TakeoverSilence (8 s, one
+// window for both: session ids are broadcast, so a shorter session-id window would let a
+// hijacker skip the name window); a holder heard from inside the window keeps it and the join is
+// rejected, and later joins for the contested session id or name from the same source address
+// are throttled. Connection ids that are not "ip:port" endpoints are their own source. Every
+// clock here is a ManualTimeProvider, so silence is exact.
 public sealed class StaleSessionTakeoverTests
 {
     private const string PlayerName = "Player A";
     private const string OldConnection = "connection-old";
     private const string NewConnection = "connection-new";
-    private static readonly TimeSpan PastTakeoverWindow = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan PastNameTakeoverWindow = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan PastTakeoverWindow = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan InsideTakeoverWindow = TimeSpan.FromSeconds(1.5);
 
     [Fact]
-    public void TakeoverWindows_AreThreeKeepalivesForASession_AndLongerForAName_BothUnderTheIdleTimeout()
+    public void TakeoverWindow_IsOneEightSecondWindow_WellPastKeepaliveGaps_AndUnderTheIdleTimeout()
     {
-        Assert.Equal(TimeSpan.FromSeconds(3), DedicatedServerHost.SameSessionTakeoverSilence);
-        Assert.Equal(TimeSpan.FromSeconds(8), DedicatedServerHost.PlayerNameTakeoverSilence);
-        Assert.True(DedicatedServerHost.SameSessionTakeoverSilence >= 3 * RemoteClientSession.KeepaliveInterval);
-        Assert.True(DedicatedServerHost.PlayerNameTakeoverSilence > DedicatedServerHost.SameSessionTakeoverSilence);
-        Assert.True(DedicatedServerHost.PlayerNameTakeoverSilence < ServerConnectionOptions.Default.IdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(8), DedicatedServerHost.TakeoverSilence);
+        Assert.True(DedicatedServerHost.TakeoverSilence >= 5 * RemoteClientSession.KeepaliveInterval);
+        Assert.True(DedicatedServerHost.TakeoverSilence < ServerConnectionOptions.Default.IdleTimeout);
         Assert.Equal(TimeSpan.FromSeconds(2), ServerRoutingContext.JoinThrottleInitialInterval);
         Assert.Equal(TimeSpan.FromSeconds(10), ServerRoutingContext.JoinThrottleMaxInterval);
         Assert.Contains("Session already in use", DedicatedServerHost.SessionInUseRejectionReason);
     }
 
     [Fact]
-    public void SameSessionId_IsTakenOverAtThreeSecondsOfSilence_NotAtTwoAndAHalf()
+    public void Hijacker_WithTheVictimsSessionIdAndName_IsRejectedAtThreeAndSevenPointNineSeconds_AndAcceptedOnlyAtEight()
+    {
+        // Reviewer S1: session ids are broadcast in snapshots, and the desktop client never rejoins
+        // under its old one, so a session-id match must wait as long as a name match.
+        ManualTimeProvider clock = new();
+        using DedicatedServerHost host = CreateHost(clock);
+        host.HandleClientMessage(OldConnection, new ClientJoinRequestMessage("client-victim", PlayerName));
+
+        clock.Advance(TimeSpan.FromSeconds(3));
+        JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("hijacker-1", new ClientJoinRequestMessage("client-victim", PlayerName))));
+        Assert.Equal(DedicatedServerHost.SessionInUseRejectionReason, rejected.Reason);
+        Assert.True(host.IsConnectionJoined(OldConnection));
+
+        clock.Advance(TimeSpan.FromSeconds(4.9));
+        rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("hijacker-2", new ClientJoinRequestMessage("client-victim", PlayerName))));
+        Assert.Equal(DedicatedServerHost.SessionInUseRejectionReason, rejected.Reason);
+        Assert.True(host.IsConnectionJoined(OldConnection));
+        Assert.False(host.TryTakeTakenOverConnection(out _));
+
+        clock.Advance(TimeSpan.FromSeconds(0.1));
+        Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+            host.HandleClientMessage("hijacker-3", new ClientJoinRequestMessage("client-victim", PlayerName))));
+        Assert.False(host.TryGetConnectionContext(OldConnection, out _));
+        Assert.True(host.TryTakeTakenOverConnection(out string closed));
+        Assert.Equal(OldConnection, closed);
+    }
+
+    [Fact]
+    public void SameSessionId_IsTakenOverAtTheTakeoverWindow_NotJustUnderIt()
     {
         ManualTimeProvider clock = new();
         using DedicatedServerHost host = CreateHost(clock);
         host.HandleClientMessage(OldConnection, new ClientJoinRequestMessage("session-a", PlayerName));
 
-        clock.Advance(TimeSpan.FromSeconds(2.5));
+        clock.Advance(DedicatedServerHost.TakeoverSilence - TimeSpan.FromSeconds(0.1));
         JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
-            host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName))));
+            host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", "Someone Else"))));
         Assert.Equal(DedicatedServerHost.SessionInUseRejectionReason, rejected.Reason);
         Assert.True(host.IsConnectionJoined(OldConnection));
 
-        clock.Advance(TimeSpan.FromSeconds(0.5));
+        clock.Advance(TimeSpan.FromSeconds(0.1));
         Assert.IsType<JoinAcceptedMessage>(Assert.Single(
-            host.HandleClientMessage("connection-third", new ClientJoinRequestMessage("session-a", PlayerName))));
+            host.HandleClientMessage("connection-third", new ClientJoinRequestMessage("session-a", "Someone Else"))));
         Assert.False(host.TryGetConnectionContext(OldConnection, out _));
         Assert.True(host.TryTakeTakenOverConnection(out string closed));
         Assert.Equal(OldConnection, closed);
@@ -76,7 +104,7 @@ public sealed class StaleSessionTakeoverTests
         Assert.True(host.IsConnectionJoined(OldConnection));
         Assert.False(host.TryTakeTakenOverConnection(out _));
 
-        // Past the session window but inside the name window: still the old player's.
+        // Just inside the window: still the old player's.
         clock.Advance(TimeSpan.FromSeconds(2.9));
         Assert.IsType<JoinRejectedMessage>(Assert.Single(
             host.HandleClientMessage("connection-third", new ClientJoinRequestMessage("client-third", PlayerName))));
@@ -196,9 +224,9 @@ public sealed class StaleSessionTakeoverTests
         Assert.True(host.IsConnectionJoined(OldConnection));
         Assert.False(host.TryTakeTakenOverConnection(out _));
 
-        // The holder's client crashes. The service keeps sweeping; three seconds later the same
+        // The holder's client crashes. The service keeps sweeping; eight seconds later the same
         // client reconnects on a fresh connection and takes its session back.
-        for (int i = 0; i < 30; i++)
+        for (int i = 0; i < 80; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
             host.ObserveInboundFrames(OldConnection, frames);
@@ -218,11 +246,11 @@ public sealed class StaleSessionTakeoverTests
         using DedicatedServerHost host = CreateHost(clock);
         host.HandleClientMessage(OldConnection, new ClientJoinRequestMessage("session-a", PlayerName));
 
-        clock.Advance(TimeSpan.FromSeconds(1));
+        clock.Advance(TimeSpan.FromSeconds(6));
         Assert.IsType<JoinRejectedMessage>(Assert.Single(
             host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName))));
         clock.Advance(TimeSpan.FromSeconds(1.9));
-        // The holder has been silent for 2.9 s; the throttle drops the attempt unanswered anyway.
+        // The holder has been silent for 7.9 s; the throttle drops the attempt unanswered anyway.
         Assert.Empty(host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName)));
         Assert.Equal(1, host.ThrottledJoinAttempts);
 
@@ -230,8 +258,8 @@ public sealed class StaleSessionTakeoverTests
         Assert.IsType<JoinAcceptedMessage>(Assert.Single(
             host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName))));
         Assert.True(host.IsConnectionJoined(NewConnection));
-        Assert.True(host.TryGetConnectionContext(NewConnection, out ServerRoutingContext? context));
-        Assert.False(context!.IsJoinThrottled(clock.GetTimestamp()));
+        Assert.False(host.IsJoinThrottled(NewConnection, "session-a", PlayerName));
+        Assert.Equal(0, host.JoinThrottleEntryCount);
     }
 
     [Fact]
@@ -316,7 +344,7 @@ public sealed class StaleSessionTakeoverTests
         Assert.True(host.IsConnectionJoined(OldConnection));
 
         // A holder that really went silent is still taken over once sweeps show it.
-        for (int i = 0; i < 30; i++)
+        for (int i = 0; i < 80; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
             host.ObserveInboundFrames(OldConnection, frames);
@@ -329,7 +357,7 @@ public sealed class StaleSessionTakeoverTests
     }
 
     [Fact]
-    public void CrashRejoin_SameSessionId_AfterTwoSecondsOfSilence_TakesOverTheSeatAndProfile()
+    public void CrashRejoin_SameSessionId_AfterTheTakeoverWindow_TakesOverTheSeatAndProfile()
     {
         using PersistenceTestDatabase database = new();
         ManualTimeProvider clock = new();
@@ -339,7 +367,7 @@ public sealed class StaleSessionTakeoverTests
         Assert.Equal("session-a", runtime.PrimaryRemoteSessionId?.Value);
         runtime.Player.Combatant.ApplyProgression(4, 25);
 
-        // The client crashed 3 s ago and comes back, well inside the 10 s idle timeout.
+        // The client crashed 8 s ago and comes back, inside the 10 s idle timeout.
         clock.Advance(PastTakeoverWindow);
         PendingConnectionReply reply = Assert.Single(JoinAndTick(host, NewConnection, "session-a", PlayerName));
 
@@ -371,7 +399,7 @@ public sealed class StaleSessionTakeoverTests
         JoinAndTick(host, OldConnection, "client-old", PlayerName);
         runtime.Player.Combatant.ApplyProgression(5, 30);
 
-        clock.Advance(PastNameTakeoverWindow);
+        clock.Advance(PastTakeoverWindow);
         PendingConnectionReply reply = Assert.Single(JoinAndTick(host, NewConnection, "client-new", PlayerName));
 
         Assert.IsType<JoinAcceptedMessage>(reply.Message);
@@ -413,9 +441,9 @@ public sealed class StaleSessionTakeoverTests
         host.HandleClientMessage(OldConnection, new ClientJoinRequestMessage("session-a", PlayerName));
         host.ObserveInboundFrames(OldConnection, 1);
 
-        clock.Advance(TimeSpan.FromSeconds(2.9));
+        clock.Advance(TimeSpan.FromSeconds(7.9));
         host.ObserveInboundFrames(OldConnection, 2);
-        clock.Advance(TimeSpan.FromSeconds(2.9));
+        clock.Advance(TimeSpan.FromSeconds(7.9));
         host.ObserveInboundFrames(OldConnection, 2);
         Assert.IsType<JoinRejectedMessage>(Assert.Single(
             host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName))));
@@ -589,6 +617,236 @@ public sealed class StaleSessionTakeoverTests
             await service.DisposeAsync();
             host.Dispose();
         }
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1:5000", "127.0.0.1")]
+    [InlineData("10.1.2.3:65535", "10.1.2.3")]
+    [InlineData("[::1]:5000", "::1")]
+    [InlineData("[::ffff:10.0.0.7]:5000", "10.0.0.7")]
+    [InlineData("connection-a", "connection-a")]
+    [InlineData("127.0.0.1", "127.0.0.1")]
+    [InlineData("1", "1")]
+    public void JoinThrottleSource_IsTheRemoteAddressOfAnIpEndpointId_ElseTheConnectionId(string connectionId, string source)
+    {
+        Assert.Equal(source, JoinThrottleTable.ResolveSource(connectionId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReconnectSpam_FromOneAddress_IsThrottledAcrossConnections_AndNeverQueuesTheJoin(bool deferJoins)
+    {
+        // Reviewer S4: each spam attempt comes on a fresh connection (a new source port). The
+        // throttle follows the address, so a reconnect does not reset it, and a throttled join is
+        // answered once without being claimed or queued (no persisted-player prefetch).
+        ManualTimeProvider clock = new();
+        using DedicatedServerHost host = CreateHost(clock, deferJoins);
+        Assert.IsType<JoinAcceptedMessage>(Assert.Single(Join(host, "10.0.0.1:4000", "client-victim", PlayerName, deferJoins)));
+        long frames = 1;
+        host.ObserveInboundFrames("10.0.0.1:4000", frames);
+
+        int processed = 0;
+        int throttled = 0;
+        int attempts = 0;
+        for (int i = 0; i <= 300; i++)
+        {
+            if (i > 0)
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(100));
+            }
+
+            if (i % 10 == 0)
+            {
+                frames++;
+            }
+
+            host.ObserveInboundFrames("10.0.0.1:4000", frames);
+            string spammer = $"10.0.0.2:{20000 + i}";
+            attempts++;
+            IReadOnlyList<IServerToClientMessage> immediate =
+                host.HandleClientMessage(spammer, new ClientJoinRequestMessage($"client-spam-{i}", PlayerName));
+            if (immediate.Count > 0)
+            {
+                JoinRejectedMessage refusal = Assert.IsType<JoinRejectedMessage>(Assert.Single(immediate));
+                if (refusal.Reason.StartsWith(DedicatedServerHost.JoinThrottledRejectionReason, StringComparison.Ordinal))
+                {
+                    throttled++;
+                    if (deferJoins)
+                    {
+                        Assert.Empty(TickAndDrain(host));
+                    }
+
+                    host.ReleaseConnection(spammer);
+                    continue;
+                }
+
+                Assert.False(deferJoins);
+                processed++;
+            }
+            else
+            {
+                Assert.True(deferJoins);
+                PendingConnectionReply reply = Assert.Single(TickAndDrain(host));
+                Assert.Equal(spammer, reply.ConnectionId);
+                JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(reply.Message);
+                Assert.False(rejected.Reason.StartsWith(DedicatedServerHost.JoinThrottledRejectionReason, StringComparison.Ordinal));
+                processed++;
+            }
+
+            host.ReleaseConnection(spammer);
+        }
+
+        // Processed at 0, 2, 6, 14 and 24 s (intervals 2, 4, 8, 10, 10 s); every other fresh
+        // connection got one throttle refusal.
+        Assert.Equal(5, processed);
+        Assert.Equal(attempts - 5, throttled);
+        Assert.Equal(attempts - 5, host.ThrottledJoinAttempts);
+        Assert.True(host.IsConnectionJoined("10.0.0.1:4000"));
+        Assert.False(host.TryTakeTakenOverConnection(out _));
+        Assert.True(host.IsJoinThrottled("10.0.0.2:30000", "client-other", PlayerName));
+
+        // The spam does not lock the victim out of its own name from its own address: it crashes
+        // and rejoins on a new connection once the takeover window has passed.
+        for (int i = 0; i < 80; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            host.ObserveInboundFrames("10.0.0.1:4000", frames);
+        }
+
+        Assert.IsType<JoinAcceptedMessage>(Assert.Single(Join(host, "10.0.0.1:4001", "client-victim-2", PlayerName, deferJoins)));
+        Assert.True(host.TryTakeTakenOverConnection(out string closed));
+        Assert.Equal("10.0.0.1:4000", closed);
+    }
+
+    [Fact]
+    public void ReconnectSpam_WithTheVictimsSessionId_FromOneAddress_IsThrottledAcrossConnections()
+    {
+        ManualTimeProvider clock = new();
+        using DedicatedServerHost host = CreateHost(clock);
+        host.HandleClientMessage("10.0.0.1:4000", new ClientJoinRequestMessage("client-victim", PlayerName));
+
+        JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.2:20000", new ClientJoinRequestMessage("client-victim", "Spammer"))));
+        Assert.Equal(DedicatedServerHost.SessionInUseRejectionReason, rejected.Reason);
+        host.ReleaseConnection("10.0.0.2:20000");
+
+        // Another name does not dodge it: the session id is what is contested.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.2:20001", new ClientJoinRequestMessage("client-victim", "Spammer 2"))));
+        Assert.StartsWith(DedicatedServerHost.JoinThrottledRejectionReason, rejected.Reason);
+        Assert.Equal(1, host.ThrottledJoinAttempts);
+        // A further join on the connection that was already answered is dropped unanswered.
+        Assert.Empty(host.HandleClientMessage("10.0.0.2:20001", new ClientJoinRequestMessage("client-victim", "Spammer 2")));
+        Assert.Equal(2, host.ThrottledJoinAttempts);
+
+        // Another address is not throttled by it.
+        clock.Advance(TimeSpan.FromSeconds(0.5));
+        rejected = Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.3:20000", new ClientJoinRequestMessage("client-victim", "Spammer"))));
+        Assert.Equal(DedicatedServerHost.SessionInUseRejectionReason, rejected.Reason);
+        Assert.Equal(2, host.ThrottledJoinAttempts);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ManyClientsFromOneAddress_WithDifferentNames_AreNeverThrottled(bool deferJoins)
+    {
+        // A loopback test server, or players behind one NAT: one address, many clients.
+        ManualTimeProvider clock = new();
+        using DedicatedServerHost host = CreateHost(clock, deferJoins);
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+                Join(host, $"127.0.0.1:{50000 + i}", $"client-{i}", $"Player {i}", deferJoins)));
+        }
+
+        // One of them restarts and rejoins while its old connection is still live: rejected, and
+        // that name is throttled for the address.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.IsType<JoinRejectedMessage>(Assert.Single(Join(host, "127.0.0.1:50100", "client-0b", "Player 0", deferJoins)));
+        host.ReleaseConnection("127.0.0.1:50100");
+        Assert.True(host.IsJoinThrottled("127.0.0.1:50101", "client-0c", "Player 0"));
+
+        // Other names from the same address still join at once.
+        for (int i = 6; i < 12; i++)
+        {
+            Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+                Join(host, $"127.0.0.1:{50000 + i}", $"client-{i}", $"Player {i}", deferJoins)));
+        }
+
+        Assert.Equal(0, host.ThrottledJoinAttempts);
+        Assert.Equal(12, host.ConnectionCount);
+    }
+
+    [Fact]
+    public void JoinThrottleState_Expires_AMaxIntervalAfterItsIntervalEnds()
+    {
+        ManualTimeProvider clock = new();
+        using DedicatedServerHost host = CreateHost(clock);
+        host.HandleClientMessage("10.0.0.1:4000", new ClientJoinRequestMessage("client-victim", PlayerName));
+        long frames = 1;
+
+        Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.2:20000", new ClientJoinRequestMessage("client-spam", PlayerName))));
+        Assert.Equal(1, host.JoinThrottleEntryCount);
+
+        // Past the 2 s interval the entry is still remembered: the next rejection doubles it.
+        AdvanceKeepingAlive(TimeSpan.FromSeconds(2));
+        Assert.False(host.IsJoinThrottled("10.0.0.2:20001", "client-spam", PlayerName));
+        Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.2:20001", new ClientJoinRequestMessage("client-spam", PlayerName))));
+        AdvanceKeepingAlive(TimeSpan.FromSeconds(3.9));
+        Assert.True(host.IsJoinThrottled("10.0.0.2:20002", "client-spam", PlayerName));
+        AdvanceKeepingAlive(TimeSpan.FromSeconds(0.1));
+        Assert.False(host.IsJoinThrottled("10.0.0.2:20002", "client-spam", PlayerName));
+        Assert.Equal(1, host.JoinThrottleEntryCount);
+
+        // A full max interval after the 4 s interval ended, the entry is forgotten, and the next
+        // rejection starts over at the initial interval.
+        AdvanceKeepingAlive(ServerRoutingContext.JoinThrottleMaxInterval);
+        Assert.False(host.IsJoinThrottled("10.0.0.2:20003", "client-spam", PlayerName));
+        Assert.Equal(0, host.JoinThrottleEntryCount);
+        Assert.IsType<JoinRejectedMessage>(Assert.Single(
+            host.HandleClientMessage("10.0.0.2:20003", new ClientJoinRequestMessage("client-spam", PlayerName))));
+        AdvanceKeepingAlive(ServerRoutingContext.JoinThrottleInitialInterval - TimeSpan.FromSeconds(0.1));
+        Assert.True(host.IsJoinThrottled("10.0.0.2:20004", "client-spam", PlayerName));
+        AdvanceKeepingAlive(TimeSpan.FromSeconds(0.1));
+        Assert.False(host.IsJoinThrottled("10.0.0.2:20004", "client-spam", PlayerName));
+        Assert.True(host.IsConnectionJoined("10.0.0.1:4000"));
+
+        void AdvanceKeepingAlive(TimeSpan duration)
+        {
+            clock.Advance(duration);
+            host.ObserveInboundFrames("10.0.0.1:4000", ++frames);
+        }
+    }
+
+    [Fact]
+    public void JoinThrottleTable_StaysBounded_AndPrunesExpiredEntries()
+    {
+        JoinThrottleTable table = new();
+        long frequency = TimeSpan.TicksPerSecond;
+        long now = 1;
+        for (int i = 0; i < JoinThrottleTable.MaxEntries * 3; i++)
+        {
+            table.Throttle(JoinThrottleTable.PlayerNameKey($"10.0.{i / 256}.{i % 256}", "Victim"), now, frequency, out _);
+            now += TimeSpan.TicksPerMillisecond;
+            Assert.True(table.Count <= JoinThrottleTable.MaxEntries);
+        }
+
+        Assert.Equal(JoinThrottleTable.MaxEntries, table.Count);
+        // The newest entry survived the evictions.
+        JoinThrottleTable.Key newest = JoinThrottleTable.PlayerNameKey(
+            $"10.0.{(JoinThrottleTable.MaxEntries * 3 - 1) / 256}.{(JoinThrottleTable.MaxEntries * 3 - 1) % 256}", "VICTIM");
+        Assert.True(table.IsThrottled(newest, now, frequency));
+
+        // Once every entry has expired, one new entry prunes them all.
+        now += (long)((ServerRoutingContext.JoinThrottleInitialInterval + ServerRoutingContext.JoinThrottleMaxInterval).TotalSeconds * frequency);
+        table.Throttle(JoinThrottleTable.SessionKey("10.9.9.9", "client-x"), now, frequency, out _);
+        Assert.Equal(1, table.Count);
     }
 
     private static async Task AdvanceUntilAsync(DedicatedServerService service, Func<bool> condition)
