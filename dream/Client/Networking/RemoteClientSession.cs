@@ -156,7 +156,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // Join requests re-sent after a retryable rejection.
     public int JoinRetryCount => Volatile.Read(ref _joinRetryCount);
 
-    // Complete inbound frames read so far, empty ones included (tests).
+    // Complete inbound frames processed so far, empty ones included (tests). A frame counts once it
+    // was decoded, accepted (or held by a world transfer) and the transfer bounds were checked, so
+    // a test that waits for the count can move a manual clock without racing the frame's handling.
+    // A frame whose handling ended the session is not counted.
     internal long InboundFrameCount => Interlocked.Read(ref _inboundFrameCount);
 
     // Chunked world transfers (joins and resyncs) completed and delivered.
@@ -209,7 +212,10 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         try
         {
-            await _serverHello.Task.WaitAsync(timeout, cancellationToken);
+            // On the session's clock, as the join supervisor's JoinTimeout is: with a manual clock
+            // the hello timeout must not run on the wall clock while the join timeout runs on the
+            // manual one (wave 11: an advancing manual clock passed JoinTimeout first).
+            await _serverHello.Task.WaitAsync(timeout, _timeProvider, cancellationToken);
         }
         catch (TimeoutException)
         {
@@ -529,12 +535,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
         {
-            Interlocked.Increment(ref _inboundFrameCount);
             if (payload.IsEmpty)
             {
                 // A transfer whose final chunk never comes would otherwise hold every later message
                 // forever while the frames keep the silence watchdog satisfied.
                 _worldTransfers.CheckDeadline();
+                // Counted once processed (InboundFrameCount).
+                Interlocked.Increment(ref _inboundFrameCount);
                 continue;
             }
 
@@ -605,6 +612,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
             // transfer whose final chunk never comes would otherwise hold every later message
             // forever while the snapshots keep the silence watchdog satisfied.
             _worldTransfers.CheckDeadline();
+            // Counted once processed (InboundFrameCount): a test waiting for it may then move its
+            // clock without racing this frame's Accept or deadline check.
+            Interlocked.Increment(ref _inboundFrameCount);
         }
     }
 

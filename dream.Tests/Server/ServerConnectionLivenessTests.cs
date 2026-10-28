@@ -45,6 +45,10 @@ public class ServerConnectionLivenessTests
         host.HandleClientMessage("idle", new ClientJoinRequestMessage("session-a", "a"));
         Assert.True(host.IsConnectionJoined("idle"));
 
+        // Each clock jump waits for the sends already queued (the join reply, a snapshot) to
+        // finish first: a real write still in flight across a 9 s jump reads as a send stall,
+        // which is not what this test is about (it closed the connection as SendStall).
+        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
         clock.Advance(TimeSpan.FromSeconds(9));
         await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
         Assert.Equal(1, service.ConnectionCount);
@@ -52,11 +56,13 @@ public class ServerConnectionLivenessTests
         // An empty frame is a complete inbound frame: it restarts the idle timer.
         transport.Feed(new LengthPrefixedMessageFramer().Frame(ReadOnlySpan<byte>.Empty));
         Assert.True(await connection.ProcessIncomingAsync());
+        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
         clock.Advance(TimeSpan.FromSeconds(9));
         await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
         Assert.Equal(1, service.ConnectionCount);
         Assert.False(connection.IsFaulted);
 
+        Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
         clock.Advance(TimeSpan.FromSeconds(1.5));
         await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
 

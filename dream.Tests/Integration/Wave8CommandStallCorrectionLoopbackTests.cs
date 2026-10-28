@@ -134,7 +134,9 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         Assert.True(report.ClientEndHeight > 1f, report.Describe("the client fell off the world"));
     }
 
-    private enum Scenario
+    // Internal (not private) so Wave8SnapshotRateCorrectionLoopbackTests below can run the same
+    // harness; Wave9NetworkMeasurementTests still finds them by reflection as non-public members.
+    internal enum Scenario
     {
         SendStall,
         FrameStall,
@@ -143,39 +145,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
         Steady200Ms
     }
 
-    // NETR-7: the default snapshot interval is 2 ticks (32 Hz), so the reconciler gets an ack every
-    // other tick instead of every tick. Steady play over the 200 ms delay corrects no worse at
-    // 32 Hz than at 64 Hz.
-    [Fact]
-    public async Task SteadyPlay_At32HzSnapshots_CorrectsLikeAt64Hz()
-    {
-        StallReport perTick = await RunAsync(Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 1);
-        StallReport everyOther = await RunAsync(Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 2);
-        output.WriteLine(perTick.Describe("64 Hz snapshots"));
-        output.WriteLine(everyOther.Describe("32 Hz snapshots"));
-
-        foreach (StallReport report in new[] { perTick, everyOther })
-        {
-            Assert.Equal(0L, report.SendStallIdleTicks);
-            Assert.Equal(0, report.SnapsAfter);
-            Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("steady"));
-            // W9-5: the comparison is only of walking if the walk stayed on the floor.
-            Assert.True(report.ClientEndHeight > 1f, report.Describe("the client fell off the world"));
-        }
-
-        // Similar, not identical: each 32 Hz ack folds two ticks of drift into one correction, so
-        // the mean per ack roughly doubles while the total over the run stays about the same
-        // (measured alone: mean 0.0025 m x 267 acks at 64 Hz, 0.0042 m x 134 acks at 32 Hz). The
-        // largest single correction is the join settle in both (0.56-0.66 m at ack 40). A loaded
-        // Debug run adds client-side dropped ticks, hence the absolute allowance.
-        float perTickTotal = perTick.MeanCorrectionAfter * perTick.CorrectionSamples;
-        float everyOtherTotal = everyOther.MeanCorrectionAfter * everyOther.CorrectionSamples;
-        Assert.True(
-            everyOtherTotal <= (perTickTotal * 2f) + 1f,
-            $"total correction {everyOtherTotal:F3} m at 32 Hz vs {perTickTotal:F3} m at 64 Hz");
-    }
-
-    private async Task<StallReport> RunAsync(Scenario scenario, string sessionId, int? snapshotIntervalTicks = null)
+    internal async Task<StallReport> RunAsync(Scenario scenario, string sessionId, int? snapshotIntervalTicks = null)
     {
         DedicatedServerHost? host = null;
         await using IntegratedLocalServerHandle server = await IntegratedLocalServerHandle.StartAsync(
@@ -341,7 +311,7 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
             PrimaryUsePressed: false);
     }
 
-    private sealed record StallReport(
+    internal sealed record StallReport(
         float MaxCorrectionAfter,
         float MaxSmoothAfter,
         int SnapsAfter,
@@ -698,5 +668,51 @@ public class Wave8CommandStallCorrectionLoopbackTests(ITestOutputHelper output)
 
             await inner.DisposeAsync();
         }
+    }
+}
+
+// Wave 11 fix loop 1: the 32 Hz vs 64 Hz comparison runs a real-time integrated server twice and
+// asserts that steady play never idles the client. In the parallel pool a starved server tick
+// legitimately trips the ack-lag heuristic (SendStallIdleTicks > 0) and inflates the total
+// correction, so this one test runs alone (TimingSensitive). It is its own class because a named
+// collection cannot hold a SplitClasses class, and serialising all of
+// Wave8CommandStallCorrectionLoopbackTests would add its ~77 s of real-time scenarios to the
+// serial phase; this test is ~19 s.
+[Collection(TimingSensitiveCollection.Name)]
+public class Wave8SnapshotRateCorrectionLoopbackTests(ITestOutputHelper output)
+{
+    // NETR-7: the default snapshot interval is 2 ticks (32 Hz), so the reconciler gets an ack every
+    // other tick instead of every tick. Steady play over the 200 ms delay corrects no worse at
+    // 32 Hz than at 64 Hz.
+    [Fact]
+    public async Task SteadyPlay_At32HzSnapshots_CorrectsLikeAt64Hz()
+    {
+        Wave8CommandStallCorrectionLoopbackTests harness = new(output);
+        Wave8CommandStallCorrectionLoopbackTests.StallReport perTick =
+            await harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 1);
+        Wave8CommandStallCorrectionLoopbackTests.StallReport everyOther =
+            await harness.RunAsync(Wave8CommandStallCorrectionLoopbackTests.Scenario.Steady200Ms, "w8-rate", snapshotIntervalTicks: 2);
+        output.WriteLine(perTick.Describe("64 Hz snapshots"));
+        output.WriteLine(everyOther.Describe("32 Hz snapshots"));
+
+        foreach (Wave8CommandStallCorrectionLoopbackTests.StallReport report in new[] { perTick, everyOther })
+        {
+            Assert.Equal(0L, report.SendStallIdleTicks);
+            Assert.Equal(0, report.SnapsAfter);
+            Assert.True(report.MaxCorrectionAfter < ClientPredictionReconciler.DefaultSnapDistance, report.Describe("steady"));
+            // W9-5: the comparison is only of walking if the walk stayed on the floor.
+            Assert.True(report.ClientEndHeight > 1f, report.Describe("the client fell off the world"));
+        }
+
+        // Similar, not identical: each 32 Hz ack folds two ticks of drift into one correction, so
+        // the mean per ack roughly doubles while the total over the run stays about the same
+        // (measured alone: mean 0.0025 m x 267 acks at 64 Hz, 0.0042 m x 134 acks at 32 Hz). The
+        // largest single correction is the join settle in both (0.56-0.66 m at ack 40). A loaded
+        // Debug run adds client-side dropped ticks, hence the absolute allowance.
+        float perTickTotal = perTick.MeanCorrectionAfter * perTick.CorrectionSamples;
+        float everyOtherTotal = everyOther.MeanCorrectionAfter * everyOther.CorrectionSamples;
+        Assert.True(
+            everyOtherTotal <= (perTickTotal * 2f) + 1f,
+            $"total correction {everyOtherTotal:F3} m at 32 Hz vs {perTickTotal:F3} m at 64 Hz");
     }
 }

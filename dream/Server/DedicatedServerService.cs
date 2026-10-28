@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Net.Sockets;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
@@ -728,6 +729,14 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             // A rejoin took over this connection's session and the service closed its transport.
         }
+        catch (Exception ex) when (IsPeerReset(ex))
+        {
+            // The client closed its socket with bytes still unread (Windows then sends an RST
+            // instead of a FIN): a normal disconnect, not a connection error.
+            NetworkDiagnosticsLog.Write(
+                "server.connection.reset",
+                $"connection={connection.ConnectionId} reason={ex.GetType().Name}: {ex.Message}");
+        }
         catch (Exception ex)
         {
             ReportConnectionError(connection, "error", $"{ex.GetType().Name}: {ex.Message}", ex);
@@ -761,6 +770,15 @@ public sealed class DedicatedServerService : IAsyncDisposable
             // host's set of taken-over ids only shrank when a new socket reused the same id.
             _host.ForgetTakenOverConnection(connection.ConnectionId);
         }
+    }
+
+    // True for a receive that failed because the peer reset or aborted the connection: a
+    // SocketException with ConnectionReset or ConnectionAborted, as such or as the inner exception
+    // of the IOException NetworkStream wraps it in.
+    internal static bool IsPeerReset(Exception exception)
+    {
+        SocketException? socketError = exception as SocketException ?? (exception as IOException)?.InnerException as SocketException;
+        return socketError is { SocketErrorCode: SocketError.ConnectionReset or SocketError.ConnectionAborted };
     }
 
     // A version mismatch is answered with one JoinRejectedMessage in the current envelope before

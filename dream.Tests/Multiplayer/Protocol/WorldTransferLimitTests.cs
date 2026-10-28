@@ -279,10 +279,9 @@ public sealed class WorldTransferLimitTests(ITestOutputHelper output)
         clock.Advance(TimeSpan.FromSeconds(25));
         transport.Feed(Frame(Chunk(11, 1, final: false, Cubes(8, 8, 8, 2)), sequence++));
         transport.Feed(Frame(Snapshot(1), sequence++));
+        // The frame count goes up once a frame was processed (accepted and its bounds checked), so
+        // the last one has finished before the clock passes the deadline.
         await WaitUntilAsync(() => session.InboundFrameCount == 4);
-        // The frame count goes up just before a frame is processed; let the last one finish
-        // before the clock passes the deadline (were it checked late, it would see at most 50 s).
-        await Task.Delay(100);
         Assert.True(session.IsReceivingWorld);
         clock.Advance(TimeSpan.FromSeconds(25));
 

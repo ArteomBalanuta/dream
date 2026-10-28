@@ -175,15 +175,29 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
         const int Queued = 20;
 
         Stopwatch elapsed;
+        // Set by the first write just before it opens its transaction on the locked database. With
+        // only a 200 ms deadline, a worker that had not started yet when Dispose ran was cancelled
+        // before it touched the database, so it never saw the lock (a flake in the parallel pool).
+        using ManualResetEventSlim firstWriteStarted = new();
         using (SqliteConnection holder = database.Schema.CreateOpenConnection())
         using (SqliteTransaction writeLock = holder.BeginTransaction(deferred: false))
         {
             for (int i = 0; i < Queued; i++)
             {
                 PersistedPlayerProfile profile = PersistenceGroupCommitTests.Profile($"short-drop-{i}", experience: i);
-                writes.Enqueue(() => profiles.Save(profile));
+                bool first = i == 0;
+                writes.Enqueue(() =>
+                {
+                    if (first)
+                    {
+                        firstWriteStarted.Set();
+                    }
+
+                    profiles.Save(profile);
+                });
             }
 
+            Assert.True(firstWriteStarted.Wait(TimeSpan.FromSeconds(30)), "The write queue's worker never started its first write.");
             elapsed = Stopwatch.StartNew();
             writes.Dispose();
             elapsed.Stop();
