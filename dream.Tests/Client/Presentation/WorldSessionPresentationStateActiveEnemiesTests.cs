@@ -87,6 +87,8 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // Where iterator over the enemy registry came on top of the 744 B measured afterwards.
         // GFX-4 added four pre-draw doubles to the FramePerformanceSnapshot carried inside each
         // presentation state, so the same single state allocation is now 32 B larger (776 B).
+        // Wave-5 fix A reuses a scratch first-person camera in ClientWorldSession, removing one
+        // Camera allocation per capture (776 B -> 696 B).
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -94,7 +96,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            776,
+            696,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 
