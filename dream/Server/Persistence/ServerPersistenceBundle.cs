@@ -10,9 +10,12 @@ public sealed class ServerPersistenceBundle : IDisposable
         IWorldPersistenceRepository world,
         ICombatFormulaRepository combatFormulas,
         Dream.Simulation.Rules.CombatFormulaService formulaService,
-        ulong? simulationSeed = null)
+        ulong? simulationSeed = null,
+        long worldTimeTicks = 0)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
         SimulationSeed = simulationSeed;
+        WorldTimeTicks = worldTimeTicks;
         Schema = schema;
         PlayerProfiles = playerProfiles;
         World = world;
@@ -34,6 +37,10 @@ public sealed class ServerPersistenceBundle : IDisposable
     // DREAM_SIMULATION_SEED override). Null means the host falls back to
     // WorldSessionRuntime.DefaultSimulationSeed. Server-only; it is never sent to clients.
     public ulong? SimulationSeed { get; }
+
+    // The world clock stored in world_metadata by the last committed checkpoint; 0 for a new world.
+    // ServerBootstrap.CreateRuntimeHost resumes the runtime's WorldClock from it.
+    public long WorldTimeTicks { get; }
 
     public void Dispose()
     {

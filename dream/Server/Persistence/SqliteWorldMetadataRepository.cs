@@ -9,10 +9,13 @@ namespace Dream.Server.Persistence;
 public readonly record struct WorldSimulationSeed(ulong Seed, bool Created);
 
 // Key/value metadata about the persisted world, stored in the world_metadata table that
-// SqliteSchemaBootstrapper.EnsureSchema creates. Today it holds only the simulation seed.
+// SqliteSchemaBootstrapper.EnsureSchema creates: the simulation seed and the world clock.
 public sealed class SqliteWorldMetadataRepository
 {
     public const string SimulationSeedKey = "simulation_seed";
+
+    // WorldClock.WorldTicks as a decimal integer; written by SqlitePersistenceCheckpointWriter.
+    public const string WorldTimeTicksKey = "world_time_ticks";
 
     private readonly SqliteSchemaBootstrapper _schema;
 
@@ -84,6 +87,38 @@ public sealed class SqliteWorldMetadataRepository
     public static string FormatSeed(ulong seed)
     {
         return seed.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static string FormatWorldTimeTicks(long ticks)
+    {
+        return ticks.ToString(CultureInfo.InvariantCulture);
+    }
+
+    // False for a world that has never written a checkpoint (it starts at WorldTicks 0).
+    public bool TryGetWorldTimeTicks(out long ticks)
+    {
+        using SqliteConnectionLease lease = _schema.OpenConnection();
+        SqliteConnection connection = lease.Connection;
+        using SqliteCommand select = connection.CreateCommand();
+        select.CommandText = "SELECT value FROM world_metadata WHERE key = $key;";
+        select.Parameters.AddWithValue("$key", WorldTimeTicksKey);
+        object? value = select.ExecuteScalar();
+        if (value is null or DBNull)
+        {
+            ticks = 0;
+            return false;
+        }
+
+        string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out ticks))
+        {
+            // Unlike the seed, a lost time of day only moves the sun; fail loudly anyway so a
+            // corrupted row is noticed rather than silently reset on the next checkpoint.
+            throw new InvalidDataException(
+                $"world_metadata.{WorldTimeTicksKey} holds '{text}', which is not a non-negative 64-bit integer.");
+        }
+
+        return true;
     }
 
     private static bool TryReadSimulationSeed(SqliteConnection connection, out ulong seed)

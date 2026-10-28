@@ -28,8 +28,28 @@ public sealed class SqlitePersistenceCheckpointWriter : IPersistenceCheckpointWr
         WriteEnemies(connection, transaction, checkpoint.Enemies, updatedUtc);
         WritePlacedCubes(connection, transaction, checkpoint.PlacedCubes, updatedUtc);
         WriteFracturePieces(connection, transaction, checkpoint.FracturePieces, updatedUtc);
+        WriteWorldTime(connection, transaction, checkpoint.WorldTimeTicks);
 
         transaction.Commit();
+    }
+
+    // The world clock rides in the same transaction as the rows it was captured with, so a
+    // restored world never pairs one checkpoint's rows with another's time. Upsert is safe:
+    // only the checkpoint writes this key.
+    private static void WriteWorldTime(SqliteConnection connection, SqliteTransaction transaction, long? worldTimeTicks)
+    {
+        if (worldTimeTicks is not { } ticks)
+        {
+            return;
+        }
+
+        using SqliteCommand command = CreateCommand(connection, transaction, """
+            INSERT INTO world_metadata (key, value) VALUES ($key, $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+            """);
+        command.Parameters.AddWithValue("$key", SqliteWorldMetadataRepository.WorldTimeTicksKey);
+        command.Parameters.AddWithValue("$value", SqliteWorldMetadataRepository.FormatWorldTimeTicks(ticks));
+        command.ExecuteNonQuery();
     }
 
     private static void WritePlayerVitals(

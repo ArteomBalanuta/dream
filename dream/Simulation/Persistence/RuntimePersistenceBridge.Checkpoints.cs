@@ -42,7 +42,9 @@ internal sealed partial class RuntimePersistenceBridge
 
     // Copies the volatile authoritative state without touching the database, so it is cheap
     // enough to run on the tick thread. Null without persistence, or when an incremental capture
-    // finds nothing to write (an idle world then allocates nothing).
+    // finds nothing to write (an idle world then allocates nothing). Every non-null capture also
+    // carries the world clock (WorldTimeTicks); the full sweep about once a minute and the
+    // shutdown checkpoint bound what a crash loses of world time.
     public PersistenceCheckpoint? CapturePersistenceCheckpoint(bool full)
     {
         if (_worldPersistence == null)
@@ -198,6 +200,7 @@ internal sealed partial class RuntimePersistenceBridge
 
         PersistenceCheckpoint checkpoint = new(worldStates, vitals, ToArray(enemies), ToArray(cubes), ToArray(pieces))
         {
+            WorldTimeTicks = _host.WorldTicks,
             ImmediateWritesCommitted = CreateImmediateWritesBarrier()
         };
         ClearCheckpointScratch();
@@ -308,6 +311,7 @@ internal sealed partial class RuntimePersistenceBridge
             RemovedCubeIds = removedCubes.Count == 0 ? [] : removedCubes.ToArray(),
             RemovedEnemyIds = ToArray(removedEnemies),
             RemovedFractureSourceCubeIds = ToArray(removedGroups),
+            WorldTimeTicks = _host.WorldTicks,
             ImmediateWritesCommitted = CreateImmediateWritesBarrier()
         };
         ClearCheckpointScratch();

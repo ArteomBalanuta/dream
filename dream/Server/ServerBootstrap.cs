@@ -7,6 +7,7 @@ using Dream.Server.Persistence;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Server;
 
@@ -18,6 +19,12 @@ public static class ServerBootstrap
     // Overrides the persisted world's simulation seed for one run (to reproduce a world's rolls)
     // without writing it back. Decimal or 0x-prefixed hexadecimal unsigned 64-bit integer.
     public const string SimulationSeedEnvironmentVariable = "DREAM_SIMULATION_SEED";
+
+    // Real-time minutes per in-game day (the world clock's TicksPerDay). Not persisted: changing it
+    // between runs keeps WorldTicks, so the time of day jumps once on restart.
+    public const string DayLengthEnvironmentVariable = "DREAM_DAY_LENGTH_MINUTES";
+    public const double MinDayLengthMinutes = 1d;
+    public const double MaxDayLengthMinutes = 1440d;
 
     public static DedicatedServerHost CreateDefaultHost()
     {
@@ -40,10 +47,18 @@ public static class ServerBootstrap
     // The authoritative runtime host over the server's SQLite persistence. The bundle's repositories
     // and formulas become the Simulation-owned RuntimePersistencePorts, with a SQLite checkpoint
     // writer and a background write queue; the host owns the bundle and disposes it. A null bundle
-    // gives a host that persists nothing.
+    // gives a host that persists nothing. The world clock resumes from the bundle's stored world
+    // time (0 for a new world or no bundle) before the first tick.
     public static RuntimeAuthoritativeSessionHost CreateRuntimeHost(ServerPersistenceBundle? persistence)
     {
-        return RuntimeAuthoritativeSessionHost.CreateDefault(CreateRuntimePersistencePorts(persistence));
+        RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault(CreateRuntimePersistencePorts(persistence));
+        double dayLengthMinutes = ResolveDayLengthMinutes(
+            Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
+            static line => Console.Error.WriteLine(line));
+        host.Runtime.ConfigureWorldClock(
+            WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes),
+            persistence?.WorldTimeTicks ?? 0);
+        return host;
     }
 
     public static RuntimePersistencePorts? CreateRuntimePersistencePorts(ServerPersistenceBundle? persistence)
@@ -126,11 +141,14 @@ public static class ServerBootstrap
     {
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
         schema.EnsureSchema();
-        WorldSimulationSeed stored = new SqliteWorldMetadataRepository(schema).GetOrCreateSimulationSeed();
+        SqliteWorldMetadataRepository metadata = new(schema);
+        WorldSimulationSeed stored = metadata.GetOrCreateSimulationSeed();
         if (stored.Created)
         {
             log?.Invoke("World simulation seed generated and stored in world_metadata.");
         }
+
+        metadata.TryGetWorldTimeTicks(out long worldTimeTicks);
 
         ulong simulationSeed = ResolveSimulationSeed(stored.Seed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
@@ -140,7 +158,38 @@ public static class ServerBootstrap
             new SqliteWorldPersistenceRepository(schema),
             formulas,
             CombatFormulaService.Create(formulas),
-            simulationSeed);
+            simulationSeed,
+            worldTimeTicks);
+    }
+
+    // Minutes per in-game day: an unset value gives the default silently; a number outside
+    // [MinDayLengthMinutes, MaxDayLengthMinutes] is clamped and an unparsable one falls back to
+    // the default, each with a log line.
+    public static double ResolveDayLengthMinutes(string? value, Action<string>? log = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return WorldClockSettings.DefaultDayLengthMinutes;
+        }
+
+        if (!double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double minutes) ||
+            !double.IsFinite(minutes))
+        {
+            log?.Invoke(
+                $"{DayLengthEnvironmentVariable} is not a number of minutes; " +
+                $"using the default of {WorldClockSettings.DefaultDayLengthMinutes}.");
+            return WorldClockSettings.DefaultDayLengthMinutes;
+        }
+
+        double clamped = Math.Clamp(minutes, MinDayLengthMinutes, MaxDayLengthMinutes);
+        if (clamped != minutes)
+        {
+            log?.Invoke(
+                $"{DayLengthEnvironmentVariable} is outside {MinDayLengthMinutes}-{MaxDayLengthMinutes} minutes; " +
+                $"using {clamped.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        return clamped;
     }
 
     // The override wins when it parses; an unset value keeps the stored seed silently, and an

@@ -230,7 +230,10 @@ Key/value metadata about the persisted world. It is created additively by `Sqlit
 - `key TEXT NOT NULL PRIMARY KEY`
 - `value TEXT NOT NULL`
 
-Today it holds one row: `simulation_seed`, the world's simulation seed stored as a decimal unsigned 64-bit number. `SqliteWorldMetadataRepository` inserts it once with `INSERT OR IGNORE` and a non-numeric value is treated as a startup error.
+It holds two rows:
+
+- `simulation_seed`: the world's simulation seed stored as a decimal unsigned 64-bit number. `SqliteWorldMetadataRepository` inserts it once with `INSERT OR IGNORE` and a non-numeric value is treated as a startup error.
+- `world_time_ticks`: the world clock (`WorldClock.WorldTicks`, authoritative ticks since the world was created) as a decimal non-negative 64-bit number. `SqlitePersistenceCheckpointWriter` upserts it inside each checkpoint transaction whose `PersistenceCheckpoint.WorldTimeTicks` is set (every non-null capture, so idle incremental captures write nothing), and `ServerBootstrap.CreatePersistenceBundle` reads it with `TryGetWorldTimeTicks`. A missing row means a new world (0); a non-numeric value is a startup error.
 
 ## player_profile_change_log
 
