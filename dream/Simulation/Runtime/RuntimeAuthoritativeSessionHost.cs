@@ -161,8 +161,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             }
         }
 
-        // Secondary commands and their primary-use actions run in ordinal session-id order, so two
-        // players hitting the same target in one tick resolve the same way on every server run.
+        // Secondary commands, and every seat's primary-use actions, run in ordinal session-id order,
+        // so two players hitting the same target in one tick resolve the same way on every server run.
         _orderedSecondaryCommands.Clear();
         for (int i = 0; i < commandFrames.Count; i++)
         {
@@ -194,28 +194,27 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             allowGameplaySimulation,
             deferPrimarySeatUse: true);
 
-        // One ordinal pass over every seat's primary use: the primary seat's (if it triggered,
-        // after its attack-interval gate) merged into the already sorted secondary frames.
+        // One ordinal pass over every seat's primary use. Every seat's use went through the same
+        // attack-interval repeat gate in the runtime tick, evaluated each tick from its last command,
+        // so a held button repeats at the same cadence on every seat instead of once per received
+        // command. The primary seat's (if it triggered) merges into the already ordered secondaries.
         bool primarySeatUsePending = Runtime.TryTakeDeferredPrimarySeatUse(out PlayerCommandFrame primarySeatUseFrame);
+        IReadOnlyList<PlayerCommandFrame> secondaryUses = Runtime.TriggeredSecondaryUseFrames;
         List<AuthoritativeActionResult>? synthesizedCommandActions = null;
         int secondaryIndex = 0;
-        while (primarySeatUsePending || secondaryIndex < _orderedSecondaryCommands.Count)
+        while (primarySeatUsePending || secondaryIndex < secondaryUses.Count)
         {
             PlayerCommandFrame useCommand;
             if (primarySeatUsePending
-                && (secondaryIndex >= _orderedSecondaryCommands.Count
-                    || CompareBySessionIdThenSequence(primarySeatUseFrame, _orderedSecondaryCommands[secondaryIndex]) <= 0))
+                && (secondaryIndex >= secondaryUses.Count
+                    || CompareBySessionIdThenSequence(primarySeatUseFrame, secondaryUses[secondaryIndex]) <= 0))
             {
                 useCommand = primarySeatUseFrame;
                 primarySeatUsePending = false;
             }
             else
             {
-                useCommand = _orderedSecondaryCommands[secondaryIndex++];
-                if (!useCommand.PrimaryUsePressed)
-                {
-                    continue;
-                }
+                useCommand = secondaryUses[secondaryIndex++];
             }
 
             PlayerActionMessage? actionMessage = Runtime.TryCreateCommandPrimaryUseActionMessage(useCommand);

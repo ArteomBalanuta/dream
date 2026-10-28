@@ -45,10 +45,15 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // MEM-3 (integrate/engine-iteration at 5b05629). Positions are quantized to 1e-4.
     // Checkpoints 6-10 were re-pinned in the wave-6 fix loop: a respawned wolf now takes a fresh
     // actor id instead of reusing 2000. Forcing the allocator back to 2000 reproduces the old values.
+    // Checkpoints 6-10 were re-pinned again in NETR-3: the secondaries (who hold attack from tick
+    // FightFrom) now go through the attack-interval repeat gate instead of resolving a use on every
+    // received command. Resolving secondary uses from the drained frames again, with no gate,
+    // reproduces the wave-6 values (0x5497DAFE6A7BEBBC, 0x1F4BB5B39F201942, 0x3385C15304627C69,
+    // 0xDFC4BD7E7472FF36, 0xD63DD1835BEC99AB).
     private static readonly ulong[] GoldenCheckpoints =
     [
         0x154E692D35B2DD4EUL, 0xC73284FF379D57EAUL, 0x7E52DBC5EC2E6514UL, 0x48E4F56A857E8DC0UL, 0xE74ADEE40AD629DAUL,
-        0x5497DAFE6A7BEBBCUL, 0x1F4BB5B39F201942UL, 0x3385C15304627C69UL, 0xDFC4BD7E7472FF36UL, 0xD63DD1835BEC99ABUL
+        0x17AF03F609BF31E8UL, 0x6A21C08ACFFABED0UL, 0x5E2E975D48F4D58AUL, 0xF80703360DEEA88FUL, 0x1DBCE7E3D7E4C392UL
     ];
 
     [Fact]

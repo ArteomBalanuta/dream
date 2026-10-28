@@ -20,6 +20,9 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
     private readonly PhysicsIntegrator _physics;
     private readonly Player _player;
     private PlayerCommandFrame? _lastCommand;
+    // Ticks simulated since the last accepted command; past WorldSessionRuntime.MaxCommandRepeatTicks
+    // the seat simulates an idle frame instead of repeating the last one.
+    private int _ticksSinceCommand;
     private bool _disposed;
 
     public RemoteSessionPlayerState(
@@ -81,6 +84,16 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
 
     public Player PhysicsPlayer => _player;
 
+    // Whether the last Simulate triggered this seat's primary use, after the same attack-interval
+    // repeat gate the primary seat goes through. The runtime collects triggered seats each tick and
+    // the host resolves them, with the primary seat's use, in one ordinal session-id pass.
+    public bool PrimaryUseTriggered { get; private set; }
+
+    // The frame the last Simulate ran (the last command, or its starved idle form).
+    public PlayerCommandFrame SimulatedCommand { get; private set; }
+
+    public int TicksSinceLastCommand => _ticksSinceCommand;
+
     public void SetInteractionMode(PlayerInteractionMode interactionMode)
     {
         InteractionMode = interactionMode;
@@ -101,14 +114,32 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
         }
 
         _lastCommand = commandFrame;
+        _ticksSinceCommand = 0;
     }
 
     // Runs before Physics.StepSimulationFixed. The last command keeps applying until a newer one
-    // arrives, like the primary seat, so movement no longer depends on command arrival rate.
-    // One-shot inputs are edge-detected by PlayerMotor, so repeating a frame does not re-trigger them.
+    // arrives, like the primary seat, so movement no longer depends on command arrival rate. After
+    // MaxCommandRepeatTicks starved ticks it decays to idle, so a stalled client stops walking and
+    // using. One-shot inputs are edge-detected by PlayerMotor, so repeating a frame does not
+    // re-trigger them. Primary use is gated every tick by the combatant's attack interval.
     public void Simulate(float deltaTime, PlayerSimulationTuning tuning)
     {
         PlayerCommandFrame command = _lastCommand ?? PlayerCommandFrame.CreateIdle(SessionId, 0);
+        if (_ticksSinceCommand > WorldSessionRuntime.MaxCommandRepeatTicks)
+        {
+            command = WorldSessionRuntime.CreateStarvedCommandFrame(command);
+        }
+
+        if (_ticksSinceCommand < int.MaxValue)
+        {
+            _ticksSinceCommand++;
+        }
+
+        SimulatedCommand = command;
+        PrimaryUseTriggered = _player.ConsumePrimaryUsePressed(
+            command.ToInteractionCommand(),
+            Combatant.DerivedStats.AttackIntervalSeconds,
+            deltaTime);
         Vector2 lookDelta = command.LookIntent.Facing.HasValue
             ? Vector2.Zero
             : new Vector2(command.LookIntent.YawDelta, command.LookIntent.PitchDelta);
@@ -122,11 +153,11 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
             tuning);
 
         // Look deltas are relative; apply them only once.
-        if (_lastCommand.HasValue && !command.LookIntent.Facing.HasValue)
+        if (_lastCommand is { } last && !last.LookIntent.Facing.HasValue)
         {
-            _lastCommand = command with
+            _lastCommand = last with
             {
-                LookIntent = new PlayerLookIntent(0f, 0f, command.LookIntent.Facing)
+                LookIntent = new PlayerLookIntent(0f, 0f, last.LookIntent.Facing)
             };
         }
     }

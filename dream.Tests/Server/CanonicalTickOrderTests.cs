@@ -328,6 +328,59 @@ public class CanonicalTickOrderTests
         Assert.False(results[1].Accepted, "The second placement into the same cell should be rejected.");
     }
 
+    // NETR-3: every seat's held use repeats on the attack-interval gate, evaluated each tick. When
+    // the repeats of all three seats land on the same tick they still resolve in ordinal order,
+    // with the primary seat (session-b, joined first) merged between the two secondaries.
+    [Fact]
+    public void RuntimeHost_HeldUseRepeats_OnEverySeat_ResolveTogetherInOrdinalOrder()
+    {
+        using WorldSessionRuntime runtime = new(16, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession(SessionB, SessionB);
+        host.JoinSession(SessionC, SessionC);
+        host.JoinSession(SessionA, SessionA);
+        Assert.Equal(SessionB, runtime.PrimaryRemoteSessionId?.Value);
+        runtime.Enemies.Clear();
+        PlayerSimulationTuning tuning = CreatePlayerTuning();
+
+        List<int> useTicks = [];
+        for (int tick = 1; tick <= 128; tick++)
+        {
+            IReadOnlyList<AuthoritativeActionResult> results = host.AdvanceTick(
+                (ulong)tick,
+                SimulationClock.FixedDeltaSeconds,
+                [
+                    CreateHeldCombatCommand(SessionC, (ulong)tick),
+                    CreateHeldCombatCommand(SessionB, (ulong)tick),
+                    CreateHeldCombatCommand(SessionA, (ulong)tick)
+                ],
+                tuning,
+                allowGameplaySimulation: false);
+            if (results.Count == 0)
+            {
+                continue;
+            }
+
+            useTicks.Add(tick);
+            Assert.Equal([SessionA, SessionB, SessionC], results.Select(result => result.SessionId));
+        }
+
+        // The first press and at least one repeat, never one use per received command.
+        Assert.InRange(useTicks.Count, 2, 8);
+        Assert.Equal(1, useTicks[0]);
+    }
+
+    private static PlayerCommandFrame CreateHeldCombatCommand(string sessionId, ulong sequence)
+    {
+        return new PlayerCommandFrame(
+            new PlayerSessionId(sessionId),
+            sequence,
+            new PlayerModeSwitchIntent(PlayerInteractionMode.Combat),
+            PlayerMoveIntent.None,
+            new PlayerLookIntent(0f, 0f, Vector3.UnitZ),
+            PrimaryUsePressed: true);
+    }
+
     [Fact]
     public void Runtime_SecondaryPlayers_AreCapturedInOrdinalOrderAfterAttachAndDetach()
     {
