@@ -273,6 +273,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         _ownedDependency?.Dispose();
     }
 
+    // The runtime rolls with the persisted world's seed when the bundle carries one; a host with no
+    // persistence (tests, ephemeral hosts) keeps the deterministic DefaultSimulationSeed.
     public static RuntimeAuthoritativeSessionHost CreateDefault(ServerPersistenceBundle? persistence = null)
     {
         SceneEventHub events = new();
@@ -284,7 +286,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             worldPersistence: persistence?.World,
             combatFormulaService: persistence?.FormulaService ?? CombatFormulaService.Default,
             checkpointWriter: persistence != null ? new SqlitePersistenceCheckpointWriter(persistence.Schema) : null,
-            persistenceWrites: persistence != null ? PersistenceWriteQueue.Background() : null);
+            persistenceWrites: persistence != null ? PersistenceWriteQueue.Background() : null,
+            simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence);
     }
 

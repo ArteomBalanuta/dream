@@ -7,8 +7,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         IPlayerProfileRepository playerProfiles,
         IWorldPersistenceRepository world,
         ICombatFormulaRepository combatFormulas,
-        Dream.Server.Rules.CombatFormulaService formulaService)
+        Dream.Server.Rules.CombatFormulaService formulaService,
+        ulong? simulationSeed = null)
     {
+        SimulationSeed = simulationSeed;
         Schema = schema;
         PlayerProfiles = playerProfiles;
         World = world;
@@ -25,6 +27,11 @@ public sealed class ServerPersistenceBundle : IDisposable
     public ICombatFormulaRepository CombatFormulas { get; }
 
     public Dream.Server.Rules.CombatFormulaService FormulaService { get; }
+
+    // The seed the world's runtime rolls with: the one stored in world_metadata (or an explicit
+    // DREAM_SIMULATION_SEED override). Null means the host falls back to
+    // WorldSessionRuntime.DefaultSimulationSeed. Server-only; it is never sent to clients.
+    public ulong? SimulationSeed { get; }
 
     public void Dispose()
     {
