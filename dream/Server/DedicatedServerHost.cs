@@ -30,7 +30,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
-    private readonly LatestPlayerCommandInbox _commandInbox = new();
+    private readonly BufferedPlayerCommandInbox _commandInbox = new();
     private readonly PlayerActionQueue _actionQueue = new();
     private readonly ServerTickRunner _tickRunner = new();
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
@@ -311,6 +311,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     ReleasingSessionForTest?.Invoke(sessionId);
                     // The departed session's queued actions would otherwise wait forever.
                     _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
+                    _commandInbox.Remove(new PlayerSessionId(sessionId));
                     if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
                     {
                         runtimeAuthority.ReleaseSession(sessionId);
