@@ -43,10 +43,12 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
 
     // Cumulative FNV-1a hash after every CheckpointInterval ticks, captured on the code before
     // MEM-3 (integrate/engine-iteration at 5b05629). Positions are quantized to 1e-4.
+    // Checkpoints 6-10 were re-pinned in the wave-6 fix loop: a respawned wolf now takes a fresh
+    // actor id instead of reusing 2000. Forcing the allocator back to 2000 reproduces the old values.
     private static readonly ulong[] GoldenCheckpoints =
     [
         0x154E692D35B2DD4EUL, 0xC73284FF379D57EAUL, 0x7E52DBC5EC2E6514UL, 0x48E4F56A857E8DC0UL, 0xE74ADEE40AD629DAUL,
-        0xA67114A570E1A99AUL, 0x31E29046D8B738B6UL, 0x2E8FBCFE5A9A6D17UL, 0x62190D974D415BDBUL, 0x27A60E4DAEF09CD7UL
+        0x5497DAFE6A7BEBBCUL, 0x1F4BB5B39F201942UL, 0x3385C15304627C69UL, 0xDFC4BD7E7472FF36UL, 0xD63DD1835BEC99ABUL
     ];
 
     [Fact]
