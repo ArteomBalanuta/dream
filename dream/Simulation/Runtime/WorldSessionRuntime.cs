@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
@@ -432,13 +433,10 @@ public sealed class WorldSessionRuntime : IDisposable
             _deferredPrimarySeatUseFrame = commandFrame;
             _hasDeferredPrimarySeatUse = true;
         }
-        else if (primaryUseTriggered)
+        else if (primaryUseTriggered
+            && TryProcessCommandPrimaryUse(commandFrame, out AuthoritativeActionResult? primaryUseResult))
         {
-            PlayerActionMessage? actionMessage = TryCreateCommandPrimaryUseActionMessage(commandFrame);
-            if (actionMessage != null)
-            {
-                actionResult = ProcessAuthoritativeAction(actionMessage);
-            }
+            actionResult = primaryUseResult;
         }
 
         if (!Physics.IsPlayerBodyParked)
@@ -920,7 +918,40 @@ public sealed class WorldSessionRuntime : IDisposable
             LastWorldMutationSequence);
     }
 
+    // A client-sent action: its sequence must be newer than every action already accepted for the
+    // session, so a replayed or reordered action is rejected.
     public AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message)
+    {
+        return ProcessAuthoritativeAction(message, fromAcceptedCommand: false);
+    }
+
+    // Resolves the primary use the server synthesized from an already-accepted command frame (the
+    // attack-interval repeat gate triggered it this tick). Returns false when the seat's mode makes
+    // no use (for example Building with no valid placement target).
+    //
+    // The command frame already passed the command-sequence gate when it arrived, so the use does not
+    // go through the client action-sequence gate again. A held button repeats from the seat's last
+    // command, so one command frame can trigger several uses on different ticks (a short attack
+    // interval with a stalled client, or a command that lands on the same sequence as a client action
+    // just accepted); every one of them is legitimate. The result still carries the command's
+    // sequence, which clients only advance past, and the seeded rolls stay distinct because they are
+    // keyed by the tick as well as the sequence.
+    public bool TryProcessCommandPrimaryUse(
+        PlayerCommandFrame commandFrame,
+        [NotNullWhen(true)] out AuthoritativeActionResult? result)
+    {
+        PlayerActionMessage? actionMessage = TryCreateCommandPrimaryUseActionMessage(commandFrame);
+        if (actionMessage == null)
+        {
+            result = null;
+            return false;
+        }
+
+        result = ProcessAuthoritativeAction(actionMessage, fromAcceptedCommand: true);
+        return true;
+    }
+
+    private AuthoritativeActionResult ProcessAuthoritativeAction(PlayerActionMessage message, bool fromAcceptedCommand)
     {
         if (!TryResolveActionContext(message.SessionId, out AuthoritativeSessionActionContext? context))
         {
@@ -934,7 +965,11 @@ public sealed class WorldSessionRuntime : IDisposable
             return CreateRejectedActionResult(message, "Player session is not spawned in the authoritative world.");
         }
 
-        if (!_sessions.TryAcceptAction(message.SessionId, message.ActionSequence, out _))
+        // A synthesized use still advances the session's accepted action sequence (as before), so a
+        // client action at or below a command sequence the server already used stays stale; it is
+        // only never rejected by it.
+        bool sequenceAccepted = _sessions.TryAcceptAction(message.SessionId, message.ActionSequence, out _);
+        if (!sequenceAccepted && !fromAcceptedCommand)
         {
             return CreateRejectedActionResult(message, "Action sequence is stale or has already been accepted.");
         }
@@ -1469,6 +1504,13 @@ public sealed class WorldSessionRuntime : IDisposable
         PlayerCombatant combatant,
         PlayerStatsUpdateIntent intent)
     {
+        // Base stats drive the use cadence (attack interval) and damage, so a client may only pick
+        // what the stat editor allows; see PlayerCombatStats.TryValidateBaseStats.
+        if (!PlayerCombatStats.TryValidateBaseStats(intent.Stats, out string? invalidReason))
+        {
+            return CreateRejectedActionResult(message, $"Stats update rejected: {invalidReason}");
+        }
+
         combatant.ApplyBaseStats(intent.Stats.ToCombatStats());
         PersistPlayerProfile(message.SessionId, combatant);
 
