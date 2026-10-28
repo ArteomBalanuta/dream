@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.World;
 using OpenTK.Graphics.OpenGL4;
 
@@ -107,7 +108,9 @@ public static class GLUtils
     };
 
     // KHR_debug output (core in GL 4.3, an extension before). Only high- and medium-severity
-    // messages are enabled; they go to the sink. Returns false when the context has no KHR_debug.
+    // messages are enabled. Errors, undefined and deprecated behaviour go to the sink as faults;
+    // performance and other notices are logged once per id as information (ClassifyDebugMessage).
+    // Returns false when the context has no KHR_debug.
     // Call with the context current, on the render thread. Meant for DEBUG builds, which also
     // request a debug context.
     public static bool InstallDebugOutput(IRenderFaultSink sink)
@@ -136,6 +139,34 @@ public static class GLUtils
 
     public static bool ShouldReportDebugMessage(DebugSeverity severity) =>
         severity is DebugSeverity.DebugSeverityHigh or DebugSeverity.DebugSeverityMedium;
+
+    // What the debug callback does with one message, from its type and severity alone:
+    // - errors, undefined and deprecated behaviour at high or medium severity are render faults;
+    // - performance, portability and "other" notices at high or medium severity are information
+    //   (for example the driver's "shader recompiled based on GL state"), never a fault;
+    // - everything else (low/notification severity, markers, debug groups) is ignored.
+    public static GLDebugMessageDisposition ClassifyDebugMessage(DebugType type, DebugSeverity severity)
+    {
+        if (!ShouldReportDebugMessage(severity))
+        {
+            return GLDebugMessageDisposition.Ignore;
+        }
+
+        return type switch
+        {
+            DebugType.DebugTypeError or
+            DebugType.DebugTypeUndefinedBehavior or
+            DebugType.DebugTypeDeprecatedBehavior => GLDebugMessageDisposition.ReportFault,
+            DebugType.DebugTypePerformance or
+            DebugType.DebugTypePortability or
+            DebugType.DebugTypeOther => GLDebugMessageDisposition.LogInfo,
+            _ => GLDebugMessageDisposition.Ignore
+        };
+    }
+
+    public const string DebugInfoCategory = "gl-debug-info";
+
+    private static readonly GLDebugMessageFilter s_debugMessageFilter = new();
 
     private static bool SupportsDebugOutput()
     {
@@ -170,21 +201,82 @@ public static class GLUtils
         IntPtr userParam)
     {
         IRenderFaultSink? sink = s_debugSink;
-        if (sink == null || !ShouldReportDebugMessage(severity))
+        if (sink == null)
         {
             return;
         }
 
         try
         {
+            GLDebugMessageDisposition disposition = s_debugMessageFilter.Decide(source, type, id, severity);
+            if (disposition == GLDebugMessageDisposition.Ignore)
+            {
+                return;
+            }
+
             string text = message == IntPtr.Zero
                 ? string.Empty
                 : length >= 0 ? Marshal.PtrToStringAnsi(message, length) : Marshal.PtrToStringAnsi(message) ?? string.Empty;
-            sink.Report(DebugOutputFaultSource, new GLDebugMessageException(source, type, id, severity, text));
+            if (disposition == GLDebugMessageDisposition.ReportFault)
+            {
+                sink.Report(DebugOutputFaultSource, new GLDebugMessageException(source, type, id, severity, text));
+                return;
+            }
+
+            WriteDebugInfo($"[{DebugInfoCategory}] GL debug {severity} {type} from {source} (id {id}): {text}");
         }
         catch (Exception)
         {
             // An exception must never unwind into the driver.
+        }
+    }
+
+    private static void WriteDebugInfo(string line)
+    {
+        if (NetworkDiagnosticsLog.IsEnabled)
+        {
+            // The diagnostics log also echoes to the console.
+            NetworkDiagnosticsLog.Write(DebugInfoCategory, line);
+            return;
+        }
+
+        Console.WriteLine(line);
+    }
+}
+
+public enum GLDebugMessageDisposition
+{
+    Ignore = 0,
+    // Logged once per message id as information; not a render fault.
+    LogInfo = 1,
+    // Reported to the render fault sink.
+    ReportFault = 2
+}
+
+// Classifies KHR_debug messages (GLUtils.ClassifyDebugMessage) and keeps informational ones to one
+// line per message: a driver repeats a performance notice such as "shader recompiled" whenever the
+// state recurs, so after the first LogInfo for an id the same id is ignored. Ids are scoped by
+// source in KHR_debug, so the key is (source, id). Faults are never deduplicated here; the fault
+// sink already rate-limits repeats. Thread-safe: asynchronous output may call from a driver thread.
+public sealed class GLDebugMessageFilter
+{
+    private readonly object _sync = new();
+    private readonly HashSet<long> _loggedInfoMessages = [];
+
+    public GLDebugMessageDisposition Decide(DebugSource source, DebugType type, int id, DebugSeverity severity)
+    {
+        GLDebugMessageDisposition disposition = GLUtils.ClassifyDebugMessage(type, severity);
+        if (disposition != GLDebugMessageDisposition.LogInfo)
+        {
+            return disposition;
+        }
+
+        long key = ((long)(int)source << 32) | (uint)id;
+        lock (_sync)
+        {
+            return _loggedInfoMessages.Add(key)
+                ? GLDebugMessageDisposition.LogInfo
+                : GLDebugMessageDisposition.Ignore;
         }
     }
 }

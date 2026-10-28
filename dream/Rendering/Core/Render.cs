@@ -672,7 +672,7 @@ public class Render : IDisposable
     // Common method to set transformation uniforms.
     private void SetTransforms(Shader shader, Matrix4 model, Matrix4 view)
     {
-        shader.SetMatrix4("model", model);
+        shader.SetModelMatrix(model);
         shader.SetMatrix4("view", view);
         shader.SetMatrix4("projection", _projection);
     }
@@ -1329,7 +1329,7 @@ public class Render : IDisposable
         Shader shader = GetShader("cube");
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.Use();
-        shader.SetMatrix4("model", modelMatrix);
+        shader.SetModelMatrix(modelMatrix);
         shader.SetMatrix4("view", camera.GetViewMatrix());
         shader.SetMatrix4("projection", _projection);
         shader.SetBool("useSkinning", false);
@@ -1337,6 +1337,9 @@ public class Render : IDisposable
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
+        // Terrain is opaque. The cube program is shared with glTF models, so the mode a MASK
+        // model left behind must not leak into terrain (the upload is skipped when unchanged).
+        shader.SetMaterialAlpha(WorldAlphaMode.Opaque, 0f);
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {

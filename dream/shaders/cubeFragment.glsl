@@ -6,6 +6,12 @@ in vec3 fragPos;
 
 out vec4 FragColor;
 
+// World-pass alpha modes (WorldAlphaMode in Shader.cs). Blending is off in the world pass and
+// there is no sorted transparency, so only OPAQUE and MASK are supported: a glTF BLEND material
+// is uploaded as OPAQUE and drawn opaque.
+const int ALPHA_MODE_OPAQUE = 0;
+const int ALPHA_MODE_MASK = 1;
+
 // Define the Material structure
 struct Material {
     vec4 baseColorFactor;
@@ -13,6 +19,8 @@ struct Material {
     float roughnessFactor;
     bool hasBaseColorTexture;
     sampler2D baseColorTexture;
+    int alphaMode;
+    float alphaCutoff;
 };
 
 // Declare the uniform variable
@@ -21,9 +29,14 @@ uniform Material material;
 void main()
 {
     vec4 baseColor = material.baseColorFactor;
-    
+
     if (material.hasBaseColorTexture) {
         baseColor *= texture(material.baseColorTexture, texCoord0);
+    }
+
+    // glTF MASK: fragments below the cutoff are not drawn. OPAQUE never takes this path.
+    if (material.alphaMode == ALPHA_MODE_MASK && baseColor.a < material.alphaCutoff) {
+        discard;
     }
 
     // Lighting

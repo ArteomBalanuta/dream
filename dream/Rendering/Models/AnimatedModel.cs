@@ -402,11 +402,12 @@ public class AnimatedModel : IDisposable
         Matrix4[] jointMatrices,
         Matrix4 meshWorldMatrix)
     {
-        // The joint matrices depend only on the node, so they are composed once per node.
+        // The joint matrices depend only on the node, so they are composed once per node, and so
+        // are the model and normal matrices, which every primitive of the node shares.
         bool jointsComposed = false;
+        shader.SetModelMatrix(modelMatrix);
         foreach (var primitive in primitives)
         {
-            shader.SetMatrix4("model", modelMatrix);
             ApplySkinning(shader, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed);
 
             SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
@@ -426,10 +427,11 @@ public class AnimatedModel : IDisposable
         Matrix4 meshWorldMatrix)
     {
         bool jointsComposed = false;
+        // Instanced draws read the model matrix from the per-instance attribute and derive the
+        // normal matrix from it in the shader, so `model` and `normalMatrix` are not uploaded.
+        shader.SetBool("useInstancing", true);
         foreach (MeshBuffers primitive in primitives)
         {
-            shader.SetBool("useInstancing", true);
-            shader.SetMatrix4("model", Matrix4.Identity);
             ApplySkinning(shader, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed);
 
             SetMaterialProperties(shader, ResolveMaterial(primitive.MaterialIndex));
@@ -536,8 +538,7 @@ public class AnimatedModel : IDisposable
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
         shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
         shader.SetVector3("material.emissiveFactor", material.EmissiveFactor);
-        shader.SetFloat("material.alphaCutoff", material.AlphaCutoff);
-        shader.SetInt("material.alphaMode", (int)material.AlphaMode);
+        shader.SetMaterialAlpha(ToWorldAlphaMode(material.AlphaMode), material.AlphaCutoff);
 
         // Set texture presence flags
         shader.SetBool("material.hasBaseColorTexture", material.HasBaseColorTexture);
@@ -554,6 +555,12 @@ public class AnimatedModel : IDisposable
         SetTexture(shader, "material.occlusionTexture", 4, material.OcclusionTexture);
     }
 
+
+    // Maps a glTF alpha mode onto the world pass's. Blending is off there and there is no sorted
+    // transparency, so BLEND (like OPAQUE) is drawn opaque; only MASK reaches the cutoff discard.
+    public static int ToWorldAlphaMode(AlphaMode alphaMode) => alphaMode == AlphaMode.MASK
+        ? WorldAlphaMode.Mask
+        : WorldAlphaMode.Opaque;
 
     private void SetTexture(Shader shader, string name, int unit, int texture)
     {
