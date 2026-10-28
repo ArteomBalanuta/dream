@@ -26,6 +26,9 @@ public static class ServerBootstrap
     public const double MinDayLengthMinutes = 1d;
     public const double MaxDayLengthMinutes = 1440d;
 
+    // The server's default log: each line to stderr.
+    private static readonly Action<string> ConsoleLog = static line => Console.Error.WriteLine(line);
+
     public static DedicatedServerHost CreateDefaultHost()
     {
         return DedicatedServerHost.CreateDefault();
@@ -51,10 +54,17 @@ public static class ServerBootstrap
     // time (0 for a new world or no bundle) before the first tick.
     public static RuntimeAuthoritativeSessionHost CreateRuntimeHost(ServerPersistenceBundle? persistence)
     {
+        return CreateRuntimeHost(persistence, ConsoleLog);
+    }
+
+    // As above; a DREAM_DAY_LENGTH_MINUTES warning goes to log (nowhere when it is null), like
+    // CreatePersistenceBundle's seed lines.
+    public static RuntimeAuthoritativeSessionHost CreateRuntimeHost(ServerPersistenceBundle? persistence, Action<string>? log)
+    {
         RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault(CreateRuntimePersistencePorts(persistence));
         double dayLengthMinutes = ResolveDayLengthMinutes(
             Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
-            static line => Console.Error.WriteLine(line));
+            log);
         host.Runtime.ConfigureWorldClock(
             WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes),
             persistence?.WorldTimeTicks ?? 0);
@@ -87,7 +97,7 @@ public static class ServerBootstrap
     {
         using DedicatedServerHost host = CreateAuthoritativeHost();
         await using IServerTransport transport = new TcpServerTransport(IPAddress.Any, DefaultPort);
-        Action<string> log = static line => Console.Error.WriteLine(line);
+        Action<string> log = ConsoleLog;
         await using DedicatedServerService service = new(
             host,
             transport,
@@ -127,7 +137,7 @@ public static class ServerBootstrap
             AssetPaths.Config("player-profiles.db"),
             AssetPaths.Config("player-profiles.init.sql"),
             Environment.GetEnvironmentVariable(SimulationSeedEnvironmentVariable),
-            static line => Console.Error.WriteLine(line));
+            ConsoleLog);
     }
 
     // Opens (or creates) the persistent world and resolves the seed its runtime rolls with: the

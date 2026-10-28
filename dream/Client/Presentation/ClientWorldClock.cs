@@ -31,8 +31,16 @@ public sealed class ClientWorldClock
         HasAnchor = false;
     }
 
-    public float TimeOfDay01(double serverTick) =>
-        HasAnchor ? (float)_anchor.TimeOfDay01At(serverTick) : (float)WorldClockSettings.StartTimeOfDay01;
+    // For rendering. The float can round across a phase bound on the bound tick itself, so phase
+    // decisions use Phase (or TimeOfDay01Exact), never WorldDayPhases.At(TimeOfDay01(...)).
+    public float TimeOfDay01(double serverTick) => (float)TimeOfDay01Exact(serverTick);
+
+    // The anchor's double math: at a whole server tick it equals the server's WorldClock.TimeOfDay01.
+    public double TimeOfDay01Exact(double serverTick) =>
+        HasAnchor ? _anchor.TimeOfDay01At(serverTick) : WorldClockSettings.StartTimeOfDay01;
+
+    // The day phase at serverTick; at a whole tick it matches the server's WorldClock.Phase.
+    public WorldDayPhase Phase(double serverTick) => WorldDayPhases.At(TimeOfDay01Exact(serverTick));
 
     public long DayNumber(double serverTick) => HasAnchor ? _anchor.DayNumberAt(serverTick) : 0L;
 }

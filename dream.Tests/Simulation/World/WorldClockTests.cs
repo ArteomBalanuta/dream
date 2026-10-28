@@ -185,6 +185,69 @@ public sealed class WorldClockTests
         Assert.NotEqual(first.WorldClock.WorldTicks, second.WorldClock.WorldTicks);
     }
 
+    // Before the first tick the clock may be configured (more than once, as a test on top of
+    // ServerBootstrap does); after it, a call would move WorldTicks - CurrentServerTick under
+    // clients' join anchors, so it throws and leaves the clock alone.
+    [Theory]
+    [InlineData(1UL)]
+    [InlineData(0UL)]
+    public void ConfigureWorldClock_AfterAnAuthoritativeTick_Throws(ulong firstTick)
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        Assert.Equal(0UL, runtime.CurrentServerTick);
+        runtime.ConfigureWorldClock(WorldClockSettings.FromDayLengthMinutes(5), worldTicks: 10);
+        runtime.ConfigureWorldClock(WorldClockSettings.Default, worldTicks: 5_000);
+
+        Tick(runtime, firstTick);
+        WorldClock clock = runtime.WorldClock;
+
+        Assert.Throws<InvalidOperationException>(() => runtime.ConfigureWorldClock(WorldClockSettings.Default, worldTicks: 0));
+        Assert.Same(clock, runtime.WorldClock);
+        Assert.Equal(5_001L, runtime.WorldClock.WorldTicks);
+    }
+
+    [Fact]
+    public void ConfigureWorldClock_AfterQueuedActionsForATick_Throws()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.ProcessQueuedAuthoritativeActions(1, []);
+
+        Assert.Throws<InvalidOperationException>(() => runtime.ConfigureWorldClock(WorldClockSettings.Default, worldTicks: 7));
+        Assert.Equal(0L, runtime.WorldClock.WorldTicks);
+    }
+
+    // The persistent production host is configured by ServerBootstrap before its first tick,
+    // from a stored world time, and is still at server tick 0 when it comes back.
+    [Fact]
+    public void ServerBootstrapHost_IsConfiguredBeforeItsFirstTick_AndLocksAfterIt()
+    {
+        using RuntimeAuthoritativeSessionHost host = Dream.Server.ServerBootstrap.CreateRuntimeHost(persistence: null, log: null);
+        Assert.Equal(0UL, host.Runtime.CurrentServerTick);
+        host.Runtime.ConfigureWorldClock(WorldClockSettings.Default, worldTicks: 42);
+
+        Tick(host.Runtime, 1);
+
+        Assert.Throws<InvalidOperationException>(() => host.Runtime.ConfigureWorldClock(WorldClockSettings.Default, worldTicks: 42));
+        Assert.Equal(43L, host.Runtime.WorldClock.WorldTicks);
+    }
+
+    // At every whole tick of a day the join anchor gives the server's exact time and phase, the
+    // four phase bound ticks and midnight included.
+    [Fact]
+    public void Anchor_AtEveryWholeTick_MatchesTheServerClockExactly()
+    {
+        WorldClockSettings settings = WorldClockSettings.FromDayLengthMinutes(1);
+        WorldClock server = new(settings, worldTicks: 3 * settings.TicksPerDay + 17);
+        WorldClockAnchor anchor = server.CaptureAnchor(serverTick: 1_000);
+        for (ulong tick = 1_001; tick <= 1_000 + (ulong)settings.TicksPerDay + 1; tick++)
+        {
+            server.Advance();
+            Assert.Equal(server.TimeOfDay01, anchor.TimeOfDay01At(tick));
+            Assert.Equal(server.Phase, WorldDayPhases.At(anchor.TimeOfDay01At(tick)));
+            Assert.Equal(server.DayNumber, anchor.DayNumberAt(tick));
+        }
+    }
+
     private static WorldSessionRuntime CreateRuntime()
     {
         return new WorldSessionRuntime(FloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
