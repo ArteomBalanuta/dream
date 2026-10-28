@@ -45,6 +45,16 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         new(7f, 1f, 6f), new(3f, 1f, 4f), new(6f, 1f, 7f), new(4f, 1f, 3f)
     ];
 
+    // Build use is server-originated only (NETR-6 rejects it over player.action), so the primary's
+    // builds are queued on the host; the placed cubes still reach every client through snapshots.
+    private static void EnqueuePrimaryBuild(ServerUnderTest server, int buildIndex)
+    {
+        Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(
+            new PlayerSessionId(PrimarySession),
+            (ulong)(buildIndex + 1),
+            new BuildUseIntent(BuildCells[buildIndex]))));
+    }
+
     [Fact]
     public async Task ThreeClients_ReceiveEverySnapshotOnce_SharedPayloadBytes_GapFreeEnvelopes_AndMatchingWorlds()
     {
@@ -65,7 +75,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
 
             if (i % 25 == 5 && builds < BuildCells.Length)
             {
-                await primary.SendActionAsync(new BuildUseIntent(BuildCells[builds++]));
+                EnqueuePrimaryBuild(server, builds++);
             }
 
             await server.TickAsync();
@@ -157,7 +167,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             // Builds keep coming while the slow client lags, so merged snapshots carry mutations.
             if (tick % 15 == 3 && builds < BuildCells.Length && (builds < 2 || slowConnection.CoalescedSnapshots > 0))
             {
-                await primary.SendActionAsync(new BuildUseIntent(BuildCells[builds++]));
+                EnqueuePrimaryBuild(server, builds++);
             }
 
             await server.TickAsync();

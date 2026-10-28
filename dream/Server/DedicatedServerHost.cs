@@ -7,7 +7,7 @@ using Dream.Simulation.Runtime;
 namespace Dream.Server;
 
 // A reply produced for a connection outside HandleClientMessage, such as a deferred join's
-// JoinAccepted or JoinRejected.
+// JoinAccepted or JoinRejected, or a world resync served after a tick.
 public readonly record struct PendingConnectionReply(string ConnectionId, IServerToClientMessage Message);
 
 public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
@@ -37,7 +37,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
-    private readonly ConcurrentQueue<PendingConnectionReply> _pendingJoinReplies = new();
+    private readonly ConcurrentQueue<PendingConnectionReply> _pendingConnectionReplies = new();
     private readonly bool _deferJoinsToTick;
     // Join requests received since the last tick, touched only under _authoritySync. The tick
     // swaps in _applyingJoins before routing, because a failed join releases its connection and
@@ -146,6 +146,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
     }
 
+    // Queues an action for a session from the server side (a scripted bot, an admin tool or a
+    // test), bypassing the player.action allow-list that keeps clients from sending build and
+    // combat use directly. The next tick drains it once the session is joined and validates it
+    // like a command-synthesized action. False when the session's pending-action cap is full.
+    public bool TryEnqueueServerAction(PlayerActionMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        return _actionQueue.TryEnqueue(message, out _);
+    }
+
     public bool TryGetConnectionContext(string connectionId, out ServerRoutingContext? context)
     {
         return _connections.TryGetValue(connectionId, out context);
@@ -193,14 +203,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
     }
 
-    // Replaces the destination's contents with the replies to joins applied at tick boundaries,
-    // in the order the joins were applied. Empty unless the host defers joins to the tick.
+    // Replaces the destination's contents with the replies produced during ticks, oldest first:
+    // replies to joins applied at tick boundaries (only when the host defers joins to the tick) and
+    // world resyncs served at the end of a tick. DedicatedServerService delivers them after
+    // AdvanceTime, before the tick's snapshot.
     public void DrainPendingJoinRepliesInto(List<PendingConnectionReply> destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
 
         destination.Clear();
-        while (_pendingJoinReplies.TryDequeue(out PendingConnectionReply reply))
+        while (_pendingConnectionReplies.TryDequeue(out PendingConnectionReply reply))
         {
             destination.Add(reply);
         }
@@ -284,6 +296,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 && string.Equals(ownerConnection, connectionId, StringComparison.Ordinal))
             {
                 _sessionClaims.TryRemove(sessionId, out _);
+                // The departed session's queued actions would otherwise wait forever.
+                _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
             }
 
             if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
@@ -370,6 +384,31 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 _checkpointElapsedSeconds -= 5d;
             }
         }
+
+        ServePendingWorldResyncs();
+    }
+
+    // WorldResyncRequestHandler only marks a connection; the full-world export runs here, on the
+    // tick thread after the tick, and the snapshot goes out through the pending-reply drain. With
+    // no pending resync this only reads a flag per connection, so steady-state ticks do not allocate.
+    private void ServePendingWorldResyncs()
+    {
+        IWorldResyncSource? source = _authority as IWorldResyncSource;
+        for (int i = 0; i < _connectionContexts.Count; i++)
+        {
+            ServerRoutingContext context = _connectionContexts[i];
+            if (!context.TryTakeWorldResyncRequest()
+                || source == null
+                || context.LastJoinRequest == null
+                || !_connections.ContainsKey(context.ConnectionId))
+            {
+                continue;
+            }
+
+            _pendingConnectionReplies.Enqueue(new PendingConnectionReply(
+                context.ConnectionId,
+                new ServerSnapshotMessage(source.ExportWorldResync())));
+        }
     }
 
     // Same-tick joins in canonical order. A join whose connection was dropped is skipped. With no
@@ -401,7 +440,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             _router.RouteServerInbound(context, join.Request);
             for (int replyIndex = 0; replyIndex < context.OutboundMessages.Count; replyIndex++)
             {
-                _pendingJoinReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
             }
 
             context.ClearOutboundMessages();

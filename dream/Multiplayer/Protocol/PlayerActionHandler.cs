@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 
 namespace Dream.Multiplayer.Protocol;
@@ -50,7 +51,41 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             return;
         }
 
+        if (!IsClientSendable(actionMessage.Payload))
+        {
+            context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                actionMessage,
+                serverTick: 0,
+                $"{DescribePayload(actionMessage.Payload)} cannot be sent by clients; build and combat use come from player.command primary use.")));
+            return;
+        }
+
+        if (context.ActionQueue is PlayerActionQueue boundedQueue)
+        {
+            if (!boundedQueue.TryEnqueue(actionMessage, out _))
+            {
+                context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                    actionMessage,
+                    serverTick: 0,
+                    $"Too many pending player actions; at most {PlayerActionQueue.MaxPendingActionsPerSession} may wait for a tick.")));
+            }
+
+            return;
+        }
+
         context.ActionQueue.Enqueue(actionMessage);
+    }
+
+    // Build and combat use intents are created only by the server, from command-frame primary use,
+    // which applies the use cadence and targeting. Over the wire a client may send only these.
+    private static bool IsClientSendable(IPlayerActionPayload payload)
+    {
+        return payload is InventoryEquipIntent or PlayerStatsUpdateIntent;
+    }
+
+    private static string DescribePayload(IPlayerActionPayload? payload)
+    {
+        return payload?.GetType().Name ?? "A null action payload";
     }
 
     private static AuthoritativeActionResult CreateRejectedResult(

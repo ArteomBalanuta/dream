@@ -89,7 +89,7 @@ public class DedicatedServerServiceTests
             new PlayerActionMessage(
                 new PlayerSessionId("session-a"),
                 9,
-                new CombatUseIntent(OpenTK.Mathematics.Vector3.Zero, -OpenTK.Mathematics.Vector3.UnitZ)));
+                new InventoryEquipIntent(3)));
 
         int executedTicks = await service.AdvanceOnceAsync(SimulationClock.FixedDeltaSeconds);
         Assert.True(await service.FlushOutboundAsync(TimeSpan.FromSeconds(5)));

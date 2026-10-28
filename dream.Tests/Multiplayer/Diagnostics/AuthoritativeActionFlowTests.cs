@@ -60,10 +60,11 @@ public class AuthoritativeActionFlowTests
             LastJoinRequest = new ClientJoinRequestMessage("session-a", "player-a")
         };
         PlayerActionHandler handler = new();
+        // Combat use is not client-sendable over player.action (NETR-6); an equip is.
         PlayerActionMessage message = new(
             new PlayerSessionId("session-a"),
             7,
-            new CombatUseIntent(new Vector3(0f, 1f, 0f), -Vector3.UnitZ));
+            new InventoryEquipIntent(1));
 
         handler.Handle(context, message);
 

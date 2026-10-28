@@ -8,18 +8,72 @@ public sealed class PlayerActionQueue : IPlayerActionQueue
     private readonly List<QueuedPlayerAction> _pending = [];
     private ulong _nextReceiveOrder;
 
+    // Most actions one session may have waiting for a tick. Further actions are rejected until a
+    // tick drains the session's backlog.
+    public const int MaxPendingActionsPerSession = 16;
+
+    // Throws when the session already has MaxPendingActionsPerSession actions pending; use
+    // TryEnqueue to handle that without an exception.
     public QueuedPlayerAction Enqueue(PlayerActionMessage message)
+    {
+        if (!TryEnqueue(message, out QueuedPlayerAction queued))
+        {
+            throw new InvalidOperationException(
+                $"Session '{message.SessionId.Value}' already has {MaxPendingActionsPerSession} pending actions.");
+        }
+
+        return queued;
+    }
+
+    public bool TryEnqueue(PlayerActionMessage message, out QueuedPlayerAction queued)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         lock (_sync)
         {
-            QueuedPlayerAction queued = new(
+            int pendingForSession = 0;
+            for (int i = 0; i < _pending.Count; i++)
+            {
+                if (_pending[i].SessionId == message.SessionId)
+                {
+                    pendingForSession++;
+                }
+            }
+
+            if (pendingForSession >= MaxPendingActionsPerSession)
+            {
+                queued = default;
+                return false;
+            }
+
+            queued = new QueuedPlayerAction(
                 ++_nextReceiveOrder,
                 message.SessionId,
                 message);
             _pending.Add(queued);
-            return queued;
+            return true;
+        }
+    }
+
+    // Drops every pending action of a session, for example when its connection is released.
+    // Returns how many were dropped.
+    public int RemoveSession(PlayerSessionId sessionId)
+    {
+        lock (_sync)
+        {
+            int kept = 0;
+            for (int i = 0; i < _pending.Count; i++)
+            {
+                QueuedPlayerAction action = _pending[i];
+                if (action.SessionId != sessionId)
+                {
+                    _pending[kept++] = action;
+                }
+            }
+
+            int removed = _pending.Count - kept;
+            _pending.RemoveRange(kept, removed);
+            return removed;
         }
     }
 
@@ -34,7 +88,8 @@ public sealed class PlayerActionQueue : IPlayerActionQueue
     }
 
     // Replaces the destination's contents with the joined sessions' pending actions, ordered by
-    // receive order, then session id (ordinal), then action sequence. Unjoined actions stay pending.
+    // receive order, then session id (ordinal), then action sequence. Unjoined actions stay pending
+    // until the session joins or RemoveSession drops them.
     public void DrainInto(IReadOnlyList<PlayerSessionId> joinedSessionIds, List<QueuedPlayerAction> destination)
     {
         ArgumentNullException.ThrowIfNull(joinedSessionIds);

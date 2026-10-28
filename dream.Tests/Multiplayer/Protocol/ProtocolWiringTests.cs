@@ -139,10 +139,11 @@ public class ProtocolWiringTests
         };
         PlayerActionHandler handler = new();
 
+        // Build and combat use are not client-sendable over player.action (NETR-6); an equip is.
         handler.Handle(context, new PlayerActionMessage(
             new PlayerSessionId("session-a"),
             9,
-            new BuildUseIntent(new OpenTK.Mathematics.Vector3(4f, 1f, 4f))));
+            new InventoryEquipIntent(2)));
 
         Assert.Empty(context.OutboundMessages);
         QueuedPlayerAction queuedAction = Assert.Single(actionQueue.EnqueuedActions);
