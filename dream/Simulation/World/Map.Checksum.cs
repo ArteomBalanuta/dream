@@ -46,6 +46,35 @@ public partial class Map
         return WorldStateChecksum.Finish(sum, count);
     }
 
+    // SimulationStateChecksum's rubble component: the sum and count of every valid rubble piece's
+    // hash, walked like ComputeWorldChecksumFull through the concrete dictionary's struct enumerator.
+    internal void SumRubblePieceHashes(out ulong sum, out ulong count)
+    {
+        sum = 0;
+        count = 0;
+        foreach (GeometryCellRecord record in _rubbleCells.Values)
+        {
+            IReadOnlyList<GeometryFracturePiece>? pieces = record.FracturePieces;
+            if (pieces == null)
+            {
+                continue;
+            }
+
+            ulong material = (ulong)record.Definition.MaterialId;
+            for (int index = 0; index < pieces.Count; index++)
+            {
+                GeometryFracturePiece piece = pieces[index];
+                if (!piece.IsValid())
+                {
+                    continue;
+                }
+
+                sum = unchecked(sum + Determinism.SimulationStateChecksum.HashFracturePiece(record.Key, index, piece, material));
+                count++;
+            }
+        }
+    }
+
     private void SetGeometryCell(GeometryCellKey key, GeometryCellRecord record)
     {
         if (_geometryCells.TryGetValue(key, out GeometryCellRecord? previous))

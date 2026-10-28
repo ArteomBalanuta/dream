@@ -15,7 +15,9 @@ namespace Dream.Rendering.Core;
 // column each, divisor 1). Attribute pointers are VAO state, so BindAttributes runs with the
 // target VAO bound; the pointers keep naming this buffer across orphaning and growth.
 //
-// Render thread only. Disposed by its owner.
+// Render thread only. Disposed by the owner of the VAOs it is bound to (Render for the fallback
+// cube mesh, AnimatedModel for its primitives), together with them, so no VAO in use keeps 6..9
+// pointing at a deleted buffer.
 public sealed class InstanceMatrixBuffer : IDisposable
 {
     public const int FirstAttributeLocation = 6;

@@ -24,9 +24,8 @@ public static class WorldStateChecksum
     }
 
     // Full walk over every geometry and rubble record. O(cells); the reference for Compute. Map
-    // walks its own dictionaries: the same loop written here over the IReadOnlyDictionary.Values
-    // interfaces returned a wrong sum in Release once tiered PGO had recompiled it (seen only when
-    // a load test had run earlier in the process; the walk's inputs, re-summed elsewhere, matched).
+    // walks its own dictionaries with their struct enumerators, so the walk uses no interface
+    // enumerator and no LINQ, and allocates nothing.
     public static ulong ComputeFull(Map map)
     {
         ArgumentNullException.ThrowIfNull(map);

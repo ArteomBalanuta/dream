@@ -35,9 +35,9 @@ namespace Dream.Simulation.Determinism;
 // order (List, Dictionary) never matters, and no sorting or scratch buffer is needed.
 //
 // Cost: a diagnostic, not a per-frame path. It is O(cells + actors + rubble pieces + cubes).
-// WorldStateChecksum.Compute and the rubble dictionary enumeration through
-// IReadOnlyDictionary allocate a few enumerator objects per call; actor and cube hashing
-// allocate nothing. Compute(WorldSessionRuntime) additionally allocates the runtime's actor
+// WorldStateChecksum.Compute is O(1), and the rubble walk (Map.SumRubblePieceHashes) goes
+// through the map's own dictionary with its struct enumerator, so the world and rubble parts,
+// like actor and cube hashing, allocate nothing. Compute(WorldSessionRuntime) additionally allocates the runtime's actor
 // snapshot list (CaptureActorSnapshots). Call it per tick in tests and tools, or at a low rate
 // in production.
 public static class SimulationStateChecksum
@@ -80,29 +80,7 @@ public static class SimulationStateChecksum
             actorSum = unchecked(actorSum + HashActor(actors[index]));
         }
 
-        ulong rubbleSum = 0;
-        ulong rubbleCount = 0;
-        foreach (GeometryCellRecord record in map.RubbleCells.Values)
-        {
-            IReadOnlyList<GeometryFracturePiece>? pieces = record.FracturePieces;
-            if (pieces == null)
-            {
-                continue;
-            }
-
-            ulong material = (ulong)record.Definition.MaterialId;
-            for (int index = 0; index < pieces.Count; index++)
-            {
-                GeometryFracturePiece piece = pieces[index];
-                if (!piece.IsValid())
-                {
-                    continue;
-                }
-
-                rubbleSum = unchecked(rubbleSum + HashFracturePiece(record.Key, index, piece, material));
-                rubbleCount++;
-            }
-        }
+        map.SumRubblePieceHashes(out ulong rubbleSum, out ulong rubbleCount);
 
         ulong cubeSum = 0;
         IReadOnlyList<Cube> cubes = map.SolidCubes;
@@ -178,7 +156,8 @@ public static class SimulationStateChecksum
         return Seed.Combine(key, Quantize(position.X), Quantize(position.Y), Quantize(position.Z));
     }
 
-    private static ulong HashFracturePiece(GeometryCellKey cell, int pieceIndex, GeometryFracturePiece piece, ulong material)
+    // Map.SumRubblePieceHashes walks the rubble with this.
+    internal static ulong HashFracturePiece(GeometryCellKey cell, int pieceIndex, GeometryFracturePiece piece, ulong material)
     {
         ulong key = Seed.Combine(Seed.FromCell(cell.X, cell.Y, cell.Z), Seed.FromInt(pieceIndex));
         ulong center = Seed.Combine(key, Quantize(piece.Center.X), Quantize(piece.Center.Y), Quantize(piece.Center.Z));

@@ -162,14 +162,7 @@ public class WorldRenderer : IDisposable
         }
 
         _disposed = true;
-        try
-        {
-            _staticChunkRenderer.Dispose();
-        }
-        finally
-        {
-            _instanceDrawer.Dispose();
-        }
+        _staticChunkRenderer.Dispose();
     }
 
     private void DrawCubeBatches(Camera camera, IReadOnlyList<WorldRenderBatch> batches)
@@ -190,28 +183,26 @@ public interface IWorldInstanceDrawTarget
     void DrawModelInstances(Camera camera, AnimatedModel animation, string shaderName, Matrix4[] modelMatrices, int count);
 
     // A batch without a model: one instanced draw of the fallback cube for the whole batch. The
-    // target uploads the matrices into `instances` before drawing.
+    // target uploads the matrices into the instance buffer it owns with the fallback cube mesh
+    // (Render's persistent InstanceMatrixBuffer) before drawing.
     void DrawFallbackInstances(
         Camera camera,
         GeometryMaterialId materialId,
-        InstanceMatrixBuffer instances,
         Matrix4[] modelMatrices,
         int count);
 }
 
 // Turns the planner's per-material batches into one instanced draw call per batch (per model
 // primitive for model batches), for dynamic cubes and dynamic blocks (rubble) alike. The model
-// matrices of each batch are written into one reused array, and model-less batches share one
-// persistent InstanceMatrixBuffer, so a frame with as many instances as an earlier one allocates
+// matrices of each batch are written into one reused array, and the target keeps a persistent
+// instance buffer per mesh, so a frame with as many instances as an earlier one allocates
 // nothing. Each batch is drawn before the next one is filled, so one array serves all of them.
-public sealed class WorldInstanceBatchDrawer : IDisposable
+// It holds no GL resources.
+public sealed class WorldInstanceBatchDrawer
 {
     private readonly ReusableMatrixBuffer _matrices = new();
-    private readonly InstanceMatrixBuffer _fallbackInstances = new();
 
     public int MatrixCapacity => _matrices.Capacity;
-
-    public InstanceMatrixBuffer FallbackInstances => _fallbackInstances;
 
     // Returns the number of batches drawn (one instanced submission each).
     public int DrawCubeBatches(IWorldInstanceDrawTarget target, Camera camera, IReadOnlyList<WorldRenderBatch> batches)
@@ -274,11 +265,6 @@ public sealed class WorldInstanceBatchDrawer : IDisposable
         return drawn;
     }
 
-    public void Dispose()
-    {
-        _fallbackInstances.Dispose();
-    }
-
     private void Submit(
         IWorldInstanceDrawTarget target,
         Camera camera,
@@ -294,7 +280,7 @@ public sealed class WorldInstanceBatchDrawer : IDisposable
         }
         else
         {
-            target.DrawFallbackInstances(camera, materialId, _fallbackInstances, matrices, count);
+            target.DrawFallbackInstances(camera, materialId, matrices, count);
         }
     }
 }
