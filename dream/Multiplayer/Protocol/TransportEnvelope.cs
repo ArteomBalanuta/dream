@@ -11,8 +11,10 @@ public readonly record struct TransportEnvelope(
     // delta-coded frames ("actorFrame" in place of "actors") and moves each connection's accepted
     // command sequence into the envelope header (the Ack below); a v3 peer would find no "actors"
     // list and fail with a NullReferenceException, so the bump makes both sides refuse it with a
-    // ProtocolVersionMismatchException instead. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 4;
+    // ProtocolVersionMismatchException instead. Version 5 (T1) adds the world clock anchor to the
+    // join-accepted message (JoinAcceptedMessage.WorldClock); a v4 client would ignore it and show a
+    // fixed time of day, so both sides refuse it instead. Decode rejects any other version.
+    public const int CurrentProtocolVersion = 5;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

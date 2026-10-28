@@ -22,6 +22,15 @@ public partial class PlayScene
             ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
             _predictionReconciler.Reset();
             _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
+            if (joinAcceptedMessage.WorldClock is { } worldClockAnchor)
+            {
+                _worldClock.Apply(worldClockAnchor);
+            }
+            else
+            {
+                _worldClock.Clear();
+            }
+
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
             LogPresenterDiagnostics("join");

@@ -83,7 +83,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 Roster: BuildJoinedPlayerRoster(),
                 Inventory: existingInventory,
                 InitialActors: Runtime.CaptureActorSnapshots(),
-                InitialWorldMutationSequence: Runtime.LastWorldMutationSequence);
+                InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
+                WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick));
             LogJoinAccepted("existing", existingAccepted);
             return existingAccepted;
         }
@@ -113,7 +114,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             Roster: BuildJoinedPlayerRoster(),
             Inventory: inventory,
             InitialActors: Runtime.CaptureActorSnapshots(),
-            InitialWorldMutationSequence: Runtime.LastWorldMutationSequence);
+            InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
+                WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick));
         LogJoinAccepted("new", accepted);
         return accepted;
     }
