@@ -4,6 +4,7 @@ using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Persistence;
+using Dream.Server.Persistence.Migrations;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -93,9 +94,40 @@ public static class ServerBootstrap
         return RunServerModeAsync().GetAwaiter().GetResult();
     }
 
+    // The dedicated server's exit code when the database was migrated by a newer build.
+    public const int SchemaTooNewExitCode = 3;
+
+    // The host, or null after logging why the server cannot start: a database at a schema version
+    // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
+    internal static DedicatedServerHost? TryCreateServerModeHost(
+        Func<DedicatedServerHost> createHost,
+        Action<string> log,
+        out int exitCode)
+    {
+        try
+        {
+            exitCode = 0;
+            return createHost();
+        }
+        catch (SchemaTooNewException ex)
+        {
+            log(
+                $"Server not started: the database schema is at version {ex.StoredVersion}, newer than the " +
+                $"version {ex.LatestVersion} this build knows. Run a newer build, or restore a backup " +
+                "made before the upgrade (the .bak next to the database).");
+            exitCode = SchemaTooNewExitCode;
+            return null;
+        }
+    }
+
     private static async Task<int> RunServerModeAsync()
     {
-        using DedicatedServerHost host = CreateAuthoritativeHost();
+        using DedicatedServerHost? host = TryCreateServerModeHost(CreateAuthoritativeHost, ConsoleLog, out int startupExitCode);
+        if (host == null)
+        {
+            return startupExitCode;
+        }
+
         await using IServerTransport transport = new TcpServerTransport(IPAddress.Any, DefaultPort);
         Action<string> log = ConsoleLog;
         await using DedicatedServerService service = new(

@@ -2,11 +2,13 @@ using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Tests.Server.Persistence;
 
@@ -211,6 +213,89 @@ public sealed class CheckpointLeaveRaceGuardTests
         Assert.Equal(2f, ReadWorldState(database).PositionX);
     }
 
+    // 8. The leave queues the world state BEFORE the profile. A stale checkpoint (its own worker)
+    // committing between the two finds the leave's world-state row already stored, so its vitals are
+    // skipped, and the profile save that follows lands: the leave's HP stands. With the profile
+    // queued first, the checkpoint would find no newer row and overwrite the leave's HP.
+    [Fact]
+    public void StaleCheckpointCommittedBetweenTheLeavesWrites_KeepsTheLeavesHp()
+    {
+        using PersistenceTestDatabase database = new();
+        InterleavingProfileRepository profiles = new(new SqlitePlayerProfileRepository(database.Schema));
+        using WorldSessionRuntime runtime = new(
+            12,
+            new Vector3(5f, 1.5f, 5f),
+            new SceneEventHub(),
+            playerProfiles: profiles,
+            worldPersistence: new SqliteWorldPersistenceRepository(database.Schema),
+            persistenceWrites: PersistenceWriteQueue.Inline());
+        PlayerSessionId session = new(Session);
+        runtime.AttachRemoteSession(session, PlayerName);
+        runtime.RestorePersistedPlayerState(session, PlayerName);
+        PersistenceCheckpoint captured = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint(full: true));
+        PlayerCheckpointVitals capturedVitals = Assert.Single(captured.PlayerVitals, vitals => vitals.PlayerName == PlayerName);
+        PersistenceCheckpoint stale = WithStaleValues(captured);
+        int leaveHp = runtime.Player.Combatant.Health.CurrentHealth - 13;
+        int leaveMaxHp = runtime.Player.Combatant.Health.MaxHealth;
+        runtime.Player.SetHealth(leaveHp, leaveMaxHp);
+        Assert.NotEqual(StaleHealth, leaveHp);
+        long hpBeforeTheLeave = ReadProfile(database).CurrentHp;
+
+        bool ran = false;
+        profiles.BeforeNextSave = () =>
+        {
+            // The leave's world-state row is committed, newer than the capture.
+            WorldStateRow left = ReadWorldState(database);
+            Assert.Equal(leaveHp, left.CurrentHp);
+            Assert.True(string.CompareOrdinal(left.UpdatedUtc, Format(capturedVitals.CapturedUtc)) > 0);
+
+            new SqlitePersistenceCheckpointWriter(database.Schema).Write(stale);
+
+            // The stale vitals were skipped; the stale world-state row too.
+            Assert.Equal(hpBeforeTheLeave, ReadProfile(database).CurrentHp);
+            Assert.Equal(left, ReadWorldState(database));
+            ran = true;
+        };
+
+        runtime.DetachRemoteSession(session);
+
+        Assert.True(ran, "the interleaved checkpoint did not complete before the leave's profile save");
+        ProfileRow profile = ReadProfile(database);
+        Assert.Equal(leaveHp, profile.CurrentHp);
+        Assert.Equal(leaveMaxHp, profile.MaxHp);
+        Assert.Equal(leaveHp, ReadWorldState(database).CurrentHp);
+    }
+
+    // 9. Why the order matters, on the repositories: world state, stale checkpoint, profile keeps the
+    // leave's HP; profile, stale checkpoint, world state (the order before the fix) loses it.
+    [Theory]
+    [InlineData(true, 20)]
+    [InlineData(false, 50)]
+    public void LeaveSaveOrder_DecidesWhetherAStaleCheckpointBetweenTheWritesWins(bool worldStateFirst, int expectedHp)
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        PersistedPlayerProfile profile = profiles.GetOrCreate(PlayerName);
+        DateTime capture = DateTime.UtcNow.AddSeconds(-1);
+        DateTime leave = DateTime.UtcNow;
+        PersistenceCheckpoint stale = PersistenceCheckpoint.Empty with
+        {
+            PlayerWorldStates = [State(PlayerName, 50f, capture)],
+            PlayerVitals = [Vitals(PlayerName, 50, capture)]
+        };
+        Action saveWorldState = () => world.SavePlayerWorldState(State(PlayerName, 20f, leave));
+        Action saveProfile = () => profiles.Save(profile with { Stats = profile.Stats with { CurrentHealth = 20 } });
+
+        (worldStateFirst ? saveWorldState : saveProfile)();
+        new SqlitePersistenceCheckpointWriter(database.Schema).Write(stale);
+        (worldStateFirst ? saveProfile : saveWorldState)();
+
+        Assert.Equal(expectedHp, ReadProfile(database).CurrentHp);
+        Assert.Equal(20, ReadWorldState(database).CurrentHp);
+        Assert.Equal(Format(leave), ReadWorldState(database).UpdatedUtc);
+    }
+
     // 6. The fallback repository writer follows the same rule.
     [Fact]
     public void RepositoryWriter_FollowsTheSameGuard()
@@ -292,6 +377,25 @@ public sealed class CheckpointLeaveRaceGuardTests
         Assert.Equal(3f, ReadWorldState(database).PositionX);
         Assert.Equal("2026-10-28T12:00:00.1240000Z", ReadWorldState(database).UpdatedUtc);
         Assert.Equal(3, ReadProfile(database).CurrentHp);
+    }
+
+    // Runs BeforeNextSave (once) just before the next profile save: a checkpoint's worker committing
+    // at that point of the leave's queued writes.
+    private sealed class InterleavingProfileRepository(IPlayerProfileRepository inner) : IPlayerProfileRepository
+    {
+        public Action? BeforeNextSave { get; set; }
+
+        public PersistedPlayerProfile GetOrCreate(string playerName) => inner.GetOrCreate(playerName);
+
+        public PersistedPlayerProfile? TryGet(string playerName) => inner.TryGet(playerName);
+
+        public void Save(PersistedPlayerProfile profile)
+        {
+            Action? before = BeforeNextSave;
+            BeforeNextSave = null;
+            before?.Invoke();
+            inner.Save(profile);
+        }
     }
 
     private static DedicatedServerHost CreateHost(PersistenceTestDatabase database) =>

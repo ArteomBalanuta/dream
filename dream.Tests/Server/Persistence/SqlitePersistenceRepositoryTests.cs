@@ -89,7 +89,6 @@ public sealed class SqlitePersistenceRepositoryTests
     {
         using TempPersistenceDatabase database = new();
         using SqliteWorldPersistenceRepository repository = new(database.Schema);
-        DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedPlayerWorldState state = new(
             "player-world",
             new Vector3(12.5f, 4f, -8.25f),
@@ -100,7 +99,6 @@ public sealed class SqlitePersistenceRepositoryTests
 
         repository.SavePlayerWorldState(state);
         PersistedPlayerWorldState? loaded = repository.TryGetPlayerWorldState(" player-world ");
-        DateTime saveFinishedUtc = DateTime.UtcNow;
 
         Assert.True(loaded.HasValue);
         Assert.Equal("player-world", loaded.Value.PlayerName);
@@ -108,7 +106,8 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(state.Facing, loaded.Value.Facing);
         Assert.Equal(71, loaded.Value.CurrentHealth);
         Assert.Equal(18, loaded.Value.CurrentEnergy);
-        Assert.InRange(loaded.Value.UpdatedUtc, saveStartedUtc, saveFinishedUtc);
+        // The state's own UpdatedUtc (its capture time), not the write time.
+        Assert.Equal(state.UpdatedUtc, loaded.Value.UpdatedUtc);
     }
 
     [Fact]
@@ -441,7 +440,8 @@ public sealed class SqlitePersistenceRepositoryTests
             string schemaPath = Path.Combine(_rootDirectory, "schema.sql");
             File.WriteAllText(schemaPath, SchemaScript);
 
-            Schema = new SqliteSchemaBootstrapper(databasePath, schemaPath);
+            // No migrations directory next to the hand-written schema: it is its own baseline.
+            Schema = new SqliteSchemaBootstrapper(databasePath, schemaPath, schemaScriptIsBaselineWithoutMigrations: true);
             Schema.EnsureSchema();
         }
 

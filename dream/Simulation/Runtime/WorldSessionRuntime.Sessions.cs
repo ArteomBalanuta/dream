@@ -128,15 +128,23 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
+        // Position, facing and HP first, then the profile: the order is load-bearing. A checkpoint
+        // captured before this leave can be written (on its own worker) between the two queued
+        // writes, and its vitals guard skips the player only once this world-state row is stored
+        // (SqlitePlayerProfileRepository.CheckpointUpdateVitalsSql). World state first, a late
+        // checkpoint runs either before both (the profile save then overwrites its vitals) or after
+        // the world state (its vitals are skipped). Profile first, a checkpoint between the two
+        // would overwrite the leave's HP with its stale vitals. Checkpoints skip detached players.
+        _persistence.PersistPlayerWorldState(sessionId);
         PersistPlayerProfile(sessionId, TryResolveAuthoritativePlayerTarget(
             sessionId,
             out _,
             out IAuthoritativePlayerTarget? target)
                 ? target!.Combatant
                 : Player.Combatant);
-        // Position, facing and HP, queued behind the profile; checkpoints skip detached players.
-        _persistence.PersistPlayerWorldState(sessionId);
         _persistence.ForgetUnrestoredSession(sessionId);
+        // The build material is per connection: a rejoin starts from Auto, as its HUD does.
+        _buildMaterialSelections.Remove(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
@@ -175,6 +183,7 @@ public sealed partial class WorldSessionRuntime
     private void OnSessionForgotten(ConnectedPlayer player)
     {
         _sessionInteractionModes.Remove(player.SessionId);
+        _buildMaterialSelections.Remove(player.SessionId);
     }
 
     // Sessions with a stored interaction mode (tests): at most the registry's Count.
@@ -192,15 +201,23 @@ public sealed partial class WorldSessionRuntime
             : PlayerInteractionMode.Building;
     }
 
-    private void SetSessionInteractionMode(PlayerSessionId sessionId, PlayerInteractionMode interactionMode)
+    // Saves the profile only when the mode changes (or saveUnchanged, the join's restore): a starved
+    // seat's frames keep the mode it already has (RequestedMode), which used to queue a profile save
+    // every tick.
+    private void SetSessionInteractionMode(
+        PlayerSessionId sessionId,
+        PlayerInteractionMode interactionMode,
+        bool saveUnchanged = false)
     {
+        bool save = saveUnchanged || GetSessionInteractionMode(sessionId) != interactionMode;
         _sessionInteractionModes[sessionId] = interactionMode;
         if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
         {
             remote.SetInteractionMode(interactionMode);
         }
 
-        if (_playerProfiles == null
+        if (!save
+            || _playerProfiles == null
             || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
             || player == null
             || player.IsLocal)

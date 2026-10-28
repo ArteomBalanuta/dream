@@ -2,9 +2,9 @@ using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Store;
 
-// Base for the SQLite repositories. Each helper opens one session per call (so it enlists in an
-// ambient SqliteWriteBatch, as SqliteSchemaBootstrapper.OpenConnection does), runs one statement
-// and disposes the session.
+// Base for the SQLite repositories. Each helper opens one session per call through
+// IWorldStore.OpenSession (so it enlists in an ambient SqliteWriteBatch), runs one statement and
+// disposes the session.
 public abstract class SqliteRepositoryBase(IWorldStore store)
 {
     protected IWorldStore Store { get; } = store;

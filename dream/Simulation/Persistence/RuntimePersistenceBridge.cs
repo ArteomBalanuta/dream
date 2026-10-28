@@ -415,8 +415,9 @@ internal sealed partial class RuntimePersistenceBridge
         });
     }
 
-    // Saves a leaving player's position, facing and HP (player_world_state), queued in order behind
-    // its profile save. Without it a leave lost everything since the last periodic checkpoint
+    // Saves a leaving player's position, facing and HP (player_world_state), queued ahead of its
+    // profile save (DetachRemoteSession explains why the order matters), stamped with the leave's
+    // time. Without it a leave lost everything since the last periodic checkpoint
     // (checkpoints capture only attached players), so leaving and rejoining healed the player and
     // rolled back their position, and a player who left within one checkpoint interval of first
     // joining had no world-state row at all. The server's shutdown detaches every session before

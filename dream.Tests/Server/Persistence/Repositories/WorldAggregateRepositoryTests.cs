@@ -18,14 +18,13 @@ public sealed class WorldAggregateRepositoryTests
     private static readonly DateTime Created = new(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
 
     [Fact]
-    public void PlayerWorldState_RoundTrips_AndStampsTheWriteTime()
+    public void PlayerWorldState_RoundTrips_AndStampsTheStatesTime()
     {
         using PersistenceTestDatabase database = NewDatabaseWithOwner();
         SqlitePlayerWorldStateRepository repository = new(new SqliteWorldStore(database.Schema));
 
         Assert.Null(repository.TryGetPlayerWorldState(Owner));
 
-        DateTime before = DateTime.UtcNow;
         repository.SavePlayerWorldState(WorldState(new Vector3(1f, 2f, 3f), hp: 40));
         PersistedPlayerWorldState saved = repository.TryGetPlayerWorldState($"  {Owner} ")!.Value;
         Assert.Equal(Owner, saved.PlayerName);
@@ -33,14 +32,20 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Equal(new Vector3(0f, 0f, -1f), saved.Facing);
         Assert.Equal(40, saved.CurrentHealth);
         Assert.Equal(7, saved.CurrentEnergy);
-        // The row carries the write time, not state.UpdatedUtc (Created).
-        Assert.True(saved.UpdatedUtc >= before);
+        // The row carries state.UpdatedUtc (Created), the state's capture time, not the write time.
+        Assert.Equal(Created, saved.UpdatedUtc);
 
         repository.SavePlayerWorldState(WorldState(new Vector3(4f, 5f, 6f), hp: 12));
         PersistedPlayerWorldState updated = repository.TryGetPlayerWorldState(Owner)!.Value;
         Assert.Equal(new Vector3(4f, 5f, 6f), updated.Position);
         Assert.Equal(12, updated.CurrentHealth);
         Assert.Equal(1L, database.Count("SELECT COUNT(*) FROM player_world_state;"));
+
+        // A default UpdatedUtc is stamped with the write time.
+        DateTime before = DateTime.UtcNow;
+        repository.SavePlayerWorldState(WorldState(new Vector3(7f, 8f, 9f), hp: 3) with { UpdatedUtc = default });
+        DateTime after = DateTime.UtcNow;
+        Assert.InRange(repository.TryGetPlayerWorldState(Owner)!.Value.UpdatedUtc, before, after);
     }
 
     [Fact]

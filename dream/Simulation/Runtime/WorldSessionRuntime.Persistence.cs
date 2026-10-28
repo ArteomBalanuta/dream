@@ -58,7 +58,8 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         PersistedPlayerProfile profile,
         PersistedPlayerWorldState? worldState)
     {
-        SetSessionInteractionMode(sessionId, profile.InteractionMode);
+        // Saved even when unchanged, as before: the join's profile save.
+        SetSessionInteractionMode(sessionId, profile.InteractionMode, saveUnchanged: true);
         if (!TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? playerTarget)
             || playerTarget == null)
         {

@@ -300,8 +300,10 @@ public sealed class WorldRoundTripCharacterizationTests
         Assert.Equal(written.AlphaState.Facing, state.Facing);
         Assert.Equal(written.AlphaState.CurrentHealth, state.CurrentHealth);
         Assert.Equal(written.AlphaState.CurrentEnergy, state.CurrentEnergy);
-        // The repository stamps its own write time, not the state's UpdatedUtc.
-        AssertStampedDuringWrite(state.UpdatedUtc, written);
+        // The row carries the state's UpdatedUtc (its capture time), not the write time, so the
+        // checkpoint guards compare capture times.
+        Assert.Equal(written.AlphaState.UpdatedUtc, state.UpdatedUtc);
+        Assert.Equal(DateTimeKind.Utc, state.UpdatedUtc.Kind);
 
         Assert.Null(world.TryGetPlayerWorldState("beta"));
     }
