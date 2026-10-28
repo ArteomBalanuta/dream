@@ -46,9 +46,24 @@ public class PhysicsSyncSystem
     private readonly HashSet<Cube> _liveCubes = [];
     private readonly List<Cube> _staleBaselineCubes = [];
 
+    // Activity tracking for the integrator's body set (see CollectBodiesThatCanHaveMoved).
+    private InsertionOrderedSet<RigidBody>? _trackedBodySet;
+    private long _syncedAddSequence;
+    private long _syncedRemovedCount;
+    private readonly HashSet<RigidBody> _revisitBodies = new(ReferenceEqualityComparer.Instance);
+    private readonly List<int> _collectedSlots = [];
+    private readonly List<(int Slot, RigidBody Body)> _revisitSlots = [];
+    private readonly List<RigidBody> _mergedBodies = [];
+    private readonly List<int> _mergedSlots = [];
+
     // Number of cubes with a last-reported center; bounded by the live dynamic cube bodies after
     // each sync.
     public int TrackedCubeBaselineCount => _lastReportedCenters.Count;
+
+    // Bodies the last sync read and processed, and bodies it skipped as unable to have moved.
+    public int LastSyncedBodyCount { get; private set; }
+
+    public int LastSkippedBodyCount { get; private set; }
 
     // The returned MovedCubes belongs to the caller and stays valid across later syncs: it is a
     // new array when cubes moved and a shared empty array otherwise.
@@ -57,10 +72,23 @@ public class PhysicsSyncSystem
         // Snapshot the bodies: motion-state callbacks and map updates can change the live list.
         List<RigidBody> bodies = _bodies;
         bodies.Clear();
-        for (int i = 0; i < dynamicBodies.Count; i++)
+        InsertionOrderedSet<RigidBody>? bodySet = dynamicBodies as InsertionOrderedSet<RigidBody>;
+        bool bodiesLeftSet = false;
+        if (bodySet != null)
         {
-            bodies.Add(dynamicBodies[i]);
+            bodiesLeftSet = CollectBodiesThatCanHaveMoved(bodySet, bodies);
         }
+        else
+        {
+            StopTrackingBodySet();
+            for (int i = 0; i < dynamicBodies.Count; i++)
+            {
+                bodies.Add(dynamicBodies[i]);
+            }
+        }
+
+        LastSyncedBodyCount = bodies.Count;
+        LastSkippedBodyCount = dynamicBodies.Count - bodies.Count;
 
         List<PendingCubeSync> pendingCubeSyncs = _pendingCubeSyncs;
         List<PendingFracturePieceSync> pendingFracturePieceSyncs = _pendingFracturePieceSyncs;
@@ -98,8 +126,18 @@ public class PhysicsSyncSystem
             }
         }
 
-        PruneRejectionStreaks(bodies);
-        PruneLastReportedCenters(pendingCubeSyncs);
+        if (bodySet == null)
+        {
+            PruneRejectionStreaks(bodies);
+            PruneLastReportedCenters(pendingCubeSyncs);
+        }
+        else if (bodiesLeftSet)
+        {
+            // State goes stale only when a body leaves the set, so the set path prunes only then.
+            PruneRejectionStreaks(bodySet);
+            PruneLastReportedCenters(bodySet);
+        }
+
         HashSet<GeometryCellKey> reservedTargetCells = _reservedTargetCells;
         reservedTargetCells.Clear();
 
@@ -170,6 +208,10 @@ public class PhysicsSyncSystem
         }
 
         SyncFracturePieces(map, pendingFracturePieceSyncs);
+        if (bodySet != null)
+        {
+            RememberBodiesToRevisit(bodies);
+        }
 
         ReportInvariantViolationsInDebugBuilds(map, movedCubes.Count);
         return new PhysicsSyncResult(movedCubes.Count == 0 ? NoMovedCubes : movedCubes.ToArray());
@@ -256,6 +298,201 @@ public class PhysicsSyncSystem
         string detail = string.Join("; ", violations.Take(5));
         System.Diagnostics.Debug.WriteLine($"[map.invariant] {violations.Count} violation(s): {detail}");
         Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write("map.invariant", $"count={violations.Count} {detail}");
+    }
+
+    // Fills `bodies`, in set order, with the bodies whose motion state can differ from what the
+    // last sync saw, and returns whether any body left the set since then. A sleeping body is
+    // neither integrated nor has its motion state synchronized by Bullet, so its transform is the
+    // one the last sync read and the map already holds; syncing it again changes nothing. Every
+    // body this code teleports (ResetBodyToCenter, WorldPhysicsBinder.TryMoveCompatibilityCubeBody)
+    // is activated in the same call. Collected:
+    //   - bodies Bullet reports active (awake, or wanting deactivation but still integrated);
+    //   - bodies added since the last sync, so each is synced at least once (it seeds its
+    //     last-reported center there);
+    //   - bodies the last sync left active or with a rejection streak (the streak advances every
+    //     sync until the body is accepted or reset, whether or not it sleeps).
+    // Each is processed exactly as the full pass would, in the same relative order; the skipped
+    // sleeping bodies would only have been re-accepted in place with no effect. So the result is
+    // identical to syncing every body. Finding the active ones still reads one native flag per
+    // body; everything after that is proportional to the collected bodies.
+    private bool CollectBodiesThatCanHaveMoved(InsertionOrderedSet<RigidBody> set, List<RigidBody> bodies)
+    {
+        bool newSet = !ReferenceEquals(set, _trackedBodySet);
+        if (newSet)
+        {
+            StopTrackingBodySet();
+            _trackedBodySet = set;
+        }
+
+        long syncedAddSequence = _syncedAddSequence;
+        List<int> slots = _collectedSlots;
+        slots.Clear();
+        int slotCount = set.SlotCount;
+        for (int slot = 0; slot < slotCount; slot++)
+        {
+            RigidBody? body = set.SlotAt(slot, out long sequence);
+            if (body != null && (sequence >= syncedAddSequence || body.IsActive))
+            {
+                bodies.Add(body);
+                slots.Add(slot);
+            }
+        }
+
+        if (_revisitBodies.Count > 0)
+        {
+            MergeRevisitBodies(set, syncedAddSequence, bodies, slots);
+        }
+
+        _syncedAddSequence = set.NextSequence;
+        bool bodiesLeft = newSet || set.RemovedCount != _syncedRemovedCount;
+        _syncedRemovedCount = set.RemovedCount;
+        return bodiesLeft;
+    }
+
+    private void MergeRevisitBodies(
+        InsertionOrderedSet<RigidBody> set,
+        long syncedAddSequence,
+        List<RigidBody> bodies,
+        List<int> slots)
+    {
+        List<(int Slot, RigidBody Body)> revisit = _revisitSlots;
+        revisit.Clear();
+        foreach (RigidBody body in _revisitBodies)
+        {
+            // Bodies the scan already took (new or active) are not added twice.
+            if (set.TryGetSlot(body, out int slot) &&
+                set.SlotAt(slot, out long sequence) != null &&
+                sequence < syncedAddSequence &&
+                !body.IsActive)
+            {
+                revisit.Add((slot, body));
+            }
+        }
+
+        _revisitBodies.Clear();
+        if (revisit.Count == 0)
+        {
+            return;
+        }
+
+        revisit.Sort(static (left, right) => left.Slot.CompareTo(right.Slot));
+        List<RigidBody> mergedBodies = _mergedBodies;
+        List<int> mergedSlots = _mergedSlots;
+        mergedBodies.Clear();
+        mergedSlots.Clear();
+        int scanned = 0;
+        int revisited = 0;
+        while (scanned < bodies.Count || revisited < revisit.Count)
+        {
+            if (revisited >= revisit.Count ||
+                (scanned < bodies.Count && slots[scanned] < revisit[revisited].Slot))
+            {
+                mergedBodies.Add(bodies[scanned]);
+                mergedSlots.Add(slots[scanned]);
+                scanned++;
+            }
+            else
+            {
+                mergedBodies.Add(revisit[revisited].Body);
+                mergedSlots.Add(revisit[revisited].Slot);
+                revisited++;
+            }
+        }
+
+        bodies.Clear();
+        bodies.AddRange(mergedBodies);
+        slots.Clear();
+        slots.AddRange(mergedSlots);
+        mergedBodies.Clear();
+        mergedSlots.Clear();
+        revisit.Clear();
+    }
+
+    private void RememberBodiesToRevisit(List<RigidBody> syncedBodies)
+    {
+        _revisitBodies.Clear();
+        for (int i = 0; i < syncedBodies.Count; i++)
+        {
+            RigidBody body = syncedBodies[i];
+            if (body.IsActive)
+            {
+                _revisitBodies.Add(body);
+            }
+        }
+
+        foreach (RigidBody body in _rejectionStreaks.Keys)
+        {
+            _revisitBodies.Add(body);
+        }
+    }
+
+    private void StopTrackingBodySet()
+    {
+        _trackedBodySet = null;
+        _syncedAddSequence = long.MinValue;
+        _syncedRemovedCount = -1;
+        _revisitBodies.Clear();
+    }
+
+    private void PruneRejectionStreaks(InsertionOrderedSet<RigidBody> set)
+    {
+        if (_rejectionStreaks.Count == 0)
+        {
+            return;
+        }
+
+        _staleStreakBodies.Clear();
+        foreach (RigidBody body in _rejectionStreaks.Keys)
+        {
+            if (!set.Contains(body))
+            {
+                _staleStreakBodies.Add(body);
+            }
+        }
+
+        for (int i = 0; i < _staleStreakBodies.Count; i++)
+        {
+            _rejectionStreaks.Remove(_staleStreakBodies[i]);
+        }
+
+        _staleStreakBodies.Clear();
+    }
+
+    // Runs only after a body left the set: drops the baselines of cubes no body in the set
+    // belongs to any more, exactly as the full pass does every sync.
+    private void PruneLastReportedCenters(InsertionOrderedSet<RigidBody> set)
+    {
+        if (_lastReportedCenters.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<Cube> live = _liveCubes;
+        live.Clear();
+        foreach (RigidBody body in set)
+        {
+            if (body.UserObject is ValueTuple<Cube, Vector3> cubeBody && cubeBody.Item1 is Cube cube)
+            {
+                live.Add(cube);
+            }
+        }
+
+        _staleBaselineCubes.Clear();
+        foreach (Cube cube in _lastReportedCenters.Keys)
+        {
+            if (!live.Contains(cube))
+            {
+                _staleBaselineCubes.Add(cube);
+            }
+        }
+
+        for (int i = 0; i < _staleBaselineCubes.Count; i++)
+        {
+            _lastReportedCenters.Remove(_staleBaselineCubes[i]);
+        }
+
+        _staleBaselineCubes.Clear();
+        live.Clear();
     }
 
     private void PruneRejectionStreaks(List<RigidBody> liveBodies)
