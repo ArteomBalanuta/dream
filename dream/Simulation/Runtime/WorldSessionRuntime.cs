@@ -800,7 +800,9 @@ public sealed class WorldSessionRuntime : IDisposable
             subscription.Dispose();
         }
 
-        // Finish queued persistence writes before the owner disposes the repositories.
+        // Shutdown flush: a full checkpoint behind the queued immediate writes, then finish those
+        // writes before the owner disposes the repositories.
+        WriteFinalCheckpoint();
         _writes?.Dispose();
 
         // Every player's contact callback tests against the physics world, so players go before it.
@@ -1395,43 +1397,319 @@ public sealed class WorldSessionRuntime : IDisposable
 
     public IPersistenceCheckpointWriter? CheckpointWriter => _checkpointWriter;
 
-    // Synchronous capture-and-write. The dedicated server instead captures under its lock and
-    // writes on a background worker; see DedicatedServerHost.
+    // Synchronous full capture-and-write, after the immediate writes it updates have committed.
+    // The dedicated server instead captures under its lock and writes on a background worker;
+    // see DedicatedServerHost.
     public void PersistCheckpoint()
     {
-        PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint();
-        if (checkpoint != null)
+        PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint(full: true);
+        if (checkpoint != null && _checkpointWriter != null)
         {
-            _checkpointWriter?.Write(checkpoint);
+            WaitForImmediateWrites(checkpoint);
+            _checkpointWriter.Write(checkpoint);
         }
     }
 
+    // Incremental checkpoints (SCALE-4): every capture but each FullCheckpointInterval-th holds only
+    // what changed since the previous capture, which the map and the world-object registry track
+    // (cube moves, registrations, damage and removals; rubble changes) and the capture diffs
+    // (enemies, against what it last captured). Players are few and their rows also change
+    // through profile saves, so connected players are captured every time. A full sweep repairs any
+    // drift (a failed write, a change no hook saw); the first capture, and the first after a map
+    // rebuild, is always full because nothing was tracked before it.
+    public const int DefaultFullCheckpointInterval = 12;
+
+    // Captures per full sweep: 12 at the server's 5-second cadence is one sweep a minute. 1 makes
+    // every capture full.
+    public int FullCheckpointInterval { get; set; } = DefaultFullCheckpointInterval;
+
+    public long FullCheckpointCaptures { get; private set; }
+
+    public long IncrementalCheckpointCaptures { get; private set; }
+
     // Copies the volatile authoritative state without touching the database, so it is cheap
-    // enough to run on the tick thread.
+    // enough to run on the tick thread. Null without persistence, or when an incremental capture
+    // finds nothing to write (an idle world then allocates nothing).
     public PersistenceCheckpoint? CapturePersistenceCheckpoint()
+    {
+        return CapturePersistenceCheckpoint(full: false);
+    }
+
+    public PersistenceCheckpoint? CapturePersistenceCheckpoint(bool full)
     {
         if (_worldPersistence == null)
         {
             return null;
         }
 
-        DateTime now = DateTime.UtcNow;
-        List<PersistedPlayerWorldState> worldStates = [];
-        List<PlayerCheckpointVitals> vitals = [];
-        foreach (ConnectedPlayer player in _sessions.Players.Where(player => !player.IsLocal))
+        if (!ReferenceEquals(_checkpointTrackedMap, Map) || !_worldObjects.IsCheckpointTrackingEnabled)
         {
-            if (!TryResolveAuthoritativePlayerTarget(player.SessionId, out _, out IAuthoritativePlayerTarget? target)
-                || target == null)
+            Map.EnableCheckpointTracking();
+            _worldObjects.EnableCheckpointTracking();
+            _checkpointTrackedMap = Map;
+            full = true;
+        }
+
+        if (++_checkpointCapturesSinceFull >= Math.Max(1, FullCheckpointInterval))
+        {
+            full = true;
+        }
+
+        DateTime now = DateTime.UtcNow;
+        PersistenceCheckpoint? checkpoint = full
+            ? CaptureFullCheckpoint(now)
+            : CaptureIncrementalCheckpoint(now);
+        Map.ClearCheckpointChanges();
+        _worldObjects.ClearCheckpointChanges();
+        if (full)
+        {
+            _checkpointCapturesSinceFull = 0;
+            FullCheckpointCaptures++;
+        }
+        else
+        {
+            IncrementalCheckpointCaptures++;
+        }
+
+        return checkpoint;
+    }
+
+    // Writes a final full checkpoint on shutdown, behind the immediate writes still queued, so a
+    // clean stop loses nothing since the last periodic checkpoint. Failures are logged only.
+    // Tests turn it off to model a crash: the process dies without the shutdown flush.
+    internal bool WriteCheckpointOnDispose { get; set; } = true;
+
+    private void WriteFinalCheckpoint()
+    {
+        if (!WriteCheckpointOnDispose || _worldPersistence == null || _checkpointWriter == null ||
+            _writes is { IsClosed: true })
+        {
+            return;
+        }
+
+        try
+        {
+            PersistenceCheckpoint? checkpoint = CapturePersistenceCheckpoint(full: true);
+            if (checkpoint != null)
+            {
+                WaitForImmediateWrites(checkpoint);
+                _checkpointWriter.Write(checkpoint);
+            }
+        }
+        catch (Exception ex)
+        {
+            Dream.Multiplayer.Diagnostics.NetworkDiagnosticsLog.Write(
+                "server.checkpoint.final-error",
+                $"{ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private static void WaitForImmediateWrites(PersistenceCheckpoint checkpoint)
+    {
+        try
+        {
+            checkpoint.ImmediateWritesCommitted?.Wait(BackgroundCheckpointWriterWaitTimeout);
+        }
+        catch (AggregateException)
+        {
+        }
+    }
+
+    private static readonly TimeSpan BackgroundCheckpointWriterWaitTimeout = TimeSpan.FromSeconds(10);
+
+    // Completes when every immediate write queued so far has committed (a read queued behind them).
+    // Null when the queue runs writes inline (they have already committed) or is closed.
+    private Task? CreateImmediateWritesBarrier()
+    {
+        if (_writes == null || !_writes.IsBackground)
+        {
+            return null;
+        }
+
+        TaskCompletionSource committed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _writes.EnqueueRead(() => committed.TrySetResult()) ? committed.Task : null;
+    }
+
+    private PersistenceCheckpoint CaptureFullCheckpoint(DateTime now)
+    {
+        CaptureConnectedPlayers(now, out PersistedPlayerWorldState[] worldStates, out PlayerCheckpointVitals[] vitals);
+
+        _checkpointEnemies.Clear();
+        List<PersistedEnemyInstance> enemies = _checkpointEnemyScratch;
+        enemies.Clear();
+        IReadOnlyList<EnemyActor> activeEnemies = _enemies.ActiveActors;
+        for (int i = 0; i < activeEnemies.Count; i++)
+        {
+            EnemyActor enemy = activeEnemies[i];
+            if (!enemy.IsActive)
             {
                 continue;
             }
 
-            vitals.Add(new PlayerCheckpointVitals(
+            PersistedEnemyInstance captured = CreatePersistedEnemy(enemy, now);
+            enemies.Add(captured);
+            _checkpointEnemies[captured.EnemyId] = captured;
+        }
+
+        List<PersistedPlacedCube> cubes = _checkpointCubeScratch;
+        cubes.Clear();
+        foreach (WorldObjectRecord record in _worldObjects.Records)
+        {
+            TryCaptureCube(record, now, cubes);
+        }
+
+        List<PersistedCubeFracturePiece> pieces = _checkpointPieceScratch;
+        pieces.Clear();
+        if (_persistedFractureGroups.Count > 0)
+        {
+            // One map scan for all groups instead of one full scan per fractured cell.
+            _checkpointMapPieceScratch.Clear();
+            Map.CaptureFracturePiecesInto(_checkpointMapPieceScratch);
+            AppendPersistedFracturePieces(_checkpointMapPieceScratch, now, pieces);
+        }
+
+        PersistenceCheckpoint checkpoint = new(worldStates, vitals, ToArray(enemies), ToArray(cubes), ToArray(pieces))
+        {
+            ImmediateWritesCommitted = CreateImmediateWritesBarrier()
+        };
+        ClearCheckpointScratch();
+        return checkpoint;
+    }
+
+    private PersistenceCheckpoint? CaptureIncrementalCheckpoint(DateTime now)
+    {
+        CaptureConnectedPlayers(now, out PersistedPlayerWorldState[] worldStates, out PlayerCheckpointVitals[] vitals);
+
+        // Enemies: diffed against the last capture, ignoring timestamps; one that is gone (killed
+        // and pruned) is a tombstone.
+        List<PersistedEnemyInstance> enemies = _checkpointEnemyScratch;
+        enemies.Clear();
+        HashSet<int> seenEnemies = _checkpointSeenEnemyIds;
+        seenEnemies.Clear();
+        IReadOnlyList<EnemyActor> activeEnemies = _enemies.ActiveActors;
+        for (int i = 0; i < activeEnemies.Count; i++)
+        {
+            EnemyActor enemy = activeEnemies[i];
+            if (!enemy.IsActive)
+            {
+                continue;
+            }
+
+            PersistedEnemyInstance captured = CreatePersistedEnemy(enemy, now);
+            seenEnemies.Add(captured.EnemyId);
+            if (_checkpointEnemies.TryGetValue(captured.EnemyId, out PersistedEnemyInstance previous) &&
+                captured with { CreatedUtc = previous.CreatedUtc, UpdatedUtc = previous.UpdatedUtc } == previous)
+            {
+                continue;
+            }
+
+            enemies.Add(captured);
+            _checkpointEnemies[captured.EnemyId] = captured;
+        }
+
+        List<int> removedEnemies = _checkpointRemovedEnemyScratch;
+        removedEnemies.Clear();
+        if (seenEnemies.Count != _checkpointEnemies.Count)
+        {
+            foreach (int enemyId in _checkpointEnemies.Keys)
+            {
+                if (!seenEnemies.Contains(enemyId))
+                {
+                    removedEnemies.Add(enemyId);
+                }
+            }
+
+            for (int i = 0; i < removedEnemies.Count; i++)
+            {
+                _checkpointEnemies.Remove(removedEnemies[i]);
+            }
+        }
+
+        // Cubes: registered or damaged (registry) and moved (map); removed ids are tombstones.
+        List<PersistedPlacedCube> cubes = _checkpointCubeScratch;
+        cubes.Clear();
+        HashSet<Cube> dirtyCubes = _worldObjects.CheckpointDirtyCubes;
+        foreach (Cube cube in dirtyCubes)
+        {
+            TryCaptureCube(cube, now, cubes);
+        }
+
+        foreach (Cube cube in Map.CheckpointMovedCubes)
+        {
+            if (!dirtyCubes.Contains(cube))
+            {
+                TryCaptureCube(cube, now, cubes);
+            }
+        }
+
+        // Fracture pieces: every piece of each changed rubble cell that belongs to a persisted
+        // group; a group whose rubble is gone is a tombstone.
+        List<PersistedCubeFracturePiece> pieces = _checkpointPieceScratch;
+        pieces.Clear();
+        List<int> removedGroups = _checkpointRemovedGroupScratch;
+        removedGroups.Clear();
+        foreach (GeometryCellKey cell in Map.CheckpointDirtyRubbleCells)
+        {
+            if (!_persistedFractureGroups.TryGetValue(cell, out PersistedFractureGroup group))
+            {
+                continue;
+            }
+
+            _checkpointMapPieceScratch.Clear();
+            Map.CaptureFracturePiecesInto(cell, _checkpointMapPieceScratch);
+            if (_checkpointMapPieceScratch.Count == 0)
+            {
+                removedGroups.Add(group.SourceCubeId);
+                continue;
+            }
+
+            AppendPersistedFracturePieces(_checkpointMapPieceScratch, now, pieces);
+        }
+
+        HashSet<int> removedCubes = _worldObjects.CheckpointRemovedCubeIds;
+        if (worldStates.Length == 0 && enemies.Count == 0 && removedEnemies.Count == 0 && cubes.Count == 0 &&
+            removedCubes.Count == 0 && pieces.Count == 0 && removedGroups.Count == 0)
+        {
+            ClearCheckpointScratch();
+            return null;
+        }
+
+        PersistenceCheckpoint checkpoint = new(worldStates, vitals, ToArray(enemies), ToArray(cubes), ToArray(pieces))
+        {
+            IsIncremental = true,
+            RemovedCubeIds = removedCubes.Count == 0 ? [] : removedCubes.ToArray(),
+            RemovedEnemyIds = ToArray(removedEnemies),
+            RemovedFractureSourceCubeIds = ToArray(removedGroups),
+            ImmediateWritesCommitted = CreateImmediateWritesBarrier()
+        };
+        ClearCheckpointScratch();
+        return checkpoint;
+    }
+
+    private void CaptureConnectedPlayers(
+        DateTime now,
+        out PersistedPlayerWorldState[] worldStates,
+        out PlayerCheckpointVitals[] vitals)
+    {
+        List<PersistedPlayerWorldState> states = _checkpointPlayerStateScratch;
+        List<PlayerCheckpointVitals> playerVitals = _checkpointPlayerVitalsScratch;
+        states.Clear();
+        playerVitals.Clear();
+        foreach (ConnectedPlayer player in _sessions.Players)
+        {
+            if (player.IsLocal ||
+                !TryResolveAuthoritativePlayerTarget(player.SessionId, out _, out IAuthoritativePlayerTarget? target) ||
+                target == null)
+            {
+                continue;
+            }
+
+            playerVitals.Add(new PlayerCheckpointVitals(
                 player.DisplayName,
                 GetSessionInteractionMode(player.SessionId),
                 target.Combatant.Health.CurrentHealth,
                 target.Combatant.Health.MaxHealth));
-            worldStates.Add(new PersistedPlayerWorldState(
+            states.Add(new PersistedPlayerWorldState(
                 player.DisplayName,
                 target.Position,
                 target.Facing,
@@ -1440,18 +1718,109 @@ public sealed class WorldSessionRuntime : IDisposable
                 UpdatedUtc: now));
         }
 
-        PersistedEnemyInstance[] enemies = _enemies.ActiveActors
-            .Where(enemy => enemy.IsActive)
-            .Select(enemy => CreatePersistedEnemy(enemy, now))
-            .ToArray();
-
-        return new PersistenceCheckpoint(
-            worldStates,
-            vitals,
-            enemies,
-            CapturePlacedCubeCheckpoint(now),
-            CaptureFracturePieceCheckpoint(now));
+        worldStates = ToArray(states);
+        vitals = ToArray(playerVitals);
     }
+
+    private void TryCaptureCube(Cube cube, DateTime now, List<PersistedPlacedCube> cubes)
+    {
+        if (_worldObjects.TryGet(cube) is { } record)
+        {
+            TryCaptureCube(record, now, cubes);
+        }
+    }
+
+    // The previous per-cube checkpoint path repaired identities from the database, reloading
+    // the whole placed-cube table and querying profiles once per cube on the tick thread. The
+    // capture uses registry identity only; records without a persistence owner are left to the
+    // placement/combat paths that still repair identity before writing.
+    private void TryCaptureCube(WorldObjectRecord record, DateTime now, List<PersistedPlacedCube> cubes)
+    {
+        if (record.SourceObject is not Cube cube ||
+            string.IsNullOrWhiteSpace(record.OwnerPlayerName) ||
+            !Map.TryGetCellForCube(cube, out GeometryCellKey cell) ||
+            cell.Y == 0)
+        {
+            return;
+        }
+
+        GeometryCellRecord? geometryCell = Map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
+        PersistedPlacedCube captured = new(
+            record.Actor.Id,
+            record.OwnerPlayerName,
+            new Vector3(cell.X, cell.Y, cell.Z),
+            GeometryShapeKind.SolidCube,
+            geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass,
+            record.Health.CurrentHealth,
+            record.Health.MaxHealth,
+            now,
+            now,
+            cube.Position);
+        cubes.Add(captured);
+        if (_persistedCubes.ContainsKey(captured.CubeId))
+        {
+            _persistedCubes[captured.CubeId] = captured;
+        }
+    }
+
+    private void AppendPersistedFracturePieces(
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> mapPieces,
+        DateTime now,
+        List<PersistedCubeFracturePiece> pieces)
+    {
+        for (int i = 0; i < mapPieces.Count; i++)
+        {
+            (GeometryCellKey pieceCell, int pieceIndex, GeometryFracturePiece piece, GeometryMaterialId materialId) = mapPieces[i];
+            if (!_persistedFractureGroups.TryGetValue(pieceCell, out PersistedFractureGroup group))
+            {
+                continue;
+            }
+
+            pieces.Add(new PersistedCubeFracturePiece(
+                SourceCubeId: group.SourceCubeId,
+                PieceIndex: pieceIndex,
+                OwnerPlayerName: group.OwnerPlayerName,
+                ParentCell: new Vector3(pieceCell.X, pieceCell.Y, pieceCell.Z),
+                Center: piece.Center,
+                SideLength: piece.SideLength,
+                MaterialId: materialId,
+                CreatedUtc: now,
+                UpdatedUtc: now));
+        }
+    }
+
+    private void ClearCheckpointScratch()
+    {
+        _checkpointEnemyScratch.Clear();
+        _checkpointCubeScratch.Clear();
+        _checkpointPieceScratch.Clear();
+        _checkpointMapPieceScratch.Clear();
+        _checkpointPlayerStateScratch.Clear();
+        _checkpointPlayerVitalsScratch.Clear();
+        _checkpointRemovedEnemyScratch.Clear();
+        _checkpointRemovedGroupScratch.Clear();
+    }
+
+    private static T[] ToArray<T>(List<T> items)
+    {
+        return items.Count == 0 ? [] : items.ToArray();
+    }
+
+    // Checkpoint capture state. The scratch lists are reused across captures (a capture copies them
+    // into exact-size arrays), so a capture of k changed rows allocates O(k) once they have grown.
+    private Map? _checkpointTrackedMap;
+    private int _checkpointCapturesSinceFull;
+    private readonly Dictionary<int, PersistedEnemyInstance> _checkpointEnemies = [];
+    private readonly HashSet<int> _checkpointSeenEnemyIds = [];
+    private readonly List<PersistedEnemyInstance> _checkpointEnemyScratch = [];
+    private readonly List<int> _checkpointRemovedEnemyScratch = [];
+    private readonly List<PersistedPlacedCube> _checkpointCubeScratch = [];
+    private readonly List<PersistedCubeFracturePiece> _checkpointPieceScratch = [];
+    private readonly List<int> _checkpointRemovedGroupScratch = [];
+    private readonly List<PersistedPlayerWorldState> _checkpointPlayerStateScratch = [];
+    private readonly List<PlayerCheckpointVitals> _checkpointPlayerVitalsScratch = [];
+    private readonly List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
+        _checkpointMapPieceScratch = [];
 
     public void ApplyPersistedPlayerState(
         PlayerSessionId sessionId,
@@ -2162,7 +2531,7 @@ public sealed class WorldSessionRuntime : IDisposable
 
     // Keeps the in-memory persisted row's health equal to the live record's after a non-fatal
     // hit, so an identity repair never brings back older health. The database row itself is
-    // refreshed by the next checkpoint (CapturePlacedCubeCheckpoint), not on every hit.
+    // refreshed by the next checkpoint (the hit marks the cube dirty; see TryCaptureCube), not on every hit.
     private void UpdatePersistedCubeHealth(WorldObjectRecord record)
     {
         if (_persistedCubes.TryGetValue(record.Actor.Id, out PersistedPlacedCube cached))
@@ -2220,45 +2589,6 @@ public sealed class WorldSessionRuntime : IDisposable
         _writes?.Enqueue(() => profiles.Save(profile));
     }
 
-    // The previous per-cube checkpoint path repaired identities from the database, reloading
-    // the whole placed-cube table and querying profiles once per cube on the tick thread. The
-    // capture uses registry identity only; records without a persistence owner are left to the
-    // placement/combat paths that still repair identity before writing.
-    private IReadOnlyList<PersistedPlacedCube> CapturePlacedCubeCheckpoint(DateTime now)
-    {
-        List<PersistedPlacedCube> cubes = [];
-        foreach (WorldObjectRecord record in _worldObjects.GetCubeRecords())
-        {
-            if (record.SourceObject is not Cube cube ||
-                string.IsNullOrWhiteSpace(record.OwnerPlayerName) ||
-                !Map.TryGetCellForCube(cube, out GeometryCellKey cell) ||
-                cell.Y == 0)
-            {
-                continue;
-            }
-
-            GeometryCellRecord? geometryCell = Map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
-            PersistedPlacedCube captured = new(
-                record.Actor.Id,
-                record.OwnerPlayerName,
-                new Vector3(cell.X, cell.Y, cell.Z),
-                GeometryShapeKind.SolidCube,
-                geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass,
-                record.Health.CurrentHealth,
-                record.Health.MaxHealth,
-                now,
-                now,
-                cube.Position);
-            cubes.Add(captured);
-            if (_persistedCubes.ContainsKey(captured.CubeId))
-            {
-                _persistedCubes[captured.CubeId] = captured;
-            }
-        }
-
-        return cubes;
-    }
-
     private void RestorePersistedCubeFracturePieces()
     {
         if (_worldPersistence == null)
@@ -2311,38 +2641,6 @@ public sealed class WorldSessionRuntime : IDisposable
 
         _persistedFractureGroups[cell] = new PersistedFractureGroup(sourceCubeId, ownerPlayerName);
         PersistFracturePiecesForCell(cell);
-    }
-
-    private IReadOnlyList<PersistedCubeFracturePiece> CaptureFracturePieceCheckpoint(DateTime now)
-    {
-        if (_persistedFractureGroups.Count == 0)
-        {
-            return [];
-        }
-
-        // One map scan for all groups instead of one full scan per fractured cell.
-        List<PersistedCubeFracturePiece> pieces = [];
-        foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in
-            Map.CaptureFracturePieces())
-        {
-            if (!_persistedFractureGroups.TryGetValue(PieceCell, out PersistedFractureGroup group))
-            {
-                continue;
-            }
-
-            pieces.Add(new PersistedCubeFracturePiece(
-                SourceCubeId: group.SourceCubeId,
-                PieceIndex: PieceIndex,
-                OwnerPlayerName: group.OwnerPlayerName,
-                ParentCell: new Vector3(PieceCell.X, PieceCell.Y, PieceCell.Z),
-                Center: Piece.Center,
-                SideLength: Piece.SideLength,
-                MaterialId: MaterialId,
-                CreatedUtc: now,
-                UpdatedUtc: now));
-        }
-
-        return pieces;
     }
 
     private void PersistFracturePiecesForCell(GeometryCellKey cell)

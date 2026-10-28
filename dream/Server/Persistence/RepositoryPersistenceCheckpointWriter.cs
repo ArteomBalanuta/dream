@@ -45,19 +45,24 @@ public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpoi
             _world.SavePlayerWorldState(state);
         }
 
-        HashSet<int> enemyIds = _world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).ToHashSet();
+        // An incremental checkpoint often holds no rows of a kind; skip that table's load then.
+        HashSet<int> enemyIds = checkpoint.Enemies.Count == 0
+            ? []
+            : _world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).ToHashSet();
         foreach (PersistedEnemyInstance enemy in checkpoint.Enemies.Where(enemy => enemyIds.Contains(enemy.EnemyId)))
         {
             _world.SaveEnemyInstance(enemy);
         }
 
-        HashSet<int> cubeIds = _world.LoadPlacedCubes().Select(cube => cube.CubeId).ToHashSet();
+        HashSet<int> cubeIds = checkpoint.PlacedCubes.Count == 0
+            ? []
+            : _world.LoadPlacedCubes().Select(cube => cube.CubeId).ToHashSet();
         foreach (PersistedPlacedCube cube in checkpoint.PlacedCubes.Where(cube => cubeIds.Contains(cube.CubeId)))
         {
             _world.SavePlacedCube(cube);
         }
 
-        HashSet<(int, int)> pieceKeys = _world.LoadCubeFracturePieces()
+        HashSet<(int, int)> pieceKeys = checkpoint.FracturePieces.Count == 0 ? [] : _world.LoadCubeFracturePieces()
             .Select(piece => (piece.SourceCubeId, piece.PieceIndex))
             .ToHashSet();
         foreach (PersistedCubeFracturePiece piece in checkpoint.FracturePieces
