@@ -99,7 +99,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
             // Exactly one new backup, named for the version pair, and it is the pre-migration file.
             string backup = Assert.Single(database.Backups().Except(backupsBeforeStart));
-            Assert.Matches($@"persistence\.sqlite\.v{fromVersion}-to-v0003\.\d{{8}}T\d{{6}}Z\.bak$", backup);
+            Assert.Matches($@"persistence\.sqlite\.v{fromVersion}-to-v0004\.\d{{8}}T\d{{6}}Z\.bak$", backup);
             using (SqliteConnection backupConnection = MigrationTestDatabase.OpenFile(backup))
             {
                 using SqliteCommand command = backupConnection.CreateCommand();
@@ -117,7 +117,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 Assert.False(reader.Read(), "foreign_key_check must be clean");
             }
 
-            Assert.Equal(3L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+            Assert.Equal(4L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
             Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
             Assert.Equal(oldSeed, database.Scalar("SELECT seed FROM worlds WHERE world_id = 1;"));
             Assert.Equal(oldTime, database.Scalar("SELECT world_time_ticks FROM worlds WHERE world_id = 1;"));

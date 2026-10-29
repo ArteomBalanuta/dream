@@ -34,7 +34,7 @@ public sealed partial class SqlitePlacedObjectRepository
             return;
         }
 
-        using SqliteCommand command = session.CreateCommand(CheckpointUpdateSql);
+        using SqliteCommand command = session.CreateCommand(SqliteRepositorySql.WithCheckpointLiterals(CheckpointUpdateSql, worldId, writeUtc));
         SqliteParameter cubeId = command.AddParameter("$cubeId", SqliteType.Integer);
         SqliteParameter cellX = command.AddParameter("$cellX", SqliteType.Real);
         SqliteParameter cellY = command.AddParameter("$cellY", SqliteType.Real);
@@ -45,8 +45,6 @@ public sealed partial class SqlitePlacedObjectRepository
         SqliteParameter materialId = command.AddParameter("$materialId", SqliteType.Text);
         SqliteParameter currentHealth = command.AddParameter("$currentHealth", SqliteType.Integer);
         SqliteParameter maxHealth = command.AddParameter("$maxHealth", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", writeUtc);
-        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedPlacedCube cube in cubes)
         {

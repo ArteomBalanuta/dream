@@ -29,15 +29,13 @@ public sealed partial class SqliteRubbleRepository
             return;
         }
 
-        using SqliteCommand command = session.CreateCommand(CheckpointUpdateSql);
+        using SqliteCommand command = session.CreateCommand(SqliteRepositorySql.WithCheckpointLiterals(CheckpointUpdateSql, worldId, writeUtc));
         SqliteParameter sourceCubeId = command.AddParameter("$sourceCubeId", SqliteType.Integer);
         SqliteParameter pieceIndex = command.AddParameter("$pieceIndex", SqliteType.Integer);
         SqliteParameter centerX = command.AddParameter("$centerX", SqliteType.Real);
         SqliteParameter centerY = command.AddParameter("$centerY", SqliteType.Real);
         SqliteParameter centerZ = command.AddParameter("$centerZ", SqliteType.Real);
         SqliteParameter sideLength = command.AddParameter("$sideLength", SqliteType.Real);
-        command.Parameters.AddWithValue("$updatedUtc", writeUtc);
-        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedCubeFracturePiece piece in pieces)
         {
