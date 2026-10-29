@@ -27,6 +27,15 @@ public static class ServerBootstrap
     public const double MinDayLengthMinutes = 1d;
     public const double MaxDayLengthMinutes = 1440d;
 
+    // Selects the world a dedicated server opens when no --world argument is given: a world id or
+    // a world name. Unset means the default world. (Read from persistence wave B2 on.)
+    public const string WorldEnvironmentVariable = "DREAM_WORLD";
+
+    // The dedicated server's database and its initial schema script, next to the executable.
+    public static string DefaultDatabasePath => AssetPaths.Config("player-profiles.db");
+
+    public static string DefaultSchemaScriptPath => AssetPaths.Config("player-profiles.init.sql");
+
     // The server's default log: each line to stderr.
     private static readonly Action<string> ConsoleLog = static line => Console.Error.WriteLine(line);
 
@@ -37,6 +46,14 @@ public static class ServerBootstrap
 
     public static DedicatedServerHost CreateAuthoritativeHost()
     {
+        return CreateAuthoritativeHost(CreatePersistenceBundle());
+    }
+
+    // The authoritative host over the default database, opening the world the options select.
+    // Until persistence wave B2 the options are accepted but the server always opens world 1.
+    public static DedicatedServerHost CreateAuthoritativeHost(ServerStartOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
         return CreateAuthoritativeHost(CreatePersistenceBundle());
     }
 
@@ -91,7 +108,13 @@ public static class ServerBootstrap
 
     public static int RunServerMode()
     {
-        return RunServerModeAsync().GetAwaiter().GetResult();
+        return RunServerMode(ServerStartOptions.Default);
+    }
+
+    public static int RunServerMode(ServerStartOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RunServerModeAsync(options).GetAwaiter().GetResult();
     }
 
     // The dedicated server's exit code when the database was migrated by a newer build.
@@ -120,9 +143,12 @@ public static class ServerBootstrap
         }
     }
 
-    private static async Task<int> RunServerModeAsync()
+    private static async Task<int> RunServerModeAsync(ServerStartOptions options)
     {
-        using DedicatedServerHost? host = TryCreateServerModeHost(CreateAuthoritativeHost, ConsoleLog, out int startupExitCode);
+        using DedicatedServerHost? host = TryCreateServerModeHost(
+            () => CreateAuthoritativeHost(options),
+            ConsoleLog,
+            out int startupExitCode);
         if (host == null)
         {
             return startupExitCode;
@@ -166,8 +192,8 @@ public static class ServerBootstrap
     private static ServerPersistenceBundle CreatePersistenceBundle()
     {
         return CreatePersistenceBundle(
-            AssetPaths.Config("player-profiles.db"),
-            AssetPaths.Config("player-profiles.init.sql"),
+            DefaultDatabasePath,
+            DefaultSchemaScriptPath,
             Environment.GetEnvironmentVariable(SimulationSeedEnvironmentVariable),
             ConsoleLog);
     }

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
@@ -22,6 +23,13 @@ public sealed partial class SqliteWorldMetadataRepository : SqliteRepositoryBase
 
     public SqliteWorldMetadataRepository(SqliteSchemaBootstrapper schema)
         : base(new SqliteWorldStore(schema))
+    {
+    }
+
+    // Bound to one world. Until workstream B1 moves the seed and clock onto the worlds row, only
+    // world 1 is supported.
+    public SqliteWorldMetadataRepository(SqliteSchemaBootstrapper schema, WorldId worldId)
+        : this(SqliteWorldBinding.RequireDefaultWorld(schema, worldId))
     {
     }
 

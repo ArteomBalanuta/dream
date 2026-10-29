@@ -1,4 +1,5 @@
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence;
 
@@ -11,9 +12,13 @@ public sealed class ServerPersistenceBundle : IDisposable
         ICombatFormulaRepository combatFormulas,
         Dream.Simulation.Rules.CombatFormulaService formulaService,
         ulong? simulationSeed = null,
-        long worldTimeTicks = 0)
+        long worldTimeTicks = 0,
+        WorldId? worldId = null,
+        WorldDescriptor? descriptor = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
+        WorldId = worldId ?? WorldId.Default;
+        Descriptor = descriptor ?? WorldDescriptor.Default;
         SimulationSeed = simulationSeed;
         WorldTimeTicks = worldTimeTicks;
         Schema = schema;
@@ -41,6 +46,13 @@ public sealed class ServerPersistenceBundle : IDisposable
     // The world clock stored in world_metadata by the last committed checkpoint; 0 for a new world.
     // ServerBootstrap.CreateRuntimeHost resumes the runtime's WorldClock from it.
     public long WorldTimeTicks { get; }
+
+    // The world this bundle's repositories are bound to; world 1 unless the server selected another.
+    public WorldId WorldId { get; }
+
+    // The public description of that world (its map size and generator); WorldDescriptor.Default
+    // unless the server selected another world.
+    public WorldDescriptor Descriptor { get; }
 
     public void Dispose()
     {

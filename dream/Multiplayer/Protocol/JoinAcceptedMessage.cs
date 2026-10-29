@@ -20,7 +20,10 @@ public sealed record JoinAcceptedMessage(
     // Protocol v5: the server's world clock at CurrentServerTick. Clients derive the time of day
     // from it and their own server tick estimate (ClientWorldClock); it is sent only at join, so
     // snapshots carry no clock bytes. A chunked transfer keeps it on the carrier.
-    WorldClockAnchor? WorldClock = null) : IServerToClientMessage
+    WorldClockAnchor? WorldClock = null,
+    // Persistence wave B: the world the client joins (its map size and generator). Null is
+    // omitted from the JSON, so a message without it encodes exactly as before.
+    WorldDescriptorWire? World = null) : IServerToClientMessage
 {
     public string MessageKind => "server.join-accepted";
 
