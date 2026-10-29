@@ -23,6 +23,10 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
     private readonly IDisposable? _ownedDependency;
 
+    // The join-accepted descriptor, cached for the runtime's current WorldDescriptor.
+    private WorldDescriptorWire? _worldWire;
+    private WorldDescriptor? _worldWireSource;
+
     // Tick scratch: this tick's secondary command frames in canonical order. Reused every tick.
     private readonly List<PlayerCommandFrame> _orderedSecondaryCommands = [];
 
@@ -84,7 +88,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 Inventory: existingInventory,
                 InitialActors: Runtime.CaptureActorSnapshots(),
                 InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
-                WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick));
+                WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
+                World: GetWorldWire());
             LogJoinAccepted("existing", existingAccepted);
             return existingAccepted;
         }
@@ -115,7 +120,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             Inventory: inventory,
             InitialActors: Runtime.CaptureActorSnapshots(),
             InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
-            WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick));
+            WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
+                World: GetWorldWire());
         LogJoinAccepted("new", accepted);
         return accepted;
     }
@@ -283,7 +289,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     {
         SceneEventHub events = new();
         WorldSessionRuntime runtime = new(
-            floorSize: WorldDefaults.StartupFloorSize,
+            world: persistence?.Descriptor ?? WorldDescriptor.Default,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             events,
             playerProfiles: persistence?.PlayerProfiles,
@@ -293,6 +299,20 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             persistenceWrites: persistence?.PersistenceWrites,
             simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner);
+    }
+
+    // The wire form of the runtime's world, built once per descriptor (a join is not a tick, but
+    // the descriptor only changes when the map is rebuilt).
+    private WorldDescriptorWire GetWorldWire()
+    {
+        WorldDescriptor world = Runtime.World;
+        if (_worldWire == null || !ReferenceEquals(_worldWireSource, world))
+        {
+            _worldWire = WorldDescriptorWire.From(world);
+            _worldWireSource = world;
+        }
+
+        return _worldWire;
     }
 
     private PlayerSessionId ResolveTickControlledSessionId()

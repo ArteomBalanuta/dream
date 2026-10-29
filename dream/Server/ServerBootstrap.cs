@@ -5,6 +5,8 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
+using Dream.Server.Persistence.Worlds;
+using Dream.Server.Worlds;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -50,11 +52,10 @@ public static class ServerBootstrap
     }
 
     // The authoritative host over the default database, opening the world the options select.
-    // Until persistence wave B2 the options are accepted but the server always opens world 1.
     public static DedicatedServerHost CreateAuthoritativeHost(ServerStartOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return CreateAuthoritativeHost(CreatePersistenceBundle());
+        return CreateAuthoritativeHost(CreatePersistenceBundle(options));
     }
 
     // The host the dedicated and integrated servers run. Joins are applied at the next tick in
@@ -100,10 +101,13 @@ public static class ServerBootstrap
             PlayerProfiles: persistence.PlayerProfiles,
             World: persistence.World,
             FormulaService: persistence.FormulaService,
-            CheckpointWriter: new SqlitePersistenceCheckpointWriter(persistence.Schema),
+            CheckpointWriter: new SqlitePersistenceCheckpointWriter(persistence.Schema, persistence.WorldId),
             PersistenceWrites: PersistenceWriteQueue.Background(),
             SimulationSeed: persistence.SimulationSeed,
-            Owner: persistence);
+            Owner: persistence)
+        {
+            Descriptor = persistence.Descriptor,
+        };
     }
 
     public static int RunServerMode()
@@ -119,6 +123,9 @@ public static class ServerBootstrap
 
     // The dedicated server's exit code when the database was migrated by a newer build.
     public const int SchemaTooNewExitCode = 3;
+
+    // The dedicated server's exit code when the selected world does not exist.
+    public const int WorldNotFoundExitCode = 4;
 
     // The host, or null after logging why the server cannot start: a database at a schema version
     // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
@@ -139,6 +146,14 @@ public static class ServerBootstrap
                 $"version {ex.LatestVersion} this build knows. Run a newer build, or restore a backup " +
                 "made before the upgrade (the .bak next to the database).");
             exitCode = SchemaTooNewExitCode;
+            return null;
+        }
+        catch (WorldNotFoundException ex)
+        {
+            log(
+                $"Server not started: world '{ex.Selector}' does not exist. " +
+                "Select an existing world id or name (--world, or DREAM_WORLD).");
+            exitCode = WorldNotFoundExitCode;
             return null;
         }
     }
@@ -189,45 +204,134 @@ public static class ServerBootstrap
         }
     }
 
-    private static ServerPersistenceBundle CreatePersistenceBundle()
+    private static ServerPersistenceBundle CreatePersistenceBundle(ServerStartOptions? start = null)
     {
         return CreatePersistenceBundle(
             DefaultDatabasePath,
             DefaultSchemaScriptPath,
             Environment.GetEnvironmentVariable(SimulationSeedEnvironmentVariable),
-            ConsoleLog);
+            ConsoleLog,
+            start);
     }
 
-    // Opens (or creates) the persistent world and resolves the seed its runtime rolls with: the
-    // seed stored in world_metadata, generated on first load, unless simulationSeedOverride holds
-    // a valid seed. The override is applied for this run only and never stored.
+    // The world a start selects: the --world argument, else DREAM_WORLD, else the default world.
+    // A selector that cannot be a world id or name (a digit text that is not a valid id) throws
+    // WorldNotFoundException, like an id that does not exist.
+    public static WorldSelector ResolveWorldSelector(string? argument, string? environmentValue)
+    {
+        string? text = string.IsNullOrWhiteSpace(argument) ? environmentValue : argument;
+        try
+        {
+            return WorldSelector.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new WorldNotFoundException(text!.Trim());
+        }
+    }
+
+    // Opens (or creates) the persistent world the start selects (see ResolveWorldSelector) and
+    // resolves the seed its runtime rolls with: the seed stored on the world, generated on first
+    // load, unless simulationSeedOverride holds a valid seed. The override is applied for this run
+    // only and never stored. The repositories are bound to the resolved world's id. The log names
+    // the world (name and id) and never the seed. catalog is a test seam; it defaults to the
+    // database's SqliteWorldCatalog.
+    //
+    // Until the SQLite catalog is implemented (workstream B4) a default selection falls back to
+    // world 1 built from the existing seed and world time, so the default path works without it.
+    // Remove that fallback (OpenLegacyDefaultWorld) once B4 has merged.
     public static ServerPersistenceBundle CreatePersistenceBundle(
         string databasePath,
         string schemaScriptPath,
         string? simulationSeedOverride = null,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        ServerStartOptions? start = null,
+        IWorldCatalog? catalog = null)
     {
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
         schema.EnsureSchema(log);
-        SqliteWorldMetadataRepository metadata = new(schema);
+
+        WorldSelector selector = ResolveWorldSelector(
+            start?.WorldSelector,
+            Environment.GetEnvironmentVariable(WorldEnvironmentVariable));
+        int newWorldSize = start?.NewWorldSize ?? WorldDefaults.StartupFloorSize;
+
+        WorldRecord record;
+        bool created;
+        try
+        {
+            record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out created);
+        }
+        catch (NotImplementedException) when (selector.IsDefault)
+        {
+            return OpenLegacyDefaultWorld(schema, simulationSeedOverride, log);
+        }
+
+        WorldDescriptor descriptor = record.Descriptor;
+        descriptor.Validate();
+        WorldId worldId = descriptor.Id;
+        log?.Invoke(created
+            ? $"World '{descriptor.Name}' (id {worldId}) created."
+            : $"World '{descriptor.Name}' (id {worldId}) opened.");
+
+        ulong storedSeed;
+        if (record.Seed is ulong recordSeed)
+        {
+            storedSeed = recordSeed;
+        }
+        else
+        {
+            WorldSimulationSeed generated = new SqliteWorldMetadataRepository(schema, worldId).GetOrCreateSimulationSeed();
+            storedSeed = generated.Seed;
+            if (generated.Created)
+            {
+                log?.Invoke($"World '{descriptor.Name}' simulation seed generated and stored.");
+            }
+        }
+
+        ulong simulationSeed = ResolveSimulationSeed(storedSeed, simulationSeedOverride, log);
+        SqliteCombatFormulaRepository formulas = new(schema);
+        return new ServerPersistenceBundle(
+            schema,
+            new SqlitePlayerProfileRepository(schema),
+            new SqliteWorldPersistenceRepository(schema, worldId),
+            formulas,
+            CombatFormulaService.Create(formulas),
+            simulationSeed,
+            record.WorldTimeTicks,
+            worldId,
+            descriptor);
+    }
+
+    // World 1 from its stored seed and world time, as the server opened it before worlds had a catalog.
+    private static ServerPersistenceBundle OpenLegacyDefaultWorld(
+        SqliteSchemaBootstrapper schema,
+        string? simulationSeedOverride,
+        Action<string>? log)
+    {
+        WorldDescriptor descriptor = WorldDescriptor.Default;
+        SqliteWorldMetadataRepository metadata = new(schema, descriptor.Id);
         WorldSimulationSeed stored = metadata.GetOrCreateSimulationSeed();
         if (stored.Created)
         {
-            log?.Invoke("World simulation seed generated and stored in world_metadata.");
+            log?.Invoke($"World '{descriptor.Name}' simulation seed generated and stored.");
         }
 
         metadata.TryGetWorldTimeTicks(out long worldTimeTicks);
+        log?.Invoke($"World '{descriptor.Name}' (id {descriptor.Id}) opened.");
 
         ulong simulationSeed = ResolveSimulationSeed(stored.Seed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
         return new ServerPersistenceBundle(
             schema,
             new SqlitePlayerProfileRepository(schema),
-            new SqliteWorldPersistenceRepository(schema),
+            new SqliteWorldPersistenceRepository(schema, descriptor.Id),
             formulas,
             CombatFormulaService.Create(formulas),
             simulationSeed,
-            worldTimeTicks);
+            worldTimeTicks,
+            descriptor.Id,
+            descriptor);
     }
 
     // Minutes per in-game day: an unset value gives the default silently; a number outside

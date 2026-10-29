@@ -78,6 +78,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // Set while a cube registration must not export a CubeIdentified delta (see OnCubeIdAssigned).
     private bool _suppressCubeIdExports;
 
+    // A square default-generator world of the given floor size (id 1, "default").
     public WorldSessionRuntime(
         int floorSize,
         Vector3 playerStartPosition,
@@ -89,7 +90,36 @@ public sealed partial class WorldSessionRuntime : IDisposable
         PersistenceWriteQueue? persistenceWrites = null,
         ulong simulationSeed = DefaultSimulationSeed,
         bool headlessMap = true)
+        : this(
+            WorldDescriptor.ForFloorSize(floorSize),
+            playerStartPosition,
+            events,
+            playerProfiles,
+            worldPersistence,
+            combatFormulaService,
+            checkpointWriter,
+            persistenceWrites,
+            simulationSeed,
+            headlessMap)
     {
+    }
+
+    // The runtime's map is built from the descriptor (width and depth; the height is the map's
+    // fixed one). The world id never enters simulation state, snapshots or checksums.
+    public WorldSessionRuntime(
+        WorldDescriptor world,
+        Vector3 playerStartPosition,
+        SceneEventHub events,
+        IPlayerProfileRepository? playerProfiles = null,
+        IWorldPersistenceRepository? worldPersistence = null,
+        CombatFormulaService? combatFormulaService = null,
+        IPersistenceCheckpointWriter? checkpointWriter = null,
+        PersistenceWriteQueue? persistenceWrites = null,
+        ulong simulationSeed = DefaultSimulationSeed,
+        bool headlessMap = true)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        World = world;
         SimulationSeed = simulationSeed;
         _headlessMap = headlessMap;
         _writes = persistenceWrites ??
@@ -101,7 +131,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
-        Map = CreateMap(floorSize);
+        Map = CreateMap(world);
 
         PhysicsFactory physicsFactory = new();
         var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
@@ -131,6 +161,10 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     public Map Map { get; private set; }
 
+    // The world this runtime hosts: the descriptor its map was built from. Replaced (same id and
+    // name, new size) by RebuildMapForFloorSize.
+    public WorldDescriptor World { get; private set; }
+
     public ulong LastWorldMutationSequence { get; private set; }
 
     // The runtime is the authoritative server's simulation and never renders (clients render their
@@ -139,13 +173,13 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // for tests that inspect the server map's render export.
     private readonly bool _headlessMap;
 
-    private Map CreateMap(int floorSize)
+    private Map CreateMap(WorldDescriptor world)
     {
         return new Map(
             Physics,
             generateStartupTerrain: true,
-            width: floorSize,
-            depth: floorSize,
+            width: world.Width,
+            depth: world.Depth,
             headless: _headlessMap);
     }
 
@@ -181,7 +215,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
         Physics.ResetMapBodies();
 
-        var rebuiltMap = CreateMap(floorSize);
+        WorldDescriptor rebuiltWorld = World with { Width = floorSize, Depth = floorSize };
+        var rebuiltMap = CreateMap(rebuiltWorld);
         previousMap.CopyPlacedCubesTo(rebuiltMap);
         // Re-keys the same ids on the rebuilt map; nothing new for clients to learn.
         _suppressCubeIdExports = true;
@@ -195,6 +230,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         }
 
         Map = rebuiltMap;
+        World = rebuiltWorld;
         Player.BindMap(rebuiltMap);
         foreach (RemoteSessionPlayerState secondary in _orderedSecondaryRemotePlayers)
         {
