@@ -92,7 +92,7 @@ public sealed class WorldRoundTripCharacterizationTests
         PersistedEnemyInstance moved = new SqliteWorldPersistenceRepository(reopened).LoadActiveEnemies().Single(enemy => enemy.ObjectId.AsInt() == 5);
         Assert.Equal(
             SqliteSchemaBootstrapper.FormatUtc(moved.UpdatedUtc),
-            ReadStrings(reopened, "SELECT updated_utc FROM enemy_instances WHERE enemy_id = 5").Single());
+            ReadStrings(reopened, "SELECT updated_utc FROM enemy_instances WHERE object_id = 5").Single());
     }
 
     [Fact]

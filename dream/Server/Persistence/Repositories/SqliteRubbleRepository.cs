@@ -5,7 +5,7 @@ using Dream.Simulation.World.Geometry;
 
 namespace Dream.Server.Persistence.Repositories;
 
-// cube_fracture_pieces: the rubble left by fractured cubes, keyed by (source_cube_id, piece_index).
+// cube_fracture_pieces: the rubble left by fractured cubes, keyed by object_id (origin_object_id and piece_index are unique per world).
 public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId worldId)
     : SqliteRepositoryBase(store, worldId), IRubbleRepository
 {
@@ -17,7 +17,8 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
 
     private const string LoadSql = """
         SELECT
-            source_cube_id,
+            object_id,
+            origin_object_id,
             piece_index,
             owner_player_name,
             parent_cell_x,
@@ -32,13 +33,14 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
             updated_utc
         FROM cube_fracture_pieces
         WHERE world_id = $worldId
-        ORDER BY source_cube_id, piece_index;
+        ORDER BY origin_object_id, piece_index;
         """;
 
     private const string UpsertSql = """
         INSERT INTO cube_fracture_pieces (
             world_id,
-            source_cube_id,
+            object_id,
+            origin_object_id,
             piece_index,
             owner_player_name,
             parent_cell_x,
@@ -54,7 +56,8 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
         )
         VALUES (
             $worldId,
-            $sourceCubeId,
+            $objectId,
+            $originObjectId,
             $pieceIndex,
             $ownerPlayerName,
             $parentCellX,
@@ -68,7 +71,7 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(world_id, source_cube_id, piece_index) DO UPDATE SET
+        ON CONFLICT(world_id, object_id) DO UPDATE SET
             owner_player_name = excluded.owner_player_name,
             parent_cell_x = excluded.parent_cell_x,
             parent_cell_y = excluded.parent_cell_y,
@@ -81,28 +84,40 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM cube_fracture_pieces WHERE world_id = $worldId AND source_cube_id = $sourceCubeId;";
+    // C0 shim, removed by the wave C glue: the bridge still passes ObjectId.None for a piece. Such a
+    // piece takes the world's next id in SQL (the insert trigger then advances the counter) and
+    // upserts on its (origin, index) key.
+    private static readonly string UpsertByIndexSql = UpsertSql
+        .Replace("$objectId,", "(SELECT next_object_id FROM worlds WHERE world_id = $worldId),", StringComparison.Ordinal)
+        .Replace("ON CONFLICT(world_id, object_id) DO UPDATE SET", "ON CONFLICT(world_id, origin_object_id, piece_index) DO UPDATE SET", StringComparison.Ordinal);
+
+    private const string DeleteSql = "DELETE FROM cube_fracture_pieces WHERE world_id = $worldId AND origin_object_id = $originObjectId;";
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() =>
         QueryList(LoadSql, static reader => new PersistedCubeFracturePiece(
-            ObjectId: ObjectId.None,
-            OriginObjectId: new ObjectId(reader.GetInt64(0)),
-            PieceIndex: reader.GetInt32(1),
-            OwnerPlayerName: reader.GetString(2),
-            ParentCell: reader.GetVector3(3),
-            Center: reader.GetVector3(6),
-            SideLength: reader.GetFloat(9),
-            MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(10), ignoreCase: true),
-            CreatedUtc: reader.GetUtc(11),
-            UpdatedUtc: reader.GetUtc(12)));
+            ObjectId: new ObjectId(reader.GetInt64(0)),
+            OriginObjectId: new ObjectId(reader.GetInt64(1)),
+            PieceIndex: reader.GetInt32(2),
+            OwnerPlayerName: reader.GetNullableString(3),
+            ParentCell: reader.GetVector3(4),
+            Center: reader.GetVector3(7),
+            SideLength: reader.GetFloat(10),
+            MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(11), ignoreCase: true),
+            CreatedUtc: reader.GetUtc(12),
+            UpdatedUtc: reader.GetUtc(13)));
 
     // created_utc keeps piece.CreatedUtc (UtcNow when unset); updated_utc is the write time.
     public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) =>
-        Execute(UpsertSql, piece, static (command, p) =>
+        Execute(piece.ObjectId.IsNone ? UpsertByIndexSql : UpsertSql, piece, static (command, p) =>
         {
-            command.BindInt64("$sourceCubeId", p.OriginObjectId.Value);
+            if (!p.ObjectId.IsNone)
+            {
+                command.BindInt64("$objectId", p.ObjectId.Value);
+            }
+
+            command.BindInt64("$originObjectId", p.OriginObjectId.Value);
             command.BindInt64("$pieceIndex", p.PieceIndex);
-            command.BindText("$ownerPlayerName", (p.OwnerPlayerName ?? string.Empty).Trim());
+            command.BindNullableText("$ownerPlayerName", string.IsNullOrWhiteSpace(p.OwnerPlayerName) ? null : p.OwnerPlayerName.Trim());
             command.BindVector3("$parentCellX", "$parentCellY", "$parentCellZ", p.ParentCell);
             command.BindVector3("$centerX", "$centerY", "$centerZ", p.Center);
             command.BindReal("$sideLength", p.SideLength);
@@ -112,5 +127,5 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
         });
 
     public void DeleteCubeFracturePieces(ObjectId originObjectId) =>
-        Execute(DeleteSql, originObjectId, static (command, id) => command.BindInt64("$sourceCubeId", id.Value));
+        Execute(DeleteSql, originObjectId, static (command, id) => command.BindInt64("$originObjectId", id.Value));
 }

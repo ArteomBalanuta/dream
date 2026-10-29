@@ -94,7 +94,7 @@ public static class WorldSeeder
                 float offsetX = piece % 2 == 0 ? 0.25f : 0.75f;
                 float offsetZ = piece < 2 ? 0.25f : 0.75f;
                 pieces.Add(new PersistedCubeFracturePiece(
-                    ObjectId.None, new ObjectId(sourceCubeId),
+                    new ObjectId(FirstSeededPieceId + i * 4 + piece), new ObjectId(sourceCubeId),
                     piece,
                     OwnerPlayerName,
                     cell,
@@ -127,6 +127,9 @@ public static class WorldSeeder
         long databaseBytes = File.Exists(databasePath) ? new FileInfo(databasePath).Length : 0;
         return new WorldSeedResult(cubes.Count, rubbleCells.Count, pieces.Count, enemies.Count, stopwatch.Elapsed.TotalMilliseconds, databaseBytes);
     }
+
+    // Rubble piece ids, above every seeded cube, origin and enemy id.
+    private const int FirstSeededPieceId = 1_000_000;
 
     private const int WorldDefaultsEnemyIdBase = Dream.Simulation.Runtime.WorldSessionRuntime.FirstEnemyActorId;
 
@@ -164,7 +167,7 @@ public static class WorldSeeder
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO placed_cube_instances (
-                    world_id, cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z,
+                    world_id, object_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z,
                     shape_kind, material_id, current_health, max_health, created_utc, updated_utc)
                 VALUES (1, $id, $owner, $cx, $cy, $cz, $px, $py, $pz, $shape, $material, $hp, $maxHp, $created, $updated);
                 """;
@@ -200,18 +203,19 @@ public static class WorldSeeder
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO cube_fracture_pieces (
-                    world_id, source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z,
+                    world_id, object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z,
                     center_x, center_y, center_z, side_length, material_id, created_utc, updated_utc)
-                VALUES (1, $source, $index, $owner, $cx, $cy, $cz, $px, $py, $pz, $side, $material, $created, $updated);
+                VALUES (1, $id, $source, $index, $owner, $cx, $cy, $cz, $px, $py, $pz, $side, $material, $created, $updated);
                 """;
             SqliteParameter[] parameters = AddParameters(
                 command,
-                "$source", "$index", "$owner", "$cx", "$cy", "$cz", "$px", "$py", "$pz", "$side", "$material", "$created", "$updated");
+                "$id", "$source", "$index", "$owner", "$cx", "$cy", "$cz", "$px", "$py", "$pz", "$side", "$material", "$created", "$updated");
             for (int i = 1; i < pieces.Count; i++)
             {
                 PersistedCubeFracturePiece piece = pieces[i];
                 SetValues(
                     parameters,
+                    piece.ObjectId.Value,
                     piece.OriginObjectId.AsInt(),
                     piece.PieceIndex,
                     piece.OwnerPlayerName,

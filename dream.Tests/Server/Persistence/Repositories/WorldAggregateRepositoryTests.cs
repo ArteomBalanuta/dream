@@ -214,7 +214,7 @@ public sealed class WorldAggregateRepositoryTests
                 enemies.SaveEnemyInstance(Enemy(2, 10));
                 enemies.ReassignEnemyId(1, 11);
                 enemies.DeleteEnemyInstance(new ObjectId(2));
-            }, "SELECT COUNT(*) FROM enemy_instances WHERE enemy_id = 11;", 1L),
+            }, "SELECT COUNT(*) FROM enemy_instances WHERE object_id = 11;", 1L),
             "Items" => (() =>
             {
                 SqliteItemRepository items = new(store);

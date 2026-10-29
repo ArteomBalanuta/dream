@@ -129,7 +129,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
 
         SqliteConnection.ClearAllPools();
         AssertDatabase(database, enemies: 1);
-        Assert.Equal((long)wolves[0], Scalar(database, "SELECT enemy_id FROM enemy_instances;"));
+        Assert.Equal((long)wolves[0], Scalar(database, "SELECT object_id FROM enemy_instances;"));
     }
 
     private void AssertDatabase(TempDatabase database, long enemies)

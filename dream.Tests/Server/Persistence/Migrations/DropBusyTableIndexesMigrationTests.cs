@@ -32,7 +32,8 @@ public sealed class DropBusyTableIndexesMigrationTests
             """);
         Assert.Equal(DroppedIndexes.Length, IndexCount(database, DroppedIndexes));
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        SchemaMigrationResult result = database.Schema.EnsureSchema(
+            new SqliteSchemaMigrator([.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory).Take(4)]));
 
         Assert.Equal(3, result.FromVersion);
         Assert.Equal(4, result.ToVersion);

@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0004\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0005\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
@@ -67,7 +67,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
 
         SqliteConnection.ClearAllPools();
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp';"));
-        Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = 7 AND material_id = 'Stone';"));
+        Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE cell_x = 20 AND cell_z = 20 AND material_id = 'Stone';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         // The pre-T2 player is recorded as having received kit v2, so the torch is granted once.
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, database.Scalar($"SELECT kit_version FROM player_starter_grants WHERE player_name = '{PlayerName}';"));

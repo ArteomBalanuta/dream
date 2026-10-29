@@ -4,7 +4,7 @@ using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence.Repositories;
 
-// enemy_instances: the live enemies, keyed by enemy_id.
+// enemy_instances: the live enemies, keyed by object_id.
 public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId worldId)
     : SqliteRepositoryBase(store, worldId), IEnemyRepository
 {
@@ -16,7 +16,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
 
     private const string LoadSql = """
         SELECT
-            enemy_id,
+            object_id,
             enemy_kind,
             display_name,
             position_x,
@@ -38,13 +38,13 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             updated_utc
         FROM enemy_instances
         WHERE world_id = $worldId
-        ORDER BY enemy_id;
+        ORDER BY object_id;
         """;
 
     private const string UpsertSql = """
         INSERT INTO enemy_instances (
             world_id,
-            enemy_id,
+            object_id,
             enemy_kind,
             display_name,
             position_x,
@@ -67,7 +67,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
         )
         VALUES (
             $worldId,
-            $enemyId,
+            $objectId,
             $enemyKind,
             $displayName,
             $positionX,
@@ -88,7 +88,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(world_id, enemy_id) DO UPDATE SET
+        ON CONFLICT(world_id, object_id) DO UPDATE SET
             enemy_kind = excluded.enemy_kind,
             display_name = excluded.display_name,
             position_x = excluded.position_x,
@@ -109,9 +109,9 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM enemy_instances WHERE world_id = $worldId AND enemy_id = $enemyId;";
+    private const string DeleteSql = "DELETE FROM enemy_instances WHERE world_id = $worldId AND object_id = $objectId;";
 
-    private const string ReassignSql = "UPDATE enemy_instances SET enemy_id = $newEnemyId WHERE world_id = $worldId AND enemy_id = $oldEnemyId;";
+    private const string ReassignSql = "UPDATE enemy_instances SET object_id = $newEnemyId WHERE world_id = $worldId AND object_id = $oldEnemyId;";
 
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() =>
         QueryList(LoadSql, static reader => new PersistedEnemyInstance(
@@ -137,7 +137,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
     public void SaveEnemyInstance(PersistedEnemyInstance enemy) =>
         Execute(UpsertSql, enemy, static (command, e) =>
         {
-            command.BindInt64("$enemyId", e.ObjectId.Value);
+            command.BindInt64("$objectId", e.ObjectId.Value);
             command.BindText("$enemyKind", e.EnemyKind);
             command.BindText("$displayName", e.DisplayName);
             command.BindVector3("$positionX", "$positionY", "$positionZ", e.Position);
@@ -156,7 +156,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
         });
 
     public void DeleteEnemyInstance(ObjectId objectId) =>
-        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$enemyId", id.Value));
+        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$objectId", id.Value));
 
     // Removed by the wave C glue.
     // One UPDATE of the primary key: atomic on its own, and under the write queue's savepoint

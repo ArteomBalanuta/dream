@@ -35,13 +35,13 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             "player_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, " +
             "current_energy, updated_utc"),
         ("placed_cube_instances",
-            "cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z, shape_kind, " +
+            "object_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z, shape_kind, " +
             "material_id, current_health, max_health, created_utc, updated_utc"),
         ("cube_fracture_pieces",
-            "source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, " +
+            "object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, " +
             "center_x, center_y, center_z, side_length, material_id, created_utc, updated_utc"),
         ("enemy_instances",
-            "enemy_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, " +
+            "object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, " +
             "facing_z, current_hp, max_hp, strength, agility, vitality, energy, movement_speed, attack_speed, " +
             "level, created_utc, updated_utc"),
         ("item_instances",
@@ -158,6 +158,17 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             copy.Parameters.AddWithValue("$newId", id);
             copy.Parameters.AddWithValue("$sourceId", source.Value);
             copy.ExecuteNonQuery();
+        }
+
+        // The copy keeps the counter, so an id the source retired is not reissued in the copy. The
+        // insert triggers already raised it past every copied row; this only ever raises it further.
+        using (SqliteCommand counter = session.CreateCommand(
+            "UPDATE worlds SET next_object_id = MAX(next_object_id, " +
+            "(SELECT next_object_id FROM worlds WHERE world_id = $sourceId)) WHERE world_id = $newId;"))
+        {
+            counter.Parameters.AddWithValue("$newId", id);
+            counter.Parameters.AddWithValue("$sourceId", source.Value);
+            counter.ExecuteNonQuery();
         }
 
         WorldRecord created = TryGet(session, new WorldId(id))!;
