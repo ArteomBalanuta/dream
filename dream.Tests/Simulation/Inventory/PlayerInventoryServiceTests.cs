@@ -65,10 +65,11 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         world.Seed("Stored", firstItemId: 40);
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
+        ObjectIdAllocator ids = new();
+        PlayerInventoryService inventory = new(world, writes, ids);
         Assert.Equal(1, inventory.NextItemInstanceId);
-
-        inventory.RestoreItemIdCounter();
+        // The persistence bridge seeds the shared allocator at startup.
+        ids.Restore(world.GetMaxItemInstanceId() + 1);
         Assert.Equal(40 + StarterCount, inventory.NextItemInstanceId);
         Assert.Equal(0, inventory.LoadedInventoryCount);
 
@@ -456,8 +457,10 @@ public sealed class PlayerInventoryServiceTests
             }
 
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-            inventory.RestoreItemIdCounter();
+            ObjectIdAllocator ids = new();
+            PlayerInventoryService inventory = new(world, writes, ids);
+            // The persistence bridge seeds the shared allocator at startup.
+            ids.Restore(world.GetMaxItemInstanceId() + 1);
             Assert.True(inventory.Ensure("Nia"));
             Assert.Equal("tool.torch", inventory.BuildSnapshot("Nia").Slots[4].Item!.Value.ItemKind);
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
@@ -466,8 +469,10 @@ public sealed class PlayerInventoryServiceTests
         using (SqliteWorldPersistenceRepository world = new(database.Schema))
         {
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-            inventory.RestoreItemIdCounter();
+            ObjectIdAllocator ids = new();
+            PlayerInventoryService inventory = new(world, writes, ids);
+            // The persistence bridge seeds the shared allocator at startup.
+            ids.Restore(world.GetMaxItemInstanceId() + 1);
             Assert.Equal(6, inventory.NextItemInstanceId);
             Assert.True(inventory.Ensure("Nia"));
 
@@ -695,8 +700,10 @@ public sealed class PlayerInventoryServiceTests
 
             Assert.Null(world.LoadPlayerInventory("Vic").StarterKitVersion);
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-            inventory.RestoreItemIdCounter();
+            ObjectIdAllocator ids = new();
+            PlayerInventoryService inventory = new(world, writes, ids);
+            // The persistence bridge seeds the shared allocator at startup.
+            ids.Restore(world.GetMaxItemInstanceId() + 1);
             Assert.True(inventory.Ensure("Vic"));
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         }
@@ -720,8 +727,10 @@ public sealed class PlayerInventoryServiceTests
             PersistedPlayerInventory loaded = world.LoadPlayerInventory("Vic");
             Assert.Equal(2, loaded.StarterKitVersion);
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-            inventory.RestoreItemIdCounter();
+            ObjectIdAllocator ids = new();
+            PlayerInventoryService inventory = new(world, writes, ids);
+            // The persistence bridge seeds the shared allocator at startup.
+            ids.Restore(world.GetMaxItemInstanceId() + 1);
             inventory.ApplyLoaded("Vic", loaded);
             Assert.True(inventory.Ensure("Vic"));
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));

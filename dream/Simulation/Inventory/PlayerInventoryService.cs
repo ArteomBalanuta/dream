@@ -24,7 +24,7 @@ public enum InventoryEquipOutcome
 internal sealed class PlayerInventoryService
 {
     private readonly IWorldPersistenceRepository? _worldPersistence;
-    // Wave C: stored, not used yet (items still count from their own counter until workstream C).
+    // Shared with cubes, rubble and enemies; the persistence bridge seeds it from the world's stored counter.
     private readonly ObjectIdAllocator _objectIds;
     private readonly PersistenceWriteQueue? _writes;
 
@@ -39,8 +39,6 @@ internal sealed class PlayerInventoryService
     // The starter kit version each loaded inventory has received (see GrantStarterKit). A loaded
     // inventory without an entry has no recorded grant yet.
     private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.OrdinalIgnoreCase);
-
-    private long _nextItemInstanceId = 1;
 
     // Inventory write outcomes, by player name. The write queue drops a write that fails (other than
     // on a lock) and only counts it in FailedWrites, so an inventory whose writes may have failed is
@@ -63,7 +61,7 @@ internal sealed class PlayerInventoryService
 
     public int LoadedItemInstanceCount => _itemInstances.Count;
 
-    public long NextItemInstanceId => _nextItemInstanceId;
+    public long NextItemInstanceId => _objectIds.Next;
 
     // Evicted inventories still held until their writes are confirmed.
     public int UnconfirmedEvictionCount
@@ -84,18 +82,6 @@ internal sealed class PlayerInventoryService
     }
 
     public bool IsLoaded(string playerName) => _slotsByPlayer.ContainsKey(playerName);
-
-    // Startup loads no inventory, only the item id counter: new ids start above every persisted id,
-    // including those of inventories that are never loaded this run.
-    public void RestoreItemIdCounter()
-    {
-        if (_worldPersistence == null)
-        {
-            return;
-        }
-
-        _nextItemInstanceId = Math.Max(_nextItemInstanceId, _worldPersistence.GetMaxItemInstanceId() + 1);
-    }
 
     // Installs a player's loaded inventory unless one is already loaded for the name: a loaded
     // inventory is at least as new as any row a load read, because every change to it queues its
@@ -123,13 +109,13 @@ internal sealed class PlayerInventoryService
         foreach (PersistedItemInstance item in inventory.Items)
         {
             _itemInstances[item.ItemInstanceId] = item;
-            _nextItemInstanceId = Math.Max(_nextItemInstanceId, item.ItemInstanceId + 1);
+            _objectIds.Reserve(new ObjectId(item.ItemInstanceId));
         }
 
         foreach (PersistedInventorySlot slot in inventory.Slots)
         {
             slots[slot.SlotIndex] = slot.ItemInstanceId;
-            _nextItemInstanceId = Math.Max(_nextItemInstanceId, slot.ItemInstanceId + 1);
+            _objectIds.Reserve(new ObjectId(slot.ItemInstanceId));
         }
     }
 
@@ -508,7 +494,7 @@ internal sealed class PlayerInventoryService
     private long GrantItem(string playerName, Dictionary<int, long> slots, string itemKind, int slotIndex)
     {
         ToolDefinition definition = ToolCatalog.Resolve(itemKind);
-        long itemInstanceId = _nextItemInstanceId++;
+        long itemInstanceId = _objectIds.Take().Value;
         PersistedItemInstance item = new(
             itemInstanceId,
             definition.ItemKind,
