@@ -1,6 +1,8 @@
 using System.Text.Json;
 using OpenTK.Mathematics;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Terrain;
 
 namespace Dream.Multiplayer.Protocol;
 
@@ -64,13 +66,31 @@ public sealed class WorldTransferSender
 {
     private WorldSnapshotJsonConverter.Cursor _cursor;
 
-    public WorldTransferSender(int transferId, WorldSnapshotCapture capture, bool releaseCaptureWhenDone)
+    private readonly TerrainTransferPayload? _terrain;
+
+    // terrain (protocol v8, stored worlds): its fragments go out as server.terrain-chunk frames
+    // before world chunk 0.
+    public WorldTransferSender(
+        int transferId,
+        WorldSnapshotCapture capture,
+        bool releaseCaptureWhenDone,
+        TerrainTransferPayload? terrain = null)
     {
         ArgumentNullException.ThrowIfNull(capture);
         TransferId = transferId;
         Capture = capture;
         ReleaseCaptureWhenDone = releaseCaptureWhenDone;
+        _terrain = terrain;
     }
+
+    // The message kind WriteNextChunk writes next: terrain fragments first, then world chunks.
+    public string NextFrameKind =>
+        _terrain != null && TerrainFragmentsWritten < _terrain.Fragments.Count
+            ? TerrainChunkMessage.Kind
+            : WorldChunkMessage.Kind;
+
+    // Terrain frames written so far.
+    public int TerrainFragmentsWritten { get; private set; }
 
     public int TransferId { get; }
 
@@ -82,13 +102,29 @@ public sealed class WorldTransferSender
 
     public bool IsComplete { get; private set; }
 
-    // Writes the next chunk's payload. Returns true when it was the final chunk; the capture is
-    // released then if this transfer owns it.
+    // Writes the next frame's payload (see NextFrameKind). Returns true when it was the final world
+    // chunk (a terrain fragment never is); the capture is released then if this transfer owns it.
     public bool WriteNextChunk(Utf8JsonWriter writer, int chunkBytes)
     {
         if (IsComplete)
         {
             throw new InvalidOperationException("The world transfer has already sent its final chunk.");
+        }
+
+        if (_terrain != null && TerrainFragmentsWritten < _terrain.Fragments.Count)
+        {
+            int fragment = TerrainFragmentsWritten;
+            (int start, int length) = _terrain.Fragments[fragment].GetOffsetAndLength(_terrain.Chunks.Count);
+            TerrainChunkMessageJsonConverter.WriteFragment(
+                writer,
+                TransferId,
+                fragment,
+                _terrain.Chunks,
+                start,
+                start + length,
+                isFinal: fragment == _terrain.Fragments.Count - 1);
+            TerrainFragmentsWritten++;
+            return false;
         }
 
         bool final = WorldChunkMessageJsonConverter.WriteChunk(
@@ -231,7 +267,7 @@ public sealed class WorldTransferReassembler
         {
             throw new WorldTransferLimitException(
                 $"World transfer {current.TransferId} did not finish within {deadline.TotalSeconds:0.###} s " +
-                $"({current.ChunksReceived} chunks, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s).");
+                $"({current.ChunksReceived} chunks, {current.TerrainFragmentsReceived} terrain fragments, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s).");
         }
 
         TimeSpan progressTimeout = Limits.ProgressTimeout;
@@ -245,7 +281,7 @@ public sealed class WorldTransferReassembler
         {
             throw new WorldTransferLimitException(
                 $"World transfer {current.TransferId} stalled: no chunk for {progressTimeout.TotalSeconds:0.###} s " +
-                $"({current.ChunksReceived} chunks, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s; " +
+                $"({current.ChunksReceived} chunks, {current.TerrainFragmentsReceived} terrain fragments, {current.ItemCount} items and {current.HeldMessages.Count} held messages after {elapsed.TotalSeconds:0.#} s; " +
                 $"last progress {stalled.TotalSeconds:0.#} s ago).");
         }
     }
@@ -258,6 +294,19 @@ public sealed class WorldTransferReassembler
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(deliver);
         WorldTransferReceiver? current = _current;
+        if (message is TerrainChunkMessage terrain)
+        {
+            if (current == null)
+            {
+                throw new InvalidOperationException(
+                    $"Received terrain fragment {terrain.Index} of world transfer {terrain.TransferId} with no transfer in progress.");
+            }
+
+            current.AddTerrain(terrain);
+            current.LastProgressTimestamp = _timeProvider.GetTimestamp();
+            return null;
+        }
+
         if (message is WorldChunkMessage chunk)
         {
             if (current == null)
@@ -273,7 +322,13 @@ public sealed class WorldTransferReassembler
             }
 
             Volatile.Write(ref _current, null);
-            deliver(WorldTransfer.WithWorld(current.Carrier, current.BuildWorld()));
+            IServerToClientMessage assembled = WorldTransfer.WithWorld(current.Carrier, current.BuildWorld());
+            if (assembled is JoinAcceptedMessage joinAccepted && current.Terrain != null)
+            {
+                assembled = joinAccepted with { ReceivedTerrain = current.Terrain };
+            }
+
+            deliver(assembled);
             IReadOnlyList<IServerToClientMessage> held = current.HeldMessages;
             for (int i = 0; i < held.Count; i++)
             {
@@ -337,6 +392,12 @@ public sealed class WorldTransferReceiver
     private int _depth;
     private ulong? _sequence;
     private long _maxItems;
+    private readonly List<PersistedTerrainChunk> _terrain = [];
+    private System.Security.Cryptography.IncrementalHash? _digest;
+    private int _gridWidth;
+    private int _gridDepth;
+    private long _maxCellCount;
+    private long _terrainBytes;
 
     public WorldTransferReceiver(IServerToClientMessage carrier)
         : this(carrier, WorldTransferLimits.Default, startedTimestamp: 0)
@@ -353,6 +414,205 @@ public sealed class WorldTransferReceiver
         _limits = limits;
         StartedTimestamp = startedTimestamp;
         LastProgressTimestamp = startedTimestamp;
+        if (carrier is JoinAcceptedMessage { Terrain: TerrainTransferManifest manifest } joinAccepted)
+        {
+            ValidateManifest(manifest, joinAccepted.World, limits);
+            Manifest = manifest;
+            _gridWidth = GridCount(joinAccepted.World!.Width);
+            _gridDepth = GridCount(joinAccepted.World.Depth);
+            _maxCellCount = TerrainChunkFormat.ChunkSize * TerrainChunkFormat.ChunkSize * (long)joinAccepted.World.Height;
+            _digest = TerrainTransferDigest.CreateIncremental();
+        }
+    }
+
+    // The terrain the carrier announced, if any (protocol v8).
+    public TerrainTransferManifest? Manifest { get; }
+
+    public int TerrainFragmentsReceived { get; private set; }
+
+    // True once the final terrain fragment arrived and its digest matched.
+    public bool IsTerrainComplete { get; private set; }
+
+    // The terrain chunks received, in wire order; null when the carrier announced none.
+    public IReadOnlyList<PersistedTerrainChunk>? Terrain => Manifest == null ? null : _terrain;
+
+    private static void ValidateManifest(TerrainTransferManifest manifest, WorldDescriptorWire? world, WorldTransferLimits limits)
+    {
+        if (world == null)
+        {
+            throw new InvalidDataException("A join-accepted carrier announces terrain without a world.");
+        }
+
+        if (world.MapSource != WorldMapSourceText.Stored)
+        {
+            throw new InvalidDataException($"A join-accepted carrier announces terrain for a '{world.MapSource}' world.");
+        }
+
+        long expectedChunks = (long)GridCount(world.Width)
+            * GridCount(world.Depth);
+        if (world.Width <= 0 || world.Depth <= 0 || world.Height <= 0 || manifest.Chunks != expectedChunks)
+        {
+            throw new InvalidDataException(
+                $"The terrain manifest announces {manifest.Chunks} chunks for a {world.Width}x{world.Height}x{world.Depth} world ({expectedChunks} expected).");
+        }
+
+        if (manifest.Fragments < 1 || manifest.Fragments > manifest.Chunks)
+        {
+            throw new InvalidDataException(
+                $"The terrain manifest announces {manifest.Fragments} fragments for {manifest.Chunks} chunks.");
+        }
+
+        if (manifest.Bytes <= 0)
+        {
+            throw new InvalidDataException($"The terrain manifest announces {manifest.Bytes} bytes.");
+        }
+
+        if (manifest.Bytes > limits.MaxTerrainBytes)
+        {
+            throw new WorldTransferLimitException(
+                $"The terrain manifest announces {manifest.Bytes} bytes, over the {limits.MaxTerrainBytes} limit.");
+        }
+
+        if (manifest.Sha256 is not { Length: 64 } sha || !IsLowerHex(sha))
+        {
+            throw new InvalidDataException("The terrain manifest's sha256 is not 64 lowercase hex characters.");
+        }
+    }
+
+    private static int GridCount(int cells) =>
+        (int)(((long)cells + TerrainChunkFormat.ChunkSize - 1) / TerrainChunkFormat.ChunkSize);
+
+    private static bool IsLowerHex(string text)
+    {
+        foreach (char c in text)
+        {
+            if (c is not ((>= '0' and <= '9') or (>= 'a' and <= 'f')))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Appends a terrain fragment, validating it as the protocol demands (see the wave E plan). Any
+    // failure is a protocol error that ends the session.
+    public void AddTerrain(TerrainChunkMessage fragment)
+    {
+        ArgumentNullException.ThrowIfNull(fragment);
+        if (Manifest == null)
+        {
+            throw new InvalidOperationException($"Received a terrain fragment for world transfer {TransferId}, whose carrier announced no terrain.");
+        }
+
+        if (fragment.TransferId != TransferId)
+        {
+            throw new InvalidOperationException(
+                $"Received terrain fragment {fragment.Index} of transfer {fragment.TransferId} during world transfer {TransferId}.");
+        }
+
+        if (ChunksReceived > 0)
+        {
+            throw new InvalidOperationException($"World transfer {TransferId} received a terrain fragment after a world chunk.");
+        }
+
+        if (IsTerrainComplete || fragment.Index != TerrainFragmentsReceived)
+        {
+            throw new InvalidOperationException(
+                $"Expected terrain fragment {TerrainFragmentsReceived} of world transfer {TransferId}, received fragment {fragment.Index}.");
+        }
+
+        IReadOnlyList<PersistedTerrainChunk> chunks = fragment.Chunks;
+        if (chunks.Count == 0)
+        {
+            throw new InvalidDataException($"Terrain fragment {fragment.Index} of world transfer {TransferId} has no chunks.");
+        }
+
+        bool lastFragment = fragment.Index == Manifest.Fragments - 1;
+        if (fragment.IsFinal != lastFragment)
+        {
+            throw new InvalidDataException(
+                $"Terrain fragment {fragment.Index} of {Manifest.Fragments} is {(fragment.IsFinal ? "" : "not ")}marked final.");
+        }
+
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            PersistedTerrainChunk chunk = chunks[i];
+            if ((uint)chunk.ChunkX >= (uint)_gridWidth || (uint)chunk.ChunkZ >= (uint)_gridDepth)
+            {
+                throw new InvalidDataException(
+                    $"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) is outside the {_gridWidth}x{_gridDepth} chunk grid.");
+            }
+
+            if (_terrain.Count > 0)
+            {
+                PersistedTerrainChunk previous = _terrain[^1];
+                if (chunk.ChunkZ < previous.ChunkZ || (chunk.ChunkZ == previous.ChunkZ && chunk.ChunkX <= previous.ChunkX))
+                {
+                    throw new InvalidDataException(
+                        $"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) is not after ({previous.ChunkX}, {previous.ChunkZ}) in (z, x) order.");
+                }
+            }
+
+            if (chunk.FormatVersion != TerrainChunkFormat.CurrentVersion)
+            {
+                throw new InvalidDataException(
+                    $"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) has format version {chunk.FormatVersion}, expected {TerrainChunkFormat.CurrentVersion}.");
+            }
+
+            if (chunk.CellCount < 0 || chunk.CellCount > _maxCellCount)
+            {
+                throw new InvalidDataException(
+                    $"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) announces {chunk.CellCount} cells, over the {_maxCellCount} a chunk holds.");
+            }
+
+            if (chunk.Data == null || chunk.Data.Length == 0)
+            {
+                throw new InvalidDataException($"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) has no data.");
+            }
+
+            if (chunk.Data.Length > _limits.MaxTerrainBlobBytes)
+            {
+                throw new WorldTransferLimitException(
+                    $"Terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) is {chunk.Data.Length} bytes, over the {_limits.MaxTerrainBlobBytes} limit.");
+            }
+
+            if (_terrain.Count >= Manifest.Chunks)
+            {
+                throw new InvalidDataException($"World transfer {TransferId} sent more than the {Manifest.Chunks} terrain chunks it announced.");
+            }
+
+            _terrainBytes += chunk.Data.Length;
+            if (_terrainBytes > Manifest.Bytes)
+            {
+                throw new InvalidDataException($"World transfer {TransferId} sent more than the {Manifest.Bytes} terrain bytes it announced.");
+            }
+
+            TerrainTransferDigest.Append(_digest!, chunk);
+            _terrain.Add(chunk);
+        }
+
+        TerrainFragmentsReceived++;
+        if (!lastFragment)
+        {
+            return;
+        }
+
+        string digest = TerrainTransferDigest.Finish(_digest!);
+        _digest!.Dispose();
+        _digest = null;
+        if (_terrain.Count != Manifest.Chunks || _terrainBytes != Manifest.Bytes)
+        {
+            throw new InvalidDataException(
+                $"World transfer {TransferId} sent {_terrain.Count} terrain chunks and {_terrainBytes} bytes; it announced {Manifest.Chunks} and {Manifest.Bytes}.");
+        }
+
+        if (!string.Equals(digest, Manifest.Sha256, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"The terrain of world transfer {TransferId} does not match its announced sha256.");
+        }
+
+        IsTerrainComplete = true;
     }
 
     public IServerToClientMessage Carrier { get; }
@@ -396,6 +656,12 @@ public sealed class WorldTransferReceiver
         if (IsComplete)
         {
             throw new InvalidOperationException($"World transfer {TransferId} received a chunk after its final one.");
+        }
+
+        if (Manifest != null && !IsTerrainComplete)
+        {
+            throw new InvalidOperationException(
+                $"World transfer {TransferId} received world chunk {chunk.ChunkIndex} before its terrain was complete ({TerrainFragmentsReceived} of {Manifest.Fragments} fragments).");
         }
 
         if (chunk.TransferId != TransferId || chunk.ChunkIndex != ChunksReceived)
