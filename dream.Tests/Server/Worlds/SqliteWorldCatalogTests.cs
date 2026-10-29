@@ -249,4 +249,93 @@ public sealed class SqliteWorldCatalogTests
         Assert.NotNull(source.Seed);
         Assert.Equal(source.Seed, copy.Seed);
     }
+    [Fact]
+    public void CreateStored_FullCopy_CopiesEveryTableExceptOverrides_AndStoresTheGivenChunks()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        Dream.Simulation.Persistence.PersistedTerrainChunk chunk = new(0, 0, 1, 0, new byte[23]);
+
+        WorldRecord stored = db.Catalog.CreateStored(WorldId.Default, "baked", [chunk], terrainOnly: false);
+
+        Assert.Equal(WorldMapSource.Stored, stored.Descriptor.MapSource);
+        Assert.Equal(("default", 1), (stored.Descriptor.GeneratorKey, stored.Descriptor.GeneratorVersion));
+        Assert.Equal(db.Catalog.TryGet(WorldId.Default)!.Seed, stored.Seed);
+        Assert.Equal(777, stored.WorldTimeTicks);
+        long id = stored.Descriptor.Id.Value;
+        foreach (string table in WorldCatalogTestDatabase.PerWorldTables)
+        {
+            long expected = table switch
+            {
+                "terrain_cell_overrides" => 0,
+                "terrain_chunks" => 1,
+                _ => db.Count(table, 1)
+            };
+            Assert.Equal(expected, db.Count(table, id));
+        }
+
+        Assert.Equal(
+            db.Scalar("SELECT next_object_id FROM worlds WHERE world_id = 1"),
+            db.Scalar($"SELECT next_object_id FROM worlds WHERE world_id = {id}"));
+        Assert.Throws<WorldNameTakenException>(() => db.Catalog.CreateStored(WorldId.Default, "BAKED", [chunk], false));
+        Assert.Throws<WorldNotFoundException>(() => db.Catalog.CreateStored(new WorldId(9), "x", [chunk], false));
+        Assert.Equal(2, db.Catalog.List().Count);
+    }
+
+    [Fact]
+    public void CreateStored_TerrainOnly_WritesNothingButTheChunks()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        Dream.Simulation.Persistence.PersistedTerrainChunk chunk = new(0, 0, 1, 0, new byte[23]);
+
+        WorldRecord stored = db.Catalog.CreateStored(WorldId.Default, "template", [chunk], terrainOnly: true);
+
+        long id = stored.Descriptor.Id.Value;
+        Assert.Equal(0, stored.WorldTimeTicks);
+        Assert.NotEqual(12345UL, stored.Seed);
+        Assert.NotNull(stored.Seed);
+        foreach (string table in WorldCatalogTestDatabase.PerWorldTables)
+        {
+            Assert.Equal(table == "terrain_chunks" ? 1 : 0, db.Count(table, id));
+        }
+
+        Assert.Equal(1L, Convert.ToInt64(db.Scalar($"SELECT next_object_id FROM worlds WHERE world_id = {id}")));
+    }
+
+    [Fact]
+    public void ResetTerrain_DeletesOverridesAndTheirRubble_AndKeepsCellsUnderPlacedCubes()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        // Rubble in the override cell (6,1,6) of another origin, and a second override under a placed cube.
+        db.Execute(
+            "INSERT INTO cube_fracture_pieces (world_id, object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id) " +
+            "VALUES (1, 32, 77, 0, NULL, 6, 1, 6, 6.1, 1.1, 6.1, 0.5, 'stone'), (1, 33, 78, 0, NULL, 4, 1, 5, 4.1, 1.1, 5.1, 0.5, 'stone');" +
+            "INSERT INTO terrain_cell_overrides (world_id, object_id, cell_x, cell_y, cell_z, kind, cell_data) VALUES (1, 41, 4, 1, 5, 0, NULL);");
+
+        TerrainResetResult result = db.Catalog.ResetTerrain(WorldId.Default);
+
+        Assert.Equal(new TerrainResetResult(1, 1, 1), result);
+        Assert.Equal(1, db.Count("terrain_cell_overrides", 1));
+        // (6,1,6) rubble gone; (3,1,3) rubble of another cell stays; (4,1,5) rubble stays.
+        Assert.Equal(2, db.Count("cube_fracture_pieces", 1));
+        Assert.Equal(2, db.Count("placed_cube_instances", 1));
+        Assert.Throws<WorldNotFoundException>(() => db.Catalog.ResetTerrain(new WorldId(9)));
+    }
+
+    [Fact]
+    public void ReadTerrainSource_StoresAMissingSeed_AndReturnsOverridesInIdOrder()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        db.Execute("UPDATE worlds SET seed = NULL WHERE world_id = 1;");
+
+        WorldTerrainSource source = db.Catalog.ReadTerrainSource(WorldId.Default);
+
+        Assert.Equal(source.Seed, db.Catalog.TryGet(WorldId.Default)!.Seed);
+        Assert.Null(source.StoredChunks);
+        Assert.Equal(40, Assert.Single(source.Overrides).ObjectId.Value);
+        Assert.Throws<WorldNotFoundException>(() => db.Catalog.ReadTerrainSource(new WorldId(9)));
+    }
 }
