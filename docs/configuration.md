@@ -97,6 +97,8 @@ Runtime-adjustable window and camera settings are now grouped in `GameSettings.c
 - minimum floor size: `5`
 - maximum floor size: `100`
 
+Since persistence wave B the floor size is only the size of a **new local world**: the integrated server uses it when it has to create a world (`ServerStartOptions.NewWorldSize`). It does not resize a world that exists, and changing it in the HUD does not rebuild a running session's map. A session's map size comes from the world descriptor the server sends at join (see Worlds below).
+
 ## Runtime Asset Path Assumptions
 
 Runtime assets are now treated as project-owned content and resolved relative to the application runtime directory.
@@ -260,11 +262,11 @@ Set `DREAM_BULLET_PROFILER_GUARD=0` to leave libbulletc's `btGetCurrentThreadInd
 
 | Variable | Read in | Effect |
 | --- | --- | --- |
-| `DREAM_DAY_LENGTH_MINUTES` | `ServerBootstrap.ResolveDayLengthMinutes` (called from `ServerBootstrap.CreateRuntimeHost`, so the dedicated and the integrated server) | Real-time minutes per in-game day. Default 30 (115,200 ticks at 64 ticks/s; a new world starts at 08:00). Decimals are accepted; values outside 1–1440 are clamped and an unparsable value falls back to 30, each with a line on standard error. Not persisted: the world keeps its `world_time_ticks`, so changing the day length between runs moves the time of day once. Server-only; clients receive it in the join-accepted world clock anchor. |
+| `DREAM_DAY_LENGTH_MINUTES` | `ServerBootstrap.ResolveDayLengthMinutes` (called from `ServerBootstrap.CreateRuntimeHost`, so the dedicated and the integrated server) | Real-time minutes per in-game day. Default 30 (115,200 ticks at 64 ticks/s; a new world starts at 08:00). Decimals are accepted; values outside 1–1440 are clamped and an unparsable value falls back to 30, each with a line on standard error. Not persisted: the world keeps its `world_time_ticks` (a column of its `worlds` row), so changing the day length between runs moves the time of day once. Server-only; clients receive it in the join-accepted world clock anchor. |
 | `DREAM_NIGHT_BRIGHTNESS` | `SkyModelSettings.FromEnvironment` (desktop client) | Up-facing light at night as a fraction of noon's. Default 0.07 (0.15 before wave T2), clamped to 0–1; an unparsable value uses the default. Client-only presentation; it changes no simulation state. Torches and lamps (point lights) are what make the night readable. |
 | `DREAM_DEBUG_POINT_LIGHTS` | desktop client (`Render.PointLights`) | Adds a deterministic ring of N synthetic point lights around the camera, for the perf harness. Default 0 (off), clamped to 0–64. Client-only debug; it changes no simulation state. At most 16 lights reach the shaders per frame, so values above 16 measure the collection and selection cost only. |
 
-The world clock counts authoritative ticks, never wall time, so the time of day stands still while the server is stopped. It is saved with each non-null checkpoint as the `world_time_ticks` row of `world_metadata` (see `docs/server-persistence-ddl.md`): a clean stop loses nothing and a crash loses at most the time since the last committed checkpoint (about a minute in an idle world, whose incremental checkpoints are skipped until the next full sweep).
+The world clock counts authoritative ticks, never wall time, so the time of day stands still while the server is stopped. It is saved with each non-null checkpoint in the `world_time_ticks` column of the world's `worlds` row (see `docs/server-persistence-ddl.md`): a clean stop loses nothing and a crash loses at most the time since the last committed checkpoint (about a minute in an idle world, whose incremental checkpoints are skipped until the next full sweep).
 
 Since wave T2 the clock is a gameplay input: at night (20:00 to 04:00) the server keeps a second wolf (see `docs/architecture.md`, Update Loop). The phase is derived from ticks only, so the persisted `world_time_ticks`, the `TicksPerDay` from `DREAM_DAY_LENGTH_MINUTES` and the number of ticks run are lockstep inputs: two servers that must produce the same checksums need the same three. Changing `DREAM_DAY_LENGTH_MINUTES` between runs can move a world into or out of night, which adds or removes the night wolf on the first tick.
 
@@ -272,14 +274,45 @@ Since wave T2 the clock is a gameplay input: at night (20:00 to 04:00) the serve
 
 Seeded server rolls (combat damage and the other `Seed.Combine(SimulationSeed, tick, session, actionSequence, targetId)` draws) start from the world runtime's `SimulationSeed`. Where that seed comes from depends on the host:
 
-- **Persistent servers** (the dedicated server and the integrated server, both built by `ServerBootstrap.CreateAuthoritativeHost()`): each world has its own seed, stored in the SQLite database next to the rest of the world as the `simulation_seed` row of the `world_metadata` table (`key TEXT PRIMARY KEY, value TEXT`, the seed as a decimal unsigned 64-bit integer). When a world is created, `SqliteWorldMetadataRepository` generates the seed once with `RandomNumberGenerator` (it never picks `DefaultSimulationSeed`); every later load reads the stored value. A stored value that is not a valid unsigned 64-bit integer stops the server from starting rather than being silently replaced.
+- **Persistent servers** (the dedicated server and the integrated server, both built by `ServerBootstrap.CreateAuthoritativeHost()`): each world has its own seed, stored in the SQLite database on the world's row, in the `seed` column of the `worlds` table (the seed as decimal text of an unsigned 64-bit integer; NULL means "generate on first load"). When a world is created, the catalog (or `SqliteWorldMetadataRepository` for a NULL seed) generates the seed once with `RandomNumberGenerator` (it never picks `DefaultSimulationSeed`); every later load reads the stored value. A stored value that is not a valid unsigned 64-bit integer stops the server from starting rather than being silently replaced.
 - **Hosts without persistence** (tests, `CreateAuthoritativeHost(null)`, `DedicatedServerHost.CreateRuntimeAttached(null)`, `RuntimeAuthoritativeSessionHost.CreateDefault()`): keep the fixed public `WorldSessionRuntime.DefaultSimulationSeed`, so determinism tests and ephemeral runs stay reproducible.
 
-`SqliteSchemaBootstrapper.EnsureSchema` creates `world_metadata` with `CREATE TABLE IF NOT EXISTS`, so the change is additive. **An existing database that predates the table gets a freshly generated seed on its first load and keeps it from then on. That changes the rolls of an existing world once: the same tick, session, action and target roll differently than they did under the old shared default seed.** Persisted state (profiles, cubes, enemies, items) is not affected.
+A database from before schema version 3 kept the seed as the `simulation_seed` row of `world_metadata`; migration 0003 moves it onto world 1's `worlds` row unchanged, so a migrated world keeps its rolls. (A database that predates the seed altogether got a freshly generated one on its first load, once, which changed that world's rolls once.) Persisted state (profiles, cubes, enemies, items) is not affected either way.
 
-Set `DREAM_SIMULATION_SEED` to override the world's seed for one server run, for example to reproduce a world's rolls from a copy of its database or to pin rolls while debugging. It accepts a decimal (`12345`) or `0x`-prefixed hexadecimal (`0x6472...`) unsigned 64-bit integer. The override is applied for that run only and is never written back to `world_metadata`. An invalid value is ignored with a log line on standard error and the stored seed is used. The server logs that a seed was generated or overridden, never the seed value. On a fresh database the server still generates a random seed and stores it in `world_metadata` as usual; the override then applies to that run only, and the next run without the variable uses the stored random seed. The variable only affects persistent servers; hosts without persistence always use `DefaultSimulationSeed`.
+Set `DREAM_SIMULATION_SEED` to override the world's seed for one server run, for example to reproduce a world's rolls from a copy of its database or to pin rolls while debugging. It accepts a decimal (`12345`) or `0x`-prefixed hexadecimal (`0x6472...`) unsigned 64-bit integer. The override is applied for that run only and is never written back to the `worlds` row. An invalid value is ignored with a log line on standard error and the stored seed is used. The server logs that a seed was generated or overridden, never the seed value. On a fresh database the server still generates a random seed and stores it on the world's row as usual; the override then applies to that run only, and the next run without the variable uses the stored random seed. The variable only affects persistent servers; hosts without persistence always use `DefaultSimulationSeed`.
 
 The seed is server-only. No protocol message carries it (a reflection test in `WorldSimulationSeedTests` walks every `IProtocolMessage` type and its nested payload types for seed-like members), so clients cannot precompute rolls.
+
+## Worlds
+
+One database holds any number of worlds, and one server process runs exactly one of them (persistence wave B; see `docs/architecture.md`, Worlds as rows, and `docs/server-persistence-ddl.md`, Worlds). A fresh or migrated database has world 1, named `default`, 56 x 56.
+
+### Choosing the world a server runs
+
+| Setting | Read in | Effect |
+| --- | --- | --- |
+| `--world <id\|name>` | `Program` (with `--server`) | Opens that world. All digits is an id, which must exist. Anything else is a name (trimmed, case-insensitive), opened if it exists and created if it does not. |
+| `DREAM_WORLD` | `ServerBootstrap.WorldEnvironmentVariable` | The same selector, used when `--world` is not given. |
+| neither | | The default: world 1 if it exists, else the lowest id, else a new world named `default`. |
+
+A name that creates a world gives it the new-world size: `ServerStartOptions.NewWorldSize`, which the integrated server takes from the floor size setting, and 56 for the dedicated server. The new world gets a random seed. The server logs the world's name and id, never its seed.
+
+An id that does not exist stops the dedicated server with exit code **4** (`WorldNotFoundException`). The other dedicated-server exit code is 3, for a database migrated by a newer build (`SchemaTooNewException`).
+
+### Managing worlds: `--worlds`
+
+`dream --worlds <command>` works on the database and exits without starting a server or a window. Stop any server on that database before `copy` or `delete`: there is no lock between processes.
+
+| Command | Effect |
+| --- | --- |
+| `--worlds list` | Prints one tab-separated line per world: id, name, size, generator, world time. The seed is never printed. |
+| `--worlds create <name> [--size N]` | Creates a world with a random seed. `N` is 5 to 100 (default 56). |
+| `--worlds copy <src> <name>` | Copies a world (by id or name) with every row it owns, the same local ids, and its seed and world time. |
+| `--worlds delete <id\|name> --yes` | Deletes a world and everything in it. Without `--yes` nothing is deleted. |
+
+Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build.
+
+Names are 1 to 64 characters after trimming and unique ignoring case. World ids are never reused.
 
 ## Project Content Layout
 
@@ -310,11 +343,10 @@ When settings are hidden, the cursor is re-grabbed and normal gameplay input res
 
 For floor-size changes, the current flow is:
 
-1. `Render` exposes a `Floor Size` slider and `Apply Floor Size` button.
+1. `Render` exposes a `New local world size` slider and apply button.
 2. `GameSettings` stages the selected value and clamps it into the supported `5..100` range.
-3. `Game` applies the staged size only when the explicit apply action is requested.
-4. `Game` rebuilds `Map` with the new square floor dimensions and rebinds the player to the rebuilt world.
-5. Existing non-floor cubes are migrated if they remain in bounds; the player position is preserved or clamped.
+3. The apply action persists the setting. It no longer rebuilds the live map: the value is the size of the next world the integrated server has to create (see Worlds).
+4. A running session keeps the map size of its world; the size of a joined world always comes from the server's world descriptor.
 
 For collision-debug changes, the current flow is:
 
