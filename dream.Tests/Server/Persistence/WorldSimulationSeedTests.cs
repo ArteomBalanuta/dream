@@ -89,7 +89,7 @@ public sealed class WorldSimulationSeedTests
             original = first.SimulationSeed!.Value;
         }
 
-        world.Execute("DELETE FROM world_metadata;");
+        world.Execute("UPDATE worlds SET seed = NULL;");
 
         ulong regenerated;
         using (ServerPersistenceBundle second = world.OpenBundle())
@@ -108,7 +108,7 @@ public sealed class WorldSimulationSeedTests
     {
         using TempWorld world = new();
         using ServerPersistenceBundle bundle = world.OpenBundle();
-        world.Execute("DELETE FROM world_metadata;");
+        world.Execute("UPDATE worlds SET seed = NULL;");
         SqliteWorldMetadataRepository repository = new(bundle.Schema);
         int calls = 0;
 
@@ -128,7 +128,7 @@ public sealed class WorldSimulationSeedTests
         {
         }
 
-        world.Execute("UPDATE world_metadata SET value = 'not-a-seed';");
+        world.Execute("UPDATE worlds SET seed = 'not-a-seed';");
 
         Assert.Throws<InvalidDataException>(() => world.OpenBundle());
     }

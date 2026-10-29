@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Repositories;
@@ -20,13 +21,13 @@ public sealed partial class SqlitePlayerWorldStateRepository
     // the same millisecond: the conservative direction (the checkpoint row is skipped).
     internal const string CheckpointUpsertSql = """
         INSERT INTO player_world_state (
-            player_name, position_x, position_y, position_z,
+            world_id, player_name, position_x, position_y, position_z,
             facing_x, facing_y, facing_z, current_hp, current_energy, updated_utc)
         SELECT
-            $playerName, $positionX, $positionY, $positionZ,
+            $worldId, $playerName, $positionX, $positionY, $positionZ,
             $facingX, $facingY, $facingZ, $currentHp, $currentEnergy, $updatedUtc
         WHERE EXISTS (SELECT 1 FROM player_profiles WHERE player_name = $playerName)
-        ON CONFLICT(player_name) DO UPDATE SET
+        ON CONFLICT(world_id, player_name) DO UPDATE SET
             position_x = excluded.position_x,
             position_y = excluded.position_y,
             position_z = excluded.position_z,
@@ -40,7 +41,7 @@ public sealed partial class SqlitePlayerWorldStateRepository
         """;
 
     // One prepared command for all rows, its parameters set per row.
-    internal static void CheckpointUpsert(SqliteSession session, IReadOnlyList<PersistedPlayerWorldState> states)
+    internal static void CheckpointUpsert(SqliteSession session, WorldId worldId, IReadOnlyList<PersistedPlayerWorldState> states)
     {
         if (states.Count == 0)
         {
@@ -48,6 +49,7 @@ public sealed partial class SqlitePlayerWorldStateRepository
         }
 
         using SqliteCommand command = session.CreateCommand(CheckpointUpsertSql);
+        command.Parameters.AddWithValue("$worldId", worldId.Value);
         SqliteParameter playerName = command.AddParameter("$playerName", SqliteType.Text);
         SqliteParameter positionX = command.AddParameter("$positionX", SqliteType.Real);
         SqliteParameter positionY = command.AddParameter("$positionY", SqliteType.Real);

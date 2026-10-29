@@ -527,8 +527,9 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         }
 
-        // Empties every table except world_metadata (the seed) and combat_formulas (rules data the
-        // init script seeds), so the next load starts a fresh world that keeps its stored seed.
+        // Empties every table except worlds (the seed and the clock), world_metadata and combat_formulas
+        // (rules data the init script seeds), so the next load starts a fresh world that keeps its
+        // stored seed.
         public void WipeWorldStateKeepingMetadata()
         {
             using SqliteConnection connection = Open();
@@ -543,10 +544,10 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
                 }
             }
 
-            Assert.Contains("world_metadata", tables);
+            Assert.Contains("worlds", tables);
             using SqliteCommand wipe = connection.CreateCommand();
             wipe.CommandText = "PRAGMA foreign_keys = OFF; " + string.Concat(
-                tables.Where(table => table is not "world_metadata" and not "combat_formulas")
+                tables.Where(table => table is not "worlds" and not "world_metadata" and not "combat_formulas" and not "schema_version")
                     .Select(table => $"DELETE FROM \"{table}\"; "));
             wipe.ExecuteNonQuery();
         }

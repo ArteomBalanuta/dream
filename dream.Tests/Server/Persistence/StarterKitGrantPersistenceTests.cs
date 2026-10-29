@@ -73,6 +73,7 @@ public sealed class StarterKitGrantPersistenceTests
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "EXPLAIN QUERY PLAN " + SqliteWorldPersistenceRepository.LoadPlayerInventorySql;
         command.Parameters.AddWithValue("$playerName", "Player A");
+        command.Parameters.AddWithValue("$worldId", 1L);
         List<string> plan = [];
         using (SqliteDataReader reader = command.ExecuteReader())
         {
