@@ -49,6 +49,7 @@ internal sealed partial class RuntimePersistenceBridge
     // Base-terrain cells whose removal is persisted (restored overrides and this run's), so a cell is
     // written once. Overrides are never checkpointed.
     private readonly HashSet<GeometryCellKey> _persistedTerrainOverrides = [];
+    private readonly HashSet<ObjectId> _persistedTerrainOverrideIds = [];
     // Fracture groups (origin ids) replaced since the previous capture; the incremental
     // checkpoint's rubble tombstones for a cell fractured twice.
     private readonly List<ObjectId> _removedFractureOriginIds = [];
@@ -712,7 +713,9 @@ internal sealed partial class RuntimePersistenceBridge
 
         Map map = _host.Map;
         // Groups by origin, then one per cell: a cell's rubble can have several groups in the
-        // database (rows orphaned before wave D); only the newest (highest origin) is the live one.
+        // database (rows orphaned before wave D); only the newest is the live one. Newest means the
+        // highest piece ObjectId: piece ids are taken at fracture time, so they follow fracture order
+        // (an origin is a placement id, and a moved cube broken later can have a lower one).
         List<(ObjectId Origin, GeometryCellKey Cell, PersistedCubeFracturePiece[] Pieces)> groups = [];
         foreach (IGrouping<ObjectId, PersistedCubeFracturePiece> group in _worldPersistence
             .LoadCubeFracturePieces()
@@ -735,24 +738,53 @@ internal sealed partial class RuntimePersistenceBridge
             }
         }
 
-        Dictionary<GeometryCellKey, ObjectId> newestOrigin = [];
-        foreach ((ObjectId groupOrigin, GeometryCellKey groupCell, _) in groups)
+        Dictionary<GeometryCellKey, (ObjectId MaxPiece, ObjectId Origin)> newest = [];
+        foreach ((ObjectId groupOrigin, GeometryCellKey groupCell, PersistedCubeFracturePiece[] groupPieces) in groups)
         {
-            if (!newestOrigin.TryGetValue(groupCell, out ObjectId known) || groupOrigin.CompareTo(known) > 0)
+            ObjectId maxPiece = groupPieces[0].ObjectId;
+            foreach (PersistedCubeFracturePiece piece in groupPieces)
             {
-                newestOrigin[groupCell] = groupOrigin;
+                if (piece.ObjectId.CompareTo(maxPiece) > 0)
+                {
+                    maxPiece = piece.ObjectId;
+                }
+            }
+
+            // Ties (impossible for distinct piece ids) fall back to the higher origin.
+            if (!newest.TryGetValue(groupCell, out (ObjectId MaxPiece, ObjectId Origin) known) ||
+                maxPiece.CompareTo(known.MaxPiece) > 0 ||
+                (maxPiece.CompareTo(known.MaxPiece) == 0 && groupOrigin.CompareTo(known.Origin) > 0))
+            {
+                newest[groupCell] = (maxPiece, groupOrigin);
             }
         }
 
         int pruned = 0;
+        int healed = 0;
         foreach ((ObjectId groupOrigin, GeometryCellKey cell, PersistedCubeFracturePiece[] pieces) in groups)
         {
-            if (newestOrigin[cell] != groupOrigin)
+            if (newest[cell].Origin != groupOrigin)
             {
                 pruned++;
                 ObjectId stale = groupOrigin;
                 EnqueueWorldWrite(world => world.DeleteCubeFracturePieces(stale));
                 continue;
+            }
+
+            // Heal: rubble over a cell that is still a source cell, whose origin is neither an override
+            // nor a placed cube, means the Removed override row was lost (crash or deletion). Remove
+            // the cell as the override would have, and write the row back under the reserved origin id.
+            if (map.IsSourceCell(cell) &&
+                !_persistedTerrainOverrideIds.Contains(groupOrigin) &&
+                !_persistedCubes.ContainsKey(groupOrigin) &&
+                map.RemoveSourceCell(cell))
+            {
+                healed++;
+                _persistedTerrainOverrides.Add(cell);
+                _persistedTerrainOverrideIds.Add(groupOrigin);
+                DateTime now = DateTime.UtcNow;
+                PersistedTerrainCellOverride healedOverride = new(groupOrigin, cell, TerrainCellOverrideKind.Removed, null, now, now);
+                EnqueueWorldWrite(world => world.SaveTerrainCellOverride(healedOverride));
             }
 
             PersistedCubeFracturePiece first = pieces[0];
@@ -783,6 +815,11 @@ internal sealed partial class RuntimePersistenceBridge
         {
             NetworkDiagnosticsLog.Write("server.persistence.orphan-rubble-pruned", $"count={pruned}");
         }
+
+        if (healed > 0)
+        {
+            NetworkDiagnosticsLog.Write("server.persistence.terrain-override-healed", $"count={healed}");
+        }
     }
 
     // A base-terrain cell was destroyed: persists a Removed override under a fresh ObjectId, once
@@ -798,6 +835,7 @@ internal sealed partial class RuntimePersistenceBridge
         ObjectId id = _objectIds.Take();
         DateTime now = DateTime.UtcNow;
         PersistedTerrainCellOverride cellOverride = new(id, cell, TerrainCellOverrideKind.Removed, null, now, now);
+        _persistedTerrainOverrideIds.Add(id);
         EnqueueWorldWrite(world => world.SaveTerrainCellOverride(cellOverride));
         _lastRetiredCube = new RetiredCube(record.Actor.Id, id);
     }
@@ -820,6 +858,7 @@ internal sealed partial class RuntimePersistenceBridge
         {
             _objectIds.Reserve(cellOverride.ObjectId);
             _persistedTerrainOverrides.Add(cellOverride.Cell);
+            _persistedTerrainOverrideIds.Add(cellOverride.ObjectId);
             if (cellOverride.Kind != TerrainCellOverrideKind.Removed)
             {
                 NetworkDiagnosticsLog.Write(
@@ -847,8 +886,18 @@ internal sealed partial class RuntimePersistenceBridge
     // DeletePersistedPlacedCube just retired (the resolver deletes, then fractures, in one tick).
     public void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell)
     {
-        if (_worldPersistence == null || record.SourceObject is not Cube)
+        if (_worldPersistence == null)
         {
+            return;
+        }
+
+        // A cell fractured before (a cube placed over rubble, then broken) replaces the old group in
+        // the map: its rows would be orphans, so they go now and the next incremental capture
+        // carries the tombstone. The early returns below also drop it: the map replaced the group
+        // whether or not the new one can be persisted (only reached for an actual new fracture).
+        if (record.SourceObject is not Cube)
+        {
+            DropReplacedFractureGroup(cell, newOrigin: null);
             return;
         }
 
@@ -865,9 +914,12 @@ internal sealed partial class RuntimePersistenceBridge
             }
             else
             {
+                DropReplacedFractureGroup(cell, newOrigin: null);
                 return;
             }
         }
+
+        DropReplacedFractureGroup(cell, origin);
 
         if (ownerPlayerName == null && _persistedCubes.TryGetValue(origin, out PersistedPlacedCube known))
         {
@@ -875,19 +927,6 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         _lastRetiredCube = default;
-
-        // A cell fractured before (a cube placed over rubble, then broken) replaces the old group in
-        // the map: its rows would be orphans, so they go now and the next incremental capture
-        // carries the tombstone.
-        if (_persistedFractureGroups.TryGetValue(cell, out PersistedFractureGroup previous) && previous.Origin != origin)
-        {
-            ObjectId oldOrigin = previous.Origin;
-            EnqueueWorldWrite(world => world.DeleteCubeFracturePieces(oldOrigin));
-            if (_worldObjects.IsCheckpointTrackingEnabled)
-            {
-                _removedFractureOriginIds.Add(oldOrigin);
-            }
-        }
 
         // The one cell's pieces in index order: the same rows a filtered whole-map scan yields, without
         // walking every rubble cell on each fracture.
@@ -922,6 +961,22 @@ internal sealed partial class RuntimePersistenceBridge
 
         cellPieces.Clear();
         _persistedFractureGroups[cell] = new PersistedFractureGroup(origin, ownerPlayerName, pieceIds);
+    }
+
+    private void DropReplacedFractureGroup(GeometryCellKey cell, ObjectId? newOrigin)
+    {
+        if (!_persistedFractureGroups.Remove(cell, out PersistedFractureGroup previous) ||
+            (newOrigin.HasValue && previous.Origin == newOrigin.Value))
+        {
+            return;
+        }
+
+        ObjectId oldOrigin = previous.Origin;
+        EnqueueWorldWrite(world => world.DeleteCubeFracturePieces(oldOrigin));
+        if (_worldObjects.IsCheckpointTrackingEnabled)
+        {
+            _removedFractureOriginIds.Add(oldOrigin);
+        }
     }
 
     // Reused by PersistFracturePieces (tick thread only).

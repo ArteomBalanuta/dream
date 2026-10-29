@@ -227,7 +227,7 @@ public sealed class TerrainEditPersistenceTests
     }
 
     [Fact]
-    public void SeveralRubbleGroupsForOneCell_KeepTheNewestAndPruneTheRest_Logged()
+    public void SeveralRubbleGroupsForOneCell_KeepTheOneWithTheNewestPieces_AndPruneTheRest_Logged()
     {
         FakeWorld world = new();
         GeometryCellKey cell = new(4, 2, 4);
@@ -250,12 +250,58 @@ public sealed class TerrainEditPersistenceTests
         (string _, string message) = Assert.Single(lines.Where(line => line.Category == "server.persistence.orphan-rubble-pruned"));
         Assert.Contains("count=2", message);
         PersistedCubeFracturePiece kept = Assert.Single(world.Pieces);
-        Assert.Equal(new ObjectId(9), kept.OriginObjectId);
+        // Newest = highest piece id (30), not highest origin (9).
+        Assert.Equal(new ObjectId(5), kept.OriginObjectId);
         (GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) restored =
             Assert.Single(rig.Host.Map.CaptureFracturePieces());
-        Assert.Equal(new Vector3(4.75f, 2.25f, 4.25f), restored.Piece.Center);
+        Assert.Equal(new Vector3(4.5f, 2.25f, 4.25f), restored.Piece.Center);
         // Pruned groups' ids stay reserved: they were issued.
         Assert.Equal(40, rig.ObjectIds.Next);
+    }
+
+    // A placed cube's origin is its placement id and physics can move it to another cell: an older
+    // cube broken later has a lower origin but newer pieces, and its group is the live one.
+    [Fact]
+    public void RubbleGroupWithLowerOriginButNewerPieces_IsKept_AndTheStaleHigherOriginGroupPruned()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = new(4, 2, 4);
+        foreach ((long origin, long piece, float x) in new[] { (9L, 20L, 4.75f), (2L, 30L, 4.5f) })
+        {
+            world.Pieces.Add(new PersistedCubeFracturePiece(
+                new ObjectId(piece), new ObjectId(origin), 0, null, new Vector3(cell.X, cell.Y, cell.Z),
+                new Vector3(x, 2.25f, 4.25f), 0.4f, GeometryMaterialId.Grass, Now, Now));
+        }
+
+        world.NextObjectId = 40;
+        Rig rig = new(world);
+
+        rig.Bridge.RestoreWorld();
+
+        PersistedCubeFracturePiece kept = Assert.Single(world.Pieces);
+        Assert.Equal(new ObjectId(2), kept.OriginObjectId);
+        Assert.Equal(new Vector3(4.5f, 2.25f, 4.25f), Assert.Single(rig.Host.Map.CaptureFracturePieces()).Piece.Center);
+    }
+
+    [Fact]
+    public void FractureWithNoPersistableOrigin_StillDeletesTheReplacedGroup()
+    {
+        FakeWorld world = new();
+        Rig rig = new(world);
+        GeometryCellKey cell = FirstRaisedCell(false);
+        rig.FractureTerrain(cell);
+        ObjectId overrideId = Assert.Single(world.Overrides).ObjectId;
+        Assert.NotEmpty(world.Pieces);
+        Assert.False(rig.Bridge.CapturePersistenceCheckpoint(full: true)!.IsIncremental);
+
+        // An unowned cube that was never persisted: no origin, so PersistFracturePieces returns early.
+        Cube placed = rig.Host.Map.TryAddCube(new Vector3(cell.X, cell.Y, cell.Z))!;
+        WorldObjectRecord record = rig.WorldObjects.RegisterCube(placed, rig.Host.Map, maxHealth: 1);
+        Assert.True(rig.Host.Map.FractureCubeIntoPieces(cell));
+        rig.Bridge.PersistFracturePieces(record, cell);
+
+        Assert.Empty(world.Pieces);
+        Assert.Contains(overrideId, rig.Bridge.CapturePersistenceCheckpoint(full: false)!.RemovedFractureOriginObjectIds);
     }
 
     [Fact]

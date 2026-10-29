@@ -13,7 +13,7 @@ public class TerrainChunkCodecTests
 
     private static GeometryCellRecord Cube(int x, int y, int z, int res = 1, bool solid = true,
         GeometryMaterialId material = GeometryMaterialId.Grass, GeometrySubdivisionState? state = null) =>
-        new(new GeometryCellKey(x, y, z), new GeometryCellDefinition(GeometryShapeKind.SolidCube, material, res, solid), state);
+        new(new GeometryCellKey(x, y, z), new GeometryCellDefinition(GeometryShapeKind.SolidCube, material, res, solid, IsFloor: y == 0), state);
 
     // Offset of the first subdivision record in a one-cell chunk blob of the given height.
     private static int SubdivisionOffset(int height, int cellCount, int paletteCount) =>

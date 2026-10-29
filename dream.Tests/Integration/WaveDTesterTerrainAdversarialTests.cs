@@ -24,11 +24,11 @@ namespace Dream.Tests.Integration;
 public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
 {
     // Crash between the writes, or a deleted row: the rubble rows (origin = the override id)
-    // survive but the override does not. Documented behaviour: the terrain cell comes back (it is
-    // a source cell again) and the surviving rubble is restored beside it. Ids stay unique and
-    // below the counter, and the map stays consistent.
+    // survive but the override does not. Restore heals it: the source cell is removed again, the
+    // override row is rewritten under the origin id, so the terrain never returns beneath its own
+    // rubble. Ids stay unique and below the counter, and the map stays consistent.
     [Fact]
-    public void LostOverrideRow_WithSurvivingRubble_RestartsWithUniqueIds_AndNoInvariantViolations()
+    public void LostOverrideRow_WithSurvivingRubble_IsHealedOnRestore_NoOverlap_AndTheRowIsRewritten()
     {
         using TempDatabase database = new();
         GeometryCellKey cell;
@@ -52,36 +52,26 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
         // Deleting the row does not lower the counter.
         Assert.Equal(beforeLoss.NextObjectId, afterLoss.NextObjectId);
 
-        long nextAfterRestart;
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         {
             TerrainEditSqlitePersistenceTests.Rig restarted = new(bundle);
             restarted.Bridge.RestoreWorld();
             Map map = restarted.Host.Map;
-            bool terrainBack = map.IsSourceCell(cell) && map.GeometryCells.ContainsKey(cell);
             int rubble = map.CaptureFracturePieces().Count(piece => piece.Cell == cell);
-            output.WriteLine($"lost override {lostId} for {cell}: terrain back={terrainBack}, cube present={map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z) != null}, rubble pieces restored={rubble}, rubble cell={map.TryGetRubbleAtCell(cell) != null}");
-            output.WriteLine("invariant violations: " + string.Join("; ", map.FindInvariantViolations()));
-            Assert.True(terrainBack, "without the override the base terrain cell returns");
+            output.WriteLine($"lost override {lostId} for {cell}: source cell={map.IsSourceCell(cell)}, rubble pieces restored={rubble}");
+            Assert.False(map.IsSourceCell(cell), "the lost override is healed: the terrain cell stays removed");
+            Assert.False(map.GeometryCells.ContainsKey(cell));
             Assert.Equal(pieces, rubble);
             Assert.Empty(map.FindInvariantViolations());
             Assert.True(restarted.ObjectIds.Next >= beforeLoss.NextObjectId, "the allocator restarted below the stored counter");
-            Assert.True(restarted.ObjectIds.Next > lostId);
-            nextAfterRestart = restarted.ObjectIds.Next;
-
-            // The player destroys the returned cell again: a new override gets a fresh id and
-            // nothing collides.
-            restarted.FractureTerrain(cell);
-            Assert.Empty(map.FindInvariantViolations());
         }
 
+        // The healed row is written on the write queue (flushed when the bundle is disposed).
         SqliteConnection.ClearAllPools();
-        PersistedIds second = ReadIds(database.DatabasePath);
-        long newOverride = Assert.Single(second.Overrides);
-        Assert.NotEqual(lostId, newOverride);
-        Assert.True(newOverride >= nextAfterRestart, "the new override id was issued below the allocator");
-        AssertIdsUnique(second);
-        output.WriteLine($"after re-destroy: override {newOverride}, origins [{string.Join(", ", second.Origins)}], pieces {second.Pieces.Count}");
+        PersistedIds healed = ReadIds(database.DatabasePath);
+        Assert.Equal(lostId, Assert.Single(healed.Overrides));
+        Assert.Equal(beforeLoss.NextObjectId, healed.NextObjectId);
+        AssertIdsUnique(healed);
 
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         {
@@ -90,7 +80,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             Map map = third.Host.Map;
             Assert.False(map.IsSourceCell(cell));
             Assert.Empty(map.FindInvariantViolations());
-            Assert.True(third.ObjectIds.Next > second.MaxId);
+            Assert.True(third.ObjectIds.Next > healed.MaxId);
         }
 
         SqliteConnection.ClearAllPools();

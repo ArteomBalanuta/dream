@@ -33,6 +33,11 @@ public static class TerrainChunkCodec
             throw new InvalidOperationException($"height {height} is outside 1..{MaxHeight}");
         }
 
+        if (cells.Count > ushort.MaxValue)
+        {
+            throw new InvalidOperationException($"{cells.Count} cells exceed the 16-bit chunk cell count ({ushort.MaxValue})");
+        }
+
         int slotCount = Size * Size * height;
         int[] slotOfCell = new int[cells.Count];
         int[] order = new int[cells.Count];
@@ -68,6 +73,11 @@ public static class TerrainChunkCodec
             int slot = slotOfCell[n];
             bitmap[slot >> 3] |= (byte)(1 << (slot & 7));
             GeometryCellDefinition d = cell.Definition;
+            if ((cell.Key.Y == 0) != d.IsFloor)
+            {
+                throw new InvalidOperationException($"cell {cell.Key}: the floor flag must be set exactly at y == 0");
+            }
+
             if (!Enum.IsDefined(d.ShapeKind) || !Enum.IsDefined(d.MaterialId) ||
                 d.SubdivisionResolution is < 1 or > MaxResolution)
             {
@@ -133,6 +143,11 @@ public static class TerrainChunkCodec
     public static List<GeometryCellRecord> Decode(MapDefinition definition, int chunkX, int chunkZ, ReadOnlySpan<byte> data)
     {
         ArgumentNullException.ThrowIfNull(definition);
+        if (chunkX < 0 || chunkZ < 0 || chunkX >= ChunkCountX(definition) || chunkZ >= ChunkCountZ(definition))
+        {
+            throw Bad("chunk coordinates are outside the world");
+        }
+
         int height = definition.Height;
         if (data.Length < HeaderSize || !data[..4].SequenceEqual(Magic))
         {
@@ -257,6 +272,11 @@ public static class TerrainChunkCodec
         {
             GeometryCellDefinition d = palette[cellBytes[n] & 0x7F];
             GeometryCellKey key = KeyOf(chunkX, chunkZ, height, slots[n]);
+            if ((key.Y == 0) != d.IsFloor)
+            {
+                throw Bad("the floor flag must be set exactly at y == 0");
+            }
+
             GeometrySubdivisionState? state = (cellBytes[n] & 0x80) != 0 ? ReadSubdivision(ref r, d) : null;
             result.Add(new GeometryCellRecord(key, d, state));
         }

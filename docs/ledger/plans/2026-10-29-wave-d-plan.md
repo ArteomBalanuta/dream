@@ -363,7 +363,7 @@ Tests go in `dream.Tests/Simulation/World/Terrain/*`.
 **Measurements on World10k (100×8×100), C0 against the merged build:**
 - full and incremental checkpoint, the 1,000-write burst, and the join tick: each at most C0 × 1.10;
 - transfer bytes for an unedited join: byte-identical to C0;
-- with 1,000 seeded overrides: restore time, join tick, transfer bytes, and that the client checksum matches;
+- with 1,000 seeded overrides (the generated 100x8x100 map has only 628 raised terrain cells, so the measurement seeds min(1000, available)): restore time, join tick, transfer bytes, and that the client checksum matches;
 - the stored map:
   - chunk count;
   - blob bytes, with a target of at most 256 KB;

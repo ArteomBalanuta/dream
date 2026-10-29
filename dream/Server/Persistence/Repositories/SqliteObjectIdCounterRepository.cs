@@ -6,10 +6,10 @@ using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence.Repositories;
 
-// The next ObjectId of a world: worlds.next_object_id, which the AFTER INSERT triggers of the four
-// object tables raise in the same statement as every insert. LoadNextObjectId is also a heal guard
+// The next ObjectId of a world: worlds.next_object_id, which the AFTER INSERT triggers of the object
+// tables (cubes, enemies, rubble, terrain overrides) raise in the same statement as every insert. LoadNextObjectId is also a heal guard
 // for a database edited outside the server: it returns max(stored, highest id in use + 1) over the
-// four tables and the inventory slots, and writes the raised value back, logging when it had to.
+// object tables and the inventory slots, and writes the raised value back, logging when it had to.
 public sealed class SqliteObjectIdCounterRepository(IWorldStore store, WorldId worldId)
     : SqliteRepositoryBase(store, worldId), IObjectIdCounterRepository
 {

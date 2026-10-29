@@ -17,8 +17,8 @@ public sealed class ServerPersistenceBundle : IDisposable
         WorldDescriptor? descriptor = null,
         ITerrainChunkRepository? terrainChunks = null)
     {
-        TerrainChunks = terrainChunks ?? (world as SqliteWorldPersistenceRepository)?.TerrainChunks;
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
+        TerrainChunks = terrainChunks ?? (world as SqliteWorldPersistenceRepository)?.TerrainChunks;
         WorldId = worldId ?? WorldId.Default;
         Descriptor = descriptor ?? WorldDescriptor.Default;
         SimulationSeed = simulationSeed;

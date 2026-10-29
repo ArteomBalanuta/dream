@@ -60,8 +60,9 @@ internal static class ObjectIdTestSupport
 
     // Since wave D a cell fractured a second time (a cube placed over its rubble, then broken)
     // replaces the cell's old rubble group: the old rows are deleted, never reissued. Every piece of
-    // `before` that is gone from `after` must belong to such a replaced group: `after` holds a group
-    // with a higher origin in the same parent cell. Returns the replaced piece ids.
+    // `before` that is gone from `after` must belong to such a replaced group: `after` holds a genuinely
+    // new group in the same parent cell: a different origin whose pieces are all absent from `before`
+    // and newer (higher ids) than the piece it replaced. Returns the replaced piece ids.
     internal static IReadOnlyList<long> AssertMissingPiecesWereReplaced(
         Dictionary<long, (long Origin, long X, long Y, long Z)> before,
         Dictionary<long, (long Origin, long X, long Y, long Z)> after)
@@ -75,8 +76,12 @@ internal static class ObjectIdTestSupport
             }
 
             Xunit.Assert.True(
-                after.Values.Any(group => group.X == x && group.Y == y && group.Z == z && group.Origin > origin),
-                $"piece {piece} (origin {origin}, cell {x},{y},{z}) is gone without a newer group replacing it in its cell");
+                after.Any(other =>
+                    other.Value.X == x && other.Value.Y == y && other.Value.Z == z &&
+                    other.Value.Origin != origin &&
+                    !before.ContainsKey(other.Key) &&
+                    other.Key > piece),
+                $"piece {piece} (origin {origin}, cell {x},{y},{z}) is gone without a genuinely new group (new origin, new higher piece ids) replacing it in its cell");
             replaced.Add(piece);
         }
 
