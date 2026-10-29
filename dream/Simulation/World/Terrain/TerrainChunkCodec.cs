@@ -151,6 +151,17 @@ public static class TerrainChunkCodec
     public static List<GeometryCellRecord> Decode(
         MapDefinition definition, int chunkX, int chunkZ, ReadOnlySpan<byte> data, ref long subcellOverrideBudget)
     {
+        long unlimited = long.MaxValue;
+        return Decode(definition, chunkX, chunkZ, data, ref subcellOverrideBudget, ref unlimited);
+    }
+
+    // As above, plus the implied-subcell budget: Map walks resolution^3 children for every record that
+    // is not a plain subdivision-free SolidCube (render blocks and collision bodies), however few override
+    // entries the blob carries, so each such record is charged resolution^3 BEFORE it is added.
+    public static List<GeometryCellRecord> Decode(
+        MapDefinition definition, int chunkX, int chunkZ, ReadOnlySpan<byte> data,
+        ref long subcellOverrideBudget, ref long impliedSubcellBudget)
+    {
         ArgumentNullException.ThrowIfNull(definition);
         if (chunkX < 0 || chunkZ < 0 || chunkX >= ChunkCountX(definition) || chunkZ >= ChunkCountZ(definition))
         {
@@ -284,6 +295,18 @@ public static class TerrainChunkCodec
             if ((key.Y == 0) != d.IsFloor)
             {
                 throw Bad("the floor flag must be set exactly at y == 0");
+            }
+
+            bool subdivided = (cellBytes[n] & 0x80) != 0;
+            if (subdivided || d.ShapeKind != GeometryShapeKind.SolidCube)
+            {
+                long implied = (long)d.SubdivisionResolution * d.SubdivisionResolution * d.SubdivisionResolution;
+                if (implied > impliedSubcellBudget)
+                {
+                    throw Bad("implied subcell budget exceeded");
+                }
+
+                impliedSubcellBudget -= implied;
             }
 
             GeometrySubdivisionState? state = (cellBytes[n] & 0x80) != 0 ? ReadSubdivision(ref r, d, ref subcellOverrideBudget) : null;

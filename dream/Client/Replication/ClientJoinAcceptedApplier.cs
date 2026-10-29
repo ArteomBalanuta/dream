@@ -9,7 +9,9 @@ namespace Dream.Client.Replication;
 
 public static class ClientJoinAcceptedApplier
 {
-    public static void ApplyToRuntime(IClientWorldState runtime, JoinAcceptedMessage joinAccepted)
+    // limits: the bounds the session received the join under; null uses WorldTransferLimits.Default.
+    public static void ApplyToRuntime(
+        IClientWorldState runtime, JoinAcceptedMessage joinAccepted, WorldTransferLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
@@ -18,7 +20,7 @@ public static class ClientJoinAcceptedApplier
         // map is sized from InitialWorld, or from the first full snapshot.
         if (joinAccepted.World is { } worldWire)
         {
-            ApplyWorldDescriptor(runtime, worldWire, joinAccepted.InitialWorld, joinAccepted);
+            ApplyWorldDescriptor(runtime, worldWire, joinAccepted.InitialWorld, joinAccepted, limits ?? WorldTransferLimits.Default);
         }
 
         if (!joinAccepted.InitialWorld.HasValue && joinAccepted.EffectiveInitialActors.Count == 0)
@@ -46,7 +48,7 @@ public static class ClientJoinAcceptedApplier
     }
 
     private static void ApplyWorldDescriptor(IClientWorldState runtime, WorldDescriptorWire wire, WorldSnapshot? initialWorld,
-        JoinAcceptedMessage joinAccepted)
+        JoinAcceptedMessage joinAccepted, WorldTransferLimits limits)
     {
         WorldDescriptor descriptor;
         try
@@ -90,7 +92,11 @@ public static class ClientJoinAcceptedApplier
                 source = new StoredMapSource(
                     MapDefinition.ForWorld(descriptor),
                     joinAccepted.ReceivedTerrain!,
-                    WorldTransferLimits.Default.MaxTerrainSubcellOverrides);
+                    limits.MaxTerrainSubcellOverrides,
+                    limits.MaxTerrainSubcells);
+                // Decode (and so validate and budget-check) before the runtime is touched: a corrupt or
+                // hostile body must leave the existing map and physics bodies intact. Map decodes again.
+                _ = source.CreateCells();
             }
             catch (InvalidDataException ex)
             {
@@ -101,7 +107,9 @@ public static class ClientJoinAcceptedApplier
             return;
         }
 
-        if (runtime.Map.Width != descriptor.Width || runtime.Map.Depth != descriptor.Depth)
+        // A stored map never stands in for a generated world, even at the same size.
+        if (runtime.Map.Width != descriptor.Width || runtime.Map.Depth != descriptor.Depth ||
+            runtime.World.MapSource == WorldMapSource.Stored)
         {
             runtime.RebuildMapForWorld(descriptor);
         }

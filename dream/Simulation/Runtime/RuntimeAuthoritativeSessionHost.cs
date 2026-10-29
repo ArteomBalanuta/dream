@@ -36,14 +36,31 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     }
 
     public RuntimeAuthoritativeSessionHost(WorldSessionRuntime runtime, IDisposable? ownedDependency)
+        : this(runtime, ownedDependency, null)
+    {
+    }
+
+    // terrainPayload: the stored world transfer when the caller already built it (bootstrap does);
+    // null builds it here. If construction throws, the runtime is disposed (the owned dependency is not).
+    public RuntimeAuthoritativeSessionHost(
+        WorldSessionRuntime runtime, IDisposable? ownedDependency, TerrainTransferPayload? terrainPayload)
     {
         Runtime = runtime;
         _ownedDependency = ownedDependency;
         // Built once per host: every join of a stored world shares the same chunks and manifest.
         // A runtime hosts one world for its lifetime, so the payload never changes.
-        _terrainPayload = runtime.World.MapSource == WorldMapSource.Stored && runtime.StoredTerrain != null
-            ? TerrainTransferPayload.Create(runtime.World, runtime.StoredTerrain)
-            : null;
+        try
+        {
+            _terrainPayload = terrainPayload ??
+                (runtime.World.MapSource == WorldMapSource.Stored && runtime.StoredTerrain != null
+                    ? TerrainTransferPayload.Create(runtime.World, runtime.StoredTerrain)
+                    : null);
+        }
+        catch
+        {
+            runtime.Dispose();
+            throw;
+        }
     }
 
     private readonly TerrainTransferPayload? _terrainPayload;
@@ -314,7 +331,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             persistenceWrites: persistence?.PersistenceWrites,
             simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed,
             storedTerrain: persistence?.StoredTerrain);
-        return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner);
+        return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner, persistence?.TerrainPayload);
     }
 
     // The wire form of the runtime's world, built once per descriptor (a join is not a tick, but

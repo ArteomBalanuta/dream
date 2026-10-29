@@ -228,7 +228,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             ],
             Array.Empty<IClientMessageHandler>());
 
-        return new DedicatedServerHost(ServerBootstrap.CreateRuntimeHost(persistence), router, deferJoinsToTick);
+        RuntimeAuthoritativeSessionHost runtimeHost = ServerBootstrap.CreateRuntimeHost(persistence);
+        try
+        {
+            return new DedicatedServerHost(runtimeHost, router, deferJoinsToTick);
+        }
+        catch
+        {
+            runtimeHost.Dispose();
+            throw;
+        }
     }
 
     public IReadOnlyList<IServerToClientMessage> HandleClientMessage(

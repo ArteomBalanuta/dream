@@ -40,8 +40,10 @@ public interface IWorldCatalog
 
     // One owned transaction. For every override cell with no placed_cube_instances row in this world,
     // deletes the override and every cube_fracture_pieces row whose parent cell is that cell (any
-    // origin, so the restore heal cannot remove the cell again). Cells under a placed cube keep their
-    // override and rubble. WorldNotFoundException when the world does not exist.
+    // origin, so the restore heal cannot remove the cell again), and every rubble row whose origin is
+    // neither an override nor a placed cube and whose cell holds no placed cube (a lost override's rubble;
+    // the debris of a broken player cube goes with it). Cells under a placed cube keep their override and
+    // rubble. The result also counts players and enemies saved inside the restored cells (not moved). WorldNotFoundException when the world does not exist.
     TerrainResetResult ResetTerrain(WorldId id);
 
     // Default: world 1, else the lowest id, else create "default" with newWorldSize.
@@ -57,4 +59,15 @@ public sealed record WorldTerrainSource(
     IReadOnlyList<PersistedTerrainChunk>? StoredChunks,
     IReadOnlyList<PersistedTerrainCellOverride> Overrides);
 
-public readonly record struct TerrainResetResult(int OverridesCleared, int RubbleRowsDeleted, int CellsKeptForPlacedCubes);
+// PlayersInside / EnemiesInside: saved positions that lie inside a cell the reset restored (reported,
+// never moved); PlayerNames lists those players (null when none).
+public readonly record struct TerrainResetResult(
+    int OverridesCleared,
+    int RubbleRowsDeleted,
+    int CellsKeptForPlacedCubes,
+    int PlayersInside = 0,
+    int EnemiesInside = 0,
+    IReadOnlyList<string>? PlayerNames = null)
+{
+    public int Inside => PlayersInside + EnemiesInside;
+}

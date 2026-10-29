@@ -16,8 +16,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         WorldId? worldId = null,
         WorldDescriptor? descriptor = null,
         ITerrainChunkRepository? terrainChunks = null,
-        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null)
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
+        Dream.Multiplayer.Protocol.TerrainTransferPayload? terrainPayload = null)
     {
+        TerrainPayload = terrainPayload;
         StoredTerrain = storedTerrain;
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
         TerrainChunks = terrainChunks ?? (world as SqliteWorldPersistenceRepository)?.TerrainChunks;
@@ -44,6 +46,10 @@ public sealed class ServerPersistenceBundle : IDisposable
 
     // The stored world's terrain chunks, loaded and validated at bootstrap; null for a generated world.
     public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; }
+
+    // The transfer form of StoredTerrain, built once at bootstrap (it validated the chunks) and handed to
+    // the host so a join does not rebuild it; null for a generated world or a bundle built without it.
+    public Dream.Multiplayer.Protocol.TerrainTransferPayload? TerrainPayload { get; }
 
     public ICombatFormulaRepository CombatFormulas { get; }
 

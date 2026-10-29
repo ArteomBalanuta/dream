@@ -208,6 +208,12 @@ public sealed record WorldTransferLimits
 
     public long MaxTerrainSubcellOverrides { get; init; } = 1L << 22;
 
+    // The implied subcells of the whole terrain: resolution^3 for every decoded record that is not a
+    // plain subdivision-free SolidCube (Map builds that many render/collision candidates for it, even
+    // when the blob carries no override entries). World10k generated terrain totals 1,667,072 (pinned in
+    // TerrainChunkCodecBudgetTests); the 8,388,608 default is about 5x that.
+    public long MaxTerrainSubcells { get; init; } = 1L << 23;
+
     // The item budget for a world of these dimensions.
     public long MaxItemsFor(int width, int height, int depth)
     {
@@ -498,6 +504,21 @@ public sealed class WorldTransferReceiver
     // Appends a terrain fragment, validating it as the protocol demands (see the wave E plan). Any
     // failure is a protocol error that ends the session.
     public void AddTerrain(TerrainChunkMessage fragment)
+    {
+        try
+        {
+            AddTerrainCore(fragment);
+        }
+        catch
+        {
+            // The session ends; release the native hash now rather than at finalization.
+            _digest?.Dispose();
+            _digest = null;
+            throw;
+        }
+    }
+
+    private void AddTerrainCore(TerrainChunkMessage fragment)
     {
         ArgumentNullException.ThrowIfNull(fragment);
         if (Manifest == null)

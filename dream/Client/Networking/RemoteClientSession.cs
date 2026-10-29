@@ -124,6 +124,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
     public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
+    // The bounds this session receives world transfers under.
+    public WorldTransferLimits WorldTransferLimits => _worldTransfers.Limits;
+
     public RemoteClientSession(
         ITransportConnection connection,
         IProtocolCodec codec,
