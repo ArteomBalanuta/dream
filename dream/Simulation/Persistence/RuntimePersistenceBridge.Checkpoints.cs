@@ -73,6 +73,7 @@ internal sealed partial class RuntimePersistenceBridge
         map.ClearCheckpointChanges();
         _worldObjects.ClearCheckpointChanges();
         _removedCubeObjectIds.Clear();
+        _removedFractureOriginIds.Clear();
         if (full)
         {
             _checkpointCapturesSinceFull = 0;
@@ -309,6 +310,9 @@ internal sealed partial class RuntimePersistenceBridge
 
             AppendPersistedFracturePieces(_checkpointMapPieceScratch, now, pieces);
         }
+
+        // Groups replaced by a second fracture of their cell (see PersistFracturePieces).
+        removedGroups.AddRange(_removedFractureOriginIds);
 
         if (worldStates.Length == 0 && enemies.Count == 0 && removedEnemies.Count == 0 && cubes.Count == 0 &&
             _removedCubeObjectIds.Count == 0 && pieces.Count == 0 && removedGroups.Count == 0)

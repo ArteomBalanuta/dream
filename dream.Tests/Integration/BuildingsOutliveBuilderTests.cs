@@ -101,7 +101,8 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
     {
         using SqliteConnection connection = Open(databasePath);
         using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = $"SELECT DISTINCT owner_player_name FROM {table};";
+        // Terrain rubble (wave D) is ownerless from the start; the builder is the one owner there is.
+        command.CommandText = $"SELECT DISTINCT owner_player_name FROM {table} WHERE owner_player_name IS NOT NULL;";
         return (string)command.ExecuteScalar()!;
     }
 
