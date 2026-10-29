@@ -87,9 +87,9 @@ public sealed class Wave13PersistentLockstepDeterminismTests(ITestOutputHelper o
         [
             ("player_profiles", "player_name, interaction_mode, strength, vitality, attack_speed, level, experience, current_hp, max_hp", "player_name"),
             ("player_world_state", "player_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp", "player_name"),
-            ("placed_cube_instances", "cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z, material_id, current_health, max_health", "cube_id"),
-            ("cube_fracture_pieces", "source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id", "source_cube_id, piece_index"),
-            ("enemy_instances", "enemy_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp", "enemy_id"),
+            ("placed_cube_instances", "object_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z, material_id, current_health, max_health", "object_id"),
+            ("cube_fracture_pieces", "object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id", "origin_object_id, piece_index"),
+            ("enemy_instances", "object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp", "object_id"),
             ("item_instances", "item_instance_id, item_kind, owner_player_name, state, stack_count", "item_instance_id"),
             ("player_inventory_slots", "player_name, slot_index, item_instance_id", "player_name, slot_index"),
         ];

@@ -22,7 +22,7 @@ public sealed partial class SqliteEnemyRepository
             max_hp = $maxHp,
             level = $level,
             updated_utc = $updatedUtc
-        WHERE world_id = $worldId AND enemy_id = $enemyId;
+        WHERE world_id = $worldId AND object_id = $objectId;
         """;
 
     // One prepared command for all rows, its parameters set per row. writeUtc is the formatted
@@ -35,7 +35,7 @@ public sealed partial class SqliteEnemyRepository
         }
 
         using SqliteCommand command = session.CreateCommand(SqliteRepositorySql.WithCheckpointLiterals(CheckpointUpdateSql, worldId, writeUtc));
-        SqliteParameter enemyId = command.AddParameter("$enemyId", SqliteType.Integer);
+        SqliteParameter objectId = command.AddParameter("$objectId", SqliteType.Integer);
         SqliteParameter positionX = command.AddParameter("$positionX", SqliteType.Real);
         SqliteParameter positionY = command.AddParameter("$positionY", SqliteType.Real);
         SqliteParameter positionZ = command.AddParameter("$positionZ", SqliteType.Real);
@@ -48,7 +48,7 @@ public sealed partial class SqliteEnemyRepository
 
         foreach (PersistedEnemyInstance enemy in enemies)
         {
-            enemyId.Value = enemy.ObjectId.Value;
+            objectId.Value = enemy.ObjectId.Value;
             positionX.Value = enemy.Position.X;
             positionY.Value = enemy.Position.Y;
             positionZ.Value = enemy.Position.Z;

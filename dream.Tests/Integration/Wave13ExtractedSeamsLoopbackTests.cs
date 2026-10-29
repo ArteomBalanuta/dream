@@ -127,7 +127,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             long persistedLevel = database.Count($"SELECT level FROM player_profiles WHERE player_name = 'Name {Alpha}';");
             Assert.Equal(afterKill.Progression.Experience, persistedExperience);
             Assert.Equal(afterKill.Progression.Level, persistedLevel);
-            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM enemy_instances WHERE enemy_id = {TargetEnemyActorId};"));
+            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM enemy_instances WHERE object_id = {TargetEnemyActorId};"));
 
             // Hit the -X cube a few times (damaged, still standing), then break the +X cube.
             int damagedCubeId = CubeIdAt(runtime, damagedCell);
@@ -164,8 +164,8 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             Assert.False(HealthOf(runtime, fracturedCubeId).HasValue, "the fractured cube's record survived");
             int livePieces = runtime.Map.CaptureFracturePieces().Count(piece => piece.Cell == fractureKey);
             Assert.True(livePieces > 0);
-            Assert.Equal(livePieces, database.CountAfterFlush(runtime, $"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {fracturedCubeId};"));
-            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {fracturedCubeId};"));
+            Assert.Equal(livePieces, database.CountAfterFlush(runtime, $"SELECT COUNT(*) FROM cube_fracture_pieces WHERE origin_object_id = {fracturedCubeId};"));
+            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE object_id = {fracturedCubeId};"));
 
             // A few more ticks so the rubble settles under physics.
             for (int i = 0; i < 32; i++)

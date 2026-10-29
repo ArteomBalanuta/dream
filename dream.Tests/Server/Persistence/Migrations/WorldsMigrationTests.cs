@@ -53,7 +53,7 @@ public sealed class WorldsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(0, 4, null), result);
+        Assert.Equal(new SchemaMigrationResult(0, 5, null), result);
         using SqliteConnection connection = database.Open();
         Assert.Equal(
             ["1|default|56|8|56|generated|default|1||0|3"],
@@ -65,9 +65,9 @@ public sealed class WorldsMigrationTests
         Assert.Equal(
             [
                 "player_world_state|world_id,player_name|0",
-                "placed_cube_instances|world_id,cube_id|0",
-                "cube_fracture_pieces|world_id,source_cube_id,piece_index|0",
-                "enemy_instances|world_id,enemy_id|0",
+                "placed_cube_instances|world_id,object_id|0",
+                "cube_fracture_pieces|world_id,object_id|0",
+                "enemy_instances|world_id,object_id|0",
                 "item_instances|world_id,item_instance_id|0",
                 "player_inventory_slots|world_id,player_name,slot_index|0",
                 "player_starter_grants|world_id,player_name|0"
@@ -125,15 +125,15 @@ public sealed class WorldsMigrationTests
                 .Migrate(database.DatabasePath, connection, log.Add);
 
             Assert.Equal(2, result.FromVersion);
-            Assert.Equal(4, result.ToVersion);
+            Assert.Equal(5, result.ToVersion);
             // The pragma is back to what the caller had.
             Assert.Equal(1L, Scalar(connection, "PRAGMA foreign_keys;"));
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0004\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0005\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
             ["alice|0|11|Sword", "bob|3|12|Potion"],
@@ -154,8 +154,8 @@ public sealed class WorldsMigrationTests
         }
 
         // Whole REAL cells become INTEGER without loss; the other columns are copied as they were.
-        Assert.Equal(["integer|1|2|3", "integer|4|2|3"], Column(migrated, "SELECT typeof(cell_x) || '|' || cell_x || '|' || cell_y || '|' || cell_z FROM placed_cube_instances ORDER BY cube_id;"));
-        Assert.Equal(["1.5|2.5|3.5", "||"], Column(migrated, "SELECT COALESCE(center_x, '') || '|' || COALESCE(center_y, '') || '|' || COALESCE(center_z, '') FROM placed_cube_instances ORDER BY cube_id;"));
+        Assert.Equal(["integer|1|2|3", "integer|4|2|3"], Column(migrated, "SELECT typeof(cell_x) || '|' || cell_x || '|' || cell_y || '|' || cell_z FROM placed_cube_instances ORDER BY object_id;"));
+        Assert.Equal(["1.5|2.5|3.5", "||"], Column(migrated, "SELECT COALESCE(center_x, '') || '|' || COALESCE(center_y, '') || '|' || COALESCE(center_z, '') FROM placed_cube_instances ORDER BY object_id;"));
         Assert.Equal(["integer|3"], Column(migrated, "SELECT DISTINCT typeof(parent_cell_z) || '|' || parent_cell_z FROM cube_fracture_pieces;"));
         Assert.Equal(["7.0|8.0|9.0"], Column(migrated, "SELECT world_position_x || '|' || world_position_y || '|' || world_position_z FROM item_instances WHERE item_instance_id = 13;"));
         Assert.Equal(["alice|2|2026-01-02T03:04:10.000Z"], Column(migrated, "SELECT player_name || '|' || kit_version || '|' || updated_utc FROM player_starter_grants;"));
@@ -237,7 +237,7 @@ public sealed class WorldsMigrationTests
         using (SqliteConnection connection = MigrationTestDatabase.OpenFile(database.DatabasePath))
         {
             Execute(connection, $"PRAGMA foreign_keys = {pragma};");
-            Assert.Equal(4, migrator.Migrate(database.DatabasePath, connection).ToVersion);
+            Assert.Equal(5, migrator.Migrate(database.DatabasePath, connection).ToVersion);
             Assert.Equal(expected, Scalar(connection, "PRAGMA foreign_keys;"));
         }
     }

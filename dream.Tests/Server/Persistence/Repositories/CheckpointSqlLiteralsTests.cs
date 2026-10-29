@@ -16,7 +16,7 @@ public sealed class CheckpointSqlLiteralsTests
             SqlitePlacedObjectRepository.CheckpointUpdateSql, new WorldId(42), "2026-10-29T01:02:03.0000000Z");
 
         Assert.Contains("updated_utc = '2026-10-29T01:02:03.0000000Z'", sql, StringComparison.Ordinal);
-        Assert.Contains("WHERE world_id = 42 AND cube_id = $cubeId;", sql, StringComparison.Ordinal);
+        Assert.Contains("WHERE world_id = 42 AND object_id = $objectId;", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("$worldId", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("$updatedUtc", sql, StringComparison.Ordinal);
     }

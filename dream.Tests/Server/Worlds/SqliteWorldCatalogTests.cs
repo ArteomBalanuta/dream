@@ -21,7 +21,7 @@ public sealed class SqliteWorldCatalogTests
         Assert.NotNull(a.Seed);
         Assert.Equal(42UL, b.Seed);
         Assert.Equal(0, a.WorldTimeTicks);
-        Assert.Equal(4, a.CreatedSchemaVersion);
+        Assert.Equal(5, a.CreatedSchemaVersion);
         Assert.Equal([a.Descriptor.Id, b.Descriptor.Id], db.Catalog.List().Select(r => r.Descriptor.Id).ToArray());
         Assert.Equal(b, db.Catalog.TryGet(b.Descriptor.Id));
     }
@@ -77,15 +77,15 @@ public sealed class SqliteWorldCatalogTests
         }
 
         Assert.Equal(
-            Convert.ToInt64(db.Scalar("SELECT SUM(cube_id) FROM placed_cube_instances WHERE world_id = 1")),
-            Convert.ToInt64(db.Scalar($"SELECT SUM(cube_id) FROM placed_cube_instances WHERE world_id = {copyId}")));
+            Convert.ToInt64(db.Scalar("SELECT SUM(object_id) FROM placed_cube_instances WHERE world_id = 1")),
+            Convert.ToInt64(db.Scalar($"SELECT SUM(object_id) FROM placed_cube_instances WHERE world_id = {copyId}")));
         Assert.Equal(
             1L,
             Convert.ToInt64(db.Scalar(
                 $"SELECT COUNT(*) FROM player_inventory_slots WHERE world_id = {copyId} AND item_instance_id = 30")));
 
         // Independent afterwards: edits to the copy do not reach the source.
-        db.Execute($"DELETE FROM placed_cube_instances WHERE world_id = {copyId} AND cube_id = 10;");
+        db.Execute($"DELETE FROM placed_cube_instances WHERE world_id = {copyId} AND object_id = 10;");
         Assert.Equal(2L, db.Count("placed_cube_instances", 1));
         Assert.Equal(1L, db.Count("placed_cube_instances", copyId));
     }

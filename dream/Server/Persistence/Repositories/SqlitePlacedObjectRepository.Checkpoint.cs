@@ -22,7 +22,7 @@ public sealed partial class SqlitePlacedObjectRepository
             current_health = $currentHealth,
             max_health = $maxHealth,
             updated_utc = $updatedUtc
-        WHERE world_id = $worldId AND cube_id = $cubeId;
+        WHERE world_id = $worldId AND object_id = $objectId;
         """;
 
     // One prepared command for all rows, its parameters set per row. writeUtc is the formatted
@@ -35,7 +35,7 @@ public sealed partial class SqlitePlacedObjectRepository
         }
 
         using SqliteCommand command = session.CreateCommand(SqliteRepositorySql.WithCheckpointLiterals(CheckpointUpdateSql, worldId, writeUtc));
-        SqliteParameter cubeId = command.AddParameter("$cubeId", SqliteType.Integer);
+        SqliteParameter objectId = command.AddParameter("$objectId", SqliteType.Integer);
         SqliteParameter cellX = command.AddParameter("$cellX", SqliteType.Real);
         SqliteParameter cellY = command.AddParameter("$cellY", SqliteType.Real);
         SqliteParameter cellZ = command.AddParameter("$cellZ", SqliteType.Real);
@@ -48,7 +48,7 @@ public sealed partial class SqlitePlacedObjectRepository
 
         foreach (PersistedPlacedCube cube in cubes)
         {
-            cubeId.Value = cube.ObjectId.Value;
+            objectId.Value = cube.ObjectId.Value;
             cellX.Value = cube.CellPosition.X;
             cellY.Value = cube.CellPosition.Y;
             cellZ.Value = cube.CellPosition.Z;

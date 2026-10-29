@@ -46,8 +46,8 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
 
         // One backup of the v2 file, taken before 0003 ran.
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0004\.\d{8}T\d{6}Z\.bak$", backup);
-        Assert.Equal(4L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0005\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal(5L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
 
         // Every row moved to world 1; nothing was lost, nothing went to another world.
         for (int i = 0; i < WorldTables.Length; i++)
@@ -82,7 +82,8 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
             Assert.Equal(GeometryMaterialId.Stone, host.Runtime.Map.TryGetCubeAtCell(30, 1, 20)?.MaterialId);
             Assert.Equal(GeometryMaterialId.Lamp, host.Runtime.Map.TryGetCubeAtCell(32, 1, 20)?.MaterialId);
             Assert.Contains(host.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == new GeometryCellKey(24, 1, 20));
-            Assert.True(host.Runtime.Enemies.TryGetEnemyByActorId(4301, out _));
+            // Restore no longer keeps the persisted id as the actor id (wave C), so the wolf is found by being the only one.
+            Assert.Single(host.Runtime.Enemies.ActiveActors);
             Assert.Equal(50_000L, host.Runtime.WorldClock.WorldTicks);
         }
 

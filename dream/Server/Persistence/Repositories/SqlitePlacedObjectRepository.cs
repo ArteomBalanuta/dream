@@ -17,7 +17,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
 
     private const string LoadSql = """
         SELECT
-            cube_id,
+            object_id,
             owner_player_name,
             cell_x,
             cell_y,
@@ -33,13 +33,13 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
             updated_utc
         FROM placed_cube_instances
         WHERE world_id = $worldId
-        ORDER BY cube_id;
+        ORDER BY object_id;
         """;
 
     private const string UpsertSql = """
         INSERT INTO placed_cube_instances (
             world_id,
-            cube_id,
+            object_id,
             owner_player_name,
             cell_x,
             cell_y,
@@ -56,7 +56,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
         )
         VALUES (
             $worldId,
-            $cubeId,
+            $objectId,
             $ownerPlayerName,
             $cellX,
             $cellY,
@@ -71,7 +71,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(world_id, cube_id) DO UPDATE SET
+        ON CONFLICT(world_id, object_id) DO UPDATE SET
             owner_player_name = excluded.owner_player_name,
             cell_x = excluded.cell_x,
             cell_y = excluded.cell_y,
@@ -86,12 +86,12 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM placed_cube_instances WHERE world_id = $worldId AND cube_id = $cubeId;";
+    private const string DeleteSql = "DELETE FROM placed_cube_instances WHERE world_id = $worldId AND object_id = $objectId;";
 
     public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() =>
         QueryList(LoadSql, static reader => new PersistedPlacedCube(
             new ObjectId(reader.GetInt64(0)),
-            reader.GetString(1),
+            reader.GetNullableString(1),
             reader.GetVector3(2),
             ShapeKind: Enum.Parse<GeometryShapeKind>(reader.GetString(8), ignoreCase: true),
             MaterialId: Enum.Parse<GeometryMaterialId>(reader.GetString(9), ignoreCase: true),
@@ -105,8 +105,8 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
     public void SavePlacedCube(PersistedPlacedCube cube) =>
         Execute(UpsertSql, cube, static (command, c) =>
         {
-            command.BindInt64("$cubeId", c.ObjectId.Value);
-            command.BindText("$ownerPlayerName", c.OwnerPlayerName ?? string.Empty);
+            command.BindInt64("$objectId", c.ObjectId.Value);
+            command.BindNullableText("$ownerPlayerName", c.OwnerPlayerName);
             command.BindVector3("$cellX", "$cellY", "$cellZ", c.CellPosition);
             command.BindNullableVector3("$centerX", "$centerY", "$centerZ", c.CenterPosition);
             command.BindText("$shapeKind", c.ShapeKind.ToString());
@@ -118,5 +118,5 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
         });
 
     public void DeletePlacedCube(ObjectId objectId) =>
-        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$cubeId", id.Value));
+        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$objectId", id.Value));
 }

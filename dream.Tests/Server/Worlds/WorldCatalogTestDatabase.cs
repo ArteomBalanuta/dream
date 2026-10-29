@@ -38,11 +38,11 @@ internal sealed class WorldCatalogTestDatabase : IDisposable
             INSERT INTO player_profiles (player_name, display_name) VALUES ('alice', 'Alice');
             INSERT INTO player_world_state (world_id, player_name, position_x, position_y, position_z, facing_x, facing_y, facing_z)
                 VALUES (1, 'alice', 1.5, 2, 3, 0, 0, 1);
-            INSERT INTO placed_cube_instances (world_id, cube_id, owner_player_name, cell_x, cell_y, cell_z, material_id, current_health, max_health)
+            INSERT INTO placed_cube_instances (world_id, object_id, owner_player_name, cell_x, cell_y, cell_z, material_id, current_health, max_health)
                 VALUES (1, 10, 'alice', 4, 1, 5, 'stone', 5, 5), (1, 11, 'alice', 4, 2, 5, 'stone', 5, 5);
-            INSERT INTO cube_fracture_pieces (world_id, source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id)
-                VALUES (1, 9, 0, 'alice', 3, 1, 3, 3.1, 1.1, 3.1, 0.5, 'stone');
-            INSERT INTO enemy_instances (world_id, enemy_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp)
+            INSERT INTO cube_fracture_pieces (world_id, object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id)
+                VALUES (1, 31, 9, 0, 'alice', 3, 1, 3, 3.1, 1.1, 3.1, 0.5, 'stone');
+            INSERT INTO enemy_instances (world_id, object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp)
                 VALUES (1, 20, 'slime', 'Slime', 0, 0, 0, 0, 0, 1, 10, 10);
             INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state)
                 VALUES (1, 30, 'tool', 'Pick', 'pick', 'alice', 'Inventory');
