@@ -4,7 +4,7 @@ Document the authoritative SQLite schema that backs player profiles, world state
 
 ## Source Of Truth
 
-The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file. Persistence wave B (plan `docs/ledger/plans/2026-10-29-wave-b-plan.md`) added `0003_worlds.sql`: worlds as rows (see Worlds below).
+The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file. Persistence wave B (plan `docs/ledger/plans/2026-10-29-wave-b-plan.md`) added `0003_worlds.sql`: worlds as rows (see Worlds below). Persistence wave C added `0005_object_ids.sql`: stable object ids (see Stable object ids below).
 
 [dream/config/player-profiles.init.sql](/G:/workspace/projects/dream/dream/config/player-profiles.init.sql) is frozen. It is the pre-migration schema. It stays as the legacy fixture that tests build old databases from, and because `SqliteSchemaBootstrapper` still takes its path: the migrations directory is found next to it (`Path.Combine(Path.GetDirectoryName(schemaScriptPath), "migrations")`). Do not edit it to change the schema; add a migration.
 
@@ -94,7 +94,7 @@ CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
 - All seven tables are rowid tables with a composite primary key (an index on the key columns), including the three busy ones (cubes, rubble, enemies). `WITHOUT ROWID` was tried for those three and measured slower: on World10k a full checkpoint was about 10% slower than the baseline with it, and about 4% slower with a rowid table and the composite key index. The composite key makes each checkpoint UPDATE two B-tree lookups (key index, then rowid) where the old `INTEGER PRIMARY KEY` was one, and the `updated_utc` index of those three tables is rewritten on every UPDATE; together with the `$worldId` bind this made the World10k checkpoint about 12% slower than before 0003, so migration 0004 drops the three `updated_utc` indexes (below).
 - `placed_cube_instances.cell_x/y/z` and `cube_fracture_pieces.parent_cell_x/y/z` are now `INTEGER NOT NULL`. Existing `REAL` values were whole numbers and convert without loss; the code that binds and reads them does not change.
 - Indexes keep their names. `ix_cube_fracture_pieces_parent_cell` is now `(world_id, parent_cell_x, parent_cell_y, parent_cell_z)` and `ix_player_inventory_slots_item_instance_id` is `(world_id, item_instance_id)`.
-- `ON DELETE SET NULL` for cube owners is deferred to a later wave; owners still cascade.
+- `ON DELETE SET NULL` for cube owners arrived with migration 0005 (see Stable object ids below); in schema version 3 and 4 owners still cascade.
 - Item ids, actor ids and cube ids restart per world, and `GetMaxItemInstanceId` is per world. Inventory does not travel between worlds.
 
 ### How the code is bound to a world
@@ -118,6 +118,51 @@ Rows move with the SQLite table-rebuild procedure: create `X__v3`, `INSERT ... S
 - `legacy_alter_table` stays OFF.
 
 A v2 database upgrading takes the usual `{db}.v0002-to-v0003.{timestamp}.bak` backup.
+
+## Stable object ids (migration 0005)
+
+Persistence wave C (plan `docs/ledger/plans/2026-10-29-wave-c-plan.md`) gave every persisted world object a 64-bit `ObjectId` that is never reused: placed cubes, rubble pieces, enemies and items. Schema version 5. The sections above and the per-table notes below describe the pre-0005 key names (`cube_id`, `source_cube_id`, `enemy_id`) where they say so; 0005 renames them as listed here. The int actor id stays the identity on the wire, in checksums and in RNG seeds; `ObjectId` only exists in persistence (see `docs/architecture.md`, Object ids and actor ids).
+
+**The counter.** `worlds.next_object_id INTEGER NOT NULL DEFAULT 1` holds the next id to issue in that world (added with `ALTER TABLE`; `worlds` is not rebuilt, because 7 child foreign keys point at it). Restore seeds the runtime's single `ObjectIdAllocator` from it. All four object kinds draw from that one allocator, so an id is unique across kinds within a world.
+
+**Keys.**
+
+| Table | Primary key | Id columns |
+| --- | --- | --- |
+| `placed_cube_instances` | `(world_id, object_id)` | `object_id` replaces `cube_id` |
+| `cube_fracture_pieces` | `(world_id, object_id)`, plus `UNIQUE INDEX ux_cube_fracture_pieces_origin (world_id, origin_object_id, piece_index)` | `object_id` is the piece's own id; `origin_object_id` replaces `source_cube_id` and is the retired id of the cube that fractured |
+| `enemy_instances` | `(world_id, object_id)` | `object_id` replaces `enemy_id` |
+| `item_instances` | `(world_id, item_instance_id)` | unchanged name; the value is an ObjectId from the shared allocator |
+| `player_inventory_slots` | unchanged | `item_instance_id` is unchanged |
+
+All rebuilt tables stay rowid tables. The `updated_utc` indexes dropped by 0004 are not recreated; the owner and `parent_cell` indexes are.
+
+**Nullable owners.** `owner_player_name` is nullable on `placed_cube_instances` and `cube_fracture_pieces`, with `CHECK (owner_player_name IS NULL OR length(trim(owner_player_name)) > 0)` and `ON DELETE SET NULL` instead of `CASCADE`. Deleting a player profile therefore leaves the player's buildings and rubble in the world with no owner (their inventory slots still cascade away). A new placement still needs a valid owner to get an `ObjectId`; an ownerless cube that already has an id is still checkpointed and can still be damaged.
+
+**Triggers: any rebuild must recreate them.** Four `AFTER INSERT` triggers keep the counter above every inserted id, in the same statement as the insert, so a crash cannot leave a persisted id at or above the stored counter:
+
+- `trg_placed_cube_instances_advance_object_id` (on `object_id`)
+- `trg_cube_fracture_pieces_advance_object_id` (on `object_id`)
+- `trg_enemy_instances_advance_object_id` (on `object_id`)
+- `trg_item_instances_advance_object_id` (on `item_instance_id`)
+
+Each runs `UPDATE worlds SET next_object_id = NEW.<id> + 1 WHERE world_id = NEW.world_id AND next_object_id <= NEW.<id>`: it raises the counter and never lowers it, and an `ON CONFLICT DO UPDATE` or a checkpoint `UPDATE` does not fire it (neither is an insert). `DROP TABLE` drops a table's triggers, so a later migration that rebuilds one of these four tables must recreate its trigger (a migration test checks this). An id reissued after a crash belonged to an insert that never committed, so nothing references it.
+
+**Deterministic backfill.** 0005 renumbers existing rows per world, so two copies of one v4 database migrate to identical v5 databases:
+
+- `base = MAX(item ids in item_instances and player_inventory_slots) + 1`, or 1 when there are none. Items keep their ids.
+- Ids are then assigned in this order: cubes (by `cube_id`), rubble groups (one per distinct `source_cube_id`, which become retired `origin_object_id` values), rubble pieces (by `source_cube_id, piece_index`), then enemies (by `enemy_id`).
+- `next_object_id = base + the number of assigned ids`.
+
+A cube and an enemy that shared a legacy integer id get different ObjectIds. The migration builds the mapping in a scratch table (`object_id_backfill__v5`) and drops it. It uses the 0003 rebuild pattern (create `X__v5`, copy, drop, rename, recreate indexes), under the migrator's existing foreign-keys-off and `foreign_key_check` handling, so an orphan row fails the migration and the version stays at 4. A v4 database takes the usual `v0004-to-v0005` backup.
+
+**Heal guard.** `LoadNextObjectId()` (`IObjectIdCounterRepository`) returns `max(stored next_object_id, MAX(id) + 1)` over the four object tables and the inventory slots. When the stored value is lower (a hand-edited or restored file), it raises `worlds.next_object_id` and logs `server.persistence.object-id-counter-healed`. The bridge also reserves every id it loads, so the allocator cannot hand out a loaded id.
+
+**Other behaviour.**
+
+- Catalog copy copies the new columns and `next_object_id` with them.
+- Load order is `ORDER BY object_id` for cubes and enemies and `ORDER BY origin_object_id, piece_index` for rubble. Restore registers cubes and enemies in that order, so their compact actor ids follow it.
+- Orphan rubble rows (pieces whose group is no longer restorable) are still never deleted. That is deferred.
 
 ## Design Notes
 
