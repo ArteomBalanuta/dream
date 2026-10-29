@@ -38,6 +38,7 @@ public partial class Map
     private IReadOnlyList<GeometryRenderBlockDescriptor> _mergedStaticSubcellRenderBlocks = [];
     private HashSet<GeometryCellKey> _mergedStaticSubcellRenderCells = [];
     private bool _mergedStaticSubcellRenderReady;
+    private bool _mergedStaticSubcellRenderStale;
     private IReadOnlyList<GeometryCollisionBodyDescriptor> _mergedStaticSubcellCollisionBodies = [];
     private HashSet<GeometryCellKey> _mergedStaticSubcellCollisionCells = [];
     private bool _mergedStaticSubcellCollisionReady;

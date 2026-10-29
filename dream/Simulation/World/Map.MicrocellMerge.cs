@@ -51,7 +51,17 @@ public partial class Map
         }
 
         _mergedStaticSubcellRenderBlocks = blocks;
+        _mergedStaticSubcellRenderStale = false;
         BumpStaticContentVersion();
+    }
+
+    // Applies a deferred merged render rebuild (see RemoveCube) before a render export reads it.
+    private void EnsureMergedStaticSubcellRenderBlocks()
+    {
+        if (_mergedStaticSubcellRenderStale)
+        {
+            RebuildMergedStaticSubcellRenderBlocks();
+        }
     }
 
     private void RebuildMergedStaticSubcellCollisionBodiesIfNeeded(
@@ -68,6 +78,29 @@ public partial class Map
         {
             RebuildMergedStaticSubcellCollisionBodies(syncPhysics);
         }
+    }
+
+    // Drops one cell from the merged static collision. The merged bodies are one coarse box per
+    // parent cell, so this equals a full rebuild without the cell (a rebuild costs ~16 ms on a
+    // 56-wide map) while touching only that cell's descriptor and body.
+    private void RemoveMergedStaticSubcellCollisionCell(GeometryCellKey key)
+    {
+        if (_initializing || !_mergedStaticSubcellCollisionReady || !_mergedStaticSubcellCollisionCells.Remove(key))
+        {
+            return;
+        }
+
+        List<GeometryCollisionBodyDescriptor> remaining = new(_mergedStaticSubcellCollisionBodies.Count);
+        foreach (GeometryCollisionBodyDescriptor body in _mergedStaticSubcellCollisionBodies)
+        {
+            if (body.CellKey != key)
+            {
+                remaining.Add(body);
+            }
+        }
+
+        _mergedStaticSubcellCollisionBodies = remaining;
+        _physicsBinder?.RemoveMergedStaticCollisionBodies(key);
     }
 
     private void RebuildMergedStaticSubcellCollisionBodies(bool syncPhysics)

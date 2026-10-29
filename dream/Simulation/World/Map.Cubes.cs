@@ -88,6 +88,10 @@ public partial class Map
         int x = key.X;
         int y = key.Y;
         int z = key.Z;
+        // A cell inside the merged static sculpture collision or render keeps its share of those
+        // merged bodies until they are rebuilt without it (as RebuildGeometryCellArtifacts does).
+        bool wasMergedStaticSubcellRenderCell = _mergedStaticSubcellRenderCells.Contains(key);
+        bool wasMergedStaticSubcellCollisionCell = _mergedStaticSubcellCollisionCells.Contains(key);
         if (IsSourceCell(key))
         {
             if (_removedSourceCellSet.Add(key))
@@ -114,6 +118,18 @@ public partial class Map
         _physicsBinder?.RemoveCellCollisionBodies(key);
         _physicsBinder?.RemoveCompatibilityCubeBodies(cube);
         _physicsBinder?.SyncCellSupportBody(key, needed: false);
+        if (wasMergedStaticSubcellRenderCell && !_initializing)
+        {
+            // The merged render rebuild costs tens of ms; it runs once, on the next render export.
+            _mergedStaticSubcellRenderStale = true;
+            BumpStaticContentVersion();
+        }
+
+        if (wasMergedStaticSubcellCollisionCell)
+        {
+            RemoveMergedStaticSubcellCollisionCell(key);
+        }
+
         return true;
     }
 

@@ -12,6 +12,7 @@ public partial class Map
     public GeometryRenderExport CaptureGeometryRenderExport(Vector3 position, float radius)
     {
         ThrowIfHeadless();
+        EnsureMergedStaticSubcellRenderBlocks();
         return CaptureGeometryRenderExport(
             GetRenderCandidateCubes(position, radius),
             includeStaticCube: cube => IsCubeWithinRadius(cube, position, radius),
@@ -24,6 +25,7 @@ public partial class Map
     public GeometryRenderExport CaptureFullGeometryRenderExport()
     {
         ThrowIfHeadless();
+        EnsureMergedStaticSubcellRenderBlocks();
         return CaptureGeometryRenderExport(
             _solidCubes,
             includeStaticCube: _ => true,
@@ -38,6 +40,7 @@ public partial class Map
     public GeometryRenderExport CapturePresentationGeometryRenderExport(Vector3 position, float radius)
     {
         ThrowIfHeadless();
+        EnsureMergedStaticSubcellRenderBlocks();
         if (_cachedStaticRenderVersion != StaticContentVersion)
         {
             RebuildStaticPresentationCache();
