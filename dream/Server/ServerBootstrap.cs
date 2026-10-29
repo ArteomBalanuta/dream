@@ -30,6 +30,10 @@ public static class ServerBootstrap
     public const double MinDayLengthMinutes = 1d;
     public const double MaxDayLengthMinutes = 1440d;
 
+    // Moves the world clock forward at start to the next tick showing this time of day
+    // (see WorldTimeOfDay.TryParse for the accepted formats). Unset changes nothing.
+    public const string TimeOfDayEnvironmentVariable = "DREAM_TIME_OF_DAY";
+
     // Selects the world a dedicated server opens when no --world argument is given: a world id or
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
@@ -89,9 +93,13 @@ public static class ServerBootstrap
             double dayLengthMinutes = ResolveDayLengthMinutes(
                 Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
                 log);
-            host.Runtime.ConfigureWorldClock(
-                WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes),
-                persistence?.WorldTimeTicks ?? 0);
+            WorldClockSettings clockSettings = WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes);
+            long worldTicks = ResolveStartWorldTicks(
+                clockSettings,
+                persistence?.WorldTimeTicks ?? 0,
+                Environment.GetEnvironmentVariable(TimeOfDayEnvironmentVariable),
+                log);
+            host.Runtime.ConfigureWorldClock(clockSettings, worldTicks);
             return host;
         }
         catch
@@ -376,6 +384,29 @@ public static class ServerBootstrap
             descriptor,
             storedTerrain: storedTerrain,
             terrainPayload: terrainPayload);
+    }
+
+    // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the
+    // DREAM_TIME_OF_DAY value (never backwards). Unset or blank changes nothing; an invalid value is
+    // ignored with one log line. The chosen time is persisted by the normal checkpoints.
+    public static long ResolveStartWorldTicks(WorldClockSettings settings, long storedTicks, string? timeOfDay, Action<string>? log = null)
+    {
+        if (string.IsNullOrWhiteSpace(timeOfDay))
+        {
+            return storedTicks;
+        }
+
+        if (!WorldTimeOfDay.TryParse(timeOfDay, out double hours))
+        {
+            log?.Invoke(
+                $"{TimeOfDayEnvironmentVariable} '{timeOfDay.Trim()}' is not HH:MM, a decimal hour (0-24) or " +
+                "dawn/morning/noon/dusk/evening/midnight/night; ignoring it.");
+            return storedTicks;
+        }
+
+        long forward = WorldTimeOfDay.ForwardTicks(settings, storedTicks, hours);
+        log?.Invoke($"World time set to {WorldTimeOfDay.Format(hours)} by {TimeOfDayEnvironmentVariable}");
+        return storedTicks + forward;
     }
 
     // Minutes per in-game day: an unset value gives the default silently; a number outside
