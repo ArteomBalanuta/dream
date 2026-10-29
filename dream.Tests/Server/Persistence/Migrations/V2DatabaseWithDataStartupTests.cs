@@ -4,6 +4,7 @@ using Xunit.Abstractions;
 using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
+using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -82,8 +83,7 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
             Assert.Equal(GeometryMaterialId.Stone, host.Runtime.Map.TryGetCubeAtCell(30, 1, 20)?.MaterialId);
             Assert.Equal(GeometryMaterialId.Lamp, host.Runtime.Map.TryGetCubeAtCell(32, 1, 20)?.MaterialId);
             Assert.Contains(host.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == new GeometryCellKey(24, 1, 20));
-            // Restore no longer keeps the persisted id as the actor id (wave C), so the wolf is found by being the only one.
-            Assert.Single(host.Runtime.Enemies.ActiveActors);
+            Assert.True(host.Runtime.Enemies.TryGetEnemyByActorId(WorldSessionRuntime.FirstEnemyActorId, out _));
             Assert.Equal(50_000L, host.Runtime.WorldClock.WorldTicks);
         }
 

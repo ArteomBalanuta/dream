@@ -31,10 +31,19 @@ internal sealed partial class RuntimePersistenceBridge
     private readonly WorldObjectRegistry _worldObjects;
     private readonly EnemyRegistry _enemies;
     private readonly SceneEventHub _events;
-    // Wave C: the runtime's object id counter and its ObjectId <-> actor id map. C0 shim: ObjectId
-    // is new ObjectId(actorId) everywhere, so nothing reads them back yet.
+    // Wave C: the runtime's object id counter and its ObjectId <-> actor id map. Persisted cubes
+    // and enemies have an ObjectId (never reused) bound to their current actor id; the actor id stays
+    // the identity on the wire, in checksums and in RNG seeds. Ids are allocated (Take) only when the
+    // runtime has world persistence, on the tick thread, so lockstep servers loading one database
+    // allocate the same ids.
     private readonly ObjectIdAllocator _objectIds;
     private readonly ObjectIdentityMap _objectIdentities;
+    // The cube DeletePersistedPlacedCube retired last, kept for one call: the combat resolver
+    // deletes a fractured cube and then persists its rubble in the same tick, and the rubble's
+    // origin is that cube's ObjectId, whose binding the delete already removed.
+    private RetiredCube _lastRetiredCube;
+    // Cubes deleted since the previous capture; the incremental checkpoint's cube tombstones.
+    private readonly List<ObjectId> _removedCubeObjectIds = [];
 
     private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
     // Profiles by player name: every active player's, plus those of the players who left most
@@ -53,7 +62,7 @@ internal sealed partial class RuntimePersistenceBridge
     // like the profile cache: an entry goes when its name rejoins, is captured attached by a
     // checkpoint, or has its profile evicted.
     private readonly Dictionary<string, PersistedPlayerWorldState> _departedWorldStates = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<int, PersistedPlacedCube> _persistedCubes = [];
+    private readonly Dictionary<ObjectId, PersistedPlacedCube> _persistedCubes = [];
 
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
     // on receive threads, consumed on the tick.
@@ -294,27 +303,17 @@ internal sealed partial class RuntimePersistenceBridge
 
         Map map = _host.Map;
         int skippedCubes = 0;
-        foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
+        foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes().OrderBy(cube => cube.ObjectId))
         {
+            // A cube whose cell is now occupied is skipped but its row still exists, so its id is
+            // reserved and the row stays in _persistedCubes.
             _objectIds.Reserve(persistedCube.ObjectId);
-            // C0 shim: an id inside the actor id space keeps today's path (it is the cube's actor
-            // id); any other id gets a newly allocated actor id below.
-            bool legacyActorId = persistedCube.ObjectId.Value <= int.MaxValue;
-            int legacyId = legacyActorId ? (int)persistedCube.ObjectId.Value : 0;
+            _persistedCubes[persistedCube.ObjectId] = persistedCube;
             if (persistedCube.OwnerPlayerName != null)
             {
                 _cubeOwnerNames.Add(persistedCube.OwnerPlayerName);
             }
 
-            if (legacyActorId)
-            {
-                _persistedCubes[legacyId] = persistedCube;
-                // The id counters are derived from the persisted ids (there is no stored counter): a
-                // cube id is reserved even when its cell is now occupied and the cube is skipped,
-                // because its row still exists. A legacy cube id in the enemy range is reserved there.
-                _worldObjects.ReserveActorId(legacyId);
-                _host.ReserveEnemyActorId(legacyId);
-            }
             Cube? cube = map.TryAddCube(
                 persistedCube.CellPosition,
                 materialId: persistedCube.MaterialId);
@@ -329,18 +328,14 @@ internal sealed partial class RuntimePersistenceBridge
                 map.UpdateCubePosition(cube, persistedCube.CenterPosition.Value);
             }
 
+            // A fresh actor id: persisted ids are ObjectIds, not actor ids.
             WorldObjectRecord registered = _worldObjects.RegisterCube(
                 cube,
                 map,
                 maxHealth: persistedCube.MaxHealth,
                 currentHealth: persistedCube.CurrentHealth,
-                actorId: legacyActorId ? legacyId : null,
+                actorId: null,
                 ownerPlayerName: persistedCube.OwnerPlayerName);
-            if (!legacyActorId)
-            {
-                _persistedCubes[registered.Actor.Id] = persistedCube;
-            }
-
             _objectIdentities.Bind(persistedCube.ObjectId, registered.Actor.Id);
         }
 
@@ -361,54 +356,22 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         _enemies.Clear();
-        // A restored world never hands a later spawn an id it already persisted. Every persisted
-        // id is reserved before any enemy is re-identified below, so a new id skips them all.
-        foreach (PersistedEnemyInstance enemy in enemies)
+        PersistedEnemyInstance[] ordered = enemies.OrderBy(enemy => enemy.ObjectId).ToArray();
+        foreach (PersistedEnemyInstance enemy in ordered)
         {
             _objectIds.Reserve(enemy.ObjectId);
-            if (enemy.ObjectId.Value <= int.MaxValue)
-            {
-                _host.ReserveEnemyActorId((int)enemy.ObjectId.Value);
-            }
         }
 
-        foreach (PersistedEnemyInstance enemy in enemies)
+        foreach (PersistedEnemyInstance enemy in ordered)
         {
-            PersistedEnemyInstance restored = enemy;
-            int actorId;
-            if (enemy.ObjectId.Value > int.MaxValue)
+            if (!_host.TryAllocateEnemyActorId(out int actorId))
             {
-                // C0 shim: an id outside the actor id space gets a newly allocated actor id.
-                if (!_host.TryAllocateEnemyActorId(out actorId))
-                {
-                    continue;
-                }
-            }
-            else if (_persistedCubes.ContainsKey((int)enemy.ObjectId.Value))
-            {
-                // A world saved before the id ranges were partitioned can hold an enemy and a
-                // placed cube under one id. The cube keeps it; the enemy is re-identified in the
-                // enemy range and its row moved to the new id. The move is one queued write (one
-                // UPDATE, under one savepoint), so a failure or crash leaves the row under exactly
-                // one id: the old one, re-identified again on the next restore, or the new one.
-                if (!_host.TryAllocateEnemyActorId(out int newEnemyId))
-                {
-                    // No enemy id left: leave the row as it is and restore the world without it.
-                    continue;
-                }
-
-                int oldEnemyId = (int)enemy.ObjectId.Value;
-                actorId = newEnemyId;
-                restored = enemy with { ObjectId = new ObjectId(newEnemyId) };
-                EnqueueWorldWrite(world => world.ReassignEnemyId(oldEnemyId, newEnemyId));
-            }
-            else
-            {
-                actorId = (int)enemy.ObjectId.Value;
+                // No enemy id left: restore the world without it.
+                continue;
             }
 
-            _enemies.Add(CreatePersistedEnemy(restored, actorId));
-            _objectIdentities.Bind(restored.ObjectId, actorId);
+            _enemies.Add(CreatePersistedEnemy(enemy, actorId));
+            _objectIdentities.Bind(enemy.ObjectId, actorId);
         }
     }
 
@@ -520,14 +483,23 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         record = RepairCubeRecordFromPersistence(record);
-        if (!TryResolveCubePersistenceIdentity(record, cube, out int cubeId, out string ownerPlayerName))
+        string? ownerPlayerName = IsValidPersistenceOwnerName(record.OwnerPlayerName) ? record.OwnerPlayerName : null;
+        if (!_objectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId objectId))
         {
-            return;
+            // A new placement needs a valid owner to get an ObjectId.
+            if (ownerPlayerName == null)
+            {
+                return;
+            }
+
+            objectId = _objectIds.Take();
+        }
+        else if (ownerPlayerName == null && _persistedCubes.TryGetValue(objectId, out PersistedPlacedCube known))
+        {
+            ownerPlayerName = known.OwnerPlayerName;
         }
 
         Vector3 cellPosition = ToCellPosition(cube.Position);
-        // C0 shim: the ObjectId is the actor id.
-        ObjectId objectId = new(cubeId);
         PersistedPlacedCube persisted = new(
             objectId,
             ownerPlayerName,
@@ -539,14 +511,14 @@ internal sealed partial class RuntimePersistenceBridge
             DateTime.UtcNow,
             DateTime.UtcNow,
             cube.Position);
-        _persistedCubes[cubeId] = persisted;
-        _objectIdentities.Bind(objectId, cubeId);
-        _cubeOwnerNames.Add(ownerPlayerName);
-        EnqueueWorldWrite(world =>
+        _persistedCubes[objectId] = persisted;
+        _objectIdentities.Bind(objectId, record.Actor.Id);
+        if (ownerPlayerName != null)
         {
-            world.DeleteCubeFracturePieces(objectId);
-            world.SavePlacedCube(persisted);
-        });
+            _cubeOwnerNames.Add(ownerPlayerName);
+        }
+
+        EnqueueWorldWrite(world => world.SavePlacedCube(persisted));
     }
 
     // Keeps the in-memory persisted row's health equal to the live record's after a non-fatal
@@ -554,9 +526,10 @@ internal sealed partial class RuntimePersistenceBridge
     // refreshed by the next checkpoint (the hit marks the cube dirty; see TryCaptureCube), not on every hit.
     public void UpdatePersistedCubeHealth(WorldObjectRecord record)
     {
-        if (_persistedCubes.TryGetValue(record.Actor.Id, out PersistedPlacedCube cached))
+        if (_objectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId objectId) &&
+            _persistedCubes.TryGetValue(objectId, out PersistedPlacedCube cached))
         {
-            _persistedCubes[record.Actor.Id] = cached with
+            _persistedCubes[objectId] = cached with
             {
                 CurrentHealth = record.Health.CurrentHealth,
                 MaxHealth = record.Health.MaxHealth
@@ -566,9 +539,15 @@ internal sealed partial class RuntimePersistenceBridge
 
     public void DeletePersistedPlacedCube(int cubeId)
     {
-        _persistedCubes.Remove(cubeId);
-        _objectIdentities.RemoveByActorId(cubeId, out _);
-        ObjectId objectId = new(cubeId);
+        // A cube with no ObjectId was never persisted (a terrain cube): nothing to delete.
+        if (!_objectIdentities.RemoveByActorId(cubeId, out ObjectId objectId))
+        {
+            return;
+        }
+
+        _persistedCubes.Remove(objectId);
+        _removedCubeObjectIds.Add(objectId);
+        _lastRetiredCube = new RetiredCube(cubeId, objectId);
         EnqueueWorldWrite(world => world.DeletePlacedCube(objectId));
     }
 
@@ -723,17 +702,16 @@ internal sealed partial class RuntimePersistenceBridge
             .LoadCubeFracturePieces()
             .GroupBy(piece => piece.OriginObjectId))
         {
-            // The fractured cube's row is gone, but its id still keys these pieces: a placed cube
-            // that later reused it would delete them (PersistPlacedCube clears its id's pieces).
+            // The fractured cube's row is gone, but its id still keys these pieces and is never reissued.
             _objectIds.Reserve(group.Key);
-            if (group.Key.Value <= int.MaxValue)
-            {
-                _worldObjects.ReserveActorId((int)group.Key.Value);
-            }
-
             PersistedCubeFracturePiece[] pieces = group
                 .OrderBy(piece => piece.PieceIndex)
                 .ToArray();
+            foreach (PersistedCubeFracturePiece piece in pieces)
+            {
+                _objectIds.Reserve(piece.ObjectId);
+            }
+
             if (pieces.Length == 0)
             {
                 continue;
@@ -750,38 +728,57 @@ internal sealed partial class RuntimePersistenceBridge
 
             if (map.RestoreFracturePieces(cell, first.MaterialId, fracturePieces, withPhysics: true))
             {
+                // The map keeps only the valid pieces, renumbered in order; PieceIds follows it.
+                List<ObjectId> pieceIds = new(pieces.Length);
+                for (int i = 0; i < pieces.Length; i++)
+                {
+                    if (fracturePieces[i].IsValid())
+                    {
+                        pieceIds.Add(pieces[i].ObjectId);
+                    }
+                }
+
                 _persistedFractureGroups[cell] = new PersistedFractureGroup(
                     first.OriginObjectId,
-                    first.OwnerPlayerName);
+                    first.OwnerPlayerName,
+                    pieceIds.ToArray());
             }
         }
     }
 
+    // Persists the rubble a destroyed cube left in cell, one new ObjectId per piece. The origin is
+    // the cube's ObjectId: its binding when the cube is still live, else the cube
+    // DeletePersistedPlacedCube just retired (the resolver deletes, then fractures, in one tick).
     public void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell)
     {
-        if (_worldPersistence == null)
+        if (_worldPersistence == null || record.SourceObject is not Cube)
         {
             return;
         }
 
-        if (record.SourceObject is not Cube cube ||
-            !TryResolveCubePersistenceIdentity(record, cube, out int sourceCubeId, out string ownerPlayerName))
+        string? ownerPlayerName = IsValidPersistenceOwnerName(record.OwnerPlayerName) ? record.OwnerPlayerName : null;
+        if (!_objectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId origin))
         {
-            return;
+            if (_lastRetiredCube.ActorId == record.Actor.Id && !_lastRetiredCube.ObjectId.IsNone)
+            {
+                origin = _lastRetiredCube.ObjectId;
+            }
+            else if (ownerPlayerName != null)
+            {
+                origin = _objectIds.Take();
+            }
+            else
+            {
+                return;
+            }
         }
 
-        // C0 shim: the group's origin is the fractured cube's id.
-        _persistedFractureGroups[cell] = new PersistedFractureGroup(new ObjectId(sourceCubeId), ownerPlayerName);
-        PersistFracturePiecesForCell(cell);
-    }
-
-    private void PersistFracturePiecesForCell(GeometryCellKey cell)
-    {
-        if (_worldPersistence == null ||
-            !_persistedFractureGroups.TryGetValue(cell, out PersistedFractureGroup group))
+        if (ownerPlayerName == null && _persistedCubes.TryGetValue(origin, out PersistedPlacedCube known))
         {
-            return;
+            ownerPlayerName = known.OwnerPlayerName;
         }
+
+        _lastRetiredCube = default;
 
         // The one cell's pieces in index order: the same rows a filtered whole-map scan yields, without
         // walking every rubble cell on each fracture.
@@ -789,13 +786,22 @@ internal sealed partial class RuntimePersistenceBridge
             _fracturePieceCellScratch;
         cellPieces.Clear();
         _host.Map.CaptureFracturePiecesInto(cell, cellPieces);
-        foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in cellPieces)
+        ObjectId[] pieceIds = new ObjectId[cellPieces.Count];
+        for (int i = 0; i < cellPieces.Count; i++)
         {
+            (GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) = cellPieces[i];
+            ObjectId pieceId = _objectIds.Take();
+            // PieceIds is indexed by map piece index; a fresh fracture's pieces are valid and 0..n-1.
+            if (PieceIndex < pieceIds.Length)
+            {
+                pieceIds[PieceIndex] = pieceId;
+            }
+
             PersistedCubeFracturePiece persistedPiece = new(
-                ObjectId: ObjectId.None,
-                OriginObjectId: group.Origin,
+                ObjectId: pieceId,
+                OriginObjectId: origin,
                 PieceIndex: PieceIndex,
-                OwnerPlayerName: group.OwnerPlayerName,
+                OwnerPlayerName: ownerPlayerName,
                 ParentCell: new Vector3(PieceCell.X, PieceCell.Y, PieceCell.Z),
                 Center: Piece.Center,
                 SideLength: Piece.SideLength,
@@ -806,24 +812,32 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         cellPieces.Clear();
+        _persistedFractureGroups[cell] = new PersistedFractureGroup(origin, ownerPlayerName, pieceIds);
     }
 
-    // Reused by PersistFracturePiecesForCell (tick thread only).
+    // Reused by PersistFracturePieces (tick thread only).
     private readonly List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
         _fracturePieceCellScratch = [];
 
+    // A new enemy is a new object, even a respawn: it takes a fresh ObjectId and is bound to its
+    // actor id. Without world persistence nothing is allocated or written.
     public void PersistEnemy(EnemyActor enemy)
     {
-        PersistedEnemyInstance persisted = CreatePersistedEnemy(enemy, DateTime.UtcNow);
-        _objectIdentities.Bind(persisted.ObjectId, enemy.Combatant.Actor.Id);
+        if (_worldPersistence == null)
+        {
+            return;
+        }
+
+        ObjectId objectId = _objectIds.Take();
+        _objectIdentities.Bind(objectId, enemy.Combatant.Actor.Id);
+        PersistedEnemyInstance persisted = CreatePersistedEnemy(enemy, objectId, DateTime.UtcNow);
         EnqueueWorldWrite(world => world.SaveEnemyInstance(persisted));
     }
 
-    private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, DateTime now)
+    private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, ObjectId objectId, DateTime now)
     {
-        // C0 shim: the ObjectId is the actor id.
         return new PersistedEnemyInstance(
-            new ObjectId(enemy.Combatant.Actor.Id),
+            objectId,
             enemy.EnemyKind,
             enemy.DisplayName,
             enemy.Position,
@@ -842,16 +856,24 @@ internal sealed partial class RuntimePersistenceBridge
             now);
     }
 
+    // A no-op for an enemy with no ObjectId (never persisted).
     public void DeletePersistedEnemy(int enemyId)
     {
-        _objectIdentities.RemoveByActorId(enemyId, out _);
-        ObjectId objectId = new(enemyId);
+        if (!_objectIdentities.RemoveByActorId(enemyId, out ObjectId objectId))
+        {
+            return;
+        }
+
         EnqueueWorldWrite(world => world.DeleteEnemyInstance(objectId));
     }
 
+    // PieceIds is indexed by the map's piece index; a cell's piece list is fixed once it fractures.
     private readonly record struct PersistedFractureGroup(
         ObjectId Origin,
-        string? OwnerPlayerName);
+        string? OwnerPlayerName,
+        ObjectId[] PieceIds);
+
+    private readonly record struct RetiredCube(int ActorId, ObjectId ObjectId);
 
     public WorldObjectRecord RepairCubeRecordFromPersistence(WorldObjectRecord record)
     {
@@ -868,45 +890,26 @@ internal sealed partial class RuntimePersistenceBridge
         // and no owner), the record's health is meaningless and the cached row's health, kept
         // current by every hit (UpdatePersistedCubeHealth), is restored with the identity.
         bool identityMatches =
-            record.Actor.Id == ShimActorId(persistedCube.ObjectId) &&
+            _objectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId bound) &&
+            bound == persistedCube.ObjectId &&
             string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase);
         if (identityMatches)
         {
             return record;
         }
 
-        return _worldObjects.ReplaceCubeRecordIdentity(
+        int actorId = _objectIdentities.TryGetActorId(persistedCube.ObjectId, out int boundActorId)
+            ? boundActorId
+            : record.Actor.Id;
+        WorldObjectRecord repaired = _worldObjects.ReplaceCubeRecordIdentity(
             cube,
             _host.Map,
-            ShimActorId(persistedCube.ObjectId),
+            actorId,
             persistedCube.MaxHealth,
             persistedCube.CurrentHealth,
             persistedCube.OwnerPlayerName);
-    }
-
-    private bool TryResolveCubePersistenceIdentity(
-        WorldObjectRecord record,
-        Cube cube,
-        out int cubeId,
-        out string ownerPlayerName)
-    {
-        if (IsValidPersistenceOwnerName(record.OwnerPlayerName))
-        {
-            cubeId = record.Actor.Id;
-            ownerPlayerName = record.OwnerPlayerName!;
-            return true;
-        }
-
-        if (TryResolvePersistedPlacedCube(cube, out PersistedPlacedCube persistedCube))
-        {
-            cubeId = ShimActorId(persistedCube.ObjectId);
-            ownerPlayerName = persistedCube.OwnerPlayerName ?? string.Empty;
-            return true;
-        }
-
-        cubeId = default;
-        ownerPlayerName = string.Empty;
-        return false;
+        _objectIdentities.Bind(persistedCube.ObjectId, repaired.Actor.Id);
+        return repaired;
     }
 
     private bool TryResolvePersistedPlacedCube(Cube cube, out PersistedPlacedCube persistedCube)
@@ -961,9 +964,6 @@ internal sealed partial class RuntimePersistenceBridge
 
         return false;
     }
-
-    // C0 shim: an ObjectId that was created from an actor id maps straight back to it.
-    private static int ShimActorId(ObjectId objectId) => checked((int)objectId.Value);
 
     private static GeometryCellKey ToGeometryCellKey(Vector3 position)
     {

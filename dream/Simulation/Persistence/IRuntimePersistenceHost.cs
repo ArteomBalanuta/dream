@@ -29,9 +29,7 @@ internal interface IRuntimePersistenceHost
         out int currentHealth,
         out int maxHealth);
 
-    // Enemy id allocation and the default spawn (the runtime's enemy partial).
-    void ReserveEnemyActorId(int actorId);
-
+    // Enemy actor id allocation and the default spawn (the runtime's enemy partial).
     bool TryAllocateEnemyActorId(out int actorId);
 
     void SpawnInitialWolf();

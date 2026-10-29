@@ -36,7 +36,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
     {
         using IncrementalCheckpointTests.TempDatabase database = new();
         new SqlitePlayerProfileRepository(database.Schema).GetOrCreate(PlayerName);
-        int cubeId;
+        ObjectId cubeId;
         Vector3 livePosition;
         Vector3 placedPosition;
         using (WorldSessionRuntime runtime = CreateRuntime(database))
@@ -55,7 +55,8 @@ public sealed class Wave9FrozenCubeCheckpointTests
             Vector3 start = PlayerPosition(runtime);
             Vector3 cell = new(laneX + 2f, 1f, laneZ);
             Cube cube = AddOwnedCube(runtime, cell);
-            Assert.True(runtime.Map.TryGetReplicatedId(cube, out cubeId) || TryGetActorId(runtime, cube, out cubeId));
+            Assert.True(runtime.Map.TryGetReplicatedId(cube, out int cubeActorId) || TryGetActorId(runtime, cube, out cubeActorId));
+            Assert.True(runtime.ObjectIdentities.TryGetObjectId(cubeActorId, out cubeId));
             RigidBody body = BodyOf(runtime, cube);
             Advance(host, ref tick, 96, Vector3.UnitX, walk: false);
             Assert.True(runtime.Physics.CubeRest.IsFrozen(body), "the placed cube never froze");
@@ -76,7 +77,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
 
             PersistenceCheckpoint incremental = runtime.CapturePersistenceCheckpoint(full: false)!;
             Assert.True(incremental.IsIncremental);
-            PersistedPlacedCube row = Assert.Single(incremental.PlacedCubes, candidate => candidate.ObjectId.AsInt() == cubeId);
+            PersistedPlacedCube row = Assert.Single(incremental.PlacedCubes, candidate => candidate.ObjectId == cubeId);
             Assert.Equal(livePosition, row.CenterPosition);
             new SqlitePersistenceCheckpointWriter(database.Schema).Write(incremental);
 
@@ -84,7 +85,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
             Advance(host, ref tick, 64, Vector3.UnitX, walk: false);
             PersistenceCheckpoint idle = runtime.CapturePersistenceCheckpoint(full: false)!;
             Assert.True(idle.IsIncremental);
-            Assert.DoesNotContain(idle.PlacedCubes, candidate => candidate.ObjectId.AsInt() == cubeId);
+            Assert.DoesNotContain(idle.PlacedCubes, candidate => candidate.ObjectId == cubeId);
         }
 
         // Restart: the cube is back at its live position, dynamic, and freezes there.
@@ -201,8 +202,10 @@ public sealed class Wave9FrozenCubeCheckpointTests
         Cube cube = Assert.IsType<Cube>(runtime.Map.TryAddCube(cell, materialId: GeometryMaterialId.Dirt));
         WorldObjectRecord record = WorldObjects(runtime).RegisterCube(cube, runtime.Map, ownerPlayerName: PlayerName);
         IWorldPersistenceRepository world = runtime.WorldPersistence!;
+        ObjectId objectId = runtime.ObjectIds.Take();
+        runtime.ObjectIdentities.Bind(objectId, record.Actor.Id);
         world.SavePlacedCube(new PersistedPlacedCube(
-            new ObjectId(record.Actor.Id),
+            objectId,
             PlayerName,
             cell,
             GeometryShapeKind.SolidCube,

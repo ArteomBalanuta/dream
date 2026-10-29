@@ -175,8 +175,6 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         return true;
     }
 
-    void IRuntimePersistenceHost.ReserveEnemyActorId(int actorId) => ReserveEnemyActorId(actorId);
-
     bool IRuntimePersistenceHost.TryAllocateEnemyActorId(out int actorId) => TryAllocateEnemyActorId(out actorId);
 
     void IRuntimePersistenceHost.SpawnInitialWolf() => SpawnInitialWolf();

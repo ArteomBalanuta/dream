@@ -206,10 +206,10 @@ public class ReplicatedIdIntegrationTests
     }
 
     [Fact]
-    public void Restart_RestoresBothIdCounters_PastEveryPersistedId()
+    public void Restart_RestoresBothIdCounters_AndTheObjectIdCounter_PastEveryPersistedId()
     {
         InMemoryWorldPersistence world = new();
-        int[] placedIds;
+        ObjectId[] placedIds;
         int lastEnemyId;
         using (WorldSessionRuntime first = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost host))
         using (host)
@@ -230,36 +230,49 @@ public class ReplicatedIdIntegrationTests
                 Tick(first, tick);
             }
 
-            placedIds = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).Order().ToArray();
+            placedIds = world.LoadPlacedCubes().Select(cube => cube.ObjectId).Order().ToArray();
             lastEnemyId = Assert.Single(first.Enemies.ActiveActors).Combatant.Actor.Id;
+            Assert.True(first.ObjectIdentities.TryGetObjectId(lastEnemyId, out ObjectId lastEnemyObject));
+            Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId == lastEnemyObject);
         }
 
         Assert.Equal(3, placedIds.Length);
         Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 3, lastEnemyId);
-        Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId.AsInt() == lastEnemyId);
+        ObjectId highestPersisted = world.LoadPlacedCubes().Select(cube => cube.ObjectId)
+            .Concat(world.LoadActiveEnemies().Select(enemy => enemy.ObjectId)).Max();
+        int persistedEnemies = world.LoadActiveEnemies().Count;
 
         using WorldSessionRuntime restarted = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost restartedHost);
         using (restartedHost)
         {
+            // Restored cubes take compact actor ids, in ObjectId order, from the start of the range.
             WorldObjectRegistry registry = GetWorldObjects(restarted);
-            Assert.Equal(placedIds.Max() + 1, registry.NextActorId);
+            Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId + 3, registry.NextActorId);
+            for (int i = 0; i < placedIds.Length; i++)
+            {
+                Assert.True(restarted.ObjectIdentities.TryGetActorId(placedIds[i], out int cubeActorId));
+                Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId + i, cubeActorId);
+            }
 
             restarted.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
             Assert.True(restarted.ProcessAuthoritativeAction(
                 new PlayerActionMessage(Session, 10, new BuildUseIntent(new Vector3(5f, 1f, 3f)))).Accepted);
-            int newCubeId = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).Except(placedIds).Single();
-            Assert.Equal(placedIds.Max() + 1, newCubeId);
+            ObjectId newCube = world.LoadPlacedCubes().Select(cube => cube.ObjectId).Except(placedIds).Single();
+            Assert.True(newCube.Value > highestPersisted.Value);
 
             restarted.Enemies.Clear();
             Tick(restarted, 1);
-            int respawnedId = Assert.Single(restarted.Enemies.ActiveActors).Combatant.Actor.Id;
-            Assert.True(respawnedId > world.LoadActiveEnemies().Where(enemy => enemy.ObjectId.AsInt() != respawnedId).Max(enemy => enemy.ObjectId.AsInt()));
-            Assert.True(ReplicatedActorIdRanges.IsEnemyId(respawnedId));
+            EnemyActor respawned = Assert.Single(restarted.Enemies.ActiveActors);
+            Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + persistedEnemies, respawned.Combatant.Actor.Id);
+            Assert.True(restarted.ObjectIdentities.TryGetObjectId(respawned.Combatant.Actor.Id, out ObjectId respawnedObject));
+            Assert.True(respawnedObject.Value > newCube.Value);
+            Assert.True(ReplicatedActorIdRanges.IsEnemyId(respawned.Combatant.Actor.Id));
         }
     }
 
-    // Worlds saved before the partition: a placed cube can hold an id in today's enemy range, even
-    // the same id as a persisted enemy, and a fractured cube's id lives on only in its pieces.
+    // Worlds saved before the partition: a placed cube can hold a number in today's enemy range, and a
+    // fractured cube's id lives on only in its pieces. Persisted ids are ObjectIds now, so none of
+    // that collides with an actor id: every object restores under a fresh actor id.
     [Fact]
     public void LegacyWorld_RestoresWithoutCollisions()
     {
@@ -268,33 +281,33 @@ public class ReplicatedIdIntegrationTests
         world.SavePlacedCube(LegacyCube(1003, new Vector3(7f, 1f, 5f), now));
         world.SavePlacedCube(LegacyCube(2004, new Vector3(5f, 1f, 7f), now));
         world.SavePlacedCube(LegacyCube(2010, new Vector3(7f, 1f, 7f), now));
-        world.SaveEnemyInstance(LegacyEnemy(2004, now));
+        world.SaveEnemyInstance(LegacyEnemy(2005, now));
         world.SaveEnemyInstance(LegacyEnemy(2006, now));
         world.SaveCubeFracturePiece(new PersistedCubeFracturePiece(
-            ObjectId.None, new ObjectId(1500), 0, "legacy", new Vector3(3f, 1f, 7f), new Vector3(3.25f, 1.25f, 7.25f), 0.25f,
+            new ObjectId(2011), new ObjectId(1500), 0, "legacy", new Vector3(3f, 1f, 7f), new Vector3(3.25f, 1.25f, 7.25f), 0.25f,
             GeometryMaterialId.Grass, now, now));
 
         using WorldSessionRuntime runtime = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost host);
         using (host)
         {
-            int[] cubeIds = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).ToArray();
-            int[] enemyIds = runtime.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id).ToArray();
-            Assert.Equal([1003, 2004, 2010], cubeIds.Order().ToArray());
-            Assert.Empty(cubeIds.Intersect(enemyIds));
-
-            // The colliding enemy moved to a fresh id past every persisted id; its old row is gone.
-            Assert.Contains(2006, enemyIds);
-            int moved = Assert.Single(enemyIds, id => id != 2006);
-            Assert.Equal(2011, moved);
-            Assert.Equal([2006, 2011], world.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()).Order().ToArray());
-            Assert.True(runtime.TryResolveCombatActor(2004, out CombatActorHandle cube));
+            int[] cubeActorIds = new[] { 1003L, 2004L, 2010L }
+                .Select(id => runtime.ObjectIdentities.TryGetActorId(new ObjectId(id), out int actorId) ? actorId : -1)
+                .ToArray();
+            int[] enemyIds = runtime.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id).Order().ToArray();
+            Assert.Equal([1000, 1001, 1002], cubeActorIds);
+            Assert.Empty(cubeActorIds.Intersect(enemyIds));
+            Assert.Equal([2000, 2001], enemyIds);
+            Assert.Equal([new ObjectId(2005), new ObjectId(2006)], world.LoadActiveEnemies().Select(enemy => enemy.ObjectId).Order());
+            Assert.True(runtime.TryResolveCombatActor(1001, out CombatActorHandle cube));
             Assert.Equal(CreatureKind.Object, cube.Kind);
 
-            // Cube ids continue past the fracture group's id; enemy ids past the legacy cube ids.
-            Assert.Equal(1501, GetWorldObjects(runtime).NextActorId);
+            // Actor ids continue after the restored ones; ObjectIds continue past every persisted one
+            // (cubes, enemies and the fracture group's origin and piece).
+            Assert.Equal(1003, GetWorldObjects(runtime).NextActorId);
+            Assert.Equal(2012, runtime.ObjectIds.Next);
             runtime.Enemies.Clear();
             Tick(runtime, 1);
-            Assert.Equal(2012, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
+            Assert.Equal(2002, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
         }
     }
 
@@ -351,41 +364,39 @@ public class ReplicatedIdIntegrationTests
         Assert.Equal(ReplicatedActorIdRanges.FirstOverflowWorldObjectId, low);
     }
 
-    // A world whose persisted ids are the last of their ranges still restores (the server starts).
-    // A later enemy spawn on the tick is refused instead of throwing; an explicit-id cube still
-    // registers, and only an allocation from the exhausted cube range fails.
+    // A world whose persisted ObjectIds are far beyond the int actor id space still restores (the
+    // server starts): its objects get fresh, compact actor ids, and later ids continue past them.
     [Fact]
-    public void Restore_WithTheLastIdOfEachRange_StartsAndRefusesFurtherEnemySpawns()
+    public void Restore_WithObjectIdsBeyondTheActorIdSpace_StartsAndAllocatesFreshActorIds()
     {
         DateTime now = DateTime.UtcNow;
         InMemoryWorldPersistence world = new();
-        world.SavePlacedCube(LegacyCube(ReplicatedActorIdRanges.LastWorldObjectId, new Vector3(7f, 1f, 5f), now));
-        world.SaveEnemyInstance(LegacyEnemy(ReplicatedActorIdRanges.LastEnemyId, now));
+        world.SavePlacedCube(LegacyCube(5_000_000_000L, new Vector3(7f, 1f, 5f), now));
+        world.SaveEnemyInstance(LegacyEnemy(6_000_000_000L, now));
 
         using WorldSessionRuntime runtime = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost host);
         using (host)
         {
             WorldObjectRegistry registry = GetWorldObjects(runtime);
-            Assert.Equal(ReplicatedActorIdRanges.ExhaustedCounter, registry.NextActorId);
-            Assert.Equal(ReplicatedActorIdRanges.LastEnemyId, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
+            Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId + 1, registry.NextActorId);
+            Assert.Equal(WorldSessionRuntime.FirstEnemyActorId, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
+            Assert.Equal(6_000_000_001L, runtime.ObjectIds.Next);
 
             runtime.Enemies.Clear();
             Tick(runtime, 1);
-            Assert.Empty(runtime.Enemies.ActiveActors);
-            Assert.Equal([ReplicatedActorIdRanges.LastEnemyId], world.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()).ToArray());
-
-            Cube cube = Assert.IsType<Cube>(runtime.Map.TryAddCube(new Vector3(5f, 1f, 7f), withPhysics: false));
-            Assert.Throws<InvalidOperationException>(() => registry.RegisterCube(cube, runtime.Map, actorId: null));
-            Assert.Equal(1500, registry.RegisterCube(cube, runtime.Map, actorId: 1500).Actor.Id);
+            EnemyActor respawned = Assert.Single(runtime.Enemies.ActiveActors);
+            Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 1, respawned.Combatant.Actor.Id);
+            Assert.True(runtime.ObjectIdentities.TryGetObjectId(respawned.Combatant.Actor.Id, out ObjectId respawnedObject));
+            Assert.Equal(new ObjectId(6_000_000_001L), respawnedObject);
         }
     }
 
-    private static PersistedPlacedCube LegacyCube(int id, Vector3 cell, DateTime now)
+    private static PersistedPlacedCube LegacyCube(long id, Vector3 cell, DateTime now)
     {
         return new PersistedPlacedCube(new ObjectId(id), "legacy", cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 100, 100, now, now);
     }
 
-    private static PersistedEnemyInstance LegacyEnemy(int id, DateTime now)
+    private static PersistedEnemyInstance LegacyEnemy(long id, DateTime now)
     {
         return new PersistedEnemyInstance(
             new ObjectId(id),
@@ -517,8 +528,8 @@ public class ReplicatedIdIntegrationTests
     private sealed class InMemoryWorldPersistence : IWorldPersistenceRepository
     {
         private readonly Dictionary<string, PersistedPlayerWorldState> _players = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<int, PersistedPlacedCube> _placedCubes = [];
-        private readonly Dictionary<int, PersistedEnemyInstance> _enemies = [];
+        private readonly Dictionary<ObjectId, PersistedPlacedCube> _placedCubes = [];
+        private readonly Dictionary<ObjectId, PersistedEnemyInstance> _enemies = [];
         private readonly List<PersistedCubeFracturePiece> _fracturePieces = [];
 
         public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName)
@@ -530,40 +541,32 @@ public class ReplicatedIdIntegrationTests
 
         public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => _placedCubes.Values.ToArray();
 
-        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.ObjectId.AsInt()] = cube;
+        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.ObjectId] = cube;
 
-        public void DeletePlacedCube(ObjectId objectId) => _placedCubes.Remove(objectId.AsInt());
+        public void DeletePlacedCube(ObjectId objectId) => _placedCubes.Remove(objectId);
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
         {
-            _fracturePieces.RemoveAll(existing => existing.OriginObjectId.AsInt() == piece.OriginObjectId.AsInt() && existing.PieceIndex == piece.PieceIndex);
+            _fracturePieces.RemoveAll(existing => piece.ObjectId.IsNone ? existing.OriginObjectId == piece.OriginObjectId && existing.PieceIndex == piece.PieceIndex : existing.ObjectId == piece.ObjectId);
             _fracturePieces.Add(piece);
         }
 
-        public void DeleteCubeFracturePieces(ObjectId originObjectId) => _fracturePieces.RemoveAll(piece => piece.OriginObjectId.AsInt() == originObjectId.AsInt());
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => _fracturePieces.RemoveAll(piece => piece.OriginObjectId == originObjectId);
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => _enemies.Values.ToArray();
 
-        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.ObjectId.AsInt()] = enemy;
+        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.ObjectId] = enemy;
 
-        public void DeleteEnemyInstance(ObjectId objectId) => _enemies.Remove(objectId.AsInt());
+        public void DeleteEnemyInstance(ObjectId objectId) => _enemies.Remove(objectId);
 
         public long LoadNextObjectId() => 1;
 
 
+        // Removed by the wave C glue; restore no longer re-identifies enemies.
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
         {
-            if (_enemies.ContainsKey(newEnemyId))
-            {
-                throw new InvalidOperationException($"Enemy id {newEnemyId} is already taken.");
-            }
-
-            if (_enemies.Remove(oldEnemyId, out PersistedEnemyInstance enemy))
-            {
-                _enemies[newEnemyId] = enemy with { ObjectId = new ObjectId(newEnemyId) };
-            }
         }
 
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();

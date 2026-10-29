@@ -112,8 +112,12 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
 
         // Phase 3 (restart at dawn): the first tick removes the night wolf (the higher id) and its row.
         WriteWorldTime(database, WaveT2NightSpawnTests.WorldTicksAt(WorldClockSettings.Default, dayIndex: 2, hour: 4) + 3);
+        long keptWolfObjectId;
         await using (WireLoopbackServer server = await StartAsync(database))
         {
+            // Rows are keyed by ObjectId; a restart gives the wolves fresh actor ids.
+            Assert.True(server.Runtime.ObjectIdentities.TryGetObjectId(wolves[0], out ObjectId keptWolf));
+            keptWolfObjectId = keptWolf.Value;
             Assert.Equal(WorldDayPhase.Dawn, server.Runtime.WorldClock.Phase);
             Assert.Equal(wolves, ActiveWolfIds(server.Runtime));
             await TickAsync(server, 1);
@@ -129,7 +133,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
 
         SqliteConnection.ClearAllPools();
         AssertDatabase(database, enemies: 1);
-        Assert.Equal((long)wolves[0], Scalar(database, "SELECT object_id FROM enemy_instances;"));
+        Assert.Equal(keptWolfObjectId, Scalar(database, "SELECT object_id FROM enemy_instances;"));
     }
 
     private void AssertDatabase(TempDatabase database, long enemies)

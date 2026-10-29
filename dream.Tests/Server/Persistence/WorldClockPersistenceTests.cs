@@ -98,7 +98,8 @@ public sealed class WorldClockPersistenceTests
         WorldObjectRegistry registry = (WorldObjectRegistry)typeof(WorldSessionRuntime)
             .GetField("_worldObjects", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(runtime)!;
-        registry.RegisterCube(cube, runtime.Map, ownerPlayerName: "player-one");
+        WorldObjectRecord cubeRecord = registry.RegisterCube(cube, runtime.Map, ownerPlayerName: "player-one");
+        runtime.ObjectIdentities.Bind(runtime.ObjectIds.Take(), cubeRecord.Actor.Id);
         Advance(runtime, ref tick, 8);
         PersistenceCheckpoint? incremental = runtime.CapturePersistenceCheckpoint();
         Assert.NotNull(incremental);

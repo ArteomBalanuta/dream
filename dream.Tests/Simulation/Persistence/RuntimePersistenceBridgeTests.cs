@@ -30,13 +30,14 @@ public sealed class RuntimePersistenceBridgeTests
     }
 
     [Fact]
-    public void RestoreWorld_RegistersCubes_ReservesIds_AndReidentifiesAnEnemyThatSharesACubeId()
+    public void RestoreWorld_RegistersCubes_GivesFreshActorIds_AndBindsEachToItsObjectId()
     {
         FakeWorld world = new();
         world.Cubes.Add(new PersistedPlacedCube(
             new ObjectId(7), "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
-        world.Enemies.Add(Enemy(7));
+        // Listed out of ObjectId order on purpose.
         world.Enemies.Add(Enemy(2001));
+        world.Enemies.Add(Enemy(9));
         Rig rig = new(world);
         rig.Host.NextEnemyId = 2500;
 
@@ -44,15 +45,20 @@ public sealed class RuntimePersistenceBridgeTests
 
         Assert.Equal(1, rig.Host.InventoryRestores);
         Assert.Equal(0, rig.Host.InitialWolfSpawns);
-        // The cube id and both enemy ids are reserved before the enemy is re-identified.
-        Assert.Equal([7, 7, 2001], rig.Host.ReservedEnemyIds);
         WorldObjectRecord record = Assert.Single(rig.WorldObjects.Records);
-        Assert.Equal(7, record.Actor.Id);
+        Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId, record.Actor.Id);
         Assert.Equal("builder", record.OwnerPlayerName);
         Assert.Equal(60, record.Health.CurrentHealth);
-        Assert.Equal([2001, 2500], rig.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id).Order());
-        // The row move is one queued write (inline here).
-        Assert.Equal([(7, 2500)], world.Reassigned);
+        Assert.True(rig.Identities.TryGetObjectId(record.Actor.Id, out ObjectId cubeObject));
+        Assert.Equal(new ObjectId(7), cubeObject);
+        // Enemies take actor ids in ObjectId order, whatever order the repository returned them in.
+        Assert.True(rig.Identities.TryGetActorId(new ObjectId(9), out int firstActor));
+        Assert.True(rig.Identities.TryGetActorId(new ObjectId(2001), out int secondActor));
+        Assert.Equal((2500, 2501), (firstActor, secondActor));
+        Assert.Equal([2500, 2501], rig.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id));
+        Assert.Empty(world.Reassigned);
+        // The allocator is past every loaded id.
+        Assert.Equal(2002, rig.ObjectIds.Next);
     }
 
     [Fact]
@@ -327,12 +333,15 @@ public sealed class RuntimePersistenceBridgeTests
 
         var expected = map.CaptureFracturePieces()
             .Where(piece => piece.Cell == fractured)
-            .Select(piece => (42, piece.PieceIndex, "builder", new Vector3(piece.Cell.X, piece.Cell.Y, piece.Cell.Z), piece.Piece.Center, piece.Piece.SideLength, piece.MaterialId))
+            .Select(piece => (piece.PieceIndex, "builder", new Vector3(piece.Cell.X, piece.Cell.Y, piece.Cell.Z), piece.Piece.Center, piece.Piece.SideLength, piece.MaterialId))
             .ToArray();
         Assert.Equal(3, expected.Length);
         Assert.Equal(
             expected,
-            world.Pieces.Select(piece => (piece.OriginObjectId.AsInt(), piece.PieceIndex, piece.OwnerPlayerName, piece.ParentCell, piece.Center, piece.SideLength, piece.MaterialId)));
+            world.Pieces.Select(piece => (piece.PieceIndex, piece.OwnerPlayerName, piece.ParentCell, piece.Center, piece.SideLength, piece.MaterialId)));
+        // The origin took the first id, and every piece its own after it.
+        Assert.All(world.Pieces, piece => Assert.Equal(new ObjectId(1), piece.OriginObjectId));
+        Assert.Equal([new ObjectId(2), new ObjectId(3), new ObjectId(4)], world.Pieces.Select(piece => piece.ObjectId));
     }
 
     private static PersistedEnemyInstance Enemy(int id)
@@ -357,6 +366,8 @@ public sealed class RuntimePersistenceBridgeTests
             PersistenceWriteQueue? writes = null)
         {
             Host = new FakeHost(new Map(generateStartupTerrain: true, width: 12, depth: 12, headless: true));
+            ObjectIds = new ObjectIdAllocator();
+            Identities = new ObjectIdentityMap();
             Bridge = new RuntimePersistenceBridge(
                 Host,
                 profiles,
@@ -366,9 +377,13 @@ public sealed class RuntimePersistenceBridgeTests
                 WorldObjects,
                 Enemies,
                 new SceneEventHub(),
-                new ObjectIdAllocator(),
-                new ObjectIdentityMap());
+                ObjectIds,
+                Identities);
         }
+
+        public ObjectIdAllocator ObjectIds { get; }
+
+        public ObjectIdentityMap Identities { get; }
 
         public FakeHost Host { get; }
 
@@ -393,8 +408,6 @@ public sealed class RuntimePersistenceBridgeTests
 
         public int InventoryRestores { get; private set; }
 
-        public List<int> ReservedEnemyIds { get; } = [];
-
         public HashSet<string> LoadedInventories { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public List<string> EvictedInventories { get; } = [];
@@ -414,8 +427,6 @@ public sealed class RuntimePersistenceBridgeTests
             (position, facing, currentHealth, maxHealth) = state;
             return found;
         }
-
-        public void ReserveEnemyActorId(int actorId) => ReservedEnemyIds.Add(actorId);
 
         public bool TryAllocateEnemyActorId(out int actorId)
         {
@@ -481,7 +492,7 @@ public sealed class RuntimePersistenceBridgeTests
 
         public List<PersistedEnemyInstance> Enemies { get; } = [];
 
-        public List<(int Old, int New)> Reassigned { get; } = [];
+        public List<(int Old, int New)> Reassigned { get; } = [];  // ReassignEnemyId is removed by the wave C glue
 
         public int InventoryLoads { get; private set; }
 
