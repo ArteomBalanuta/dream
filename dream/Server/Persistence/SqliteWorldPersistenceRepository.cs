@@ -19,6 +19,7 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     private readonly SqliteEnemyRepository _enemies;
     private readonly SqliteItemRepository _items;
     private readonly SqliteInventoryRepository _inventory;
+    private readonly SqliteObjectIdCounterRepository _objectIdCounter;
 
     // Bound to one world: every statement of the six repositories is scoped to its world_id.
     public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema, WorldId worldId)
@@ -30,6 +31,7 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         _enemies = new SqliteEnemyRepository(store, worldId);
         _items = new SqliteItemRepository(store, worldId);
         _inventory = new SqliteInventoryRepository(store, worldId);
+        _objectIdCounter = new SqliteObjectIdCounterRepository(store, worldId);
     }
 
     // World 1: the default world.
@@ -46,19 +48,19 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void SavePlacedCube(PersistedPlacedCube cube) => _placedObjects.SavePlacedCube(cube);
 
-    public void DeletePlacedCube(int cubeId) => _placedObjects.DeletePlacedCube(cubeId);
+    public void DeletePlacedCube(ObjectId objectId) => _placedObjects.DeletePlacedCube(objectId);
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _rubble.LoadCubeFracturePieces();
 
     public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => _rubble.SaveCubeFracturePiece(piece);
 
-    public void DeleteCubeFracturePieces(int sourceCubeId) => _rubble.DeleteCubeFracturePieces(sourceCubeId);
+    public void DeleteCubeFracturePieces(ObjectId originObjectId) => _rubble.DeleteCubeFracturePieces(originObjectId);
 
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => _enemies.LoadActiveEnemies();
 
     public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies.SaveEnemyInstance(enemy);
 
-    public void DeleteEnemyInstance(int enemyId) => _enemies.DeleteEnemyInstance(enemyId);
+    public void DeleteEnemyInstance(ObjectId objectId) => _enemies.DeleteEnemyInstance(objectId);
 
     public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => _enemies.ReassignEnemyId(oldEnemyId, newEnemyId);
 
@@ -79,6 +81,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     public void DeleteInventorySlots(string playerName) => _inventory.DeleteInventorySlots(playerName);
 
     public void SaveStarterKitGrant(string playerName, int kitVersion) => _inventory.SaveStarterKitGrant(playerName, kitVersion);
+
+    public long LoadNextObjectId() => _objectIdCounter.LoadNextObjectId();
 
     public void Dispose()
     {

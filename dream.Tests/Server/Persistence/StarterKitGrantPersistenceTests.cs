@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 using Xunit;
 using Dream.Server.Persistence;
@@ -95,7 +96,7 @@ public sealed class StarterKitGrantPersistenceTests
         CreateProfiles(database, "fay");
         SqliteWorldPersistenceRepository world = new(database.Schema);
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         // As a join prefetch would: the new player's (empty) inventory is loaded.
         inventory.ApplyLoaded("fay", world.LoadPlayerInventory("fay"));
 

@@ -32,7 +32,7 @@ public sealed class EnemyReassignPersistenceTests
 
         world.ReassignEnemyId(CollidingId, MovedId);
         Assert.Equal([OtherEnemyId, MovedId], EnemyIds(world));
-        PersistedEnemyInstance moved = Assert.Single(world.LoadActiveEnemies(), enemy => enemy.EnemyId == MovedId);
+        PersistedEnemyInstance moved = Assert.Single(world.LoadActiveEnemies(), enemy => enemy.ObjectId.AsInt() == MovedId);
         Assert.Equal(Enemy(CollidingId, now).Position, moved.Position);
 
         world.ReassignEnemyId(CollidingId, 3000);
@@ -118,18 +118,18 @@ public sealed class EnemyReassignPersistenceTests
 
     private static int[] EnemyIds(IWorldPersistenceRepository world)
     {
-        return [.. world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).Order()];
+        return [.. world.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()).Order()];
     }
 
     private static PersistedPlacedCube Cube(int id, Vector3 cell, DateTime now)
     {
-        return new PersistedPlacedCube(id, Owner, cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 100, 100, now, now);
+        return new PersistedPlacedCube(new ObjectId(id), Owner, cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 100, 100, now, now);
     }
 
     private static PersistedEnemyInstance Enemy(int id, DateTime now)
     {
         return new PersistedEnemyInstance(
-            id,
+            new ObjectId(id),
             "Wolf",
             "Wolf",
             new Vector3(9f, 1f, 9f),
@@ -156,13 +156,13 @@ public sealed class EnemyReassignPersistenceTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => inner.SavePlacedCube(cube);
 
-        public void DeletePlacedCube(int cubeId) => inner.DeletePlacedCube(cubeId);
+        public void DeletePlacedCube(ObjectId objectId) => inner.DeletePlacedCube(objectId);
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => inner.LoadCubeFracturePieces();
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => inner.SaveCubeFracturePiece(piece);
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => inner.DeleteCubeFracturePieces(sourceCubeId);
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => inner.DeleteCubeFracturePieces(originObjectId);
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => inner.LoadActiveEnemies();
 
@@ -172,11 +172,14 @@ public sealed class EnemyReassignPersistenceTests
             inner.SaveEnemyInstance(enemy);
         }
 
-        public void DeleteEnemyInstance(int enemyId)
+        public void DeleteEnemyInstance(ObjectId objectId)
         {
             EnemyDeletes++;
-            inner.DeleteEnemyInstance(enemyId);
+            inner.DeleteEnemyInstance(objectId);
         }
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
         {

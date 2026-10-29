@@ -79,6 +79,6 @@ public sealed class RebuildMapCombatCheckpointTests
         Assert.False(checkpoint.IsIncremental);
         Assert.Equal(fullBefore + 1, runtime.FullCheckpointCaptures);
         Assert.Equal(incrementalBefore, runtime.IncrementalCheckpointCaptures);
-        Assert.Equal(livePieces, checkpoint.FracturePieces.Count(piece => piece.SourceCubeId == cubeId));
+        Assert.Equal(livePieces, checkpoint.FracturePieces.Count(piece => piece.OriginObjectId.AsInt() == cubeId));
     }
 }

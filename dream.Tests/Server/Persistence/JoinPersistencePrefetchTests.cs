@@ -502,19 +502,22 @@ public sealed class JoinPersistencePrefetchTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => Call(nameof(SavePlacedCube), () => inner.SavePlacedCube(cube));
 
-        public void DeletePlacedCube(int cubeId) => Call(nameof(DeletePlacedCube), () => inner.DeletePlacedCube(cubeId));
+        public void DeletePlacedCube(ObjectId objectId) => Call(nameof(DeletePlacedCube), () => inner.DeletePlacedCube(objectId));
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => Call(nameof(LoadCubeFracturePieces), inner.LoadCubeFracturePieces);
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => Call(nameof(SaveCubeFracturePiece), () => inner.SaveCubeFracturePiece(piece));
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => Call(nameof(DeleteCubeFracturePieces), () => inner.DeleteCubeFracturePieces(sourceCubeId));
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => Call(nameof(DeleteCubeFracturePieces), () => inner.DeleteCubeFracturePieces(originObjectId));
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Call(nameof(LoadActiveEnemies), inner.LoadActiveEnemies);
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => Call(nameof(SaveEnemyInstance), () => inner.SaveEnemyInstance(enemy));
 
-        public void DeleteEnemyInstance(int enemyId) => Call(nameof(DeleteEnemyInstance), () => inner.DeleteEnemyInstance(enemyId));
+        public void DeleteEnemyInstance(ObjectId objectId) => Call(nameof(DeleteEnemyInstance), () => inner.DeleteEnemyInstance(objectId));
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Call(nameof(ReassignEnemyId), () => inner.ReassignEnemyId(oldEnemyId, newEnemyId));
 

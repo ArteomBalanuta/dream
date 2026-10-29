@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
@@ -59,7 +60,7 @@ public sealed class WorldAggregateRepositoryTests
         repository.SavePlacedCube(Cube(1, health: 3, center: null));
 
         IReadOnlyList<PersistedPlacedCube> cubes = repository.LoadPlacedCubes();
-        Assert.Equal([1, 2], cubes.Select(cube => cube.CubeId));
+        Assert.Equal([1, 2], cubes.Select(cube => cube.ObjectId.AsInt()));
         Assert.Equal(3, cubes[0].CurrentHealth);
         Assert.Null(cubes[0].CenterPosition);
         Assert.Equal(new Vector3(2.5f, 1.5f, 3.5f), cubes[1].CenterPosition);
@@ -67,8 +68,8 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Equal(GeometryMaterialId.Stone, cubes[1].MaterialId);
         Assert.Equal(Created, cubes[0].CreatedUtc);
 
-        repository.DeletePlacedCube(1);
-        Assert.Equal([2], repository.LoadPlacedCubes().Select(cube => cube.CubeId));
+        repository.DeletePlacedCube(new ObjectId(1));
+        Assert.Equal([2], repository.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()));
     }
 
     [Fact]
@@ -83,14 +84,14 @@ public sealed class WorldAggregateRepositoryTests
         repository.SaveCubeFracturePiece(Piece(sourceCubeId: 9, pieceIndex: 1, side: 0.125f));
 
         IReadOnlyList<PersistedCubeFracturePiece> pieces = repository.LoadCubeFracturePieces();
-        Assert.Equal([(9, 0), (9, 1), (10, 0)], pieces.Select(piece => (piece.SourceCubeId, piece.PieceIndex)));
+        Assert.Equal([(9, 0), (9, 1), (10, 0)], pieces.Select(piece => (piece.OriginObjectId.AsInt(), piece.PieceIndex)));
         Assert.Equal(0.125f, pieces[1].SideLength);
         Assert.Equal(new Vector3(9f, 1f, 2f), pieces[1].ParentCell);
         Assert.Equal(new Vector3(9.25f, 1.25f, 2.25f), pieces[1].Center);
         Assert.Equal(Created, pieces[1].CreatedUtc);
 
-        repository.DeleteCubeFracturePieces(9);
-        Assert.Equal([10], repository.LoadCubeFracturePieces().Select(piece => piece.SourceCubeId));
+        repository.DeleteCubeFracturePieces(new ObjectId(9));
+        Assert.Equal([10], repository.LoadCubeFracturePieces().Select(piece => piece.OriginObjectId.AsInt()));
     }
 
     [Fact]
@@ -104,7 +105,7 @@ public sealed class WorldAggregateRepositoryTests
         repository.SaveEnemyInstance(Enemy(3, hp: 11));
 
         IReadOnlyList<PersistedEnemyInstance> enemies = repository.LoadActiveEnemies();
-        Assert.Equal([3, 4], enemies.Select(enemy => enemy.EnemyId));
+        Assert.Equal([3, 4], enemies.Select(enemy => enemy.ObjectId.AsInt()));
         Assert.Equal(11, enemies[0].Stats.CurrentHealth);
         Assert.Equal(2.5f, enemies[0].Stats.MovementSpeed);
         Assert.Equal(1.25f, enemies[0].Stats.AttackSpeed);
@@ -112,14 +113,14 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Equal(Created, enemies[0].CreatedUtc);
 
         repository.ReassignEnemyId(3, 30);
-        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.EnemyId));
+        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
 
         // A taken id fails the primary key and changes nothing.
         Assert.Throws<SqliteException>(() => repository.ReassignEnemyId(30, 4));
-        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.EnemyId));
+        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
 
-        repository.DeleteEnemyInstance(4);
-        Assert.Equal([30], repository.LoadActiveEnemies().Select(enemy => enemy.EnemyId));
+        repository.DeleteEnemyInstance(new ObjectId(4));
+        Assert.Equal([30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
     }
 
     [Fact]
@@ -196,7 +197,7 @@ public sealed class WorldAggregateRepositoryTests
                 cubes.SavePlacedCube(Cube(1, 5, null));
                 cubes.SavePlacedCube(Cube(2, 5, null));
                 cubes.SavePlacedCube(Cube(3, 5, null));
-                cubes.DeletePlacedCube(2);
+                cubes.DeletePlacedCube(new ObjectId(2));
             }, "SELECT COUNT(*) FROM placed_cube_instances;", 2L),
             "Rubble" => (() =>
             {
@@ -204,7 +205,7 @@ public sealed class WorldAggregateRepositoryTests
                 rubble.SaveCubeFracturePiece(Piece(1, 0, 0.5f));
                 rubble.SaveCubeFracturePiece(Piece(1, 1, 0.5f));
                 rubble.SaveCubeFracturePiece(Piece(2, 0, 0.5f));
-                rubble.DeleteCubeFracturePieces(2);
+                rubble.DeleteCubeFracturePieces(new ObjectId(2));
             }, "SELECT COUNT(*) FROM cube_fracture_pieces;", 2L),
             "Enemies" => (() =>
             {
@@ -212,7 +213,7 @@ public sealed class WorldAggregateRepositoryTests
                 enemies.SaveEnemyInstance(Enemy(1, 10));
                 enemies.SaveEnemyInstance(Enemy(2, 10));
                 enemies.ReassignEnemyId(1, 11);
-                enemies.DeleteEnemyInstance(2);
+                enemies.DeleteEnemyInstance(new ObjectId(2));
             }, "SELECT COUNT(*) FROM enemy_instances WHERE enemy_id = 11;", 1L),
             "Items" => (() =>
             {
@@ -306,15 +307,15 @@ public sealed class WorldAggregateRepositoryTests
         new(Owner, position, new Vector3(0f, 0f, -1f), hp, 7, Created);
 
     private static PersistedPlacedCube Cube(int cubeId, int health, Vector3? center) =>
-        new(cubeId, Owner, new Vector3(cubeId, 1f, 2f), GeometryShapeKind.SolidCube, GeometryMaterialId.Stone,
+        new(new ObjectId(cubeId), Owner, new Vector3(cubeId, 1f, 2f), GeometryShapeKind.SolidCube, GeometryMaterialId.Stone,
             health, 5, Created, Created, center);
 
     private static PersistedCubeFracturePiece Piece(int sourceCubeId, int pieceIndex, float side) =>
-        new(sourceCubeId, pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
+        new(ObjectId.None, new ObjectId(sourceCubeId), pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
             new Vector3(sourceCubeId + 0.25f, 1.25f, 2.25f), side, GeometryMaterialId.Stone, Created, Created);
 
     private static PersistedEnemyInstance Enemy(int enemyId, int hp) =>
-        new(enemyId, "slime", $"Slime {enemyId}", new Vector3(enemyId, 0f, enemyId), new Vector3(1f, 0f, 0f),
+        new(new ObjectId(enemyId), "slime", $"Slime {enemyId}", new Vector3(enemyId, 0f, enemyId), new Vector3(1f, 0f, 0f),
             new PersistedCreatureStats(hp, 20, 3, 4, 5, 6, 2.5f, 1.25f, 2), Created, Created);
 
     private static PersistedItemInstance Item(long id, string? owner, Vector3? position) =>

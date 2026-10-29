@@ -67,7 +67,7 @@ public sealed class WaveT2LampPersistenceTests
             host.JoinSession(SessionId.Value, PlayerName);
             runtime.Enemies.Clear();
             PlaceLamp(host);
-            lampId = Assert.Single(runtime.WorldPersistence!.LoadPlacedCubes()).CubeId;
+            lampId = Assert.Single(runtime.WorldPersistence!.LoadPlacedCubes()).ObjectId.AsInt();
             Assert.True(host.ProcessAction(new PlayerActionMessage(
                 SessionId,
                 3,
@@ -92,7 +92,7 @@ public sealed class WaveT2LampPersistenceTests
         Assert.NotEmpty(pieces);
         Assert.All(pieces, piece =>
         {
-            Assert.Equal(lampId, piece.SourceCubeId);
+            Assert.Equal(lampId, piece.OriginObjectId.AsInt());
             Assert.Equal(GeometryMaterialId.Lamp, piece.MaterialId);
         });
 

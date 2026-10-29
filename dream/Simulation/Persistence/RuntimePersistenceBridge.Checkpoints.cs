@@ -178,7 +178,7 @@ internal sealed partial class RuntimePersistenceBridge
 
             PersistedEnemyInstance captured = CreatePersistedEnemy(enemy, now);
             enemies.Add(captured);
-            _checkpointEnemies[captured.EnemyId] = captured;
+            _checkpointEnemies[ShimActorId(captured.ObjectId)] = captured;
         }
 
         List<PersistedPlacedCube> cubes = _checkpointCubeScratch;
@@ -227,15 +227,16 @@ internal sealed partial class RuntimePersistenceBridge
             }
 
             PersistedEnemyInstance captured = CreatePersistedEnemy(enemy, now);
-            seenEnemies.Add(captured.EnemyId);
-            if (_checkpointEnemies.TryGetValue(captured.EnemyId, out PersistedEnemyInstance previous) &&
+            int capturedActorId = ShimActorId(captured.ObjectId);
+            seenEnemies.Add(capturedActorId);
+            if (_checkpointEnemies.TryGetValue(capturedActorId, out PersistedEnemyInstance previous) &&
                 captured with { CreatedUtc = previous.CreatedUtc, UpdatedUtc = previous.UpdatedUtc } == previous)
             {
                 continue;
             }
 
             enemies.Add(captured);
-            _checkpointEnemies[captured.EnemyId] = captured;
+            _checkpointEnemies[capturedActorId] = captured;
         }
 
         List<int> removedEnemies = _checkpointRemovedEnemyScratch;
@@ -277,7 +278,7 @@ internal sealed partial class RuntimePersistenceBridge
         // group; a group whose rubble is gone is a tombstone.
         List<PersistedCubeFracturePiece> pieces = _checkpointPieceScratch;
         pieces.Clear();
-        List<int> removedGroups = _checkpointRemovedGroupScratch;
+        List<ObjectId> removedGroups = _checkpointRemovedGroupScratch;
         removedGroups.Clear();
         foreach (GeometryCellKey cell in map.CheckpointDirtyRubbleCells)
         {
@@ -290,7 +291,7 @@ internal sealed partial class RuntimePersistenceBridge
             map.CaptureFracturePiecesInto(cell, _checkpointMapPieceScratch);
             if (_checkpointMapPieceScratch.Count == 0)
             {
-                removedGroups.Add(group.SourceCubeId);
+                removedGroups.Add(group.Origin);
                 continue;
             }
 
@@ -308,9 +309,10 @@ internal sealed partial class RuntimePersistenceBridge
         PersistenceCheckpoint checkpoint = new(worldStates, vitals, ToArray(enemies), ToArray(cubes), ToArray(pieces))
         {
             IsIncremental = true,
-            RemovedCubeIds = removedCubes.Count == 0 ? [] : removedCubes.ToArray(),
-            RemovedEnemyIds = ToArray(removedEnemies),
-            RemovedFractureSourceCubeIds = ToArray(removedGroups),
+            // C0 shim: tombstones carry ObjectId(actorId).
+            RemovedCubeObjectIds = ToObjectIds(removedCubes),
+            RemovedEnemyObjectIds = ToObjectIds(removedEnemies),
+            RemovedFractureOriginObjectIds = ToArray(removedGroups),
             WorldTimeTicks = _host.WorldTicks,
             ImmediateWritesCommitted = CreateImmediateWritesBarrier()
         };
@@ -393,7 +395,7 @@ internal sealed partial class RuntimePersistenceBridge
 
         GeometryCellRecord? geometryCell = map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
         PersistedPlacedCube captured = new(
-            record.Actor.Id,
+            new ObjectId(record.Actor.Id),
             record.OwnerPlayerName,
             new Vector3(cell.X, cell.Y, cell.Z),
             GeometryShapeKind.SolidCube,
@@ -404,9 +406,10 @@ internal sealed partial class RuntimePersistenceBridge
             now,
             cube.Position);
         cubes.Add(captured);
-        if (_persistedCubes.ContainsKey(captured.CubeId))
+        int capturedCubeId = record.Actor.Id;
+        if (_persistedCubes.ContainsKey(capturedCubeId))
         {
-            _persistedCubes[captured.CubeId] = captured;
+            _persistedCubes[capturedCubeId] = captured;
         }
     }
 
@@ -424,7 +427,8 @@ internal sealed partial class RuntimePersistenceBridge
             }
 
             pieces.Add(new PersistedCubeFracturePiece(
-                SourceCubeId: group.SourceCubeId,
+                ObjectId: ObjectId.None,
+                OriginObjectId: group.Origin,
                 PieceIndex: pieceIndex,
                 OwnerPlayerName: group.OwnerPlayerName,
                 ParentCell: new Vector3(pieceCell.X, pieceCell.Y, pieceCell.Z),
@@ -453,6 +457,24 @@ internal sealed partial class RuntimePersistenceBridge
         return items.Count == 0 ? [] : items.ToArray();
     }
 
+    // C0 shim: actor ids as ObjectIds.
+    private static ObjectId[] ToObjectIds(IReadOnlyCollection<int> actorIds)
+    {
+        if (actorIds.Count == 0)
+        {
+            return [];
+        }
+
+        ObjectId[] result = new ObjectId[actorIds.Count];
+        int index = 0;
+        foreach (int actorId in actorIds)
+        {
+            result[index++] = new ObjectId(actorId);
+        }
+
+        return result;
+    }
+
     // Checkpoint capture state. The scratch lists are reused across captures (a capture copies them
     // into exact-size arrays), so a capture of k changed rows allocates O(k) once they have grown.
     private Map? _checkpointTrackedMap;
@@ -463,7 +485,7 @@ internal sealed partial class RuntimePersistenceBridge
     private readonly List<int> _checkpointRemovedEnemyScratch = [];
     private readonly List<PersistedPlacedCube> _checkpointCubeScratch = [];
     private readonly List<PersistedCubeFracturePiece> _checkpointPieceScratch = [];
-    private readonly List<int> _checkpointRemovedGroupScratch = [];
+    private readonly List<ObjectId> _checkpointRemovedGroupScratch = [];
     private readonly List<PersistedPlayerWorldState> _checkpointPlayerStateScratch = [];
     private readonly List<PlayerCheckpointVitals> _checkpointPlayerVitalsScratch = [];
     private readonly List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>

@@ -39,7 +39,7 @@ public sealed partial class SqliteRubbleRepository
 
         foreach (PersistedCubeFracturePiece piece in pieces)
         {
-            sourceCubeId.Value = piece.SourceCubeId;
+            sourceCubeId.Value = piece.OriginObjectId.Value;
             pieceIndex.Value = piece.PieceIndex;
             centerX.Value = piece.Center.X;
             centerY.Value = piece.Center.Y;

@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
@@ -159,7 +160,7 @@ public sealed class PersistenceGroupCommitTests
 
         // Save, delete, save again: only the order save -> delete -> save leaves the cube with health 2.
         writes.Enqueue(() => world.SavePlacedCube(Cube(cubeId: 9, owner: "owner") with { CurrentHealth = 1 }));
-        writes.Enqueue(() => world.DeletePlacedCube(9));
+        writes.Enqueue(() => world.DeletePlacedCube(new ObjectId(9)));
         writes.Enqueue(() => world.SavePlacedCube(Cube(cubeId: 9, owner: "owner") with { CurrentHealth = 2 }));
 
         gate.Set();
@@ -243,7 +244,7 @@ public sealed class PersistenceGroupCommitTests
     {
         DateTime now = DateTime.UtcNow;
         return new PersistedPlacedCube(
-            cubeId,
+            new ObjectId(cubeId),
             owner,
             new Vector3(3f, 1f, 3f),
             GeometryShapeKind.SolidCube,

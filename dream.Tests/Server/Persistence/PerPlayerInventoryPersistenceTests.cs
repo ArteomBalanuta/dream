@@ -543,19 +543,22 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => Count(nameof(SavePlacedCube));
 
-        public void DeletePlacedCube(int cubeId) => Count(nameof(DeletePlacedCube));
+        public void DeletePlacedCube(ObjectId objectId) => Count(nameof(DeletePlacedCube));
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => [];
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => Count(nameof(SaveCubeFracturePiece));
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => Count(nameof(DeleteCubeFracturePieces));
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => Count(nameof(DeleteCubeFracturePieces));
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => [];
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => Count(nameof(SaveEnemyInstance));
 
-        public void DeleteEnemyInstance(int enemyId) => Count(nameof(DeleteEnemyInstance));
+        public void DeleteEnemyInstance(ObjectId objectId) => Count(nameof(DeleteEnemyInstance));
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Count(nameof(ReassignEnemyId));
 

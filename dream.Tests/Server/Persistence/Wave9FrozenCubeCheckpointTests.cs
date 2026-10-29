@@ -76,7 +76,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
 
             PersistenceCheckpoint incremental = runtime.CapturePersistenceCheckpoint(full: false)!;
             Assert.True(incremental.IsIncremental);
-            PersistedPlacedCube row = Assert.Single(incremental.PlacedCubes, candidate => candidate.CubeId == cubeId);
+            PersistedPlacedCube row = Assert.Single(incremental.PlacedCubes, candidate => candidate.ObjectId.AsInt() == cubeId);
             Assert.Equal(livePosition, row.CenterPosition);
             new SqlitePersistenceCheckpointWriter(database.Schema).Write(incremental);
 
@@ -84,7 +84,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
             Advance(host, ref tick, 64, Vector3.UnitX, walk: false);
             PersistenceCheckpoint idle = runtime.CapturePersistenceCheckpoint(full: false)!;
             Assert.True(idle.IsIncremental);
-            Assert.DoesNotContain(idle.PlacedCubes, candidate => candidate.CubeId == cubeId);
+            Assert.DoesNotContain(idle.PlacedCubes, candidate => candidate.ObjectId.AsInt() == cubeId);
         }
 
         // Restart: the cube is back at its live position, dynamic, and freezes there.
@@ -202,7 +202,7 @@ public sealed class Wave9FrozenCubeCheckpointTests
         WorldObjectRecord record = WorldObjects(runtime).RegisterCube(cube, runtime.Map, ownerPlayerName: PlayerName);
         IWorldPersistenceRepository world = runtime.WorldPersistence!;
         world.SavePlacedCube(new PersistedPlacedCube(
-            record.Actor.Id,
+            new ObjectId(record.Actor.Id),
             PlayerName,
             cell,
             GeometryShapeKind.SolidCube,

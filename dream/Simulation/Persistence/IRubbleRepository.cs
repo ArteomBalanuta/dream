@@ -1,3 +1,5 @@
+using Dream.Simulation.World;
+
 namespace Dream.Simulation.Persistence;
 
 public interface IRubbleRepository
@@ -6,5 +8,5 @@ public interface IRubbleRepository
 
     void SaveCubeFracturePiece(PersistedCubeFracturePiece piece);
 
-    void DeleteCubeFracturePieces(int sourceCubeId);
+    void DeleteCubeFracturePieces(ObjectId originObjectId);
 }

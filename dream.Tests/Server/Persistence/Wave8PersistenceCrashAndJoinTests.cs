@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
@@ -260,7 +261,7 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
     {
         DateTime now = DateTime.UtcNow;
         return new PersistedPlacedCube(
-            cubeId,
+            new ObjectId(cubeId),
             owner,
             new Vector3(3f, 1f, 3f),
             GeometryShapeKind.SolidCube,

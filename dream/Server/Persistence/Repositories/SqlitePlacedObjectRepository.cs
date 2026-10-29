@@ -90,7 +90,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
 
     public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() =>
         QueryList(LoadSql, static reader => new PersistedPlacedCube(
-            reader.GetInt32(0),
+            new ObjectId(reader.GetInt64(0)),
             reader.GetString(1),
             reader.GetVector3(2),
             ShapeKind: Enum.Parse<GeometryShapeKind>(reader.GetString(8), ignoreCase: true),
@@ -105,8 +105,8 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
     public void SavePlacedCube(PersistedPlacedCube cube) =>
         Execute(UpsertSql, cube, static (command, c) =>
         {
-            command.BindInt64("$cubeId", c.CubeId);
-            command.BindText("$ownerPlayerName", c.OwnerPlayerName);
+            command.BindInt64("$cubeId", c.ObjectId.Value);
+            command.BindText("$ownerPlayerName", c.OwnerPlayerName ?? string.Empty);
             command.BindVector3("$cellX", "$cellY", "$cellZ", c.CellPosition);
             command.BindNullableVector3("$centerX", "$centerY", "$centerZ", c.CenterPosition);
             command.BindText("$shapeKind", c.ShapeKind.ToString());
@@ -117,6 +117,6 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, Worl
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
         });
 
-    public void DeletePlacedCube(int cubeId) =>
-        Execute(DeleteSql, cubeId, static (command, id) => command.BindInt64("$cubeId", id));
+    public void DeletePlacedCube(ObjectId objectId) =>
+        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$cubeId", id.Value));
 }

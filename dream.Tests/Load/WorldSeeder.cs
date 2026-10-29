@@ -71,7 +71,7 @@ public static class WorldSeeder
         {
             Vector3 cell = cubeCells[i];
             cubes.Add(new PersistedPlacedCube(
-                FirstSeededCubeId + i,
+                new ObjectId(FirstSeededCubeId + i),
                 OwnerPlayerName,
                 cell,
                 GeometryShapeKind.SolidCube,
@@ -94,7 +94,7 @@ public static class WorldSeeder
                 float offsetX = piece % 2 == 0 ? 0.25f : 0.75f;
                 float offsetZ = piece < 2 ? 0.25f : 0.75f;
                 pieces.Add(new PersistedCubeFracturePiece(
-                    sourceCubeId,
+                    ObjectId.None, new ObjectId(sourceCubeId),
                     piece,
                     OwnerPlayerName,
                     cell,
@@ -112,7 +112,7 @@ public static class WorldSeeder
             float x = 12f + (float)random.NextDouble() * (scenario.FloorSize - 16f);
             float z = 12f + (float)random.NextDouble() * (scenario.FloorSize - 16f);
             enemies.Add(new PersistedEnemyInstance(
-                WorldDefaultsEnemyIdBase + i,
+                new ObjectId(WorldDefaultsEnemyIdBase + i),
                 "wolf",
                 "Wolf",
                 new Vector3(x, 1f, z),
@@ -177,7 +177,7 @@ public static class WorldSeeder
                 Vector3 center = cube.CenterPosition ?? cube.CellPosition + new Vector3(0.5f);
                 SetValues(
                     parameters,
-                    cube.CubeId,
+                    cube.ObjectId.AsInt(),
                     cube.OwnerPlayerName,
                     cube.CellPosition.X,
                     cube.CellPosition.Y,
@@ -212,7 +212,7 @@ public static class WorldSeeder
                 PersistedCubeFracturePiece piece = pieces[i];
                 SetValues(
                     parameters,
-                    piece.SourceCubeId,
+                    piece.OriginObjectId.AsInt(),
                     piece.PieceIndex,
                     piece.OwnerPlayerName,
                     piece.ParentCell.X,

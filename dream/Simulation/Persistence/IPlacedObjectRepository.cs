@@ -1,3 +1,5 @@
+using Dream.Simulation.World;
+
 namespace Dream.Simulation.Persistence;
 
 public interface IPlacedObjectRepository
@@ -6,5 +8,5 @@ public interface IPlacedObjectRepository
 
     void SavePlacedCube(PersistedPlacedCube cube);
 
-    void DeletePlacedCube(int cubeId);
+    void DeletePlacedCube(ObjectId objectId);
 }

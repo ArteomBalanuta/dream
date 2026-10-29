@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -140,7 +141,7 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
                 case 1:
                 {
                     PersistedPlacedCube cube = new(
-                        id,
+                        new ObjectId(id),
                         WorldSeeder.OwnerPlayerName,
                         new OpenTK.Mathematics.Vector3(40 + i % 10, 30, 40),
                         Dream.Simulation.World.Geometry.GeometryShapeKind.SolidCube,
@@ -154,7 +155,7 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
                     break;
                 }
                 default:
-                    writes.Enqueue(() => world.DeletePlacedCube(id - 1));
+                    writes.Enqueue(() => world.DeletePlacedCube(new ObjectId(id - 1)));
                     break;
             }
         }

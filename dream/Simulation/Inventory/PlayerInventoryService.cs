@@ -1,5 +1,6 @@
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Inventory;
 
@@ -23,6 +24,8 @@ public enum InventoryEquipOutcome
 internal sealed class PlayerInventoryService
 {
     private readonly IWorldPersistenceRepository? _worldPersistence;
+    // Wave C: stored, not used yet (items still count from their own counter until workstream C).
+    private readonly ObjectIdAllocator _objectIds;
     private readonly PersistenceWriteQueue? _writes;
 
     // Loaded inventories only: a player's inventory is loaded when it joins (with the join
@@ -46,8 +49,9 @@ internal sealed class PlayerInventoryService
     // evicted inventory waits for its writes to be confirmed (see Evict).
     private readonly Dictionary<string, InventoryWriteTracker> _writeTrackers = new(StringComparer.OrdinalIgnoreCase);
 
-    public PlayerInventoryService(IWorldPersistenceRepository? worldPersistence, PersistenceWriteQueue? writes)
+    public PlayerInventoryService(IWorldPersistenceRepository? worldPersistence, PersistenceWriteQueue? writes, ObjectIdAllocator objectIds)
     {
+        _objectIds = objectIds ?? throw new ArgumentNullException(nameof(objectIds));
         _worldPersistence = worldPersistence;
         _writes = writes;
     }

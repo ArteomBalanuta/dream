@@ -70,6 +70,10 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private readonly PersistenceWriteQueue? _writes;
     // World restore, join prefetch, profile cache, write-through and checkpoints (ARCH-3 step B).
     private readonly RuntimePersistenceBridge _persistence;
+    // Wave C: one counter for every persisted object id, and the ObjectId <-> actor id map
+    // for placed cubes and enemies. Tick thread only.
+    private readonly ObjectIdAllocator _objectIds = new();
+    private readonly ObjectIdentityMap _objectIdentities = new();
     private readonly CombatFormulaService _combatFormulaService;
     private readonly AuthoritativeCombatResolver _combatResolver;
     private PlayerCommandFrame _lastAppliedCommandFrame;
@@ -126,7 +130,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _events = events;
         _playerProfiles = playerProfiles;
-        _inventory = new PlayerInventoryService(worldPersistence, _writes);
+        _inventory = new PlayerInventoryService(worldPersistence, _writes, _objectIds);
         IPersistenceCheckpointWriter? resolvedCheckpointWriter = checkpointWriter ??
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
@@ -151,13 +155,17 @@ public sealed partial class WorldSessionRuntime : IDisposable
         _enemies = new EnemyRegistry();
         _combatResolver = CreateCombatResolver();
         _persistence = new RuntimePersistenceBridge(
-            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events);
+            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities);
         SubscribeReplicationExports();
 
         RestorePersistedWorldState();
         // After the restore: the world a client joins already carries the restored cubes' ids.
         _worldObjects.CubeIdAssigned = OnCubeIdAssigned;
     }
+
+    internal ObjectIdAllocator ObjectIds => _objectIds;
+
+    internal ObjectIdentityMap ObjectIdentities => _objectIdentities;
 
     public Map Map { get; private set; }
 

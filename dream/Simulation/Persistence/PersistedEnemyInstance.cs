@@ -1,9 +1,10 @@
+using Dream.Simulation.World;
 using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Persistence;
 
 public readonly record struct PersistedEnemyInstance(
-    int EnemyId,
+    ObjectId ObjectId,
     string EnemyKind,
     string DisplayName,
     Vector3 Position,

@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Dream.Server.Persistence;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
@@ -120,7 +121,7 @@ public sealed class SqlitePersistenceRepositoryTests
         DateTime createdUtc = new(2026, 7, 4, 8, 15, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedPlacedCube cube = new(
-            CubeId: 41,
+            ObjectId: new ObjectId(41),
             OwnerPlayerName: "builder-a",
             CellPosition: new Vector3(6f, 2f, 9f),
             ShapeKind: GeometryShapeKind.SolidCube,
@@ -134,7 +135,7 @@ public sealed class SqlitePersistenceRepositoryTests
         repository.SavePlacedCube(cube);
         PersistedPlacedCube loaded = Assert.Single(repository.LoadPlacedCubes());
 
-        Assert.Equal(41, loaded.CubeId);
+        Assert.Equal(41, loaded.ObjectId.AsInt());
         Assert.Equal("builder-a", loaded.OwnerPlayerName);
         Assert.Equal(cube.CellPosition, loaded.CellPosition);
         Assert.Equal(cube.CenterPosition, loaded.CenterPosition);
@@ -145,7 +146,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(createdUtc, loaded.CreatedUtc);
         Assert.InRange(loaded.UpdatedUtc, saveStartedUtc, DateTime.UtcNow);
 
-        repository.DeletePlacedCube(cube.CubeId);
+        repository.DeletePlacedCube(new ObjectId(cube.ObjectId.AsInt()));
 
         Assert.Empty(repository.LoadPlacedCubes());
     }
@@ -159,7 +160,8 @@ public sealed class SqlitePersistenceRepositoryTests
         DateTime createdUtc = new(2026, 7, 4, 8, 30, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedCubeFracturePiece first = new(
-            SourceCubeId: 41,
+            ObjectId: ObjectId.None,
+            OriginObjectId: new ObjectId(41),
             PieceIndex: 0,
             OwnerPlayerName: "builder-a",
             ParentCell: new Vector3(6f, 2f, 9f),
@@ -179,7 +181,7 @@ public sealed class SqlitePersistenceRepositoryTests
         PersistedCubeFracturePiece[] loaded = repository.LoadCubeFracturePieces().OrderBy(piece => piece.PieceIndex).ToArray();
 
         Assert.Equal(2, loaded.Length);
-        Assert.Equal(41, loaded[0].SourceCubeId);
+        Assert.Equal(41, loaded[0].OriginObjectId.AsInt());
         Assert.Equal(0, loaded[0].PieceIndex);
         Assert.Equal("builder-a", loaded[0].OwnerPlayerName);
         Assert.Equal(first.ParentCell, loaded[0].ParentCell);
@@ -190,7 +192,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.InRange(loaded[0].UpdatedUtc, saveStartedUtc, DateTime.UtcNow);
         Assert.Equal(second.Center, loaded[1].Center);
 
-        repository.DeleteCubeFracturePieces(41);
+        repository.DeleteCubeFracturePieces(new ObjectId(41));
 
         Assert.Empty(repository.LoadCubeFracturePieces());
     }
@@ -203,7 +205,7 @@ public sealed class SqlitePersistenceRepositoryTests
         DateTime createdUtc = new(2026, 7, 4, 7, 45, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedEnemyInstance enemy = new(
-            EnemyId: 8,
+            ObjectId: new ObjectId(8),
             EnemyKind: "Wolf",
             DisplayName: "Ashfang",
             Position: new Vector3(-3f, 1.5f, 14f),
@@ -224,7 +226,7 @@ public sealed class SqlitePersistenceRepositoryTests
         repository.SaveEnemyInstance(enemy);
         PersistedEnemyInstance loaded = Assert.Single(repository.LoadActiveEnemies());
 
-        Assert.Equal(8, loaded.EnemyId);
+        Assert.Equal(8, loaded.ObjectId.AsInt());
         Assert.Equal("Wolf", loaded.EnemyKind);
         Assert.Equal("Ashfang", loaded.DisplayName);
         Assert.Equal(enemy.Position, loaded.Position);
@@ -233,7 +235,7 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal(createdUtc, loaded.CreatedUtc);
         Assert.InRange(loaded.UpdatedUtc, saveStartedUtc, DateTime.UtcNow);
 
-        repository.DeleteEnemyInstance(enemy.EnemyId);
+        repository.DeleteEnemyInstance(new ObjectId(enemy.ObjectId.AsInt()));
 
         Assert.Empty(repository.LoadActiveEnemies());
     }

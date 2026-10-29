@@ -1,11 +1,12 @@
+using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Persistence;
 
 public readonly record struct PersistedPlacedCube(
-    int CubeId,
-    string OwnerPlayerName,
+    ObjectId ObjectId,
+    string? OwnerPlayerName,
     Vector3 CellPosition,
     GeometryShapeKind ShapeKind,
     GeometryMaterialId MaterialId,

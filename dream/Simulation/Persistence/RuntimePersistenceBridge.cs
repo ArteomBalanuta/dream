@@ -31,6 +31,10 @@ internal sealed partial class RuntimePersistenceBridge
     private readonly WorldObjectRegistry _worldObjects;
     private readonly EnemyRegistry _enemies;
     private readonly SceneEventHub _events;
+    // Wave C: the runtime's object id counter and its ObjectId <-> actor id map. C0 shim: ObjectId
+    // is new ObjectId(actorId) everywhere, so nothing reads them back yet.
+    private readonly ObjectIdAllocator _objectIds;
+    private readonly ObjectIdentityMap _objectIdentities;
 
     private readonly Dictionary<GeometryCellKey, PersistedFractureGroup> _persistedFractureGroups = [];
     // Profiles by player name: every active player's, plus those of the players who left most
@@ -65,7 +69,9 @@ internal sealed partial class RuntimePersistenceBridge
         PersistenceWriteQueue? writes,
         WorldObjectRegistry worldObjects,
         EnemyRegistry enemies,
-        SceneEventHub events)
+        SceneEventHub events,
+        ObjectIdAllocator objectIds,
+        ObjectIdentityMap objectIdentities)
     {
         _host = host;
         _playerProfiles = playerProfiles;
@@ -75,6 +81,8 @@ internal sealed partial class RuntimePersistenceBridge
         _worldObjects = worldObjects;
         _enemies = enemies;
         _events = events;
+        _objectIds = objectIds;
+        _objectIdentities = objectIdentities;
     }
 
     public PersistenceWriteQueue? Writes => _writes;
@@ -281,19 +289,32 @@ internal sealed partial class RuntimePersistenceBridge
             return;
         }
 
+        _objectIds.Restore(_worldPersistence.LoadNextObjectId());
         _host.RestorePersistedInventoryState();
 
         Map map = _host.Map;
         int skippedCubes = 0;
         foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
         {
-            _persistedCubes[persistedCube.CubeId] = persistedCube;
-            _cubeOwnerNames.Add(persistedCube.OwnerPlayerName);
-            // The id counters are derived from the persisted ids (there is no stored counter): a
-            // cube id is reserved even when its cell is now occupied and the cube is skipped,
-            // because its row still exists. A legacy cube id in the enemy range is reserved there.
-            _worldObjects.ReserveActorId(persistedCube.CubeId);
-            _host.ReserveEnemyActorId(persistedCube.CubeId);
+            _objectIds.Reserve(persistedCube.ObjectId);
+            // C0 shim: an id inside the actor id space keeps today's path (it is the cube's actor
+            // id); any other id gets a newly allocated actor id below.
+            bool legacyActorId = persistedCube.ObjectId.Value <= int.MaxValue;
+            int legacyId = legacyActorId ? (int)persistedCube.ObjectId.Value : 0;
+            if (persistedCube.OwnerPlayerName != null)
+            {
+                _cubeOwnerNames.Add(persistedCube.OwnerPlayerName);
+            }
+
+            if (legacyActorId)
+            {
+                _persistedCubes[legacyId] = persistedCube;
+                // The id counters are derived from the persisted ids (there is no stored counter): a
+                // cube id is reserved even when its cell is now occupied and the cube is skipped,
+                // because its row still exists. A legacy cube id in the enemy range is reserved there.
+                _worldObjects.ReserveActorId(legacyId);
+                _host.ReserveEnemyActorId(legacyId);
+            }
             Cube? cube = map.TryAddCube(
                 persistedCube.CellPosition,
                 materialId: persistedCube.MaterialId);
@@ -308,13 +329,19 @@ internal sealed partial class RuntimePersistenceBridge
                 map.UpdateCubePosition(cube, persistedCube.CenterPosition.Value);
             }
 
-            _worldObjects.RegisterCube(
+            WorldObjectRecord registered = _worldObjects.RegisterCube(
                 cube,
                 map,
                 maxHealth: persistedCube.MaxHealth,
                 currentHealth: persistedCube.CurrentHealth,
-                actorId: persistedCube.CubeId,
+                actorId: legacyActorId ? legacyId : null,
                 ownerPlayerName: persistedCube.OwnerPlayerName);
+            if (!legacyActorId)
+            {
+                _persistedCubes[registered.Actor.Id] = persistedCube;
+            }
+
+            _objectIdentities.Bind(persistedCube.ObjectId, registered.Actor.Id);
         }
 
         if (skippedCubes > 0)
@@ -338,13 +365,26 @@ internal sealed partial class RuntimePersistenceBridge
         // id is reserved before any enemy is re-identified below, so a new id skips them all.
         foreach (PersistedEnemyInstance enemy in enemies)
         {
-            _host.ReserveEnemyActorId(enemy.EnemyId);
+            _objectIds.Reserve(enemy.ObjectId);
+            if (enemy.ObjectId.Value <= int.MaxValue)
+            {
+                _host.ReserveEnemyActorId((int)enemy.ObjectId.Value);
+            }
         }
 
         foreach (PersistedEnemyInstance enemy in enemies)
         {
             PersistedEnemyInstance restored = enemy;
-            if (_persistedCubes.ContainsKey(enemy.EnemyId))
+            int actorId;
+            if (enemy.ObjectId.Value > int.MaxValue)
+            {
+                // C0 shim: an id outside the actor id space gets a newly allocated actor id.
+                if (!_host.TryAllocateEnemyActorId(out actorId))
+                {
+                    continue;
+                }
+            }
+            else if (_persistedCubes.ContainsKey((int)enemy.ObjectId.Value))
             {
                 // A world saved before the id ranges were partitioned can hold an enemy and a
                 // placed cube under one id. The cube keeps it; the enemy is re-identified in the
@@ -357,21 +397,27 @@ internal sealed partial class RuntimePersistenceBridge
                     continue;
                 }
 
-                int oldEnemyId = enemy.EnemyId;
-                restored = enemy with { EnemyId = newEnemyId };
+                int oldEnemyId = (int)enemy.ObjectId.Value;
+                actorId = newEnemyId;
+                restored = enemy with { ObjectId = new ObjectId(newEnemyId) };
                 EnqueueWorldWrite(world => world.ReassignEnemyId(oldEnemyId, newEnemyId));
             }
+            else
+            {
+                actorId = (int)enemy.ObjectId.Value;
+            }
 
-            _enemies.Add(CreatePersistedEnemy(restored));
+            _enemies.Add(CreatePersistedEnemy(restored, actorId));
+            _objectIdentities.Bind(restored.ObjectId, actorId);
         }
     }
 
-    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy)
+    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy, int actorId)
     {
         EnemyCombatant combatant = new(
             () => enemy.Position,
             _events,
-            actorId: enemy.EnemyId,
+            actorId: actorId,
             maxHealth: enemy.Stats.MaxHealth,
             attackDamage: Math.Max(1, enemy.Stats.Strength + 2),
             attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
@@ -480,8 +526,10 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         Vector3 cellPosition = ToCellPosition(cube.Position);
+        // C0 shim: the ObjectId is the actor id.
+        ObjectId objectId = new(cubeId);
         PersistedPlacedCube persisted = new(
-            cubeId,
+            objectId,
             ownerPlayerName,
             cellPosition,
             GeometryShapeKind.SolidCube,
@@ -492,10 +540,11 @@ internal sealed partial class RuntimePersistenceBridge
             DateTime.UtcNow,
             cube.Position);
         _persistedCubes[cubeId] = persisted;
+        _objectIdentities.Bind(objectId, cubeId);
         _cubeOwnerNames.Add(ownerPlayerName);
         EnqueueWorldWrite(world =>
         {
-            world.DeleteCubeFracturePieces(cubeId);
+            world.DeleteCubeFracturePieces(objectId);
             world.SavePlacedCube(persisted);
         });
     }
@@ -518,7 +567,9 @@ internal sealed partial class RuntimePersistenceBridge
     public void DeletePersistedPlacedCube(int cubeId)
     {
         _persistedCubes.Remove(cubeId);
-        EnqueueWorldWrite(world => world.DeletePlacedCube(cubeId));
+        _objectIdentities.RemoveByActorId(cubeId, out _);
+        ObjectId objectId = new(cubeId);
+        EnqueueWorldWrite(world => world.DeletePlacedCube(objectId));
     }
 
     public void EnqueueWorldWrite(Action<IWorldPersistenceRepository> write)
@@ -668,13 +719,18 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         Map map = _host.Map;
-        foreach (IGrouping<int, PersistedCubeFracturePiece> group in _worldPersistence
+        foreach (IGrouping<ObjectId, PersistedCubeFracturePiece> group in _worldPersistence
             .LoadCubeFracturePieces()
-            .GroupBy(piece => piece.SourceCubeId))
+            .GroupBy(piece => piece.OriginObjectId))
         {
             // The fractured cube's row is gone, but its id still keys these pieces: a placed cube
             // that later reused it would delete them (PersistPlacedCube clears its id's pieces).
-            _worldObjects.ReserveActorId(group.Key);
+            _objectIds.Reserve(group.Key);
+            if (group.Key.Value <= int.MaxValue)
+            {
+                _worldObjects.ReserveActorId((int)group.Key.Value);
+            }
+
             PersistedCubeFracturePiece[] pieces = group
                 .OrderBy(piece => piece.PieceIndex)
                 .ToArray();
@@ -695,7 +751,7 @@ internal sealed partial class RuntimePersistenceBridge
             if (map.RestoreFracturePieces(cell, first.MaterialId, fracturePieces, withPhysics: true))
             {
                 _persistedFractureGroups[cell] = new PersistedFractureGroup(
-                    first.SourceCubeId,
+                    first.OriginObjectId,
                     first.OwnerPlayerName);
             }
         }
@@ -714,7 +770,8 @@ internal sealed partial class RuntimePersistenceBridge
             return;
         }
 
-        _persistedFractureGroups[cell] = new PersistedFractureGroup(sourceCubeId, ownerPlayerName);
+        // C0 shim: the group's origin is the fractured cube's id.
+        _persistedFractureGroups[cell] = new PersistedFractureGroup(new ObjectId(sourceCubeId), ownerPlayerName);
         PersistFracturePiecesForCell(cell);
     }
 
@@ -735,7 +792,8 @@ internal sealed partial class RuntimePersistenceBridge
         foreach ((GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) in cellPieces)
         {
             PersistedCubeFracturePiece persistedPiece = new(
-                SourceCubeId: group.SourceCubeId,
+                ObjectId: ObjectId.None,
+                OriginObjectId: group.Origin,
                 PieceIndex: PieceIndex,
                 OwnerPlayerName: group.OwnerPlayerName,
                 ParentCell: new Vector3(PieceCell.X, PieceCell.Y, PieceCell.Z),
@@ -757,13 +815,15 @@ internal sealed partial class RuntimePersistenceBridge
     public void PersistEnemy(EnemyActor enemy)
     {
         PersistedEnemyInstance persisted = CreatePersistedEnemy(enemy, DateTime.UtcNow);
+        _objectIdentities.Bind(persisted.ObjectId, enemy.Combatant.Actor.Id);
         EnqueueWorldWrite(world => world.SaveEnemyInstance(persisted));
     }
 
     private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, DateTime now)
     {
+        // C0 shim: the ObjectId is the actor id.
         return new PersistedEnemyInstance(
-            enemy.Combatant.Actor.Id,
+            new ObjectId(enemy.Combatant.Actor.Id),
             enemy.EnemyKind,
             enemy.DisplayName,
             enemy.Position,
@@ -784,12 +844,14 @@ internal sealed partial class RuntimePersistenceBridge
 
     public void DeletePersistedEnemy(int enemyId)
     {
-        EnqueueWorldWrite(world => world.DeleteEnemyInstance(enemyId));
+        _objectIdentities.RemoveByActorId(enemyId, out _);
+        ObjectId objectId = new(enemyId);
+        EnqueueWorldWrite(world => world.DeleteEnemyInstance(objectId));
     }
 
     private readonly record struct PersistedFractureGroup(
-        int SourceCubeId,
-        string OwnerPlayerName);
+        ObjectId Origin,
+        string? OwnerPlayerName);
 
     public WorldObjectRecord RepairCubeRecordFromPersistence(WorldObjectRecord record)
     {
@@ -806,7 +868,7 @@ internal sealed partial class RuntimePersistenceBridge
         // and no owner), the record's health is meaningless and the cached row's health, kept
         // current by every hit (UpdatePersistedCubeHealth), is restored with the identity.
         bool identityMatches =
-            record.Actor.Id == persistedCube.CubeId &&
+            record.Actor.Id == ShimActorId(persistedCube.ObjectId) &&
             string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase);
         if (identityMatches)
         {
@@ -816,7 +878,7 @@ internal sealed partial class RuntimePersistenceBridge
         return _worldObjects.ReplaceCubeRecordIdentity(
             cube,
             _host.Map,
-            persistedCube.CubeId,
+            ShimActorId(persistedCube.ObjectId),
             persistedCube.MaxHealth,
             persistedCube.CurrentHealth,
             persistedCube.OwnerPlayerName);
@@ -837,8 +899,8 @@ internal sealed partial class RuntimePersistenceBridge
 
         if (TryResolvePersistedPlacedCube(cube, out PersistedPlacedCube persistedCube))
         {
-            cubeId = persistedCube.CubeId;
-            ownerPlayerName = persistedCube.OwnerPlayerName;
+            cubeId = ShimActorId(persistedCube.ObjectId);
+            ownerPlayerName = persistedCube.OwnerPlayerName ?? string.Empty;
             return true;
         }
 
@@ -899,6 +961,9 @@ internal sealed partial class RuntimePersistenceBridge
 
         return false;
     }
+
+    // C0 shim: an ObjectId that was created from an actor id maps straight back to it.
+    private static int ShimActorId(ObjectId objectId) => checked((int)objectId.Value);
 
     private static GeometryCellKey ToGeometryCellKey(Vector3 position)
     {

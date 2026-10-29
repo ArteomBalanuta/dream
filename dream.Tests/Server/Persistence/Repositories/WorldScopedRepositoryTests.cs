@@ -33,9 +33,9 @@ public sealed class WorldScopedRepositoryTests
         Assert.Equal(3L, database.Count("SELECT COUNT(*) FROM item_instances;"));
 
         // Deletes, id reassignment and the slot reset stay inside their world.
-        two.DeletePlacedCube(1);
-        two.DeleteCubeFracturePieces(1);
-        two.DeleteEnemyInstance(1);
+        two.DeletePlacedCube(new ObjectId(1));
+        two.DeleteCubeFracturePieces(new ObjectId(1));
+        two.DeleteEnemyInstance(new ObjectId(1));
         two.DeleteItemInstance(1);
         two.DeleteInventorySlots(Owner);
         AssertFilled(one, tag: 1);
@@ -48,10 +48,10 @@ public sealed class WorldScopedRepositoryTests
         Assert.Equal(5L, one.GetMaxItemInstanceId());
 
         one.ReassignEnemyId(1, 9);
-        Assert.Equal([9], one.LoadActiveEnemies().Select(enemy => enemy.EnemyId));
+        Assert.Equal([9], one.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
         two.SaveEnemyInstance(Enemy(1, 12));
         two.ReassignEnemyId(1, 9);
-        Assert.Equal([9], two.LoadActiveEnemies().Select(enemy => enemy.EnemyId));
+        Assert.Equal([9], two.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
         Assert.Equal(11, one.LoadActiveEnemies().Single().Stats.CurrentHealth);
     }
 
@@ -243,15 +243,15 @@ public sealed class WorldScopedRepositoryTests
     }
 
     private static PersistedPlacedCube Cube(int cubeId, int health) =>
-        new(cubeId, Owner, new Vector3(cubeId, 1f, 2f), GeometryShapeKind.SolidCube, GeometryMaterialId.Stone,
+        new(new ObjectId(cubeId), Owner, new Vector3(cubeId, 1f, 2f), GeometryShapeKind.SolidCube, GeometryMaterialId.Stone,
             health, 5, Created, Created, null);
 
     private static PersistedCubeFracturePiece Piece(int sourceCubeId, int pieceIndex) =>
-        new(sourceCubeId, pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
+        new(ObjectId.None, new ObjectId(sourceCubeId), pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
             new Vector3(sourceCubeId + 0.25f, 1.25f, 2.25f), 0.5f, GeometryMaterialId.Stone, Created, Created);
 
     private static PersistedEnemyInstance Enemy(int enemyId, int hp) =>
-        new(enemyId, "slime", $"Slime {enemyId}", new Vector3(enemyId, 0f, enemyId), new Vector3(1f, 0f, 0f),
+        new(new ObjectId(enemyId), "slime", $"Slime {enemyId}", new Vector3(enemyId, 0f, enemyId), new Vector3(1f, 0f, 0f),
             new PersistedCreatureStats(hp, 20, 3, 4, 5, 6, 2.5f, 1.25f, 2), Created, Created);
 
     private static PersistedItemInstance Item(long id) =>
