@@ -24,13 +24,16 @@ public sealed class WorldsLockstepDeterminismTests(ITestOutputHelper output)
     private const long DayClockTicks = 50_000;
     private const ulong MigratedSeed = 5150;
 
-    [Fact(Skip = WorldBundles.SkipReason)]
+    [Fact]
     public void World1_AndACopyOfIt_RunTheSameScript_WithEqualChecksumsOnEveryTick()
     {
         using MigrationTestDatabase database = new();
         SqliteWorldCatalog catalog = WorldBundles.OpenCatalog(database);
         WorldRecord original = catalog.Resolve(WorldSelector.Default, WorldDefaults.StartupFloorSize, out _);
         Assert.Equal(WorldId.Default, original.Descriptor.Id);
+        // A fresh database has no seed on world 1 yet; opening it as the server does generates and stores one.
+        WorldBundles.Bind(database.Schema, original).Dispose();
+        original = catalog.TryGet(WorldId.Default)!;
         Assert.NotNull(original.Seed);
         WorldRecord copy = catalog.Copy(original.Descriptor.Id, "twin");
         Assert.NotEqual(WorldId.Default, copy.Descriptor.Id);
@@ -40,7 +43,7 @@ public sealed class WorldsLockstepDeterminismTests(ITestOutputHelper output)
         AssertLockstep(database, original, database, copy);
     }
 
-    [Fact(Skip = WorldBundles.SkipReason)]
+    [Fact]
     public void AMigratedWorld_KeepsTheChecksums_OfItsPreMigrationSeedAndTime()
     {
         // The reference: a fresh v3 database whose world has the migrated world's seed and clock.

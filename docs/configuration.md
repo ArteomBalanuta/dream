@@ -305,12 +305,12 @@ An id that does not exist stops the dedicated server with exit code **4** (`Worl
 
 | Command | Effect |
 | --- | --- |
-| `--worlds list` | Prints one tab-separated line per world: id, name, size, generator, world time. The seed is never printed. |
-| `--worlds create <name> [--size N]` | Creates a world with a random seed. `N` is 5 to 100 (default 56). |
-| `--worlds copy <src> <name>` | Copies a world (by id or name) with every row it owns, the same local ids, and its seed and world time. |
-| `--worlds delete <id\|name> --yes` | Deletes a world and everything in it. Without `--yes` nothing is deleted. |
+| `--worlds list` | Prints one tab-separated line per world: id, name, size (`WxHxD`), generator (`key:version`), world time in ticks. The seed is never printed. |
+| `--worlds create <name> [--size N]` | Creates a world with a random seed. `N` is 5 to 100 (default 56). Prints the new world in the `list` format. |
+| `--worlds copy <src> <name>` | Copies a world (by id or name) with every row it owns, the same local ids, and its seed and world time. Prints the new world in the `list` format. |
+| `--worlds delete <id\|name> --yes` | Deletes a world and everything in it. Without `--yes` nothing is deleted. Prints `deleted`, id and name. |
 
-Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build.
+Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build. A bad argument, including a size outside 5 to 100 or a name that is blank or longer than 64 characters, is a usage error (1). A name already taken ignoring case is a conflict (2).
 
 Names are 1 to 64 characters after trimming and unique ignoring case. World ids are never reused.
 
@@ -347,6 +347,7 @@ For floor-size changes, the current flow is:
 2. `GameSettings` stages the selected value and clamps it into the supported `5..100` range.
 3. The apply action persists the setting. It no longer rebuilds the live map: the value is the size of the next world the integrated server has to create (see Worlds).
 4. A running session keeps the map size of its world; the size of a joined world always comes from the server's world descriptor.
+5. A client that is sent a world it cannot host (a generator or version it does not know, a map source other than `generated`, a size outside 5 to 100) ends the session with a reason such as `The server's world "x" uses generator "nope" version 1, which this client does not support.`; a join-accepted whose initial world differs in size from its descriptor ends it the same way (`PlayScene.ApplyReplicatedMessage` -> `RemoteClientSession.EndSessionWithReason`).
 
 For collision-debug changes, the current flow is:
 

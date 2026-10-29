@@ -37,7 +37,7 @@ To run the dedicated server instead of the desktop client:
 dotnet run --project dream\dream.csproj -- --server
 ```
 
-It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 6 and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
+It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 7 and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
 
 The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, and font files are loaded from the runtime output layout rather than from machine-specific absolute paths.
 
@@ -50,7 +50,7 @@ On startup, the game currently:
 - starts with a `70` degree field of view
 - builds the HUD crosshair from the live viewport instead of from fixed HUD pixel coordinates
 - scales the HUD crosshair with window size while keeping it centered on the active viewport
-- starts with a `56 x 56` floor (`WorldDefaults.StartupFloorSize`) that can be resized at runtime from the settings menu
+- starts with a `56 x 56` floor (`WorldDefaults.StartupFloorSize`): the size of a new local world, changeable from the settings menu (it does not resize an existing world or a running session)
 - loads the default first-person hands and held-item blockout viewmodels from `dream/animations/viewmodels/`
 
 ### Default controls

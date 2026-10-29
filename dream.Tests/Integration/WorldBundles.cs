@@ -16,8 +16,6 @@ namespace Dream.Tests.Integration;
 // process-wide DREAM_WORLD variable. The bundle is handed to ServerBootstrap.CreateAuthoritativeHost.
 internal static class WorldBundles
 {
-    public const string SkipReason = "needs B1 + B2 + B4 merged";
-
     public static readonly string[] WorldTables =
     [
         "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances",

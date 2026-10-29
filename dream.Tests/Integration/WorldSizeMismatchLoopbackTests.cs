@@ -22,7 +22,7 @@ public sealed class WorldSizeMismatchLoopbackTests(ITestOutputHelper output)
     private const int ServerWorldSize = 30;
     private const int ClientFloorSize = 20;
 
-    [Fact(Skip = WorldBundles.SkipReason)]
+    [Fact]
     public async Task ClientWithADifferentFloorSize_TakesTheServersWorldSize_FromTheJoin()
     {
         using MigrationTestDatabase database = new();

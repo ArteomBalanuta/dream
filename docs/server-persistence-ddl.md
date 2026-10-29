@@ -83,15 +83,15 @@ CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
 | Table | Primary key | Storage |
 | --- | --- | --- |
 | `player_world_state` | `(world_id, player_name)` | rowid table |
-| `placed_cube_instances` | `(world_id, cube_id)` | `WITHOUT ROWID` |
-| `cube_fracture_pieces` | `(world_id, source_cube_id, piece_index)` | `WITHOUT ROWID` |
-| `enemy_instances` | `(world_id, enemy_id)` | `WITHOUT ROWID` |
+| `placed_cube_instances` | `(world_id, cube_id)` | rowid table |
+| `cube_fracture_pieces` | `(world_id, source_cube_id, piece_index)` | rowid table |
+| `enemy_instances` | `(world_id, enemy_id)` | rowid table |
 | `item_instances` | `(world_id, item_instance_id)` | rowid table |
 | `player_inventory_slots` | `(world_id, player_name, slot_index)` | rowid table |
 | `player_starter_grants` | `(world_id, player_name)` | rowid table |
 
 - Every per-world table has `FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE`. Other foreign keys are as before (owners to `player_profiles`: `CASCADE`, except `item_instances.owner_player_name`, which stays `SET NULL`). `player_inventory_slots` references items by `(world_id, item_instance_id)`.
-- The three busy tables are `WITHOUT ROWID` so that a checkpoint `UPDATE` by composite key needs one B-tree lookup instead of two (the composite key would otherwise be a secondary index in front of the rowid).
+- All seven tables are rowid tables with a composite primary key (an index on the key columns), including the three busy ones (cubes, rubble, enemies). `WITHOUT ROWID` was tried for those three and measured slower: on World10k a full checkpoint was about 10% slower than the baseline with it, and about 4% slower with a rowid table and the composite key index.
 - `placed_cube_instances.cell_x/y/z` and `cube_fracture_pieces.parent_cell_x/y/z` are now `INTEGER NOT NULL`. Existing `REAL` values were whole numbers and convert without loss; the code that binds and reads them does not change.
 - Indexes keep their names. `ix_cube_fracture_pieces_parent_cell` is now `(world_id, parent_cell_x, parent_cell_y, parent_cell_z)` and `ix_player_inventory_slots_item_instance_id` is `(world_id, item_instance_id)`.
 - `ON DELETE SET NULL` for cube owners is deferred to a later wave; owners still cascade.
@@ -200,7 +200,7 @@ One row per surviving player-made cube.
 
 Key fields:
 
-- `world_id`, `cube_id`: composite primary key (`WITHOUT ROWID`)
+- `world_id`, `cube_id`: composite primary key
 - `owner_player_name`: FK to `player_profiles`
 - `cell_x`, `cell_y`, `cell_z`: coarse grid cell that owns the cube (`INTEGER`)
 - `center_x`, `center_y`, `center_z`: nullable exact render/physics center; older rows may be null and restore from the coarse cell center
@@ -222,7 +222,7 @@ One row per persisted fragment produced when a destructible cube fractures.
 
 Key fields:
 
-- composite PK: `world_id`, `source_cube_id`, `piece_index` (`WITHOUT ROWID`)
+- composite PK: `world_id`, `source_cube_id`, `piece_index`
 - `owner_player_name`: original cube owner, FK to `player_profiles`
 - `parent_cell_x`, `parent_cell_y`, `parent_cell_z`: coarse cell that owns the rubble group (`INTEGER`)
 - `center_x`, `center_y`, `center_z`: authoritative fragment center in world coordinates
@@ -248,7 +248,7 @@ One row per currently active enemy instance.
 
 Key fields:
 
-- `world_id`, `enemy_id`: composite primary key (`WITHOUT ROWID`)
+- `world_id`, `enemy_id`: composite primary key
 - `enemy_kind`
 - `display_name`
 - `position_*`, `facing_*`

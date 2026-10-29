@@ -236,10 +236,6 @@ public static class ServerBootstrap
     // only and never stored. The repositories are bound to the resolved world's id. The log names
     // the world (name and id) and never the seed. catalog is a test seam; it defaults to the
     // database's SqliteWorldCatalog.
-    //
-    // Until the SQLite catalog is implemented (workstream B4) a default selection falls back to
-    // world 1 built from the existing seed and world time, so the default path works without it.
-    // Remove that fallback (OpenLegacyDefaultWorld) once B4 has merged.
     public static ServerPersistenceBundle CreatePersistenceBundle(
         string databasePath,
         string schemaScriptPath,
@@ -256,16 +252,7 @@ public static class ServerBootstrap
             Environment.GetEnvironmentVariable(WorldEnvironmentVariable));
         int newWorldSize = start?.NewWorldSize ?? WorldDefaults.StartupFloorSize;
 
-        WorldRecord record;
-        bool created;
-        try
-        {
-            record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out created);
-        }
-        catch (NotImplementedException) when (selector.IsDefault)
-        {
-            return OpenLegacyDefaultWorld(schema, simulationSeedOverride, log);
-        }
+        WorldRecord record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out bool created);
 
         WorldDescriptor descriptor = record.Descriptor;
         descriptor.Validate();
@@ -300,37 +287,6 @@ public static class ServerBootstrap
             simulationSeed,
             record.WorldTimeTicks,
             worldId,
-            descriptor);
-    }
-
-    // World 1 from its stored seed and world time, as the server opened it before worlds had a catalog.
-    private static ServerPersistenceBundle OpenLegacyDefaultWorld(
-        SqliteSchemaBootstrapper schema,
-        string? simulationSeedOverride,
-        Action<string>? log)
-    {
-        WorldDescriptor descriptor = WorldDescriptor.Default;
-        SqliteWorldMetadataRepository metadata = new(schema, descriptor.Id);
-        WorldSimulationSeed stored = metadata.GetOrCreateSimulationSeed();
-        if (stored.Created)
-        {
-            log?.Invoke($"World '{descriptor.Name}' simulation seed generated and stored.");
-        }
-
-        metadata.TryGetWorldTimeTicks(out long worldTimeTicks);
-        log?.Invoke($"World '{descriptor.Name}' (id {descriptor.Id}) opened.");
-
-        ulong simulationSeed = ResolveSimulationSeed(stored.Seed, simulationSeedOverride, log);
-        SqliteCombatFormulaRepository formulas = new(schema);
-        return new ServerPersistenceBundle(
-            schema,
-            new SqlitePlayerProfileRepository(schema),
-            new SqliteWorldPersistenceRepository(schema, descriptor.Id),
-            formulas,
-            CombatFormulaService.Create(formulas),
-            simulationSeed,
-            worldTimeTicks,
-            descriptor.Id,
             descriptor);
     }
 

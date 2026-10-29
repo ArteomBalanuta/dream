@@ -21,7 +21,7 @@ public sealed class SqliteWorldCatalogTests
         Assert.NotNull(a.Seed);
         Assert.Equal(42UL, b.Seed);
         Assert.Equal(0, a.WorldTimeTicks);
-        Assert.True(a.CreatedSchemaVersion >= 1);
+        Assert.Equal(3, a.CreatedSchemaVersion);
         Assert.Equal([a.Descriptor.Id, b.Descriptor.Id], db.Catalog.List().Select(r => r.Descriptor.Id).ToArray());
         Assert.Equal(b, db.Catalog.TryGet(b.Descriptor.Id));
     }
@@ -120,6 +120,22 @@ public sealed class SqliteWorldCatalogTests
 
         Assert.Equal(1L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM player_profiles")));
         Assert.False(db.Catalog.Delete(copy.Descriptor.Id));
+    }
+
+    [Fact]
+    public void CopyAndDelete_LeaveTheMigratedDatabaseForeignKeyClean()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")));
+
+        WorldRecord copy = db.Catalog.Copy(WorldId.Default, "Copy");
+        Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")));
+        Assert.Equal("ok", db.Scalar("PRAGMA integrity_check"));
+
+        Assert.True(db.Catalog.Delete(copy.Descriptor.Id));
+        Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")));
+        Assert.Equal("ok", db.Scalar("PRAGMA integrity_check"));
     }
 
     [Fact]
