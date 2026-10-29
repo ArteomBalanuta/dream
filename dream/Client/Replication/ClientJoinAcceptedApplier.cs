@@ -49,7 +49,14 @@ public static class ClientJoinAcceptedApplier
         try
         {
             descriptor = wire.ToDescriptor();
-            if (!WorldGeneratorCatalog.IsSupported(descriptor.GeneratorKey, descriptor.GeneratorVersion))
+            if (descriptor.MapSource == WorldMapSource.Stored)
+            {
+                // Replaced by the terrain-transfer build in wave E (B).
+                throw new UnsupportedWorldException("stored worlds need a v8 terrain transfer");
+            }
+
+            if (descriptor.MapSource == WorldMapSource.Generated &&
+                !WorldGeneratorCatalog.IsSupported(descriptor.GeneratorKey, descriptor.GeneratorVersion))
             {
                 throw new UnsupportedWorldException(
                     $"The server's world \"{descriptor.Name}\" uses generator \"{descriptor.GeneratorKey}\" " +

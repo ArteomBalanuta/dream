@@ -68,13 +68,13 @@ public class WorldGeneratorCatalogTests
     }
 
     [Fact]
-    public void ForWorld_RejectsStoredAndUnknownGenerators()
+    public void ForWorld_RejectsUnknownGenerators_AndStoredWorldsWithoutChunks()
     {
         WorldDescriptor stored = WorldDescriptor.ForFloorSize(30) with { MapSource = WorldMapSource.Stored };
         WorldDescriptor unknown = WorldDescriptor.ForFloorSize(30) with { GeneratorKey = "nope" };
 
-        NotSupportedException storedError = Assert.Throws<NotSupportedException>(() => MapSources.ForWorld(stored, 1));
-        Assert.Contains("stored worlds are hosted from wave E", storedError.Message);
+        InvalidOperationException storedError = Assert.Throws<InvalidOperationException>(() => MapSources.ForWorld(stored, 1));
+        Assert.Contains("stored world has no terrain chunks", storedError.Message);
         Assert.Throws<NotSupportedException>(() => MapSources.ForWorld(unknown, 1));
     }
 }

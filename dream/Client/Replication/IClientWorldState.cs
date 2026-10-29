@@ -1,6 +1,7 @@
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.MapSources;
 
 namespace Dream.Client.Replication;
 
@@ -24,7 +25,8 @@ public interface IClientWorldState : IReplicatedSessionStateTarget
     WorldDescriptor World { get; }
 
     // Rebuilds the map at the descriptor's size and records it as the current world.
-    void RebuildMapForWorld(WorldDescriptor world);
+    // A non-null source builds the map from it (stored worlds); null builds the generated map.
+    void RebuildMapForWorld(WorldDescriptor world, IMapSource? source = null);
 
     // Records the descriptor when the map already has its size.
     void AdoptWorldDescriptor(WorldDescriptor world);

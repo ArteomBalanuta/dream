@@ -164,6 +164,14 @@ public sealed record WorldTransferLimits
     // it off.
     public TimeSpan Deadline { get; init; } = TimeSpan.FromSeconds(300);
 
+    // Stored terrain (protocol v8): the raw bytes of all chunk blobs of one transfer, of one blob, and
+    // the decoded subcell overrides of the whole terrain (the decode budget).
+    public long MaxTerrainBytes { get; init; } = 16L << 20;
+
+    public int MaxTerrainBlobBytes { get; init; } = 1 << 20;
+
+    public long MaxTerrainSubcellOverrides { get; init; } = 1L << 22;
+
     // The item budget for a world of these dimensions.
     public long MaxItemsFor(int width, int height, int depth)
     {

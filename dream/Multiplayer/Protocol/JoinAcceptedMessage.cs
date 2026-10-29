@@ -1,5 +1,7 @@
+using System.Text.Json.Serialization;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 
 namespace Dream.Multiplayer.Protocol;
@@ -23,8 +25,19 @@ public sealed record JoinAcceptedMessage(
     WorldClockAnchor? WorldClock = null,
     // Persistence wave B: the world the client joins (its map size and generator). Null is
     // omitted from the JSON, so a message without it encodes exactly as before.
-    WorldDescriptorWire? World = null) : IServerToClientMessage
+    WorldDescriptorWire? World = null,
+    // Protocol v8: the stored terrain that follows this carrier as server.terrain-chunk frames.
+    // Null (generated worlds) is omitted from the JSON, so those joins encode exactly as in v7.
+    TerrainTransferManifest? Terrain = null) : IServerToClientMessage
 {
+    // Server: the terrain the connection writer streams after the carrier. Not on the wire.
+    [JsonIgnore]
+    public TerrainTransferPayload? TerrainPayload { get; init; }
+
+    // Client: the terrain the reassembler collected, delivered with the assembled world. Not on the wire.
+    [JsonIgnore]
+    public IReadOnlyList<PersistedTerrainChunk>? ReceivedTerrain { get; init; }
+
     public string MessageKind => "server.join-accepted";
 
     public IReadOnlyList<PlayerRosterEntry> EffectiveRoster => Roster ?? Array.Empty<PlayerRosterEntry>();

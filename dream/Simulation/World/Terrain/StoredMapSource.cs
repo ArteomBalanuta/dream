@@ -9,8 +9,10 @@ namespace Dream.Simulation.World.Terrain;
 public sealed class StoredMapSource : IMapSource
 {
     private readonly IReadOnlyList<PersistedTerrainChunk> _chunks;
+    private readonly long _maxSubcellOverrides;
 
-    public StoredMapSource(MapDefinition definition, IReadOnlyList<PersistedTerrainChunk> chunks)
+    public StoredMapSource(MapDefinition definition, IReadOnlyList<PersistedTerrainChunk> chunks,
+        long maxSubcellOverrides = long.MaxValue)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         ArgumentNullException.ThrowIfNull(chunks);
@@ -37,6 +39,7 @@ public sealed class StoredMapSource : IMapSource
         }
 
         _chunks = chunks;
+        _maxSubcellOverrides = maxSubcellOverrides;
     }
 
     public MapDefinition Definition { get; }
@@ -47,9 +50,10 @@ public sealed class StoredMapSource : IMapSource
         int height = Definition.Height;
         GeometryCellRecord?[] slots = new GeometryCellRecord?[Definition.Width * depth * height];
         int total = 0;
+        long budget = _maxSubcellOverrides;
         foreach (PersistedTerrainChunk chunk in _chunks)
         {
-            List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(Definition, chunk.ChunkX, chunk.ChunkZ, chunk.Data);
+            List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(Definition, chunk.ChunkX, chunk.ChunkZ, chunk.Data, ref budget);
             if (cells.Count != chunk.CellCount)
             {
                 throw new InvalidDataException($"terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) cell count differs from its blob");

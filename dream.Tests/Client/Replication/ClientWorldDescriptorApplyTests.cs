@@ -130,8 +130,38 @@ public class ClientWorldDescriptorApplyTests
         using ClientWorldSession client = CreateClient(20);
         WorldDescriptorWire wire = WorldDescriptorWire.From(WorldDescriptor.Default) with { MapSource = "stored" };
 
-        Assert.Throws<UnsupportedWorldException>(() => ClientJoinAcceptedApplier.ApplyToRuntime(
+        UnsupportedWorldException error = Assert.Throws<UnsupportedWorldException>(() => ClientJoinAcceptedApplier.ApplyToRuntime(
             client, new JoinAcceptedMessage("session-a", 101, 0, InitialWorld: null, World: wire)));
+
+        Assert.Equal("stored worlds need a v8 terrain transfer", error.Message);
+        Assert.Equal(20, client.Map.Width);
+    }
+
+    [Fact]
+    public void AStoredWorld_IsRejected_EvenWithReceivedTerrain_AndAnUnknownProvenanceGenerator()
+    {
+        using ClientWorldSession client = CreateClient(20);
+        WorldDescriptorWire wire = WorldDescriptorWire.From(WorldDescriptor.Default) with { MapSource = "stored", GeneratorKey = "someday" };
+        JoinAcceptedMessage join = new JoinAcceptedMessage("session-a", 101, 0, InitialWorld: null, World: wire) with
+        {
+            ReceivedTerrain = Array.Empty<Dream.Simulation.Persistence.PersistedTerrainChunk>()
+        };
+
+        UnsupportedWorldException error = Assert.Throws<UnsupportedWorldException>(
+            () => ClientJoinAcceptedApplier.ApplyToRuntime(client, join));
+
+        Assert.Equal("stored worlds need a v8 terrain transfer", error.Message);
+    }
+
+    [Fact]
+    public void RebuildingFromASource_IsNotSupportedYet()
+    {
+        using ClientWorldSession client = CreateClient(20);
+
+        Assert.Throws<NotSupportedException>(() => client.RebuildMapForWorld(
+            WorldDescriptor.ForFloorSize(20),
+            new Dream.Simulation.World.MapSources.GeneratedMapSource(
+                Dream.Simulation.World.MapSources.MapDefinition.ForWorld(WorldDescriptor.ForFloorSize(20)))));
     }
 
     [Fact]

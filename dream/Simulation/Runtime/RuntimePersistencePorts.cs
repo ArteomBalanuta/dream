@@ -20,4 +20,7 @@ public sealed record RuntimePersistencePorts(
     // The world the host runs: its map is built from this descriptor. Null means
     // WorldDescriptor.Default. (Named Descriptor because World is the world repository.)
     public WorldDescriptor? Descriptor { get; init; }
+
+    // The terrain chunks of a stored world, as loaded; null for generated worlds.
+    public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; init; }
 }

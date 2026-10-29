@@ -18,8 +18,10 @@ public readonly record struct TransportEnvelope(
     // 256); a v5 client would reject the mask, so both sides refuse it. Version 7 (persistence
     // wave B) adds the world descriptor to the join-accepted message (JoinAcceptedMessage.World): a
     // v6 client would size its map from the first snapshot and ignore the descriptor, so both sides
-    // refuse it. Snapshot payloads are unchanged. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 7;
+    // refuse it. Version 8 (persistence wave E) adds the stored-terrain manifest
+    // (JoinAcceptedMessage.Terrain) and the server.terrain-chunk transfer of stored worlds; a v7 client could not
+    // build a stored world, so both sides refuse it. Snapshot payloads are unchanged. Decode rejects any other version.
+    public const int CurrentProtocolVersion = 8;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)
