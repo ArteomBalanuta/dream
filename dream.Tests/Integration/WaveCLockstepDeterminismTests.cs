@@ -14,11 +14,10 @@ namespace Dream.Tests.Integration;
 // worlds.next_object_id included.
 public sealed class WaveCLockstepDeterminismTests(ITestOutputHelper output)
 {
-    private const string NeedsAbc = "wave C: needs A+B+C, unskip at glue";
     private const int FirstRunTicks = 600;
     private const int SecondRunTicks = 150;
 
-    [Fact(Skip = NeedsAbc)]
+    [Fact]
     public void TwoServers_WithARestartInTheMiddle_KeepEqualChecksumsEveryTick_AndEqualDatabases()
     {
         using TempDatabase left = new();

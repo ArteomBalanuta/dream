@@ -111,7 +111,6 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
 
     private const string DeleteSql = "DELETE FROM enemy_instances WHERE world_id = $worldId AND object_id = $objectId;";
 
-    private const string ReassignSql = "UPDATE enemy_instances SET object_id = $newEnemyId WHERE world_id = $worldId AND object_id = $oldEnemyId;";
 
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() =>
         QueryList(LoadSql, static reader => new PersistedEnemyInstance(
@@ -157,14 +156,4 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
 
     public void DeleteEnemyInstance(ObjectId objectId) =>
         Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$objectId", id.Value));
-
-    // Removed by the wave C glue.
-    // One UPDATE of the primary key: atomic on its own, and under the write queue's savepoint
-    // when it runs in a group. A taken newEnemyId fails the primary key and changes nothing.
-    public void ReassignEnemyId(int oldEnemyId, int newEnemyId) =>
-        Execute(ReassignSql, (oldEnemyId, newEnemyId), static (command, ids) =>
-        {
-            command.BindInt64("$oldEnemyId", ids.oldEnemyId);
-            command.BindInt64("$newEnemyId", ids.newEnemyId);
-        });
 }

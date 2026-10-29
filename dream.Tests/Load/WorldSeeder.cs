@@ -180,7 +180,7 @@ public static class WorldSeeder
                 Vector3 center = cube.CenterPosition ?? cube.CellPosition + new Vector3(0.5f);
                 SetValues(
                     parameters,
-                    cube.ObjectId.AsInt(),
+                    (int)cube.ObjectId.Value,
                     cube.OwnerPlayerName,
                     cube.CellPosition.X,
                     cube.CellPosition.Y,
@@ -216,7 +216,7 @@ public static class WorldSeeder
                 SetValues(
                     parameters,
                     piece.ObjectId.Value,
-                    piece.OriginObjectId.AsInt(),
+                    (int)piece.OriginObjectId.Value,
                     piece.PieceIndex,
                     piece.OwnerPlayerName,
                     piece.ParentCell.X,

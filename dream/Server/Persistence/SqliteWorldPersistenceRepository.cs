@@ -62,7 +62,6 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteEnemyInstance(ObjectId objectId) => _enemies.DeleteEnemyInstance(objectId);
 
-    public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => _enemies.ReassignEnemyId(oldEnemyId, newEnemyId);
 
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => _items.LoadItemInstances();
 
@@ -70,7 +69,6 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteItemInstance(long itemInstanceId) => _items.DeleteItemInstance(itemInstanceId);
 
-    public long GetMaxItemInstanceId() => _items.GetMaxItemInstanceId();
 
     public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => _inventory.LoadInventorySlots();
 

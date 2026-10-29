@@ -8,6 +8,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -266,8 +267,10 @@ public class ServerActorIdentityIntegrationTests
 
             EnemyActor respawned = Assert.Single(runtime.Enemies.ActiveActors);
             Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 1, respawned.Combatant.Actor.Id);
-            Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 1, ActorOf(runtime, new ObjectId(2008)));
-            Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId == new ObjectId(2008));
+            // The joined player's starter items took the ids after 2007, so the respawn is a fresh id past them.
+            ObjectId respawnedObject = new(2008 + ToolCatalog.StarterItemKinds.Count);
+            Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 1, ActorOf(runtime, respawnedObject));
+            Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId == respawnedObject);
         }
     }
 
@@ -430,11 +433,6 @@ public class ServerActorIdentityIntegrationTests
         public long LoadNextObjectId() => 1;
 
 
-        // Removed by the wave C glue; restore no longer re-identifies enemies.
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
-        {
-        }
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
         public void SaveItemInstance(PersistedItemInstance item)
@@ -448,8 +446,6 @@ public class ServerActorIdentityIntegrationTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Array.Empty<PersistedInventorySlot>();
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName) => PersistedPlayerInventory.Empty;
-
-        public long GetMaxItemInstanceId() => 0;
 
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {

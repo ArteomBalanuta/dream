@@ -84,13 +84,6 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
             updated_utc = excluded.updated_utc;
         """;
 
-    // C0 shim, removed by the wave C glue: the bridge still passes ObjectId.None for a piece. Such a
-    // piece takes the world's next id in SQL (the insert trigger then advances the counter) and
-    // upserts on its (origin, index) key.
-    private static readonly string UpsertByIndexSql = UpsertSql
-        .Replace("$objectId,", "(SELECT next_object_id FROM worlds WHERE world_id = $worldId),", StringComparison.Ordinal)
-        .Replace("ON CONFLICT(world_id, object_id) DO UPDATE SET", "ON CONFLICT(world_id, origin_object_id, piece_index) DO UPDATE SET", StringComparison.Ordinal);
-
     private const string DeleteSql = "DELETE FROM cube_fracture_pieces WHERE world_id = $worldId AND origin_object_id = $originObjectId;";
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() =>
@@ -108,12 +101,9 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
 
     // created_utc keeps piece.CreatedUtc (UtcNow when unset); updated_utc is the write time.
     public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) =>
-        Execute(piece.ObjectId.IsNone ? UpsertByIndexSql : UpsertSql, piece, static (command, p) =>
+        Execute(UpsertSql, piece, static (command, p) =>
         {
-            if (!p.ObjectId.IsNone)
-            {
-                command.BindInt64("$objectId", p.ObjectId.Value);
-            }
+            command.BindInt64("$objectId", p.ObjectId.Value);
 
             command.BindInt64("$originObjectId", p.OriginObjectId.Value);
             command.BindInt64("$pieceIndex", p.PieceIndex);

@@ -117,6 +117,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 Assert.False(reader.Read(), "foreign_key_check must be clean");
             }
 
+            AssertObjectIdCounterAndTriggers(database);
             Assert.Equal(5L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
             Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
             Assert.Equal(oldSeed, database.Scalar("SELECT seed FROM worlds WHERE world_id = 1;"));
@@ -168,6 +169,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
         MigrationTestDatabase.ReleasePooledConnections();
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
+        AssertObjectIdCounterAndTriggers(database);
         Assert.Equal(lampsBefore + 1, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp' AND world_id = 1;"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
         // The two torches of the real players are still theirs; the new player has her own (starter kit).
@@ -194,6 +196,27 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
         MigrationTestDatabase.ReleasePooledConnections();
         Assert.Single(database.Backups());
+    }
+
+    // worlds.next_object_id is above every object id of every kind, and the four triggers that keep it
+    // there survived the migration.
+    private static void AssertObjectIdCounterAndTriggers(MigrationTestDatabase database)
+    {
+        Assert.Equal(
+            1L,
+            database.Scalar("""
+                SELECT CASE WHEN w.next_object_id > COALESCE(MAX(m.id), 0) THEN 1 ELSE 0 END
+                FROM worlds w, (
+                    SELECT object_id AS id FROM placed_cube_instances WHERE world_id = 1
+                    UNION ALL SELECT object_id FROM cube_fracture_pieces WHERE world_id = 1
+                    UNION ALL SELECT object_id FROM enemy_instances WHERE world_id = 1
+                    UNION ALL SELECT item_instance_id FROM item_instances WHERE world_id = 1
+                ) m
+                WHERE w.world_id = 1;
+                """));
+        Assert.Equal(
+            4L,
+            database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id';"));
     }
 
     private static IReadOnlyList<ISchemaMigration> MigrationSet() => SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);

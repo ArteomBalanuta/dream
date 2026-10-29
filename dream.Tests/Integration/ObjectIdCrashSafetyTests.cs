@@ -13,9 +13,8 @@ namespace Dream.Tests.Integration;
 // allocator past all of them.
 public sealed class ObjectIdCrashSafetyTests(ITestOutputHelper output)
 {
-    private const string NeedsAbc = "wave C: needs A+B+C, unskip at glue";
 
-    [Fact(Skip = NeedsAbc)]
+    [Fact]
     public void AfterACrash_EveryPersistedId_IsBelowTheStoredCounter_AndNoPersistedIdIsReissued()
     {
         using TempDatabase database = new();

@@ -286,9 +286,9 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadItemInstances)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadInventorySlots)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
-        Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.GetMaxItemInstanceId)));
         Assert.Equal(0, runtime.LoadedInventoryCount);
-        Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count, runtime.NextItemInstanceId);
+        // Past every stored id, plus the one the startup wolf took from the shared allocator.
+        Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count + 1, runtime.NextItemInstanceId);
 
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("stored", "Stored");
@@ -339,12 +339,11 @@ public sealed class PerPlayerInventoryPersistenceTests
     }
 
     [Fact]
-    public void SqliteRepository_LoadsOnePlayersInventory_AndTheMaxItemId()
+    public void SqliteRepository_LoadsOnePlayersInventory()
     {
         using PersistenceTestDatabase database = new();
         SqlitePlayerProfileRepository profiles = new(database.Schema);
         SqliteWorldPersistenceRepository world = new(database.Schema);
-        Assert.Equal(0, world.GetMaxItemInstanceId());
         profiles.GetOrCreate("player-one");
         profiles.GetOrCreate("player-two");
         world.SaveItemInstance(Item(101, "player-one"));
@@ -360,7 +359,6 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(new[] { 101L, 102L }, one.Items.Select(item => item.ItemInstanceId).Order());
         Assert.All(one.Items, item => Assert.Equal("player-one", item.OwnerPlayerName));
         Assert.Empty(world.LoadPlayerInventory("nobody").Slots);
-        Assert.Equal(205, world.GetMaxItemInstanceId());
     }
 
     private static WorldSessionRuntime CreateRuntime(PersistenceTestDatabase database)
@@ -567,8 +565,6 @@ public sealed class PerPlayerInventoryPersistenceTests
         }
 
 
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Count(nameof(ReassignEnemyId));
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances()
         {
             Count(nameof(LoadItemInstances));
@@ -608,13 +604,6 @@ public sealed class PerPlayerInventoryPersistenceTests
                 .Select(id => _items[id])
                 .ToArray();
             return new PersistedPlayerInventory(slots, items, _grants.TryGetValue(name, out int kit) ? kit : null);
-        }
-
-        public long GetMaxItemInstanceId()
-        {
-            Count(nameof(GetMaxItemInstanceId));
-            long max = _items.Count == 0 ? 0 : _items.Keys.Max();
-            return _slots.Count == 0 ? max : Math.Max(max, _slots.Values.Max(slot => slot.ItemInstanceId));
         }
 
         public void SaveInventorySlot(PersistedInventorySlot slot)

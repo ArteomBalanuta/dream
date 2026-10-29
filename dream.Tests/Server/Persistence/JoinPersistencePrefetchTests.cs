@@ -519,8 +519,6 @@ public sealed class JoinPersistencePrefetchTests
         public long LoadNextObjectId() => 1;
 
 
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Call(nameof(ReassignEnemyId), () => inner.ReassignEnemyId(oldEnemyId, newEnemyId));
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Call(nameof(LoadItemInstances), inner.LoadItemInstances);
 
         public void SaveItemInstance(PersistedItemInstance item) => Call(nameof(SaveItemInstance), () => inner.SaveItemInstance(item));
@@ -530,8 +528,6 @@ public sealed class JoinPersistencePrefetchTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Call(nameof(LoadInventorySlots), inner.LoadInventorySlots);
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName) => Call(nameof(LoadPlayerInventory), () => inner.LoadPlayerInventory(playerName));
-
-        public long GetMaxItemInstanceId() => Call(nameof(GetMaxItemInstanceId), inner.GetMaxItemInstanceId);
 
         public void SaveInventorySlot(PersistedInventorySlot slot) => Call(nameof(SaveInventorySlot), () => inner.SaveInventorySlot(slot));
 
