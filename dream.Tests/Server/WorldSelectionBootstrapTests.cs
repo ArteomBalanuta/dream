@@ -380,5 +380,15 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
         public WorldRecord Copy(WorldId source, string newName) => throw new NotSupportedException();
 
         public bool Delete(WorldId id) => throw new NotSupportedException();
+
+        public WorldTerrainSource ReadTerrainSource(WorldId id) => throw new NotSupportedException();
+
+        public WorldRecord CreateStored(
+            WorldId source,
+            string newName,
+            IReadOnlyList<Dream.Simulation.Persistence.PersistedTerrainChunk> chunks,
+            bool terrainOnly) => throw new NotSupportedException();
+
+        public TerrainResetResult ResetTerrain(WorldId id) => throw new NotSupportedException();
     }
 }

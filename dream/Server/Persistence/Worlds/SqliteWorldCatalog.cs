@@ -1,6 +1,8 @@
 using System.Globalization;
+using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
 using Dream.Server.Worlds;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
@@ -158,27 +160,181 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
 
         foreach ((string table, string columns) in CopyTables)
         {
-            using SqliteCommand copy = session.CreateCommand(
-                $"INSERT INTO {table} (world_id, {columns}) SELECT $newId, {columns} FROM {table} WHERE world_id = $sourceId;");
-            copy.Parameters.AddWithValue("$newId", id);
-            copy.Parameters.AddWithValue("$sourceId", source.Value);
-            copy.ExecuteNonQuery();
+            CopyTable(session, table, columns, source.Value, id);
         }
 
-        // The copy keeps the counter, so an id the source retired is not reissued in the copy. The
-        // insert triggers already raised it past every copied row; this only ever raises it further.
-        using (SqliteCommand counter = session.CreateCommand(
-            "UPDATE worlds SET next_object_id = MAX(next_object_id, " +
-            "(SELECT next_object_id FROM worlds WHERE world_id = $sourceId)) WHERE world_id = $newId;"))
+        RaiseCounter(session, source.Value, id);
+
+        WorldRecord created = TryGet(session, new WorldId(id))!;
+        session.Commit();
+        return created;
+    }
+
+    public WorldTerrainSource ReadTerrainSource(WorldId id)
+    {
+        WorldRecord record;
+        using (SqliteSession session = _store.BeginOwnedTransaction())
         {
-            counter.Parameters.AddWithValue("$newId", id);
-            counter.Parameters.AddWithValue("$sourceId", source.Value);
-            counter.ExecuteNonQuery();
+            record = TryGet(session, id) ?? throw new WorldNotFoundException(id.ToString());
+            if (record.Seed == null)
+            {
+                string generated = SqliteWorldMetadataRepository.GenerateSimulationSeed().ToString(CultureInfo.InvariantCulture);
+                using SqliteCommand store = session.CreateCommand(
+                    "UPDATE worlds SET seed = $seed WHERE world_id = $id AND seed IS NULL;");
+                store.Parameters.AddWithValue("$seed", generated);
+                store.Parameters.AddWithValue("$id", id.Value);
+                store.ExecuteNonQuery();
+                record = TryGet(session, id)!;
+            }
+
+            session.Commit();
+        }
+
+        IReadOnlyList<PersistedTerrainChunk>? chunks = null;
+        if (record.Descriptor.MapSource == WorldMapSource.Stored)
+        {
+            chunks = new SqliteTerrainChunkRepository(_store, id).LoadTerrainChunks();
+        }
+
+        IReadOnlyList<PersistedTerrainCellOverride> overrides =
+            new SqliteTerrainOverrideRepository(_store, id).LoadTerrainCellOverrides();
+        return new WorldTerrainSource(record, record.Seed!.Value, chunks, overrides);
+    }
+
+    public WorldRecord CreateStored(
+        WorldId source,
+        string newName,
+        IReadOnlyList<PersistedTerrainChunk> chunks,
+        bool terrainOnly)
+    {
+        ArgumentNullException.ThrowIfNull(newName);
+        ArgumentNullException.ThrowIfNull(chunks);
+        string name = newName.Trim();
+        RequireValidName(name);
+
+        using SqliteSession session = _store.BeginOwnedTransaction();
+        WorldRecord sourceRecord = TryGet(session, source) ?? throw new WorldNotFoundException(source.ToString());
+        RequireNameFree(session, name);
+
+        string seedText = (terrainOnly ? null : sourceRecord.Seed?.ToString(CultureInfo.InvariantCulture))
+            ?? SqliteWorldMetadataRepository.GenerateSimulationSeed().ToString(CultureInfo.InvariantCulture);
+        WorldDescriptor d = sourceRecord.Descriptor;
+        long id = InsertWorld(
+            session,
+            name,
+            d.Width,
+            d.Height,
+            d.Depth,
+            WorldMapSourceText.ToStorage(WorldMapSource.Stored),
+            d.GeneratorKey,
+            d.GeneratorVersion,
+            seedText,
+            terrainOnly ? 0L : sourceRecord.WorldTimeTicks);
+
+        if (!terrainOnly)
+        {
+            foreach ((string table, string columns) in CopyTables)
+            {
+                // The removals are baked into the chunks; the chunks are the new ones.
+                if (table is "terrain_cell_overrides" or "terrain_chunks")
+                {
+                    continue;
+                }
+
+                CopyTable(session, table, columns, source.Value, id);
+            }
+
+            RaiseCounter(session, source.Value, id);
+        }
+
+        using (SqliteCommand insert = session.CreateCommand(
+            "INSERT INTO terrain_chunks (world_id, chunk_x, chunk_z, format_version, cell_count, data, updated_utc) " +
+            "VALUES ($worldId, $chunkX, $chunkZ, $formatVersion, $cellCount, $data, $updatedUtc);"))
+        {
+            insert.Parameters.AddWithValue("$worldId", id);
+            insert.Parameters.AddWithValue("$updatedUtc", SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow));
+            SqliteParameter chunkX = insert.Parameters.Add("$chunkX", SqliteType.Integer);
+            SqliteParameter chunkZ = insert.Parameters.Add("$chunkZ", SqliteType.Integer);
+            SqliteParameter version = insert.Parameters.Add("$formatVersion", SqliteType.Integer);
+            SqliteParameter cells = insert.Parameters.Add("$cellCount", SqliteType.Integer);
+            SqliteParameter data = insert.Parameters.Add("$data", SqliteType.Blob);
+            foreach (PersistedTerrainChunk chunk in chunks)
+            {
+                chunkX.Value = chunk.ChunkX;
+                chunkZ.Value = chunk.ChunkZ;
+                version.Value = chunk.FormatVersion;
+                cells.Value = chunk.CellCount;
+                data.Value = chunk.Data;
+                insert.ExecuteNonQuery();
+            }
         }
 
         WorldRecord created = TryGet(session, new WorldId(id))!;
         session.Commit();
         return created;
+    }
+
+    public TerrainResetResult ResetTerrain(WorldId id)
+    {
+        using SqliteSession session = _store.BeginOwnedTransaction();
+        _ = TryGet(session, id) ?? throw new WorldNotFoundException(id.ToString());
+
+        // Rubble first (it is matched through the override rows), then the overrides.
+        int rubble;
+        using (SqliteCommand command = session.CreateCommand(
+            "DELETE FROM cube_fracture_pieces WHERE world_id = $id AND EXISTS (" +
+            "SELECT 1 FROM terrain_cell_overrides AS o WHERE o.world_id = $id " +
+            "AND o.cell_x = cube_fracture_pieces.parent_cell_x AND o.cell_y = cube_fracture_pieces.parent_cell_y " +
+            "AND o.cell_z = cube_fracture_pieces.parent_cell_z AND NOT EXISTS (" +
+            "SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
+            "AND p.cell_x = o.cell_x AND p.cell_y = o.cell_y AND p.cell_z = o.cell_z));"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value);
+            rubble = command.ExecuteNonQuery();
+        }
+
+        int cleared;
+        using (SqliteCommand command = session.CreateCommand(
+            "DELETE FROM terrain_cell_overrides WHERE world_id = $id AND NOT EXISTS (" +
+            "SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
+            "AND p.cell_x = terrain_cell_overrides.cell_x AND p.cell_y = terrain_cell_overrides.cell_y " +
+            "AND p.cell_z = terrain_cell_overrides.cell_z);"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value);
+            cleared = command.ExecuteNonQuery();
+        }
+
+        int kept;
+        using (SqliteCommand command = session.CreateCommand(
+            "SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = $id;"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value);
+            kept = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        }
+
+        session.Commit();
+        return new TerrainResetResult(cleared, rubble, kept);
+    }
+
+    private static void CopyTable(SqliteSession session, string table, string columns, long sourceId, long newId)
+    {
+        using SqliteCommand copy = session.CreateCommand(
+            $"INSERT INTO {table} (world_id, {columns}) SELECT $newId, {columns} FROM {table} WHERE world_id = $sourceId;");
+        copy.Parameters.AddWithValue("$newId", newId);
+        copy.Parameters.AddWithValue("$sourceId", sourceId);
+        copy.ExecuteNonQuery();
+    }
+
+    // The copy keeps the counter, so an id the source retired is not reissued in the copy. The
+    // insert triggers already raised it past every copied row; this only ever raises it further.
+    private static void RaiseCounter(SqliteSession session, long sourceId, long newId)
+    {
+        using SqliteCommand counter = session.CreateCommand(
+            "UPDATE worlds SET next_object_id = MAX(next_object_id, " +
+            "(SELECT next_object_id FROM worlds WHERE world_id = $sourceId)) WHERE world_id = $newId;");
+        counter.Parameters.AddWithValue("$newId", newId);
+        counter.Parameters.AddWithValue("$sourceId", sourceId);
+        counter.ExecuteNonQuery();
     }
 
     public bool Delete(WorldId id)

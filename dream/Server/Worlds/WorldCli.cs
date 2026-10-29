@@ -7,7 +7,7 @@ using Dream.Simulation.World;
 namespace Dream.Server.Worlds;
 
 // The `--worlds` command line: list | create <name> [--size N] | copy <src> <name> |
-// delete <id|name> --yes. Output is tab-separated (id, name, size, generator, world time ticks); the
+// delete <id|name> --yes | export <src> <name> [--terrain-only] | reset-terrain <id|name> --yes. Output is tab-separated (id, name, size, generator, world time ticks); the
 // seed is never printed.
 public static class WorldCli
 {
@@ -15,9 +15,14 @@ public static class WorldCli
     public const int ExitUsage = 1;
     public const int ExitNotFoundOrConflict = 2;
     public const int ExitSchemaTooNew = 3;
+    public const int ExitTerrainInvalid = 4;
 
     public const string Usage =
-        "Usage: --worlds list | create <name> [--size N] | copy <id|name> <new name> | delete <id|name> --yes";
+        "Usage: --worlds list | create <name> [--size N] | copy <id|name> <new name> | delete <id|name> --yes | " +
+        "export <id|name> <new name> [--terrain-only] | reset-terrain <id|name> --yes";
+
+    // Export and reset are offline commands: nothing detects a running server (a hosting lease is Phase 5).
+    internal const string OfflineNote = "Note: stop the server hosting this world first.";
 
     // Runs against the default database (migrating it first). args are the arguments after --worlds.
     public static int Run(string[] args)
@@ -32,7 +37,7 @@ public static class WorldCli
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(error);
 
-        Func<IWorldCatalog, int>? command = Parse(args, output, out string? usageError);
+        Func<IWorldCatalog, int>? command = Parse(args, output, error, out string? usageError);
         if (command == null)
         {
             error.WriteLine(usageError);
@@ -76,7 +81,7 @@ public static class WorldCli
         return new SqliteWorldCatalog(schema);
     }
 
-    private static Func<IWorldCatalog, int>? Parse(string[] args, TextWriter output, out string? usageError)
+    private static Func<IWorldCatalog, int>? Parse(string[] args, TextWriter output, TextWriter error, out string? usageError)
     {
         usageError = null;
         if (args.Length == 0)
@@ -167,6 +172,86 @@ public static class WorldCli
                 };
             }
 
+            case "export":
+            {
+                bool terrainOnly = rest.Contains("--terrain-only", StringComparer.Ordinal);
+                string[] positional = rest.Where(a => a != "--terrain-only").ToArray();
+                if (positional.Length != 2 || positional.Any(a => a.StartsWith("--", StringComparison.Ordinal)))
+                {
+                    usageError = "'export' needs a source world and a new name, and takes only --terrain-only.";
+                    return null;
+                }
+
+                WorldSelector exportSource = ParseSelector(positional[0], out usageError);
+                if (usageError != null)
+                {
+                    return null;
+                }
+
+                string exportName = positional[1];
+                return catalog =>
+                {
+                    error.WriteLine(OfflineNote);
+                    WorldRecord source = ResolveExisting(catalog, exportSource);
+                    string trimmed = exportName.Trim();
+                    if (catalog.TryGetByName(trimmed) != null)
+                    {
+                        throw new WorldNameTakenException(trimmed);
+                    }
+
+                    WorldTerrainSource input = catalog.ReadTerrainSource(source.Descriptor.Id);
+                    BakedTerrain baked;
+                    try
+                    {
+                        baked = WorldTerrainBaker.Bake(input.Record, input.Seed, input.StoredChunks, input.Overrides);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        error.WriteLine($"The terrain cannot be exported: {ex.Message}");
+                        return ExitTerrainInvalid;
+                    }
+
+                    WorldRecord created = catalog.CreateStored(source.Descriptor.Id, exportName, baked.Chunks, terrainOnly);
+                    output.WriteLine(Format(created));
+                    return ExitOk;
+                };
+            }
+
+            case "reset-terrain":
+            {
+                bool yes = rest.Contains("--yes", StringComparer.Ordinal);
+                string[] positional = rest.Where(a => a != "--yes").ToArray();
+                if (positional.Length != 1)
+                {
+                    usageError = "'reset-terrain' needs exactly one world id or name.";
+                    return null;
+                }
+
+                if (!yes)
+                {
+                    usageError = "'reset-terrain' restores the world's base terrain and drops its rubble; pass --yes to confirm.";
+                    return null;
+                }
+
+                WorldSelector resetTarget = ParseSelector(positional[0], out usageError);
+                if (usageError != null)
+                {
+                    return null;
+                }
+
+                return catalog =>
+                {
+                    error.WriteLine(OfflineNote);
+                    WorldRecord target = ResolveExisting(catalog, resetTarget);
+                    TerrainResetResult result = catalog.ResetTerrain(target.Descriptor.Id);
+                    output.WriteLine(
+                        $"reset-terrain\t{target.Descriptor.Id}\t{target.Descriptor.Name}\t" +
+                        $"cleared={result.OverridesCleared}\trubble={result.RubbleRowsDeleted}\t" +
+                        $"kept={result.CellsKeptForPlacedCubes}");
+                    return ExitOk;
+                };
+            }
+
             default:
                 usageError = $"Unknown --worlds command '{args[0]}'.";
                 return null;
@@ -253,7 +338,9 @@ public static class WorldCli
             d.Id.ToString(),
             d.Name,
             $"{d.Width}x{d.Height}x{d.Depth}",
-            $"{d.GeneratorKey}:{d.GeneratorVersion}",
+            d.MapSource == WorldMapSource.Stored
+                ? $"stored:{d.GeneratorKey}:{d.GeneratorVersion}"
+                : $"{d.GeneratorKey}:{d.GeneratorVersion}",
             record.WorldTimeTicks.ToString(CultureInfo.InvariantCulture));
     }
 }
