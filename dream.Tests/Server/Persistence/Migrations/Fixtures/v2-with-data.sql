@@ -12,11 +12,11 @@ INSERT INTO player_world_state (player_name, position_x, position_y, position_z,
     current_hp, current_energy, updated_utc)
 VALUES ('Name legacy', 30.5, 1.5, 30.5, 0.0, 0.0, 1.0, 100, 10, '2026-01-02T03:04:07.123Z');
 
--- Whole REAL cell coordinates: migration 0003 stores them as INTEGER without loss.
+-- Cells outside the default world's generated wall (x up to 25 at z 20), so the cubes restore. Whole REAL cell coordinates: migration 0003 stores them as INTEGER without loss.
 INSERT INTO placed_cube_instances (cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z,
     shape_kind, material_id, current_health, max_health)
-VALUES (7, 'Name legacy', 20.0, 1.0, 20.0, 20.5, 1.5, 20.5, 'SolidCube', 'Stone', 5, 5),
-       (8, 'Name legacy', 22.0, 1.0, 20.0, 22.5, 1.5, 20.5, 'SolidCube', 'Lamp', 3, 3);
+VALUES (7, 'Name legacy', 30.0, 1.0, 20.0, 30.5, 1.5, 20.5, 'SolidCube', 'Stone', 5, 5),
+       (8, 'Name legacy', 32.0, 1.0, 20.0, 32.5, 1.5, 20.5, 'SolidCube', 'Lamp', 3, 3);
 
 INSERT INTO cube_fracture_pieces (source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z,
     center_x, center_y, center_z, side_length, material_id)

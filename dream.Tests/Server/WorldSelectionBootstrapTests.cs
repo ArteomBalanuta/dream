@@ -9,8 +9,8 @@ using Xunit;
 namespace Dream.Tests.Server;
 
 // Persistence wave B2: the server resolves its world through IWorldCatalog and builds its
-// persistence bundle and runtime ports from the result. Uses a fake catalog; the SQLite catalog
-// is workstream B4.
+// persistence bundle and runtime ports from the result. Most tests use a fake catalog; the RealCatalog tests
+// use the SQLite catalog on a temp database.
 public sealed class WorldSelectionBootstrapTests : IDisposable
 {
     private const ulong RecordSeed = 0x1234_5678_9ABC_DEF0UL;
@@ -166,29 +166,6 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
     }
 
     [Fact]
-    public void DefaultSelection_WithAnUnimplementedCatalog_FallsBackToWorldOne()
-    {
-        FakeCatalog catalog = new(null) { Throw = new NotImplementedException("B4") };
-
-        using ServerPersistenceBundle first = Open(catalog, null);
-        ulong seed = first.SimulationSeed!.Value;
-        first.Dispose();
-        using ServerPersistenceBundle reopened = Open(catalog, null);
-
-        Assert.Equal(WorldDescriptor.Default, first.Descriptor);
-        Assert.Equal(WorldId.Default, first.WorldId);
-        Assert.Equal(seed, reopened.SimulationSeed);
-    }
-
-    [Fact]
-    public void NamedSelection_WithAnUnimplementedCatalog_DoesNotFallBack()
-    {
-        FakeCatalog catalog = new(null) { Throw = new NotImplementedException("B4") };
-
-        Assert.Throws<NotImplementedException>(() => Open(catalog, new ServerStartOptions("alpha")));
-    }
-
-    [Fact]
     public void RuntimePorts_CarryTheBundlesWorldDescriptor()
     {
         WorldDescriptor small = WorldDescriptor.ForFloorSize(20, WorldId.Default, "small");
@@ -216,9 +193,51 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
         Assert.Equal(100, host.Runtime.WorldClock.WorldTicks);
     }
 
-    // Needs the world-bound repositories of workstream B1: until it merges they throw
-    // NotSupportedException for any world other than 1. Enable after the B1 merge.
-    [Fact(Skip = "Enable after B1 merges: repositories bound to world 2 throw NotSupportedException before it.")]
+    [Fact]
+    public void RealCatalog_DefaultSelectorOpensWorldOne()
+    {
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            _databasePath, _schemaPath, start: new ServerStartOptions(null));
+
+        Assert.Equal(WorldId.Default, bundle.WorldId);
+        Assert.Equal("default", bundle.Descriptor!.Name);
+        Assert.NotNull(bundle.SimulationSeed);
+    }
+
+    [Fact]
+    public void RealCatalog_NamedSelectorCreatesTheWorld()
+    {
+        List<string> lines = [];
+
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            _databasePath, _schemaPath, log: lines.Add, start: new ServerStartOptions("foo", 20));
+
+        Assert.Equal("foo", bundle.Descriptor!.Name);
+        Assert.Equal(20, bundle.Descriptor.Width);
+        Assert.NotEqual(WorldId.Default, bundle.WorldId);
+        Assert.Contains(lines, line => line.Contains("created", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RealCatalog_UnknownIdExitsWithCode4()
+    {
+        List<string> lines = [];
+
+        DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+            () =>
+            {
+                ServerBootstrap.CreatePersistenceBundle(
+                    _databasePath, _schemaPath, start: new ServerStartOptions("999")).Dispose();
+                throw new InvalidOperationException("unreachable");
+            },
+            lines.Add,
+            out int exitCode);
+
+        Assert.Null(host);
+        Assert.Equal(4, exitCode);
+    }
+
+    [Fact]
     public void Bundle_ForWorldTwo_BindsRepositoriesAndPortsToWorldTwo()
     {
         WorldDescriptor second = WorldDescriptor.ForFloorSize(20, new WorldId(2), "second");

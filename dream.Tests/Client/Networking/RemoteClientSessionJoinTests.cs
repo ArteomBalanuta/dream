@@ -1,3 +1,8 @@
+using OpenTK.Mathematics;
+using Dream.Client.Replication;
+using Dream.Client.World;
+using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 using System.Threading.Channels;
 using Xunit;
 using Dream.Client.Networking;
@@ -205,6 +210,39 @@ public class RemoteClientSessionJoinTests
         Assert.True(await session.FlushOutboundAsync(Timeout), "the send loop did not drain");
         Assert.Equal(0, session.PendingSendSignalCount);
         Assert.True(session.IsConnected);
+    }
+
+    // The client-side path of an unsupported world, minus the PlayScene shell (a GL scene that cannot be
+    // built in a test): the join-accepted travels the real wire, and the owner applies it and reacts the
+    // way PlayScene.ApplyReplicatedMessage does (catch UnsupportedWorldException -> EndSessionWithReason).
+    // Not covered: PlayScene itself making that call and the scene then leaving play.
+    [Fact]
+    public async Task JoinAcceptedWithAnUnsupportedWorld_EndsTheSessionWithAReasonNamingTheGenerator()
+    {
+        ManualTimerTimeProvider clock = new();
+        WorldDescriptorWire wire = WorldDescriptorWire.From(WorldDescriptor.Default) with { GeneratorKey = "nope" };
+        ScriptedServerConnection server = new(_ => new JoinAcceptedMessage(SessionId, 1, 0, null, World: wire));
+        await using RemoteClientSession session = CreateSession(server, clock);
+        session.StartBackgroundReceive();
+        await session.SendJoinRequestAsync();
+        await WaitUntilAsync(() => session.IsJoined, "the join");
+        JoinAcceptedMessage accepted = Assert.IsType<JoinAcceptedMessage>(Assert.Single(Drain(session)));
+        using ClientWorldSession client = new(20, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+
+        try
+        {
+            ClientJoinAcceptedApplier.ApplyToRuntime(client, accepted);
+            Assert.Fail("The unsupported world was applied.");
+        }
+        catch (Exception ex) when (ex is UnsupportedWorldException or InvalidDataException)
+        {
+            session.EndSessionWithReason(ex.Message);
+        }
+
+        Assert.False(session.IsConnected);
+        Assert.NotNull(session.DisconnectReason);
+        Assert.Contains("nope", session.DisconnectReason, StringComparison.Ordinal);
+        Assert.Equal(20, client.Map.Width);
     }
 
     private static JoinAcceptedMessage Accepted() => new(SessionId, 1, 0, null);

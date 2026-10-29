@@ -22,7 +22,7 @@ public sealed class MultiWorldIsolationTests(ITestOutputHelper output)
     private const ulong AlphaSeed = 1111;
     private const ulong BetaSeed = 2222;
 
-    [Fact(Skip = WorldBundles.SkipReason)]
+    [Fact]
     public void TwoWorlds_RunningTheSameScript_WithTheSameLocalIds_StayIsolated()
     {
         using MigrationTestDatabase database = new();

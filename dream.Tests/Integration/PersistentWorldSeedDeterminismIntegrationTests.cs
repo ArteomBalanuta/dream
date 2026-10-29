@@ -105,7 +105,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         SqliteConnection.ClearAllPools();
 
         // Restart again on a fresh world state (every world and player table emptied) but the same
-        // world_metadata row: the same script must replay with the same checksum every tick.
+        // seed and clock on its worlds row: the same script must replay with the same checksum every tick.
         database.WipeWorldStateKeepingMetadata();
         RunRecord replay;
         using (PersistentScriptedServer server = new(database.OpenBundle()))

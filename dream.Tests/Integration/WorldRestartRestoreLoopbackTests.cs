@@ -21,7 +21,7 @@ public sealed class WorldRestartRestoreLoopbackTests(ITestOutputHelper output)
     private const int SecondWorldSize = 30;
     private const ulong SecondSeed = 7777;
 
-    [Fact(Skip = WorldBundles.SkipReason)]
+    [Fact]
     public async Task World2_RestoresItsLamp_AndItsDescriptor_AfterARestart_WhileWorld1StaysEmpty()
     {
         using MigrationTestDatabase database = new();

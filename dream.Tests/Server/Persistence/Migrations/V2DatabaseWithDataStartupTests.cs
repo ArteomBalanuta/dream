@@ -15,8 +15,6 @@ namespace Dream.Tests.Server.Persistence.Migrations;
 // the clock move onto the worlds row, and the server starts on the restored world.
 public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
 {
-    private const string SkipReason = "needs B1 (migration 0003) + B2 (world selection) merged";
-
     private static readonly string[] WorldTables =
     [
         "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances",
@@ -25,7 +23,7 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
 
     private static readonly long[] FixtureRowCounts = [1, 2, 2, 1, 4, 4, 1];
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public void V2DatabaseWithData_MigratesToV3_KeepsEveryRow_AndTheServerStartsOnWorld1()
     {
         using MigrationTestDatabase database = new();
@@ -81,8 +79,8 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
         {
             host.Runtime!.WriteCheckpointOnDispose = false;
             Assert.Equal(5150UL, host.Runtime.SimulationSeed);
-            Assert.Equal(GeometryMaterialId.Stone, host.Runtime.Map.TryGetCubeAtCell(20, 1, 20)?.MaterialId);
-            Assert.Equal(GeometryMaterialId.Lamp, host.Runtime.Map.TryGetCubeAtCell(22, 1, 20)?.MaterialId);
+            Assert.Equal(GeometryMaterialId.Stone, host.Runtime.Map.TryGetCubeAtCell(30, 1, 20)?.MaterialId);
+            Assert.Equal(GeometryMaterialId.Lamp, host.Runtime.Map.TryGetCubeAtCell(32, 1, 20)?.MaterialId);
             Assert.Contains(host.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == new GeometryCellKey(24, 1, 20));
             Assert.True(host.Runtime.Enemies.TryGetEnemyByActorId(4301, out _));
             Assert.Equal(50_000L, host.Runtime.WorldClock.WorldTicks);
