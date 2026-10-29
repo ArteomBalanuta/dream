@@ -188,7 +188,7 @@ A foreign key to `worlds` with `ON DELETE CASCADE`. A row is written once, when 
 
 **Orphan rubble.** When several rubble groups map to one cell on restore, the group with the highest piece `object_id` wins (piece ids are taken at fracture time, so they follow fracture order; an origin is a placement id and a cube that physics moved to another cell and broke later can have a lower one) and the others are deleted and logged as `server.persistence.orphan-rubble-pruned count=` (decision U5). A group that is replaced while the cell is live (a cube placed over rubble and then broken) deletes the old group's rows on the write queue before the new group's rows; checkpoints carry the tombstone. This also happens when the new group cannot be persisted (no ObjectId or owner), so a stale group is never left behind. This supersedes the wave C note that orphan rubble rows are never deleted.
 
-**`terrain_chunks`: exported terrain.** One row per 16 x 16 column chunk of a map, in a `WITHOUT ROWID` table: `(world_id, chunk_x, chunk_z)` primary key, `format_version`, `cell_count`, `data` (the blob below) and `updated_utc`. Checks: `chunk_x >= 0 AND chunk_z >= 0`, `format_version >= 1`, `cell_count >= 0`, `length(data) >= 23`. Foreign key to `worlds` with `ON DELETE CASCADE`. `ReplaceTerrainChunks` deletes the world's chunks and inserts the new ones in one transaction, so a failure leaves the old set; `LoadTerrainChunks` is `ORDER BY chunk_z, chunk_x`. It is an admin and export path (`ITerrainChunkRepository`), not part of the write queue or the world facade. Catalog copy copies overrides with the same ids, the chunks, and the counter. A `stored` world can have chunk rows but cannot be hosted until wave E (`WorldDescriptor.Validate` still rejects it).
+**`terrain_chunks`: exported terrain.** One row per 16 x 16 column chunk of a map, in a `WITHOUT ROWID` table: `(world_id, chunk_x, chunk_z)` primary key, `format_version`, `cell_count`, `data` (the blob below) and `updated_utc`. Checks: `chunk_x >= 0 AND chunk_z >= 0`, `format_version >= 1`, `cell_count >= 0`, `length(data) >= 23`. Foreign key to `worlds` with `ON DELETE CASCADE`. `ReplaceTerrainChunks` deletes the world's chunks and inserts the new ones in one transaction, so a failure leaves the old set; `LoadTerrainChunks` is `ORDER BY chunk_z, chunk_x`. It is an admin and export path (`ITerrainChunkRepository`), not part of the write queue or the world facade. Catalog copy copies overrides with the same ids, the chunks, and the counter. A `stored` world is hosted from wave E: see **Stored worlds, export and reset (wave E)** below.
 
 **Chunk blob format v1** (`TerrainChunkCodec`, `Dream.Simulation.World.Terrain`). Little-endian, uncompressed, deterministic; the decoder throws `InvalidDataException` on any violation, and encode and decode are exact inverses at the level of effective cell records.
 
@@ -214,6 +214,23 @@ off 0   u8[4]  magic "DTCK"
 ```
 
 The encoder rejects overrides outside `[0, res)`, fracture pieces and more than 127 palette entries. `TerrainChunkFormat.CurrentVersion = 1`, `ChunkSize = 16`.
+
+## Stored worlds, export and reset (wave E)
+
+Persistence wave E (plan `docs/ledger/plans/2026-10-29-wave-e-plan.md`) hosts worlds whose terrain is `terrain_chunks`. **No schema change**: the schema stays at version 6 and no migration is added (decision E6). Migration 0003 already allows `map_source IN ('generated','stored')`, and 0006 already has `terrain_chunks` and `terrain_cell_overrides`. A legacy database stays at v6 with no backup taken.
+
+**What a stored world is.** A `worlds` row with `map_source = 'stored'`, the bounds of its map (square, 5 to 100, height 8, the same hosting limits as a generated world), and a complete set of `terrain_chunks` rows: exactly `ceil(W/16) x ceil(D/16)` chunks, format v1, none duplicated. On a stored world `generator_key` and `generator_version` are provenance only (they record where the terrain came from); `WorldDescriptor.Validate` requires a non-blank key and a version of at least 1 and does not look them up in the catalog. The server loads the chunks once at start and the blobs are sent to clients unchanged; the table is never written while a world is hosted.
+
+**Edits.** `terrain_cell_overrides` rows and their rubble work exactly as on a generated world (see Terrain as data): an override removes a cell of the stored base, in `object_id` order, before cubes are restored. The stored chunks hold the base as exported; an edit never rewrites them.
+
+**Export** (`--worlds export <src> <new name> [--terrain-only]`) is one transaction (`IWorldCatalog.CreateStored`) that inserts a new `worlds` row with `map_source = 'stored'`, the source's bounds and its provenance generator key and version (for a stored source, its own provenance), and the chunks. The chunks are `TerrainChunkExporter.Export(map)` of the source's map after its `Removed` overrides were applied (`Replaced` overrides are counted and skipped, as on restore), so destroyed cells are baked out. Export is deterministic: the same database state gives byte-identical blobs.
+
+- Full export (without `--terrain-only`): copies every world-scoped row as `--worlds copy` does, with the same ids, counter, seed and world time, **except `terrain_cell_overrides`**, which are baked into the chunks. The rubble rows are copied, so the new world shows the same rubble where cells were destroyed.
+- `--terrain-only`: the chunks only. A new seed, `world_time_ticks = 0`, `next_object_id = 1`, and no player, cube, rubble, enemy, item or override rows.
+
+**Reset-terrain** (`--worlds reset-terrain <id|name> --yes`, `IWorldCatalog.ResetTerrain`) is one transaction. For every override cell that holds no `placed_cube_instances` row of that world: delete the override and every `cube_fracture_pieces` row whose parent cell is that cell (any origin, so the restore heal cannot remove the cell again). Cells under a saved placed cube keep their override and rubble and are counted in `CellsKeptForPlacedCubes`. `worlds.next_object_id` is never lowered. The base is the world's own: the generator output for a generated world, the stored chunks for a stored world. A player or enemy saved inside a restored cell is not moved; that behaviour is recorded by the reset tests.
+
+**Offline only.** Export and reset are for a world that no server is running. There is no lease that detects a running server: a running server's later checkpoint, or its restore heal, can write the rows again. A hosting lease belongs to Phase 5.
 
 ## Design Notes
 

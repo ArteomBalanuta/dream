@@ -205,6 +205,7 @@ Read only by `dream.Tests` (see `docs/build-and-run.md`, Testing):
 | `DREAM_LOAD_DURATION_SECONDS` | `LoadScenario.DurationOverrideEnvironmentVariable` | Overrides every scenario's duration, in seconds. |
 | `DREAM_W9_RUNS` | `Wave9NetworkMeasurementTests` | Repetitions per cell of the stall table (default 3). |
 | `DREAM_W9_SCENARIOS` | `Wave9NetworkMeasurementTests` | Comma-separated stall scenarios to run (default `SendStall,FrameStall,NetworkStall,Steady200Ms,Hitchy`). |
+| `DREAM_SOAK_REFERENCE_P99_MS` | `StoredWorldSoakTests.LongSoak_StoredWorld10k_115200Ticks_SixRestarts` | Optional. The tick p99 in milliseconds of `LongSoak_GeneratedReference_115200Ticks_SixRestarts` on the C0 build; when set, the stored soak fails if its own p99 exceeds it by more than 10%. |
 
 `DREAM_BULLET_PROFILER_STRESS_SECONDS` and `DREAM_TEST_MAX_COLLECTIONS` are test-only too and are described under Physics and Test Scheduling below.
 
@@ -297,7 +298,7 @@ One database holds any number of worlds, and one server process runs exactly one
 
 A name that creates a world gives it the new-world size: `ServerStartOptions.NewWorldSize`, which the integrated server takes from the floor size setting, and 56 for the dedicated server. The new world gets a random seed. The server logs the world's name and id, never its seed.
 
-An id that does not exist stops the dedicated server with exit code **4** (`WorldNotFoundException`). A world that cannot be opened stops it with exit code **5**: a `--world` name over 64 characters, or a stored world this build cannot host (a size outside 5 to 100, another height, an unsupported generator). The log line reads `world '<selector>' cannot be opened: <reason>`. The other dedicated-server exit code is 3, for a database migrated by a newer build (`SchemaTooNewException`).
+An id that does not exist stops the dedicated server with exit code **4** (`WorldNotFoundException`). A world that cannot be opened stops it with exit code **5**: a `--world` name over 64 characters, a world whose size is outside 5 to 100 or whose height is not 8, a generated world with an unsupported generator, or a stored world whose terrain chunks are missing, partial, corrupt or over the transfer limits (wave E). The log line reads `world '<selector>' cannot be opened: <reason>`. The other dedicated-server exit code is 3, for a database migrated by a newer build (`SchemaTooNewException`).
 
 A name that does not exist is created, so a typo such as `--world fo` makes a new empty world. The server says so on standard error: `World 'fo' (id 5) did not exist and was created (size 56).` An existing world logs `opened`.
 
@@ -307,12 +308,16 @@ A name that does not exist is created, so a typo such as `--world fo` makes a ne
 
 | Command | Effect |
 | --- | --- |
-| `--worlds list` | Prints one tab-separated line per world: id, name, size (`WxHxD`), generator (`key:version`), world time in ticks. The seed is never printed. |
+| `--worlds list` | Prints one tab-separated line per world: id, name, size (`WxHxD`), generator (`key:version`, or `stored:key:version` for a stored world), world time in ticks. The seed is never printed. |
 | `--worlds create <name> [--size N]` | Creates a world with a random seed. `N` is 5 to 100 (default 56). Prints the new world in the `list` format. |
 | `--worlds copy <src> <name>` | Copies a world (by id or name) with every row it owns, the same local ids, and its seed and world time. Prints the new world in the `list` format. |
 | `--worlds delete <id\|name> --yes` | Deletes a world and everything in it. Without `--yes` nothing is deleted. Prints `deleted`, id and name. |
+| `--worlds export <id\|name> <new name> [--terrain-only]` | Wave E. Creates a NEW stored world from a world's current terrain (never in place; to turn a world into a stored one, export it and delete the old one). The terrain is the source's map with its destroyed cells baked out. Without `--terrain-only` the new world also gets the source's other rows (cubes, rubble, enemies, items, players, the same ids, counter, seed and world time) but no overrides; with `--terrain-only` it is a fresh world with the chunks only, a new seed, world time 0 and no other rows (a map template). Prints the new world in the `list` format. |
+| `--worlds reset-terrain <id\|name> --yes` | Wave E. Restores the world's own base terrain: the generator output for a generated world, its own chunks for a stored world. Deletes every terrain override and the rubble of those cells. Cells that hold a saved placed cube keep their override and rubble and are reported. Prints `reset-terrain`, id, name, `cleared=`, `rubble=`, `kept=`. Without `--yes` nothing changes. |
 
-Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build. A bad argument, including a size outside 5 to 100 or a name that is blank or longer than 64 characters, is a usage error (1). A name already taken ignoring case is a conflict (2).
+`export` and `reset-terrain` are offline commands: **stop the server that hosts the world first.** There is no lease that detects a running server (a hosting lease belongs to Phase 5), so a running server's later checkpoint or restore heal can silently undo a reset, and an export reads the database as it is on disk. Both commands print "stop the server hosting this world first" on standard error. A stored world is hosted like any other (`--world <id|name>`, `DREAM_WORLD`); the server logs `World '<name>' (id n) stored terrain: chunks= bytes= sha256=` at start.
+
+Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build, **4** the terrain is invalid for hosting (export: the baked chunks exceed the hosting limits). A bad argument, including a size outside 5 to 100 or a name that is blank or longer than 64 characters, is a usage error (1). A name already taken ignoring case is a conflict (2).
 
 Names are 1 to 64 characters after trimming and unique ignoring case. A name cannot be only ASCII digits (`--world 2024` selects the id 2024, so such a world could never be selected by name) and cannot contain control characters such as a tab or a newline (they break the `list` output); `create` and `copy` reject both as a usage error (1). World ids are never reused. A copy of a world that has no stored seed stores one on the source first, so both share it.
 
