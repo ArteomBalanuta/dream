@@ -15,8 +15,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         long worldTimeTicks = 0,
         WorldId? worldId = null,
         WorldDescriptor? descriptor = null,
-        ITerrainChunkRepository? terrainChunks = null)
+        ITerrainChunkRepository? terrainChunks = null,
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null)
     {
+        StoredTerrain = storedTerrain;
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
         TerrainChunks = terrainChunks ?? (world as SqliteWorldPersistenceRepository)?.TerrainChunks;
         WorldId = worldId ?? WorldId.Default;
@@ -39,6 +41,9 @@ public sealed class ServerPersistenceBundle : IDisposable
     // The stored-map chunks of this bundle's world (admin and export path, not the write queue).
     // Null when World is not the SQLite repository (a test fake).
     public ITerrainChunkRepository? TerrainChunks { get; }
+
+    // The stored world's terrain chunks, loaded and validated at bootstrap; null for a generated world.
+    public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; }
 
     public ICombatFormulaRepository CombatFormulas { get; }
 

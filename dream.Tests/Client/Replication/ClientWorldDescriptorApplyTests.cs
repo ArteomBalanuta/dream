@@ -125,7 +125,7 @@ public class ClientWorldDescriptorApplyTests
     }
 
     [Fact]
-    public void AStoredMapSource_IsUnsupported()
+    public void AStoredMapSource_WithoutTerrain_IsUnsupported()
     {
         using ClientWorldSession client = CreateClient(20);
         WorldDescriptorWire wire = WorldDescriptorWire.From(WorldDescriptor.Default) with { MapSource = "stored" };
@@ -133,12 +133,12 @@ public class ClientWorldDescriptorApplyTests
         UnsupportedWorldException error = Assert.Throws<UnsupportedWorldException>(() => ClientJoinAcceptedApplier.ApplyToRuntime(
             client, new JoinAcceptedMessage("session-a", 101, 0, InitialWorld: null, World: wire)));
 
-        Assert.Equal("stored worlds need a v8 terrain transfer", error.Message);
+        Assert.Equal("the server sent no terrain for its stored world", error.Message);
         Assert.Equal(20, client.Map.Width);
     }
 
     [Fact]
-    public void AStoredWorld_IsRejected_EvenWithReceivedTerrain_AndAnUnknownProvenanceGenerator()
+    public void AStoredWorld_WithEmptyReceivedTerrain_AndAnUnknownProvenanceGenerator_IsAProtocolError()
     {
         using ClientWorldSession client = CreateClient(20);
         WorldDescriptorWire wire = WorldDescriptorWire.From(WorldDescriptor.Default) with { MapSource = "stored", GeneratorKey = "someday" };
@@ -147,21 +147,25 @@ public class ClientWorldDescriptorApplyTests
             ReceivedTerrain = Array.Empty<Dream.Simulation.Persistence.PersistedTerrainChunk>()
         };
 
-        UnsupportedWorldException error = Assert.Throws<UnsupportedWorldException>(
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
             () => ClientJoinAcceptedApplier.ApplyToRuntime(client, join));
 
-        Assert.Equal("stored worlds need a v8 terrain transfer", error.Message);
+        Assert.StartsWith("Protocol error: stored terrain", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RebuildingFromASource_IsNotSupportedYet()
+    public void RebuildingFromASource_BuildsTheMapFromIt()
     {
         using ClientWorldSession client = CreateClient(20);
+        WorldDescriptor world = WorldDescriptor.ForFloorSize(30);
 
-        Assert.Throws<NotSupportedException>(() => client.RebuildMapForWorld(
-            WorldDescriptor.ForFloorSize(20),
+        client.RebuildMapForWorld(
+            world,
             new Dream.Simulation.World.MapSources.GeneratedMapSource(
-                Dream.Simulation.World.MapSources.MapDefinition.ForWorld(WorldDescriptor.ForFloorSize(20)))));
+                Dream.Simulation.World.MapSources.MapDefinition.ForWorld(world)));
+
+        Assert.Equal(30, client.Map.Width);
+        Assert.Equal(30, client.World.Width);
     }
 
     [Fact]
