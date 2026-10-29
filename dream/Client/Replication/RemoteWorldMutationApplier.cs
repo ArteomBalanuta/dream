@@ -113,7 +113,7 @@ public static class RemoteWorldMutationApplier
     }
 
     // ApplySnapshotToRuntime for a live session: a resync the client cannot host (a stored world of other
-    // dimensions, a non-square world) reports its message to endSession and returns false instead of
+    // dimensions, a non-square world; both are InvalidDataException protocol errors) reports its message to endSession and returns false instead of
     // letting the exception escape the frame loop.
     public static bool TryApplySnapshotToRuntime(
         IClientWorldState runtime, ServerSnapshotEnvelope snapshot, Action<string> endSession)
@@ -124,7 +124,7 @@ public static class RemoteWorldMutationApplier
             ApplySnapshotToRuntime(runtime, snapshot);
             return true;
         }
-        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+        catch (InvalidDataException ex)
         {
             endSession(ex.Message);
             return false;
@@ -211,8 +211,8 @@ public static class RemoteWorldMutationApplier
     {
         if (snapshot.Width != snapshot.Depth)
         {
-            throw new InvalidOperationException(
-                "Client world snapshot application currently supports only square worlds.");
+            throw new InvalidDataException(
+                "Protocol error: client world snapshot application currently supports only square worlds.");
         }
 
         if (runtime.Map.Width != snapshot.Width || runtime.Map.Depth != snapshot.Depth)

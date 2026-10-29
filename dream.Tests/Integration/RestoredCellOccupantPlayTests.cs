@@ -24,7 +24,12 @@ public sealed class RestoredCellOccupantPlayTests(ITestOutputHelper output)
         f.Exec("INSERT OR IGNORE INTO player_profiles (player_name, display_name) VALUES ('Name alice', 'Name alice');");
         f.Exec($"INSERT INTO player_world_state (world_id, player_name, position_x, position_y, position_z, facing_x, facing_y, facing_z) VALUES (1, 'Name alice', {center}, 0, 0, 1);");
         f.Exec($"INSERT INTO enemy_instances (world_id, object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp) VALUES (1, 800001, 'wolf', 'Wolf', {center}, 0, 0, 1, 10, 10);");
-        Assert.Equal(0, f.Cli("reset-terrain", "1", "--yes").Exit);
+        (int exit, string resetLine, _) = f.Cli("reset-terrain", "1", "--yes");
+        Assert.Equal(0, exit);
+        // Reset reports who is inside the restored cells: the saved player and the saved enemy.
+        string[] resetFields = resetLine.TrimEnd().Split('	');
+        Assert.Contains("inside=2", resetFields);
+        Assert.Contains("inside_players=Name alice", resetFields);
 
         await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(StoredWorldDb.CreateHost(f.Database.OpenBundle(), null));
         Assert.NotNull(server.Runtime.Map.Cubes[cell.X, cell.Y, cell.Z]);

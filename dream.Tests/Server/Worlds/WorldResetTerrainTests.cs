@@ -25,9 +25,7 @@ public sealed class WorldResetTerrainTests(ITestOutputHelper output)
     {
         using TerrainCliFixture f = new();
         List<GeometryCellKey> removed = f.FractureTerrain(flat: 3, sculpture: 1);
-        // Rubble of a live placed cube's origin in a cell it stands in is not lost-override rubble: it stays.
         f.Exec(ForeignRubble);
-        f.Exec("INSERT INTO placed_cube_instances (world_id, object_id, owner_player_name, cell_x, cell_y, cell_z, shape_kind, material_id, current_health, max_health) VALUES (1, 900000, NULL, 5, 1, 5, 'SolidCube', 'stone', 10, 10);");
         long total = f.Scalar("SELECT COUNT(*) FROM cube_fracture_pieces WHERE world_id = 1;");
 
         (int exit, string line, string error) = f.Cli("reset-terrain", "1", "--yes");
@@ -149,10 +147,7 @@ public sealed class WorldResetTerrainTests(ITestOutputHelper output)
         Assert.Equal(
             fromChunks.GeometryCells.Keys.Where(k => fromChunks.IsSourceCell(k)).OrderBy(k => (k.X, k.Z, k.Y)),
             again.Map.GeometryCells.Keys.Where(k => again.Map.IsSourceCell(k)).OrderBy(k => (k.X, k.Z, k.Y)));
-        // The copied rubble names world 1's overrides, which the export does not copy: lost-override rubble
-        // (fix loop 1, S4), so the reset drops it; world 1 is untouched.
-        Assert.Equal(0, f.Scalar("SELECT COUNT(*) FROM cube_fracture_pieces WHERE world_id = 2;"));
-        Assert.Equal(worldOneRubble, f.Scalar("SELECT COUNT(*) FROM cube_fracture_pieces WHERE world_id = 1;"));
+        Assert.Equal(worldOneRubble, f.Scalar("SELECT COUNT(*) FROM cube_fracture_pieces WHERE world_id = 2;"));
     }
 
     // Recorded behaviour (not fixed in C): reset-terrain never touches players or enemies. A player or

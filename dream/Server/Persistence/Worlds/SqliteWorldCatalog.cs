@@ -4,6 +4,8 @@ using Dream.Server.Persistence.Store;
 using Dream.Server.Worlds;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
+using Dream.Simulation.World.MapSources;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Worlds;
@@ -276,6 +278,18 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
 
     public TerrainResetResult ResetTerrain(WorldId id)
     {
+        // The cells (Y > 0) the world's base terrain, generated or stored, creates: read before the write
+        // transaction, from the same map source the server hosts.
+        WorldTerrainSource terrain = ReadTerrainSource(id);
+        HashSet<(int, int, int)> sourceCells = [];
+        foreach (GeometryCellRecord record in MapSources.ForWorld(terrain.Record.Descriptor, terrain.Seed, terrain.StoredChunks).CreateCells())
+        {
+            if (record.Key.Y > 0)
+            {
+                sourceCells.Add((record.Key.X, record.Key.Y, record.Key.Z));
+            }
+        }
+
         using SqliteSession session = _store.BeginOwnedTransaction();
         _ = TryGet(session, id) ?? throw new WorldNotFoundException(id.ToString());
 
@@ -343,22 +357,45 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             rubble = command.ExecuteNonQuery();
         }
 
-        // Lost-override rubble: a source cell whose override row is gone (so it is not matched above) but
-        // whose rubble still names an origin that is neither an override nor a live placed cube. After the
-        // reset the cell stands, and the load-time heal would remove it again to match that rubble.
-        // Rubble of a broken player cube in an air cell has the same shape (its origin cube is gone), so
-        // an explicit admin reset deletes it too, which is harmless: it is only loose debris.
-        using (SqliteCommand command = session.CreateCommand(
-            "DELETE FROM cube_fracture_pieces WHERE world_id = $id " +
+        // Lost-override rubble: rubble on a SOURCE cell of the world's base terrain whose override row is
+        // gone (so it is not matched above) and whose origin is neither an override nor a live placed cube.
+        // After the reset the cell stands, and the load-time heal would remove it again to match that
+        // rubble. Rubble in cells that are not source cells (debris of a destroyed player cube in the air,
+        // a baked export's copied rubble in baked-out cells) is ordinary debris and stays.
+        const string LostOverrideRubble =
+            "world_id = $id " +
             "AND NOT EXISTS (SELECT 1 FROM terrain_cell_overrides AS o WHERE o.world_id = $id " +
             "AND o.object_id = cube_fracture_pieces.origin_object_id) " +
             "AND NOT EXISTS (SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
             "AND p.object_id = cube_fracture_pieces.origin_object_id) " +
             "AND NOT EXISTS (SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
             "AND p.cell_x = cube_fracture_pieces.parent_cell_x AND p.cell_y = cube_fracture_pieces.parent_cell_y " +
-            "AND p.cell_z = cube_fracture_pieces.parent_cell_z);"))
+            "AND p.cell_z = cube_fracture_pieces.parent_cell_z)";
+        List<(int, int, int)> lostRubbleCells = [];
+        using (SqliteCommand command = session.CreateCommand(
+            "SELECT DISTINCT parent_cell_x, parent_cell_y, parent_cell_z FROM cube_fracture_pieces WHERE " + LostOverrideRubble + ";"))
         {
             command.Parameters.AddWithValue("$id", id.Value);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                (int, int, int) cell = (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+                if (sourceCells.Contains(cell))
+                {
+                    lostRubbleCells.Add(cell);
+                }
+            }
+        }
+
+        foreach ((int x, int y, int z) in lostRubbleCells)
+        {
+            using SqliteCommand command = session.CreateCommand(
+                "DELETE FROM cube_fracture_pieces WHERE " + LostOverrideRubble +
+                " AND parent_cell_x = $x AND parent_cell_y = $y AND parent_cell_z = $z;");
+            command.Parameters.AddWithValue("$id", id.Value);
+            command.Parameters.AddWithValue("$x", x);
+            command.Parameters.AddWithValue("$y", y);
+            command.Parameters.AddWithValue("$z", z);
             rubble += command.ExecuteNonQuery();
         }
 

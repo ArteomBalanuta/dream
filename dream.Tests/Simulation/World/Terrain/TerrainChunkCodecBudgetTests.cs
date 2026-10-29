@@ -40,7 +40,7 @@ public class TerrainChunkCodecBudgetTests(ITestOutputHelper output)
         long total = TerrainChunkBudgetProbe.ImpliedTotal(definition, chunks);
 
         output.WriteLine($"World10k generated implied subcell total: {total:N0} (limit {WorldTransferLimits.Default.MaxTerrainSubcells:N0})");
-        Assert.True(total <= WorldTransferLimits.Default.MaxTerrainSubcells / 4);
+        Assert.True(total <= WorldTransferLimits.Default.MaxTerrainSubcells / 2);
         Assert.Equal(ExpectedWorld10kImpliedTotal, total);
     }
 

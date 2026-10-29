@@ -229,7 +229,7 @@ public class TerrainTransferPayloadTests(ITestOutputHelper output)
 
         Assert.Equal(16L << 20, limits.MaxTerrainBytes);
         Assert.Equal(1 << 20, limits.MaxTerrainBlobBytes);
-        Assert.Equal(1L << 22, limits.MaxTerrainSubcellOverrides);
+        Assert.Equal(1L << 20, limits.MaxTerrainSubcellOverrides);
         Assert.Equal(48 * 1024, TerrainTransferPayload.DefaultFragmentRawBytes);
     }
 

@@ -28,14 +28,14 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
-    // One blob over the whole per-world override budget (4,194,304): 80 cells x 64,000 children.
+    // One blob over the whole per-world override budget (1,048,576): 17 cells x 64,000 children.
     [Fact]
     public async Task OneBlob_WithMoreSubcellOverridesThanTheBudget_EndsTheSessionAsAProtocolError_WithBoundedMemory()
     {
-        Outcome outcome = await RunAsync(chunks => Replace(chunks, 0, 0, HugeBlob(chunks, 0, 0, cellCount: 80)));
+        Outcome outcome = await RunAsync(chunks => Replace(chunks, 0, 0, HugeBlob(chunks, 0, 0, cellCount: 17)));
 
         AssertProtocolError(outcome, "subcell override budget exceeded");
-        Assert.True(outcome.AllocatedBytes < 512L << 20, $"{outcome.AllocatedBytes:N0} bytes allocated");
+        Assert.True(outcome.AllocatedBytes < 300L << 20, $"{outcome.AllocatedBytes:N0} bytes allocated");
     }
 
     // Each blob alone is within the budget, together they are over it: the budget is per world.
@@ -47,26 +47,49 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
             IReadOnlyList<PersistedTerrainChunk> result = chunks;
             for (int chunk = 0; chunk < 4; chunk++)
             {
-                result = Replace(result, chunk, 1, HugeBlob(result, chunk, 1, cellCount: 40));
+                result = Replace(result, chunk, 1, HugeBlob(result, chunk, 1, cellCount: 5));
             }
 
             return result;
         });
 
         AssertProtocolError(outcome, "subcell override budget exceeded");
-        Assert.True(outcome.AllocatedBytes < 512L << 20, $"{outcome.AllocatedBytes:N0} bytes allocated");
+        Assert.True(outcome.AllocatedBytes < 300L << 20, $"{outcome.AllocatedBytes:N0} bytes allocated");
     }
 
-    // Just inside the budget (60 x 64,000 = 3.84 M): accepted, because the budget is the bound. Reports
-    // what the worst accepted blob costs the client (decode plus map build).
+    // Just inside the budget (12 x 64,000 = 768,000 plus the stored world's own overrides, under 1,048,576):
+    // accepted, because the budget is the bound. What the blob costs the client (decode plus map build) is
+    // the allocation over a run of the same world with no hostile blob, whose fixed cost is the map and
+    // physics build of the whole world. Measured at the 1<<22 limit: ~965 MB transient, ~188 MB retained.
     [Fact]
-    public async Task OneBlob_JustInsideTheBudget_IsAccepted_AndItsCostIsReported()
+    public async Task OneBlob_JustInsideTheBudget_IsAccepted_AndItsCostIsBounded()
     {
-        Outcome outcome = await RunAsync(chunks => Replace(chunks, 0, 0, HugeBlob(chunks, 0, 0, cellCount: 60)), expectError: false);
+        Outcome baseline = await RunAsync(chunks => chunks, expectError: false);
+        Outcome outcome = await RunAsync(chunks => Replace(chunks, 0, 0, HugeBlob(chunks, 0, 0, cellCount: 12)), expectError: false);
 
-        output.WriteLine($"accepted worst case: {outcome.AllocatedBytes / (1024d * 1024d):N0} MB allocated, {outcome.Milliseconds:N0} ms, {outcome.RetainedBytes / (1024d * 1024d):N0} MB retained");
+        long blobBytes = outcome.AllocatedBytes - baseline.AllocatedBytes;
+        output.WriteLine($"accepted worst case: {outcome.AllocatedBytes / (1024d * 1024d):N0} MB allocated ({blobBytes / (1024d * 1024d):N0} MB over the {baseline.AllocatedBytes / (1024d * 1024d):N0} MB baseline), {outcome.Milliseconds:N0} ms, {outcome.RetainedBytes / (1024d * 1024d):N0} MB retained");
         Assert.Null(outcome.Error);
+        Assert.True(blobBytes < 300L << 20, $"{blobBytes:N0} bytes allocated for the blob");
+        Assert.True(outcome.AllocatedBytes < 600L << 20, $"{outcome.AllocatedBytes:N0} bytes allocated in total");
     }
+
+    // The implied-subcell budget (MaxTerrainSubcells): Slope cells at resolution 40 carry no override at
+    // all, yet Map walks every implied subcell of each (64,000) for render blocks and collision. Just
+    // inside the budget the client accepts them; the cost is bounded because the budget is.
+    [Fact]
+    public async Task SlopeCellsAtResolution40_JustInsideTheImpliedSubcellBudget_AreAccepted_WithBoundedCost()
+    {
+        Outcome baseline = await RunAsync(chunks => chunks, expectError: false);
+        Outcome outcome = await RunAsync(chunks => Replace(chunks, 0, 0, HugeBlob(chunks, 0, 0, cellCount: SlopeCellsJustInside, shape: GeometryShapeKind.Slope, overrides: false)), expectError: false);
+
+        long blobBytes = outcome.AllocatedBytes - baseline.AllocatedBytes;
+        output.WriteLine($"accepted implied worst case: {outcome.AllocatedBytes / (1024d * 1024d):N0} MB allocated ({blobBytes / (1024d * 1024d):N0} MB over the {baseline.AllocatedBytes / (1024d * 1024d):N0} MB baseline), {outcome.Milliseconds:N0} ms, {outcome.RetainedBytes / (1024d * 1024d):N0} MB retained");
+        Assert.Null(outcome.Error);
+        Assert.True(blobBytes < 300L << 20, $"{blobBytes:N0} bytes allocated for the blob");
+    }
+
+    private const int SlopeCellsJustInside = 38;
 
     // Valid digest, but not what the encoder writes: trailing bytes.
     [Fact]
@@ -122,6 +145,7 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
         });
 
         Assert.NotNull(outcome.Error);
+        Assert.StartsWith("Protocol error: stored terrain", outcome.Error, StringComparison.Ordinal);
         Assert.False(outcome.Connected);
         Assert.Equal(outcome.Error, outcome.DisconnectReason);
         Assert.True(outcome.ServerSocketStillOpen);
@@ -132,8 +156,8 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
         Assert.True(outcome.TerrainReachedTheApplier, "the transport accepted the terrain");
         Assert.NotNull(outcome.Error);
         Assert.False(outcome.Connected, "the session must be over");
-        // The reason names what is wrong. (A decode failure surfaces from RebuildMapForWorld, outside the
-        // applier's "Protocol error: stored terrain" wrapper, so the reason has no such prefix; reported.)
+        // The applier decodes eagerly and wraps a failure as "Protocol error: stored terrain <what>".
+        Assert.StartsWith("Protocol error: stored terrain", outcome.DisconnectReason, StringComparison.Ordinal);
         Assert.Contains(expectedFragment, outcome.DisconnectReason, StringComparison.Ordinal);
         Assert.Equal(outcome.Error, outcome.DisconnectReason);
         output.WriteLine($"{expectedFragment}: {outcome.AllocatedBytes / (1024d * 1024d):N0} MB allocated, {outcome.Milliseconds:N0} ms; reason: {outcome.DisconnectReason}");
@@ -165,13 +189,15 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
 
     // The chunk's real cells plus cellCount sub-divided cubes (resolution 40, every child an override) in
     // free slots above the floor: a few hundred KB that decode to millions of overrides.
-    private static byte[] HugeBlob(IReadOnlyList<PersistedTerrainChunk> chunks, int chunkX, int chunkZ, int cellCount)
+    private static byte[] HugeBlob(
+        IReadOnlyList<PersistedTerrainChunk> chunks, int chunkX, int chunkZ, int cellCount,
+        GeometryShapeKind shape = GeometryShapeKind.SolidCube, bool overrides = true)
     {
         MapDefinition definition = new(56, 8, 56, WorldMapSource.Generated, WorldGeneratorCatalog.DefaultKey, WorldGeneratorCatalog.DefaultVersion);
         PersistedTerrainChunk source = chunks.First(c => c.ChunkX == chunkX && c.ChunkZ == chunkZ);
         List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(definition, chunkX, chunkZ, source.Data);
         HashSet<GeometryCellKey> used = [.. cells.Select(c => c.Key)];
-        GeometryCellDefinition cube = new(GeometryShapeKind.SolidCube, GeometryMaterialId.Stone, 40, IsSolid: true, IsFloor: false);
+        GeometryCellDefinition cube = new(shape, GeometryMaterialId.Stone, 40, IsSolid: true, IsFloor: false);
         int added = 0;
         for (int y = 1; y < 8 && added < cellCount; y++)
         {
@@ -186,8 +212,12 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
                     }
 
                     GeometrySubdivisionState state = new(40);
-                    state.SetAllChildrenEmpty();
-                    for (int a = 0; a < 40; a++)
+                    if (overrides)
+                    {
+                        state.SetAllChildrenEmpty();
+                    }
+
+                    for (int a = 0; a < 40 && overrides; a++)
                     {
                         for (int b = 0; b < 40; b++)
                         {
@@ -268,7 +298,7 @@ public sealed class HostileTerrainServerLoopbackTests(ITestOutputHelper output)
         double milliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         long retained = GC.GetTotalMemory(forceFullCollection: true);
-        Assert.Equal(expectError, error != null);
+        Assert.True(expectError == (error != null), $"expectError={expectError}, error={error}");
         return new Outcome(true, error, session.IsConnected, session.DisconnectReason, server.IsOpen, allocated, retained, milliseconds);
     }
 

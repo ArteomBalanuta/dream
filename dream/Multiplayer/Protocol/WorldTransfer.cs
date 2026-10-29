@@ -206,13 +206,13 @@ public sealed record WorldTransferLimits
 
     public int MaxTerrainBlobBytes { get; init; } = 1 << 20;
 
-    public long MaxTerrainSubcellOverrides { get; init; } = 1L << 22;
+    public long MaxTerrainSubcellOverrides { get; init; } = 1L << 20;
 
     // The implied subcells of the whole terrain: resolution^3 for every decoded record that is not a
     // plain subdivision-free SolidCube (Map builds that many render/collision candidates for it, even
     // when the blob carries no override entries). World10k generated terrain totals 1,667,072 (pinned in
-    // TerrainChunkCodecBudgetTests); the 8,388,608 default is about 5x that.
-    public long MaxTerrainSubcells { get; init; } = 1L << 23;
+    // TerrainChunkCodecBudgetTests); the 4,194,304 default is about 2.5x that. A Slope blob at resolution 40 just inside it costs about 94 MB over the baseline join on the client.
+    public long MaxTerrainSubcells { get; init; } = 1L << 22;
 
     // The item budget for a world of these dimensions.
     public long MaxItemsFor(int width, int height, int depth)

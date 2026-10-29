@@ -17,6 +17,7 @@ public partial class PlayScene : ISessionEndSource
         : _remoteClient.DisconnectReason ?? "Disconnected from the server.";
 
     private bool _sessionEndReported;
+    private Action<string>? _endSessionAsProtocolError;
 
     // The endpoint and name this scene's session used, so the connection screen Game returns to
     // after the session ends is filled in for a reconnect.
@@ -35,7 +36,8 @@ public partial class PlayScene : ISessionEndSource
 
     private void DrainRemoteTransportMessages()
     {
-        while (_remoteClient.TryDequeueInbound(out IServerToClientMessage? message) && message != null)
+        // Once a message ended the session (a protocol error), the rest of the queue is not applied.
+        while (_remoteClient.IsConnected && _remoteClient.TryDequeueInbound(out IServerToClientMessage? message) && message != null)
         {
             ApplyReplicatedMessage(message);
         }

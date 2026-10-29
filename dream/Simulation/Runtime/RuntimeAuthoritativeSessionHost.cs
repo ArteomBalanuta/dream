@@ -58,7 +58,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         }
         catch
         {
-            runtime.Dispose();
+            runtime.DisposeWithoutFinalCheckpoint();
             throw;
         }
     }

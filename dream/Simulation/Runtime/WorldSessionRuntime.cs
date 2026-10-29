@@ -48,6 +48,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
     // _secondaryRemotePlayers' values in ordinal session-id order; rebuilt on attach and detach.
     private RemoteSessionPlayerState[] _orderedSecondaryRemotePlayers = [];
     private bool _disposed;
+    private bool _skipFinalCheckpoint;
     // The primary seat's player target, created once per primary session id. Its delegates read
     // live state; it is dropped on attach, detach and seat changes and rebuilt on next use.
     private AuthoritativePlayerTarget? _primaryPlayerTarget;
@@ -171,9 +172,28 @@ public sealed partial class WorldSessionRuntime : IDisposable
             this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities);
         SubscribeReplicationExports();
 
-        RestorePersistedWorldState();
+        try
+        {
+            RestorePersistedWorldState();
+        }
+        catch
+        {
+            // The constructor throws: nobody owns the player or the native physics world.
+            Player.Dispose();
+            Physics.Dispose();
+            throw;
+        }
+
         // After the restore: the world a client joins already carries the restored cubes' ids.
         _worldObjects.CubeIdAssigned = OnCubeIdAssigned;
+    }
+
+    // Disposes a runtime whose host failed to construct: the world was never served, so no final
+    // checkpoint is written over what the database holds.
+    internal void DisposeWithoutFinalCheckpoint()
+    {
+        _skipFinalCheckpoint = true;
+        Dispose();
     }
 
     internal ObjectIdAllocator ObjectIds => _objectIds;
@@ -293,7 +313,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
         // Shutdown flush: a full checkpoint behind the queued immediate writes, then finish those
         // writes before the owner disposes the repositories.
-        PendingFinalCheckpoint? finalCheckpoint = WriteFinalCheckpoint();
+        PendingFinalCheckpoint? finalCheckpoint = _skipFinalCheckpoint ? null : WriteFinalCheckpoint();
         _writes?.Dispose();
         finalCheckpoint?.WriteIfDropped(_writes);
 

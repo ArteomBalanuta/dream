@@ -106,6 +106,21 @@ public sealed class StoredTerrainFixLoopServerTests
     }
 
     [Fact]
+    public void DebrisOfADestroyedPlayerCubeInAnAirCell_SurvivesReset()
+    {
+        using TerrainCliFixture f = new();
+        f.FractureTerrain(flat: 1);
+        // Origin 999999 is a long-gone player cube; the cell (2, 6, 2) is air in the base terrain.
+        f.Exec(
+            "INSERT INTO cube_fracture_pieces (world_id, object_id, origin_object_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id) " +
+            "VALUES (1, 900100, 999999, 0, NULL, 2, 6, 2, 2.1, 6.1, 2.1, 0.5, 'stone');");
+
+        _ = f.Catalog.ResetTerrain(Dream.Simulation.World.WorldId.Default);
+
+        Assert.Equal(1, f.Scalar("SELECT COUNT(*) FROM cube_fracture_pieces WHERE object_id = 900100;"));
+    }
+
+    [Fact]
     public void RubbleOfALivePlacedCubesCell_SurvivesTheLostOverrideRule()
     {
         using TerrainCliFixture f = new();

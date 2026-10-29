@@ -70,7 +70,7 @@ public partial class PlayScene
             if (!RemoteWorldMutationApplier.TryApplySnapshotToRuntime(
                     _runtime,
                     snapshotMessage.Snapshot,
-                    reason => _remoteClient.EndSessionWithReason(reason, RemoteClientSession.ProtocolErrorLogEvent)))
+                    _endSessionAsProtocolError ??= reason => _remoteClient.EndSessionWithReason(reason, RemoteClientSession.ProtocolErrorLogEvent)))
             {
                 return;
             }

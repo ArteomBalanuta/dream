@@ -155,6 +155,26 @@ public sealed class StoredTerrainFixLoopTests
     }
 
     [Fact]
+    public void ANonSquareWorldSnapshot_EndsTheSessionAsAProtocolError_NotAnInvalidOperation()
+    {
+        using ClientWorldSession client = new(20, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        ServerSnapshotEnvelope snapshot = new(
+            1,
+            new Dictionary<string, ulong>(),
+            Array.Empty<ActorSnapshot>(),
+            client.InteractionMode,
+            new WorldSnapshot(14, client.Map.Height, 20, Array.Empty<Vector3>()),
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+        List<string> ended = [];
+
+        bool applied = RemoteWorldMutationApplier.TryApplySnapshotToRuntime(client, snapshot, ended.Add);
+
+        Assert.False(applied);
+        Assert.StartsWith("Protocol error:", Assert.Single(ended), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AGeneratedJoin_ReplacesAStoredMap_EvenAtTheSameSize()
     {
         using StoredWorldFixture fixture = new();
