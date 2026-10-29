@@ -95,7 +95,7 @@ CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
 - `placed_cube_instances.cell_x/y/z` and `cube_fracture_pieces.parent_cell_x/y/z` are now `INTEGER NOT NULL`. Existing `REAL` values were whole numbers and convert without loss; the code that binds and reads them does not change.
 - Indexes keep their names. `ix_cube_fracture_pieces_parent_cell` is now `(world_id, parent_cell_x, parent_cell_y, parent_cell_z)` and `ix_player_inventory_slots_item_instance_id` is `(world_id, item_instance_id)`.
 - `ON DELETE SET NULL` for cube owners arrived with migration 0005 (see Stable object ids below); in schema version 3 and 4 owners still cascade.
-- Item ids, actor ids and cube ids restart per world, and `GetMaxItemInstanceId` is per world. Inventory does not travel between worlds.
+- Object ids restart per world, and item ids come from the per-world `next_object_id`; actor ids are not persisted. Inventory does not travel between worlds.
 
 ### How the code is bound to a world
 

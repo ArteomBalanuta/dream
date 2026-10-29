@@ -19,9 +19,9 @@ namespace Dream.Simulation.World;
 // 1000, enemies from 2000, in ObjectId order) and binds them to their persisted ObjectId
 // (ObjectIdentityMap), so a world saved before the partition restores without any id collision.
 //
-// Counters: an allocator keeps the id it hands out next. Reserving an id that is already taken (a
-// persisted id on restore) moves the counter past it, and saturates at ExhaustedCounter when the
-// taken id is the last of its range, so a restore never fails on a persisted id. Only handing out
+// Counters: an allocator keeps the id it hands out next. Reserving an id that is already taken moves
+// the counter past it, and saturates at ExhaustedCounter when the taken id is the last of its
+// range, so a reservation never fails. Only handing out
 // an id from an exhausted counter fails (TakeWorldObjectId, TakeEnemyId).
 public static class ReplicatedActorIdRanges
 {

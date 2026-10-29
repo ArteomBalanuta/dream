@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.World;
 using Xunit;
 using Dream.Server.Persistence;
@@ -89,6 +90,33 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(
             Enumerable.Range(71, StarterCount).Select(id => (long)id),
             inventory.BuildSnapshot("Fresh").Slots.Take(StarterCount).Select(slot => slot.Item!.Value.ItemInstanceId));
+    }
+
+    [Fact]
+    public void ApplyLoaded_NonPositiveItemIds_StillLoad_AreNotReserved_AndAreLoggedOnce()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        ObjectIdAllocator ids = new();
+        PlayerInventoryService inventory = new(world, writes, ids);
+        List<(string Category, string Message)> lines = [];
+
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            inventory.ApplyLoaded("Hand", new PersistedPlayerInventory(
+                [
+                    new PersistedInventorySlot("Hand", 0, 0, DateTime.UtcNow),
+                    new PersistedInventorySlot("Hand", 1, 7, DateTime.UtcNow)
+                ],
+                [Item(0, "Hand"), Item(-3, "Hand"), Item(7, "Hand")]));
+        }
+
+        Assert.True(inventory.IsLoaded("Hand"));
+        Assert.Equal(3, inventory.LoadedItemInstanceCount);
+        Assert.Equal(8, inventory.NextItemInstanceId);
+        Assert.Single(lines);
+        Assert.Equal("server.persistence.inventory-invalid-item-id", lines[0].Category);
+        Assert.Contains("count=3", lines[0].Message);
     }
 
     [Fact]

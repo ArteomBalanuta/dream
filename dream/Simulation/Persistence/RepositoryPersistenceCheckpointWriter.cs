@@ -81,11 +81,13 @@ public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpoi
             _world.SavePlacedCube(cube);
         }
 
-        HashSet<(ObjectId, int)> pieceKeys = checkpoint.FracturePieces.Count == 0 ? [] : _world.LoadCubeFracturePieces()
-            .Select(piece => (piece.OriginObjectId, piece.PieceIndex))
+        // Keyed by the piece's own id, as the SQLite writer and Merge do: after restore compaction
+        // the in-memory piece index can differ from the stored piece_index.
+        HashSet<ObjectId> pieceKeys = checkpoint.FracturePieces.Count == 0 ? [] : _world.LoadCubeFracturePieces()
+            .Select(piece => piece.ObjectId)
             .ToHashSet();
         foreach (PersistedCubeFracturePiece piece in checkpoint.FracturePieces
-            .Where(piece => pieceKeys.Contains((piece.OriginObjectId, piece.PieceIndex))))
+            .Where(piece => pieceKeys.Contains(piece.ObjectId)))
         {
             _world.SaveCubeFracturePiece(piece);
         }

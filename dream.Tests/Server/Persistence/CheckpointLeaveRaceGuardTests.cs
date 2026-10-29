@@ -9,6 +9,7 @@ using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Tests.Server.Persistence;
 
@@ -336,6 +337,33 @@ public sealed class CheckpointLeaveRaceGuardTests
             PlayerVitals = [new PlayerCheckpointVitals(PlayerName, PlayerInteractionMode.Combat, 70, 100)]
         });
         Assert.Equal(70, ReadProfile(database).CurrentHp);
+    }
+
+    // The fallback writer matches stored pieces by their own ObjectId, not (origin, in-memory index):
+    // after restore compaction the index can differ from the stored piece_index.
+    [Fact]
+    public void RepositoryWriter_MatchesPiecesByObjectId_NotByPieceIndex()
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        RepositoryPersistenceCheckpointWriter writer = new(profiles, world);
+        profiles.GetOrCreate(PlayerName);
+        world.SavePlacedCube(new PersistedPlacedCube(
+            new ObjectId(8), PlayerName, new Vector3(2f, 1f, 2f), GeometryShapeKind.SolidCube,
+            GeometryMaterialId.Dirt, 5, 5, DateTime.UtcNow, DateTime.UtcNow, new Vector3(2.5f, 1.5f, 2.5f)));
+        PersistedCubeFracturePiece stored = new(
+            new ObjectId(500), new ObjectId(8), 3, PlayerName, new Vector3(2f, 1f, 2f),
+            new Vector3(2.5f, 1.1f, 2.5f), 0.2f, GeometryMaterialId.Dirt, DateTime.UtcNow, DateTime.UtcNow);
+        world.SaveCubeFracturePiece(stored);
+
+        // Compaction moved the piece to in-memory index 0; its ObjectId is unchanged.
+        PersistedCubeFracturePiece moved = stored with { PieceIndex = 0, Center = new Vector3(2.6f, 1.1f, 2.6f) };
+        writer.Write(PersistenceCheckpoint.Empty with { FracturePieces = [moved] });
+
+        PersistedCubeFracturePiece loaded = Assert.Single(world.LoadCubeFracturePieces());
+        Assert.Equal(new ObjectId(500), loaded.ObjectId);
+        Assert.Equal(2.6f, loaded.Center.X, 3);
     }
 
     // 7. A legacy strftime updated_utc (3 fractional digits) against the 7-digit capture text: an
