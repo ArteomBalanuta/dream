@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
@@ -37,7 +38,8 @@ public sealed partial class SqlitePlayerProfileRepository
         WHERE player_name = $playerName
             AND NOT EXISTS (
                 SELECT 1 FROM player_world_state
-                WHERE player_world_state.player_name = $playerName
+                WHERE player_world_state.world_id = $worldId
+                    AND player_world_state.player_name = $playerName
                     AND player_world_state.updated_utc > $capturedUtc);
         """;
 
@@ -45,6 +47,7 @@ public sealed partial class SqlitePlayerProfileRepository
     // write time every updated profile is stamped with.
     internal static void CheckpointUpdateVitals(
         SqliteSession session,
+        WorldId worldId,
         IReadOnlyList<PlayerCheckpointVitals> vitals,
         string writeUtc)
     {
@@ -60,6 +63,7 @@ public sealed partial class SqlitePlayerProfileRepository
         SqliteParameter maxHp = command.AddParameter("$maxHp", SqliteType.Integer);
         SqliteParameter capturedUtc = command.AddParameter("$capturedUtc", SqliteType.Text);
         command.Parameters.AddWithValue("$updatedUtc", writeUtc);
+        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         // The rows of one capture share its time, so it is formatted once, not once per row.
         CheckpointUtcText capturedText = default;

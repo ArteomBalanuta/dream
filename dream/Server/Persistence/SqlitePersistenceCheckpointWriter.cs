@@ -21,17 +21,20 @@ namespace Dream.Server.Persistence;
 public sealed class SqlitePersistenceCheckpointWriter : IPersistenceCheckpointWriter
 {
     private readonly IWorldStore _store;
+    private readonly WorldId _worldId;
 
-    // Bound to one world. Until workstream B1 binds the SQL to a world, only world 1 is supported.
+    // Bound to one world: every statement is scoped to its world_id.
     public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema, WorldId worldId)
-        : this(SqliteWorldBinding.RequireDefaultWorld(schema, worldId))
-    {
-    }
-
-    public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
         _store = new SqliteWorldStore(schema);
+        _worldId = worldId;
+    }
+
+    // World 1: the default world.
+    public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema)
+        : this(schema, WorldId.Default)
+    {
     }
 
     public void Write(PersistenceCheckpoint checkpoint)
@@ -47,12 +50,12 @@ public sealed class SqlitePersistenceCheckpointWriter : IPersistenceCheckpointWr
         string writeUtc = SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow);
         using SqliteSession session = _store.BeginOwnedTransaction();
 
-        SqlitePlayerProfileRepository.CheckpointUpdateVitals(session, checkpoint.PlayerVitals, writeUtc);
-        SqlitePlayerWorldStateRepository.CheckpointUpsert(session, checkpoint.PlayerWorldStates);
-        SqliteEnemyRepository.CheckpointUpdate(session, checkpoint.Enemies, writeUtc);
-        SqlitePlacedObjectRepository.CheckpointUpdate(session, checkpoint.PlacedCubes, writeUtc);
-        SqliteRubbleRepository.CheckpointUpdate(session, checkpoint.FracturePieces, writeUtc);
-        SqliteWorldMetadataRepository.WriteWorldTime(session, checkpoint.WorldTimeTicks);
+        SqlitePlayerProfileRepository.CheckpointUpdateVitals(session, _worldId, checkpoint.PlayerVitals, writeUtc);
+        SqlitePlayerWorldStateRepository.CheckpointUpsert(session, _worldId, checkpoint.PlayerWorldStates);
+        SqliteEnemyRepository.CheckpointUpdate(session, _worldId, checkpoint.Enemies, writeUtc);
+        SqlitePlacedObjectRepository.CheckpointUpdate(session, _worldId, checkpoint.PlacedCubes, writeUtc);
+        SqliteRubbleRepository.CheckpointUpdate(session, _worldId, checkpoint.FracturePieces, writeUtc);
+        SqliteWorldMetadataRepository.WriteWorldTime(session, _worldId, checkpoint.WorldTimeTicks);
 
         session.Commit();
     }

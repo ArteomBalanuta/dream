@@ -164,9 +164,9 @@ public static class WorldSeeder
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO placed_cube_instances (
-                    cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z,
+                    world_id, cube_id, owner_player_name, cell_x, cell_y, cell_z, center_x, center_y, center_z,
                     shape_kind, material_id, current_health, max_health, created_utc, updated_utc)
-                VALUES ($id, $owner, $cx, $cy, $cz, $px, $py, $pz, $shape, $material, $hp, $maxHp, $created, $updated);
+                VALUES (1, $id, $owner, $cx, $cy, $cz, $px, $py, $pz, $shape, $material, $hp, $maxHp, $created, $updated);
                 """;
             SqliteParameter[] parameters = AddParameters(
                 command,
@@ -200,9 +200,9 @@ public static class WorldSeeder
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO cube_fracture_pieces (
-                    source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z,
+                    world_id, source_cube_id, piece_index, owner_player_name, parent_cell_x, parent_cell_y, parent_cell_z,
                     center_x, center_y, center_z, side_length, material_id, created_utc, updated_utc)
-                VALUES ($source, $index, $owner, $cx, $cy, $cz, $px, $py, $pz, $side, $material, $created, $updated);
+                VALUES (1, $source, $index, $owner, $cx, $cy, $cz, $px, $py, $pz, $side, $material, $created, $updated);
                 """;
             SqliteParameter[] parameters = AddParameters(
                 command,

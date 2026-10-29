@@ -10,11 +10,11 @@ namespace Dream.Tests.Server.Persistence.Migrations;
 public sealed class SchemaMigrationTests
 {
     [Fact]
-    public void ShippedMigrations_AreTheBaseline_ThenTheStarterGrants()
+    public void ShippedMigrations_AreTheBaseline_TheStarterGrants_ThenTheWorlds()
     {
         IReadOnlyList<ISchemaMigration> migrations = SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);
 
-        Assert.Equal(2, migrations.Count);
+        Assert.Equal(3, migrations.Count);
         ISchemaMigration baseline = migrations[0];
         Assert.IsType<BaselineMigration>(baseline);
         Assert.Equal(1, baseline.Version);
@@ -22,7 +22,10 @@ public sealed class SchemaMigrationTests
         Assert.IsType<SqlScriptMigration>(migrations[1]);
         Assert.Equal(2, migrations[1].Version);
         Assert.Equal("player_starter_grants", migrations[1].Name);
-        Assert.Equal(2, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.IsType<SqlScriptMigration>(migrations[2]);
+        Assert.Equal(3, migrations[2].Version);
+        Assert.Equal("worlds", migrations[2].Name);
+        Assert.Equal(3, MigrationTestDatabase.ShippedLatestVersion);
     }
 
     [Fact]
@@ -67,21 +70,22 @@ public sealed class SchemaMigrationTests
     }
 
     [Fact]
-    public void NewDatabase_GetsEveryShippedMigration_TheBaselineThenTheStarterGrants()
+    public void NewDatabase_GetsEveryShippedMigration_TheBaselineThenTheStarterGrantsThenTheWorlds()
     {
         using MigrationTestDatabase reference = new();
         reference.BuildWithPreMigrationBootstrapper();
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0002_player_starter_grants.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0003_worlds.sql")));
         using MigrationTestDatabase database = new();
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(0, 2, null), result);
+        Assert.Equal(new SchemaMigrationResult(0, 3, null), result);
         Assert.Empty(database.Backups());
         using SqliteConnection expected = reference.Open();
         using SqliteConnection actual = database.Open();
         Assert.Equal(SqliteSchemaSnapshot.Capture(expected), SqliteSchemaSnapshot.Capture(actual));
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], VersionRows(actual));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds")], VersionRows(actual));
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_starter_grants;"));
     }
 
@@ -105,7 +109,9 @@ public sealed class SchemaMigrationTests
         }
 
         List<string> log = [];
-        SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
+        // Migrations 0001 and 0002 only: 0003 rebuilds the per-world tables (see WorldsMigrationTests).
+        SqliteSchemaMigrator upToTheGrants = new([.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory).Take(2)]);
+        SchemaMigrationResult result = database.Schema.EnsureSchema(upToTheGrants, log.Add);
 
         Assert.Equal(1, result.FromVersion);
         Assert.Equal(2, result.ToVersion);
@@ -136,11 +142,11 @@ public sealed class SchemaMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
 
-        Assert.Equal(new SchemaMigrationResult(2, 2, null), result);
+        Assert.Equal(new SchemaMigrationResult(3, 3, null), result);
         Assert.Empty(log);
         Assert.Empty(database.Backups());
         using SqliteConnection connection = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants")], VersionRows(connection));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds")], VersionRows(connection));
         Assert.Equal("yes", database.Scalar("SELECT value FROM world_metadata WHERE key = 'kept';"));
         // The accepted behaviour change: the baseline runs once, so a deleted seed row stays deleted.
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM combat_formulas WHERE formula_key = 'player.critical_chance';"));

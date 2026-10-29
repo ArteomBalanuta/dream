@@ -1,13 +1,20 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Server.Persistence.Repositories;
 
 // placed_cube_instances: the player-built cubes.
-public sealed partial class SqlitePlacedObjectRepository(IWorldStore store)
-    : SqliteRepositoryBase(store), IPlacedObjectRepository
+public sealed partial class SqlitePlacedObjectRepository(IWorldStore store, WorldId worldId)
+    : SqliteRepositoryBase(store, worldId), IPlacedObjectRepository
 {
+    // World 1: the default world.
+    public SqlitePlacedObjectRepository(IWorldStore store)
+        : this(store, WorldId.Default)
+    {
+    }
+
     private const string LoadSql = """
         SELECT
             cube_id,
@@ -25,11 +32,13 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store)
             created_utc,
             updated_utc
         FROM placed_cube_instances
+        WHERE world_id = $worldId
         ORDER BY cube_id;
         """;
 
     private const string UpsertSql = """
         INSERT INTO placed_cube_instances (
+            world_id,
             cube_id,
             owner_player_name,
             cell_x,
@@ -46,6 +55,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store)
             updated_utc
         )
         VALUES (
+            $worldId,
             $cubeId,
             $ownerPlayerName,
             $cellX,
@@ -61,7 +71,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store)
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(cube_id) DO UPDATE SET
+        ON CONFLICT(world_id, cube_id) DO UPDATE SET
             owner_player_name = excluded.owner_player_name,
             cell_x = excluded.cell_x,
             cell_y = excluded.cell_y,
@@ -76,7 +86,7 @@ public sealed partial class SqlitePlacedObjectRepository(IWorldStore store)
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM placed_cube_instances WHERE cube_id = $cubeId;";
+    private const string DeleteSql = "DELETE FROM placed_cube_instances WHERE world_id = $worldId AND cube_id = $cubeId;";
 
     public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() =>
         QueryList(LoadSql, static reader => new PersistedPlacedCube(

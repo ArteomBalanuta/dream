@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 
@@ -7,9 +8,15 @@ namespace Dream.Server.Persistence.Repositories;
 
 // item_instances: every item, in the world or in a slot. GetMaxItemInstanceId also reads
 // player_inventory_slots.
-public sealed partial class SqliteItemRepository(IWorldStore store)
-    : SqliteRepositoryBase(store), IItemRepository
+public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worldId)
+    : SqliteRepositoryBase(store, worldId), IItemRepository
 {
+    // World 1: the default world.
+    public SqliteItemRepository(IWorldStore store)
+        : this(store, WorldId.Default)
+    {
+    }
+
     private const string LoadSql = """
         SELECT
             item_instance_id,
@@ -25,17 +32,19 @@ public sealed partial class SqliteItemRepository(IWorldStore store)
             created_utc,
             updated_utc
         FROM item_instances
+        WHERE world_id = $worldId
         ORDER BY item_instance_id;
         """;
 
     private const string MaxIdSql = """
         SELECT MAX(
-            COALESCE((SELECT MAX(item_instance_id) FROM item_instances), 0),
-            COALESCE((SELECT MAX(item_instance_id) FROM player_inventory_slots), 0));
+            COALESCE((SELECT MAX(item_instance_id) FROM item_instances WHERE world_id = $worldId), 0),
+            COALESCE((SELECT MAX(item_instance_id) FROM player_inventory_slots WHERE world_id = $worldId), 0));
         """;
 
     private const string UpsertSql = """
         INSERT INTO item_instances (
+            world_id,
             item_instance_id,
             item_kind,
             display_name,
@@ -50,6 +59,7 @@ public sealed partial class SqliteItemRepository(IWorldStore store)
             updated_utc
         )
         VALUES (
+            $worldId,
             $itemInstanceId,
             $itemKind,
             $displayName,
@@ -63,7 +73,7 @@ public sealed partial class SqliteItemRepository(IWorldStore store)
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(item_instance_id) DO UPDATE SET
+        ON CONFLICT(world_id, item_instance_id) DO UPDATE SET
             item_kind = excluded.item_kind,
             display_name = excluded.display_name,
             visual_id = excluded.visual_id,
@@ -76,7 +86,7 @@ public sealed partial class SqliteItemRepository(IWorldStore store)
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM item_instances WHERE item_instance_id = $itemInstanceId;";
+    private const string DeleteSql = "DELETE FROM item_instances WHERE world_id = $worldId AND item_instance_id = $itemInstanceId;";
 
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances() =>
         QueryList(LoadSql, static reader => ReadItem(reader, 0));

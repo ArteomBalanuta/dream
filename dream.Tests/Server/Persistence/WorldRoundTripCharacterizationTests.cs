@@ -115,7 +115,9 @@ public sealed class WorldRoundTripCharacterizationTests
         Assert.Equal(2, after["item_instances"]);
         Assert.Equal(2, after["player_inventory_slots"]);
         Assert.Equal(8, after["combat_formulas"]);
-        Assert.Equal(2, after["world_metadata"]);
+        // The seed and the clock live on the worlds row since migration 0003.
+        Assert.Equal(0, after["world_metadata"]);
+        Assert.Equal(1, after["worlds"]);
         Assert.Equal(0, after["player_profile_change_log"]);
     }
 
@@ -423,7 +425,7 @@ public sealed class WorldRoundTripCharacterizationTests
         Assert.Equal(1_234_567_890_123L, ticks);
         Assert.Equal(
             new[] { "18364758544493064720", "1234567890123" },
-            ReadStrings(schema, "SELECT value FROM world_metadata ORDER BY key"));
+            ReadStrings(schema, "SELECT seed FROM worlds WHERE world_id = 1 UNION ALL SELECT CAST(world_time_ticks AS TEXT) FROM worlds WHERE world_id = 1"));
     }
 
     private static void AssertCombatFormulas(SqliteSchemaBootstrapper schema)
@@ -475,6 +477,7 @@ public sealed class WorldRoundTripCharacterizationTests
             "player_inventory_slots",
             "combat_formulas",
             "world_metadata",
+            "worlds",
             "player_profile_change_log"
         ];
         using SqliteConnection connection = schema.CreateOpenConnection();

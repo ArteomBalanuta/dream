@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Repositories;
@@ -21,12 +22,12 @@ public sealed partial class SqliteEnemyRepository
             max_hp = $maxHp,
             level = $level,
             updated_utc = $updatedUtc
-        WHERE enemy_id = $enemyId;
+        WHERE world_id = $worldId AND enemy_id = $enemyId;
         """;
 
     // One prepared command for all rows, its parameters set per row. writeUtc is the formatted
     // write time every row is stamped with.
-    internal static void CheckpointUpdate(SqliteSession session, IReadOnlyList<PersistedEnemyInstance> enemies, string writeUtc)
+    internal static void CheckpointUpdate(SqliteSession session, WorldId worldId, IReadOnlyList<PersistedEnemyInstance> enemies, string writeUtc)
     {
         if (enemies.Count == 0)
         {
@@ -45,6 +46,7 @@ public sealed partial class SqliteEnemyRepository
         SqliteParameter maxHp = command.AddParameter("$maxHp", SqliteType.Integer);
         SqliteParameter level = command.AddParameter("$level", SqliteType.Integer);
         command.Parameters.AddWithValue("$updatedUtc", writeUtc);
+        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedEnemyInstance enemy in enemies)
         {

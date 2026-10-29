@@ -89,6 +89,7 @@ public sealed class SqlitePersistenceRepositoryTests
     {
         using TempPersistenceDatabase database = new();
         using SqliteWorldPersistenceRepository repository = new(database.Schema);
+        database.AddProfile("player-world");
         PersistedPlayerWorldState state = new(
             "player-world",
             new Vector3(12.5f, 4f, -8.25f),
@@ -115,6 +116,7 @@ public sealed class SqlitePersistenceRepositoryTests
     {
         using TempPersistenceDatabase database = new();
         using SqliteWorldPersistenceRepository repository = new(database.Schema);
+        database.AddProfile("builder-a");
         DateTime createdUtc = new(2026, 7, 4, 8, 15, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedPlacedCube cube = new(
@@ -153,6 +155,7 @@ public sealed class SqlitePersistenceRepositoryTests
     {
         using TempPersistenceDatabase database = new();
         using SqliteWorldPersistenceRepository repository = new(database.Schema);
+        database.AddProfile("builder-a");
         DateTime createdUtc = new(2026, 7, 4, 8, 30, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedCubeFracturePiece first = new(
@@ -240,6 +243,7 @@ public sealed class SqlitePersistenceRepositoryTests
     {
         using TempPersistenceDatabase database = new();
         using SqliteWorldPersistenceRepository repository = new(database.Schema);
+        database.AddProfile("player-one");
         DateTime createdUtc = new(2026, 7, 4, 11, 45, 0, DateTimeKind.Utc);
         PersistedItemInstance item = new(
             ItemInstanceId: 101,
@@ -298,137 +302,6 @@ public sealed class SqlitePersistenceRepositoryTests
 
     private sealed class TempPersistenceDatabase : IDisposable
     {
-        private const string SchemaScript = """
-            PRAGMA foreign_keys = ON;
-
-            CREATE TABLE IF NOT EXISTS player_profiles (
-                player_name TEXT NOT NULL PRIMARY KEY,
-                display_name TEXT NOT NULL,
-                interaction_mode TEXT NOT NULL,
-                strength INTEGER NOT NULL,
-                agility INTEGER NOT NULL,
-                vitality INTEGER NOT NULL,
-                energy INTEGER NOT NULL,
-                movement_speed REAL NOT NULL,
-                attack_speed REAL NOT NULL,
-                level INTEGER NOT NULL,
-                experience INTEGER NOT NULL,
-                current_hp INTEGER NOT NULL,
-                max_hp INTEGER NOT NULL,
-                created_utc TEXT NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS player_world_state (
-                player_name TEXT NOT NULL PRIMARY KEY,
-                position_x REAL NOT NULL,
-                position_y REAL NOT NULL,
-                position_z REAL NOT NULL,
-                facing_x REAL NOT NULL,
-                facing_y REAL NOT NULL,
-                facing_z REAL NOT NULL,
-                current_hp INTEGER NOT NULL,
-                current_energy INTEGER NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS placed_cube_instances (
-                cube_id INTEGER NOT NULL PRIMARY KEY,
-                owner_player_name TEXT NOT NULL,
-                cell_x REAL NOT NULL,
-                cell_y REAL NOT NULL,
-                cell_z REAL NOT NULL,
-                shape_kind TEXT NOT NULL,
-                material_id TEXT NOT NULL,
-                current_health INTEGER NOT NULL,
-                max_health INTEGER NOT NULL,
-                created_utc TEXT NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS cube_fracture_pieces (
-                source_cube_id INTEGER NOT NULL,
-                piece_index INTEGER NOT NULL,
-                owner_player_name TEXT NOT NULL,
-                parent_cell_x REAL NOT NULL,
-                parent_cell_y REAL NOT NULL,
-                parent_cell_z REAL NOT NULL,
-                center_x REAL NOT NULL,
-                center_y REAL NOT NULL,
-                center_z REAL NOT NULL,
-                side_length REAL NOT NULL,
-                material_id TEXT NOT NULL,
-                created_utc TEXT NOT NULL,
-                updated_utc TEXT NOT NULL,
-                PRIMARY KEY (source_cube_id, piece_index)
-            );
-
-            CREATE TABLE IF NOT EXISTS enemy_instances (
-                enemy_id INTEGER NOT NULL PRIMARY KEY,
-                enemy_kind TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                position_x REAL NOT NULL,
-                position_y REAL NOT NULL,
-                position_z REAL NOT NULL,
-                facing_x REAL NOT NULL,
-                facing_y REAL NOT NULL,
-                facing_z REAL NOT NULL,
-                current_hp INTEGER NOT NULL,
-                max_hp INTEGER NOT NULL,
-                strength INTEGER NOT NULL,
-                agility INTEGER NOT NULL,
-                vitality INTEGER NOT NULL,
-                energy INTEGER NOT NULL,
-                movement_speed REAL NOT NULL,
-                attack_speed REAL NOT NULL,
-                level INTEGER NOT NULL,
-                created_utc TEXT NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS item_instances (
-                item_instance_id INTEGER NOT NULL PRIMARY KEY,
-                item_kind TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                visual_id TEXT NOT NULL,
-                owner_player_name TEXT NULL,
-                world_position_x REAL NULL,
-                world_position_y REAL NULL,
-                world_position_z REAL NULL,
-                state TEXT NOT NULL,
-                stack_count INTEGER NOT NULL,
-                created_utc TEXT NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS player_inventory_slots (
-                player_name TEXT NOT NULL,
-                slot_index INTEGER NOT NULL,
-                item_instance_id INTEGER NOT NULL,
-                updated_utc TEXT NOT NULL,
-                PRIMARY KEY (player_name, slot_index)
-            );
-
-            CREATE TABLE IF NOT EXISTS combat_formulas (
-                formula_key TEXT NOT NULL PRIMARY KEY,
-                expression_text TEXT NOT NULL,
-                description TEXT NOT NULL,
-                enabled INTEGER NOT NULL,
-                updated_utc TEXT NOT NULL
-            );
-
-            INSERT INTO combat_formulas (formula_key, expression_text, description, enabled, updated_utc)
-            VALUES
-                ('player.min_damage', '5 + strength * 2', 'Player minimum melee damage.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.max_damage', '10 + strength * 4', 'Player maximum melee damage.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.max_health', '50 + vitality * 5', 'Player maximum health.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.critical_damage', 'max_damage * 1.5', 'Critical hit damage.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.critical_chance', '0.15', 'Critical hit chance.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.attack_interval_seconds', '1.0 / attack_speed', 'Authoritative attack interval.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('player.experience_to_next_level', '1000 + level * 23', 'Experience required to reach the next level.', 1, '2026-07-04T00:00:00.0000000Z'),
-                ('enemy.experience_reward', 'enemy_level * 14', 'Experience granted for killing an enemy.', 1, '2026-07-04T00:00:00.0000000Z');
-            """;
-
         private readonly string _rootDirectory;
 
         public TempPersistenceDatabase()
@@ -437,15 +310,18 @@ public sealed class SqlitePersistenceRepositoryTests
             Directory.CreateDirectory(_rootDirectory);
 
             string databasePath = Path.Combine(_rootDirectory, "persistence.sqlite");
-            string schemaPath = Path.Combine(_rootDirectory, "schema.sql");
-            File.WriteAllText(schemaPath, SchemaScript);
-
-            // No migrations directory next to the hand-written schema: it is its own baseline.
-            Schema = new SqliteSchemaBootstrapper(databasePath, schemaPath, schemaScriptIsBaselineWithoutMigrations: true);
+            // The shipped schema script and migrations (config/migrations is found next to it), so the
+            // tests run on the schema the server runs on.
+            string schemaPath = Path.Combine(Dream.Tests.Integration.RepoRoot.Find(), "dream", "config", "player-profiles.init.sql");
+            Schema = new SqliteSchemaBootstrapper(databasePath, schemaPath);
             Schema.EnsureSchema();
         }
 
         public SqliteSchemaBootstrapper Schema { get; }
+
+        // The shipped schema enforces the owner foreign keys, so a row's owner needs a profile.
+        public void AddProfile(string playerName) =>
+            new SqlitePlayerProfileRepository(Schema).Save(PersistenceGroupCommitTests.Profile(playerName, experience: 0));
 
         public void Dispose()
         {

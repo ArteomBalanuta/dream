@@ -1,13 +1,20 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Server.Persistence.Repositories;
 
 // cube_fracture_pieces: the rubble left by fractured cubes, keyed by (source_cube_id, piece_index).
-public sealed partial class SqliteRubbleRepository(IWorldStore store)
-    : SqliteRepositoryBase(store), IRubbleRepository
+public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId worldId)
+    : SqliteRepositoryBase(store, worldId), IRubbleRepository
 {
+    // World 1: the default world.
+    public SqliteRubbleRepository(IWorldStore store)
+        : this(store, WorldId.Default)
+    {
+    }
+
     private const string LoadSql = """
         SELECT
             source_cube_id,
@@ -24,11 +31,13 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store)
             created_utc,
             updated_utc
         FROM cube_fracture_pieces
+        WHERE world_id = $worldId
         ORDER BY source_cube_id, piece_index;
         """;
 
     private const string UpsertSql = """
         INSERT INTO cube_fracture_pieces (
+            world_id,
             source_cube_id,
             piece_index,
             owner_player_name,
@@ -44,6 +53,7 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store)
             updated_utc
         )
         VALUES (
+            $worldId,
             $sourceCubeId,
             $pieceIndex,
             $ownerPlayerName,
@@ -58,7 +68,7 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store)
             $createdUtc,
             $updatedUtc
         )
-        ON CONFLICT(source_cube_id, piece_index) DO UPDATE SET
+        ON CONFLICT(world_id, source_cube_id, piece_index) DO UPDATE SET
             owner_player_name = excluded.owner_player_name,
             parent_cell_x = excluded.parent_cell_x,
             parent_cell_y = excluded.parent_cell_y,
@@ -71,7 +81,7 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store)
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSql = "DELETE FROM cube_fracture_pieces WHERE source_cube_id = $sourceCubeId;";
+    private const string DeleteSql = "DELETE FROM cube_fracture_pieces WHERE world_id = $worldId AND source_cube_id = $sourceCubeId;";
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() =>
         QueryList(LoadSql, static reader => new PersistedCubeFracturePiece(

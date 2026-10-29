@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Repositories;
@@ -7,9 +8,15 @@ namespace Dream.Server.Persistence.Repositories;
 // player_inventory_slots: one row per occupied slot, keyed by (player_name, slot_index).
 // player_starter_grants: the starter kit version each player has received (migration 0002).
 // LoadPlayerInventory also reads the referenced item_instances rows and the player's grant row.
-public sealed partial class SqliteInventoryRepository(IWorldStore store)
-    : SqliteRepositoryBase(store), IInventoryRepository
+public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId worldId)
+    : SqliteRepositoryBase(store, worldId), IInventoryRepository
 {
+    // World 1: the default world.
+    public SqliteInventoryRepository(IWorldStore store)
+        : this(store, WorldId.Default)
+    {
+    }
+
     private const string LoadSlotsSql = """
         SELECT
             player_name,
@@ -17,12 +24,13 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store)
             item_instance_id,
             updated_utc
         FROM player_inventory_slots
+        WHERE world_id = $worldId
         ORDER BY player_name, slot_index;
         """;
 
     // One statement, so the slots, the items and the starter grant come from one snapshot.
     // - The first SELECT gives one row per slot. Its WHERE uses the slot table's primary key
-    //   (player_name, slot_index) and the join the item table's primary key, so a load reads one
+    //   (world_id, player_name, slot_index) and the join the item table's primary key, so a load reads one
     //   player's rows only (no new index is needed).
     // - The second gives the player's grant row, if any, by player_starter_grants' primary key, with
     //   NULL slot and item columns and the version in the last column. ORDER BY slot_index puts it
@@ -47,8 +55,8 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store)
             i.updated_utc,
             NULL AS kit_version
         FROM player_inventory_slots AS s
-        LEFT JOIN item_instances AS i ON i.item_instance_id = s.item_instance_id
-        WHERE s.player_name = $playerName
+        LEFT JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
+        WHERE s.world_id = $worldId AND s.player_name = $playerName
         UNION ALL
         SELECT
             g.player_name,
@@ -56,7 +64,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store)
             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
             g.kit_version
         FROM player_starter_grants AS g
-        WHERE g.player_name = $playerName
+        WHERE g.world_id = $worldId AND g.player_name = $playerName
         ORDER BY 2;
         """;
 
@@ -65,37 +73,41 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store)
 
     private const string UpsertSlotSql = """
         INSERT INTO player_inventory_slots (
+            world_id,
             player_name,
             slot_index,
             item_instance_id,
             updated_utc
         )
         VALUES (
+            $worldId,
             $playerName,
             $slotIndex,
             $itemInstanceId,
             $updatedUtc
         )
-        ON CONFLICT(player_name, slot_index) DO UPDATE SET
+        ON CONFLICT(world_id, player_name, slot_index) DO UPDATE SET
             item_instance_id = excluded.item_instance_id,
             updated_utc = excluded.updated_utc;
         """;
 
-    private const string DeleteSlotsSql = "DELETE FROM player_inventory_slots WHERE player_name = $playerName;";
+    private const string DeleteSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName;";
 
     // The recorded version never goes down, so a stale write cannot undo a newer grant.
     private const string UpsertStarterGrantSql = """
         INSERT INTO player_starter_grants (
+            world_id,
             player_name,
             kit_version,
             updated_utc
         )
         VALUES (
+            $worldId,
             $playerName,
             $kitVersion,
             $updatedUtc
         )
-        ON CONFLICT(player_name) DO UPDATE SET
+        ON CONFLICT(world_id, player_name) DO UPDATE SET
             kit_version = excluded.kit_version,
             updated_utc = excluded.updated_utc
         WHERE player_starter_grants.kit_version < excluded.kit_version;
@@ -108,6 +120,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store)
     {
         using SqliteSession session = Store.OpenSession();
         using SqliteCommand command = session.CreateCommand(LoadPlayerInventorySql);
+        command.BindInt64("$worldId", WorldIdValue);
         command.BindText("$playerName", playerName.Trim());
         using SqliteDataReader reader = command.ExecuteReader();
         List<PersistedInventorySlot> slots = [];

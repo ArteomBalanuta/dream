@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Dream.Tests.Server.Persistence;
 
-// Wave T1a: the world clock is saved as world_metadata.world_time_ticks with every non-null
+// Wave T1a: the world clock is saved as worlds.world_time_ticks with every non-null
 // checkpoint and resumed by ServerBootstrap, so world time survives a restart.
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class WorldClockPersistenceTests
@@ -190,7 +190,7 @@ public sealed class WorldClockPersistenceTests
         using (Microsoft.Data.Sqlite.SqliteConnection connection = database.Schema.CreateOpenConnection())
         using (Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand())
         {
-            command.CommandText = "INSERT INTO world_metadata (key, value) VALUES ('world_time_ticks', '-5');";
+            command.CommandText = "UPDATE worlds SET world_time_ticks = -5 WHERE world_id = 1;";
             command.ExecuteNonQuery();
         }
 

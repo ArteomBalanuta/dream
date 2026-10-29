@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Repositories;
@@ -16,12 +17,12 @@ public sealed partial class SqliteRubbleRepository
             center_z = $centerZ,
             side_length = $sideLength,
             updated_utc = $updatedUtc
-        WHERE source_cube_id = $sourceCubeId AND piece_index = $pieceIndex;
+        WHERE world_id = $worldId AND source_cube_id = $sourceCubeId AND piece_index = $pieceIndex;
         """;
 
     // One prepared command for all rows, its parameters set per row. writeUtc is the formatted
     // write time every row is stamped with.
-    internal static void CheckpointUpdate(SqliteSession session, IReadOnlyList<PersistedCubeFracturePiece> pieces, string writeUtc)
+    internal static void CheckpointUpdate(SqliteSession session, WorldId worldId, IReadOnlyList<PersistedCubeFracturePiece> pieces, string writeUtc)
     {
         if (pieces.Count == 0)
         {
@@ -36,6 +37,7 @@ public sealed partial class SqliteRubbleRepository
         SqliteParameter centerZ = command.AddParameter("$centerZ", SqliteType.Real);
         SqliteParameter sideLength = command.AddParameter("$sideLength", SqliteType.Real);
         command.Parameters.AddWithValue("$updatedUtc", writeUtc);
+        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedCubeFracturePiece piece in pieces)
         {

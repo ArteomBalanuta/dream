@@ -1,5 +1,6 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence.Repositories;
@@ -21,12 +22,12 @@ public sealed partial class SqlitePlacedObjectRepository
             current_health = $currentHealth,
             max_health = $maxHealth,
             updated_utc = $updatedUtc
-        WHERE cube_id = $cubeId;
+        WHERE world_id = $worldId AND cube_id = $cubeId;
         """;
 
     // One prepared command for all rows, its parameters set per row. writeUtc is the formatted
     // write time every row is stamped with.
-    internal static void CheckpointUpdate(SqliteSession session, IReadOnlyList<PersistedPlacedCube> cubes, string writeUtc)
+    internal static void CheckpointUpdate(SqliteSession session, WorldId worldId, IReadOnlyList<PersistedPlacedCube> cubes, string writeUtc)
     {
         if (cubes.Count == 0)
         {
@@ -45,6 +46,7 @@ public sealed partial class SqlitePlacedObjectRepository
         SqliteParameter currentHealth = command.AddParameter("$currentHealth", SqliteType.Integer);
         SqliteParameter maxHealth = command.AddParameter("$maxHealth", SqliteType.Integer);
         command.Parameters.AddWithValue("$updatedUtc", writeUtc);
+        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedPlacedCube cube in cubes)
         {

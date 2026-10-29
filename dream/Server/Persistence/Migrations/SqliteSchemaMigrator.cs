@@ -57,8 +57,19 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
             log?.Invoke($"Database backed up to {backupPath} before the schema migration.");
         }
 
-        using (SqliteTransaction transaction = connection.BeginTransaction())
+        // PRAGMA foreign_keys is a no-op inside a transaction, and with foreign keys on, DROP TABLE of a
+        // parent runs an implicit DELETE that fires ON DELETE CASCADE (a table rebuild would wipe its
+        // children). So the pragma is switched off here, outside the transaction, and restored in the
+        // finally (a pooled connection keeps it). Integrity is checked before the commit instead.
+        bool foreignKeysWereOn = GetForeignKeys(connection);
+        if (foreignKeysWereOn)
         {
+            SetForeignKeys(connection, false);
+        }
+
+        try
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
             Execute(connection, transaction, CreateVersionTableSql);
             for (int i = from; i < to; i++)
             {
@@ -75,13 +86,65 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
                 record.ExecuteNonQuery();
             }
 
+            ThrowIfForeignKeyViolations(connection, transaction);
             transaction.Commit();
+        }
+        finally
+        {
+            if (foreignKeysWereOn)
+            {
+                SetForeignKeys(connection, true);
+            }
         }
 
         log?.Invoke(from == 0 && backupPath == null
             ? $"Database schema created at version {to}."
             : $"Database schema migrated from version {from} to {to}.");
         return new SchemaMigrationResult(from, to, backupPath);
+    }
+
+    private static bool GetForeignKeys(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "PRAGMA foreign_keys;";
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    }
+
+    private static void SetForeignKeys(SqliteConnection connection, bool on)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = on ? "PRAGMA foreign_keys = ON;" : "PRAGMA foreign_keys = OFF;";
+        command.ExecuteNonQuery();
+    }
+
+    // Foreign keys were off while the migrations ran, so an orphan row (for example an item whose
+    // world_id has no worlds row, or a slot whose item is gone) is only found here. Throwing rolls
+    // everything back; the backup taken before the migration still exists.
+    private static void ThrowIfForeignKeyViolations(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using SqliteCommand check = connection.CreateCommand();
+        check.Transaction = transaction;
+        check.CommandText = "PRAGMA foreign_key_check;";
+        using SqliteDataReader reader = check.ExecuteReader();
+        List<string> violations = [];
+        while (reader.Read())
+        {
+            if (violations.Count == 10)
+            {
+                violations.Add("...");
+                break;
+            }
+
+            string rowId = reader.IsDBNull(1) ? "(none)" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture)!;
+            violations.Add($"table '{reader.GetString(0)}' rowid {rowId} references missing parent '{reader.GetString(2)}'");
+        }
+
+        if (violations.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Schema migration failed its foreign key check and was rolled back; the database stays at its old version: " +
+                string.Join("; ", violations) + ".");
+        }
     }
 
     // SchemaMigrations.LoadFromDirectory rejects transaction control only at the start of a line, so

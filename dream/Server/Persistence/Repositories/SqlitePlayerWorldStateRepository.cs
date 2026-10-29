@@ -1,13 +1,20 @@
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence.Repositories;
 
 // player_world_state: one row per player, written on leave (and by the checkpoint, in the
 // Checkpoint partial).
-public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
-    : SqliteRepositoryBase(store), IPlayerWorldStateRepository
+public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store, WorldId worldId)
+    : SqliteRepositoryBase(store, worldId), IPlayerWorldStateRepository
 {
+    // World 1: the default world.
+    public SqlitePlayerWorldStateRepository(IWorldStore store)
+        : this(store, WorldId.Default)
+    {
+    }
+
     private const string SelectSql = """
         SELECT
             player_name,
@@ -21,11 +28,12 @@ public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
             current_energy,
             updated_utc
         FROM player_world_state
-        WHERE player_name = $playerName;
+        WHERE world_id = $worldId AND player_name = $playerName;
         """;
 
     private const string UpsertSql = """
         INSERT INTO player_world_state (
+            world_id,
             player_name,
             position_x,
             position_y,
@@ -38,6 +46,7 @@ public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
             updated_utc
         )
         VALUES (
+            $worldId,
             $playerName,
             $positionX,
             $positionY,
@@ -49,7 +58,7 @@ public sealed partial class SqlitePlayerWorldStateRepository(IWorldStore store)
             $currentEnergy,
             $updatedUtc
         )
-        ON CONFLICT(player_name) DO UPDATE SET
+        ON CONFLICT(world_id, player_name) DO UPDATE SET
             position_x = excluded.position_x,
             position_y = excluded.position_y,
             position_z = excluded.position_z,

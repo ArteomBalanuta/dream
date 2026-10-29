@@ -20,21 +20,22 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     private readonly SqliteItemRepository _items;
     private readonly SqliteInventoryRepository _inventory;
 
-    // Bound to one world. Until workstream B1 binds the SQL to a world, only world 1 is supported.
+    // Bound to one world: every statement of the six repositories is scoped to its world_id.
     public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema, WorldId worldId)
-        : this(SqliteWorldBinding.RequireDefaultWorld(schema, worldId))
-    {
-    }
-
-    public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema)
     {
         SqliteWorldStore store = new(schema);
-        _playerWorldState = new SqlitePlayerWorldStateRepository(store);
-        _placedObjects = new SqlitePlacedObjectRepository(store);
-        _rubble = new SqliteRubbleRepository(store);
-        _enemies = new SqliteEnemyRepository(store);
-        _items = new SqliteItemRepository(store);
-        _inventory = new SqliteInventoryRepository(store);
+        _playerWorldState = new SqlitePlayerWorldStateRepository(store, worldId);
+        _placedObjects = new SqlitePlacedObjectRepository(store, worldId);
+        _rubble = new SqliteRubbleRepository(store, worldId);
+        _enemies = new SqliteEnemyRepository(store, worldId);
+        _items = new SqliteItemRepository(store, worldId);
+        _inventory = new SqliteInventoryRepository(store, worldId);
+    }
+
+    // World 1: the default world.
+    public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema)
+        : this(schema, WorldId.Default)
+    {
     }
 
     public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName) => _playerWorldState.TryGetPlayerWorldState(playerName);
