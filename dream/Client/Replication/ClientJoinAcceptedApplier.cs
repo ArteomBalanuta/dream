@@ -11,6 +11,14 @@ public static class ClientJoinAcceptedApplier
     {
         ArgumentNullException.ThrowIfNull(runtime);
 
+        // The descriptor comes first, so the map has the server's size before any cube or snapshot
+        // reaches it. A null World (a server that does not send one) keeps the old behaviour: the
+        // map is sized from InitialWorld, or from the first full snapshot.
+        if (joinAccepted.World is { } worldWire)
+        {
+            ApplyWorldDescriptor(runtime, worldWire, joinAccepted.InitialWorld);
+        }
+
         if (!joinAccepted.InitialWorld.HasValue && joinAccepted.EffectiveInitialActors.Count == 0)
         {
             return;
@@ -35,9 +43,59 @@ public static class ClientJoinAcceptedApplier
         ClientCorrectionApplier.ApplySnapshotToRuntime(runtime, bootstrapSnapshot, joinAccepted.SessionId);
     }
 
+    private static void ApplyWorldDescriptor(IClientWorldState runtime, WorldDescriptorWire wire, WorldSnapshot? initialWorld)
+    {
+        WorldDescriptor descriptor;
+        try
+        {
+            descriptor = wire.ToDescriptor();
+            if (!WorldGeneratorCatalog.IsSupported(descriptor.GeneratorKey, descriptor.GeneratorVersion))
+            {
+                throw new UnsupportedWorldException(
+                    $"The server's world \"{descriptor.Name}\" uses generator \"{descriptor.GeneratorKey}\" " +
+                    $"version {descriptor.GeneratorVersion}, which this client does not support.");
+            }
+
+            descriptor.Validate();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidDataException)
+        {
+            throw new UnsupportedWorldException($"The server's world is not supported by this client: {ex.Message}", ex);
+        }
+
+        if (initialWorld is { } world && (world.Width != descriptor.Width || world.Depth != descriptor.Depth))
+        {
+            throw new InvalidDataException(
+                $"Protocol error: the join-accepted world is {descriptor.Width}x{descriptor.Depth} " +
+                $"but its initial world is {world.Width}x{world.Depth}.");
+        }
+
+        if (runtime.Map.Width != descriptor.Width || runtime.Map.Depth != descriptor.Depth)
+        {
+            runtime.RebuildMapForWorld(descriptor);
+        }
+        else
+        {
+            runtime.AdoptWorldDescriptor(descriptor);
+        }
+    }
+
     public static void ApplyToPresenter(ClientScenePresenter presenter, JoinAcceptedMessage joinAccepted)
     {
         ArgumentNullException.ThrowIfNull(presenter);
         presenter.ApplyJoinAccepted(joinAccepted);
+    }
+}
+
+// The server's world cannot be hosted by this client (an unknown generator or version, an unsupported
+// map source or an out-of-range size). The session ends with this message as its reason.
+public sealed class UnsupportedWorldException : Exception
+{
+    public UnsupportedWorldException(string message) : base(message)
+    {
+    }
+
+    public UnsupportedWorldException(string message, Exception innerException) : base(message, innerException)
+    {
     }
 }

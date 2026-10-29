@@ -33,10 +33,11 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
     [InlineData(3)]
     [InlineData(4)]
     [InlineData(5)]
+    [InlineData(6)]
     public async Task OldClient_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying(int legacyVersion)
     {
-        Assert.Equal(6, TransportEnvelope.CurrentProtocolVersion);
-        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v6.";
+        Assert.Equal(7, TransportEnvelope.CurrentProtocolVersion);
+        string ExpectedReason = $"Client uses protocol v{legacyVersion}; this server uses v7.";
         List<Exception> unobserved = [];
         EventHandler<UnobservedTaskExceptionEventArgs> onUnobserved = (_, args) =>
         {
@@ -84,7 +85,7 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
                     _ => ProtocolWireOptions.V3,
                 });
             InvalidOperationException versionError = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1Hello));
-            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 6.", versionError.Message);
+            Assert.Equal($"Unsupported protocol version {legacyVersion}. Supported version: 7.", versionError.Message);
 
             using TcpClient legacy = new();
             await legacy.ConnectAsync(IPAddress.Loopback, server.Port);

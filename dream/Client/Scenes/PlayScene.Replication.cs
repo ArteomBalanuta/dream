@@ -19,7 +19,17 @@ public partial class PlayScene
             NetworkDiagnosticsLog.Write(
                 "client.apply.join",
                 $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeJoin(joinAcceptedMessage)}");
-            ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
+            try
+            {
+                ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
+            }
+            catch (Exception ex) when (ex is UnsupportedWorldException or InvalidDataException)
+            {
+                // A world this client cannot host: the session ends with a readable reason.
+                _remoteClient.EndSessionWithReason(ex.Message);
+                return;
+            }
+
             _predictionReconciler.Reset();
             _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
             if (joinAcceptedMessage.WorldClock is { } worldClockAnchor)

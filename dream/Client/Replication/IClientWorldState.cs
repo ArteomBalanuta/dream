@@ -20,7 +20,14 @@ public interface IClientWorldState : IReplicatedSessionStateTarget
 
     void AcknowledgeReplicatedWorldMutations(ulong sequence);
 
-    void RebuildMapForFloorSize(int floorSize);
+    // The world this client shows: the join-accepted descriptor, or a floor-size default before one arrives.
+    WorldDescriptor World { get; }
+
+    // Rebuilds the map at the descriptor's size and records it as the current world.
+    void RebuildMapForWorld(WorldDescriptor world);
+
+    // Records the descriptor when the map already has its size.
+    void AdoptWorldDescriptor(WorldDescriptor world);
 
     bool TryResolveCombatActor(int actorId, out CombatActorHandle actor);
 }

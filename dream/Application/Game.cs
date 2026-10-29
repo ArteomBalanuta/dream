@@ -6,6 +6,7 @@ using Dream.Client.Startup;
 using Dream.Configuration;
 using Dream.Rendering.Core;
 using Dream.Rendering.ViewModels;
+using Dream.Server;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using System.Diagnostics;
@@ -101,7 +102,9 @@ public class Game : GameWindow
     private ILocalServerHandle CreateLocalServerHandle()
     {
         return new OnDemandLocalServerHandle(
-            () => IntegratedLocalServerHandle.StartAsync().AsTask().GetAwaiter().GetResult(),
+            () => IntegratedLocalServerHandle.StartAsync(
+                hostFactory: () => ServerBootstrap.CreateAuthoritativeHost(
+                    new ServerStartOptions(NewWorldSize: _settings.FloorSize))).AsTask().GetAwaiter().GetResult(),
             startAfter: () => _localServerShutdown.Pending);
     }
 
