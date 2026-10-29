@@ -42,6 +42,12 @@ public partial class Map
 
     public void CopyPlacedCubesTo(Map target)
     {
+        // Terrain destroyed here stays destroyed in the target, which built its own base terrain.
+        foreach (GeometryCellKey removedCell in _removedSourceCells)
+        {
+            target.RemoveSourceCell(removedCell);
+        }
+
         foreach (GeometryCellRecord geometryCell in _geometryCells.Values)
         {
             int x = geometryCell.Key.X;
@@ -82,6 +88,18 @@ public partial class Map
         int x = key.X;
         int y = key.Y;
         int z = key.Z;
+        // A cell inside the merged static sculpture collision or render keeps its share of those
+        // merged bodies until they are rebuilt without it (as RebuildGeometryCellArtifacts does).
+        bool wasMergedStaticSubcellRenderCell = _mergedStaticSubcellRenderCells.Contains(key);
+        bool wasMergedStaticSubcellCollisionCell = _mergedStaticSubcellCollisionCells.Contains(key);
+        if (IsSourceCell(key))
+        {
+            if (_removedSourceCellSet.Add(key))
+            {
+                _removedSourceCells.Add(key);
+            }
+        }
+
         RemoveGeometryCell(key);
         _renderBlocksByCell.Remove(key);
         _collisionBodiesByCell.Remove(key);
@@ -100,6 +118,18 @@ public partial class Map
         _physicsBinder?.RemoveCellCollisionBodies(key);
         _physicsBinder?.RemoveCompatibilityCubeBodies(cube);
         _physicsBinder?.SyncCellSupportBody(key, needed: false);
+        if (wasMergedStaticSubcellRenderCell && !_initializing)
+        {
+            // The merged render rebuild costs tens of ms; it runs once, on the next render export.
+            _mergedStaticSubcellRenderStale = true;
+            BumpStaticContentVersion();
+        }
+
+        if (wasMergedStaticSubcellCollisionCell)
+        {
+            RemoveMergedStaticSubcellCollisionCell(key);
+        }
+
         return true;
     }
 
@@ -264,6 +294,14 @@ public partial class Map
         return true;
     }
 
+    private void ForgetRemovedSourceCell(GeometryCellKey key)
+    {
+        if (_removedSourceCellSet.Remove(key))
+        {
+            _removedSourceCells.Remove(key);
+        }
+    }
+
     public bool RestoreGeneratedStartupCell(GeometryCellKey cell)
     {
         return RestoreGeneratedStartupCells([cell]) == 1;
@@ -284,7 +322,7 @@ public partial class Map
         _initializing = true;
         try
         {
-            foreach (GeometryCellRecord generatedCell in _generator.CreateStartupGeometry(Width, Height, Depth, _generateStartupTerrain))
+            foreach (GeometryCellRecord generatedCell in _source.CreateCells())
             {
                 if (!requestedCells.Contains(generatedCell.Key))
                 {
@@ -294,6 +332,8 @@ public partial class Map
                 if (_geometryCells.ContainsKey(generatedCell.Key))
                 {
                     SetGeometryCell(generatedCell.Key, generatedCell);
+                    _sourceRecords[generatedCell.Key] = generatedCell;
+                    ForgetRemovedSourceCell(generatedCell.Key);
                     RebuildGeometryCellArtifacts(generatedCell.Key, syncPhysics: _physicsBinder != null);
                     restoredCount++;
                     continue;
@@ -301,6 +341,8 @@ public partial class Map
 
                 if (TryAddGeometryCell(generatedCell, isStatic: true, withPhysics: _physicsBinder != null) != null)
                 {
+                    _sourceRecords[generatedCell.Key] = generatedCell;
+                    ForgetRemovedSourceCell(generatedCell.Key);
                     restoredCount++;
                 }
             }

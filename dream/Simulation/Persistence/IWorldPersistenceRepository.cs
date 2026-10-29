@@ -9,6 +9,7 @@ public interface IWorldPersistenceRepository :
     IEnemyRepository,
     IItemRepository,
     IInventoryRepository,
-    IObjectIdCounterRepository
+    IObjectIdCounterRepository,
+    ITerrainOverrideRepository
 {
 }

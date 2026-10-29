@@ -82,6 +82,13 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public long LoadNextObjectId() => _objectIdCounter.LoadNextObjectId();
 
+    // wave D: shim until the terrain override repository lands (workstream A).
+    public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => [];
+
+    public void SaveTerrainCellOverride(PersistedTerrainCellOverride cellOverride)
+    {
+    }
+
     public void Dispose()
     {
     }

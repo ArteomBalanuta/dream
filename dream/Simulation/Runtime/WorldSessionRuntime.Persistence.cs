@@ -137,6 +137,9 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
     private void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell) =>
         _persistence.PersistFracturePieces(record, cell);
 
+    private void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell) =>
+        _persistence.PersistTerrainCellRemoved(record, cell);
+
     private void PersistEnemy(EnemyActor enemy) => _persistence.PersistEnemy(enemy);
 
     private void DeletePersistedEnemy(int enemyId) => _persistence.DeletePersistedEnemy(enemyId);

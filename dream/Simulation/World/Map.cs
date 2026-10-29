@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Simulation.Physics;
 using Dream.Simulation.World.Geometry;
+using Dream.Simulation.World.MapSources;
 
 namespace Dream.Simulation.World;
 
@@ -15,7 +16,12 @@ public partial class Map
     private readonly IGeometryMutationService _geometryMutations = new GeometryMutationService();
     private readonly WorldGrid _grid;
     private readonly WorldGenerator _generator;
-    private readonly bool _generateStartupTerrain;
+    private readonly IMapSource _source;
+    // The record each source cell was added with (the cell's Source record); see IsSourceCell.
+    private readonly Dictionary<GeometryCellKey, GeometryCellRecord> _sourceRecords = new();
+    // Source cells destroyed since they were added, in removal order (CopyPlacedCubesTo replays it).
+    private readonly List<GeometryCellKey> _removedSourceCells = [];
+    private readonly HashSet<GeometryCellKey> _removedSourceCellSet = [];
     private readonly WorldPhysicsBinder? _physicsBinder;
     private readonly PhysicsIntegrator? _physics;
     // Insertion-ordered with O(1) Remove: its order is the checksum and export order, as with the
@@ -32,6 +38,7 @@ public partial class Map
     private IReadOnlyList<GeometryRenderBlockDescriptor> _mergedStaticSubcellRenderBlocks = [];
     private HashSet<GeometryCellKey> _mergedStaticSubcellRenderCells = [];
     private bool _mergedStaticSubcellRenderReady;
+    private bool _mergedStaticSubcellRenderStale;
     private IReadOnlyList<GeometryCollisionBodyDescriptor> _mergedStaticSubcellCollisionBodies = [];
     private HashSet<GeometryCellKey> _mergedStaticSubcellCollisionCells = [];
     private bool _mergedStaticSubcellCollisionReady;
@@ -99,22 +106,74 @@ public partial class Map
         int depth = 25,
         bool replicatedCubeBodies = false,
         bool headless = false)
+        : this(
+            new GeneratedMapSource(
+                new MapDefinition(
+                    width,
+                    height,
+                    depth,
+                    WorldMapSource.Generated,
+                    WorldGeneratorCatalog.DefaultKey,
+                    WorldGeneratorCatalog.DefaultVersion),
+                generateStartupTerrain),
+            physics,
+            replicatedCubeBodies,
+            headless)
     {
+    }
+
+    public Map(
+        IMapSource source,
+        PhysicsIntegrator? physics,
+        bool replicatedCubeBodies = false,
+        bool headless = false)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        _source = source;
         _physics = physics;
         IsHeadless = headless;
-        _grid = new WorldGrid(width, height, depth);
+        MapDefinition definition = source.Definition;
+        _grid = new WorldGrid(definition.Width, definition.Height, definition.Depth);
         _generator = new WorldGenerator();
-        _generateStartupTerrain = generateStartupTerrain;
         _physicsBinder = _physics != null ? new WorldPhysicsBinder(_physics, replicatedCubeBodies) : null;
         Initialize();
+    }
+
+    // Where this map's base terrain came from.
+    public IMapSource Source => _source;
+
+    // True while the cell (Y > 0) holds the record it got from Source (or from a
+    // RestoreGeneratedStartupCells re-add): not once it was destroyed, replaced or moved.
+    public bool IsSourceCell(GeometryCellKey cell)
+    {
+        return cell.Y > 0 &&
+            _sourceRecords.TryGetValue(cell, out GeometryCellRecord? sourceRecord) &&
+            _geometryCells.TryGetValue(cell, out GeometryCellRecord? current) &&
+            ReferenceEquals(sourceRecord, current);
+    }
+
+    // Removes a source cell exactly as a live destruction does (RemoveCube), without leaving
+    // rubble. False if the cell is not a source cell.
+    public bool RemoveSourceCell(GeometryCellKey cell)
+    {
+        if (!IsSourceCell(cell))
+        {
+            return false;
+        }
+
+        Cube? cube = Cubes[cell.X, cell.Y, cell.Z];
+        return cube != null && RemoveCube(cube);
     }
 
     private void Initialize()
     {
         _initializing = true;
-        foreach (GeometryCellRecord record in _generator.CreateStartupGeometry(Width, Height, Depth, _generateStartupTerrain))
+        foreach (GeometryCellRecord record in _source.CreateCells())
         {
-            TryAddGeometryCell(record, isStatic: true, withPhysics: false);
+            if (TryAddGeometryCell(record, isStatic: true, withPhysics: false) != null)
+            {
+                _sourceRecords[record.Key] = record;
+            }
         }
 
         _initializing = false;

@@ -219,6 +219,21 @@ public class WorldPhysicsBinder
         }
     }
 
+    // Removes the merged static body of one parent cell (see Map.RemoveMergedStaticSubcellCollisionCell).
+    public void RemoveMergedStaticCollisionBodies(GeometryCellKey cellKey)
+    {
+        for (int i = _mergedStaticCollisionBodies.Count - 1; i >= 0; i--)
+        {
+            RigidBody body = _mergedStaticCollisionBodies[i];
+            if (body.UserObject is ValueTuple<GeometryCellKey?, GeometrySubcellKey?, Vector3> reference &&
+                reference.Item1 == cellKey)
+            {
+                _mergedStaticCollisionBodies.RemoveAt(i);
+                RemoveBody(body);
+            }
+        }
+    }
+
     public void RemoveCellCollisionBodies(GeometryCellKey cellKey)
     {
         if (!_geometryCellBodies.TryGetValue(cellKey, out List<RigidBody>? bodies))

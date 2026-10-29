@@ -32,6 +32,10 @@ internal interface IAuthoritativeCombatHost
     void DeletePersistedPlacedCube(int cubeId);
 
     void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell);
+
+    // A cell of the map's base terrain (not a placed cube) was destroyed. Called after
+    // DeletePersistedPlacedCube and immediately before PersistFracturePieces for the same cell.
+    void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell);
 }
 
 // Resolves an authoritative combat use: the seeded attack roll, the enemy or destructible cube it
@@ -316,13 +320,20 @@ internal sealed class AuthoritativeCombatResolver
         object sourceObject = record.SourceObject;
         if (sourceObject is Cube destroyedCube)
         {
-            if (map.TryGetCellForCube(destroyedCube, out GeometryCellKey cell) &&
-                map.FractureCubeIntoPieces(cell))
+            bool hasCell = map.TryGetCellForCube(destroyedCube, out GeometryCellKey cell);
+            // Before the fracture removes the cell: afterwards it no longer holds its source record.
+            bool sourceCell = hasCell && map.IsSourceCell(cell);
+            if (hasCell && map.FractureCubeIntoPieces(cell))
             {
                 GeometryCellRecord? fracturedCell = map.TryGetRubbleAtCell(cell);
                 GeometryMaterialId materialId = fracturedCell?.Definition.MaterialId ?? GeometryMaterialId.Grass;
                 GeometryFracturePiece[] fracturePieces = CaptureCellFracturePieces(map, cell, _fracturePieceScratch);
                 _host.DeletePersistedPlacedCube(record.Actor.Id);
+                if (sourceCell)
+                {
+                    _host.PersistTerrainCellRemoved(record, cell);
+                }
+
                 _host.PersistFracturePieces(record, cell);
                 _worldObjects.Unregister(sourceObject, preserveDetachedRecord: false);
                 _events.Publish(new CubeFracturedEvent(

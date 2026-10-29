@@ -446,5 +446,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
 
         public void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell)
             => Calls.Add($"PersistFracturePieces {record.Actor.Id} {cell}");
+
+        public void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell)
+            => Calls.Add($"PersistTerrainCellRemoved {record.Actor.Id} {cell}");
     }
 }

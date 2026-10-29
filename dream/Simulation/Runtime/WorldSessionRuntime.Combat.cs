@@ -99,5 +99,8 @@ public sealed partial class WorldSessionRuntime
 
         public void PersistFracturePieces(WorldObjectRecord record, GeometryCellKey cell)
             => runtime.PersistFracturePieces(record, cell);
+
+        public void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell)
+            => runtime.PersistTerrainCellRemoved(record, cell);
     }
 }

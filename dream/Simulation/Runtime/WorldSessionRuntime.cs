@@ -10,6 +10,7 @@ using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using Dream.Simulation.World.MapSources;
 
 namespace Dream.Simulation.Runtime;
 
@@ -183,12 +184,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     private Map CreateMap(WorldDescriptor world)
     {
-        return new Map(
-            Physics,
-            generateStartupTerrain: true,
-            width: world.Width,
-            depth: world.Depth,
-            headless: _headlessMap);
+        return new Map(MapSources.ForWorld(world, SimulationSeed), Physics, headless: _headlessMap);
     }
 
     public PhysicsIntegrator Physics { get; }
