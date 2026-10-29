@@ -192,29 +192,37 @@ public sealed class IncrementalCheckpointTests
     // ---- Dirty tracking ----
 
     [Fact]
-    public void Registry_RemoveThenReAddSameId_ClearsTheTombstone_AndDamageMarksDirty()
+    public void Registry_RemoveThenReAddSameCell_TombstonesTheOldRow_AndDamageMarksDirty()
     {
-        Map map = new(physics: null, generateStartupTerrain: false, width: 10, depth: 10);
-        WorldObjectRegistry registry = new();
-        registry.EnableCheckpointTracking();
-        Cube first = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f)));
-        WorldObjectRecord record = registry.RegisterCube(first, map, actorId: 4000, ownerPlayerName: PlayerName);
-        registry.ClearCheckpointChanges();
+        using TempDatabase database = new();
+        using ScriptedSession session = new(database, fullCheckpointInterval: 12, joinPlayer: false);
+        WorldSessionRuntime runtime = session.Runtime;
+        Map map = runtime.Map;
+        WorldObjectRegistry registry = GetWorldObjects(runtime);
+        Vector3 cell = new(3f, 1f, 3f);
+        Cube first = session.AddOwnedCube(cell);
+        Assert.False(Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint()).IsIncremental);
 
+        WorldObjectRecord record = Assert.IsType<WorldObjectRecord>(registry.TryGet(first));
         record.ApplyDamage(5);
         Assert.Contains(first, registry.CheckpointDirtyCubes);
-        registry.ClearCheckpointChanges();
+        PersistenceCheckpoint damaged = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint());
+        Assert.Single(damaged.PlacedCubes);
+        Assert.Empty(damaged.RemovedCubeObjectIds);
 
+        Assert.True(runtime.ObjectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId removedObjectId));
+        DeletePersistedPlacedCube(runtime, record.Actor.Id);
         Assert.True(registry.TryRemove(record));
-        Assert.Contains(4000, registry.CheckpointRemovedCubeIds);
+        PersistenceCheckpoint removed = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint());
+        Assert.Equal(new[] { removedObjectId }, removed.RemovedCubeObjectIds);
 
-        Cube second = Assert.IsType<Cube>(map.TryAddCube(new Vector3(3f, 1f, 3f)));
-        registry.RegisterCube(second, map, actorId: 4000, ownerPlayerName: PlayerName);
-        Assert.DoesNotContain(4000, registry.CheckpointRemovedCubeIds);
+        Cube second = session.AddOwnedCube(cell);
         Assert.Contains(second, registry.CheckpointDirtyCubes);
+        PersistenceCheckpoint readded = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint());
+        Assert.Empty(readded.RemovedCubeObjectIds);
+        Assert.Single(readded.PlacedCubes);
 
         // A removed record's damage no longer marks anything.
-        registry.ClearCheckpointChanges();
         record.ApplyDamage(1);
         Assert.Empty(registry.CheckpointDirtyCubes);
     }

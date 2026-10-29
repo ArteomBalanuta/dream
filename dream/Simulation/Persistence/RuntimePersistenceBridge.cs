@@ -545,7 +545,14 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         _persistedCubes.Remove(objectId);
-        _removedCubeObjectIds.Add(objectId);
+        // Tombstones matter only to an incremental capture, and capture tracking starts with the first
+        // capture (which is full): a runtime that never captures does not accumulate them. Every
+        // capture clears the list.
+        if (_worldObjects.IsCheckpointTrackingEnabled)
+        {
+            _removedCubeObjectIds.Add(objectId);
+        }
+
         _lastRetiredCube = new RetiredCube(cubeId, objectId);
         EnqueueWorldWrite(world => world.DeletePlacedCube(objectId));
     }

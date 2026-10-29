@@ -498,7 +498,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryWorldPersistenceRepository worldPersistence = new();
         GeometryCellKey cell = new(4, 1, 4);
         PersistedCubeFracturePiece persistedPiece = new(
-            ObjectId: ObjectId.None,
+            ObjectId: new ObjectId(89),
             OriginObjectId: new ObjectId(88),
             PieceIndex: 0,
             OwnerPlayerName: "builder-a",
@@ -570,7 +570,7 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.InRange(pieces.Length, 5, 7);
         Assert.All(pieces, piece =>
         {
-            Assert.Equal((int)persistedCube.ObjectId.Value, (int)piece.OriginObjectId.Value);
+            Assert.Equal(persistedCube.ObjectId, piece.OriginObjectId);
             Assert.Equal("Player A", piece.OwnerPlayerName);
             Assert.Equal(persistedCube.CellPosition, piece.ParentCell);
             Assert.Equal(persistedCube.MaterialId, piece.MaterialId);
@@ -723,7 +723,7 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.NotEmpty(pieces);
         Assert.All(pieces, piece =>
         {
-            Assert.Equal((int)persistedCube.ObjectId.Value, (int)piece.OriginObjectId.Value);
+            Assert.Equal(persistedCube.ObjectId, piece.OriginObjectId);
             Assert.Equal("Player A", piece.OwnerPlayerName);
             Assert.Equal(new Vector3(8f, 1f, 7f), piece.ParentCell);
         });
@@ -757,7 +757,7 @@ public class RuntimeAuthoritativeSessionHostTests
             new BuildUseIntent(new Vector3(8f, 1f, 6f)))).Accepted);
 
         PersistedPlacedCube[] beforeCombat = worldPersistence.LoadPlacedCubes()
-            .OrderBy(cube => (int)cube.ObjectId.Value)
+            .OrderBy(cube => cube.ObjectId)
             .ToArray();
         Assert.Equal(2, beforeCombat.Length);
         PersistedPlacedCube movedCubePersisted = beforeCombat[0];
@@ -790,13 +790,13 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.True(resolution.TargetDied);
 
         PersistedPlacedCube remainingCube = Assert.Single(worldPersistence.LoadPlacedCubes());
-        Assert.Equal((int)nearbyCubePersisted.ObjectId.Value, (int)remainingCube.ObjectId.Value);
+        Assert.Equal(nearbyCubePersisted.ObjectId, remainingCube.ObjectId);
         Assert.Equal(nearbyCubePersisted.CellPosition, remainingCube.CellPosition);
 
         PersistedCubeFracturePiece[] fracturePieces = worldPersistence.LoadCubeFracturePieces().ToArray();
         Assert.NotEmpty(fracturePieces);
-        Assert.All(fracturePieces, piece => Assert.NotEqual((int)nearbyCubePersisted.ObjectId.Value, (int)piece.OriginObjectId.Value));
-        Assert.Contains(fracturePieces, piece => (int)piece.OriginObjectId.Value == (int)movedCubePersisted.ObjectId.Value);
+        Assert.All(fracturePieces, piece => Assert.NotEqual(nearbyCubePersisted.ObjectId, piece.OriginObjectId));
+        Assert.Contains(fracturePieces, piece => piece.OriginObjectId == movedCubePersisted.ObjectId);
     }
 
     [Fact]
@@ -1272,7 +1272,7 @@ public class RuntimeAuthoritativeSessionHostTests
     private sealed class InMemoryWorldPersistenceRepository : IWorldPersistenceRepository
     {
         private readonly Dictionary<string, PersistedPlayerWorldState> _players = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<int, PersistedPlacedCube> _placedCubes = [];
+        private readonly Dictionary<ObjectId, PersistedPlacedCube> _placedCubes = [];
         private readonly List<PersistedCubeFracturePiece> _fracturePieces = [];
 
         public PersistedPlayerWorldState? TryGetPlayerWorldState(string playerName)
@@ -1289,12 +1289,12 @@ public class RuntimeAuthoritativeSessionHostTests
 
         public void SavePlacedCube(PersistedPlacedCube cube)
         {
-            _placedCubes[(int)cube.ObjectId.Value] = cube;
+            _placedCubes[cube.ObjectId] = cube;
         }
 
         public void DeletePlacedCube(ObjectId objectId)
         {
-            _placedCubes.Remove((int)objectId.Value);
+            _placedCubes.Remove(objectId);
         }
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
@@ -1302,14 +1302,14 @@ public class RuntimeAuthoritativeSessionHostTests
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
         {
             _fracturePieces.RemoveAll(existing =>
-                (int)existing.OriginObjectId.Value == (int)piece.OriginObjectId.Value &&
+                existing.OriginObjectId == piece.OriginObjectId &&
                 existing.PieceIndex == piece.PieceIndex);
             _fracturePieces.Add(piece);
         }
 
         public void DeleteCubeFracturePieces(ObjectId originObjectId)
         {
-            _fracturePieces.RemoveAll(piece => (int)piece.OriginObjectId.Value == (int)originObjectId.Value);
+            _fracturePieces.RemoveAll(piece => piece.OriginObjectId == originObjectId);
         }
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Array.Empty<PersistedEnemyInstance>();

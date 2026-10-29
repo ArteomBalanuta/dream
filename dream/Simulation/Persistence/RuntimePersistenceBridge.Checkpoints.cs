@@ -72,6 +72,7 @@ internal sealed partial class RuntimePersistenceBridge
             : CaptureIncrementalCheckpoint(map, now);
         map.ClearCheckpointChanges();
         _worldObjects.ClearCheckpointChanges();
+        _removedCubeObjectIds.Clear();
         if (full)
         {
             _checkpointCapturesSinceFull = 0;

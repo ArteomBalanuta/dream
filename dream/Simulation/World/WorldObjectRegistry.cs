@@ -14,10 +14,9 @@ public sealed class WorldObjectRegistry
     private int _nextActorId = ReplicatedActorIdRanges.FirstWorldObjectId;
     // Persistence checkpoint change tracking (off until EnableCheckpointTracking; clients never
     // turn it on): cubes registered (placed, restored, rebound, re-identified) or damaged since the
-    // last ClearCheckpointChanges, and the actor ids of cube records removed since then and not
-    // registered again. Cube moves are tracked by the map (Map.CheckpointMovedCubes).
+    // last ClearCheckpointChanges. Cube moves are tracked by the map (Map.CheckpointMovedCubes);
+    // cube tombstones come from the persistence bridge.
     private HashSet<Cube>? _checkpointDirtyCubes;
-    private HashSet<int>? _checkpointRemovedCubeIds;
     private Action<WorldObjectRecord>? _recordDamaged;
 
     public bool IsCheckpointTrackingEnabled => _checkpointDirtyCubes != null;
@@ -43,7 +42,6 @@ public sealed class WorldObjectRegistry
     public void EnableCheckpointTracking()
     {
         _checkpointDirtyCubes ??= new HashSet<Cube>(ReferenceEqualityComparer.Instance);
-        _checkpointRemovedCubeIds ??= [];
         if (_recordDamaged == null)
         {
             _recordDamaged = MarkCheckpointDirty;
@@ -57,19 +55,15 @@ public sealed class WorldObjectRegistry
     // Concrete sets (read-only by contract), so the capture enumerates them without boxing.
     internal HashSet<Cube> CheckpointDirtyCubes => _checkpointDirtyCubes ?? EmptyCubeSet;
 
-    internal HashSet<int> CheckpointRemovedCubeIds => _checkpointRemovedCubeIds ?? EmptyIdSet;
-
     public void ClearCheckpointChanges()
     {
         _checkpointDirtyCubes?.Clear();
-        _checkpointRemovedCubeIds?.Clear();
     }
 
     // Visits every cube record without allocating (GetCubeRecords copies them into an array).
     public Dictionary<object, WorldObjectRecord>.ValueCollection Records => _records.Values;
 
     private static readonly HashSet<Cube> EmptyCubeSet = [];
-    private static readonly HashSet<int> EmptyIdSet = [];
 
     private void MarkCheckpointDirty(WorldObjectRecord record)
     {
@@ -86,17 +80,12 @@ public sealed class WorldObjectRegistry
         if (_checkpointDirtyCubes != null && record.SourceObject is Cube cube)
         {
             _checkpointDirtyCubes.Add(cube);
-            _checkpointRemovedCubeIds!.Remove(record.Actor.Id);
         }
     }
 
     private void TrackRemoved(WorldObjectRecord record)
     {
         record.Damaged = null;
-        if (_checkpointRemovedCubeIds != null && record.SourceObject is Cube)
-        {
-            _checkpointRemovedCubeIds.Add(record.Actor.Id);
-        }
     }
 
     public WorldObjectRecord Register(

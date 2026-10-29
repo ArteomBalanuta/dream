@@ -106,17 +106,44 @@ internal sealed class PlayerInventoryService
             _starterKitByPlayer[playerName] = starterKitVersion;
         }
 
+        // A hand-edited row can hold an id of 0 or below, which is not a valid ObjectId: the row still
+        // loads, it just has nothing to reserve (the allocator never hands such an id out).
+        int unreservableIds = 0;
         foreach (PersistedItemInstance item in inventory.Items)
         {
             _itemInstances[item.ItemInstanceId] = item;
-            _objectIds.Reserve(new ObjectId(item.ItemInstanceId));
+            if (!TryReserve(item.ItemInstanceId))
+            {
+                unreservableIds++;
+            }
         }
 
         foreach (PersistedInventorySlot slot in inventory.Slots)
         {
             slots[slot.SlotIndex] = slot.ItemInstanceId;
-            _objectIds.Reserve(new ObjectId(slot.ItemInstanceId));
+            if (!TryReserve(slot.ItemInstanceId))
+            {
+                unreservableIds++;
+            }
         }
+
+        if (unreservableIds > 0)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.inventory-invalid-item-id",
+                $"player={playerName} count={unreservableIds}");
+        }
+    }
+
+    private bool TryReserve(long itemInstanceId)
+    {
+        if (itemInstanceId < 1)
+        {
+            return false;
+        }
+
+        _objectIds.Reserve(new ObjectId(itemInstanceId));
+        return true;
     }
 
     // Makes sure the player's inventory is loaded and usable: loads it if no join did, grants the
