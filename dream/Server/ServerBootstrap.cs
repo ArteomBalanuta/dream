@@ -169,6 +169,15 @@ public static class ServerBootstrap
             exitCode = WorldCannotBeOpenedExitCode;
             return null;
         }
+        catch (InvalidDataException ex)
+        {
+            // Bootstrap validates the stored terrain's rows and limits but does not decode the blobs;
+            // a corrupt blob body surfaces here, from the runtime's map build.
+            string label = string.IsNullOrWhiteSpace(worldSelector) ? "(default)" : worldSelector.Trim();
+            log($"Server not started: world '{label}' cannot be opened: the stored terrain is invalid: {ex.Message}");
+            exitCode = WorldCannotBeOpenedExitCode;
+            return null;
+        }
     }
 
     private static async Task<int> RunServerModeAsync(ServerStartOptions options)

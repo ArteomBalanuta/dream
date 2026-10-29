@@ -17,7 +17,7 @@ namespace Dream.Tests.Server;
 // Persistence wave E (B): a stored world is hosted from its terrain_chunks rows.
 public sealed class StoredWorldHostingTests
 {
-    public enum Damage { Missing, Partial, Corrupt, OverLimit }
+    public enum Damage { Missing, Partial, Corrupt, OverLimit, CorruptBytes }
 
     [Fact]
     public void Bootstrap_OpensAStoredWorld_AndItsRuntimeChecksumEqualsTheGeneratedSources()
@@ -39,6 +39,7 @@ public sealed class StoredWorldHostingTests
     [InlineData(Damage.Partial)]
     [InlineData(Damage.Corrupt)]
     [InlineData(Damage.OverLimit)]
+    [InlineData(Damage.CorruptBytes)]
     public void DamagedTerrain_ExitsWithCode5_AndALog(Damage damage)
     {
         using StoredWorldFixture fixture = new();
@@ -129,12 +130,31 @@ internal sealed class StoredWorldFixture : IDisposable
             case StoredWorldHostingTests.Damage.Corrupt:
                 _database.ExecuteScript("UPDATE terrain_chunks SET format_version = 99 WHERE world_id = 2 AND chunk_x = 0 AND chunk_z = 0;");
                 break;
+            case StoredWorldHostingTests.Damage.CorruptBytes:
+                CorruptOneBitmapByte();
+                break;
             default:
                 _database.ExecuteScript(
                     $"UPDATE terrain_chunks SET data = zeroblob({WorldTransferLimits.Default.MaxTerrainBlobBytes + 1}) " +
                     "WHERE world_id = 2 AND chunk_x = 0 AND chunk_z = 0;");
                 break;
         }
+    }
+
+    // A blob whose header, format version, size and row cell count are all valid, but whose occupancy
+    // bitmap has one byte cleared (every column holds the floor, so the byte was not zero): only a full
+    // decode notices.
+    private void CorruptOneBitmapByte()
+    {
+        PersistedTerrainChunk[] chunks = [.. Chunks];
+        byte[] data = (byte[])chunks[0].Data.Clone();
+        const int headerSize = 23;
+        int paletteCount = data[headerSize - 1];
+        int bitmapByte = headerSize + (4 * paletteCount) + 5;
+        Assert.NotEqual(0, data[bitmapByte]);
+        data[bitmapByte] = 0;
+        chunks[0] = chunks[0] with { Data = data };
+        new SqliteTerrainChunkRepository(new SqliteWorldStore(_database.Schema), new WorldId(2)).ReplaceTerrainChunks(chunks);
     }
 
     public void Dispose()

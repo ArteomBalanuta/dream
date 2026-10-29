@@ -38,7 +38,6 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
     private const int LongSessions = 6;
     private const int LongSessionTicks = 19_200;
     private const int LongSlotTicks = 128;
-    private const string GlueSkip = "wave E: needs the stored-world join (A terrain transfer, B hosting and client build), unskip at glue";
 
     [Fact]
     public void Short_StoredWorld_ThreeSessions_FractureAndRestart_KeepsEveryInvariant()
@@ -49,7 +48,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
 
     // After each restart two clients join over loopback TCP and build their map from the terrain
     // transfer; checksum, raised cells and rubble equal the server's.
-    [Fact(Skip = GlueSkip)]
+    [Fact]
     public async Task Short_StoredWorld_ClientJoinsAfterEachRestart_MatchTheServer()
     {
         using StoredWorldDb db = new(ShortSize);
@@ -98,7 +97,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
         output.WriteLine($"managed heap after a full GC at each restart (MB): {string.Join(", ", heaps.Select(heap => (heap / 1048576d).ToString("0.0")))}");
     }
 
-    [LoadFact(Skip = GlueSkip)]
+    [LoadFact]
     public async Task LongSoak_StoredWorld10k_TwoClientsJoinAfterEachRestart()
     {
         using StoredWorldDb db = new(LongSize);

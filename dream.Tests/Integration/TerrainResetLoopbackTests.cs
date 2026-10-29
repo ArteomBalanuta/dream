@@ -1,35 +1,27 @@
 using Xunit;
 using Xunit.Abstractions;
-#if WAVE_E_GLUE
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Dream.Client.World;
 using Dream.Server.Persistence.Worlds;
+using Dream.Server.Worlds;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Dream.Simulation.World.MapSources;
 using Dream.Simulation.World.Terrain;
 using static Dream.Tests.Integration.ObjectIdTestSupport;
-#endif
 
 namespace Dream.Tests.Integration;
 
 // Persistence wave E, workstream D: reset-terrain end to end. Fracture a stored world, stop the server,
 // reset the terrain offline (IWorldCatalog.ResetTerrain, workstream C), restart: the map is the base
 // again except the cells under a saved placed cube, and a client joining over TCP matches.
-//
-// The body is compiled only with WAVE_E_GLUE (it uses IWorldCatalog.ResetTerrain and
-// TerrainResetResult, which arrive with workstream C); the glue defines the symbol and removes the
-// Skip. Needs A and B for the client join.
 public sealed class TerrainResetLoopbackTests(ITestOutputHelper output)
 {
-    private const string GlueSkip = "wave E: needs IWorldCatalog.ResetTerrain (C) and the stored-world join (A, B), unskip at glue";
-
-    [Fact(Skip = GlueSkip)]
+    [Fact]
     public async Task ResetTerrain_ThenRestart_RestoresTheBase_AndAClientJoinsAndMatches()
     {
-#if WAVE_E_GLUE
         using StoredWorldDb db = new();
         int fractures;
         using (SoakServer script = new(db.CreateHost()))
@@ -73,9 +65,5 @@ public sealed class TerrainResetLoopbackTests(ITestOutputHelper output)
         Assert.Equal(WorldStateChecksum.Compute(restored), WorldStateChecksum.Compute(world.Map));
         Assert.Equal(restored.RubbleCells.Keys.ToHashSet(), world.Map.RubbleCells.Keys.ToHashSet());
         await server.DisconnectAsync(client);
-#else
-        await Task.CompletedTask;
-        _ = output;
-#endif
     }
 }

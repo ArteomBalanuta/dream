@@ -14,8 +14,6 @@ namespace Dream.Tests.Integration;
 // is unchanged by wave E.
 public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper output)
 {
-    private const string GlueSkip = "wave E: needs the stored-world join (A terrain transfer, B hosting and client build), unskip at glue";
-
     // Measured at wave E C0 (3e30c12, protocol v8) before A, B or C merged: a client joins the
     // generated 56x8x56 world of StoredWorldDb(stored: false) (seed 20261029) and the server ticks
     // three more times with a snapshot per tick; the pinned frames are the join's (the snapshot frames
@@ -43,7 +41,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     }
 
     // Over real TCP a client joins a stored World10k: checksum, raised key sets and rubble equal.
-    [Fact(Skip = GlueSkip)]
+    [Fact]
     public async Task Client_JoiningAStoredWorld10k_BuildsTheServersMap()
     {
         using StoredWorldDb db = new(100);
@@ -58,7 +56,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     }
 
     // Terrain destroyed (cube and sculpture cells among them), restart, join again: equal again.
-    [Fact(Skip = GlueSkip)]
+    [Fact]
     public async Task Client_JoinsAgain_AfterTerrainWasDestroyedAndTheServerRestarted()
     {
         using StoredWorldDb db = new();
@@ -87,7 +85,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     }
 
     // Two clients connect before either has applied its transfer; both build the same map.
-    [Fact(Skip = GlueSkip)]
+    [Fact]
     public async Task TwoClients_JoinAtOnce_BothBuildTheServersMap()
     {
         using StoredWorldDb db = new(100);
