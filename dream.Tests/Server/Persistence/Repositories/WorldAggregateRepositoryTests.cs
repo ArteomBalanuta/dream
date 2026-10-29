@@ -60,7 +60,7 @@ public sealed class WorldAggregateRepositoryTests
         repository.SavePlacedCube(Cube(1, health: 3, center: null));
 
         IReadOnlyList<PersistedPlacedCube> cubes = repository.LoadPlacedCubes();
-        Assert.Equal([1, 2], cubes.Select(cube => cube.ObjectId.AsInt()));
+        Assert.Equal([1, 2], cubes.Select(cube => (int)cube.ObjectId.Value));
         Assert.Equal(3, cubes[0].CurrentHealth);
         Assert.Null(cubes[0].CenterPosition);
         Assert.Equal(new Vector3(2.5f, 1.5f, 3.5f), cubes[1].CenterPosition);
@@ -69,7 +69,7 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Equal(Created, cubes[0].CreatedUtc);
 
         repository.DeletePlacedCube(new ObjectId(1));
-        Assert.Equal([2], repository.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()));
+        Assert.Equal([2], repository.LoadPlacedCubes().Select(cube => (int)cube.ObjectId.Value));
     }
 
     [Fact]
@@ -84,14 +84,14 @@ public sealed class WorldAggregateRepositoryTests
         repository.SaveCubeFracturePiece(Piece(sourceCubeId: 9, pieceIndex: 1, side: 0.125f));
 
         IReadOnlyList<PersistedCubeFracturePiece> pieces = repository.LoadCubeFracturePieces();
-        Assert.Equal([(9, 0), (9, 1), (10, 0)], pieces.Select(piece => (piece.OriginObjectId.AsInt(), piece.PieceIndex)));
+        Assert.Equal([(9, 0), (9, 1), (10, 0)], pieces.Select(piece => ((int)piece.OriginObjectId.Value, piece.PieceIndex)));
         Assert.Equal(0.125f, pieces[1].SideLength);
         Assert.Equal(new Vector3(9f, 1f, 2f), pieces[1].ParentCell);
         Assert.Equal(new Vector3(9.25f, 1.25f, 2.25f), pieces[1].Center);
         Assert.Equal(Created, pieces[1].CreatedUtc);
 
         repository.DeleteCubeFracturePieces(new ObjectId(9));
-        Assert.Equal([10], repository.LoadCubeFracturePieces().Select(piece => piece.OriginObjectId.AsInt()));
+        Assert.Equal([10], repository.LoadCubeFracturePieces().Select(piece => (int)piece.OriginObjectId.Value));
     }
 
     [Fact]
@@ -105,31 +105,23 @@ public sealed class WorldAggregateRepositoryTests
         repository.SaveEnemyInstance(Enemy(3, hp: 11));
 
         IReadOnlyList<PersistedEnemyInstance> enemies = repository.LoadActiveEnemies();
-        Assert.Equal([3, 4], enemies.Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal([3, 4], enemies.Select(enemy => (int)enemy.ObjectId.Value));
         Assert.Equal(11, enemies[0].Stats.CurrentHealth);
         Assert.Equal(2.5f, enemies[0].Stats.MovementSpeed);
         Assert.Equal(1.25f, enemies[0].Stats.AttackSpeed);
         Assert.Equal(new Vector3(3f, 0f, 3f), enemies[0].Position);
         Assert.Equal(Created, enemies[0].CreatedUtc);
 
-        repository.ReassignEnemyId(3, 30);
-        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
-
-        // A taken id fails the primary key and changes nothing.
-        Assert.Throws<SqliteException>(() => repository.ReassignEnemyId(30, 4));
-        Assert.Equal([4, 30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
-
         repository.DeleteEnemyInstance(new ObjectId(4));
-        Assert.Equal([30], repository.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal([3], repository.LoadActiveEnemies().Select(enemy => (int)enemy.ObjectId.Value));
     }
 
     [Fact]
-    public void Items_CreateReadUpdateDelete_AndTheMaxId()
+    public void Items_CreateReadUpdateDelete()
     {
         using PersistenceTestDatabase database = NewDatabaseWithOwner();
         SqliteItemRepository items = new(new SqliteWorldStore(database.Schema));
 
-        Assert.Equal(0L, items.GetMaxItemInstanceId());
         items.SaveItemInstance(Item(5, owner: null, position: new Vector3(1f, 2f, 3f)));
         items.SaveItemInstance(Item(6, owner: Owner, position: null));
         items.SaveItemInstance(Item(5, owner: null, position: new Vector3(7f, 8f, 9f)));
@@ -141,11 +133,9 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Null(loaded[1].WorldPosition);
         Assert.Equal(Owner, loaded[1].OwnerPlayerName);
         Assert.Equal(Created, loaded[1].CreatedUtc);
-        Assert.Equal(6L, items.GetMaxItemInstanceId());
 
         items.DeleteItemInstance(6);
         Assert.Equal([5L], items.LoadItemInstances().Select(item => item.ItemInstanceId));
-        Assert.Equal(5L, items.GetMaxItemInstanceId());
     }
 
     [Fact]
@@ -212,9 +202,8 @@ public sealed class WorldAggregateRepositoryTests
                 SqliteEnemyRepository enemies = new(store);
                 enemies.SaveEnemyInstance(Enemy(1, 10));
                 enemies.SaveEnemyInstance(Enemy(2, 10));
-                enemies.ReassignEnemyId(1, 11);
                 enemies.DeleteEnemyInstance(new ObjectId(2));
-            }, "SELECT COUNT(*) FROM enemy_instances WHERE object_id = 11;", 1L),
+            }, "SELECT COUNT(*) FROM enemy_instances WHERE object_id = 1;", 1L),
             "Items" => (() =>
             {
                 SqliteItemRepository items = new(store);
@@ -286,7 +275,6 @@ public sealed class WorldAggregateRepositoryTests
         Assert.Equal(facade.LoadCubeFracturePieces(), rubble.LoadCubeFracturePieces());
         Assert.Equal(facade.LoadActiveEnemies(), enemies.LoadActiveEnemies());
         Assert.Equal(facade.LoadItemInstances(), items.LoadItemInstances());
-        Assert.Equal(facade.GetMaxItemInstanceId(), items.GetMaxItemInstanceId());
         Assert.Equal(facade.LoadInventorySlots(), inventory.LoadInventorySlots());
         PersistedPlayerInventory fromFacade = facade.LoadPlayerInventory(Owner);
         PersistedPlayerInventory fromPart = inventory.LoadPlayerInventory(Owner);

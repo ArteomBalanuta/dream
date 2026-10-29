@@ -11,7 +11,7 @@ using Xunit;
 namespace Dream.Tests.Server.Persistence;
 
 // Wave C (B): an enemy's durable identity is its ObjectId. A restore keeps it and hands the enemy a
-// fresh actor id (replacing the wave 10 ReassignEnemyId re-identification), a respawn is a new
+// fresh actor id (replacing the old enemy re-identification), a respawn is a new
 // object with a new ObjectId, and a legacy cube id that sits in the enemy actor range no longer
 // collides with anything.
 public sealed class EnemyObjectIdPersistenceTests

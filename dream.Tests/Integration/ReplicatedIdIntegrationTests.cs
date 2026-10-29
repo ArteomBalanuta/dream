@@ -564,11 +564,6 @@ public class ReplicatedIdIntegrationTests
         public long LoadNextObjectId() => 1;
 
 
-        // Removed by the wave C glue; restore no longer re-identifies enemies.
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
-        {
-        }
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
         public void SaveItemInstance(PersistedItemInstance item)
@@ -582,8 +577,6 @@ public class ReplicatedIdIntegrationTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Array.Empty<PersistedInventorySlot>();
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName) => PersistedPlayerInventory.Empty;
-
-        public long GetMaxItemInstanceId() => 0;
 
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {

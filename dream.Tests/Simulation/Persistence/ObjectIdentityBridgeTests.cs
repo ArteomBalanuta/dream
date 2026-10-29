@@ -340,10 +340,6 @@ public sealed class ObjectIdentityBridgeTests
         {
         }
 
-        public void RestorePersistedInventoryState()
-        {
-        }
-
         public bool IsPlayerInventoryLoaded(string playerName) => false;
 
         public void EvictPlayerInventory(string playerName)

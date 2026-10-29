@@ -6,8 +6,7 @@ using OpenTK.Mathematics;
 
 namespace Dream.Server.Persistence.Repositories;
 
-// item_instances: every item, in the world or in a slot. GetMaxItemInstanceId also reads
-// player_inventory_slots.
+// item_instances: every item, in the world or in a slot.
 public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worldId)
     : SqliteRepositoryBase(store, worldId), IItemRepository
 {
@@ -34,12 +33,6 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
         FROM item_instances
         WHERE world_id = $worldId
         ORDER BY item_instance_id;
-        """;
-
-    private const string MaxIdSql = """
-        SELECT MAX(
-            COALESCE((SELECT MAX(item_instance_id) FROM item_instances WHERE world_id = $worldId), 0),
-            COALESCE((SELECT MAX(item_instance_id) FROM player_inventory_slots WHERE world_id = $worldId), 0));
         """;
 
     private const string UpsertSql = """
@@ -90,10 +83,6 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
 
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances() =>
         QueryList(LoadSql, static reader => ReadItem(reader, 0));
-
-    // Both maxima read an index (the item table's primary key, the slot table's item id index).
-    // Slots count too: foreign keys are not enforced on the runtime's connections.
-    public long GetMaxItemInstanceId() => QueryInt64(MaxIdSql);
 
     // created_utc keeps item.CreatedUtc (UtcNow when unset); updated_utc is the write time.
     public void SaveItemInstance(PersistedItemInstance item) =>

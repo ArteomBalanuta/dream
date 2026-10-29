@@ -179,8 +179,6 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
     void IRuntimePersistenceHost.SpawnInitialWolf() => SpawnInitialWolf();
 
-    void IRuntimePersistenceHost.RestorePersistedInventoryState() => RestorePersistedInventoryState();
-
     bool IRuntimePersistenceHost.IsPlayerInventoryLoaded(string playerName) =>
         _inventory.IsLoaded(playerName);
 

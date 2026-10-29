@@ -299,7 +299,6 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         _objectIds.Restore(_worldPersistence.LoadNextObjectId());
-        _host.RestorePersistedInventoryState();
 
         Map map = _host.Map;
         int skippedCubes = 0;

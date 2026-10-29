@@ -32,7 +32,7 @@ public sealed class WorldScopedRepositoryTests
         Assert.Equal(2L, database.Count("SELECT COUNT(*) FROM placed_cube_instances;"));
         Assert.Equal(3L, database.Count("SELECT COUNT(*) FROM item_instances;"));
 
-        // Deletes, id reassignment and the slot reset stay inside their world.
+        // Deletes and the slot reset stay inside their world.
         two.DeletePlacedCube(new ObjectId(1));
         two.DeleteCubeFracturePieces(new ObjectId(1));
         two.DeleteEnemyInstance(new ObjectId(1));
@@ -44,14 +44,10 @@ public sealed class WorldScopedRepositoryTests
         Assert.Empty(two.LoadActiveEnemies());
         Assert.Empty(two.LoadItemInstances());
         Assert.Empty(two.LoadInventorySlots());
-        Assert.Equal(0L, two.GetMaxItemInstanceId());
-        Assert.Equal(5L, one.GetMaxItemInstanceId());
 
-        one.ReassignEnemyId(1, 9);
-        Assert.Equal([9], one.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal([1], one.LoadActiveEnemies().Select(enemy => (int)enemy.ObjectId.Value));
         two.SaveEnemyInstance(Enemy(1, 12));
-        two.ReassignEnemyId(1, 9);
-        Assert.Equal([9], two.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal([1], two.LoadActiveEnemies().Select(enemy => (int)enemy.ObjectId.Value));
         Assert.Equal(11, one.LoadActiveEnemies().Single().Stats.CurrentHealth);
     }
 

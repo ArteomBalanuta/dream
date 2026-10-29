@@ -570,7 +570,7 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.InRange(pieces.Length, 5, 7);
         Assert.All(pieces, piece =>
         {
-            Assert.Equal(persistedCube.ObjectId.AsInt(), piece.OriginObjectId.AsInt());
+            Assert.Equal((int)persistedCube.ObjectId.Value, (int)piece.OriginObjectId.Value);
             Assert.Equal("Player A", piece.OwnerPlayerName);
             Assert.Equal(persistedCube.CellPosition, piece.ParentCell);
             Assert.Equal(persistedCube.MaterialId, piece.MaterialId);
@@ -723,7 +723,7 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.NotEmpty(pieces);
         Assert.All(pieces, piece =>
         {
-            Assert.Equal(persistedCube.ObjectId.AsInt(), piece.OriginObjectId.AsInt());
+            Assert.Equal((int)persistedCube.ObjectId.Value, (int)piece.OriginObjectId.Value);
             Assert.Equal("Player A", piece.OwnerPlayerName);
             Assert.Equal(new Vector3(8f, 1f, 7f), piece.ParentCell);
         });
@@ -757,7 +757,7 @@ public class RuntimeAuthoritativeSessionHostTests
             new BuildUseIntent(new Vector3(8f, 1f, 6f)))).Accepted);
 
         PersistedPlacedCube[] beforeCombat = worldPersistence.LoadPlacedCubes()
-            .OrderBy(cube => cube.ObjectId.AsInt())
+            .OrderBy(cube => (int)cube.ObjectId.Value)
             .ToArray();
         Assert.Equal(2, beforeCombat.Length);
         PersistedPlacedCube movedCubePersisted = beforeCombat[0];
@@ -790,13 +790,13 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.True(resolution.TargetDied);
 
         PersistedPlacedCube remainingCube = Assert.Single(worldPersistence.LoadPlacedCubes());
-        Assert.Equal(nearbyCubePersisted.ObjectId.AsInt(), remainingCube.ObjectId.AsInt());
+        Assert.Equal((int)nearbyCubePersisted.ObjectId.Value, (int)remainingCube.ObjectId.Value);
         Assert.Equal(nearbyCubePersisted.CellPosition, remainingCube.CellPosition);
 
         PersistedCubeFracturePiece[] fracturePieces = worldPersistence.LoadCubeFracturePieces().ToArray();
         Assert.NotEmpty(fracturePieces);
-        Assert.All(fracturePieces, piece => Assert.NotEqual(nearbyCubePersisted.ObjectId.AsInt(), piece.OriginObjectId.AsInt()));
-        Assert.Contains(fracturePieces, piece => piece.OriginObjectId.AsInt() == movedCubePersisted.ObjectId.AsInt());
+        Assert.All(fracturePieces, piece => Assert.NotEqual((int)nearbyCubePersisted.ObjectId.Value, (int)piece.OriginObjectId.Value));
+        Assert.Contains(fracturePieces, piece => (int)piece.OriginObjectId.Value == (int)movedCubePersisted.ObjectId.Value);
     }
 
     [Fact]
@@ -1289,12 +1289,12 @@ public class RuntimeAuthoritativeSessionHostTests
 
         public void SavePlacedCube(PersistedPlacedCube cube)
         {
-            _placedCubes[cube.ObjectId.AsInt()] = cube;
+            _placedCubes[(int)cube.ObjectId.Value] = cube;
         }
 
         public void DeletePlacedCube(ObjectId objectId)
         {
-            _placedCubes.Remove(objectId.AsInt());
+            _placedCubes.Remove((int)objectId.Value);
         }
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
@@ -1302,14 +1302,14 @@ public class RuntimeAuthoritativeSessionHostTests
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
         {
             _fracturePieces.RemoveAll(existing =>
-                existing.OriginObjectId.AsInt() == piece.OriginObjectId.AsInt() &&
+                (int)existing.OriginObjectId.Value == (int)piece.OriginObjectId.Value &&
                 existing.PieceIndex == piece.PieceIndex);
             _fracturePieces.Add(piece);
         }
 
         public void DeleteCubeFracturePieces(ObjectId originObjectId)
         {
-            _fracturePieces.RemoveAll(piece => piece.OriginObjectId.AsInt() == originObjectId.AsInt());
+            _fracturePieces.RemoveAll(piece => (int)piece.OriginObjectId.Value == (int)originObjectId.Value);
         }
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Array.Empty<PersistedEnemyInstance>();
@@ -1325,10 +1325,6 @@ public class RuntimeAuthoritativeSessionHostTests
         public long LoadNextObjectId() => 1;
 
 
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
-        {
-        }
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Array.Empty<PersistedItemInstance>();
 
         public void SaveItemInstance(PersistedItemInstance item)
@@ -1342,8 +1338,6 @@ public class RuntimeAuthoritativeSessionHostTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Array.Empty<PersistedInventorySlot>();
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName) => PersistedPlayerInventory.Empty;
-
-        public long GetMaxItemInstanceId() => 0;
 
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {

@@ -63,12 +63,6 @@ public sealed partial class WorldSessionRuntime
             Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.DisplayName)));
     }
 
-    // Startup loads no inventory. Item ids come from the shared object id allocator, which the
-    // persistence bridge seeds from the world's stored counter before this runs.
-    private void RestorePersistedInventoryState()
-    {
-    }
-
     // See PlayerInventoryService.ApplyLoaded.
     private void ApplyLoadedInventory(string playerName, PersistedPlayerInventory? inventory)
         => _inventory.ApplyLoaded(playerName, inventory);

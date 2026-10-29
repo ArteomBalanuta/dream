@@ -59,13 +59,13 @@ public sealed class IncrementalCheckpointTests
         PersistenceCheckpoint merged = PersistenceCheckpoint.Merge(PersistenceCheckpoint.Merge(first, second), third);
 
         Assert.True(merged.IsIncremental);
-        Assert.Equal([(1, 70), (2, 60), (3, 50)], merged.PlacedCubes.Select(cube => (cube.ObjectId.AsInt(), cube.CurrentHealth)));
+        Assert.Equal([(1, 70), (2, 60), (3, 50)], merged.PlacedCubes.Select(cube => ((int)cube.ObjectId.Value, cube.CurrentHealth)));
         Assert.Empty(merged.RemovedCubeObjectIds);
-        Assert.Equal([51], merged.Enemies.Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal([51], merged.Enemies.Select(enemy => (int)enemy.ObjectId.Value));
         Assert.Equal(new[] { new ObjectId(50) }, merged.RemovedEnemyObjectIds);
         // The group was removed and then got a piece again: the re-add wins, the older pieces stay dropped.
         PersistedCubeFracturePiece piece = Assert.Single(merged.FracturePieces);
-        Assert.Equal((8, 1, 2f), (piece.OriginObjectId.AsInt(), piece.PieceIndex, piece.Center.X));
+        Assert.Equal((8, 1, 2f), ((int)piece.OriginObjectId.Value, piece.PieceIndex, piece.Center.X));
         Assert.Empty(merged.RemovedFractureOriginObjectIds);
     }
 
@@ -76,19 +76,19 @@ public sealed class IncrementalCheckpointTests
         PersistenceCheckpoint removal = Incremental(removedCubes: [1]);
 
         PersistenceCheckpoint merged = PersistenceCheckpoint.Merge(first, removal);
-        Assert.Equal([2], merged.PlacedCubes.Select(cube => cube.ObjectId.AsInt()));
+        Assert.Equal([2], merged.PlacedCubes.Select(cube => (int)cube.ObjectId.Value));
         Assert.Equal(new[] { new ObjectId(1) }, merged.RemovedCubeObjectIds);
 
         PersistenceCheckpoint full = new([], [], [], [Cube(2, health: 10), Cube(5, health: 10)], []);
         PersistenceCheckpoint mergedFull = PersistenceCheckpoint.Merge(merged, full);
         Assert.False(mergedFull.IsIncremental);
-        Assert.Equal([(2, 10), (5, 10)], mergedFull.PlacedCubes.Select(cube => (cube.ObjectId.AsInt(), cube.CurrentHealth)));
+        Assert.Equal([(2, 10), (5, 10)], mergedFull.PlacedCubes.Select(cube => ((int)cube.ObjectId.Value, cube.CurrentHealth)));
         Assert.Same(full, PersistenceCheckpoint.Merge(PersistenceCheckpoint.Empty, full));
 
         // An incremental checkpoint folded into a full one keeps the result full.
         PersistenceCheckpoint fullThenIncremental = PersistenceCheckpoint.Merge(full, Incremental(cubes: [Cube(5, health: 4)]));
         Assert.False(fullThenIncremental.IsIncremental);
-        Assert.Equal([(2, 10), (5, 4)], fullThenIncremental.PlacedCubes.Select(cube => (cube.ObjectId.AsInt(), cube.CurrentHealth)));
+        Assert.Equal([(2, 10), (5, 4)], fullThenIncremental.PlacedCubes.Select(cube => ((int)cube.ObjectId.Value, cube.CurrentHealth)));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class IncrementalCheckpointTests
         Assert.Equal(2, background.SupersededCheckpoints);
         Assert.Same(first, writer.Written[0]);
         PersistenceCheckpoint merged = writer.Written[1];
-        Assert.Equal([(1, 60), (2, 50)], merged.PlacedCubes.Select(cube => (cube.ObjectId.AsInt(), cube.CurrentHealth)));
+        Assert.Equal([(1, 60), (2, 50)], merged.PlacedCubes.Select(cube => ((int)cube.ObjectId.Value, cube.CurrentHealth)));
         Assert.Empty(merged.RemovedCubeObjectIds);
         Assert.Equal(2, background.LastWriteRows);
         Assert.Equal(3, background.TotalWrittenRows);
@@ -147,7 +147,7 @@ public sealed class IncrementalCheckpointTests
 
         Assert.Equal(1, background.FailedWrites);
         PersistenceCheckpoint written = Assert.Single(writer.Written);
-        Assert.Equal([(1, 90), (2, 70)], written.PlacedCubes.Select(cube => (cube.ObjectId.AsInt(), cube.CurrentHealth)));
+        Assert.Equal([(1, 90), (2, 70)], written.PlacedCubes.Select(cube => ((int)cube.ObjectId.Value, cube.CurrentHealth)));
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public sealed class IncrementalCheckpointTests
             Incremental(cubes: [Cube(1, health: 30)], removedCubes: [2]));
         new SqlitePersistenceCheckpointWriter(database.Schema).Write(merged);
 
-        Dictionary<int, int> health = world.LoadPlacedCubes().ToDictionary(cube => cube.ObjectId.AsInt(), cube => cube.CurrentHealth);
+        Dictionary<int, int> health = world.LoadPlacedCubes().ToDictionary(cube => (int)cube.ObjectId.Value, cube => cube.CurrentHealth);
         Assert.Equal(30, health[1]);
         Assert.Equal(100, health[2]);
     }
@@ -384,7 +384,7 @@ public sealed class IncrementalCheckpointTests
             Assert.NotNull(lost);
             Assert.True(lost.IsIncremental);
             Assert.ThrowsAny<Exception>(() => new SqlitePersistenceCheckpointWriter(database.Schema).Write(
-                lost with { PlacedCubes = [.. lost.PlacedCubes, Cube(lost.PlacedCubes[0].ObjectId.AsInt(), health: 999)] }));
+                lost with { PlacedCubes = [.. lost.PlacedCubes, Cube((int)lost.PlacedCubes[0].ObjectId.Value, health: 999)] }));
             runtime.WriteCheckpointOnDispose = false;
         }
 
@@ -452,7 +452,7 @@ public sealed class IncrementalCheckpointTests
             PersistenceCheckpoint captured = runtime.CapturePersistenceCheckpoint()!;
             if (captured.PlacedCubes.Count != Moved)
             {
-                Assert.Fail($"captured {captured.PlacedCubes.Count}: full={!captured.IsIncremental} " + string.Join(";", captured.PlacedCubes.Select(c => $"{c.ObjectId.AsInt()}@{c.CenterPosition}")));
+                Assert.Fail($"captured {captured.PlacedCubes.Count}: full={!captured.IsIncremental} " + string.Join(";", captured.PlacedCubes.Select(c => $"{(int)c.ObjectId.Value}@{c.CenterPosition}")));
             }
         });
         long budget = 512 + (Moved * 128);
@@ -545,20 +545,20 @@ public sealed class IncrementalCheckpointTests
     {
         SqliteWorldPersistenceRepository world = new(database.Schema);
         List<string> rows = [];
-        foreach (PersistedPlacedCube cube in world.LoadPlacedCubes().OrderBy(cube => cube.ObjectId.AsInt()))
+        foreach (PersistedPlacedCube cube in world.LoadPlacedCubes().OrderBy(cube => (int)cube.ObjectId.Value))
         {
-            rows.Add($"cube {cube.ObjectId.AsInt()} {cube.OwnerPlayerName} {V(cube.CellPosition)} {cube.MaterialId} {cube.CurrentHealth}/{cube.MaxHealth} " +
+            rows.Add($"cube {(int)cube.ObjectId.Value} {cube.OwnerPlayerName} {V(cube.CellPosition)} {cube.MaterialId} {cube.CurrentHealth}/{cube.MaxHealth} " +
                 $"{(cube.CenterPosition is { } center ? V(center) : "-")}");
         }
 
-        foreach (PersistedCubeFracturePiece piece in world.LoadCubeFracturePieces().OrderBy(piece => piece.OriginObjectId.AsInt()).ThenBy(piece => piece.PieceIndex))
+        foreach (PersistedCubeFracturePiece piece in world.LoadCubeFracturePieces().OrderBy(piece => (int)piece.OriginObjectId.Value).ThenBy(piece => piece.PieceIndex))
         {
-            rows.Add($"piece {piece.OriginObjectId.AsInt()}/{piece.PieceIndex} {piece.OwnerPlayerName} {V(piece.ParentCell)} {V(piece.Center)} {F(piece.SideLength)} {piece.MaterialId}");
+            rows.Add($"piece {(int)piece.OriginObjectId.Value}/{piece.PieceIndex} {piece.OwnerPlayerName} {V(piece.ParentCell)} {V(piece.Center)} {F(piece.SideLength)} {piece.MaterialId}");
         }
 
-        foreach (PersistedEnemyInstance enemy in world.LoadActiveEnemies().OrderBy(enemy => enemy.ObjectId.AsInt()))
+        foreach (PersistedEnemyInstance enemy in world.LoadActiveEnemies().OrderBy(enemy => (int)enemy.ObjectId.Value))
         {
-            rows.Add($"enemy {enemy.ObjectId.AsInt()} {enemy.EnemyKind} {V(enemy.Position)} {V(enemy.Facing)} {enemy.Stats.CurrentHealth}/{enemy.Stats.MaxHealth} L{enemy.Stats.Level}");
+            rows.Add($"enemy {(int)enemy.ObjectId.Value} {enemy.EnemyKind} {V(enemy.Position)} {V(enemy.Facing)} {enemy.Stats.CurrentHealth}/{enemy.Stats.MaxHealth} L{enemy.Stats.Level}");
         }
 
         if (world.TryGetPlayerWorldState(PlayerName) is { } state)

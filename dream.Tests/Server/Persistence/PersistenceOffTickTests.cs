@@ -197,8 +197,6 @@ public sealed class PersistenceOffTickTests
         public long LoadNextObjectId() => 1;
 
 
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Write(() => Inner.ReassignEnemyId(oldEnemyId, newEnemyId));
-
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => Read(Inner.LoadItemInstances);
 
         public void SaveItemInstance(PersistedItemInstance item) => Write(() => Inner.SaveItemInstance(item));
@@ -208,8 +206,6 @@ public sealed class PersistenceOffTickTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Read(Inner.LoadInventorySlots);
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName) => Read(() => Inner.LoadPlayerInventory(playerName));
-
-        public long GetMaxItemInstanceId() => Read(Inner.GetMaxItemInstanceId);
 
         public void SaveInventorySlot(PersistedInventorySlot slot) => Write(() => Inner.SaveInventorySlot(slot));
 

@@ -35,8 +35,6 @@ internal interface IRuntimePersistenceHost
     void SpawnInitialWolf();
 
     // Inventory forwarders (the runtime's inventory partial).
-    void RestorePersistedInventoryState();
-
     bool IsPlayerInventoryLoaded(string playerName);
 
     void EvictPlayerInventory(string playerName);

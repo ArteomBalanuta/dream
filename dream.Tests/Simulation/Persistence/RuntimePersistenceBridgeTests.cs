@@ -25,7 +25,6 @@ public sealed class RuntimePersistenceBridgeTests
         rig.Bridge.RestoreWorld();
 
         Assert.Equal(1, rig.Host.InitialWolfSpawns);
-        Assert.Equal(0, rig.Host.InventoryRestores);
         Assert.Null(rig.Bridge.CapturePersistenceCheckpoint(full: true));
     }
 
@@ -43,7 +42,6 @@ public sealed class RuntimePersistenceBridgeTests
 
         rig.Bridge.RestoreWorld();
 
-        Assert.Equal(1, rig.Host.InventoryRestores);
         Assert.Equal(0, rig.Host.InitialWolfSpawns);
         WorldObjectRecord record = Assert.Single(rig.WorldObjects.Records);
         Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId, record.Actor.Id);
@@ -56,7 +54,6 @@ public sealed class RuntimePersistenceBridgeTests
         Assert.True(rig.Identities.TryGetActorId(new ObjectId(2001), out int secondActor));
         Assert.Equal((2500, 2501), (firstActor, secondActor));
         Assert.Equal([2500, 2501], rig.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id));
-        Assert.Empty(world.Reassigned);
         // The allocator is past every loaded id.
         Assert.Equal(2002, rig.ObjectIds.Next);
     }
@@ -406,7 +403,6 @@ public sealed class RuntimePersistenceBridgeTests
 
         public int InitialWolfSpawns { get; set; }
 
-        public int InventoryRestores { get; private set; }
 
         public HashSet<string> LoadedInventories { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -435,8 +431,6 @@ public sealed class RuntimePersistenceBridgeTests
         }
 
         public void SpawnInitialWolf() => InitialWolfSpawns++;
-
-        public void RestorePersistedInventoryState() => InventoryRestores++;
 
         public bool IsPlayerInventoryLoaded(string playerName) => LoadedInventories.Contains(playerName);
 
@@ -492,7 +486,6 @@ public sealed class RuntimePersistenceBridgeTests
 
         public List<PersistedEnemyInstance> Enemies { get; } = [];
 
-        public List<(int Old, int New)> Reassigned { get; } = [];  // ReassignEnemyId is removed by the wave C glue
 
         public int InventoryLoads { get; private set; }
 
@@ -509,7 +502,7 @@ public sealed class RuntimePersistenceBridgeTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => Cubes.Add(cube);
 
-        public void DeletePlacedCube(ObjectId objectId) => Cubes.RemoveAll(cube => cube.ObjectId.AsInt() == objectId.AsInt());
+        public void DeletePlacedCube(ObjectId objectId) => Cubes.RemoveAll(cube => (int)cube.ObjectId.Value == (int)objectId.Value);
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => [];
 
@@ -525,12 +518,10 @@ public sealed class RuntimePersistenceBridgeTests
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => Enemies.Add(enemy);
 
-        public void DeleteEnemyInstance(ObjectId objectId) => Enemies.RemoveAll(enemy => enemy.ObjectId.AsInt() == objectId.AsInt());
+        public void DeleteEnemyInstance(ObjectId objectId) => Enemies.RemoveAll(enemy => (int)enemy.ObjectId.Value == (int)objectId.Value);
 
         public long LoadNextObjectId() => 1;
 
-
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Reassigned.Add((oldEnemyId, newEnemyId));
 
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => [];
 
@@ -549,8 +540,6 @@ public sealed class RuntimePersistenceBridgeTests
             InventoryLoads++;
             return PersistedPlayerInventory.Empty;
         }
-
-        public long GetMaxItemInstanceId() => 0;
 
         public void SaveInventorySlot(PersistedInventorySlot slot)
         {

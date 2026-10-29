@@ -14,6 +14,12 @@ public sealed class PlayerInventoryServiceTests
 {
     private static int StarterCount => ToolCatalog.StarterItemKinds.Count;
 
+    // What the persistence bridge seeds the shared allocator with: above every stored item and slot id.
+    private static long NextIdAboveStored(IWorldPersistenceRepository world) =>
+        Math.Max(
+            world.LoadItemInstances().Select(item => item.ItemInstanceId).DefaultIfEmpty(0).Max(),
+            world.LoadInventorySlots().Select(slot => slot.ItemInstanceId).DefaultIfEmpty(0).Max()) + 1;
+
     [Fact]
     public void Ensure_SeedsTheStarterInventory_AndEquipsTheFirstItem()
     {
@@ -69,7 +75,7 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventoryService inventory = new(world, writes, ids);
         Assert.Equal(1, inventory.NextItemInstanceId);
         // The persistence bridge seeds the shared allocator at startup.
-        ids.Restore(world.GetMaxItemInstanceId() + 1);
+        ids.Restore(NextIdAboveStored(world));
         Assert.Equal(40 + StarterCount, inventory.NextItemInstanceId);
         Assert.Equal(0, inventory.LoadedInventoryCount);
 
@@ -460,7 +466,7 @@ public sealed class PlayerInventoryServiceTests
             ObjectIdAllocator ids = new();
             PlayerInventoryService inventory = new(world, writes, ids);
             // The persistence bridge seeds the shared allocator at startup.
-            ids.Restore(world.GetMaxItemInstanceId() + 1);
+            ids.Restore(NextIdAboveStored(world));
             Assert.True(inventory.Ensure("Nia"));
             Assert.Equal("tool.torch", inventory.BuildSnapshot("Nia").Slots[4].Item!.Value.ItemKind);
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
@@ -472,7 +478,7 @@ public sealed class PlayerInventoryServiceTests
             ObjectIdAllocator ids = new();
             PlayerInventoryService inventory = new(world, writes, ids);
             // The persistence bridge seeds the shared allocator at startup.
-            ids.Restore(world.GetMaxItemInstanceId() + 1);
+            ids.Restore(NextIdAboveStored(world));
             Assert.Equal(6, inventory.NextItemInstanceId);
             Assert.True(inventory.Ensure("Nia"));
 
@@ -703,7 +709,7 @@ public sealed class PlayerInventoryServiceTests
             ObjectIdAllocator ids = new();
             PlayerInventoryService inventory = new(world, writes, ids);
             // The persistence bridge seeds the shared allocator at startup.
-            ids.Restore(world.GetMaxItemInstanceId() + 1);
+            ids.Restore(NextIdAboveStored(world));
             Assert.True(inventory.Ensure("Vic"));
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         }
@@ -730,7 +736,7 @@ public sealed class PlayerInventoryServiceTests
             ObjectIdAllocator ids = new();
             PlayerInventoryService inventory = new(world, writes, ids);
             // The persistence bridge seeds the shared allocator at startup.
-            ids.Restore(world.GetMaxItemInstanceId() + 1);
+            ids.Restore(NextIdAboveStored(world));
             inventory.ApplyLoaded("Vic", loaded);
             Assert.True(inventory.Ensure("Vic"));
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
@@ -847,12 +853,6 @@ public sealed class PlayerInventoryServiceTests
             return new PersistedPlayerInventory(slots, items, Grants.TryGetValue(playerName, out int kit) ? kit : null);
         }
 
-        public long GetMaxItemInstanceId()
-        {
-            long max = _items.Count == 0 ? 0 : _items.Keys.Max();
-            return Rows.Count == 0 ? max : Math.Max(max, Rows.Values.Max(slot => slot.ItemInstanceId));
-        }
-
         public void SaveItemInstance(PersistedItemInstance item)
         {
             Interlocked.Increment(ref _itemSaves);
@@ -894,8 +894,6 @@ public sealed class PlayerInventoryServiceTests
 
         public long LoadNextObjectId() => 1;
 
-
-        public void ReassignEnemyId(int oldEnemyId, int newEnemyId) { }
 
         public IReadOnlyList<PersistedItemInstance> LoadItemInstances() => _items.Values.ToArray();
 

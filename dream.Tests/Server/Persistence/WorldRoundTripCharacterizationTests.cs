@@ -88,11 +88,10 @@ public sealed class WorldRoundTripCharacterizationTests
             RoundTripUtc,
             ReadStrings(reopened, "SELECT updated_utc FROM combat_formulas WHERE formula_key = 'player.min_damage'").Single());
 
-        // ReassignEnemyId is a bare UPDATE of the key: the row keeps the time its save stamped.
-        PersistedEnemyInstance moved = new SqliteWorldPersistenceRepository(reopened).LoadActiveEnemies().Single(enemy => enemy.ObjectId.AsInt() == 5);
+        PersistedEnemyInstance second = new SqliteWorldPersistenceRepository(reopened).LoadActiveEnemies().Single(enemy => (int)enemy.ObjectId.Value == 2);
         Assert.Equal(
-            SqliteSchemaBootstrapper.FormatUtc(moved.UpdatedUtc),
-            ReadStrings(reopened, "SELECT updated_utc FROM enemy_instances WHERE object_id = 5").Single());
+            SqliteSchemaBootstrapper.FormatUtc(second.UpdatedUtc),
+            ReadStrings(reopened, "SELECT updated_utc FROM enemy_instances WHERE object_id = 2").Single());
     }
 
     [Fact]
@@ -130,7 +129,7 @@ public sealed class WorldRoundTripCharacterizationTests
         PersistedPlacedCube CubeWithoutCenter,
         PersistedCubeFracturePiece[] Pieces,
         PersistedEnemyInstance Kept,
-        PersistedEnemyInstance Reassigned,
+        PersistedEnemyInstance Second,
         PersistedItemInstance Held,
         PersistedItemInstance Dropped,
         DateTime StartedUtc,
@@ -220,7 +219,7 @@ public sealed class WorldRoundTripCharacterizationTests
             new PersistedCreatureStats(33, 40, 8, 6, 9, 0, 2.8f, 0.95f, 3),
             CreatedUtc,
             default);
-        PersistedEnemyInstance reassigned = kept with
+        PersistedEnemyInstance second = kept with
         {
             ObjectId = new ObjectId(2),
             EnemyKind = "wolf",
@@ -229,10 +228,9 @@ public sealed class WorldRoundTripCharacterizationTests
             Stats = new PersistedCreatureStats(60, 60, 14, 12, 11, 4, 4.5f, 1.25f, 7)
         };
         world.SaveEnemyInstance(kept);
-        world.SaveEnemyInstance(reassigned);
+        world.SaveEnemyInstance(second);
         world.SaveEnemyInstance(kept with { ObjectId = new ObjectId(3) });
         world.DeleteEnemyInstance(new ObjectId(3));
-        world.ReassignEnemyId(2, 5);
 
         PersistedItemInstance held = new(100, "sword", "Iron Sword", "sword_iron", "alpha", null, "Inventory", 1, CreatedUtc, default);
         PersistedItemInstance dropped = new(101, "stone", "Stone", "stone_small", null, new Vector3(1.5f, 0.25f, -2f), "World", 12, CreatedUtc, default);
@@ -263,7 +261,7 @@ public sealed class WorldRoundTripCharacterizationTests
             withoutCenter,
             pieces,
             kept,
-            reassigned with { ObjectId = new ObjectId(5) },
+            second,
             held,
             dropped,
             started,
@@ -314,7 +312,7 @@ public sealed class WorldRoundTripCharacterizationTests
     private static void AssertPlacedCubes(SqliteSchemaBootstrapper schema, WrittenWorld written)
     {
         IReadOnlyList<PersistedPlacedCube> cubes = new SqliteWorldPersistenceRepository(schema).LoadPlacedCubes();
-        Assert.Equal(new[] { 10, 11 }, cubes.Select(cube => cube.ObjectId.AsInt()));
+        Assert.Equal(new[] { 10, 11 }, cubes.Select(cube => (int)cube.ObjectId.Value));
         AssertCube(written.CubeWithCenter, cubes[0], written);
         AssertCube(written.CubeWithoutCenter, cubes[1], written);
         Assert.Null(cubes[1].CenterPosition);
@@ -322,7 +320,7 @@ public sealed class WorldRoundTripCharacterizationTests
 
     private static void AssertCube(PersistedPlacedCube expected, PersistedPlacedCube actual, WrittenWorld written)
     {
-        Assert.Equal(expected.ObjectId.AsInt(), actual.ObjectId.AsInt());
+        Assert.Equal((int)expected.ObjectId.Value, (int)actual.ObjectId.Value);
         Assert.Equal(expected.OwnerPlayerName, actual.OwnerPlayerName);
         Assert.Equal(expected.CellPosition, actual.CellPosition);
         Assert.Equal(expected.CenterPosition, actual.CenterPosition);
@@ -342,7 +340,7 @@ public sealed class WorldRoundTripCharacterizationTests
         {
             PersistedCubeFracturePiece expected = written.Pieces[i];
             PersistedCubeFracturePiece actual = pieces[i];
-            Assert.Equal(expected.OriginObjectId.AsInt(), actual.OriginObjectId.AsInt());
+            Assert.Equal((int)expected.OriginObjectId.Value, (int)actual.OriginObjectId.Value);
             Assert.Equal(expected.PieceIndex, actual.PieceIndex);
             Assert.Equal("alpha", actual.OwnerPlayerName);
             Assert.Equal(expected.ParentCell, actual.ParentCell);
@@ -358,14 +356,14 @@ public sealed class WorldRoundTripCharacterizationTests
     private static void AssertEnemies(SqliteSchemaBootstrapper schema, WrittenWorld written)
     {
         IReadOnlyList<PersistedEnemyInstance> enemies = new SqliteWorldPersistenceRepository(schema).LoadActiveEnemies();
-        Assert.Equal(new[] { 1, 5 }, enemies.Select(enemy => enemy.ObjectId.AsInt()));
+        Assert.Equal(new[] { 1, 2 }, enemies.Select(enemy => (int)enemy.ObjectId.Value));
         AssertEnemy(written.Kept, enemies[0], written);
-        AssertEnemy(written.Reassigned, enemies[1], written);
+        AssertEnemy(written.Second, enemies[1], written);
     }
 
     private static void AssertEnemy(PersistedEnemyInstance expected, PersistedEnemyInstance actual, WrittenWorld written)
     {
-        Assert.Equal(expected.ObjectId.AsInt(), actual.ObjectId.AsInt());
+        Assert.Equal((int)expected.ObjectId.Value, (int)actual.ObjectId.Value);
         Assert.Equal(expected.EnemyKind, actual.EnemyKind);
         Assert.Equal(expected.DisplayName, actual.DisplayName);
         Assert.Equal(expected.Position, actual.Position);
@@ -386,7 +384,6 @@ public sealed class WorldRoundTripCharacterizationTests
         Assert.Equal("alpha", items[0].OwnerPlayerName);
         Assert.Null(items[0].WorldPosition);
         Assert.Null(items[1].OwnerPlayerName);
-        Assert.Equal(101L, world.GetMaxItemInstanceId());
 
         IReadOnlyList<PersistedInventorySlot> slots = world.LoadInventorySlots();
         Assert.Equal(new[] { ("alpha", 0, 100L), ("alpha", 3, 100L) }, slots.Select(slot => (slot.PlayerName, slot.SlotIndex, slot.ItemInstanceId)));
