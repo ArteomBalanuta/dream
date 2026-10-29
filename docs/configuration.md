@@ -297,7 +297,9 @@ One database holds any number of worlds, and one server process runs exactly one
 
 A name that creates a world gives it the new-world size: `ServerStartOptions.NewWorldSize`, which the integrated server takes from the floor size setting, and 56 for the dedicated server. The new world gets a random seed. The server logs the world's name and id, never its seed.
 
-An id that does not exist stops the dedicated server with exit code **4** (`WorldNotFoundException`). The other dedicated-server exit code is 3, for a database migrated by a newer build (`SchemaTooNewException`).
+An id that does not exist stops the dedicated server with exit code **4** (`WorldNotFoundException`). A world that cannot be opened stops it with exit code **5**: a `--world` name over 64 characters, or a stored world this build cannot host (a size outside 5 to 100, another height, an unsupported generator). The log line reads `world '<selector>' cannot be opened: <reason>`. The other dedicated-server exit code is 3, for a database migrated by a newer build (`SchemaTooNewException`).
+
+A name that does not exist is created, so a typo such as `--world fo` makes a new empty world. The server says so on standard error: `World 'fo' (id 5) did not exist and was created (size 56).` An existing world logs `opened`.
 
 ### Managing worlds: `--worlds`
 
@@ -312,7 +314,7 @@ An id that does not exist stops the dedicated server with exit code **4** (`Worl
 
 Exit codes: **0** success, **1** usage error, **2** world not found or name conflict, **3** the database schema is newer than this build. A bad argument, including a size outside 5 to 100 or a name that is blank or longer than 64 characters, is a usage error (1). A name already taken ignoring case is a conflict (2).
 
-Names are 1 to 64 characters after trimming and unique ignoring case. World ids are never reused.
+Names are 1 to 64 characters after trimming and unique ignoring case. A name cannot be only ASCII digits (`--world 2024` selects the id 2024, so such a world could never be selected by name) and cannot contain control characters such as a tab or a newline (they break the `list` output); `create` and `copy` reject both as a usage error (1). World ids are never reused. A copy of a world that has no stored seed stores one on the source first, so both share it.
 
 ## Project Content Layout
 

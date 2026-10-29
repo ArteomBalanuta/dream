@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
@@ -52,6 +53,30 @@ public sealed class RuntimePersistenceBridgeTests
         Assert.Equal([2001, 2500], rig.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id).Order());
         // The row move is one queued write (inline here).
         Assert.Equal([(7, 2500)], world.Reassigned);
+    }
+
+    [Fact]
+    public void RestoreWorld_CountsCubesSkippedForAnOccupiedOrOutOfBoundsCell_InOneSummaryLine()
+    {
+        FakeWorld world = new();
+        world.Cubes.Add(new PersistedPlacedCube(
+            7, "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+        world.Cubes.Add(new PersistedPlacedCube(
+            8, "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+        world.Cubes.Add(new PersistedPlacedCube(
+            9, "builder", new Vector3(100000, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+        Rig rig = new(world);
+        List<(string Category, string Message)> lines = [];
+
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            rig.Bridge.RestoreWorld();
+        }
+
+        Assert.Single(rig.WorldObjects.Records);
+        (string category, string message) = Assert.Single(
+            lines.Where(line => line.Category == "server.persistence.restore-skipped-cubes"));
+        Assert.Contains("count=2", message);
     }
 
     [Fact]

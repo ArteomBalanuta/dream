@@ -284,6 +284,7 @@ internal sealed partial class RuntimePersistenceBridge
         _host.RestorePersistedInventoryState();
 
         Map map = _host.Map;
+        int skippedCubes = 0;
         foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes())
         {
             _persistedCubes[persistedCube.CubeId] = persistedCube;
@@ -298,6 +299,7 @@ internal sealed partial class RuntimePersistenceBridge
                 materialId: persistedCube.MaterialId);
             if (cube == null)
             {
+                skippedCubes++;
                 continue;
             }
 
@@ -313,6 +315,13 @@ internal sealed partial class RuntimePersistenceBridge
                 currentHealth: persistedCube.CurrentHealth,
                 actorId: persistedCube.CubeId,
                 ownerPlayerName: persistedCube.OwnerPlayerName);
+        }
+
+        if (skippedCubes > 0)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.restore-skipped-cubes",
+                $"count={skippedCubes} reason=cell-occupied-or-out-of-bounds");
         }
 
         RestorePersistedCubeFracturePieces();

@@ -157,6 +157,71 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
     }
 
     [Fact]
+    public void TryCreateServerModeHost_InvalidWorldName_ExitsWithCode5AndNamesTheWorld()
+    {
+        List<string> lines = [];
+        string longName = new('x', 65);
+
+        DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+            () =>
+            {
+                ServerBootstrap.CreatePersistenceBundle(
+                    _databasePath, _schemaPath, start: new ServerStartOptions(longName)).Dispose();
+                throw new InvalidOperationException("unreachable");
+            },
+            lines.Add,
+            out int exitCode,
+            longName);
+
+        Assert.Null(host);
+        Assert.Equal(5, exitCode);
+        Assert.Equal(ServerBootstrap.WorldCannotBeOpenedExitCode, exitCode);
+        Assert.Contains(lines, line => line.Contains("cannot be opened", StringComparison.Ordinal) &&
+            line.Contains(longName, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TryCreateServerModeHost_StoredWorldThisBuildCannotHost_ExitsWithCode5()
+    {
+        List<string> lines = [];
+        FakeCatalog catalog = new(Record(WorldDescriptor.ForFloorSize(500)));
+
+        DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+            () =>
+            {
+                Open(catalog, null).Dispose();
+                throw new InvalidOperationException("unreachable");
+            },
+            lines.Add,
+            out int exitCode);
+
+        Assert.Null(host);
+        Assert.Equal(5, exitCode);
+        Assert.Contains(lines, line => line.Contains("cannot be opened", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Bundle_TakesTheWorldEnvironmentValueFromTheCaller_NotFromTheProcess()
+    {
+        Assert.Throws<WorldNotFoundException>(() => ServerBootstrap.CreatePersistenceBundle(
+            _databasePath, _schemaPath, worldEnvironmentValue: "999"));
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(_databasePath, _schemaPath);
+        Assert.Equal(WorldId.Default, bundle.WorldId);
+    }
+
+    [Fact]
+    public void Bundle_NamedWorldThatDidNotExist_LogsThatItWasCreated()
+    {
+        List<string> lines = [];
+
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            _databasePath, _schemaPath, log: lines.Add, start: new ServerStartOptions("fo"));
+
+        Assert.Contains(lines, line => line.Contains("'fo'", StringComparison.Ordinal) &&
+            line.Contains("did not exist and was created", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Bundle_InvalidResolvedDescriptor_IsRejected()
     {
         WorldDescriptor tooBig = WorldDescriptor.ForFloorSize(500);

@@ -236,7 +236,7 @@ public class RemoteClientSessionJoinTests
         }
         catch (Exception ex) when (ex is UnsupportedWorldException or InvalidDataException)
         {
-            session.EndSessionWithReason(ex.Message);
+            session.EndSessionWithReason(ex.Message, RemoteClientSession.UnsupportedWorldLogEvent);
         }
 
         Assert.False(session.IsConnected);

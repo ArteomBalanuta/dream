@@ -36,10 +36,18 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
         return Convert.ToInt32(max.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
+    // Concurrent first starts: the version is read once without a lock (the common, already-migrated
+    // case stays cheap), and again after BeginTransaction() has taken the write lock. BeginTransaction()
+    // is IMMEDIATE, so a second process waits (busy_timeout) for the first to commit, then sees the new
+    // version and does nothing. The backup is taken under that lock, after the re-read confirmed a
+    // migration is still needed. SQLite's backup API cannot read through the connection that holds the
+    // write transaction ("database is locked"), so Backup copies through a separate reader; readers do
+    // not conflict with the write lock, and no other process can change the file while it is held, so
+    // the copy is exactly the pre-migration state.
     public SchemaMigrationResult Migrate(string databasePath, SqliteConnection connection, Action<string>? log = null)
     {
-        int from = GetCurrentVersion(connection);
         int to = LatestVersion;
+        int from = GetCurrentVersion(connection);
         if (from > to)
         {
             throw new SchemaTooNewException(from, to);
@@ -48,13 +56,6 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
         if (from == to)
         {
             return new SchemaMigrationResult(from, to, null);
-        }
-
-        // A new database has nothing to lose; any other gets a copy it can be restored from.
-        string? backupPath = HasUserTables(connection) ? Backup(databasePath, connection, from, to) : null;
-        if (backupPath != null)
-        {
-            log?.Invoke($"Database backed up to {backupPath} before the schema migration.");
         }
 
         // PRAGMA foreign_keys is a no-op inside a transaction, and with foreign keys on, DROP TABLE of a
@@ -67,9 +68,29 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
             SetForeignKeys(connection, false);
         }
 
+        string? backupPath = null;
         try
         {
             using SqliteTransaction transaction = connection.BeginTransaction();
+            from = GetCurrentVersion(connection);
+            if (from > to)
+            {
+                throw new SchemaTooNewException(from, to);
+            }
+
+            if (from == to)
+            {
+                // Another process migrated while this one waited for the lock.
+                return new SchemaMigrationResult(from, to, null);
+            }
+
+            // A new database has nothing to lose; any other gets a copy it can be restored from.
+            if (HasUserTables(connection))
+            {
+                backupPath = Backup(databasePath, connection, from, to);
+                log?.Invoke($"Database backed up to {backupPath} before the schema migration.");
+            }
+
             Execute(connection, transaction, CreateVersionTableSql);
             for (int i = from; i < to; i++)
             {
@@ -203,13 +224,23 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
 
         try
         {
+            // A second, read-only-in-effect connection is the backup source: SQLite's backup API reports
+            // "database is locked" when its source connection holds the write transaction. A reader
+            // does not conflict with the held write lock and sees the last committed state, which is
+            // the pre-migration state because the transaction has written nothing yet.
+            using SqliteConnection source = new(new SqliteConnectionStringBuilder(connection.ConnectionString)
+            {
+                Pooling = false,
+                Mode = SqliteOpenMode.ReadOnly
+            }.ToString());
+            source.Open();
             using SqliteConnection destination = new(new SqliteConnectionStringBuilder
             {
                 DataSource = backupPath,
                 Pooling = false
             }.ToString());
             destination.Open();
-            connection.BackupDatabase(destination);
+            source.BackupDatabase(destination);
         }
         catch
         {
