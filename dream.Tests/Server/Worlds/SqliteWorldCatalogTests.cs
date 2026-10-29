@@ -21,7 +21,7 @@ public sealed class SqliteWorldCatalogTests
         Assert.NotNull(a.Seed);
         Assert.Equal(42UL, b.Seed);
         Assert.Equal(0, a.WorldTimeTicks);
-        Assert.Equal(3, a.CreatedSchemaVersion);
+        Assert.Equal(4, a.CreatedSchemaVersion);
         Assert.Equal([a.Descriptor.Id, b.Descriptor.Id], db.Catalog.List().Select(r => r.Descriptor.Id).ToArray());
         Assert.Equal(b, db.Catalog.TryGet(b.Descriptor.Id));
     }

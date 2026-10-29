@@ -83,3 +83,17 @@ public abstract class SqliteRepositoryBase(IWorldStore store, WorldId? worldId)
         return Convert.ToInt64(command.ExecuteScalar());
     }
 }
+
+// SQL text helpers shared by the repositories.
+internal static class SqliteRepositorySql
+{
+    // The checkpoint statement with its $worldId and $updatedUtc parameters replaced by literals.
+    // The checkpoint statements run once per row and Microsoft.Data.Sqlite looks every parameter up
+    // by name and binds it on every execution; the two values that never change within a statement
+    // cost a lookup and a bind per row as parameters and nothing as literals. The world id is a
+    // long formatted invariantly and the time is escaped as a SQL string, so neither can inject
+    // SQL. The command is built once per checkpoint, so the text is prepared once as before.
+    internal static string WithCheckpointLiterals(string sql, WorldId worldId, string writeUtc) =>
+        sql.Replace("$worldId", worldId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("$updatedUtc", "'" + writeUtc.Replace("'", "''", StringComparison.Ordinal) + "'", StringComparison.Ordinal);
+}

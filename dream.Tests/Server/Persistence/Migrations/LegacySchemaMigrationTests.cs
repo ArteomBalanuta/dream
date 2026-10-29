@@ -140,7 +140,7 @@ public sealed class LegacySchemaMigrationTests
 
         Assert.Equal(new SchemaMigrationResult(0, MigrationTestDatabase.ShippedLatestVersion, result.BackupPath), result);
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0003\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0004\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
         // Migration 0003 moves the per-world tables to (world_id, ...) keys and the seed and clock onto
         // the worlds row, so only the tables it leaves alone compare equal here; the per-world rows are
@@ -157,7 +157,7 @@ public sealed class LegacySchemaMigrationTests
                 rowsAfter.Count(row => row.StartsWith(table + " ", StringComparison.Ordinal)));
         }
 
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(0L, Scalar(migrated, "SELECT COUNT(*) FROM player_starter_grants;"));
     }
 

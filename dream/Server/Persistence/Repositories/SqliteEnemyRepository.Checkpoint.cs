@@ -34,7 +34,7 @@ public sealed partial class SqliteEnemyRepository
             return;
         }
 
-        using SqliteCommand command = session.CreateCommand(CheckpointUpdateSql);
+        using SqliteCommand command = session.CreateCommand(SqliteRepositorySql.WithCheckpointLiterals(CheckpointUpdateSql, worldId, writeUtc));
         SqliteParameter enemyId = command.AddParameter("$enemyId", SqliteType.Integer);
         SqliteParameter positionX = command.AddParameter("$positionX", SqliteType.Real);
         SqliteParameter positionY = command.AddParameter("$positionY", SqliteType.Real);
@@ -45,8 +45,6 @@ public sealed partial class SqliteEnemyRepository
         SqliteParameter currentHp = command.AddParameter("$currentHp", SqliteType.Integer);
         SqliteParameter maxHp = command.AddParameter("$maxHp", SqliteType.Integer);
         SqliteParameter level = command.AddParameter("$level", SqliteType.Integer);
-        command.Parameters.AddWithValue("$updatedUtc", writeUtc);
-        command.Parameters.AddWithValue("$worldId", worldId.Value);
 
         foreach (PersistedEnemyInstance enemy in enemies)
         {

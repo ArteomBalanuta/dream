@@ -53,7 +53,7 @@ public sealed class WorldsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(0, 3, null), result);
+        Assert.Equal(new SchemaMigrationResult(0, 4, null), result);
         using SqliteConnection connection = database.Open();
         Assert.Equal(
             ["1|default|56|8|56|generated|default|1||0|3"],
@@ -87,9 +87,9 @@ public sealed class WorldsMigrationTests
                 """));
         Assert.Equal(
             [
-                "ix_cube_fracture_pieces_owner_player_name", "ix_cube_fracture_pieces_parent_cell", "ix_cube_fracture_pieces_updated_utc",
-                "ix_enemy_instances_updated_utc", "ix_item_instances_owner_player_name", "ix_item_instances_updated_utc",
-                "ix_placed_cube_instances_owner_player_name", "ix_placed_cube_instances_updated_utc",
+                "ix_cube_fracture_pieces_owner_player_name", "ix_cube_fracture_pieces_parent_cell",
+                "ix_item_instances_owner_player_name", "ix_item_instances_updated_utc",
+                "ix_placed_cube_instances_owner_player_name",
                 "ix_player_inventory_slots_item_instance_id", "ix_player_world_state_updated_utc"
             ],
             Column(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'ix\\_%' ESCAPE '\\' AND name NOT LIKE 'ix\\_player\\_profile%' ESCAPE '\\' ORDER BY name;"));
@@ -125,15 +125,15 @@ public sealed class WorldsMigrationTests
                 .Migrate(database.DatabasePath, connection, log.Add);
 
             Assert.Equal(2, result.FromVersion);
-            Assert.Equal(3, result.ToVersion);
+            Assert.Equal(4, result.ToVersion);
             // The pragma is back to what the caller had.
             Assert.Equal(1L, Scalar(connection, "PRAGMA foreign_keys;"));
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0003\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0004\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
             ["alice|0|11|Sword", "bob|3|12|Potion"],
@@ -237,7 +237,7 @@ public sealed class WorldsMigrationTests
         using (SqliteConnection connection = MigrationTestDatabase.OpenFile(database.DatabasePath))
         {
             Execute(connection, $"PRAGMA foreign_keys = {pragma};");
-            Assert.Equal(3, migrator.Migrate(database.DatabasePath, connection).ToVersion);
+            Assert.Equal(4, migrator.Migrate(database.DatabasePath, connection).ToVersion);
             Assert.Equal(expected, Scalar(connection, "PRAGMA foreign_keys;"));
         }
     }
