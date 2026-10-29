@@ -14,7 +14,7 @@ public sealed class SchemaMigrationTests
     {
         IReadOnlyList<ISchemaMigration> migrations = SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);
 
-        Assert.Equal(5, migrations.Count);
+        Assert.Equal(6, migrations.Count);
         ISchemaMigration baseline = migrations[0];
         Assert.IsType<BaselineMigration>(baseline);
         Assert.Equal(1, baseline.Version);
@@ -31,7 +31,10 @@ public sealed class SchemaMigrationTests
         Assert.IsType<SqlScriptMigration>(migrations[4]);
         Assert.Equal(5, migrations[4].Version);
         Assert.Equal("object_ids", migrations[4].Name);
-        Assert.Equal(5, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(6, migrations[5].Version);
+        Assert.Equal("terrain", migrations[5].Name);
+        Assert.IsType<SqlScriptMigration>(migrations[5]);
+        Assert.Equal(6, MigrationTestDatabase.ShippedLatestVersion);
     }
 
     [Fact]
@@ -84,16 +87,17 @@ public sealed class SchemaMigrationTests
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0003_worlds.sql")));
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0004_drop_busy_table_updated_utc_indexes.sql")));
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0005_object_ids.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0006_terrain.sql")));
         using MigrationTestDatabase database = new();
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(0, 5, null), result);
+        Assert.Equal(new SchemaMigrationResult(0, MigrationTestDatabase.ShippedLatestVersion, null), result);
         Assert.Empty(database.Backups());
         using SqliteConnection expected = reference.Open();
         using SqliteConnection actual = database.Open();
         Assert.Equal(SqliteSchemaSnapshot.Capture(expected), SqliteSchemaSnapshot.Capture(actual));
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids")], VersionRows(actual));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain")], VersionRows(actual));
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_starter_grants;"));
     }
 
@@ -150,11 +154,11 @@ public sealed class SchemaMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
 
-        Assert.Equal(new SchemaMigrationResult(5, 5, null), result);
+        Assert.Equal(new SchemaMigrationResult(MigrationTestDatabase.ShippedLatestVersion, MigrationTestDatabase.ShippedLatestVersion, null), result);
         Assert.Empty(log);
         Assert.Empty(database.Backups());
         using SqliteConnection connection = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids")], VersionRows(connection));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain")], VersionRows(connection));
         Assert.Equal("yes", database.Scalar("SELECT value FROM world_metadata WHERE key = 'kept';"));
         // The accepted behaviour change: the baseline runs once, so a deleted seed row stays deleted.
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM combat_formulas WHERE formula_key = 'player.critical_chance';"));

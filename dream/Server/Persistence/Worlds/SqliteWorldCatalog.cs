@@ -19,6 +19,8 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
     // Children first: inventory slots reference item_instances.
     private static readonly string[] DeleteOrder =
     [
+        "terrain_chunks",
+        "terrain_cell_overrides",
         "player_inventory_slots",
         "player_starter_grants",
         "item_instances",
@@ -47,6 +49,9 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         ("item_instances",
             "item_instance_id, item_kind, display_name, visual_id, owner_player_name, world_position_x, " +
             "world_position_y, world_position_z, state, stack_count, created_utc, updated_utc"),
+        ("terrain_cell_overrides",
+            "object_id, cell_x, cell_y, cell_z, kind, cell_data, created_utc, updated_utc"),
+        ("terrain_chunks", "chunk_x, chunk_z, format_version, cell_count, data, updated_utc"),
         ("player_inventory_slots", "player_name, slot_index, item_instance_id, updated_utc"),
         ("player_starter_grants", "player_name, kit_version, updated_utc")
     ];

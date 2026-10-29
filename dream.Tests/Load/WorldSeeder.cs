@@ -5,6 +5,7 @@ using Dream.Server.Persistence;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using Dream.Simulation.World.MapSources;
 
 namespace Dream.Tests.Load;
 
@@ -123,9 +124,62 @@ public static class WorldSeeder
         }
 
         WriteRows(schema, cubes, pieces, enemies);
+        if (scenario.TerrainOverrides > 0)
+        {
+            SeedTerrainOverrides(databasePath, WorldDescriptor.ForFloorSize(scenario.FloorSize), scenario.TerrainOverrides, schemaScriptPath);
+        }
+
         stopwatch.Stop();
         long databaseBytes = File.Exists(databasePath) ? new FileInfo(databasePath).Length : 0;
         return new WorldSeedResult(cubes.Count, rubbleCells.Count, pieces.Count, enemies.Count, stopwatch.Elapsed.TotalMilliseconds, databaseBytes);
+    }
+
+    // Writes `count` Removed terrain overrides: the first raised, non-floor cells of the world's
+    // GeneratedMapSource in canonical order. Ids come from the world's object-id counter (the insert
+    // trigger advances it); no rubble is written. Returns the cells in id order. The schema script
+    // defaults to the repository's player-profiles.init.sql.
+    public static IReadOnlyList<GeometryCellKey> SeedTerrainOverrides(
+        string databasePath,
+        WorldDescriptor world,
+        int count,
+        string? schemaScriptPath = null)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        SqliteSchemaBootstrapper schema = new(
+            databasePath,
+            schemaScriptPath ?? Dream.Tests.Server.Persistence.Migrations.MigrationTestDatabase.InitScriptPath);
+        schema.EnsureSchema();
+
+        List<GeometryCellKey> cells = [];
+        foreach (GeometryCellRecord record in new GeneratedMapSource(MapDefinition.ForWorld(world)).CreateCells())
+        {
+            if (cells.Count >= count)
+            {
+                break;
+            }
+
+            if (record.Key.Y > 0 && !record.Definition.IsFloor)
+            {
+                cells.Add(record.Key);
+            }
+        }
+
+        if (cells.Count < count)
+        {
+            throw new InvalidOperationException($"World has only {cells.Count} raised terrain cells; {count} requested.");
+        }
+
+        using SqliteWorldPersistenceRepository repository = new(schema, world.Id);
+        long nextId = repository.LoadNextObjectId();
+        DateTime now = DateTime.UtcNow;
+        foreach (GeometryCellKey cell in cells)
+        {
+            repository.SaveTerrainCellOverride(new PersistedTerrainCellOverride(
+                new ObjectId(nextId++), cell, TerrainCellOverrideKind.Removed, CellData: null, now, now));
+        }
+
+        return cells;
     }
 
     // Rubble piece ids, above every seeded cube, origin and enemy id.

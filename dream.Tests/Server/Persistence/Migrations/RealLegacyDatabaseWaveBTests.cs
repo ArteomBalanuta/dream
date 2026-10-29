@@ -99,7 +99,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
             // Exactly one new backup, named for the version pair, and it is the pre-migration file.
             string backup = Assert.Single(database.Backups().Except(backupsBeforeStart));
-            Assert.Matches($@"persistence\.sqlite\.v{fromVersion}-to-v0005\.\d{{8}}T\d{{6}}Z\.bak$", backup);
+            Assert.Matches($@"persistence\.sqlite\.v{fromVersion}-to-v{MigrationTestDatabase.ShippedLatestVersion:D4}\.\d{{8}}T\d{{6}}Z\.bak$", backup);
             using (SqliteConnection backupConnection = MigrationTestDatabase.OpenFile(backup))
             {
                 using SqliteCommand command = backupConnection.CreateCommand();
@@ -118,7 +118,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
             }
 
             AssertObjectIdCounterAndTriggers(database);
-            Assert.Equal(5L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+            Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
             Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
             Assert.Equal(oldSeed, database.Scalar("SELECT seed FROM worlds WHERE world_id = 1;"));
             Assert.Equal(oldTime, database.Scalar("SELECT world_time_ticks FROM worlds WHERE world_id = 1;"));
@@ -215,7 +215,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 WHERE w.world_id = 1;
                 """));
         Assert.Equal(
-            4L,
+            5L,
             database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id';"));
     }
 

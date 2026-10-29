@@ -23,6 +23,7 @@ public sealed class SqliteObjectIdCounterRepository(IWorldStore store, WorldId w
             COALESCE((SELECT MAX(object_id) FROM enemy_instances WHERE world_id = $worldId), 0),
             COALESCE((SELECT MAX(object_id) FROM cube_fracture_pieces WHERE world_id = $worldId), 0),
             COALESCE((SELECT MAX(origin_object_id) FROM cube_fracture_pieces WHERE world_id = $worldId), 0),
+            COALESCE((SELECT MAX(object_id) FROM terrain_cell_overrides WHERE world_id = $worldId), 0),
             COALESCE((SELECT MAX(item_instance_id) FROM item_instances WHERE world_id = $worldId), 0),
             COALESCE((SELECT MAX(item_instance_id) FROM player_inventory_slots WHERE world_id = $worldId), 0));
         """;

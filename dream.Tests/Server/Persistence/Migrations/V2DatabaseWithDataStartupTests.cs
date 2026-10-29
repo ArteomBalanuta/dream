@@ -47,8 +47,8 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
 
         // One backup of the v2 file, taken before 0003 ran.
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0005\.\d{8}T\d{6}Z\.bak$", backup);
-        Assert.Equal(5L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0006\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
 
         // Every row moved to world 1; nothing was lost, nothing went to another world.
         for (int i = 0; i < WorldTables.Length; i++)

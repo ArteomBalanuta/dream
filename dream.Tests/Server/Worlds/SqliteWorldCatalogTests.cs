@@ -1,4 +1,5 @@
 using Xunit;
+using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Server.Worlds;
 using Dream.Simulation.World;
 
@@ -21,7 +22,7 @@ public sealed class SqliteWorldCatalogTests
         Assert.NotNull(a.Seed);
         Assert.Equal(42UL, b.Seed);
         Assert.Equal(0, a.WorldTimeTicks);
-        Assert.Equal(5, a.CreatedSchemaVersion);
+        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, a.CreatedSchemaVersion);
         Assert.Equal([a.Descriptor.Id, b.Descriptor.Id], db.Catalog.List().Select(r => r.Descriptor.Id).ToArray());
         Assert.Equal(b, db.Catalog.TryGet(b.Descriptor.Id));
     }
