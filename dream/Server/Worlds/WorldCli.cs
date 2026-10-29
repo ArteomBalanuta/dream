@@ -247,7 +247,8 @@ public static class WorldCli
                     output.WriteLine(
                         $"reset-terrain\t{target.Descriptor.Id}\t{target.Descriptor.Name}\t" +
                         $"cleared={result.OverridesCleared}\trubble={result.RubbleRowsDeleted}\t" +
-                        $"kept={result.CellsKeptForPlacedCubes}");
+                        $"kept={result.CellsKeptForPlacedCubes}\tinside={result.Inside}" +
+                        (result.PlayerNames is { Count: > 0 } names ? $"\tinside_players={string.Join(',', names)}" : string.Empty));
                     return ExitOk;
                 };
             }

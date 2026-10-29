@@ -112,6 +112,25 @@ public static class RemoteWorldMutationApplier
         }
     }
 
+    // ApplySnapshotToRuntime for a live session: a resync the client cannot host (a stored world of other
+    // dimensions, a non-square world) reports its message to endSession and returns false instead of
+    // letting the exception escape the frame loop.
+    public static bool TryApplySnapshotToRuntime(
+        IClientWorldState runtime, ServerSnapshotEnvelope snapshot, Action<string> endSession)
+    {
+        ArgumentNullException.ThrowIfNull(endSession);
+        try
+        {
+            ApplySnapshotToRuntime(runtime, snapshot);
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+        {
+            endSession(ex.Message);
+            return false;
+        }
+    }
+
     public static void ApplySnapshotToRuntime(IClientWorldState runtime, ServerSnapshotEnvelope snapshot)
     {
         ArgumentNullException.ThrowIfNull(runtime);

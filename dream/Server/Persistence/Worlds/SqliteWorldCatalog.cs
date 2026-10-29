@@ -279,6 +279,56 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         using SqliteSession session = _store.BeginOwnedTransaction();
         _ = TryGet(session, id) ?? throw new WorldNotFoundException(id.ToString());
 
+        // The cells about to be restored: override cells with no placed cube. Read first, for the report of
+        // players and enemies saved inside them (they are not moved).
+        HashSet<(int, int, int)> restoredCells = [];
+        using (SqliteCommand command = session.CreateCommand(
+            "SELECT o.cell_x, o.cell_y, o.cell_z FROM terrain_cell_overrides AS o WHERE o.world_id = $id AND NOT EXISTS (" +
+            "SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
+            "AND p.cell_x = o.cell_x AND p.cell_y = o.cell_y AND p.cell_z = o.cell_z);"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value);
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                restoredCells.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2)));
+            }
+        }
+
+        List<string> playersInside = [];
+        int enemiesInside = 0;
+        if (restoredCells.Count > 0)
+        {
+            using (SqliteCommand command = session.CreateCommand(
+                "SELECT player_name, position_x, position_y, position_z FROM player_world_state " +
+                "WHERE world_id = $id ORDER BY player_name;"))
+            {
+                command.Parameters.AddWithValue("$id", id.Value);
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    if (restoredCells.Contains(CellOf(reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3))))
+                    {
+                        playersInside.Add(reader.GetString(0));
+                    }
+                }
+            }
+
+            using (SqliteCommand command = session.CreateCommand(
+                "SELECT position_x, position_y, position_z FROM enemy_instances WHERE world_id = $id;"))
+            {
+                command.Parameters.AddWithValue("$id", id.Value);
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    if (restoredCells.Contains(CellOf(reader.GetDouble(0), reader.GetDouble(1), reader.GetDouble(2))))
+                    {
+                        enemiesInside++;
+                    }
+                }
+            }
+        }
+
         // Rubble first (it is matched through the override rows), then the overrides.
         int rubble;
         using (SqliteCommand command = session.CreateCommand(
@@ -291,6 +341,25 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         {
             command.Parameters.AddWithValue("$id", id.Value);
             rubble = command.ExecuteNonQuery();
+        }
+
+        // Lost-override rubble: a source cell whose override row is gone (so it is not matched above) but
+        // whose rubble still names an origin that is neither an override nor a live placed cube. After the
+        // reset the cell stands, and the load-time heal would remove it again to match that rubble.
+        // Rubble of a broken player cube in an air cell has the same shape (its origin cube is gone), so
+        // an explicit admin reset deletes it too, which is harmless: it is only loose debris.
+        using (SqliteCommand command = session.CreateCommand(
+            "DELETE FROM cube_fracture_pieces WHERE world_id = $id " +
+            "AND NOT EXISTS (SELECT 1 FROM terrain_cell_overrides AS o WHERE o.world_id = $id " +
+            "AND o.object_id = cube_fracture_pieces.origin_object_id) " +
+            "AND NOT EXISTS (SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
+            "AND p.object_id = cube_fracture_pieces.origin_object_id) " +
+            "AND NOT EXISTS (SELECT 1 FROM placed_cube_instances AS p WHERE p.world_id = $id " +
+            "AND p.cell_x = cube_fracture_pieces.parent_cell_x AND p.cell_y = cube_fracture_pieces.parent_cell_y " +
+            "AND p.cell_z = cube_fracture_pieces.parent_cell_z);"))
+        {
+            command.Parameters.AddWithValue("$id", id.Value);
+            rubble += command.ExecuteNonQuery();
         }
 
         int cleared;
@@ -313,8 +382,17 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         }
 
         session.Commit();
-        return new TerrainResetResult(cleared, rubble, kept);
+        return new TerrainResetResult(
+            cleared,
+            rubble,
+            kept,
+            playersInside.Count,
+            enemiesInside,
+            playersInside.Count > 0 ? playersInside : null);
     }
+
+    private static (int, int, int) CellOf(double x, double y, double z) =>
+        ((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z));
 
     private static void CopyTable(SqliteSession session, string table, string columns, long sourceId, long newId)
     {

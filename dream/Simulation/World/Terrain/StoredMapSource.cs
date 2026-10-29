@@ -10,9 +10,10 @@ public sealed class StoredMapSource : IMapSource
 {
     private readonly IReadOnlyList<PersistedTerrainChunk> _chunks;
     private readonly long _maxSubcellOverrides;
+    private readonly long _maxImpliedSubcells;
 
     public StoredMapSource(MapDefinition definition, IReadOnlyList<PersistedTerrainChunk> chunks,
-        long maxSubcellOverrides = long.MaxValue)
+        long maxSubcellOverrides = long.MaxValue, long maxImpliedSubcells = long.MaxValue)
     {
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         ArgumentNullException.ThrowIfNull(chunks);
@@ -40,6 +41,7 @@ public sealed class StoredMapSource : IMapSource
 
         _chunks = chunks;
         _maxSubcellOverrides = maxSubcellOverrides;
+        _maxImpliedSubcells = maxImpliedSubcells;
     }
 
     public MapDefinition Definition { get; }
@@ -51,9 +53,10 @@ public sealed class StoredMapSource : IMapSource
         GeometryCellRecord?[] slots = new GeometryCellRecord?[Definition.Width * depth * height];
         int total = 0;
         long budget = _maxSubcellOverrides;
+        long impliedBudget = _maxImpliedSubcells;
         foreach (PersistedTerrainChunk chunk in _chunks)
         {
-            List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(Definition, chunk.ChunkX, chunk.ChunkZ, chunk.Data, ref budget);
+            List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(Definition, chunk.ChunkX, chunk.ChunkZ, chunk.Data, ref budget, ref impliedBudget);
             if (cells.Count != chunk.CellCount)
             {
                 throw new InvalidDataException($"terrain chunk ({chunk.ChunkX}, {chunk.ChunkZ}) cell count differs from its blob");

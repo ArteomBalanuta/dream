@@ -32,6 +32,21 @@ public class TerrainChunkCodecBudgetTests(ITestOutputHelper output)
     private const long ExpectedWorld10kOverrideTotal = 246_382;
 
     [Fact]
+    public void World10k_GeneratedImpliedSubcellTotal_IsRecordedAndFarBelowTheLimit()
+    {
+        MapDefinition definition = Def(100);
+        IReadOnlyList<PersistedTerrainChunk> chunks = TerrainChunkExporter.Export(new GeneratedMapSource(definition));
+
+        long total = TerrainChunkBudgetProbe.ImpliedTotal(definition, chunks);
+
+        output.WriteLine($"World10k generated implied subcell total: {total:N0} (limit {WorldTransferLimits.Default.MaxTerrainSubcells:N0})");
+        Assert.True(total <= WorldTransferLimits.Default.MaxTerrainSubcells / 4);
+        Assert.Equal(ExpectedWorld10kImpliedTotal, total);
+    }
+
+    private const long ExpectedWorld10kImpliedTotal = 1_667_072;
+
+    [Fact]
     public void TheBudget_IsSpentExactly_AndExhaustedBeforeAnyOverrideSetIsAllocated()
     {
         MapDefinition definition = Def(100);

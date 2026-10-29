@@ -11,6 +11,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Dream.Simulation.World.MapSources;
+using Dream.Simulation.World.Terrain;
 
 namespace Dream.Simulation.Runtime;
 
@@ -138,7 +139,16 @@ public sealed partial class WorldSessionRuntime : IDisposable
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
-        Map = CreateMap(world);
+        try
+        {
+            Map = CreateMap(world);
+        }
+        catch
+        {
+            // The constructor throws: nobody owns the native physics world.
+            Physics.Dispose();
+            throw;
+        }
 
         PhysicsFactory physicsFactory = new();
         var playerBody = physicsFactory.CreatePlayerBody(playerStartPosition.ToBullet());
@@ -186,7 +196,15 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     private Map CreateMap(WorldDescriptor world)
     {
-        return new Map(MapSources.ForWorld(world, SimulationSeed, StoredTerrain), Physics, headless: _headlessMap);
+        try
+        {
+            return new Map(MapSources.ForWorld(world, SimulationSeed, StoredTerrain), Physics, headless: _headlessMap);
+        }
+        catch (InvalidDataException ex) when (world.MapSource == WorldMapSource.Stored)
+        {
+            // The stored blobs decode lazily, here; name the failure for the bootstrap.
+            throw new StoredTerrainInvalidException(ex.Message, ex);
+        }
     }
 
     // The terrain chunks a stored world was built from; null for generated worlds.

@@ -11,6 +11,7 @@ using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Terrain;
 
 namespace Dream.Server;
 
@@ -80,14 +81,35 @@ public static class ServerBootstrap
     // CreatePersistenceBundle's seed lines.
     public static RuntimeAuthoritativeSessionHost CreateRuntimeHost(ServerPersistenceBundle? persistence, Action<string>? log)
     {
-        RuntimeAuthoritativeSessionHost host = RuntimeAuthoritativeSessionHost.CreateDefault(CreateRuntimePersistencePorts(persistence));
-        double dayLengthMinutes = ResolveDayLengthMinutes(
-            Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
-            log);
-        host.Runtime.ConfigureWorldClock(
-            WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes),
-            persistence?.WorldTimeTicks ?? 0);
-        return host;
+        RuntimePersistencePorts? ports = CreateRuntimePersistencePorts(persistence);
+        RuntimeAuthoritativeSessionHost? host = null;
+        try
+        {
+            host = RuntimeAuthoritativeSessionHost.CreateDefault(ports);
+            double dayLengthMinutes = ResolveDayLengthMinutes(
+                Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
+                log);
+            host.Runtime.ConfigureWorldClock(
+                WorldClockSettings.FromDayLengthMinutes(dayLengthMinutes),
+                persistence?.WorldTimeTicks ?? 0);
+            return host;
+        }
+        catch
+        {
+            // A failed start (a corrupt stored terrain, say) must release the database: the host owns
+            // the bundle once it exists; before that the write queue and the bundle are released here.
+            if (host != null)
+            {
+                host.Dispose();
+            }
+            else
+            {
+                ports?.PersistenceWrites?.Dispose();
+                persistence?.Dispose();
+            }
+
+            throw;
+        }
     }
 
     public static RuntimePersistencePorts? CreateRuntimePersistencePorts(ServerPersistenceBundle? persistence)
@@ -108,6 +130,7 @@ public static class ServerBootstrap
         {
             Descriptor = persistence.Descriptor,
             StoredTerrain = persistence.StoredTerrain,
+            TerrainPayload = persistence.TerrainPayload,
         };
     }
 
@@ -169,12 +192,20 @@ public static class ServerBootstrap
             exitCode = WorldCannotBeOpenedExitCode;
             return null;
         }
-        catch (InvalidDataException ex)
+        catch (StoredTerrainInvalidException ex)
         {
             // Bootstrap validates the stored terrain's rows and limits but does not decode the blobs;
             // a corrupt blob body surfaces here, from the runtime's map build.
             string label = string.IsNullOrWhiteSpace(worldSelector) ? "(default)" : worldSelector.Trim();
             log($"Server not started: world '{label}' cannot be opened: the stored terrain is invalid: {ex.Message}");
+            exitCode = WorldCannotBeOpenedExitCode;
+            return null;
+        }
+        catch (InvalidDataException ex)
+        {
+            // Any other invalid data at startup: no claim about the terrain.
+            string label = string.IsNullOrWhiteSpace(worldSelector) ? "(default)" : worldSelector.Trim();
+            log($"Server not started: world '{label}' cannot be opened: invalid data: {ex.Message}");
             exitCode = WorldCannotBeOpenedExitCode;
             return null;
         }
@@ -288,12 +319,18 @@ public static class ServerBootstrap
 
         WorldId worldId = descriptor.Id;
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null;
+        TerrainTransferPayload? terrainPayload = null;
         if (descriptor.MapSource == WorldMapSource.Stored)
         {
             try
             {
-                storedTerrain = new SqliteWorldPersistenceRepository(schema, worldId).TerrainChunks.LoadTerrainChunks();
+                using (SqliteWorldPersistenceRepository terrainRepository = new(schema, worldId))
+                {
+                    storedTerrain = terrainRepository.TerrainChunks.LoadTerrainChunks();
+                }
+
                 TerrainTransferPayload payload = TerrainTransferPayload.Create(descriptor, storedTerrain);
+                terrainPayload = payload;
                 log?.Invoke(
                     $"World '{descriptor.Name}' (id {worldId}) stored terrain: chunks={payload.Manifest.Chunks} " +
                     $"bytes={payload.Manifest.Bytes} sha256={payload.Manifest.Sha256}");
@@ -337,7 +374,8 @@ public static class ServerBootstrap
             record.WorldTimeTicks,
             worldId,
             descriptor,
-            storedTerrain: storedTerrain);
+            storedTerrain: storedTerrain,
+            terrainPayload: terrainPayload);
     }
 
     // Minutes per in-game day: an unset value gives the default silently; a number outside

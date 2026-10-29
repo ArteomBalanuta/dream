@@ -23,4 +23,7 @@ public sealed record RuntimePersistencePorts(
 
     // The terrain chunks of a stored world, as loaded; null for generated worlds.
     public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; init; }
+
+    // The terrain transfer built from StoredTerrain at bootstrap; null makes the host build its own.
+    public Dream.Multiplayer.Protocol.TerrainTransferPayload? TerrainPayload { get; init; }
 }

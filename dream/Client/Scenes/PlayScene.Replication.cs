@@ -22,7 +22,7 @@ public partial class PlayScene
                 $"local={_remoteClient.SessionId} {NetworkDiagnosticsLog.DescribeJoin(joinAcceptedMessage)}");
             try
             {
-                ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
+                ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage, _remoteClient.WorldTransferLimits);
             }
             catch (UnsupportedWorldException ex)
             {
@@ -65,7 +65,16 @@ public partial class PlayScene
                     static state => $"local={state.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(state.Snapshot)}");
             }
 
-            RemoteWorldMutationApplier.ApplySnapshotToRuntime(_runtime, snapshotMessage.Snapshot);
+            // A resync the client cannot host (for example a stored world of other dimensions) ends the
+            // session with a readable reason instead of the exception escaping the frame.
+            if (!RemoteWorldMutationApplier.TryApplySnapshotToRuntime(
+                    _runtime,
+                    snapshotMessage.Snapshot,
+                    reason => _remoteClient.EndSessionWithReason(reason, RemoteClientSession.ProtocolErrorLogEvent)))
+            {
+                return;
+            }
+
             RequestWorldResyncIfOutOfSync(snapshotMessage.Snapshot);
             ClientCorrectionApplier.ApplySnapshotToRuntime(
                 _runtime,

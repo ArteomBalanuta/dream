@@ -126,4 +126,17 @@ internal static class TerrainChunkBudgetProbe
 
         return long.MaxValue - budget;
     }
+
+    // The implied subcells (resolution^3 per record off the coarse SolidCube path) of all chunks.
+    public static long ImpliedTotal(MapDefinition definition, IReadOnlyList<PersistedTerrainChunk> chunks)
+    {
+        long overrides = long.MaxValue;
+        long implied = long.MaxValue;
+        foreach (PersistedTerrainChunk chunk in chunks)
+        {
+            _ = TerrainChunkCodec.Decode(definition, chunk.ChunkX, chunk.ChunkZ, chunk.Data, ref overrides, ref implied);
+        }
+
+        return long.MaxValue - implied;
+    }
 }

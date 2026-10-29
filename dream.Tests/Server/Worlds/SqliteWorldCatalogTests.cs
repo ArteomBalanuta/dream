@@ -316,10 +316,12 @@ public sealed class SqliteWorldCatalogTests
 
         TerrainResetResult result = db.Catalog.ResetTerrain(WorldId.Default);
 
-        Assert.Equal(new TerrainResetResult(1, 1, 1), result);
+        // Fix loop 1 (S4): the (3,1,3) rubble of an origin that is neither an override nor a placed cube
+        // is lost-override rubble and goes too; (4,1,5), under a placed cube, stays.
+        Assert.Equal(new TerrainResetResult(1, 2, 1), result);
         Assert.Equal(1, db.Count("terrain_cell_overrides", 1));
-        // (6,1,6) rubble gone; (3,1,3) rubble of another cell stays; (4,1,5) rubble stays.
-        Assert.Equal(2, db.Count("cube_fracture_pieces", 1));
+        // (6,1,6) and (3,1,3) rubble gone; (4,1,5) rubble stays.
+        Assert.Equal(1, db.Count("cube_fracture_pieces", 1));
         Assert.Equal(2, db.Count("placed_cube_instances", 1));
         Assert.Throws<WorldNotFoundException>(() => db.Catalog.ResetTerrain(new WorldId(9)));
     }
