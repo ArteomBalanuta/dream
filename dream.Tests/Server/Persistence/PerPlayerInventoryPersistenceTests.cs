@@ -110,7 +110,8 @@ public sealed class PerPlayerInventoryPersistenceTests
         // Nothing is loaded at startup, yet the counter starts above every persisted id.
         Assert.Equal(0, restarted.LoadedInventoryCount);
         Assert.Equal(0, restarted.LoadedItemInstanceCount);
-        Assert.Equal(firstRunIds.Max() + 1, restarted.NextItemInstanceId);
+        // The counter is shared with persisted enemies and cubes, so it may sit further above.
+        Assert.True(restarted.NextItemInstanceId > firstRunIds.Max());
 
         using RuntimeAuthoritativeSessionHost restartedHost = new(restarted);
         restartedHost.JoinSession("b", "Bravo");
@@ -285,7 +286,7 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadItemInstances)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadInventorySlots)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
-        Assert.Equal(1, world.Calls(nameof(IWorldPersistenceRepository.GetMaxItemInstanceId)));
+        Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.GetMaxItemInstanceId)));
         Assert.Equal(0, runtime.LoadedInventoryCount);
         Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count, runtime.NextItemInstanceId);
 
@@ -557,7 +558,13 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         public void DeleteEnemyInstance(ObjectId objectId) => Count(nameof(DeleteEnemyInstance));
 
-        public long LoadNextObjectId() => 1;
+        // What the real counter returns once items are the only persisted objects (the bridge seeds
+        // the shared allocator from it at startup). Not counted: it is not an item-repository read.
+        public long LoadNextObjectId()
+        {
+            long max = _items.Count == 0 ? 0 : _items.Keys.Max();
+            return (_slots.Count == 0 ? max : Math.Max(max, _slots.Values.Max(slot => slot.ItemInstanceId))) + 1;
+        }
 
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Count(nameof(ReassignEnemyId));
