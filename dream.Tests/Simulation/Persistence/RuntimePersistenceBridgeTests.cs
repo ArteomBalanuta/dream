@@ -34,7 +34,7 @@ public sealed class RuntimePersistenceBridgeTests
     {
         FakeWorld world = new();
         world.Cubes.Add(new PersistedPlacedCube(
-            7, "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+            new ObjectId(7), "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
         world.Enemies.Add(Enemy(7));
         world.Enemies.Add(Enemy(2001));
         Rig rig = new(world);
@@ -60,11 +60,11 @@ public sealed class RuntimePersistenceBridgeTests
     {
         FakeWorld world = new();
         world.Cubes.Add(new PersistedPlacedCube(
-            7, "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+            new ObjectId(7), "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
         world.Cubes.Add(new PersistedPlacedCube(
-            8, "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+            new ObjectId(8), "builder", new Vector3(3, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
         world.Cubes.Add(new PersistedPlacedCube(
-            9, "builder", new Vector3(100000, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
+            new ObjectId(9), "builder", new Vector3(100000, 1, 3), GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 60, 100, Now, Now));
         Rig rig = new(world);
         List<(string Category, string Message)> lines = [];
 
@@ -332,13 +332,13 @@ public sealed class RuntimePersistenceBridgeTests
         Assert.Equal(3, expected.Length);
         Assert.Equal(
             expected,
-            world.Pieces.Select(piece => (piece.SourceCubeId, piece.PieceIndex, piece.OwnerPlayerName, piece.ParentCell, piece.Center, piece.SideLength, piece.MaterialId)));
+            world.Pieces.Select(piece => (piece.OriginObjectId.AsInt(), piece.PieceIndex, piece.OwnerPlayerName, piece.ParentCell, piece.Center, piece.SideLength, piece.MaterialId)));
     }
 
     private static PersistedEnemyInstance Enemy(int id)
     {
         return new PersistedEnemyInstance(
-            id,
+            new ObjectId(id),
             "wolf",
             "Wolf",
             new Vector3(5, 1, 5),
@@ -365,7 +365,9 @@ public sealed class RuntimePersistenceBridgeTests
                 writes ?? PersistenceWriteQueue.Inline(),
                 WorldObjects,
                 Enemies,
-                new SceneEventHub());
+                new SceneEventHub(),
+                new ObjectIdAllocator(),
+                new ObjectIdentityMap());
         }
 
         public FakeHost Host { get; }
@@ -496,7 +498,7 @@ public sealed class RuntimePersistenceBridgeTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => Cubes.Add(cube);
 
-        public void DeletePlacedCube(int cubeId) => Cubes.RemoveAll(cube => cube.CubeId == cubeId);
+        public void DeletePlacedCube(ObjectId objectId) => Cubes.RemoveAll(cube => cube.ObjectId.AsInt() == objectId.AsInt());
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => [];
 
@@ -504,7 +506,7 @@ public sealed class RuntimePersistenceBridgeTests
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => Pieces.Add(piece);
 
-        public void DeleteCubeFracturePieces(int sourceCubeId)
+        public void DeleteCubeFracturePieces(ObjectId originObjectId)
         {
         }
 
@@ -512,7 +514,10 @@ public sealed class RuntimePersistenceBridgeTests
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => Enemies.Add(enemy);
 
-        public void DeleteEnemyInstance(int enemyId) => Enemies.RemoveAll(enemy => enemy.EnemyId == enemyId);
+        public void DeleteEnemyInstance(ObjectId objectId) => Enemies.RemoveAll(enemy => enemy.ObjectId.AsInt() == objectId.AsInt());
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Reassigned.Add((oldEnemyId, newEnemyId));
 

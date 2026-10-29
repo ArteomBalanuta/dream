@@ -230,13 +230,13 @@ public class ReplicatedIdIntegrationTests
                 Tick(first, tick);
             }
 
-            placedIds = world.LoadPlacedCubes().Select(cube => cube.CubeId).Order().ToArray();
+            placedIds = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).Order().ToArray();
             lastEnemyId = Assert.Single(first.Enemies.ActiveActors).Combatant.Actor.Id;
         }
 
         Assert.Equal(3, placedIds.Length);
         Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 3, lastEnemyId);
-        Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.EnemyId == lastEnemyId);
+        Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId.AsInt() == lastEnemyId);
 
         using WorldSessionRuntime restarted = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost restartedHost);
         using (restartedHost)
@@ -247,13 +247,13 @@ public class ReplicatedIdIntegrationTests
             restarted.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
             Assert.True(restarted.ProcessAuthoritativeAction(
                 new PlayerActionMessage(Session, 10, new BuildUseIntent(new Vector3(5f, 1f, 3f)))).Accepted);
-            int newCubeId = world.LoadPlacedCubes().Select(cube => cube.CubeId).Except(placedIds).Single();
+            int newCubeId = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).Except(placedIds).Single();
             Assert.Equal(placedIds.Max() + 1, newCubeId);
 
             restarted.Enemies.Clear();
             Tick(restarted, 1);
             int respawnedId = Assert.Single(restarted.Enemies.ActiveActors).Combatant.Actor.Id;
-            Assert.True(respawnedId > world.LoadActiveEnemies().Where(enemy => enemy.EnemyId != respawnedId).Max(enemy => enemy.EnemyId));
+            Assert.True(respawnedId > world.LoadActiveEnemies().Where(enemy => enemy.ObjectId.AsInt() != respawnedId).Max(enemy => enemy.ObjectId.AsInt()));
             Assert.True(ReplicatedActorIdRanges.IsEnemyId(respawnedId));
         }
     }
@@ -271,13 +271,13 @@ public class ReplicatedIdIntegrationTests
         world.SaveEnemyInstance(LegacyEnemy(2004, now));
         world.SaveEnemyInstance(LegacyEnemy(2006, now));
         world.SaveCubeFracturePiece(new PersistedCubeFracturePiece(
-            1500, 0, "legacy", new Vector3(3f, 1f, 7f), new Vector3(3.25f, 1.25f, 7.25f), 0.25f,
+            ObjectId.None, new ObjectId(1500), 0, "legacy", new Vector3(3f, 1f, 7f), new Vector3(3.25f, 1.25f, 7.25f), 0.25f,
             GeometryMaterialId.Grass, now, now));
 
         using WorldSessionRuntime runtime = CreatePersistentRuntime(world, out RuntimeAuthoritativeSessionHost host);
         using (host)
         {
-            int[] cubeIds = world.LoadPlacedCubes().Select(cube => cube.CubeId).ToArray();
+            int[] cubeIds = world.LoadPlacedCubes().Select(cube => cube.ObjectId.AsInt()).ToArray();
             int[] enemyIds = runtime.Enemies.ActiveActors.Select(enemy => enemy.Combatant.Actor.Id).ToArray();
             Assert.Equal([1003, 2004, 2010], cubeIds.Order().ToArray());
             Assert.Empty(cubeIds.Intersect(enemyIds));
@@ -286,7 +286,7 @@ public class ReplicatedIdIntegrationTests
             Assert.Contains(2006, enemyIds);
             int moved = Assert.Single(enemyIds, id => id != 2006);
             Assert.Equal(2011, moved);
-            Assert.Equal([2006, 2011], world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).Order().ToArray());
+            Assert.Equal([2006, 2011], world.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()).Order().ToArray());
             Assert.True(runtime.TryResolveCombatActor(2004, out CombatActorHandle cube));
             Assert.Equal(CreatureKind.Object, cube.Kind);
 
@@ -372,7 +372,7 @@ public class ReplicatedIdIntegrationTests
             runtime.Enemies.Clear();
             Tick(runtime, 1);
             Assert.Empty(runtime.Enemies.ActiveActors);
-            Assert.Equal([ReplicatedActorIdRanges.LastEnemyId], world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).ToArray());
+            Assert.Equal([ReplicatedActorIdRanges.LastEnemyId], world.LoadActiveEnemies().Select(enemy => enemy.ObjectId.AsInt()).ToArray());
 
             Cube cube = Assert.IsType<Cube>(runtime.Map.TryAddCube(new Vector3(5f, 1f, 7f), withPhysics: false));
             Assert.Throws<InvalidOperationException>(() => registry.RegisterCube(cube, runtime.Map, actorId: null));
@@ -382,13 +382,13 @@ public class ReplicatedIdIntegrationTests
 
     private static PersistedPlacedCube LegacyCube(int id, Vector3 cell, DateTime now)
     {
-        return new PersistedPlacedCube(id, "legacy", cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 100, 100, now, now);
+        return new PersistedPlacedCube(new ObjectId(id), "legacy", cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 100, 100, now, now);
     }
 
     private static PersistedEnemyInstance LegacyEnemy(int id, DateTime now)
     {
         return new PersistedEnemyInstance(
-            id,
+            new ObjectId(id),
             "Wolf",
             "Wolf",
             new Vector3(9f, 1f, 9f),
@@ -530,25 +530,28 @@ public class ReplicatedIdIntegrationTests
 
         public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => _placedCubes.Values.ToArray();
 
-        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.CubeId] = cube;
+        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.ObjectId.AsInt()] = cube;
 
-        public void DeletePlacedCube(int cubeId) => _placedCubes.Remove(cubeId);
+        public void DeletePlacedCube(ObjectId objectId) => _placedCubes.Remove(objectId.AsInt());
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
         {
-            _fracturePieces.RemoveAll(existing => existing.SourceCubeId == piece.SourceCubeId && existing.PieceIndex == piece.PieceIndex);
+            _fracturePieces.RemoveAll(existing => existing.OriginObjectId.AsInt() == piece.OriginObjectId.AsInt() && existing.PieceIndex == piece.PieceIndex);
             _fracturePieces.Add(piece);
         }
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => _fracturePieces.RemoveAll(piece => piece.SourceCubeId == sourceCubeId);
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => _fracturePieces.RemoveAll(piece => piece.OriginObjectId.AsInt() == originObjectId.AsInt());
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => _enemies.Values.ToArray();
 
-        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.EnemyId] = enemy;
+        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.ObjectId.AsInt()] = enemy;
 
-        public void DeleteEnemyInstance(int enemyId) => _enemies.Remove(enemyId);
+        public void DeleteEnemyInstance(ObjectId objectId) => _enemies.Remove(objectId.AsInt());
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
         {
@@ -559,7 +562,7 @@ public class ReplicatedIdIntegrationTests
 
             if (_enemies.Remove(oldEnemyId, out PersistedEnemyInstance enemy))
             {
-                _enemies[newEnemyId] = enemy with { EnemyId = newEnemyId };
+                _enemies[newEnemyId] = enemy with { ObjectId = new ObjectId(newEnemyId) };
             }
         }
 

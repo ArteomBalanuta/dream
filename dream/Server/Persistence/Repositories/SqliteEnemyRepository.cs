@@ -115,7 +115,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
 
     public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() =>
         QueryList(LoadSql, static reader => new PersistedEnemyInstance(
-            reader.GetInt32(0),
+            new ObjectId(reader.GetInt64(0)),
             reader.GetString(1),
             reader.GetString(2),
             reader.GetVector3(3),
@@ -137,7 +137,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
     public void SaveEnemyInstance(PersistedEnemyInstance enemy) =>
         Execute(UpsertSql, enemy, static (command, e) =>
         {
-            command.BindInt64("$enemyId", e.EnemyId);
+            command.BindInt64("$enemyId", e.ObjectId.Value);
             command.BindText("$enemyKind", e.EnemyKind);
             command.BindText("$displayName", e.DisplayName);
             command.BindVector3("$positionX", "$positionY", "$positionZ", e.Position);
@@ -155,9 +155,10 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
         });
 
-    public void DeleteEnemyInstance(int enemyId) =>
-        Execute(DeleteSql, enemyId, static (command, id) => command.BindInt64("$enemyId", id));
+    public void DeleteEnemyInstance(ObjectId objectId) =>
+        Execute(DeleteSql, objectId, static (command, id) => command.BindInt64("$enemyId", id.Value));
 
+    // Removed by the wave C glue.
     // One UPDATE of the primary key: atomic on its own, and under the write queue's savepoint
     // when it runs in a group. A taken newEnemyId fails the primary key and changes nothing.
     public void ReassignEnemyId(int oldEnemyId, int newEnemyId) =>

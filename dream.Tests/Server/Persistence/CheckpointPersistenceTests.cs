@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Persistence;
@@ -56,9 +57,9 @@ public sealed class CheckpointPersistenceTests
         using TempDatabase database = new();
         SeedPlayerCubePieceAndEnemy(database);
         SqliteWorldPersistenceRepository world = new(database.Schema);
-        world.DeletePlacedCube(7);
-        world.DeleteEnemyInstance(50);
-        world.DeleteCubeFracturePieces(8);
+        world.DeletePlacedCube(new ObjectId(7));
+        world.DeleteEnemyInstance(new ObjectId(50));
+        world.DeleteCubeFracturePieces(new ObjectId(8));
 
         new SqlitePersistenceCheckpointWriter(database.Schema).Write(new PersistenceCheckpoint(
             [],
@@ -201,7 +202,7 @@ public sealed class CheckpointPersistenceTests
     private static PersistedPlacedCube CreateCube(int id, Vector3 center, int currentHealth)
     {
         return new PersistedPlacedCube(
-            id,
+            new ObjectId(id),
             Player,
             new Vector3(MathF.Floor(center.X), MathF.Floor(center.Y), MathF.Floor(center.Z)),
             GeometryShapeKind.SolidCube,
@@ -216,7 +217,7 @@ public sealed class CheckpointPersistenceTests
     private static PersistedCubeFracturePiece CreatePiece(int cubeId, int index, Vector3 center)
     {
         return new PersistedCubeFracturePiece(
-            cubeId,
+            ObjectId.None, new ObjectId(cubeId),
             index,
             Player,
             new Vector3(2f, 1f, 2f),
@@ -230,7 +231,7 @@ public sealed class CheckpointPersistenceTests
     private static PersistedEnemyInstance CreateEnemy(int id, Vector3 position, int currentHp)
     {
         return new PersistedEnemyInstance(
-            id,
+            new ObjectId(id),
             "wolf",
             "Wolf",
             position,

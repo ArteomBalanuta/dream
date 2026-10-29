@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
@@ -179,19 +180,22 @@ public sealed class PersistenceOffTickTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) => Write(() => Inner.SavePlacedCube(cube));
 
-        public void DeletePlacedCube(int cubeId) => Write(() => Inner.DeletePlacedCube(cubeId));
+        public void DeletePlacedCube(ObjectId objectId) => Write(() => Inner.DeletePlacedCube(objectId));
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => Read(Inner.LoadCubeFracturePieces);
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) => Write(() => Inner.SaveCubeFracturePiece(piece));
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => Write(() => Inner.DeleteCubeFracturePieces(sourceCubeId));
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => Write(() => Inner.DeleteCubeFracturePieces(originObjectId));
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => Read(Inner.LoadActiveEnemies);
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) => Write(() => Inner.SaveEnemyInstance(enemy));
 
-        public void DeleteEnemyInstance(int enemyId) => Write(() => Inner.DeleteEnemyInstance(enemyId));
+        public void DeleteEnemyInstance(ObjectId objectId) => Write(() => Inner.DeleteEnemyInstance(objectId));
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) => Write(() => Inner.ReassignEnemyId(oldEnemyId, newEnemyId));
 

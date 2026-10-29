@@ -139,7 +139,7 @@ public sealed class WorldClockPersistenceTests
         PersistenceCheckpoint withRows = new([], [], [], [], [])
         {
             IsIncremental = true,
-            RemovedCubeIds = [5],
+            RemovedCubeObjectIds = [new ObjectId(5)],
             WorldTimeTicks = 10
         };
         PersistenceCheckpoint newer = PersistenceCheckpoint.Empty with { IsIncremental = true, WorldTimeTicks = 20 };

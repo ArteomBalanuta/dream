@@ -1,12 +1,14 @@
+using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Persistence;
 
 public readonly record struct PersistedCubeFracturePiece(
-    int SourceCubeId,
+    ObjectId ObjectId,
+    ObjectId OriginObjectId,
     int PieceIndex,
-    string OwnerPlayerName,
+    string? OwnerPlayerName,
     Vector3 ParentCell,
     Vector3 Center,
     float SideLength,

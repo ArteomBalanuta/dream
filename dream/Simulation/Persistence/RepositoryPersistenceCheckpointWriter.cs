@@ -1,3 +1,5 @@
+using Dream.Simulation.World;
+
 namespace Dream.Simulation.Persistence;
 
 // Fallback writer for repositories without a shared SQLite connection (for example in-memory
@@ -63,27 +65,27 @@ public sealed class RepositoryPersistenceCheckpointWriter : IPersistenceCheckpoi
         }
 
         // An incremental checkpoint often holds no rows of a kind; skip that table's load then.
-        HashSet<int> enemyIds = checkpoint.Enemies.Count == 0
+        HashSet<ObjectId> enemyIds = checkpoint.Enemies.Count == 0
             ? []
-            : _world.LoadActiveEnemies().Select(enemy => enemy.EnemyId).ToHashSet();
-        foreach (PersistedEnemyInstance enemy in checkpoint.Enemies.Where(enemy => enemyIds.Contains(enemy.EnemyId)))
+            : _world.LoadActiveEnemies().Select(enemy => enemy.ObjectId).ToHashSet();
+        foreach (PersistedEnemyInstance enemy in checkpoint.Enemies.Where(enemy => enemyIds.Contains(enemy.ObjectId)))
         {
             _world.SaveEnemyInstance(enemy);
         }
 
-        HashSet<int> cubeIds = checkpoint.PlacedCubes.Count == 0
+        HashSet<ObjectId> cubeIds = checkpoint.PlacedCubes.Count == 0
             ? []
-            : _world.LoadPlacedCubes().Select(cube => cube.CubeId).ToHashSet();
-        foreach (PersistedPlacedCube cube in checkpoint.PlacedCubes.Where(cube => cubeIds.Contains(cube.CubeId)))
+            : _world.LoadPlacedCubes().Select(cube => cube.ObjectId).ToHashSet();
+        foreach (PersistedPlacedCube cube in checkpoint.PlacedCubes.Where(cube => cubeIds.Contains(cube.ObjectId)))
         {
             _world.SavePlacedCube(cube);
         }
 
-        HashSet<(int, int)> pieceKeys = checkpoint.FracturePieces.Count == 0 ? [] : _world.LoadCubeFracturePieces()
-            .Select(piece => (piece.SourceCubeId, piece.PieceIndex))
+        HashSet<(ObjectId, int)> pieceKeys = checkpoint.FracturePieces.Count == 0 ? [] : _world.LoadCubeFracturePieces()
+            .Select(piece => (piece.OriginObjectId, piece.PieceIndex))
             .ToHashSet();
         foreach (PersistedCubeFracturePiece piece in checkpoint.FracturePieces
-            .Where(piece => pieceKeys.Contains((piece.SourceCubeId, piece.PieceIndex))))
+            .Where(piece => pieceKeys.Contains((piece.OriginObjectId, piece.PieceIndex))))
         {
             _world.SaveCubeFracturePiece(piece);
         }

@@ -8,6 +8,7 @@ public interface IWorldPersistenceRepository :
     IRubbleRepository,
     IEnemyRepository,
     IItemRepository,
-    IInventoryRepository
+    IInventoryRepository,
+    IObjectIdCounterRepository
 {
 }

@@ -1,3 +1,4 @@
+using Dream.Simulation.World;
 using Xunit;
 using Dream.Server.Persistence;
 using Dream.Simulation.Inventory;
@@ -18,7 +19,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Alice"));
 
@@ -49,7 +50,7 @@ public sealed class PlayerInventoryServiceTests
     [Fact]
     public void Ensure_WithoutPersistence_SeedsInMemory()
     {
-        PlayerInventoryService inventory = new(worldPersistence: null, writes: null);
+        PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Solo"));
 
@@ -64,7 +65,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         world.Seed("Stored", firstItemId: 40);
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.Equal(1, inventory.NextItemInstanceId);
 
         inventory.RestoreItemIdCounter();
@@ -88,7 +89,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         // Backpack items but no equipped row: Ensure equips the first occupied slot.
         inventory.ApplyLoaded("Bob", new PersistedPlayerInventory(
@@ -126,7 +127,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         world.Seed("Stored", firstItemId: 20);
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Stored"));
 
@@ -140,7 +141,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, inventory.TryEquip("Carol", -1));
         Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, inventory.TryEquip("Carol", InventoryConstants.BackpackSlotCount));
@@ -166,7 +167,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         using ManualResetEventSlim gate = new(initialState: false);
         try
         {
@@ -185,7 +186,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Eve"));
 
         inventory.Evict("eve");
@@ -206,7 +207,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         // Background: the inline queue rethrows a failed write instead of dropping it.
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Frank"));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
@@ -230,7 +231,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Grace"));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
@@ -265,7 +266,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Heidi"));
 
         using ManualResetEventSlim gate = new(initialState: false);
@@ -317,7 +318,7 @@ public sealed class PlayerInventoryServiceTests
             ["tool.builder-hammer", "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch"],
             ToolCatalog.StarterItemKinds);
 
-        PlayerInventoryService inventory = new(worldPersistence: null, writes: null);
+        PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Ivan"));
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Ivan");
         Assert.Equal("tool.builder-hammer", snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
@@ -328,7 +329,7 @@ public sealed class PlayerInventoryServiceTests
     [Fact]
     public void ResolveEquippedHeldLight_FollowsTheEquippedItem()
     {
-        PlayerInventoryService inventory = new(worldPersistence: null, writes: null);
+        PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Nobody"));
         Assert.True(inventory.Ensure("Judy"));
         int torchSlot = IndexOfStarter("tool.torch");
@@ -347,7 +348,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         inventory.ApplyLoaded("Ken", LegacyInventory("Ken", firstItemId: 1, equippedSlot: 2));
 
         Assert.True(inventory.Ensure("Ken"));
@@ -376,7 +377,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         List<PersistedInventorySlot> slots = [];
         List<PersistedItemInstance> items = [];
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
@@ -400,7 +401,7 @@ public sealed class PlayerInventoryServiceTests
     [Fact]
     public void Ensure_TopUpStopsWhenTheBackpackFills()
     {
-        PlayerInventoryService inventory = new(worldPersistence: null, writes: null);
+        PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
         // Hammers everywhere but one slot. With no grant recorded the inventory is taken to hold kit
         // v1, so the blade, maul and lantern are not granted again; only the torch (v2) is, and it
         // fits.
@@ -455,7 +456,7 @@ public sealed class PlayerInventoryServiceTests
             }
 
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes);
+            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
             inventory.RestoreItemIdCounter();
             Assert.True(inventory.Ensure("Nia"));
             Assert.Equal("tool.torch", inventory.BuildSnapshot("Nia").Slots[4].Item!.Value.ItemKind);
@@ -465,7 +466,7 @@ public sealed class PlayerInventoryServiceTests
         using (SqliteWorldPersistenceRepository world = new(database.Schema))
         {
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes);
+            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
             inventory.RestoreItemIdCounter();
             Assert.Equal(6, inventory.NextItemInstanceId);
             Assert.True(inventory.Ensure("Nia"));
@@ -508,7 +509,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Olga"));
 
@@ -524,7 +525,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         inventory.ApplyLoaded("Pia", LegacyInventory("Pia", firstItemId: 1, equippedSlot: 0));
 
         Assert.True(inventory.Ensure("Pia"));
@@ -543,7 +544,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         using (PersistenceWriteQueue writes = PersistenceWriteQueue.Inline())
         {
-            PlayerInventoryService first = new(world, writes);
+            PlayerInventoryService first = new(world, writes, new ObjectIdAllocator());
             first.ApplyLoaded("Quin", LegacyInventory("Quin", firstItemId: 1, equippedSlot: 0));
             Assert.True(first.Ensure("Quin"));
             Assert.Equal("tool.torch", first.BuildSnapshot("Quin").Slots[4].Item!.Value.ItemKind);
@@ -553,7 +554,7 @@ public sealed class PlayerInventoryServiceTests
         // The torch leaves the backpack (as a future drop or trade would), then the player rejoins.
         Assert.True(world.Rows.Remove(("Quin", 4)));
         using PersistenceWriteQueue rejoinWrites = PersistenceWriteQueue.Inline();
-        PlayerInventoryService rejoined = new(world, rejoinWrites);
+        PlayerInventoryService rejoined = new(world, rejoinWrites, new ObjectIdAllocator());
         rejoined.ApplyLoaded("Quin", world.LoadPlayerInventory("Quin"));
 
         Assert.True(rejoined.Ensure("Quin"));
@@ -570,7 +571,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         world.Grants["Rae"] = ToolCatalog.CurrentStarterKitVersion;
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Rae"));
 
@@ -588,7 +589,7 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         world.Seed("Sam", firstItemId: 1);
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
         Assert.True(inventory.Ensure("Sam"));
 
@@ -602,7 +603,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         List<PersistedInventorySlot> slots = [];
         List<PersistedItemInstance> items = [];
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
@@ -636,7 +637,7 @@ public sealed class PlayerInventoryServiceTests
     {
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Background();
-        PlayerInventoryService inventory = new(world, writes);
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Uma"));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         // The rows lose the grant, so only the moved-out copy still knows the kit version.
@@ -694,7 +695,7 @@ public sealed class PlayerInventoryServiceTests
 
             Assert.Null(world.LoadPlayerInventory("Vic").StarterKitVersion);
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes);
+            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
             inventory.RestoreItemIdCounter();
             Assert.True(inventory.Ensure("Vic"));
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
@@ -719,7 +720,7 @@ public sealed class PlayerInventoryServiceTests
             PersistedPlayerInventory loaded = world.LoadPlayerInventory("Vic");
             Assert.Equal(2, loaded.StarterKitVersion);
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-            PlayerInventoryService inventory = new(world, writes);
+            PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
             inventory.RestoreItemIdCounter();
             inventory.ApplyLoaded("Vic", loaded);
             Assert.True(inventory.Ensure("Vic"));
@@ -868,19 +869,22 @@ public sealed class PlayerInventoryServiceTests
 
         public void SavePlacedCube(PersistedPlacedCube cube) { }
 
-        public void DeletePlacedCube(int cubeId) { }
+        public void DeletePlacedCube(ObjectId objectId) { }
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => [];
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) { }
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) { }
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) { }
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => [];
 
         public void SaveEnemyInstance(PersistedEnemyInstance enemy) { }
 
-        public void DeleteEnemyInstance(int enemyId) { }
+        public void DeleteEnemyInstance(ObjectId objectId) { }
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId) { }
 

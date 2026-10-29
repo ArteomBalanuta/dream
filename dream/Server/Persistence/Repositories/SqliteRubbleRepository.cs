@@ -85,7 +85,8 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
 
     public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() =>
         QueryList(LoadSql, static reader => new PersistedCubeFracturePiece(
-            SourceCubeId: reader.GetInt32(0),
+            ObjectId: ObjectId.None,
+            OriginObjectId: new ObjectId(reader.GetInt64(0)),
             PieceIndex: reader.GetInt32(1),
             OwnerPlayerName: reader.GetString(2),
             ParentCell: reader.GetVector3(3),
@@ -99,9 +100,9 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
     public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece) =>
         Execute(UpsertSql, piece, static (command, p) =>
         {
-            command.BindInt64("$sourceCubeId", p.SourceCubeId);
+            command.BindInt64("$sourceCubeId", p.OriginObjectId.Value);
             command.BindInt64("$pieceIndex", p.PieceIndex);
-            command.BindText("$ownerPlayerName", p.OwnerPlayerName.Trim());
+            command.BindText("$ownerPlayerName", (p.OwnerPlayerName ?? string.Empty).Trim());
             command.BindVector3("$parentCellX", "$parentCellY", "$parentCellZ", p.ParentCell);
             command.BindVector3("$centerX", "$centerY", "$centerZ", p.Center);
             command.BindReal("$sideLength", p.SideLength);
@@ -110,6 +111,6 @@ public sealed partial class SqliteRubbleRepository(IWorldStore store, WorldId wo
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
         });
 
-    public void DeleteCubeFracturePieces(int sourceCubeId) =>
-        Execute(DeleteSql, sourceCubeId, static (command, id) => command.BindInt64("$sourceCubeId", id));
+    public void DeleteCubeFracturePieces(ObjectId originObjectId) =>
+        Execute(DeleteSql, originObjectId, static (command, id) => command.BindInt64("$sourceCubeId", id.Value));
 }

@@ -48,7 +48,7 @@ public sealed partial class SqlitePlacedObjectRepository
 
         foreach (PersistedPlacedCube cube in cubes)
         {
-            cubeId.Value = cube.CubeId;
+            cubeId.Value = cube.ObjectId.Value;
             cellX.Value = cube.CellPosition.X;
             cellY.Value = cube.CellPosition.Y;
             cellZ.Value = cube.CellPosition.Z;

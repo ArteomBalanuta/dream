@@ -1,4 +1,5 @@
 using Dream.Simulation.Players;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Persistence;
 
@@ -24,13 +25,13 @@ public sealed record PersistenceCheckpoint(
     public bool IsIncremental { get; init; }
 
     // Placed cubes removed since the previous capture (and not re-added).
-    public IReadOnlyList<int> RemovedCubeIds { get; init; } = [];
+    public IReadOnlyList<ObjectId> RemovedCubeObjectIds { get; init; } = [];
 
     // Enemies removed since the previous capture.
-    public IReadOnlyList<int> RemovedEnemyIds { get; init; } = [];
+    public IReadOnlyList<ObjectId> RemovedEnemyObjectIds { get; init; } = [];
 
-    // Fracture groups (by source cube id) whose rubble is gone since the previous capture.
-    public IReadOnlyList<int> RemovedFractureSourceCubeIds { get; init; } = [];
+    // Fracture groups (by origin ObjectId) whose rubble is gone since the previous capture.
+    public IReadOnlyList<ObjectId> RemovedFractureOriginObjectIds { get; init; } = [];
 
     // The world clock (WorldClock.WorldTicks) at the capture; written to world_metadata in the
     // checkpoint's transaction. Null: leave the stored world time as it is.
@@ -54,7 +55,7 @@ public sealed record PersistenceCheckpoint(
         PlayerWorldStates.Count + PlayerVitals.Count + Enemies.Count + PlacedCubes.Count + FracturePieces.Count;
 
     public int TombstoneCount =>
-        RemovedCubeIds.Count + RemovedEnemyIds.Count + RemovedFractureSourceCubeIds.Count;
+        RemovedCubeObjectIds.Count + RemovedEnemyObjectIds.Count + RemovedFractureOriginObjectIds.Count;
 
     // Folds a newer checkpoint into an older one that has not been written yet, so the merged write
     // leaves the database where writing both in order would. The last write wins per key: a newer
@@ -78,20 +79,20 @@ public sealed record PersistenceCheckpoint(
         }
 
         StringComparer names = StringComparer.OrdinalIgnoreCase;
-        (IReadOnlyList<PersistedPlacedCube> cubes, IReadOnlyList<int> removedCubes) = MergeKeyed(
+        (IReadOnlyList<PersistedPlacedCube> cubes, IReadOnlyList<ObjectId> removedCubes) = MergeKeyed(
             older.PlacedCubes,
-            older.RemovedCubeIds,
+            older.RemovedCubeObjectIds,
             newer.PlacedCubes,
-            newer.RemovedCubeIds,
-            static cube => cube.CubeId,
-            EqualityComparer<int>.Default);
-        (IReadOnlyList<PersistedEnemyInstance> enemies, IReadOnlyList<int> removedEnemies) = MergeKeyed(
+            newer.RemovedCubeObjectIds,
+            static cube => cube.ObjectId,
+            EqualityComparer<ObjectId>.Default);
+        (IReadOnlyList<PersistedEnemyInstance> enemies, IReadOnlyList<ObjectId> removedEnemies) = MergeKeyed(
             older.Enemies,
-            older.RemovedEnemyIds,
+            older.RemovedEnemyObjectIds,
             newer.Enemies,
-            newer.RemovedEnemyIds,
-            static enemy => enemy.EnemyId,
-            EqualityComparer<int>.Default);
+            newer.RemovedEnemyObjectIds,
+            static enemy => enemy.ObjectId,
+            EqualityComparer<ObjectId>.Default);
         (IReadOnlyList<PersistedPlayerWorldState> worldStates, _) = MergeKeyed(
             older.PlayerWorldStates,
             [],
@@ -106,14 +107,14 @@ public sealed record PersistenceCheckpoint(
             [],
             static entry => entry.PlayerName.Trim(),
             names);
-        (IReadOnlyList<PersistedCubeFracturePiece> pieces, IReadOnlyList<int> removedGroups) = MergeFracturePieces(older, newer);
+        (IReadOnlyList<PersistedCubeFracturePiece> pieces, IReadOnlyList<ObjectId> removedGroups) = MergeFracturePieces(older, newer);
 
         return new PersistenceCheckpoint(worldStates, vitals, enemies, cubes, pieces)
         {
             IsIncremental = older.IsIncremental && newer.IsIncremental,
-            RemovedCubeIds = removedCubes,
-            RemovedEnemyIds = removedEnemies,
-            RemovedFractureSourceCubeIds = removedGroups,
+            RemovedCubeObjectIds = removedCubes,
+            RemovedEnemyObjectIds = removedEnemies,
+            RemovedFractureOriginObjectIds = removedGroups,
             WorldTimeTicks = newer.WorldTimeTicks ?? older.WorldTimeTicks,
             // The queue commits in order, so the newer barrier implies the older one.
             ImmediateWritesCommitted = newer.ImmediateWritesCommitted ?? older.ImmediateWritesCommitted
@@ -181,30 +182,30 @@ public sealed record PersistenceCheckpoint(
         return (mergedRows, removed.ToArray());
     }
 
-    // Pieces are keyed by (source cube id, piece index); their tombstones by source cube id, since
+    // Pieces are keyed by (origin ObjectId, piece index); their tombstones by origin ObjectId, since
     // a group's rubble goes as a whole.
-    private static (IReadOnlyList<PersistedCubeFracturePiece> Pieces, IReadOnlyList<int> Removed) MergeFracturePieces(
+    private static (IReadOnlyList<PersistedCubeFracturePiece> Pieces, IReadOnlyList<ObjectId> Removed) MergeFracturePieces(
         PersistenceCheckpoint older,
         PersistenceCheckpoint newer)
     {
-        if (older.FracturePieces.Count == 0 && older.RemovedFractureSourceCubeIds.Count == 0)
+        if (older.FracturePieces.Count == 0 && older.RemovedFractureOriginObjectIds.Count == 0)
         {
-            return (newer.FracturePieces, newer.RemovedFractureSourceCubeIds);
+            return (newer.FracturePieces, newer.RemovedFractureOriginObjectIds);
         }
 
-        HashSet<int> newerRemoved = new(newer.RemovedFractureSourceCubeIds);
-        HashSet<int> newerSources = [];
-        HashSet<(int, int)> newerKeys = [];
+        HashSet<ObjectId> newerRemoved = new(newer.RemovedFractureOriginObjectIds);
+        HashSet<ObjectId> newerSources = [];
+        HashSet<(ObjectId, int)> newerKeys = [];
         foreach (PersistedCubeFracturePiece piece in newer.FracturePieces)
         {
-            newerSources.Add(piece.SourceCubeId);
-            newerKeys.Add((piece.SourceCubeId, piece.PieceIndex));
+            newerSources.Add(piece.OriginObjectId);
+            newerKeys.Add((piece.OriginObjectId, piece.PieceIndex));
         }
 
         List<PersistedCubeFracturePiece> pieces = new(older.FracturePieces.Count + newer.FracturePieces.Count);
         foreach (PersistedCubeFracturePiece piece in older.FracturePieces)
         {
-            if (!newerRemoved.Contains(piece.SourceCubeId) && !newerKeys.Contains((piece.SourceCubeId, piece.PieceIndex)))
+            if (!newerRemoved.Contains(piece.OriginObjectId) && !newerKeys.Contains((piece.OriginObjectId, piece.PieceIndex)))
             {
                 pieces.Add(piece);
             }
@@ -212,7 +213,7 @@ public sealed record PersistenceCheckpoint(
 
         pieces.AddRange(newer.FracturePieces);
 
-        HashSet<int> removed = new(older.RemovedFractureSourceCubeIds);
+        HashSet<ObjectId> removed = new(older.RemovedFractureOriginObjectIds);
         removed.ExceptWith(newerSources);
         removed.UnionWith(newerRemoved);
         return (pieces, removed.ToArray());

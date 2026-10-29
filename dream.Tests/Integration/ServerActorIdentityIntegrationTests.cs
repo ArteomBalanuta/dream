@@ -40,14 +40,14 @@ public class ServerActorIdentityIntegrationTests
             Assert.Equal(placed.MaxHealth, placed.CurrentHealth);
 
             CombatResolutionResult hit = HitAlongX(runtime, sequence: 2);
-            Assert.Equal(placed.CubeId, hit.TargetActorId);
+            Assert.Equal(placed.ObjectId.AsInt(), hit.TargetActorId);
             Assert.False(hit.TargetDied);
             Assert.True(hit.CurrentHealth < placed.MaxHealth);
 
             runtime.PersistCheckpoint();
 
             PersistedPlacedCube saved = Assert.Single(world.LoadPlacedCubes());
-            Assert.Equal(placed.CubeId, saved.CubeId);
+            Assert.Equal(placed.ObjectId.AsInt(), saved.ObjectId.AsInt());
             Assert.Equal(hit.CurrentHealth, saved.CurrentHealth);
         }
     }
@@ -73,7 +73,7 @@ public class ServerActorIdentityIntegrationTests
 
             WaitOutTheAttackCooldown(runtime);
             CombatResolutionResult second = HitAlongX(runtime, sequence: 3);
-            Assert.Equal(placed.CubeId, second.TargetActorId);
+            Assert.Equal(placed.ObjectId.AsInt(), second.TargetActorId);
             Assert.True(
                 second.CurrentHealth < first.CurrentHealth,
                 $"The second hit left {second.CurrentHealth} hp after the first left {first.CurrentHealth} hp.");
@@ -81,7 +81,7 @@ public class ServerActorIdentityIntegrationTests
             if (!second.TargetDied)
             {
                 Assert.NotNull(repaired);
-                Assert.Equal(placed.CubeId, repaired.Actor.Id);
+                Assert.Equal(placed.ObjectId.AsInt(), repaired.Actor.Id);
                 Assert.Equal(placed.OwnerPlayerName, repaired.OwnerPlayerName);
             }
         }
@@ -122,7 +122,7 @@ public class ServerActorIdentityIntegrationTests
     {
         RecordingWorldPersistence world = new();
         world.SavePlacedCube(new PersistedPlacedCube(
-            4242,
+            new ObjectId(4242),
             "Player A",
             new Vector3(7f, 1f, 7f),
             GeometryShapeKind.SolidCube,
@@ -241,7 +241,7 @@ public class ServerActorIdentityIntegrationTests
     {
         RecordingWorldPersistence world = new();
         world.SaveEnemyInstance(new PersistedEnemyInstance(
-            2007,
+            new ObjectId(2007),
             "Wolf",
             "Wolf",
             new Vector3(6f, 1f, 6f),
@@ -260,7 +260,7 @@ public class ServerActorIdentityIntegrationTests
 
             EnemyActor respawned = Assert.Single(runtime.Enemies.ActiveActors);
             Assert.Equal(2008, respawned.Combatant.Actor.Id);
-            Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.EnemyId == 2008);
+            Assert.Contains(world.LoadActiveEnemies(), enemy => enemy.ObjectId.AsInt() == 2008);
         }
     }
 
@@ -394,25 +394,28 @@ public class ServerActorIdentityIntegrationTests
 
         public IReadOnlyList<PersistedPlacedCube> LoadPlacedCubes() => _placedCubes.Values.ToArray();
 
-        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.CubeId] = cube;
+        public void SavePlacedCube(PersistedPlacedCube cube) => _placedCubes[cube.ObjectId.AsInt()] = cube;
 
-        public void DeletePlacedCube(int cubeId) => _placedCubes.Remove(cubeId);
+        public void DeletePlacedCube(ObjectId objectId) => _placedCubes.Remove(objectId.AsInt());
 
         public IReadOnlyList<PersistedCubeFracturePiece> LoadCubeFracturePieces() => _fracturePieces.ToArray();
 
         public void SaveCubeFracturePiece(PersistedCubeFracturePiece piece)
         {
-            _fracturePieces.RemoveAll(existing => existing.SourceCubeId == piece.SourceCubeId && existing.PieceIndex == piece.PieceIndex);
+            _fracturePieces.RemoveAll(existing => existing.OriginObjectId.AsInt() == piece.OriginObjectId.AsInt() && existing.PieceIndex == piece.PieceIndex);
             _fracturePieces.Add(piece);
         }
 
-        public void DeleteCubeFracturePieces(int sourceCubeId) => _fracturePieces.RemoveAll(piece => piece.SourceCubeId == sourceCubeId);
+        public void DeleteCubeFracturePieces(ObjectId originObjectId) => _fracturePieces.RemoveAll(piece => piece.OriginObjectId.AsInt() == originObjectId.AsInt());
 
         public IReadOnlyList<PersistedEnemyInstance> LoadActiveEnemies() => _enemies.Values.ToArray();
 
-        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.EnemyId] = enemy;
+        public void SaveEnemyInstance(PersistedEnemyInstance enemy) => _enemies[enemy.ObjectId.AsInt()] = enemy;
 
-        public void DeleteEnemyInstance(int enemyId) => _enemies.Remove(enemyId);
+        public void DeleteEnemyInstance(ObjectId objectId) => _enemies.Remove(objectId.AsInt());
+
+        public long LoadNextObjectId() => 1;
+
 
         public void ReassignEnemyId(int oldEnemyId, int newEnemyId)
         {
@@ -423,7 +426,7 @@ public class ServerActorIdentityIntegrationTests
 
             if (_enemies.Remove(oldEnemyId, out PersistedEnemyInstance enemy))
             {
-                _enemies[newEnemyId] = enemy with { EnemyId = newEnemyId };
+                _enemies[newEnemyId] = enemy with { ObjectId = new ObjectId(newEnemyId) };
             }
         }
 

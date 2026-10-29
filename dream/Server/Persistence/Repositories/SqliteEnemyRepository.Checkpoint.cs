@@ -48,7 +48,7 @@ public sealed partial class SqliteEnemyRepository
 
         foreach (PersistedEnemyInstance enemy in enemies)
         {
-            enemyId.Value = enemy.EnemyId;
+            enemyId.Value = enemy.ObjectId.Value;
             positionX.Value = enemy.Position.X;
             positionY.Value = enemy.Position.Y;
             positionZ.Value = enemy.Position.Z;
