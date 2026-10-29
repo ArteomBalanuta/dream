@@ -102,8 +102,9 @@ public partial class PlayScene
         if (request.RequestedFloorSize.HasValue && request.RequestedFloorSize.Value != _settings.FloorSize)
         {
             _settings.StageFloorSize(request.RequestedFloorSize.Value);
+            // Only the size of the next local world. The live map is the server's world and keeps
+            // the size its join-accepted descriptor gave it.
             _settings.ApplyPendingFloorSize();
-            _runtime.RebuildMapForFloorSize(_settings.FloorSize);
         }
 
         if (persistDesktopConfig)

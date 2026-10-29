@@ -44,6 +44,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         ArgumentNullException.ThrowIfNull(events);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
         Physics = new PhysicsIntegrator();
+        World = WorldDescriptor.ForFloorSize(floorSize);
         Map = CreateMap(floorSize);
         var playerBody = new PhysicsFactory().CreatePlayerBody(playerStartPosition.ToBullet());
         Physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
@@ -51,6 +52,8 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     }
 
     public Map Map { get; private set; }
+
+    public WorldDescriptor World { get; private set; }
 
     public PhysicsIntegrator Physics { get; }
 
@@ -175,6 +178,19 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 0,
                 0,
                 Physics.MapCubeBodies.Count));
+    }
+
+    public void RebuildMapForWorld(WorldDescriptor world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        RebuildMapForFloorSize(world.Width);
+        World = world;
+    }
+
+    public void AdoptWorldDescriptor(WorldDescriptor world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        World = world;
     }
 
     public void RebuildMapForFloorSize(int floorSize)

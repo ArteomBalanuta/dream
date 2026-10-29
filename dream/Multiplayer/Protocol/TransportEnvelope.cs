@@ -15,9 +15,11 @@ public readonly record struct TransportEnvelope(
     // join-accepted message (JoinAcceptedMessage.WorldClock); a v4 client would ignore it and show a
     // fixed time of day, so both sides refuse it instead. Version 6 (T2f) adds each player actor's
     // held light (ActorSnapshot.HeldLight, the Equipment group of an actor frame record, mask bit
-    // 256); a v5 client would reject the mask, so both sides refuse it. Decode rejects any other
-    // version.
-    public const int CurrentProtocolVersion = 6;
+    // 256); a v5 client would reject the mask, so both sides refuse it. Version 7 (persistence
+    // wave B) adds the world descriptor to the join-accepted message (JoinAcceptedMessage.World): a
+    // v6 client would size its map from the first snapshot and ignore the descriptor, so both sides
+    // refuse it. Snapshot payloads are unchanged. Decode rejects any other version.
+    public const int CurrentProtocolVersion = 7;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

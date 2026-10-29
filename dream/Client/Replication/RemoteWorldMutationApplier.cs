@@ -198,7 +198,7 @@ public static class RemoteWorldMutationApplier
 
         if (runtime.Map.Width != snapshot.Width || runtime.Map.Depth != snapshot.Depth)
         {
-            runtime.RebuildMapForFloorSize(snapshot.Width);
+            runtime.RebuildMapForWorld(runtime.World with { Width = snapshot.Width, Depth = snapshot.Depth });
         }
 
         ApplyWorldSnapshot(runtime.Map, snapshot);

@@ -385,6 +385,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
         EndSession(reason, "client.join.failed");
     }
 
+    // For the owner when it cannot use what the server sent (an unsupported world): ends the session
+    // with the reason, like any other failed join.
+    public void EndSessionWithReason(string reason)
+    {
+        EndSession(reason, "client.join.unsupported-world");
+    }
+
     // Ends the session the way a lost connection does: IsConnected false with a DisconnectReason
     // the owner shows. The loops stop; the socket closes when the owner disposes the session.
     private void EndSession(string reason, string logEvent)

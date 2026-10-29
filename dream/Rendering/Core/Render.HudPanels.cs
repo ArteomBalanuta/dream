@@ -200,11 +200,11 @@ public partial class Render
             }
 
             int floorSize = settings.PendingFloorSize;
-            if (ImGui.SliderInt("Floor Size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
+            if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
             {
                 stagedFloorSize = floorSize;
             }
-            if (ImGui.Button("Apply Floor Size"))
+            if (ImGui.Button("Set new world size"))
             {
                 requestedFloorSize = floorSize;
                 stagedFloorSize = floorSize;
