@@ -9,6 +9,7 @@ using Dream.Server.Worlds;
 using Dream.Simulation.World;
 using Dream.Tests.Integration;
 using Dream.Tests.Server.Persistence.Migrations;
+using Dream.Tests.Server.Persistence.Migrations;
 
 namespace Dream.Tests.Server.Worlds;
 
@@ -144,8 +145,8 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         Assert.Equal(first.SimulationSeed, second.SimulationSeed);
         Assert.Equal(first.WorldTimeTicks, second.WorldTimeTicks);
         SqliteConnection.ClearAllPools();
-        Assert.Equal(3L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
-        Assert.Equal(3L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
         Assert.Equal(5L, WorldBundles.Count(database, "placed_cube_instances", WorldId.Default));
@@ -180,8 +181,8 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
 
         SqliteConnection.ClearAllPools();
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
-        Assert.Equal(4L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
-        Assert.Equal(4L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
         Assert.Equal(5L, WorldBundles.Count(database, "placed_cube_instances", WorldId.Default));
         Assert.Equal(12L, WorldBundles.Count(database, "player_inventory_slots", WorldId.Default));
