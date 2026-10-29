@@ -183,20 +183,39 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         }
 
         runtime.ExportServerSnapshotEnvelope();
-        int changesBefore = phaseChanges;
-        long dayBefore = runtime.WorldClock.DayNumber;
-
         int dayTicks = (int)settings.TicksPerDay;
-        long[] tickBytes = new long[dayTicks];
-        WorldDayPhase[] tickPhases = new WorldDayPhase[dayTicks];
-        int[] tickWolves = new int[dayTicks];
+
+        // Tiered compilation charges a few hundred bytes to the calling thread whenever a tier-up,
+        // call-counting or OSR transition lands inside a measured tick (see AllocationAssert). Under
+        // full-suite load the 100 ms tiering delay expires mid-measurement, so one pass over a day
+        // can read non-zero on an arbitrary tick although the tick code allocates nothing. GC.GetAllocatedBytesForCurrentThread
+        // counts only this thread; the noise is the runtime's own work on it. Therefore: one whole
+        // day of warm-up (every phase bound, spawn and despawn included), then two measured days,
+        // keeping the minimum per day-relative tick. Noise only ever adds bytes, and the code under
+        // test allocates the same on every day, so a real allocation shows in both days.
         for (int i = 0; i < dayTicks; i++)
         {
-            long before = GC.GetAllocatedBytesForCurrentThread();
             Tick(runtime, ++tick);
-            tickBytes[i] = GC.GetAllocatedBytesForCurrentThread() - before;
-            tickPhases[i] = runtime.WorldClock.Phase;
-            tickWolves[i] = runtime.Enemies.ActiveActors.Count;
+        }
+
+        int changesBefore = phaseChanges;
+        long dayBefore = runtime.WorldClock.DayNumber;
+        const int measuredDays = 2;
+        long[] tickBytes = new long[dayTicks];
+        Array.Fill(tickBytes, long.MaxValue);
+        WorldDayPhase[] tickPhases = new WorldDayPhase[dayTicks];
+        int[] tickWolves = new int[dayTicks];
+        for (int day = 0; day < measuredDays; day++)
+        {
+            for (int i = 0; i < dayTicks; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Tick(runtime, ++tick);
+                long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+                tickBytes[i] = Math.Min(tickBytes[i], bytes);
+                tickPhases[i] = runtime.WorldClock.Phase;
+                tickWolves[i] = runtime.Enemies.ActiveActors.Count;
+            }
         }
 
         int spawnTick = -1;
@@ -215,10 +234,10 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
 
         int[] allocatingTicks = Enumerable.Range(0, dayTicks).Where(i => tickBytes[i] != 0).ToArray();
         output.WriteLine(
-            $"{settings.TicksPerDay} ticks (one day, {phaseChanges - changesBefore} phase changes): {tickBytes.Sum()} B; " +
+            $"{settings.TicksPerDay} ticks per day ({measuredDays} measured days, {phaseChanges - changesBefore} phase changes): {tickBytes.Sum()} B; " +
             $"allocating ticks {string.Join(", ", allocatingTicks.Select(i => $"{i} ({tickPhases[i]}, {tickBytes[i]} B)"))}");
-        Assert.Equal(4, phaseChanges - changesBefore);
-        Assert.Equal(dayBefore + 1, runtime.WorldClock.DayNumber);
+        Assert.Equal(4 * measuredDays, phaseChanges - changesBefore);
+        Assert.Equal(dayBefore + measuredDays, runtime.WorldClock.DayNumber);
         Assert.True(spawnTick > 0 && despawnTick > 0, "the day did not cross nightfall and dawn");
         Assert.Equal(2, tickWolves[spawnTick]);
         Assert.Equal(1, tickWolves[spawnTick - 1]);

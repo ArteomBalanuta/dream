@@ -4,7 +4,7 @@ Document the authoritative SQLite schema that backs player profiles, world state
 
 ## Source Of Truth
 
-The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file.
+The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file. Persistence wave B (plan `docs/ledger/plans/2026-10-29-wave-b-plan.md`) added `0003_worlds.sql`: worlds as rows (see Worlds below).
 
 [dream/config/player-profiles.init.sql](/G:/workspace/projects/dream/dream/config/player-profiles.init.sql) is frozen. It is the pre-migration schema. It stays as the legacy fixture that tests build old databases from, and because `SqliteSchemaBootstrapper` still takes its path: the migrations directory is found next to it (`Path.Combine(Path.GetDirectoryName(schemaScriptPath), "migrations")`). Do not edit it to change the schema; add a migration.
 
@@ -37,6 +37,83 @@ The current version is the highest `version`; a database without the table is at
 **The baseline.** `0001_baseline` (`BaselineMigration`) runs the idempotent baseline script (`IF NOT EXISTS` everywhere, `ON CONFLICT DO NOTHING` for the formula seed), then adds the four columns that older files may lack: `player_profiles.experience` and `placed_cube_instances.center_x`, `center_y` and `center_z`. It is the only migration that probes columns, and it runs only from version 0 to 1. Later migrations assume the schema of the version before them.
 
 **Behaviour change: the formula seed runs once.** Before wave A the whole init script ran on every startup, so a deleted `combat_formulas` seed row came back on the next start. The baseline now runs once, so a deleted seed row stays deleted. Edited formulas were already kept (`ON CONFLICT DO NOTHING`), and still are. To restore a deleted default, insert it again, or add a migration that does.
+
+## Worlds (migration 0003)
+
+Since schema version 3 one database holds any number of worlds. A world is a row of `worlds`; seven tables hold per-world state and carry `world_id` as the first column of a composite primary key.
+
+**Per world:** `player_world_state`, `placed_cube_instances`, `cube_fracture_pieces`, `enemy_instances`, `item_instances`, `player_inventory_slots`, `player_starter_grants`.
+
+**Global (no `world_id`):** `player_profiles` (including vitals), `player_profile_change_log`, `combat_formulas`, `schema_version`, and `world_metadata` (kept as a generic key/value table; it no longer holds the seed or the world time).
+
+Inventory belongs to a world because items exist in it: an item instance id is only unique within its world, and a player's slots in world 2 are not the slots in world 1. The starter grant is measured against that world's inventory.
+
+### The `worlds` table
+
+```sql
+CREATE TABLE worlds (
+    world_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    width INTEGER NOT NULL, height INTEGER NOT NULL, depth INTEGER NOT NULL,
+    map_source TEXT NOT NULL,          -- 'generated' | 'stored'
+    generator_key TEXT NOT NULL,
+    generator_version INTEGER NOT NULL,
+    seed TEXT NULL,                    -- decimal unsigned 64-bit; NULL = generate on first load
+    world_time_ticks INTEGER NOT NULL DEFAULT 0,
+    created_schema_version INTEGER NOT NULL,
+    created_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (length(trim(name)) > 0), CHECK (width >= 1 AND height >= 1 AND depth >= 1),
+    CHECK (map_source IN ('generated', 'stored')), CHECK (length(trim(generator_key)) > 0),
+    CHECK (generator_version >= 1), CHECK (created_schema_version >= 1)
+);
+CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
+```
+
+- `world_id` is `AUTOINCREMENT`, so a deleted world's id is never reused.
+- Names are unique ignoring case. The catalog trims them and allows 1 to 64 characters.
+- Allowed sizes: width equals depth, 5 to 100; height 8; generator `default` version 1; map source `generated`. `WorldDescriptor.Validate` enforces this when a world is created or opened.
+- `seed` is the same decimal text the old `simulation_seed` row held. `SqliteWorldMetadataRepository.GetOrCreateSimulationSeed` fills a NULL seed with `UPDATE worlds SET seed = $seed WHERE world_id = $worldId AND seed IS NULL` and re-reads it, so two racing loads keep the first. A seed that is not a decimal unsigned 64-bit number is a startup error (`InvalidDataException`).
+- `world_time_ticks` is the world clock (`WorldClock.WorldTicks`). `SqlitePersistenceCheckpointWriter` writes it with `UPDATE worlds SET world_time_ticks = $ticks WHERE world_id = $worldId` inside each checkpoint transaction whose `PersistenceCheckpoint.WorldTimeTicks` is set. A negative or non-integer value is a startup error.
+- The seed and the time are server-only. The wire carries only the public part of the row (`WorldDescriptor`, protocol v7), never the seed. Tick length per day is not stored: `DREAM_DAY_LENGTH_MINUTES` keeps control.
+- Migration 0003 inserts world 1, named `default`, 56x8x56, generated, generator `default` version 1, with `created_schema_version` 3. Its seed and time come from the old `world_metadata` rows, which the migration then deletes.
+
+### Keys, storage and types
+
+| Table | Primary key | Storage |
+| --- | --- | --- |
+| `player_world_state` | `(world_id, player_name)` | rowid table |
+| `placed_cube_instances` | `(world_id, cube_id)` | `WITHOUT ROWID` |
+| `cube_fracture_pieces` | `(world_id, source_cube_id, piece_index)` | `WITHOUT ROWID` |
+| `enemy_instances` | `(world_id, enemy_id)` | `WITHOUT ROWID` |
+| `item_instances` | `(world_id, item_instance_id)` | rowid table |
+| `player_inventory_slots` | `(world_id, player_name, slot_index)` | rowid table |
+| `player_starter_grants` | `(world_id, player_name)` | rowid table |
+
+- Every per-world table has `FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE`. Other foreign keys are as before (owners to `player_profiles`: `CASCADE`, except `item_instances.owner_player_name`, which stays `SET NULL`). `player_inventory_slots` references items by `(world_id, item_instance_id)`.
+- The three busy tables are `WITHOUT ROWID` so that a checkpoint `UPDATE` by composite key needs one B-tree lookup instead of two (the composite key would otherwise be a secondary index in front of the rowid).
+- `placed_cube_instances.cell_x/y/z` and `cube_fracture_pieces.parent_cell_x/y/z` are now `INTEGER NOT NULL`. Existing `REAL` values were whole numbers and convert without loss; the code that binds and reads them does not change.
+- Indexes keep their names. `ix_cube_fracture_pieces_parent_cell` is now `(world_id, parent_cell_x, parent_cell_y, parent_cell_z)` and `ix_player_inventory_slots_item_instance_id` is `(world_id, item_instance_id)`.
+- `ON DELETE SET NULL` for cube owners is deferred to a later wave; owners still cascade.
+- Item ids, actor ids and cube ids restart per world, and `GetMaxItemInstanceId` is per world. Inventory does not travel between worlds.
+
+### How the code is bound to a world
+
+One repository instance serves one world: the world id is given at construction (`new SqliteWorldPersistenceRepository(schema, worldId)`, `SqlitePersistenceCheckpointWriter(schema, worldId)`, `SqliteWorldMetadataRepository(schema, worldId)`; the constructors without a world id mean world 1) and bound as `$worldId` in every statement. One server process runs one world. The checkpoint binds `$worldId` once per prepared command and its `ON CONFLICT` targets are the composite keys. The `updated_utc` guard on profile vitals gained `AND player_world_state.world_id = $worldId`.
+
+The catalog (`SqliteWorldCatalog`, `Dream.Server.Worlds.IWorldCatalog`) lists, creates, copies, deletes and resolves worlds. Copy and delete run in one transaction each, with explicit column lists. A copy gets every world-scoped row with the same local ids, and the source's seed and world time. A delete removes the per-world tables' rows explicitly, children first, then the world row. There is no lock between processes, so stop the server before `--worlds copy` or `--worlds delete`.
+
+### How 0003 migrates
+
+Rows move with the SQLite table-rebuild procedure: create `X__v3`, `INSERT ... SELECT 1, <old columns>` into it, `DROP TABLE X`, `ALTER TABLE X__v3 RENAME TO X`, recreate the indexes. The old table is never renamed out of the way first, because SQLite 3.26 and later would rewrite child foreign keys to point at the renamed table.
+
+`SqliteSchemaMigrator.Migrate` changed for this:
+
+- **Foreign keys are off while migrations run.** `PRAGMA foreign_keys` is a no-op inside a transaction, and with foreign keys on, `DROP TABLE` performs an implicit `DELETE` that fires `ON DELETE CASCADE`: dropping `item_instances` would wipe the inventory slots. Outside the transaction the migrator reads the pragma, switches it off if it was on, and restores the original value in a `finally`, because pooled connections keep the pragma.
+- **`PRAGMA foreign_key_check` after the last migration**, inside the transaction. Any row makes the migrator throw `InvalidOperationException` naming the table, rowid and parent (up to 10 rows). That rolls everything back; the version stays where it was and the backup already exists. An orphan row in a pre-0003 database therefore fails startup loudly instead of being copied.
+- `legacy_alter_table` stays OFF.
+
+A v2 database upgrading takes the usual `{db}.v0002-to-v0003.{timestamp}.bak` backup.
 
 ## Design Notes
 
@@ -83,7 +160,7 @@ One row per player position/facing checkpoint.
 
 Key fields:
 
-- `player_name`: primary key and FK to `player_profiles`
+- `world_id`, `player_name`: composite primary key; `player_name` is an FK to `player_profiles`
 - `position_x`, `position_y`, `position_z`
 - `facing_x`, `facing_y`, `facing_z`
 - `current_hp`
@@ -123,9 +200,9 @@ One row per surviving player-made cube.
 
 Key fields:
 
-- `cube_id`: primary key
+- `world_id`, `cube_id`: composite primary key (`WITHOUT ROWID`)
 - `owner_player_name`: FK to `player_profiles`
-- `cell_x`, `cell_y`, `cell_z`: coarse grid cell that owns the cube
+- `cell_x`, `cell_y`, `cell_z`: coarse grid cell that owns the cube (`INTEGER`)
 - `center_x`, `center_y`, `center_z`: nullable exact render/physics center; older rows may be null and restore from the coarse cell center
 - `shape_kind`
 - `material_id`
@@ -145,9 +222,9 @@ One row per persisted fragment produced when a destructible cube fractures.
 
 Key fields:
 
-- composite PK: `source_cube_id`, `piece_index`
+- composite PK: `world_id`, `source_cube_id`, `piece_index` (`WITHOUT ROWID`)
 - `owner_player_name`: original cube owner, FK to `player_profiles`
-- `parent_cell_x`, `parent_cell_y`, `parent_cell_z`: coarse cell that owns the rubble group
+- `parent_cell_x`, `parent_cell_y`, `parent_cell_z`: coarse cell that owns the rubble group (`INTEGER`)
 - `center_x`, `center_y`, `center_z`: authoritative fragment center in world coordinates
 - `side_length`: fragment cube size
 - `material_id`: material used by render and collision rehydration
@@ -171,7 +248,7 @@ One row per currently active enemy instance.
 
 Key fields:
 
-- `enemy_id`: primary key
+- `world_id`, `enemy_id`: composite primary key (`WITHOUT ROWID`)
 - `enemy_kind`
 - `display_name`
 - `position_*`, `facing_*`
@@ -192,7 +269,7 @@ One row per persistent item instance.
 
 Key fields:
 
-- `item_instance_id`: primary key
+- `world_id`, `item_instance_id`: composite primary key (item ids are unique per world)
 - `item_kind`
 - `display_name`
 - `visual_id`
@@ -214,8 +291,8 @@ One row per occupied player inventory or equipped slot.
 
 Key fields:
 
-- composite PK: `player_name`, `slot_index`
-- `item_instance_id`
+- composite PK: `world_id`, `player_name`, `slot_index`
+- `item_instance_id`, with `(world_id, item_instance_id)` an FK to `item_instances`
 - `updated_utc`
 
 Used for:
@@ -226,11 +303,11 @@ Used for:
 
 ### `player_starter_grants` (migration 0002)
 
-One row per player. It records which version of the starter kit the player has received.
+One row per player and world. It records which version of the starter kit the player has received in that world. Migration 0003 added `world_id` and made the primary key `(world_id, player_name)`; the description below is of the 0002 shape plus that.
 
 Columns:
 
-- `player_name TEXT NOT NULL PRIMARY KEY`, referencing `player_profiles(player_name)` `ON DELETE CASCADE`
+- `world_id INTEGER NOT NULL` (0003), and `player_name TEXT NOT NULL`, together the primary key; `player_name` references `player_profiles(player_name)` `ON DELETE CASCADE`
 - `kit_version INTEGER NOT NULL`, with `CHECK >= 0`
 - `updated_utc TEXT NOT NULL`, the write time
 
@@ -282,7 +359,7 @@ Important note:
 
 ## Indexes
 
-The baseline adds lookup indexes for:
+The baseline adds lookup indexes (migration 0003 recreates the per-world ones under the same names, with `world_id` leading where noted under Worlds, and adds `ux_worlds_name`) for:
 
 - recently updated player profiles
 - recently updated player world state
@@ -305,15 +382,12 @@ These indexes are aimed at:
 
 ## world_metadata
 
-Key/value metadata about the persisted world. It is created by the `0001_baseline` migration (`CREATE TABLE IF NOT EXISTS`), so databases that predate it gain it when they migrate to version 1.
+A generic key/value table, created by the `0001_baseline` migration (`CREATE TABLE IF NOT EXISTS`):
 
 - `key TEXT NOT NULL PRIMARY KEY`
 - `value TEXT NOT NULL`
 
-It holds two rows:
-
-- `simulation_seed`: the world's simulation seed stored as a decimal unsigned 64-bit number. `SqliteWorldMetadataRepository` inserts it once with `INSERT OR IGNORE` and a non-numeric value is treated as a startup error.
-- `world_time_ticks`: the world clock (`WorldClock.WorldTicks`, authoritative ticks since the world was created) as a decimal non-negative 64-bit number. `SqlitePersistenceCheckpointWriter` upserts it inside each checkpoint transaction whose `PersistenceCheckpoint.WorldTimeTicks` is set (every non-null capture, so idle incremental captures write nothing), and `ServerBootstrap.CreatePersistenceBundle` reads it with `TryGetWorldTimeTicks`. A missing row means a new world (0); a non-numeric value is a startup error.
+It is global, not per world, and it holds no rows today. Before schema version 3 it held the world's `simulation_seed` and `world_time_ticks`; migration 0003 moved both onto the `worlds` row of world 1 (columns `seed` and `world_time_ticks`) and deleted the two keys. See Worlds above.
 
 ## player_profile_change_log
 
@@ -352,6 +426,8 @@ When extending this schema:
 - write the script for the schema of the version before it, without `BEGIN`, `COMMIT`, `ROLLBACK`, `END TRANSACTION` or a journal-mode pragma
 - prefer additive columns and additive tables
 - keep startup restore queries direct
+- a new per-world table gets `world_id` first in its primary key and a `FOREIGN KEY (world_id) REFERENCES worlds(world_id) ON DELETE CASCADE`; add it to the world catalog's copy and delete lists
+- when a migration rebuilds a table, use the 12-step procedure (never rename the old table away first); the migrator keeps foreign keys off and checks `foreign_key_check` at the end
 - avoid collapsing players, enemies, cubes, and items into one generic entity table
 - keep formula evaluation server-owned even when the source strings live in the DB
 - document new runtime assumptions in the ledger and here together
