@@ -117,7 +117,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     {
         using StoredWorldDb db = new(stored: false);
         await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(db.CreateHost());
-        await using WireLoopbackClient client = await server.ConnectAndJoinAsync("capture-client");
+        await using WireLoopbackClient client = await server.ConnectAndJoinAsync("capture-client", awaitPrefetchBeforeTicking: true);
         for (int i = 0; i < 3; i++)
         {
             await server.TickAsync();

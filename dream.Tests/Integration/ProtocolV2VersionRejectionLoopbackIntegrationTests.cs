@@ -34,6 +34,7 @@ public class ProtocolV2VersionRejectionLoopbackIntegrationTests
     [InlineData(4)]
     [InlineData(5)]
     [InlineData(6)]
+    [InlineData(7)]
     public async Task OldClient_IsRejectedWithALoggedReason_WithoutAnUnobservedTaskFault_AndTheOtherClientsKeepPlaying(int legacyVersion)
     {
         Assert.Equal(8, TransportEnvelope.CurrentProtocolVersion);

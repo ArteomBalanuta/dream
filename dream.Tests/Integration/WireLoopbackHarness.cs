@@ -9,6 +9,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -54,7 +55,7 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         return Task.FromResult(new WireLoopbackServer(host, service));
     }
 
-    public async Task<WireLoopbackClient> ConnectAndJoinAsync(string sessionId, int? receiveBufferSize = null)
+    public async Task<WireLoopbackClient> ConnectAndJoinAsync(string sessionId, int? receiveBufferSize = null, bool awaitPrefetchBeforeTicking = false)
     {
         Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(Port, sessionId, receiveBufferSize);
@@ -62,6 +63,20 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         _connections[client] = connection;
         await client.HandshakeAsync();
         DateTime deadline = DateTime.UtcNow + Timeout;
+        if (awaitPrefetchBeforeTicking)
+        {
+            // A join is deferred, tick after tick, until its player's persisted-state load finished,
+            // and each tick moves the scripted enemies. Waiting for the load (which starts when the
+            // server reads the join request) makes the first tick apply the join, so the join lands
+            // on the same tick however loaded the machine is.
+            string playerName = WorldSessionRuntime.ResolveJoinPlayerName(sessionId, $"Name {sessionId}");
+            while (Runtime.GetPersistedPlayerLoadState(playerName) != PersistedPlayerLoadState.Ready)
+            {
+                Assert.True(DateTime.UtcNow < deadline, $"{sessionId}'s persisted state never loaded");
+                await Task.Delay(1);
+            }
+        }
+
         while (!Host.IsConnectionJoined(connection.ConnectionId))
         {
             Assert.True(DateTime.UtcNow < deadline, $"{sessionId} never joined");
