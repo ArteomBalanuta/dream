@@ -1,5 +1,6 @@
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Runtime;
 
@@ -14,4 +15,9 @@ public sealed record RuntimePersistencePorts(
     PersistenceWriteQueue? PersistenceWrites,
     ulong? SimulationSeed,
     // Disposed with the host, after its runtime (the server's persistence bundle).
-    IDisposable? Owner);
+    IDisposable? Owner)
+{
+    // The world the host runs: its map is built from this descriptor. Null means
+    // WorldDescriptor.Default. (Named Descriptor because World is the world repository.)
+    public WorldDescriptor? Descriptor { get; init; }
+}

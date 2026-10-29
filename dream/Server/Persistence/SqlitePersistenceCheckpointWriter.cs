@@ -1,6 +1,7 @@
 using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence;
 
@@ -20,6 +21,12 @@ namespace Dream.Server.Persistence;
 public sealed class SqlitePersistenceCheckpointWriter : IPersistenceCheckpointWriter
 {
     private readonly IWorldStore _store;
+
+    // Bound to one world. Until workstream B1 binds the SQL to a world, only world 1 is supported.
+    public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema, WorldId worldId)
+        : this(SqliteWorldBinding.RequireDefaultWorld(schema, worldId))
+    {
+    }
 
     public SqlitePersistenceCheckpointWriter(SqliteSchemaBootstrapper schema)
     {

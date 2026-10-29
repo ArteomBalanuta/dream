@@ -1,6 +1,7 @@
 using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.World;
 
 namespace Dream.Server.Persistence;
 
@@ -18,6 +19,12 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     private readonly SqliteEnemyRepository _enemies;
     private readonly SqliteItemRepository _items;
     private readonly SqliteInventoryRepository _inventory;
+
+    // Bound to one world. Until workstream B1 binds the SQL to a world, only world 1 is supported.
+    public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema, WorldId worldId)
+        : this(SqliteWorldBinding.RequireDefaultWorld(schema, worldId))
+    {
+    }
 
     public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema)
     {
