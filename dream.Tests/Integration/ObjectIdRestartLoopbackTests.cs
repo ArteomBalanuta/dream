@@ -18,9 +18,8 @@ namespace Dream.Tests.Integration;
 //   an id above everything that existed before, including the retired origin id of the first cube.
 public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
 {
-    private const string NeedsAbc = "wave C: needs A+B+C, unskip at glue";
 
-    [Fact(Skip = NeedsAbc)]
+    [Fact]
     public void ObjectIds_SurviveARestart_AFracture_ARespawn_AndACheckpoint_AndAreUniqueAcrossKinds()
     {
         using TempDatabase database = new();

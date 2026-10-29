@@ -15,9 +15,8 @@ namespace Dream.Tests.Integration;
 // when it has an ObjectId binding, whatever its owner), and the cube can still be damaged.
 public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
 {
-    private const string NeedsAbc = "wave C: needs A+B+C, unskip at glue";
 
-    [Fact(Skip = NeedsAbc)]
+    [Fact]
     public async Task DeletingTheOwnersProfile_KeepsTheCube_WhichIsRestoredOwnerless_CheckpointedAndDamageable()
     {
         using TempDatabase database = new();
@@ -65,7 +64,7 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
         Assert.Equal(0L, Scalar(database.DatabasePath, "SELECT COUNT(*) FROM cube_fracture_pieces WHERE owner_player_name IS NOT NULL;"));
     }
 
-    [Fact(Skip = NeedsAbc)]
+    [Fact]
     public void DeletingTheOwnersProfile_KeepsTheRubble_WhichIsRestoredOwnerless_AndCheckpointedUnderTheSameIds()
     {
         using TempDatabase database = new();
