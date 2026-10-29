@@ -4,7 +4,7 @@ Document the authoritative SQLite schema that backs player profiles, world state
 
 ## Source Of Truth
 
-The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file. Persistence wave B (plan `docs/ledger/plans/2026-10-29-wave-b-plan.md`) added `0003_worlds.sql`: worlds as rows (see Worlds below). Persistence wave C added `0005_object_ids.sql`: stable object ids (see Stable object ids below).
+The ordered migration scripts in [dream/config/migrations](/G:/workspace/projects/dream/dream/config/migrations) are the source of truth for the schema (persistence wave A, plan `docs/ledger/plans/2026-10-28-wave-a-plan.md`). `0001_baseline.sql` is the schema every existing database already has: the statements of `player-profiles.init.sql` byte for byte, plus the `world_metadata` table. Every later change is a new `NNNN_snake_case.sql` file. Persistence wave B (plan `docs/ledger/plans/2026-10-29-wave-b-plan.md`) added `0003_worlds.sql`: worlds as rows (see Worlds below). Persistence wave C added `0005_object_ids.sql`: stable object ids (see Stable object ids below). Persistence wave D added `0006_terrain.sql`: terrain overrides and exported terrain chunks (see Terrain as data below).
 
 [dream/config/player-profiles.init.sql](/G:/workspace/projects/dream/dream/config/player-profiles.init.sql) is frozen. It is the pre-migration schema. It stays as the legacy fixture that tests build old databases from, and because `SqliteSchemaBootstrapper` still takes its path: the migrations directory is found next to it (`Path.Combine(Path.GetDirectoryName(schemaScriptPath), "migrations")`). Do not edit it to change the schema; add a migration.
 
@@ -163,6 +163,53 @@ A cube and an enemy that shared a legacy integer id get different ObjectIds. The
 - Catalog copy copies the new columns and `next_object_id` with them.
 - Load order is `ORDER BY object_id` for cubes and enemies and `ORDER BY origin_object_id, piece_index` for rubble. Restore registers cubes and enemies in that order, so their compact actor ids follow it.
 - Orphan rubble rows (pieces whose group is no longer restorable) are still never deleted. That is deferred.
+
+## Terrain as data (migration 0006)
+
+Persistence wave D (plan `docs/ledger/plans/2026-10-29-wave-d-plan.md`) stores terrain edits and exported terrain. Schema version 6. Migration 0006 adds two empty tables and one trigger; no existing row or table changes (terrain destroyed before wave D has already come back and is not recovered). Nothing changes on the wire: the protocol stays at v7.
+
+**`terrain_cell_overrides`: edits on a generated world.** One row per base-terrain cell that was destroyed. The cell stays destroyed after a restart; its rubble is stored as ordinary `cube_fracture_pieces` rows whose `origin_object_id` is this row's `object_id`.
+
+| Column | Notes |
+| --- | --- |
+| `world_id`, `object_id` | Primary key. `object_id` comes from the world's shared `ObjectIdAllocator`, so it is unique across kinds. |
+| `cell_x`, `cell_y`, `cell_z` | The terrain cell. `CHECK (cell_x >= 0 AND cell_y >= 1 AND cell_z >= 0)`: the floor (`y = 0`) is never an override. `UNIQUE INDEX ux_terrain_cell_overrides_cell (world_id, cell_x, cell_y, cell_z)`. |
+| `kind` | `0 = Removed` (the only kind written in wave D), `1 = Replaced` (reserved; restore logs `terrain-override-unsupported` and skips it). |
+| `cell_data` | NULL for `Removed`, NOT NULL for `Replaced` (`CHECK`). |
+| `created_utc`, `updated_utc` | Stamped by default. |
+
+A foreign key to `worlds` with `ON DELETE CASCADE`. A row is written once, when the cell is destroyed, with `INSERT ... ON CONFLICT(world_id, cell_x, cell_y, cell_z) DO NOTHING`, so a second insert for a cell is ignored and leaves the counter alone. Overrides are never checkpointed or updated. The trigger `trg_terrain_cell_overrides_advance_object_id` (the fifth object-id trigger, on `object_id`) keeps `worlds.next_object_id` above every override id, exactly like the four from 0005; a migration test counts the 5 triggers. The heal guard in `LoadNextObjectId()` also takes the maximum over `terrain_cell_overrides`. Loading is `ORDER BY object_id`.
+
+**Restore.** After the object id allocator is seeded and before placed cubes, rubble and enemies are restored, each `Removed` override is applied with `Map.RemoveSourceCell(cell)`, the same removal path a live destruction takes, in `object_id` order. An override whose cell is not a source cell of the map (for example the world was resized) is logged as `server.persistence.terrain-override-skipped` and its row is kept. Clients are not told: they generate the base terrain and the join snapshot removes every raised cube that the server no longer has. Terrain that is damaged but still standing is not stored and heals on restart (decision U2).
+
+**Orphan rubble.** When several rubble groups map to one cell on restore, the group with the highest origin wins and the others are deleted and logged as `server.persistence.orphan-rubble-pruned count=` (decision U5). A group that is replaced while the cell is live (a cube placed over rubble and then broken) deletes the old group in the same write. This supersedes the wave C note that orphan rubble rows are never deleted.
+
+**`terrain_chunks`: exported terrain.** One row per 16 x 16 column chunk of a map, in a `WITHOUT ROWID` table: `(world_id, chunk_x, chunk_z)` primary key, `format_version`, `cell_count`, `data` (the blob below) and `updated_utc`. Checks: `chunk_x >= 0 AND chunk_z >= 0`, `format_version >= 1`, `cell_count >= 0`, `length(data) >= 23`. Foreign key to `worlds` with `ON DELETE CASCADE`. `ReplaceTerrainChunks` deletes the world's chunks and inserts the new ones in one transaction, so a failure leaves the old set; `LoadTerrainChunks` is `ORDER BY chunk_z, chunk_x`. It is an admin and export path (`ITerrainChunkRepository`), not part of the write queue or the world facade. Catalog copy copies overrides with the same ids, the chunks, and the counter. A `stored` world can have chunk rows but cannot be hosted until wave E (`WorldDescriptor.Validate` still rejects it).
+
+**Chunk blob format v1** (`TerrainChunkCodec`, `Dream.Simulation.World.Terrain`). Little-endian, uncompressed, deterministic; the decoder throws `InvalidDataException` on any violation, and encode and decode are exact inverses at the level of effective cell records.
+
+```
+off 0   u8[4]  magic "DTCK"
+    4   u16    formatVersion = 1
+    6   u16    reserved = 0
+    8   i32    chunkX            12  i32 chunkZ     (must equal the row's columns)
+   16   u8     sizeX = 16        17  u8 sizeZ = 16  18  u16 height (1..1024)
+   20   u16    cellCount (<= sizeX * sizeZ * height)
+   22   u8     paletteCount (0 iff cellCount == 0; <= 127)
+   23   palette, 4 B each: u8 shapeKind, u8 materialId, u8 subdivisionResolution,
+        u8 flags (bit0 IsSolid, bit1 IsFloor). Order: first appearance in ascending cell index.
+        occupancy bitmap: ceil(sizeX * sizeZ * height / 8) B, LSB-first; bit i = local cell
+        i = ((lx * sizeZ) + lz) * height + y. Bits for cells outside the world must be 0.
+        cell bytes, one per set bit ascending: bit7 = has subdivision state, bits0-6 = palette index.
+        subdivision records, one per cell with bit7, ascending:
+          u8 resolution (1..40), u8 flags (bit0 AllChildrenEmpty, bit1 has false overrides),
+          set(true overrides), then set(false overrides) if bit1.
+          set := u8 mode; mode 0: bitmask ceil(res^3 / 8) B, LSB-first, child c = (sx * res + sy) * res + sz;
+                 mode 1: u16 count, then count x u16 ascending c. The encoder picks the shorter, tie -> mode 0.
+        no trailing bytes.
+```
+
+The encoder rejects overrides outside `[0, res)`, fracture pieces and more than 127 palette entries. `TerrainChunkFormat.CurrentVersion = 1`, `ChunkSize = 16`.
 
 ## Design Notes
 
