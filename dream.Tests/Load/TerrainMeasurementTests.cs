@@ -121,7 +121,10 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
     [LoadFact]
     public async Task World10k_With1000SeededOverrides_RestoreJoinAndTransfer()
     {
-        const int Overrides = 1000;
+        // The plan asks for 1,000 overrides, but the generated 100x8x100 map has only 628 raised
+        // non-floor cells (what the seeder can remove), so the test seeds all of them (capped at 1,000).
+        MapDefinition seedDefinition = new(FloorSize, 8, FloorSize, WorldMapSource.Generated, WorldGeneratorCatalog.DefaultKey, WorldGeneratorCatalog.DefaultVersion);
+        int Overrides = Math.Min(1000, new GeneratedMapSource(seedDefinition).CreateCells().Count(c => c.Key.Y > 0 && !c.Definition.IsFloor));
         using Dream.Tests.Server.Persistence.Migrations.MigrationTestDatabase database = new();
         Dream.Server.Worlds.WorldRecord record = Dream.Tests.Integration.WorldBundles.OpenCatalog(database)
             .Create(new Dream.Server.Worlds.WorldCreateOptions("w10k", FloorSize, 4242));
@@ -142,5 +145,11 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
         long bytes = server.ConnectionFor(client).BytesSent;
         output.WriteLine($"join {join.Elapsed.TotalMilliseconds:0.0} ms, {bytes:N0} bytes sent to the connection");
         Assert.True(bytes > 0);
+
+        using Dream.Client.World.ClientWorldSession world = new(map.Width, new OpenTK.Mathematics.Vector3(5f, 1.5f, 5f), new Dream.Simulation.Runtime.SceneEventHub());
+        Dream.Tests.Integration.TerrainPersistenceLoopbackTests.ApplyAllFrames(client, world);
+        Assert.Equal(Dream.Simulation.World.WorldStateChecksum.Compute(map), Dream.Simulation.World.WorldStateChecksum.Compute(world.Map));
+        Assert.Equal(map.GeometryCells.Keys.Where(k => k.Y > 0).ToHashSet(), world.Map.GeometryCells.Keys.Where(k => k.Y > 0).ToHashSet());
+        output.WriteLine($"client checksum matches the server; {map.GeometryCells.Keys.Count(k => k.Y > 0)} raised cells remain");
     }
 }

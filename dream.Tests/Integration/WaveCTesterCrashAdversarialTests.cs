@@ -201,6 +201,10 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
     {
         Assert.Equal(ids.AllObjects.Count, ids.AllObjects.Distinct().Count());
         Assert.Empty(ids.Origins.Intersect(ids.AllObjects));
+        // Wave D: terrain override ids come from the same counter.
+        Assert.Equal(ids.Overrides.Count, ids.Overrides.Distinct().Count());
+        Assert.Empty(ids.Overrides.Intersect(ids.AllObjects));
+        Assert.All(ids.Overrides, id => Assert.True(id < ids.NextObjectId, $"override id {id} is not below the stored counter {ids.NextObjectId}"));
     }
 
     private static void DeleteNewestRows(string databasePath, int perKind)

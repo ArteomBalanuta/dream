@@ -18,9 +18,13 @@ internal static class ObjectIdTestSupport
         long NextObjectId)
     {
         // Cube, piece, enemy and item ids. Origins are retired cube ids, so they are not an extra kind.
+        // terrain_cell_overrides ids (wave D). An override id is also the origin of its terrain rubble
+        // group, so like origins it is a retired id, never a live object id.
+        public IReadOnlyList<long> Overrides { get; init; } = [];
+
         public IReadOnlyList<long> AllObjects => [.. Cubes, .. Pieces, .. Enemies, .. Items];
 
-        public long MaxId => Math.Max(AllObjects.DefaultIfEmpty(0L).Max(), Origins.DefaultIfEmpty(0L).Max());
+        public long MaxId => Math.Max(Math.Max(AllObjects.DefaultIfEmpty(0L).Max(), Origins.DefaultIfEmpty(0L).Max()), Overrides.DefaultIfEmpty(0L).Max());
     }
 
     internal static PersistedIds ReadIds(string databasePath)
@@ -32,7 +36,10 @@ internal static class ObjectIdTestSupport
             Longs(connection, "SELECT DISTINCT origin_object_id FROM cube_fracture_pieces WHERE world_id = 1 ORDER BY origin_object_id;"),
             Longs(connection, "SELECT object_id FROM enemy_instances WHERE world_id = 1 ORDER BY object_id;"),
             Longs(connection, "SELECT item_instance_id FROM item_instances WHERE world_id = 1 ORDER BY item_instance_id;"),
-            Longs(connection, "SELECT next_object_id FROM worlds WHERE world_id = 1;").Single());
+            Longs(connection, "SELECT next_object_id FROM worlds WHERE world_id = 1;").Single())
+        {
+            Overrides = Longs(connection, "SELECT object_id FROM terrain_cell_overrides WHERE world_id = 1 ORDER BY object_id;")
+        };
     }
 
     // Every rubble piece of world 1: piece id -> (origin id, parent cell).

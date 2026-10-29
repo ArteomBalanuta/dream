@@ -180,7 +180,7 @@ public sealed class TerrainEditSqlitePersistenceTests
         Assert.Equal(before.NextObjectId, after.NextObjectId);
     }
 
-    private static GeometryCellKey FirstRaisedCell(Map map, bool sculpture)
+    internal static GeometryCellKey FirstRaisedCell(Map map, bool sculpture)
     {
         return map.GeometryCells
             .Where(pair => pair.Key.Y > 0
@@ -211,7 +211,7 @@ public sealed class TerrainEditSqlitePersistenceTests
 
     // RuntimePersistenceBridge over the bundle's real facade and profile repository, with an inline
     // write queue and a map built from the bundle's world.
-    private sealed class Rig
+    internal sealed class Rig
     {
         public Rig(ServerPersistenceBundle bundle)
         {
@@ -252,14 +252,14 @@ public sealed class TerrainEditSqlitePersistenceTests
         }
     }
 
-    private sealed class NullCheckpointWriter : IPersistenceCheckpointWriter
+    internal sealed class NullCheckpointWriter : IPersistenceCheckpointWriter
     {
         public void Write(PersistenceCheckpoint checkpoint)
         {
         }
     }
 
-    private sealed class FakeHost(Map map) : IRuntimePersistenceHost
+    internal sealed class FakeHost(Map map) : IRuntimePersistenceHost
     {
         public Map Map { get; } = map;
 

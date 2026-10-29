@@ -171,7 +171,7 @@ public sealed class TerrainPersistenceLoopbackTests(ITestOutputHelper output)
 
     // Applies every frame the joiner received, in order, the way PlayScene does (the world arrives
     // in chunks that the reassembler hands on).
-    private static void ApplyAllFrames(WireLoopbackClient client, ClientWorldSession world)
+    internal static void ApplyAllFrames(WireLoopbackClient client, ClientWorldSession world)
     {
         WorldTransferReassembler transfers = new();
         List<IServerToClientMessage> delivered = [];
