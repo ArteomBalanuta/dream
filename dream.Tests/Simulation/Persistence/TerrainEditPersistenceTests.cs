@@ -361,6 +361,121 @@ public sealed class TerrainEditPersistenceTests
         Assert.All(world.Pieces, piece => Assert.Equal(row.ObjectId, piece.OriginObjectId));
     }
 
+    private static PersistedCubeFracturePiece Rubble(long origin, long id, GeometryCellKey cell) =>
+        new(new ObjectId(id), new ObjectId(origin), 0, null, new Vector3(cell.X, cell.Y, cell.Z),
+            new Vector3(cell.X + 0.25f, cell.Y + 0.25f, cell.Z + 0.25f), 0.4f, GeometryMaterialId.Grass, Now, Now);
+
+    private static PersistedPlacedCube PlacedCube(long id, Vector3 cell) =>
+        new(new ObjectId(id), Builder, cell, GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 1, 1, Now, Now);
+
+    private static List<(string Category, string Message)> Restore(Rig rig)
+    {
+        List<(string Category, string Message)> lines = [];
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            rig.Bridge.RestoreWorld();
+        }
+
+        return lines;
+    }
+
+    [Fact]
+    public void LostOverrideRow_WithSurvivingRubble_IsHealed_Written_AndLogged()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = FirstRaisedCell(false);
+        world.Pieces.Add(Rubble(50, 51, cell));
+        world.NextObjectId = 60;
+        Rig rig = new(world);
+        Assert.True(rig.Host.Map.IsSourceCell(cell));
+
+        List<(string Category, string Message)> lines = Restore(rig);
+
+        (string _, string message) = Assert.Single(lines.Where(line => line.Category == "server.persistence.terrain-override-healed"));
+        Assert.Equal("count=1", message);
+        PersistedTerrainCellOverride row = Assert.Single(world.Overrides);
+        Assert.Equal((new ObjectId(50), cell, TerrainCellOverrideKind.Removed), (row.ObjectId, row.Cell, row.Kind));
+        Assert.False(rig.Host.Map.IsSourceCell(cell));
+        Assert.Single(rig.Host.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
+        Assert.Empty(rig.Host.Map.FindInvariantViolations());
+    }
+
+    [Fact]
+    public void KeptRubbleOfADeletedPlayerCube_OverANonSourceCell_IsNotHealed()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = new(3, 7, 3); // above the generated terrain: not a source cell
+        world.Pieces.Add(Rubble(50, 51, cell));
+        world.NextObjectId = 60;
+        Rig rig = new(world);
+        Assert.False(rig.Host.Map.IsSourceCell(cell));
+
+        List<(string Category, string Message)> lines = Restore(rig);
+
+        Assert.Empty(world.Overrides);
+        Assert.DoesNotContain(lines, line => line.Category == "server.persistence.terrain-override-healed");
+        Assert.Single(rig.Host.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
+    }
+
+    [Fact]
+    public void KeptRubbleWhoseOriginIsAPersistedCube_IsNotHealed()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = FirstRaisedCell(false);
+        world.Pieces.Add(Rubble(50, 51, cell));
+        world.Cubes.Add(PlacedCube(50, new Vector3(3, 7, 3)));
+        world.NextObjectId = 60;
+        Rig rig = new(world, knownPlayers: [Builder]);
+
+        List<(string Category, string Message)> lines = Restore(rig);
+
+        Assert.Empty(world.Overrides);
+        Assert.True(rig.Host.Map.IsSourceCell(cell));
+        Assert.DoesNotContain(lines, line => line.Category == "server.persistence.terrain-override-healed");
+    }
+
+    [Fact]
+    public void ReplacedOverrideRow_WithRubbleInItsCell_IsNeverHealed()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = FirstRaisedCell(false);
+        PersistedTerrainCellOverride replaced = new(new ObjectId(6), cell, TerrainCellOverrideKind.Replaced, [1], Now, Now);
+        world.Overrides.Add(replaced);
+        world.Pieces.Add(Rubble(50, 51, cell));
+        world.NextObjectId = 60;
+        Rig rig = new(world);
+
+        List<(string Category, string Message)> lines = Restore(rig);
+
+        Assert.Equal([replaced], world.Overrides);
+        Assert.True(rig.Host.Map.IsSourceCell(cell));
+        Assert.DoesNotContain(lines, line => line.Category == "server.persistence.terrain-override-healed");
+    }
+
+    // The heal runs before placed cubes are restored, so a persisted cube in a healed cell returns on the
+    // same restart instead of being skipped as "cell occupied".
+    [Fact]
+    public void PersistedCubeInACellWhoseOverrideWasLost_RestoresOnTheSameRestartAsTheHeal()
+    {
+        FakeWorld world = new();
+        GeometryCellKey cell = FirstRaisedCell(false);
+        world.Pieces.Add(Rubble(50, 51, cell));
+        world.Cubes.Add(PlacedCube(70, new Vector3(cell.X, cell.Y, cell.Z)));
+        world.NextObjectId = 80;
+        Rig rig = new(world, knownPlayers: [Builder]);
+
+        List<(string Category, string Message)> lines = Restore(rig);
+
+        Assert.Single(lines.Where(line => line.Category == "server.persistence.terrain-override-healed"));
+        Assert.DoesNotContain(lines, line => line.Category == "server.persistence.restore-skipped-cubes");
+        Assert.Equal(new ObjectId(50), Assert.Single(world.Overrides).ObjectId);
+        WorldObjectRecord restored = Assert.Single(rig.WorldObjects.Records);
+        Assert.Equal(Builder, restored.OwnerPlayerName);
+        Assert.NotNull(rig.Host.Map.Cubes[cell.X, cell.Y, cell.Z]);
+        Assert.Single(rig.Host.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
+        Assert.Empty(rig.Host.Map.FindInvariantViolations());
+    }
+
     private static readonly DateTime Now = new(2026, 10, 29, 12, 0, 0, DateTimeKind.Utc);
 
     private static IEnumerable<ObjectId> AllIds(FakeWorld world)

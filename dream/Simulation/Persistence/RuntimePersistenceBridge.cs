@@ -309,18 +309,25 @@ internal sealed partial class RuntimePersistenceBridge
 
         Map map = _host.Map;
         RestoreTerrainOverrides(map);
-        int skippedCubes = 0;
-        foreach (PersistedPlacedCube persistedCube in _worldPersistence.LoadPlacedCubes().OrderBy(cube => cube.ObjectId))
+        // A cube whose cell is later found occupied is skipped but its row still exists, so its id is
+        // reserved and the row stays in _persistedCubes. Registered first: the rubble heal below must
+        // know every persisted cube id, and it runs before the cubes so a healed cell is free for them.
+        PersistedPlacedCube[] persistedCubes = _worldPersistence.LoadPlacedCubes().OrderBy(cube => cube.ObjectId).ToArray();
+        foreach (PersistedPlacedCube persistedCube in persistedCubes)
         {
-            // A cube whose cell is now occupied is skipped but its row still exists, so its id is
-            // reserved and the row stays in _persistedCubes.
             _objectIds.Reserve(persistedCube.ObjectId);
             _persistedCubes[persistedCube.ObjectId] = persistedCube;
             if (persistedCube.OwnerPlayerName != null)
             {
                 _cubeOwnerNames.Add(persistedCube.OwnerPlayerName);
             }
+        }
 
+        List<(ObjectId Origin, GeometryCellKey Cell, PersistedCubeFracturePiece[] Pieces)> rubbleGroups =
+            PrepareRubbleGroups(map);
+        int skippedCubes = 0;
+        foreach (PersistedPlacedCube persistedCube in persistedCubes)
+        {
             Cube? cube = map.TryAddCube(
                 persistedCube.CellPosition,
                 materialId: persistedCube.MaterialId);
@@ -353,7 +360,7 @@ internal sealed partial class RuntimePersistenceBridge
                 $"count={skippedCubes} reason=cell-occupied-or-out-of-bounds");
         }
 
-        RestorePersistedCubeFracturePieces();
+        RestoreRubbleGroups(map, rubbleGroups);
 
         IReadOnlyList<PersistedEnemyInstance> enemies = _worldPersistence.LoadActiveEnemies();
         if (enemies.Count == 0)
@@ -704,14 +711,10 @@ internal sealed partial class RuntimePersistenceBridge
         _writes?.Enqueue(() => profiles.Save(profile));
     }
 
-    private void RestorePersistedCubeFracturePieces()
+    // Loads the rubble groups, prunes the stale ones and heals lost terrain overrides; returns the kept
+    // groups in origin order. Runs before the placed cubes are restored (see RestoreWorld).
+    private List<(ObjectId Origin, GeometryCellKey Cell, PersistedCubeFracturePiece[] Pieces)> PrepareRubbleGroups(Map map)
     {
-        if (_worldPersistence == null)
-        {
-            return;
-        }
-
-        Map map = _host.Map;
         // Groups by origin, then one per cell: a cell's rubble can have several groups in the
         // database (rows orphaned before wave D); only the newest is the live one. Newest means the
         // highest piece ObjectId: piece ids are taken at fracture time, so they follow fracture order
@@ -759,6 +762,7 @@ internal sealed partial class RuntimePersistenceBridge
             }
         }
 
+        List<(ObjectId Origin, GeometryCellKey Cell, PersistedCubeFracturePiece[] Pieces)> kept = [];
         int pruned = 0;
         int healed = 0;
         foreach ((ObjectId groupOrigin, GeometryCellKey cell, PersistedCubeFracturePiece[] pieces) in groups)
@@ -774,7 +778,9 @@ internal sealed partial class RuntimePersistenceBridge
             // Heal: rubble over a cell that is still a source cell, whose origin is neither an override
             // nor a placed cube, means the Removed override row was lost (crash or deletion). Remove
             // the cell as the override would have, and write the row back under the reserved origin id.
+            // A cell that already has an override row (for example an unsupported kind) is never healed.
             if (map.IsSourceCell(cell) &&
+                !_persistedTerrainOverrides.Contains(cell) &&
                 !_persistedTerrainOverrideIds.Contains(groupOrigin) &&
                 !_persistedCubes.ContainsKey(groupOrigin) &&
                 map.RemoveSourceCell(cell))
@@ -787,6 +793,28 @@ internal sealed partial class RuntimePersistenceBridge
                 EnqueueWorldWrite(world => world.SaveTerrainCellOverride(healedOverride));
             }
 
+            kept.Add((groupOrigin, cell, pieces));
+        }
+
+        if (pruned > 0)
+        {
+            NetworkDiagnosticsLog.Write("server.persistence.orphan-rubble-pruned", $"count={pruned}");
+        }
+
+        if (healed > 0)
+        {
+            NetworkDiagnosticsLog.Write("server.persistence.terrain-override-healed", $"count={healed}");
+        }
+
+        return kept;
+    }
+
+    private void RestoreRubbleGroups(
+        Map map,
+        List<(ObjectId Origin, GeometryCellKey Cell, PersistedCubeFracturePiece[] Pieces)> groups)
+    {
+        foreach ((ObjectId _, GeometryCellKey cell, PersistedCubeFracturePiece[] pieces) in groups)
+        {
             PersistedCubeFracturePiece first = pieces[0];
             GeometryFracturePiece[] fracturePieces = pieces
                 .Select(piece => new GeometryFracturePiece(piece.Center, piece.SideLength))
@@ -809,16 +837,6 @@ internal sealed partial class RuntimePersistenceBridge
                     first.OwnerPlayerName,
                     pieceIds.ToArray());
             }
-        }
-
-        if (pruned > 0)
-        {
-            NetworkDiagnosticsLog.Write("server.persistence.orphan-rubble-pruned", $"count={pruned}");
-        }
-
-        if (healed > 0)
-        {
-            NetworkDiagnosticsLog.Write("server.persistence.terrain-override-healed", $"count={healed}");
         }
     }
 

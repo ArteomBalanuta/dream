@@ -280,4 +280,61 @@ public class TerrainChunkCodecTests
         unused[cellBytes + 1] = 0;
         AssertRejected(unused);
     }
+
+    [Fact]
+    public void EncodeRejectsMoreCellsThanTheSixteenBitCount()
+    {
+        MapDefinition tall = Def(height: 257); // 16 * 16 * 257 = 65792 slots
+        List<GeometryCellRecord> dense = [];
+        for (int x = 0; x < 16; x++)
+        {
+            for (int z = 0; z < 16; z++)
+            {
+                for (int y = 0; y < 257; y++)
+                {
+                    dense.Add(Cube(x, y, z));
+                }
+            }
+        }
+
+        Assert.True(dense.Count > ushort.MaxValue);
+        Assert.Throws<InvalidOperationException>(() => TerrainChunkCodec.Encode(tall, 0, 0, dense));
+        dense.RemoveRange(ushort.MaxValue, dense.Count - ushort.MaxValue);
+        Assert.Equal(ushort.MaxValue, TerrainChunkCodec.Decode(tall, 0, 0, TerrainChunkCodec.Encode(tall, 0, 0, dense)).Count);
+    }
+
+    [Fact]
+    public void DecodeRejectsChunkCoordinatesOutsideTheWorld()
+    {
+        byte[] blob = Golden();
+        AssertRejected(blob, chunkX: -1);
+        AssertRejected(blob, chunkZ: -1);
+        AssertRejected(blob, chunkX: 1); // Def() is a single 16 x 16 chunk
+        AssertRejected(blob, chunkZ: 1);
+        AssertRejected(blob, chunkX: int.MaxValue);
+        Assert.Single(TerrainChunkCodec.Decode(Def(), 0, 0, blob));
+    }
+
+    [Fact]
+    public void FloorFlagMustMatchYZero()
+    {
+        GeometryCellDefinition solid = new(GeometryShapeKind.SolidCube, GeometryMaterialId.Grass, 1, true, IsFloor: false);
+        GeometryCellDefinition floor = solid with { IsFloor = true };
+        Assert.Throws<InvalidOperationException>(() =>
+            TerrainChunkCodec.Encode(Def(), 0, 0, [new GeometryCellRecord(new GeometryCellKey(0, 0, 0), solid, null)]));
+        Assert.Throws<InvalidOperationException>(() =>
+            TerrainChunkCodec.Encode(Def(), 0, 0, [new GeometryCellRecord(new GeometryCellKey(0, 1, 0), floor, null)]));
+
+        // Decode: the palette flags byte is at offset 26 (bit 1 = floor).
+        byte[] atY1 = Golden();
+        Assert.Equal(1, atY1[26]);
+        atY1[26] |= 2; // the y == 1 cell now claims to be a floor
+        AssertRejected(atY1);
+
+        byte[] atY0 = TerrainChunkCodec.Encode(Def(), 0, 0, [Cube(0, 0, 0)]);
+        Assert.Equal(3, atY0[26]);
+        Assert.Single(TerrainChunkCodec.Decode(Def(), 0, 0, atY0));
+        atY0[26] = 1; // the y == 0 cell loses its floor flag
+        AssertRejected(atY0);
+    }
 }
