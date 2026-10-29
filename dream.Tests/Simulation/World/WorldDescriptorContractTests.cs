@@ -62,11 +62,18 @@ public class WorldDescriptorContractTests
         Assert.Throws<ArgumentException>(() => (ok with { Height = 9 }).Validate());
         Assert.Throws<ArgumentException>(() => (ok with { Name = "   " }).Validate());
         Assert.Throws<ArgumentException>(() => (ok with { Name = new string('a', 65) }).Validate());
-        Assert.Throws<ArgumentException>(() => (ok with { MapSource = WorldMapSource.Stored }).Validate());
+        Assert.Throws<ArgumentException>(() => (ok with { MapSource = WorldMapSource.Stored, GeneratorKey = " " }).Validate());
+        Assert.Throws<ArgumentException>(() => (ok with { MapSource = WorldMapSource.Stored, GeneratorKey = "" }).Validate());
+        Assert.Throws<ArgumentException>(() => (ok with { MapSource = WorldMapSource.Stored, GeneratorVersion = 0 }).Validate());
+        Assert.Throws<ArgumentException>(() => (ok with { MapSource = (WorldMapSource)99 }).Validate());
         Assert.Throws<ArgumentException>(() => (ok with { GeneratorKey = "flat" }).Validate());
         Assert.Throws<ArgumentException>(() => (ok with { GeneratorVersion = 2 }).Validate());
 
         (ok with { Name = "  " + new string('a', 64) + "  " }).Validate();
+
+        // A stored world only needs provenance; its generator is never looked up in the catalog.
+        (ok with { MapSource = WorldMapSource.Stored }).Validate();
+        (ok with { MapSource = WorldMapSource.Stored, GeneratorKey = "someday", GeneratorVersion = 9 }).Validate();
     }
 
     [Fact]

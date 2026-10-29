@@ -121,10 +121,12 @@ public sealed partial class WorldSessionRuntime : IDisposable
         IPersistenceCheckpointWriter? checkpointWriter = null,
         PersistenceWriteQueue? persistenceWrites = null,
         ulong simulationSeed = DefaultSimulationSeed,
-        bool headlessMap = true)
+        bool headlessMap = true,
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         World = world;
+        StoredTerrain = storedTerrain;
         SimulationSeed = simulationSeed;
         _headlessMap = headlessMap;
         _writes = persistenceWrites ??
@@ -184,8 +186,11 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     private Map CreateMap(WorldDescriptor world)
     {
-        return new Map(MapSources.ForWorld(world, SimulationSeed), Physics, headless: _headlessMap);
+        return new Map(MapSources.ForWorld(world, SimulationSeed, StoredTerrain), Physics, headless: _headlessMap);
     }
+
+    // The terrain chunks a stored world was built from; null for generated worlds.
+    public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; }
 
     public PhysicsIntegrator Physics { get; }
 
@@ -213,6 +218,11 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     public void RebuildMapForFloorSize(int floorSize)
     {
+        if (World.MapSource == WorldMapSource.Stored)
+        {
+            throw new NotSupportedException("a stored world cannot be resized");
+        }
+
         Vector3 currentPlayerPosition = Player.GetWorldPosition();
         Map previousMap = Map;
         WorldObjectCubeSnapshot worldObjectSnapshot = _worldObjects.CreateCubeSnapshot();

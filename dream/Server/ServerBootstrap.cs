@@ -275,6 +275,12 @@ public static class ServerBootstrap
 
         WorldDescriptor descriptor = record.Descriptor;
         descriptor.Validate();
+        if (descriptor.MapSource == WorldMapSource.Stored)
+        {
+            // Wave E (B) replaces this with loading and checking the world's terrain chunks.
+            throw new ArgumentException("stored worlds are hosted from wave E", nameof(record));
+        }
+
         WorldId worldId = descriptor.Id;
         log?.Invoke(created
             ? $"World '{descriptor.Name}' (id {worldId}) did not exist and was created (size {descriptor.Width}). " +

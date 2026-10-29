@@ -142,6 +142,15 @@ public static class TerrainChunkCodec
     // Decodes into records in ascending local-slot order, which is (x, z, y) ascending inside the chunk.
     public static List<GeometryCellRecord> Decode(MapDefinition definition, int chunkX, int chunkZ, ReadOnlySpan<byte> data)
     {
+        long unlimited = long.MaxValue;
+        return Decode(definition, chunkX, chunkZ, data, ref unlimited);
+    }
+
+    // As above, for untrusted input: each override set's entry count is subtracted from the budget BEFORE
+    // the set is allocated, and InvalidDataException is thrown when the budget would drop below zero.
+    public static List<GeometryCellRecord> Decode(
+        MapDefinition definition, int chunkX, int chunkZ, ReadOnlySpan<byte> data, ref long subcellOverrideBudget)
+    {
         ArgumentNullException.ThrowIfNull(definition);
         if (chunkX < 0 || chunkZ < 0 || chunkX >= ChunkCountX(definition) || chunkZ >= ChunkCountZ(definition))
         {
@@ -277,7 +286,7 @@ public static class TerrainChunkCodec
                 throw Bad("the floor flag must be set exactly at y == 0");
             }
 
-            GeometrySubdivisionState? state = (cellBytes[n] & 0x80) != 0 ? ReadSubdivision(ref r, d) : null;
+            GeometrySubdivisionState? state = (cellBytes[n] & 0x80) != 0 ? ReadSubdivision(ref r, d, ref subcellOverrideBudget) : null;
             result.Add(new GeometryCellRecord(key, d, state));
         }
 
@@ -403,7 +412,7 @@ public static class TerrainChunkCodec
         output.Write(mask);
     }
 
-    private static GeometrySubdivisionState ReadSubdivision(ref Reader r, GeometryCellDefinition d)
+    private static GeometrySubdivisionState ReadSubdivision(ref Reader r, GeometryCellDefinition d, ref long budget)
     {
         int res = r.U8();
         if (res != d.SubdivisionResolution)
@@ -425,8 +434,8 @@ public static class TerrainChunkCodec
         }
 
         int n = res * res * res;
-        List<int> trues = ReadSet(ref r, n);
-        List<int> falses = hasFalse ? ReadSet(ref r, n) : [];
+        List<int> trues = ReadSet(ref r, n, ref budget);
+        List<int> falses = hasFalse ? ReadSet(ref r, n, ref budget) : [];
         if (hasFalse && falses.Count == 0)
         {
             throw Bad("false-override flag set with no false overrides");
@@ -468,13 +477,33 @@ public static class TerrainChunkCodec
         return new GeometrySubcellKey(c / (res * res), (c / res) % res, c % res);
     }
 
-    private static List<int> ReadSet(ref Reader r, int n)
+    private static void Spend(ref long budget, int count)
     {
-        List<int> result = [];
+        if (count > budget)
+        {
+            throw Bad("subcell override budget exceeded");
+        }
+
+        budget -= count;
+    }
+
+    private static List<int> ReadSet(ref Reader r, int n, ref long budget)
+    {
         int mode = r.U8();
         if (mode == 0)
         {
             ReadOnlySpan<byte> mask = r.Take((n + 7) / 8);
+            int set = 0;
+            for (int c = 0; c < n; c++)
+            {
+                if ((mask[c >> 3] & (1 << (c & 7))) != 0)
+                {
+                    set++;
+                }
+            }
+
+            Spend(ref budget, set);
+            List<int> result = new(set);
             for (int c = 0; c < n; c++)
             {
                 if ((mask[c >> 3] & (1 << (c & 7))) != 0)
@@ -507,6 +536,8 @@ public static class TerrainChunkCodec
             throw Bad("set is not in its shortest mode");
         }
 
+        Spend(ref budget, count);
+        List<int> list = new(count);
         int previous = -1;
         for (int i = 0; i < count; i++)
         {
@@ -517,10 +548,10 @@ public static class TerrainChunkCodec
             }
 
             previous = c;
-            result.Add(c);
+            list.Add(c);
         }
 
-        return result;
+        return list;
     }
 
     private static InvalidDataException Bad(string message) => new("terrain chunk: " + message);

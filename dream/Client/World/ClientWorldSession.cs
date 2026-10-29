@@ -13,6 +13,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using Dream.Simulation.World.MapSources;
 using Dream.Rendering.Hud;
 
 namespace Dream.Client.World;
@@ -180,9 +181,14 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 Physics.MapCubeBodies.Count));
     }
 
-    public void RebuildMapForWorld(WorldDescriptor world)
+    public void RebuildMapForWorld(WorldDescriptor world, IMapSource? source = null)
     {
         ArgumentNullException.ThrowIfNull(world);
+        if (source != null)
+        {
+            throw new NotSupportedException("building a client map from a source arrives with wave E (B)");
+        }
+
         RebuildMapForFloorSize(world.Width);
         World = world;
     }

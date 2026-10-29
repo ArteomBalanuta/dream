@@ -37,7 +37,7 @@ public sealed record WorldDescriptor(
 
     // Throws ArgumentException unless this build can host the world: a trimmed name of
     // 1..MaxNameLength characters, a square floor in [MinHorizontalSize, MaxHorizontalSize],
-    // height DefaultHeight, a generated map and a supported generator.
+    // height DefaultHeight, and a generated map with a supported generator or a stored map with provenance.
     public void Validate()
     {
         string? trimmed = Name?.Trim();
@@ -63,15 +63,27 @@ public sealed record WorldDescriptor(
             throw new ArgumentException($"World height must be {DefaultHeight}; got {Height}.", nameof(Height));
         }
 
-        if (MapSource != WorldMapSource.Generated)
+        switch (MapSource)
         {
-            throw new ArgumentException($"World map source {MapSource} is not supported.", nameof(MapSource));
-        }
+            case WorldMapSource.Generated:
+                if (!WorldGeneratorCatalog.IsSupported(GeneratorKey, GeneratorVersion))
+                {
+                    throw new ArgumentException(
+                        $"World generator '{GeneratorKey}' version {GeneratorVersion} is not supported.", nameof(GeneratorKey));
+                }
 
-        if (!WorldGeneratorCatalog.IsSupported(GeneratorKey, GeneratorVersion))
-        {
-            throw new ArgumentException(
-                $"World generator '{GeneratorKey}' version {GeneratorVersion} is not supported.", nameof(GeneratorKey));
+                break;
+            case WorldMapSource.Stored:
+                // Provenance only: where the terrain came from. It is never checked against the catalog.
+                if (string.IsNullOrWhiteSpace(GeneratorKey) || GeneratorVersion < 1)
+                {
+                    throw new ArgumentException(
+                        "A stored world needs a generator key and a version >= 1 as provenance.", nameof(GeneratorKey));
+                }
+
+                break;
+            default:
+                throw new ArgumentException($"World map source {MapSource} is not supported.", nameof(MapSource));
         }
     }
 }
