@@ -14,8 +14,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         ulong? simulationSeed = null,
         long worldTimeTicks = 0,
         WorldId? worldId = null,
-        WorldDescriptor? descriptor = null)
+        WorldDescriptor? descriptor = null,
+        ITerrainChunkRepository? terrainChunks = null)
     {
+        TerrainChunks = terrainChunks ?? (world as SqliteWorldPersistenceRepository)?.TerrainChunks;
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
         WorldId = worldId ?? WorldId.Default;
         Descriptor = descriptor ?? WorldDescriptor.Default;
@@ -33,6 +35,10 @@ public sealed class ServerPersistenceBundle : IDisposable
     public IPlayerProfileRepository PlayerProfiles { get; }
 
     public IWorldPersistenceRepository World { get; }
+
+    // The stored-map chunks of this bundle's world (admin and export path, not the write queue).
+    // Null when World is not the SQLite repository (a test fake).
+    public ITerrainChunkRepository? TerrainChunks { get; }
 
     public ICombatFormulaRepository CombatFormulas { get; }
 

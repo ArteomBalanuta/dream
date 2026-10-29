@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0005\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0006\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);

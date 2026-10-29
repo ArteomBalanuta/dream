@@ -69,6 +69,8 @@ internal static class ObjectIdTestSupport
             ("enemy_instances", "object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp", "object_id"),
             ("item_instances", "item_instance_id, item_kind, owner_player_name, state, stack_count", "item_instance_id"),
             ("player_inventory_slots", "player_name, slot_index, item_instance_id", "player_name, slot_index"),
+            ("terrain_cell_overrides", "object_id, cell_x, cell_y, cell_z, kind, length(cell_data)", "object_id"),
+            ("terrain_chunks", "chunk_x, chunk_z, format_version, cell_count, length(data)", "chunk_z, chunk_x"),
         ];
         StringBuilder dump = new();
         using SqliteConnection connection = Open(databasePath);

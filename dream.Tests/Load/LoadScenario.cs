@@ -40,7 +40,9 @@ public sealed record LoadScenario(
     // Largest frame payload either side accepts. Null uses the production directional limits
     // (FrameLimitOptions.Default).
     int? MaxFramePayloadBytes = null,
-    int CommandRateHz = 64)
+    int CommandRateHz = 64,
+    // Terrain cells seeded as Removed overrides (WorldSeeder.SeedTerrainOverrides); 0 seeds none.
+    int TerrainOverrides = 0)
 {
     // Overrides every scenario's duration (seconds), for quick harness checks.
     public const string DurationOverrideEnvironmentVariable = "DREAM_LOAD_DURATION_SECONDS";

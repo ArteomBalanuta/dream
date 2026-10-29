@@ -20,6 +20,7 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     private readonly SqliteItemRepository _items;
     private readonly SqliteInventoryRepository _inventory;
     private readonly SqliteObjectIdCounterRepository _objectIdCounter;
+    private readonly SqliteTerrainOverrideRepository _terrainOverrides;
 
     // Bound to one world: every statement of the six repositories is scoped to its world_id.
     public SqliteWorldPersistenceRepository(SqliteSchemaBootstrapper schema, WorldId worldId)
@@ -32,6 +33,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         _items = new SqliteItemRepository(store, worldId);
         _inventory = new SqliteInventoryRepository(store, worldId);
         _objectIdCounter = new SqliteObjectIdCounterRepository(store, worldId);
+        _terrainOverrides = new SqliteTerrainOverrideRepository(store, worldId);
+        TerrainChunks = new SqliteTerrainChunkRepository(store, worldId);
     }
 
     // World 1: the default world.
@@ -82,12 +85,12 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public long LoadNextObjectId() => _objectIdCounter.LoadNextObjectId();
 
-    // wave D: shim until the terrain override repository lands (workstream A).
-    public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => [];
+    public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => _terrainOverrides.LoadTerrainCellOverrides();
 
-    public void SaveTerrainCellOverride(PersistedTerrainCellOverride cellOverride)
-    {
-    }
+    public void SaveTerrainCellOverride(PersistedTerrainCellOverride cellOverride) => _terrainOverrides.SaveTerrainCellOverride(cellOverride);
+
+    // The stored-map chunks of this world: the admin and export path, not part of the write facade.
+    public ITerrainChunkRepository TerrainChunks { get; }
 
     public void Dispose()
     {

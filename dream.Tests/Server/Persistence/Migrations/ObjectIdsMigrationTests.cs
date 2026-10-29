@@ -40,7 +40,7 @@ public sealed class ObjectIdsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(4, result.FromVersion);
-        Assert.Equal(5, result.ToVersion);
+        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
         using SqliteConnection c = database.Open();
         // Cubes in cube_id order after the items; the cube and the enemy that shared 2003 now differ.
         Assert.Equal(["43|alice|1", "44|alice|5", "45|bob|3"], Rows(c, "SELECT object_id || '|' || owner_player_name || '|' || cell_x FROM placed_cube_instances WHERE world_id = 1 ORDER BY object_id;"));
@@ -55,9 +55,9 @@ public sealed class ObjectIdsMigrationTests
         Assert.Equal(["40", "41", "42"], Rows(c, "SELECT item_instance_id FROM item_instances ORDER BY item_instance_id;"));
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Empty(Rows(c, "PRAGMA foreign_key_check;"));
-        // The four counter triggers exist.
+        // The four counter triggers of 0005 exist (0006 adds a fifth for terrain overrides).
         Assert.Equal(
-            ["trg_cube_fracture_pieces_advance_object_id", "trg_enemy_instances_advance_object_id", "trg_item_instances_advance_object_id", "trg_placed_cube_instances_advance_object_id"],
+            ["trg_cube_fracture_pieces_advance_object_id", "trg_enemy_instances_advance_object_id", "trg_item_instances_advance_object_id", "trg_placed_cube_instances_advance_object_id", "trg_terrain_cell_overrides_advance_object_id"],
             Rows(c, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id' ORDER BY name;"));
     }
 
