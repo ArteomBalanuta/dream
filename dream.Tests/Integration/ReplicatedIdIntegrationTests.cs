@@ -9,6 +9,7 @@ using Dream.Simulation.Persistence;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -304,7 +305,8 @@ public class ReplicatedIdIntegrationTests
             // Actor ids continue after the restored ones; ObjectIds continue past every persisted one
             // (cubes, enemies and the fracture group's origin and piece).
             Assert.Equal(1003, GetWorldObjects(runtime).NextActorId);
-            Assert.Equal(2012, runtime.ObjectIds.Next);
+            // The joined player's starter items take the ids after them.
+            Assert.Equal(2012 + ToolCatalog.StarterItemKinds.Count, runtime.ObjectIds.Next);
             runtime.Enemies.Clear();
             Tick(runtime, 1);
             Assert.Equal(2002, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
@@ -380,14 +382,16 @@ public class ReplicatedIdIntegrationTests
             WorldObjectRegistry registry = GetWorldObjects(runtime);
             Assert.Equal(ReplicatedActorIdRanges.FirstWorldObjectId + 1, registry.NextActorId);
             Assert.Equal(WorldSessionRuntime.FirstEnemyActorId, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
-            Assert.Equal(6_000_000_001L, runtime.ObjectIds.Next);
+            // The joined player's starter items take the first ids after the stored ones.
+            long firstFree = 6_000_000_001L + ToolCatalog.StarterItemKinds.Count;
+            Assert.Equal(firstFree, runtime.ObjectIds.Next);
 
             runtime.Enemies.Clear();
             Tick(runtime, 1);
             EnemyActor respawned = Assert.Single(runtime.Enemies.ActiveActors);
             Assert.Equal(WorldSessionRuntime.FirstEnemyActorId + 1, respawned.Combatant.Actor.Id);
             Assert.True(runtime.ObjectIdentities.TryGetObjectId(respawned.Combatant.Actor.Id, out ObjectId respawnedObject));
-            Assert.Equal(new ObjectId(6_000_000_001L), respawnedObject);
+            Assert.Equal(new ObjectId(firstFree), respawnedObject);
         }
     }
 

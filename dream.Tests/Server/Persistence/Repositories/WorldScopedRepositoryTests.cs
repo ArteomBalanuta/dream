@@ -243,7 +243,7 @@ public sealed class WorldScopedRepositoryTests
             health, 5, Created, Created, null);
 
     private static PersistedCubeFracturePiece Piece(int sourceCubeId, int pieceIndex) =>
-        new(ObjectId.None, new ObjectId(sourceCubeId), pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
+        new(new ObjectId(1000 + sourceCubeId * 10 + pieceIndex), new ObjectId(sourceCubeId), pieceIndex, Owner, new Vector3(sourceCubeId, 1f, 2f),
             new Vector3(sourceCubeId + 0.25f, 1.25f, 2.25f), 0.5f, GeometryMaterialId.Stone, Created, Created);
 
     private static PersistedEnemyInstance Enemy(int enemyId, int hp) =>

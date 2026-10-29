@@ -217,7 +217,7 @@ public sealed class CheckpointPersistenceTests
     private static PersistedCubeFracturePiece CreatePiece(int cubeId, int index, Vector3 center)
     {
         return new PersistedCubeFracturePiece(
-            ObjectId.None, new ObjectId(cubeId),
+            new ObjectId(1000 + cubeId * 10 + index), new ObjectId(cubeId),
             index,
             Player,
             new Vector3(2f, 1f, 2f),

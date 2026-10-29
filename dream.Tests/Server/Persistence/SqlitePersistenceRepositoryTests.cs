@@ -160,7 +160,7 @@ public sealed class SqlitePersistenceRepositoryTests
         DateTime createdUtc = new(2026, 7, 4, 8, 30, 0, DateTimeKind.Utc);
         DateTime saveStartedUtc = DateTime.UtcNow;
         PersistedCubeFracturePiece first = new(
-            ObjectId: ObjectId.None,
+            ObjectId: new ObjectId(501),
             OriginObjectId: new ObjectId(41),
             PieceIndex: 0,
             OwnerPlayerName: "builder-a",
@@ -172,6 +172,7 @@ public sealed class SqlitePersistenceRepositoryTests
             UpdatedUtc: createdUtc);
         PersistedCubeFracturePiece second = first with
         {
+            ObjectId = new ObjectId(502),
             PieceIndex = 1,
             Center = new Vector3(6.72f, 2.17f, 9.64f)
         };

@@ -198,8 +198,8 @@ public sealed class WorldRoundTripCharacterizationTests
 
         PersistedCubeFracturePiece[] pieces =
         [
-            new(ObjectId.None, new ObjectId(10), 0, "alpha", new Vector3(4f, 5f, 6f), new Vector3(4.25f, 5.25f, 6.25f), 0.5f, GeometryMaterialId.Stone, CreatedUtc, default),
-            new(ObjectId.None, new ObjectId(10), 1, " alpha ", new Vector3(4f, 5f, 6f), new Vector3(4.75f, 5.25f, 6.25f), 0.25f, GeometryMaterialId.Stone, CreatedUtc, default)
+            new(new ObjectId(20), new ObjectId(10), 0, "alpha", new Vector3(4f, 5f, 6f), new Vector3(4.25f, 5.25f, 6.25f), 0.5f, GeometryMaterialId.Stone, CreatedUtc, default),
+            new(new ObjectId(21), new ObjectId(10), 1, " alpha ", new Vector3(4f, 5f, 6f), new Vector3(4.75f, 5.25f, 6.25f), 0.25f, GeometryMaterialId.Stone, CreatedUtc, default)
         ];
         world.SaveCubeFracturePiece(pieces[0] with { SideLength = 9f });
         foreach (PersistedCubeFracturePiece piece in pieces)
@@ -207,7 +207,7 @@ public sealed class WorldRoundTripCharacterizationTests
             world.SaveCubeFracturePiece(piece);
         }
 
-        world.SaveCubeFracturePiece(pieces[0] with { OriginObjectId = new ObjectId(11) });
+        world.SaveCubeFracturePiece(pieces[0] with { ObjectId = new ObjectId(22), OriginObjectId = new ObjectId(11) });
         world.DeleteCubeFracturePieces(new ObjectId(11));
 
         PersistedEnemyInstance kept = new(

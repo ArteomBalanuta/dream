@@ -513,7 +513,7 @@ public sealed class IncrementalCheckpointTests
     private static PersistedCubeFracturePiece Piece(int sourceCubeId, int index, float x)
     {
         return new PersistedCubeFracturePiece(
-            ObjectId.None, new ObjectId(sourceCubeId),
+            new ObjectId(1000 + sourceCubeId * 10 + index), new ObjectId(sourceCubeId),
             index,
             PlayerName,
             new Vector3(2f, 1f, 2f),

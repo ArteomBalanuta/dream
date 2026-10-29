@@ -287,7 +287,8 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadInventorySlots)));
         Assert.Equal(0, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
         Assert.Equal(0, runtime.LoadedInventoryCount);
-        Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count, runtime.NextItemInstanceId);
+        // Past every stored id, plus the one the startup wolf took from the shared allocator.
+        Assert.Equal(90 + ToolCatalog.StarterItemKinds.Count + 1, runtime.NextItemInstanceId);
 
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("stored", "Stored");
