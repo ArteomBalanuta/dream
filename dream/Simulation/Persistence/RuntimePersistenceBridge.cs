@@ -752,6 +752,12 @@ internal sealed partial class RuntimePersistenceBridge
         }
     }
 
+    // A base-terrain cell was destroyed. A no-op until the terrain override write lands (wave D,
+    // workstream B).
+    public void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell)
+    {
+    }
+
     // Persists the rubble a destroyed cube left in cell, one new ObjectId per piece. The origin is
     // the cube's ObjectId: its binding when the cube is still live, else the cube
     // DeletePersistedPlacedCube just retired (the resolver deletes, then fractures, in one tick).
