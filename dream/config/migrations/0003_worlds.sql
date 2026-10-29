@@ -4,7 +4,9 @@
 -- column first in their primary keys. Global tables (player_profiles, player_profile_change_log,
 -- combat_formulas, schema_version, world_metadata) are untouched.
 -- Each rebuild follows SQLite's 12-step procedure: create X__v3, copy, DROP X, RENAME X__v3 TO X,
--- recreate the indexes. The old table is never renamed away first (that would rewrite the child
+-- recreate the indexes. The three busy tables (cubes, rubble, enemies) stay rowid tables: measured
+-- on World10k, WITHOUT ROWID made the full checkpoint about 10% slower than the baseline, a rowid
+-- table with the composite key index about 4% slower. The old table is never renamed away first (that would rewrite the child
 -- foreign keys). The migrator runs with foreign_keys OFF (otherwise dropping item_instances would
 -- cascade-delete the inventory slots) and runs foreign_key_check before it commits.
 
@@ -95,7 +97,7 @@ CREATE TABLE placed_cube_instances__v3 (
     CHECK (current_health >= 0),
     CHECK (max_health >= 1),
     CHECK (current_health <= max_health)
-) WITHOUT ROWID;
+);
 
 INSERT INTO placed_cube_instances__v3 (world_id, cube_id, owner_player_name, cell_x, cell_y, cell_z,
     center_x, center_y, center_z, shape_kind, material_id, current_health, max_health, created_utc, updated_utc)
@@ -134,7 +136,7 @@ CREATE TABLE cube_fracture_pieces__v3 (
     CHECK (piece_index >= 0),
     CHECK (length(trim(owner_player_name)) > 0),
     CHECK (side_length > 0)
-) WITHOUT ROWID;
+);
 
 INSERT INTO cube_fracture_pieces__v3 (world_id, source_cube_id, piece_index, owner_player_name,
     parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length,
@@ -189,7 +191,7 @@ CREATE TABLE enemy_instances__v3 (
     CHECK (movement_speed >= 0),
     CHECK (attack_speed > 0),
     CHECK (level >= 1)
-) WITHOUT ROWID;
+);
 
 INSERT INTO enemy_instances__v3 (world_id, enemy_id, enemy_kind, display_name,
     position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp,

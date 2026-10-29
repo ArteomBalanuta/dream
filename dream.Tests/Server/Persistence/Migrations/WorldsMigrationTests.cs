@@ -65,9 +65,9 @@ public sealed class WorldsMigrationTests
         Assert.Equal(
             [
                 "player_world_state|world_id,player_name|0",
-                "placed_cube_instances|world_id,cube_id|1",
-                "cube_fracture_pieces|world_id,source_cube_id,piece_index|1",
-                "enemy_instances|world_id,enemy_id|1",
+                "placed_cube_instances|world_id,cube_id|0",
+                "cube_fracture_pieces|world_id,source_cube_id,piece_index|0",
+                "enemy_instances|world_id,enemy_id|0",
                 "item_instances|world_id,item_instance_id|0",
                 "player_inventory_slots|world_id,player_name,slot_index|0",
                 "player_starter_grants|world_id,player_name|0"
