@@ -43,7 +43,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
             ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add, start: start))))
         {
             output.WriteLine(string.Join(" / ", log));
-            Assert.Contains(log, line => line.Contains("World 'foo' (id 2) created.", StringComparison.Ordinal));
+            Assert.Contains(log, line => line.Contains("World 'foo' (id 2) did not exist and was created (size 20).", StringComparison.Ordinal));
             Assert.Equal(20, server.Runtime.Map.Width);
             Assert.Equal(20, server.Runtime.Map.Depth);
             await using WireLoopbackClient wire = await server.ConnectAndJoinAsync(Session);

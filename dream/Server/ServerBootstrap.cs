@@ -127,12 +127,17 @@ public static class ServerBootstrap
     // The dedicated server's exit code when the selected world does not exist.
     public const int WorldNotFoundExitCode = 4;
 
+    // The dedicated server's exit code when the selected world cannot be opened: an invalid name
+    // (over 64 characters), or a stored world this build cannot host (size, height, generator).
+    public const int WorldCannotBeOpenedExitCode = 5;
+
     // The host, or null after logging why the server cannot start: a database at a schema version
     // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
     internal static DedicatedServerHost? TryCreateServerModeHost(
         Func<DedicatedServerHost> createHost,
         Action<string> log,
-        out int exitCode)
+        out int exitCode,
+        string? worldSelector = null)
     {
         try
         {
@@ -156,6 +161,13 @@ public static class ServerBootstrap
             exitCode = WorldNotFoundExitCode;
             return null;
         }
+        catch (ArgumentException ex)
+        {
+            string label = string.IsNullOrWhiteSpace(worldSelector) ? "(default)" : worldSelector.Trim();
+            log($"Server not started: world '{label}' cannot be opened: {ex.Message}");
+            exitCode = WorldCannotBeOpenedExitCode;
+            return null;
+        }
     }
 
     private static async Task<int> RunServerModeAsync(ServerStartOptions options)
@@ -163,7 +175,10 @@ public static class ServerBootstrap
         using DedicatedServerHost? host = TryCreateServerModeHost(
             () => CreateAuthoritativeHost(options),
             ConsoleLog,
-            out int startupExitCode);
+            out int startupExitCode,
+            string.IsNullOrWhiteSpace(options.WorldSelector)
+                ? Environment.GetEnvironmentVariable(WorldEnvironmentVariable)
+                : options.WorldSelector);
         if (host == null)
         {
             return startupExitCode;
@@ -211,7 +226,8 @@ public static class ServerBootstrap
             DefaultSchemaScriptPath,
             Environment.GetEnvironmentVariable(SimulationSeedEnvironmentVariable),
             ConsoleLog,
-            start);
+            start,
+            worldEnvironmentValue: Environment.GetEnvironmentVariable(WorldEnvironmentVariable));
     }
 
     // The world a start selects: the --world argument, else DREAM_WORLD, else the default world.
@@ -235,21 +251,24 @@ public static class ServerBootstrap
     // load, unless simulationSeedOverride holds a valid seed. The override is applied for this run
     // only and never stored. The repositories are bound to the resolved world's id. The log names
     // the world (name and id) and never the seed. catalog is a test seam; it defaults to the
-    // database's SqliteWorldCatalog.
+    // database's SqliteWorldCatalog. worldEnvironmentValue is the DREAM_WORLD value the caller read
+    // (the entry points above read it); it defaults to none, so a direct call never depends on the
+    // process environment.
     public static ServerPersistenceBundle CreatePersistenceBundle(
         string databasePath,
         string schemaScriptPath,
         string? simulationSeedOverride = null,
         Action<string>? log = null,
         ServerStartOptions? start = null,
-        IWorldCatalog? catalog = null)
+        IWorldCatalog? catalog = null,
+        string? worldEnvironmentValue = null)
     {
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
         schema.EnsureSchema(log);
 
         WorldSelector selector = ResolveWorldSelector(
             start?.WorldSelector,
-            Environment.GetEnvironmentVariable(WorldEnvironmentVariable));
+            worldEnvironmentValue);
         int newWorldSize = start?.NewWorldSize ?? WorldDefaults.StartupFloorSize;
 
         WorldRecord record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out bool created);
@@ -258,7 +277,8 @@ public static class ServerBootstrap
         descriptor.Validate();
         WorldId worldId = descriptor.Id;
         log?.Invoke(created
-            ? $"World '{descriptor.Name}' (id {worldId}) created."
+            ? $"World '{descriptor.Name}' (id {worldId}) did not exist and was created (size {descriptor.Width}). " +
+              "If this was a typo, stop the server and remove it with: --worlds delete <id> --yes."
             : $"World '{descriptor.Name}' (id {worldId}) opened.");
 
         ulong storedSeed;

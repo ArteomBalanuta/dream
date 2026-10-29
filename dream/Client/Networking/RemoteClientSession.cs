@@ -385,11 +385,16 @@ public sealed class RemoteClientSession : IAsyncDisposable
         EndSession(reason, "client.join.failed");
     }
 
-    // For the owner when it cannot use what the server sent (an unsupported world): ends the session
-    // with the reason, like any other failed join.
-    public void EndSessionWithReason(string reason)
+    public const string UnsupportedWorldLogEvent = "client.join.unsupported-world";
+    public const string ProtocolErrorLogEvent = "client.join.protocol-error";
+
+    // For the owner when it cannot use what the server sent (an unsupported world, or a payload that
+    // does not match its own header): ends the session with the reason, like any other failed join,
+    // and logs logEvent (UnsupportedWorldLogEvent or ProtocolErrorLogEvent).
+    public void EndSessionWithReason(string reason, string logEvent)
     {
-        EndSession(reason, "client.join.unsupported-world");
+        ArgumentException.ThrowIfNullOrEmpty(logEvent);
+        EndSession(reason, logEvent);
     }
 
     // Ends the session the way a lost connection does: IsConnected false with a DisconnectReason

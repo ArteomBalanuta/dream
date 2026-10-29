@@ -1,4 +1,5 @@
 using Vector3 = OpenTK.Mathematics.Vector3;
+using Dream.Client.Networking;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
@@ -23,10 +24,16 @@ public partial class PlayScene
             {
                 ClientJoinAcceptedApplier.ApplyToRuntime(_runtime, joinAcceptedMessage);
             }
-            catch (Exception ex) when (ex is UnsupportedWorldException or InvalidDataException)
+            catch (UnsupportedWorldException ex)
             {
                 // A world this client cannot host: the session ends with a readable reason.
-                _remoteClient.EndSessionWithReason(ex.Message);
+                _remoteClient.EndSessionWithReason(ex.Message, RemoteClientSession.UnsupportedWorldLogEvent);
+                return;
+            }
+            catch (InvalidDataException ex)
+            {
+                // A payload that contradicts its own header (for example a size mismatch).
+                _remoteClient.EndSessionWithReason(ex.Message, RemoteClientSession.ProtocolErrorLogEvent);
                 return;
             }
 

@@ -193,7 +193,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         World = world;
     }
 
-    public void RebuildMapForFloorSize(int floorSize)
+    private void RebuildMapForFloorSize(int floorSize)
     {
         Vector3 currentPlayerPosition = Player.GetWorldPosition();
         Map previousMap = Map;

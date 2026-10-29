@@ -121,7 +121,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             InitialActors: Runtime.CaptureActorSnapshots(),
             InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
             WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
-                World: GetWorldWire());
+            World: GetWorldWire());
         LogJoinAccepted("new", accepted);
         return accepted;
     }

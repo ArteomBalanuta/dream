@@ -93,6 +93,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
     {
         ArgumentNullException.ThrowIfNull(options);
         string name = (options.Name ?? string.Empty).Trim();
+        RequireValidName(name);
         WorldDescriptor.ForFloorSize(options.Size, name: name).Validate();
         ulong seed = options.Seed ?? SqliteWorldMetadataRepository.GenerateSimulationSeed();
 
@@ -124,6 +125,19 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         WorldRecord sourceRecord = TryGet(session, source) ?? throw new WorldNotFoundException(source.ToString());
         RequireNameFree(session, name);
 
+        // A source without a stored seed gets one now, in this transaction, so the copy keeps the
+        // same seed instead of each of them generating its own later.
+        string? seedText = sourceRecord.Seed?.ToString(CultureInfo.InvariantCulture);
+        if (seedText == null)
+        {
+            seedText = SqliteWorldMetadataRepository.GenerateSimulationSeed().ToString(CultureInfo.InvariantCulture);
+            using SqliteCommand store = session.CreateCommand(
+                "UPDATE worlds SET seed = $seed WHERE world_id = $id AND seed IS NULL;");
+            store.Parameters.AddWithValue("$seed", seedText);
+            store.Parameters.AddWithValue("$id", source.Value);
+            store.ExecuteNonQuery();
+        }
+
         WorldDescriptor d = sourceRecord.Descriptor;
         long id = InsertWorld(
             session,
@@ -134,7 +148,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             WorldMapSourceText.ToStorage(d.MapSource),
             d.GeneratorKey,
             d.GeneratorVersion,
-            sourceRecord.Seed?.ToString(CultureInfo.InvariantCulture),
+            seedText,
             sourceRecord.WorldTimeTicks);
 
         foreach ((string table, string columns) in CopyTables)
@@ -210,6 +224,18 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         {
             throw new ArgumentException(
                 $"World name must be 1-{WorldDescriptor.MaxNameLength} characters after trimming.", "name");
+        }
+
+        // An all-digit name would be read as a world id by WorldSelector.Parse and never found by name.
+        if (trimmed.All(char.IsAsciiDigit))
+        {
+            throw new ArgumentException(
+                $"World name '{trimmed}' cannot be only digits: it would be read as a world id.", "name");
+        }
+
+        if (trimmed.Any(char.IsControl))
+        {
+            throw new ArgumentException("World name cannot contain control characters.", "name");
         }
     }
 
@@ -308,10 +334,21 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         return new WorldRecord(
             descriptor,
             seed,
-            reader.GetInt64(9),
+            ReadWorldTimeTicks(reader, id),
             reader.GetInt32(10),
             ParseUtc(reader.GetString(11)),
             ParseUtc(reader.GetString(12)));
+    }
+
+    // GetInt64 would turn a TEXT value into 0 and silently restart the world clock.
+    private static long ReadWorldTimeTicks(SqliteDataReader reader, long id)
+    {
+        if (reader.IsDBNull(9) || reader.GetFieldType(9) != typeof(long) || reader.GetInt64(9) < 0)
+        {
+            throw new InvalidDataException($"World {id} has an invalid world_time_ticks value.");
+        }
+
+        return reader.GetInt64(9);
     }
 
     private static DateTime ParseUtc(string text) =>

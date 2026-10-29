@@ -200,4 +200,52 @@ public sealed class SqliteWorldCatalogTests
 
         Assert.Throws<InvalidDataException>(() => db.Catalog.TryGet(a.Descriptor.Id));
     }
+
+    [Fact]
+    public void Read_RejectsCorruptWorldTimeTicks()
+    {
+        using WorldCatalogTestDatabase db = new();
+        WorldRecord a = db.Catalog.Create(new WorldCreateOptions("Alpha", 20));
+        db.Execute($"UPDATE worlds SET world_time_ticks = 'soon' WHERE world_id = {a.Descriptor.Id.Value};");
+        Assert.Throws<InvalidDataException>(() => db.Catalog.TryGet(a.Descriptor.Id));
+
+        db.Execute($"UPDATE worlds SET world_time_ticks = -5 WHERE world_id = {a.Descriptor.Id.Value};");
+        Assert.Throws<InvalidDataException>(() => db.Catalog.TryGet(a.Descriptor.Id));
+    }
+
+    [Theory]
+    [InlineData("2024")]
+    [InlineData(" 7 ")]
+    [InlineData("a\tb")]
+    [InlineData("a\nb")]
+    public void CreateAndCopy_RejectAllDigitAndControlCharacterNames(string name)
+    {
+        using WorldCatalogTestDatabase db = new();
+        WorldRecord a = db.Catalog.Create(new WorldCreateOptions("Alpha", 20));
+
+        Assert.Throws<ArgumentException>(() => db.Catalog.Create(new WorldCreateOptions(name, 20)));
+        Assert.Throws<ArgumentException>(() => db.Catalog.Copy(a.Descriptor.Id, name));
+        Assert.Single(db.Catalog.List());
+    }
+
+    [Fact]
+    public void Create_AcceptsNamesThatMerelyContainDigits()
+    {
+        using WorldCatalogTestDatabase db = new();
+        Assert.Equal("w2024", db.Catalog.Create(new WorldCreateOptions("w2024", 20)).Descriptor.Name);
+    }
+
+    [Fact]
+    public void Copy_OfASourceWithoutASeed_StoresOneSeedSharedByBoth()
+    {
+        using WorldCatalogTestDatabase db = new();
+        WorldRecord a = db.Catalog.Create(new WorldCreateOptions("Alpha", 20));
+        db.Execute($"UPDATE worlds SET seed = NULL WHERE world_id = {a.Descriptor.Id.Value};");
+
+        WorldRecord copy = db.Catalog.Copy(a.Descriptor.Id, "Copy");
+
+        WorldRecord source = db.Catalog.TryGet(a.Descriptor.Id)!;
+        Assert.NotNull(source.Seed);
+        Assert.Equal(source.Seed, copy.Seed);
+    }
 }
