@@ -9,10 +9,8 @@ namespace Dream.Tests.Load;
 
 // Persistence wave D measurements (DREAM_LOAD_TEST=1, Release) on World10k (100x8x100).
 //
-// GeneratedWorld10k_BuildReference runs at any build: the generated map build is the reference for
-// the stored-map budget (load plus build at most 1.5x the generated build). The two tests below the
-// #if need workstreams A, B and C and are compiled out of the C0 build; at glue define
-// WAVE_D_GLUE (or delete the #if lines) and fix any name A or C chose differently.
+// GeneratedWorld10k_BuildReference: the generated map build is the reference for the stored-map
+// budget (load plus build at most 1.5x the generated build).
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class TerrainMeasurementTests(ITestOutputHelper output)
 {
@@ -54,11 +52,10 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
         return watch.Elapsed.TotalMilliseconds;
     }
 
-#if WAVE_D_GLUE
     // Stored map: chunk count, blob bytes (target <= 256 KB, base64 is x 4/3 for E1's wire budget),
     // encode time, ReplaceTerrainChunks time, and load plus build against the generated build
     // (target <= 1.5x).
-    [LoadFact(Skip = "wave D: needs workstreams A and C (exporter, StoredMapSource, chunk repository), unskip at glue")]
+    [LoadFact]
     public void StoredWorld10k_ChunkBytes_EncodeReplaceAndLoadPlusBuild()
     {
         MapDefinition definition = new(FloorSize, 8, FloorSize, WorldMapSource.Generated, WorldGeneratorCatalog.DefaultKey, WorldGeneratorCatalog.DefaultVersion);
@@ -81,7 +78,7 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
                 Path.Combine(work, "world.sqlite"),
                 Path.Combine(LoadPaths.FindRepoRoot(), "dream", "config", "player-profiles.init.sql"));
             schema.EnsureSchema();
-            Dream.Server.Persistence.Repositories.SqliteTerrainChunkRepository repository = new(schema, Dream.Simulation.World.WorldId.Default);
+            Dream.Server.Persistence.Repositories.SqliteTerrainChunkRepository repository = new(new Dream.Server.Persistence.Store.SqliteWorldStore(schema), Dream.Simulation.World.WorldId.Default);
             double replace = Time(() => repository.ReplaceTerrainChunks(chunks));
             double load = 0d;
             IReadOnlyList<Dream.Simulation.Persistence.PersistedTerrainChunk> loaded = [];
@@ -121,7 +118,7 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
     // 1,000 seeded terrain overrides on World10k: restore time, join transfer bytes and that the
     // joining client's checksum matches the server. Compare the transfer bytes with the unedited
     // World10k join in the baseline work-log.
-    [LoadFact(Skip = "wave D: needs workstreams A and B (WorldSeeder.SeedTerrainOverrides, override restore), unskip at glue")]
+    [LoadFact]
     public async Task World10k_With1000SeededOverrides_RestoreJoinAndTransfer()
     {
         const int Overrides = 1000;
@@ -146,5 +143,4 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
         output.WriteLine($"join {join.Elapsed.TotalMilliseconds:0.0} ms, {bytes:N0} bytes sent to the connection");
         Assert.True(bytes > 0);
     }
-#endif
 }

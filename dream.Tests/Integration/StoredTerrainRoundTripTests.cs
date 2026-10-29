@@ -1,16 +1,12 @@
 // Persistence wave D, safety net for the stored-map path: export a generated map to chunks, store
 // them in SQLite, load them back, build a map from the StoredMapSource and compare it with the map
 // built from the generated source.
-//
-// The whole file is guarded: it needs workstream A (migration 0006, SqliteTerrainChunkRepository)
-// and workstream C (TerrainChunkExporter, StoredMapSource), which are not in the wave D C0 build.
-// At glue: define WAVE_D_GLUE (or delete the #if lines), fix the repository construction if A named
-// it differently, and remove the Skip on the facts.
-#if WAVE_D_GLUE
 using Microsoft.Data.Sqlite;
 using Xunit;
 using Xunit.Abstractions;
 using Dream.Server.Persistence;
+using Dream.Server.Persistence.Repositories;
+using Dream.Server.Persistence.Store;
 using Dream.Server.Worlds;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Physics;
@@ -24,7 +20,7 @@ namespace Dream.Tests.Integration;
 
 public sealed class StoredTerrainRoundTripTests(ITestOutputHelper output)
 {
-    [Theory(Skip = "wave D: needs workstreams A and C (terrain chunk repository, exporter, StoredMapSource), unskip at glue")]
+    [Theory]
     [InlineData(56)]
     [InlineData(100)]
     public void ExportedChunks_SurviveSqlite_AndBuildAnEqualMap(int size)
@@ -36,7 +32,7 @@ public sealed class StoredTerrainRoundTripTests(ITestOutputHelper output)
 
         using MigrationTestDatabase database = new();
         database.Schema.EnsureSchema();
-        SqliteTerrainChunkRepository repository = new(database.Schema, WorldId.Default);
+        SqliteTerrainChunkRepository repository = new(new SqliteWorldStore(database.Schema), WorldId.Default);
         repository.ReplaceTerrainChunks(exported);
         SqliteConnection.ClearAllPools();
         IReadOnlyList<PersistedTerrainChunk> loaded = repository.LoadTerrainChunks();
@@ -66,8 +62,8 @@ public sealed class StoredTerrainRoundTripTests(ITestOutputHelper output)
             Assert.True(storedMap.GeometryCells.TryGetValue(key, out GeometryCellRecord? actual), $"missing cell {key}");
             Assert.Equal(expected.Definition.MaterialId, actual!.Definition.MaterialId);
             Assert.Equal(expected.Definition.ShapeKind, actual.Definition.ShapeKind);
-            Assert.Equal(expected.IsSolid, actual.IsSolid);
-            Assert.Equal(expected.IsFloor, actual.IsFloor);
+            Assert.Equal(expected.Definition, actual.Definition);
+            Assert.Equal(expected.SubdivisionState?.OverrideCount, actual.SubdivisionState?.OverrideCount);
             Assert.Equal(expected.SubdivisionState != null, actual.SubdivisionState != null);
             Assert.Equal(expected.SubdivisionState?.Resolution, actual.SubdivisionState?.Resolution);
             Assert.Equal(expected.SubdivisionState?.AllChildrenEmpty, actual.SubdivisionState?.AllChildrenEmpty);
@@ -83,4 +79,3 @@ public sealed class StoredTerrainRoundTripTests(ITestOutputHelper output)
         output.WriteLine($"{size}x{size}: {exported.Count} chunks, {exported.Sum(chunk => chunk.Data.Length):N0} blob bytes, {storedMap.GeometryCells.Count} cells");
     }
 }
-#endif

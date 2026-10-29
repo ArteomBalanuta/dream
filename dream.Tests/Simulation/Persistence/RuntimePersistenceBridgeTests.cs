@@ -522,7 +522,7 @@ public sealed class RuntimePersistenceBridgeTests
 
         public long LoadNextObjectId() => 1;
 
-        // wave D shims: terrain overrides are not exercised by this fake.
+        // Terrain overrides are not exercised by this fake.
         public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => [];
 
         public void SaveTerrainCellOverride(PersistedTerrainCellOverride cellOverride)

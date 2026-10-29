@@ -162,7 +162,7 @@ A cube and an enemy that shared a legacy integer id get different ObjectIds. The
 
 - Catalog copy copies the new columns and `next_object_id` with them.
 - Load order is `ORDER BY object_id` for cubes and enemies and `ORDER BY origin_object_id, piece_index` for rubble. Restore registers cubes and enemies in that order, so their compact actor ids follow it.
-- Orphan rubble rows (pieces whose group is no longer restorable) are still never deleted. That is deferred.
+- Orphan rubble rows (pieces whose group is no longer restorable) were never deleted in wave C. Wave D (migration 0006) deletes them: see **Orphan rubble** under "Terrain as data" below.
 
 ## Terrain as data (migration 0006)
 

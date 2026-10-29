@@ -202,11 +202,12 @@ public sealed class TerrainRepositoryTests
         Assert.Equal(
             db.Scalar("SELECT group_concat(object_id || '|' || cell_x || '|' || cell_y || '|' || cell_z || '|' || kind || '|' || COALESCE(hex(cell_data), '-'), ',') FROM (SELECT * FROM terrain_cell_overrides WHERE world_id = 1 ORDER BY object_id)"),
             db.Scalar($"SELECT group_concat(object_id || '|' || cell_x || '|' || cell_y || '|' || cell_z || '|' || kind || '|' || COALESCE(hex(cell_data), '-'), ',') FROM (SELECT * FROM terrain_cell_overrides WHERE world_id = {id} ORDER BY object_id)"));
-        Assert.Equal(2L, db.Count("terrain_cell_overrides", id));
+        // SeedWorldOne adds one override and one chunk of its own.
+        Assert.Equal(3L, db.Count("terrain_cell_overrides", id));
         Assert.Equal(
             db.Scalar("SELECT group_concat(chunk_x || '|' || chunk_z || '|' || cell_count || '|' || hex(data), ',') FROM (SELECT * FROM terrain_chunks WHERE world_id = 1 ORDER BY chunk_z, chunk_x)"),
             db.Scalar($"SELECT group_concat(chunk_x || '|' || chunk_z || '|' || cell_count || '|' || hex(data), ',') FROM (SELECT * FROM terrain_chunks WHERE world_id = {id} ORDER BY chunk_z, chunk_x)"));
-        Assert.Equal(2L, db.Count("terrain_chunks", id));
+        Assert.Equal(3L, db.Count("terrain_chunks", id));
         Assert.Equal(900L, db.Scalar($"SELECT next_object_id FROM worlds WHERE world_id = {id}"));
         Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")));
     }
@@ -221,14 +222,15 @@ public sealed class TerrainRepositoryTests
             INSERT INTO terrain_chunks (world_id, chunk_x, chunk_z, format_version, cell_count, data) VALUES (1, 0, 0, 1, 0, zeroblob(23));
             """);
         WorldRecord copy = db.Catalog.Copy(WorldId.Default, "Copy");
-        Assert.Equal(1L, db.Count("terrain_cell_overrides", copy.Descriptor.Id.Value));
+        // SeedWorldOne adds one override and one chunk of its own.
+        Assert.Equal(2L, db.Count("terrain_cell_overrides", copy.Descriptor.Id.Value));
 
         Assert.True(db.Catalog.Delete(copy.Descriptor.Id));
 
         Assert.Equal(0L, db.Count("terrain_cell_overrides", copy.Descriptor.Id.Value));
         Assert.Equal(0L, db.Count("terrain_chunks", copy.Descriptor.Id.Value));
-        Assert.Equal(1L, db.Count("terrain_cell_overrides", 1));
-        Assert.Equal(1L, db.Count("terrain_chunks", 1));
+        Assert.Equal(2L, db.Count("terrain_cell_overrides", 1));
+        Assert.Equal(2L, db.Count("terrain_chunks", 1));
         Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")));
     }
 

@@ -19,7 +19,8 @@ internal static class WorldBundles
     public static readonly string[] WorldTables =
     [
         "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances",
-        "item_instances", "player_inventory_slots", "player_starter_grants"
+        "item_instances", "player_inventory_slots", "player_starter_grants",
+        "terrain_cell_overrides", "terrain_chunks"
     ];
 
     public static SqliteWorldCatalog OpenCatalog(MigrationTestDatabase database)

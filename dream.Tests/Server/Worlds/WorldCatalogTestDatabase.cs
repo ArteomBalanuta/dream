@@ -28,7 +28,7 @@ internal sealed class WorldCatalogTestDatabase : IDisposable
 
     public object? Scalar(string sql) => _database.Scalar(sql);
 
-    // Fills every one of the 7 per-world tables of world 1 (creating the world row when absent).
+    // Fills every one of the 9 per-world tables of world 1 (creating the world row when absent).
     public void SeedWorldOne()
     {
         _database.ExecuteScript(
@@ -50,13 +50,18 @@ internal sealed class WorldCatalogTestDatabase : IDisposable
                 VALUES (1, 'alice', 0, 30, '2026-01-01T00:00:00Z');
             INSERT INTO player_starter_grants (world_id, player_name, kit_version, updated_utc)
                 VALUES (1, 'alice', 2, '2026-01-01T00:00:00Z');
+            INSERT INTO terrain_cell_overrides (world_id, object_id, cell_x, cell_y, cell_z, kind, cell_data)
+                VALUES (1, 40, 6, 1, 6, 0, NULL);
+            INSERT INTO terrain_chunks (world_id, chunk_x, chunk_z, format_version, cell_count, data)
+                VALUES (1, 2, 2, 1, 0, zeroblob(23));
             """);
     }
 
     public static readonly string[] PerWorldTables =
     [
         "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances",
-        "item_instances", "player_inventory_slots", "player_starter_grants"
+        "item_instances", "player_inventory_slots", "player_starter_grants",
+        "terrain_cell_overrides", "terrain_chunks"
     ];
 
     public void Execute(string sql) => _database.ExecuteScript(sql);

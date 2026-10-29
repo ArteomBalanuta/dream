@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using Microsoft.Data.Sqlite;
 using Xunit;
 using Xunit.Abstractions;
@@ -10,8 +8,8 @@ namespace Dream.Tests.Integration;
 
 // Persistence wave D: two lockstep servers on two copies of one database, each restarting twice,
 // while the scripted session fractures generated terrain. Checksums must be equal on every tick of
-// every phase, the rubble cells must be equal, and after every phase the database dumps (and, once
-// migration 0006 is in, the terrain override rows) must be equal. The scripted secondaries fracture
+// every phase, the rubble cells must be equal, and after every phase the database dumps (terrain
+// override and chunk rows included) must be equal. The scripted secondaries fracture
 // terrain in each phase; from the second phase on the restored overrides remove those cells again
 // before the script replays.
 public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
@@ -42,32 +40,28 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
             int divergence = RunPhase(left, right, PhaseTicks[phase], out int compared, out int terrainRubble);
             Assert.True(divergence < 0, $"phase {phase + 1}: the servers diverged at tick {divergence}");
             SqliteConnection.ClearAllPools();
-            Assert.Equal(DumpWorld(left.DatabasePath), DumpWorld(right.DatabasePath));
-            string leftTerrain = DumpTerrain(left.DatabasePath);
-            Assert.Equal(leftTerrain, DumpTerrain(right.DatabasePath));
+            // DumpWorld includes the wave D terrain tables (overrides and chunks).
+            string leftDump = DumpWorld(left.DatabasePath);
+            Assert.Equal(leftDump, DumpWorld(right.DatabasePath));
             PersistedIds ids = ReadIds(left.DatabasePath);
             Assert.Equal(ids.AllObjects.Count, ids.AllObjects.Distinct().Count());
             Assert.Empty(ids.Origins.Intersect(ids.AllObjects));
 
-            long overrides = TerrainTableExists(left.DatabasePath, "terrain_cell_overrides")
-                ? Scalar(left.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = 1;")
-                : -1;
-            if (overrides >= 0)
-            {
-                // Migration 0006 and the bridge are in: the scripted terrain fractures are stored,
-                // and the override ids are unique across every kind.
-                Assert.True(overrides > 0, $"phase {phase + 1}: no terrain override was stored");
-                Assert.True(overrides >= previousOverrides);
-                previousOverrides = overrides;
-                Assert.Equal(
-                    overrides,
-                    Scalar(left.DatabasePath, "SELECT COUNT(DISTINCT object_id) FROM terrain_cell_overrides WHERE world_id = 1;"));
-                Assert.Equal(
-                    0L,
-                    Scalar(left.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides o JOIN placed_cube_instances p ON p.world_id = o.world_id AND p.object_id = o.object_id;"));
-            }
+            // The scripted terrain fractures are stored from phase 1 on, and the override ids are
+            // unique across every kind.
+            long overrides = Scalar(left.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = 1;");
+            Assert.True(overrides > 0, $"phase {phase + 1}: no terrain override was stored");
+            Assert.True(overrides >= previousOverrides);
+            previousOverrides = overrides;
+            Assert.Equal(
+                overrides,
+                Scalar(left.DatabasePath, "SELECT COUNT(DISTINCT object_id) FROM terrain_cell_overrides WHERE world_id = 1;"));
+            Assert.Equal(
+                0L,
+                Scalar(left.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides o JOIN placed_cube_instances p ON p.world_id = o.world_id AND p.object_id = o.object_id;"));
+            Assert.Empty(ids.AllObjects.Intersect(OverrideIds(left.DatabasePath)));
 
-            output.WriteLine($"phase {phase + 1}: {compared} ticks equal; rubble cells {terrainRubble}; terrain overrides {overrides}; dumps equal ({leftTerrain.Length} terrain chars)");
+            output.WriteLine($"phase {phase + 1}: {compared} ticks equal; rubble cells {terrainRubble}; terrain overrides {overrides}; dumps equal ({leftDump.Length} chars)");
         }
     }
 
@@ -102,43 +96,18 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
         return firstDivergence;
     }
 
-    private static bool TerrainTableExists(string databasePath, string table)
+    private static long[] OverrideIds(string databasePath)
     {
-        return Scalar(databasePath, $"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}';") > 0;
-    }
-
-    // The wave D tables (migration 0006), ordered, when they exist.
-    private static string DumpTerrain(string databasePath)
-    {
-        StringBuilder dump = new();
         using SqliteConnection connection = Open(databasePath);
-        foreach ((string table, string columns, string order) in new[]
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT object_id FROM terrain_cell_overrides WHERE world_id = 1;";
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<long> ids = [];
+        while (reader.Read())
         {
-            ("terrain_cell_overrides", "object_id, cell_x, cell_y, cell_z, kind, length(cell_data)", "object_id"),
-            ("terrain_chunks", "chunk_x, chunk_z, format_version, cell_count, length(data)", "chunk_z, chunk_x")
-        })
-        {
-            if (!TerrainTableExists(databasePath, table))
-            {
-                continue;
-            }
-
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = $"SELECT {columns} FROM {table} WHERE world_id = 1 ORDER BY {order};";
-            using SqliteDataReader reader = command.ExecuteReader();
-            dump.AppendLine(table);
-            while (reader.Read())
-            {
-                for (int i = 0; i < reader.FieldCount; i++)
-                {
-                    dump.Append(i == 0 ? "  " : " | ");
-                    dump.Append(reader.IsDBNull(i) ? "null" : Convert.ToString(reader.GetValue(i), CultureInfo.InvariantCulture));
-                }
-
-                dump.AppendLine();
-            }
+            ids.Add(reader.GetInt64(0));
         }
 
-        return dump.ToString();
+        return [.. ids];
     }
 }

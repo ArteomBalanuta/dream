@@ -26,7 +26,7 @@ public sealed class TerrainPersistenceLoopbackTests(ITestOutputHelper output)
     private const string Fighter = "terrain-fighter";
     private const string Joiner = "terrain-joiner";
 
-    [Fact(Skip = "wave D: needs workstream B (terrain override persist and restore), unskip at glue")]
+    [Fact]
     public async Task DestroyedTerrainCube_AndSculptureCell_StayDestroyed_AfterARestart_AndAJoiningClientMatchesTheServer()
     {
         using TempDatabase database = new();

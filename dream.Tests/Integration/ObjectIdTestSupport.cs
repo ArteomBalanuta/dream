@@ -35,6 +35,47 @@ internal static class ObjectIdTestSupport
             Longs(connection, "SELECT next_object_id FROM worlds WHERE world_id = 1;").Single());
     }
 
+    // Every rubble piece of world 1: piece id -> (origin id, parent cell).
+    internal static Dictionary<long, (long Origin, long X, long Y, long Z)> ReadPieceGroups(string databasePath)
+    {
+        using SqliteConnection connection = Open(databasePath);
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT object_id, origin_object_id, parent_cell_x, parent_cell_y, parent_cell_z FROM cube_fracture_pieces WHERE world_id = 1;";
+        using SqliteDataReader reader = command.ExecuteReader();
+        Dictionary<long, (long, long, long, long)> pieces = [];
+        while (reader.Read())
+        {
+            pieces[reader.GetInt64(0)] = (reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
+        }
+
+        return pieces;
+    }
+
+    // Since wave D a cell fractured a second time (a cube placed over its rubble, then broken)
+    // replaces the cell's old rubble group: the old rows are deleted, never reissued. Every piece of
+    // `before` that is gone from `after` must belong to such a replaced group: `after` holds a group
+    // with a higher origin in the same parent cell. Returns the replaced piece ids.
+    internal static IReadOnlyList<long> AssertMissingPiecesWereReplaced(
+        Dictionary<long, (long Origin, long X, long Y, long Z)> before,
+        Dictionary<long, (long Origin, long X, long Y, long Z)> after)
+    {
+        List<long> replaced = [];
+        foreach ((long piece, (long origin, long x, long y, long z)) in before)
+        {
+            if (after.ContainsKey(piece))
+            {
+                continue;
+            }
+
+            Xunit.Assert.True(
+                after.Values.Any(group => group.X == x && group.Y == y && group.Z == z && group.Origin > origin),
+                $"piece {piece} (origin {origin}, cell {x},{y},{z}) is gone without a newer group replacing it in its cell");
+            replaced.Add(piece);
+        }
+
+        return replaced;
+    }
+
     internal static long Scalar(string databasePath, string sql)
     {
         using SqliteConnection connection = Open(databasePath);

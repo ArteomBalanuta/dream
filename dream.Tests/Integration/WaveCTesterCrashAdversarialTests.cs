@@ -50,10 +50,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
     // The realistic kill: the lost rows and their counter bump roll back together. Ids of rows that
     // never committed may then be issued again. What must hold: no id of a surviving row is
     // issued again, and no two kinds share an id.
-    // The script destroys terrain; until the SQL override repository lands (the facade still returns
-    // no overrides) a restart regenerates that terrain, the script breaks it again and the orphan fix
-    // replaces the surviving rubble rows. With overrides the destroyed cells stay destroyed.
-    [Fact(Skip = "wave D: needs migration 0006, unskip at glue")]
+    [Fact]
     public void LostNewestRows_WithTheCounterRolledBackWithThem_NeverCollideWithSurvivingRows()
     {
         using TempDatabase database = new();
@@ -63,6 +60,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
         DeleteNewestRows(database.DatabasePath, perKind: 3);
         SqliteConnection.ClearAllPools();
         PersistedIds survivors = ReadIds(database.DatabasePath);
+        Dictionary<long, (long Origin, long X, long Y, long Z)> survivingPieces = ReadPieceGroups(database.DatabasePath);
         long rolledBack = survivors.MaxId + 1;
         using (SqliteConnection connection = Open(database.DatabasePath, readOnly: false))
         {
@@ -75,8 +73,10 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
         RunCrashedPhase(database, everSeen, "phase 2", mustStartAbove: survivors.MaxId);
         PersistedIds second = ReadIds(database.DatabasePath);
         AssertNoSharedIdsAcrossKinds(second);
-        // Every surviving row is still there with its id and was not overwritten by a different kind.
-        Assert.Empty(survivors.Pieces.Except(second.Pieces));
+        // Every surviving row is still there with its id and was not overwritten by a different kind;
+        // a rubble group may only be gone because phase 2 fractured its cell again (wave D).
+        IReadOnlyList<long> replaced = AssertMissingPiecesWereReplaced(survivingPieces, ReadPieceGroups(database.DatabasePath));
+        output.WriteLine($"rubble pieces replaced by a second fracture of their cell: {replaced.Count}");
         Assert.Empty(survivors.Items.Except(second.Items));
     }
 

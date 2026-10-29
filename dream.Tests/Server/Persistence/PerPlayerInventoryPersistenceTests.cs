@@ -564,7 +564,7 @@ public sealed class PerPlayerInventoryPersistenceTests
             return (_slots.Count == 0 ? max : Math.Max(max, _slots.Values.Max(slot => slot.ItemInstanceId))) + 1;
         }
 
-        // wave D shims: terrain overrides are not exercised by this fake.
+        // Terrain overrides are not exercised by this fake.
         public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => [];
 
         public void SaveTerrainCellOverride(PersistedTerrainCellOverride cellOverride)

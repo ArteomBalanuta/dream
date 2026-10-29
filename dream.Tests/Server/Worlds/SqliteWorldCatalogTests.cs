@@ -58,7 +58,7 @@ public sealed class SqliteWorldCatalogTests
     }
 
     [Fact]
-    public void Copy_DeepCopiesAllSevenTablesWithSameIdsAndStaysIndependent()
+    public void Copy_DeepCopiesEveryPerWorldTableWithSameIdsAndStaysIndependent()
     {
         using WorldCatalogTestDatabase db = new();
         db.SeedWorldOne();

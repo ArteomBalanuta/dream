@@ -34,6 +34,7 @@ public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
 
         SqliteConnection.ClearAllPools();
         first = ReadIds(database.DatabasePath);
+        Dictionary<long, (long Origin, long X, long Y, long Z)> firstPieces = ReadPieceGroups(database.DatabasePath);
         output.WriteLine($"first run: cubes {first.Cubes.Count}, pieces {first.Pieces.Count} (origins {string.Join(",", first.Origins)}), enemies {first.Enemies.Count}, items {first.Items.Count}, next_object_id {first.NextObjectId}");
         AssertUniqueAndBelowCounter(first);
         Assert.NotEmpty(first.Pieces);
@@ -79,7 +80,9 @@ public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
         HashSet<long> seenBefore = [.. first.AllObjects, .. first.Origins];
         Assert.All(second.AllObjects.Where(id => !seenBefore.Contains(id)), id => Assert.True(id >= first.NextObjectId, $"id {id} was issued below the counter {first.NextObjectId}"));
         Assert.Empty(first.Items.Except(second.Items));
-        Assert.Empty(first.Pieces.Except(second.Pieces));
+        // The second run may rebuild and break the cube over its old rubble; that replaces the cell's
+        // group (wave D), any other first-run piece survives.
+        AssertMissingPiecesWereReplaced(firstPieces, ReadPieceGroups(database.DatabasePath));
     }
 
     private static void AssertUniqueAndBelowCounter(PersistedIds ids)
