@@ -50,6 +50,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
         // Protocol v3 (SCALE-1): the compact world, and the chunks a join or resync world is sent in.
         SerializerOptions.Converters.Add(new WorldSnapshotJsonConverter());
         SerializerOptions.Converters.Add(new WorldChunkMessageJsonConverter());
+        SerializerOptions.Converters.Add(new TerrainChunkMessageJsonConverter());
     }
 
     // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on
@@ -278,7 +279,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
     public static bool IsServerOnlyKind(string messageKind)
     {
         return messageKind is "server.hello" or "server.join-accepted" or "server.join-rejected"
-            or "server.snapshot" or "server.action" or WorldChunkMessage.Kind;
+            or "server.snapshot" or "server.action" or WorldChunkMessage.Kind or TerrainChunkMessage.Kind;
     }
 
     private DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload, bool fromClient)
@@ -389,6 +390,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
             "server.snapshot" => DeserializeMessage<ServerSnapshotMessage>(ref payloadReader, hasPayload),
             "server.action" => DeserializeMessage<ServerActionMessage>(ref payloadReader, hasPayload),
             WorldChunkMessage.Kind => DeserializeMessage<WorldChunkMessage>(ref payloadReader, hasPayload),
+            TerrainChunkMessage.Kind => DeserializeMessage<TerrainChunkMessage>(ref payloadReader, hasPayload),
             _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
@@ -401,7 +403,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
     [
         "server.snapshot", "player.command", "server.action", "player.action", "client.hello",
         "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected",
-        WorldChunkMessage.Kind
+        WorldChunkMessage.Kind, TerrainChunkMessage.Kind
     ];
 
     private static readonly byte[][] KnownMessageKindsUtf8 = Array.ConvertAll(KnownMessageKinds, System.Text.Encoding.UTF8.GetBytes);

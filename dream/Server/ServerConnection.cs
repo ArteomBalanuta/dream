@@ -121,6 +121,7 @@ public sealed class ServerConnection : IAsyncDisposable
     private int _nextWorldTransferId;
     private long _worldTransfers;
     private long _worldChunksSent;
+    private long _terrainFragmentsSent;
     // The chunk payload is written here first, then wrapped in its envelope in _frameWriter.
     // Only touched while _sendLock is held, like _frameWriter.
     private readonly PooledFrameWriter _chunkPayloadWriter = new();
@@ -187,6 +188,9 @@ public sealed class ServerConnection : IAsyncDisposable
     public long WorldTransfers => Interlocked.Read(ref _worldTransfers);
 
     public long WorldChunksSent => Interlocked.Read(ref _worldChunksSent);
+
+    // server.terrain-chunk frames written (protocol v8 stored-world joins); not counted in WorldChunksSent.
+    public long TerrainFragmentsSent => Interlocked.Read(ref _terrainFragmentsSent);
 
     // True while a world transfer (join or resync) is queued or still going out.
     public bool HasWorldTransferPending
@@ -753,7 +757,14 @@ public sealed class ServerConnection : IAsyncDisposable
             ? captured
             : WorldSnapshotCapture.FromSnapshot(world);
         int transferId = ++_nextWorldTransferId;
-        _activeTransfer = new WorldTransferSender(transferId, capture, releaseCaptureWhenDone: true);
+        TerrainTransferPayload? terrain = (message as JoinAcceptedMessage)?.TerrainPayload;
+        if (terrain != null && !terrain.Manifest.Equals((message as JoinAcceptedMessage)!.Terrain))
+        {
+            capture.Release();
+            throw new InvalidOperationException("The join's terrain payload does not match the manifest on its carrier.");
+        }
+
+        _activeTransfer = new WorldTransferSender(transferId, capture, releaseCaptureWhenDone: true, terrain);
         Interlocked.Increment(ref _worldTransfers);
         await SendMessageAsync(WorldTransfer.ToCarrier(message, transferId), sharedPayload: null, cancellationToken);
         await SendNextWorldChunkAsync(cancellationToken);
@@ -763,8 +774,9 @@ public sealed class ServerConnection : IAsyncDisposable
     {
         WorldTransferSender transfer = _activeTransfer
             ?? throw new InvalidOperationException("No world transfer is in progress.");
+        bool terrainFragment = transfer.NextFrameKind == TerrainChunkMessage.Kind;
         await SendFrameAsync(message: null, sharedPayload: null, transfer, cancellationToken);
-        Interlocked.Increment(ref _worldChunksSent);
+        Interlocked.Increment(ref terrainFragment ? ref _terrainFragmentsSent : ref _worldChunksSent);
         _chunkDue = false;
         if (transfer.IsComplete)
         {
@@ -904,7 +916,7 @@ public sealed class ServerConnection : IAsyncDisposable
     {
         TransportEnvelope envelope = new(
             TransportEnvelope.CurrentProtocolVersion,
-            worldChunk != null ? WorldChunkMessage.Kind : message!.MessageKind,
+            worldChunk != null ? worldChunk.NextFrameKind : message!.MessageKind,
             _nextOutboundSequence);
 
         if (worldChunk != null)
@@ -1110,10 +1122,12 @@ public sealed class ServerConnection : IAsyncDisposable
 
         if (message == null)
         {
+            // Terrain fragments precede world chunk 0, so no world chunk written yet means this was one.
+            bool terrain = worldChunk is { ChunksWritten: 0, TerrainFragmentsWritten: > 0 };
             NetworkDiagnosticsLog.Write(
                 "server.tx",
-                $"connection={ConnectionId} kind={WorldChunkMessage.Kind} bytes={byteCount} sendMs={stopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
-                $"transfer={worldChunk?.TransferId} chunk={worldChunk?.ChunksWritten - 1} final={worldChunk?.IsComplete}");
+                $"connection={ConnectionId} kind={(terrain ? TerrainChunkMessage.Kind : WorldChunkMessage.Kind)} bytes={byteCount} sendMs={stopwatch?.Elapsed.TotalMilliseconds ?? 0d:0.00} " +
+                $"transfer={worldChunk?.TransferId} chunk={(terrain ? worldChunk!.TerrainFragmentsWritten - 1 : worldChunk?.ChunksWritten - 1)} final={worldChunk?.IsComplete}");
             return;
         }
 

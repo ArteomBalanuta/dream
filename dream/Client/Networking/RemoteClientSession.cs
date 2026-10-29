@@ -634,9 +634,16 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
             WorldTransferReceiver? completed = _worldTransfers.Accept(serverMessage, _deliverInbound);
-            if (serverMessage is WorldChunkMessage)
+            if (serverMessage is WorldChunkMessage or TerrainChunkMessage)
             {
                 Interlocked.Add(ref _worldTransferBytes, payloadBytes);
+                if (serverMessage is TerrainChunkMessage terrainFragment && NetworkDiagnosticsLog.IsEnabled)
+                {
+                    NetworkDiagnosticsLog.Write(
+                        "client.world-transfer.terrain",
+                        $"endpoint={Options.EndpointLabel} session={Options.SessionId} transfer={terrainFragment.TransferId} " +
+                        $"fragment={terrainFragment.Index} chunks={terrainFragment.Chunks.Count} final={terrainFragment.IsFinal} bytes={payloadBytes}");
+                }
             }
 
             if (!wasReceivingWorld && _worldTransfers.Current is WorldTransferReceiver started)
@@ -660,7 +667,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                     NetworkDiagnosticsLog.Write(
                         "client.world-transfer.complete",
                         $"endpoint={Options.EndpointLabel} session={Options.SessionId} transfer={completed.TransferId} chunks={completed.ChunksReceived} " +
-                        $"held={completed.HeldMessages.Count} ms={Stopwatch.GetElapsedTime(_worldTransferStartedTimestamp).TotalMilliseconds:0.0}");
+                        $"terrain={completed.Terrain?.Count ?? 0} held={completed.HeldMessages.Count} ms={Stopwatch.GetElapsedTime(_worldTransferStartedTimestamp).TotalMilliseconds:0.0}");
                 }
             }
 
