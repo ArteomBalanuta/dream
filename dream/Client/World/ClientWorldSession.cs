@@ -186,7 +186,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         ArgumentNullException.ThrowIfNull(world);
         if (source != null)
         {
-            throw new NotSupportedException("building a client map from a source arrives with wave E (B)");
+            RebuildMapFromSource(source);
+            World = world;
+            return;
         }
 
         RebuildMapForFloorSize(world.Width);
@@ -197,6 +199,22 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     {
         ArgumentNullException.ThrowIfNull(world);
         World = world;
+    }
+
+    // A stored world's map. No CopyPlacedCubesTo: it would replay the old map's removals onto a
+    // different source, and the join's snapshot follows immediately.
+    private void RebuildMapFromSource(IMapSource source)
+    {
+        Vector3 currentPlayerPosition = Player.GetWorldPosition();
+        Physics.ResetMapBodies();
+        Map rebuiltMap = new(source, Physics, replicatedCubeBodies: true);
+        Map = rebuiltMap;
+        Player.BindMap(rebuiltMap);
+        Enemies.ClampToMapBounds(rebuiltMap);
+        Player.SetWorldPosition(new Vector3(
+            Math.Clamp(currentPlayerPosition.X, 0.5f, rebuiltMap.Width - 0.5f),
+            Math.Clamp(currentPlayerPosition.Y, 1.5f, rebuiltMap.Height - 0.5f),
+            Math.Clamp(currentPlayerPosition.Z, 0.5f, rebuiltMap.Depth - 0.5f)));
     }
 
     private void RebuildMapForFloorSize(int floorSize)

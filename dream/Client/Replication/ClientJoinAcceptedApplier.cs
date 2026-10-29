@@ -1,5 +1,7 @@
 using Dream.Client.Presentation;
 using Dream.Multiplayer.Protocol;
+using Dream.Simulation.World.MapSources;
+using Dream.Simulation.World.Terrain;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 
@@ -16,7 +18,7 @@ public static class ClientJoinAcceptedApplier
         // map is sized from InitialWorld, or from the first full snapshot.
         if (joinAccepted.World is { } worldWire)
         {
-            ApplyWorldDescriptor(runtime, worldWire, joinAccepted.InitialWorld);
+            ApplyWorldDescriptor(runtime, worldWire, joinAccepted.InitialWorld, joinAccepted);
         }
 
         if (!joinAccepted.InitialWorld.HasValue && joinAccepted.EffectiveInitialActors.Count == 0)
@@ -43,7 +45,8 @@ public static class ClientJoinAcceptedApplier
         ClientCorrectionApplier.ApplySnapshotToRuntime(runtime, bootstrapSnapshot, joinAccepted.SessionId);
     }
 
-    private static void ApplyWorldDescriptor(IClientWorldState runtime, WorldDescriptorWire wire, WorldSnapshot? initialWorld)
+    private static void ApplyWorldDescriptor(IClientWorldState runtime, WorldDescriptorWire wire, WorldSnapshot? initialWorld,
+        JoinAcceptedMessage joinAccepted)
     {
         WorldDescriptor descriptor;
         try
@@ -51,8 +54,10 @@ public static class ClientJoinAcceptedApplier
             descriptor = wire.ToDescriptor();
             if (descriptor.MapSource == WorldMapSource.Stored)
             {
-                // Replaced by the terrain-transfer build in wave E (B).
-                throw new UnsupportedWorldException("stored worlds need a v8 terrain transfer");
+                if (joinAccepted.ReceivedTerrain == null)
+                {
+                    throw new UnsupportedWorldException("the server sent no terrain for its stored world");
+                }
             }
 
             if (descriptor.MapSource == WorldMapSource.Generated &&
@@ -75,6 +80,25 @@ public static class ClientJoinAcceptedApplier
             throw new InvalidDataException(
                 $"Protocol error: the join-accepted world is {descriptor.Width}x{descriptor.Depth} " +
                 $"but its initial world is {world.Width}x{world.Depth}.");
+        }
+
+        if (descriptor.MapSource == WorldMapSource.Stored)
+        {
+            StoredMapSource source;
+            try
+            {
+                source = new StoredMapSource(
+                    MapDefinition.ForWorld(descriptor),
+                    joinAccepted.ReceivedTerrain!,
+                    WorldTransferLimits.Default.MaxTerrainSubcellOverrides);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new InvalidDataException($"Protocol error: stored terrain {ex.Message}", ex);
+            }
+
+            runtime.RebuildMapForWorld(descriptor, source);
+            return;
         }
 
         if (runtime.Map.Width != descriptor.Width || runtime.Map.Depth != descriptor.Depth)

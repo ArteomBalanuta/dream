@@ -107,6 +107,7 @@ public static class ServerBootstrap
             Owner: persistence)
         {
             Descriptor = persistence.Descriptor,
+            StoredTerrain = persistence.StoredTerrain,
         };
     }
 
@@ -275,13 +276,26 @@ public static class ServerBootstrap
 
         WorldDescriptor descriptor = record.Descriptor;
         descriptor.Validate();
-        if (descriptor.MapSource == WorldMapSource.Stored)
-        {
-            // Wave E (B) replaces this with loading and checking the world's terrain chunks.
-            throw new ArgumentException("stored worlds are hosted from wave E", nameof(record));
-        }
 
         WorldId worldId = descriptor.Id;
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null;
+        if (descriptor.MapSource == WorldMapSource.Stored)
+        {
+            try
+            {
+                storedTerrain = new SqliteWorldPersistenceRepository(schema, worldId).TerrainChunks.LoadTerrainChunks();
+                TerrainTransferPayload payload = TerrainTransferPayload.Create(descriptor, storedTerrain);
+                log?.Invoke(
+                    $"World '{descriptor.Name}' (id {worldId}) stored terrain: chunks={payload.Manifest.Chunks} " +
+                    $"bytes={payload.Manifest.Bytes} sha256={payload.Manifest.Sha256}");
+            }
+            catch (InvalidDataException ex)
+            {
+                // Mapped to exit 5 by TryCreateServerModeHost (ArgumentException).
+                throw new ArgumentException($"the stored terrain is invalid: {ex.Message}", nameof(record), ex);
+            }
+        }
+
         log?.Invoke(created
             ? $"World '{descriptor.Name}' (id {worldId}) did not exist and was created (size {descriptor.Width}). " +
               "If this was a typo, stop the server and remove it with: --worlds delete <id> --yes."
@@ -313,7 +327,8 @@ public static class ServerBootstrap
             simulationSeed,
             record.WorldTimeTicks,
             worldId,
-            descriptor);
+            descriptor,
+            storedTerrain: storedTerrain);
     }
 
     // Minutes per in-game day: an unset value gives the default silently; a number outside

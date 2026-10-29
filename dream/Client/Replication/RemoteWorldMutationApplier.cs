@@ -198,6 +198,14 @@ public static class RemoteWorldMutationApplier
 
         if (runtime.Map.Width != snapshot.Width || runtime.Map.Depth != snapshot.Depth)
         {
+            if (runtime.World.MapSource == WorldMapSource.Stored)
+            {
+                // A stored map comes from the terrain transfer, never from a generated rebuild.
+                throw new InvalidDataException(
+                    $"Protocol error: a world snapshot of {snapshot.Width}x{snapshot.Depth} does not match " +
+                    $"the stored world's {runtime.Map.Width}x{runtime.Map.Depth} map.");
+            }
+
             runtime.RebuildMapForWorld(runtime.World with { Width = snapshot.Width, Depth = snapshot.Depth });
         }
 

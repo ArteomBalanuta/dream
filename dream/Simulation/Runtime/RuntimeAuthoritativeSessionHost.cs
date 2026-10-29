@@ -39,7 +39,14 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     {
         Runtime = runtime;
         _ownedDependency = ownedDependency;
+        // Built once per host: every join of a stored world shares the same chunks and manifest.
+        // A runtime hosts one world for its lifetime, so the payload never changes.
+        _terrainPayload = runtime.World.MapSource == WorldMapSource.Stored && runtime.StoredTerrain != null
+            ? TerrainTransferPayload.Create(runtime.World, runtime.StoredTerrain)
+            : null;
     }
+
+    private readonly TerrainTransferPayload? _terrainPayload;
 
     public WorldSessionRuntime Runtime { get; }
 
@@ -89,7 +96,11 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 InitialActors: Runtime.CaptureActorSnapshots(),
                 InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
                 WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
-                World: GetWorldWire());
+                World: GetWorldWire(),
+                Terrain: _terrainPayload?.Manifest)
+            {
+                TerrainPayload = _terrainPayload,
+            };
             LogJoinAccepted("existing", existingAccepted);
             return existingAccepted;
         }
@@ -121,7 +132,11 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             InitialActors: Runtime.CaptureActorSnapshots(),
             InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
             WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
-            World: GetWorldWire());
+            World: GetWorldWire(),
+            Terrain: _terrainPayload?.Manifest)
+        {
+            TerrainPayload = _terrainPayload,
+        };
         LogJoinAccepted("new", accepted);
         return accepted;
     }
