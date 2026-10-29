@@ -132,6 +132,8 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             // Hit the -X cube a few times (damaged, still standing), then break the +X cube.
             int damagedCubeId = CubeIdAt(runtime, damagedCell);
             int fracturedCubeId = CubeIdAt(runtime, fractureCell);
+            // Rows are keyed by ObjectId; the actor id is only the live identity.
+            Assert.True(runtime.ObjectIdentities.TryGetObjectId(fracturedCubeId, out ObjectId fracturedObjectId));
             // The damage roll is seeded by the tick, and how many ticks the join and the kill take
             // depends on timing, so one maul hit (a high or critical roll, after the kill's level-up)
             // sometimes broke the 100 HP -X cube outright: it then fractured instead of standing
@@ -164,8 +166,8 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             Assert.False(HealthOf(runtime, fracturedCubeId).HasValue, "the fractured cube's record survived");
             int livePieces = runtime.Map.CaptureFracturePieces().Count(piece => piece.Cell == fractureKey);
             Assert.True(livePieces > 0);
-            Assert.Equal(livePieces, database.CountAfterFlush(runtime, $"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {fracturedCubeId};"));
-            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {fracturedCubeId};"));
+            Assert.Equal(livePieces, database.CountAfterFlush(runtime, $"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {fracturedObjectId.Value};"));
+            Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {fracturedObjectId.Value};"));
 
             // A few more ticks so the rubble settles under physics.
             for (int i = 0; i < 32; i++)
@@ -270,7 +272,10 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
 
     private static void AssertSameWorld(WorldState expected, WorldState actual)
     {
-        Assert.Equal(expected.Cubes, actual.Cubes);
+        // Cubes are compared by ObjectId: a restart gives every cube a fresh actor id.
+        Assert.Equal(
+            expected.Cubes.Select(cube => (cube.ObjectId, cube.Cell, cube.CurrentHealth, cube.MaxHealth, cube.Owner)),
+            actual.Cubes.Select(cube => (cube.ObjectId, cube.Cell, cube.CurrentHealth, cube.MaxHealth, cube.Owner)));
         Assert.Equal(expected.Pieces.Count, actual.Pieces.Count);
         for (int i = 0; i < expected.Pieces.Count; i++)
         {
@@ -327,9 +332,10 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             .Select(record =>
             {
                 Assert.True(map.TryGetCellForCube((Cube)record.SourceObject, out GeometryCellKey cell));
-                return new CubeState(record.Actor.Id, cell, record.Health.CurrentHealth, record.Health.MaxHealth, record.OwnerPlayerName!);
+                runtime.ObjectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId objectId);
+                return new CubeState(objectId, record.Actor.Id, cell, record.Health.CurrentHealth, record.Health.MaxHealth, record.OwnerPlayerName!);
             })
-            .OrderBy(cube => cube.ActorId)
+            .OrderBy(cube => cube.ObjectId)
             .ToArray();
         PieceState[] pieces = map.CaptureFracturePieces()
             .Select(piece => new PieceState(piece.Cell, piece.PieceIndex, piece.Piece.Center, piece.Piece.SideLength, piece.MaterialId))
@@ -338,7 +344,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
         EnemyState[] enemies = runtime.Enemies.ActiveActors
             .Where(enemy => enemy.Combatant.Health.IsAlive)
             .Select(enemy => new EnemyState(
-                enemy.Combatant.Actor.Id,
+                runtime.ObjectIdentities.TryGetObjectId(enemy.Combatant.Actor.Id, out ObjectId enemyObject) ? enemyObject.Value : 0,
                 enemy.EnemyKind,
                 enemy.DisplayName,
                 enemy.Position,
@@ -452,11 +458,11 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             $"level {Progression.Level} xp {Progression.Experience}/{Progression.ExperienceToNextLevel} hp {CurrentHealth}/{MaxHealth} at {Position}; {Describe(Inventory)}";
     }
 
-    private readonly record struct CubeState(int ActorId, GeometryCellKey Cell, int CurrentHealth, int MaxHealth, string Owner);
+    private readonly record struct CubeState(ObjectId ObjectId, int ActorId, GeometryCellKey Cell, int CurrentHealth, int MaxHealth, string Owner);
 
     private readonly record struct PieceState(GeometryCellKey Cell, int PieceIndex, Vector3 Center, float Side, GeometryMaterialId Material);
 
-    private readonly record struct EnemyState(int Id, string Kind, string Name, Vector3 Position, int Health, int MaxHealth, int Level);
+    private readonly record struct EnemyState(long Id, string Kind, string Name, Vector3 Position, int Health, int MaxHealth, int Level);
 
     private sealed record WorldState(IReadOnlyList<CubeState> Cubes, IReadOnlyList<PieceState> Pieces, IReadOnlyList<EnemyState> Enemies)
     {

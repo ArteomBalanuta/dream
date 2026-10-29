@@ -246,6 +246,8 @@ public sealed class IncrementalCheckpointTests
         WorldObjectRegistry registry = GetWorldObjects(runtime);
         Assert.IsType<WorldObjectRecord>(registry.TryGet(damaged)).ApplyDamage(3);
         WorldObjectRecord removed = Assert.IsType<WorldObjectRecord>(registry.TryGet(runtime.Map.TryGetCubeAtCell(7, 1, 12)!));
+        Assert.True(runtime.ObjectIdentities.TryGetObjectId(removed.Actor.Id, out ObjectId removedObjectId));
+        DeletePersistedPlacedCube(runtime, removed.Actor.Id);
         Assert.True(registry.TryRemove(removed));
 
         PersistenceCheckpoint incremental = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint());
@@ -253,7 +255,7 @@ public sealed class IncrementalCheckpointTests
         Assert.Equal(2, incremental.PlacedCubes.Count);
         Assert.Contains(incremental.PlacedCubes, cube => cube.CenterPosition == moved.Position);
         Assert.Contains(incremental.PlacedCubes, cube => cube.CurrentHealth == 97);
-        Assert.Equal(new[] { new ObjectId(removed.Actor.Id) }, incremental.RemovedCubeObjectIds);
+        Assert.Equal(new[] { removedObjectId }, incremental.RemovedCubeObjectIds);
         Assert.Equal(1, runtime.FullCheckpointCaptures);
         Assert.Equal(2, runtime.IncrementalCheckpointCaptures);
     }
@@ -396,20 +398,21 @@ public sealed class IncrementalCheckpointTests
     {
         using TempDatabase database = new();
         Vector3 movedCenter;
-        int cubeId;
+        ObjectId cubeId;
         using (ScriptedSession session = new(database, fullCheckpointInterval: 12, joinPlayer: false))
         {
             session.AddOwnedCube(new Vector3(3f, 1f, 12f));
             session.Advance(TicksPerCheckpoint);
             Cube cube = Assert.IsType<Cube>(session.Runtime.Map.TryGetCubeAtCell(3, 1, 12));
-            Assert.True(session.Runtime.Map.TryGetReplicatedId(cube, out cubeId));
+            Assert.True(session.Runtime.Map.TryGetReplicatedId(cube, out int cubeActorId));
+            Assert.True(session.Runtime.ObjectIdentities.TryGetObjectId(cubeActorId, out cubeId));
             movedCenter = cube.Position + new Vector3(0.2f, 0f, 0.1f);
             session.Runtime.Map.UpdateCubePosition(cube, movedCenter, syncPhysics: false);
         }
 
         PersistedPlacedCube saved = new SqliteWorldPersistenceRepository(database.Schema)
             .LoadPlacedCubes()
-            .Single(cube => cube.ObjectId.AsInt() == cubeId);
+            .Single(cube => cube.ObjectId == cubeId);
         Assert.Equal(movedCenter, saved.CenterPosition);
     }
 
@@ -526,6 +529,12 @@ public sealed class IncrementalCheckpointTests
         FieldInfo field = typeof(WorldSessionRuntime).GetField("_worldObjects", BindingFlags.Instance | BindingFlags.NonPublic)!;
         return (WorldObjectRegistry)field.GetValue(runtime)!;
     }
+
+    // Deletes a cube's persisted row the way the combat resolver does (the runtime's private forwarder).
+    private static void DeletePersistedPlacedCube(WorldSessionRuntime runtime, int cubeActorId) =>
+        typeof(WorldSessionRuntime)
+            .GetMethod("DeletePersistedPlacedCube", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(runtime, [cubeActorId]);
 
     private static string F(float value) => value.ToString("R", CultureInfo.InvariantCulture);
 
@@ -887,8 +896,10 @@ public sealed class IncrementalCheckpointTests
         {
             IWorldPersistenceRepository world = runtime.WorldPersistence!;
             Vector3 cell = new(MathF.Floor(cube.Position.X), MathF.Floor(cube.Position.Y), MathF.Floor(cube.Position.Z));
+            ObjectId objectId = runtime.ObjectIds.Take();
+            runtime.ObjectIdentities.Bind(objectId, record.Actor.Id);
             world.SavePlacedCube(new PersistedPlacedCube(
-                new ObjectId(record.Actor.Id),
+                objectId,
                 PlayerName,
                 cell,
                 GeometryShapeKind.SolidCube,

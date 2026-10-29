@@ -30,8 +30,9 @@ public sealed class WorldObjectRegistry
     // CubeIdentified delta, so clients key the cube (and its checksum) by the same id.
     public Action<Map, Cube, int>? CubeIdAssigned { get; set; }
 
-    // Keeps later allocations past a world-object id that is already taken (a persisted cube or
-    // fracture group). Ids outside the world-object ranges are ignored: the allocator never
+    // Keeps later allocations past a world-object id that is already taken. Restore no longer
+    // calls it: persisted cubes get fresh actor ids and keep their ObjectId in ObjectIdentityMap.
+    // Ids outside the world-object ranges are ignored: the allocator never
     // reaches them. Reserving the last world-object id saturates the counter instead of failing,
     // so a restore never fails on a persisted id; only a later allocation then fails.
     public void ReserveActorId(int actorId)

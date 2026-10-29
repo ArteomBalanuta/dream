@@ -17,7 +17,7 @@ public sealed partial class WorldSessionRuntime
     // Every spawned enemy gets a fresh actor id, so a respawn is a different actor on the wire
     // and a client drops the dead enemy's interpolation buffer instead of sliding it to the new
     // spawn. Part of simulation state: same-seed servers with the same history allocate the same
-    // ids. Persisted enemies advance it past their ids when the world is restored.
+    // ids. A restore gives persisted enemies fresh ids from it, in ObjectId order.
     private int _nextEnemyActorId = FirstEnemyActorId;
     private bool _enemyIdsExhaustedLogged;
 
@@ -65,8 +65,8 @@ public sealed partial class WorldSessionRuntime
     }
 
     // Monotonic and deterministic. Ids are never reused (a despawned or killed wolf's id stays
-    // taken), and a restore advances the counter past every persisted enemy, so the id is never
-    // held by a live or persisted enemy.
+    // taken), so the id is never held by a live enemy. A persisted enemy's durable identity is its
+    // ObjectId (ObjectIdentityMap), not this id.
     //
     // False once the enemy range (about a billion ids) is exhausted. Spawns run on the tick, where
     // a throw would stop the server, so the spawn is refused (logged once) instead: the world goes
@@ -87,14 +87,6 @@ public sealed partial class WorldSessionRuntime
 
         actorId = ReplicatedActorIdRanges.TakeEnemyId(ref _nextEnemyActorId);
         return true;
-    }
-
-    // Keeps later enemy spawns past an id in the enemy range that is already taken: a persisted
-    // enemy, or a legacy cube saved before the id ranges were partitioned. Reserving the last enemy
-    // id saturates the counter instead of failing, so a restore never fails on a persisted id.
-    private void ReserveEnemyActorId(int actorId)
-    {
-        _nextEnemyActorId = ReplicatedActorIdRanges.ReserveEnemyId(_nextEnemyActorId, actorId);
     }
 
     // The wolf population step: authoritative only, once per tick inside the gameplay block, after

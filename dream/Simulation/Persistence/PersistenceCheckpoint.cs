@@ -182,8 +182,11 @@ public sealed record PersistenceCheckpoint(
         return (mergedRows, removed.ToArray());
     }
 
-    // Pieces are keyed by (origin ObjectId, piece index); their tombstones by origin ObjectId, since
-    // a group's rubble goes as a whole.
+    // Pieces are keyed by their own ObjectId; their tombstones by origin ObjectId, since a group's
+    // rubble goes as a whole. A piece with no ObjectId (None) falls back to (origin, piece index).
+    private static (ObjectId Piece, ObjectId Origin, int Index) PieceKey(PersistedCubeFracturePiece piece) =>
+        piece.ObjectId.IsNone ? (ObjectId.None, piece.OriginObjectId, piece.PieceIndex) : (piece.ObjectId, ObjectId.None, 0);
+
     private static (IReadOnlyList<PersistedCubeFracturePiece> Pieces, IReadOnlyList<ObjectId> Removed) MergeFracturePieces(
         PersistenceCheckpoint older,
         PersistenceCheckpoint newer)
@@ -195,17 +198,17 @@ public sealed record PersistenceCheckpoint(
 
         HashSet<ObjectId> newerRemoved = new(newer.RemovedFractureOriginObjectIds);
         HashSet<ObjectId> newerSources = [];
-        HashSet<(ObjectId, int)> newerKeys = [];
+        HashSet<(ObjectId, ObjectId, int)> newerKeys = [];
         foreach (PersistedCubeFracturePiece piece in newer.FracturePieces)
         {
             newerSources.Add(piece.OriginObjectId);
-            newerKeys.Add((piece.OriginObjectId, piece.PieceIndex));
+            newerKeys.Add(PieceKey(piece));
         }
 
         List<PersistedCubeFracturePiece> pieces = new(older.FracturePieces.Count + newer.FracturePieces.Count);
         foreach (PersistedCubeFracturePiece piece in older.FracturePieces)
         {
-            if (!newerRemoved.Contains(piece.OriginObjectId) && !newerKeys.Contains((piece.OriginObjectId, piece.PieceIndex)))
+            if (!newerRemoved.Contains(piece.OriginObjectId) && !newerKeys.Contains(PieceKey(piece)))
             {
                 pieces.Add(piece);
             }

@@ -15,9 +15,9 @@ namespace Dream.Simulation.World;
 // next join takes the lowest released id (see WorldSessionRuntime.AllocateRemoteActorId), so the
 // player block is bounded by the players connected at once, not by how many ever joined.
 //
-// Worlds saved before the partition can hold placed-cube ids at or above FirstEnemyId (a cube
-// counter that ran past 2000). Such a legacy id stays the cube's id; the world restore reserves it
-// in the enemy counter so no later enemy takes it (see WorldSessionRuntime.RestorePersistedWorldState).
+// Actor ids are not persisted. A world restore gives cubes and enemies fresh actor ids (cubes from
+// 1000, enemies from 2000, in ObjectId order) and binds them to their persisted ObjectId
+// (ObjectIdentityMap), so a world saved before the partition restores without any id collision.
 //
 // Counters: an allocator keeps the id it hands out next. Reserving an id that is already taken (a
 // persisted id on restore) moves the counter past it, and saturates at ExhaustedCounter when the

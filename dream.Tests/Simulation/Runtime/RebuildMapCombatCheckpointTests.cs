@@ -53,7 +53,9 @@ public sealed class RebuildMapCombatCheckpointTests
         Cube cube = Assert.IsType<Cube>(runtime.Map.TryGetCubeAtCell(7, 1, 7));
         Assert.Null(startupMap.TryGetCubeAtCell(7, 1, 7));
         Assert.True(runtime.Map.TryGetReplicatedId(cube, out int cubeId));
-        Assert.Equal(1, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {cubeId};"));
+        // The rebuild kept the ObjectId binding, so the cube is persisted under its ObjectId.
+        Assert.True(runtime.ObjectIdentities.TryGetObjectId(cubeId, out ObjectId objectId));
+        Assert.Equal(1, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {objectId.Value};"));
 
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
         Vector3 origin = new(7.5f, 1.5f, 9.5f);
@@ -72,13 +74,13 @@ public sealed class RebuildMapCombatCheckpointTests
         Assert.Null(runtime.Map.TryGetCubeAtCell(7, 1, 7));
         int livePieces = runtime.Map.CaptureFracturePieces().Count(piece => piece.Cell == cell);
         Assert.True(livePieces > 0);
-        Assert.Equal(livePieces, database.Count($"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {cubeId};"));
-        Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {cubeId};"));
+        Assert.Equal(livePieces, database.Count($"SELECT COUNT(*) FROM cube_fracture_pieces WHERE source_cube_id = {objectId.Value};"));
+        Assert.Equal(0, database.Count($"SELECT COUNT(*) FROM placed_cube_instances WHERE cube_id = {objectId.Value};"));
 
         PersistenceCheckpoint checkpoint = Assert.IsType<PersistenceCheckpoint>(runtime.CapturePersistenceCheckpoint());
         Assert.False(checkpoint.IsIncremental);
         Assert.Equal(fullBefore + 1, runtime.FullCheckpointCaptures);
         Assert.Equal(incrementalBefore, runtime.IncrementalCheckpointCaptures);
-        Assert.Equal(livePieces, checkpoint.FracturePieces.Count(piece => piece.OriginObjectId.AsInt() == cubeId));
+        Assert.Equal(livePieces, checkpoint.FracturePieces.Count(piece => piece.OriginObjectId == objectId));
     }
 }
