@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.World;
 
@@ -43,29 +44,36 @@ public static class RemoteEnemyStateApplier
         registry.RemoveAllExcept(activeEnemyActorIds);
     }
 
+    // The client never attacks for an enemy; these were always placeholders here, not the server's
+    // 12 and 1.05 s, and stay so to keep client behaviour identical.
+    private const int ClientAttackDamagePlaceholder = 10;
+    private const float ClientAttackIntervalPlaceholderSeconds = 1f;
+
     // Kept out of the loop so the position lambda's closure is allocated only when an enemy is
     // created, not on every iteration.
     private static EnemyActor CreateEnemy(ActorSnapshot actor, EnemyBehaviorState behaviorState)
     {
         Vector3 spawnPosition = actor.Position;
+        // The snapshot carries no enemy kind yet, so every enemy is drawn from the wolf template.
+        EnemyTemplate template = ContentCatalog.Shipped.Wolf;
         EnemyCombatant combatant = new(
             () => spawnPosition,
             actorId: actor.ActorId,
             maxHealth: actor.MaxHealth,
-            attackDamage: 10,
-            attackIntervalSeconds: 1f);
+            attackDamage: ClientAttackDamagePlaceholder,
+            attackIntervalSeconds: ClientAttackIntervalPlaceholderSeconds);
         combatant.Health.SetAuthoritativeState(actor.CurrentHealth, actor.MaxHealth);
 
         EnemyActor enemy = new(
             combatant,
             actor.Position,
-            aggroRange: 10f,
-            attackRange: 1.35f,
-            moveSpeed: 2.8f,
+            aggroRange: template.AggroRange,
+            attackRange: template.AttackRange,
+            moveSpeed: template.MoveSpeed,
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
             collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? "Wolf" : actor.DisplayName);
+            displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? template.DisplayName : actor.DisplayName);
         enemy.SetAuthoritativeState(actor.Position, actor.Facing, behaviorState);
         return enemy;
     }

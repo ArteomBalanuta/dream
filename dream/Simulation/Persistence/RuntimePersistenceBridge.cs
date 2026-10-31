@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -378,18 +379,28 @@ internal sealed partial class RuntimePersistenceBridge
 
         foreach (PersistedEnemyInstance enemy in ordered)
         {
+            // A retired or unknown kind: the row is kept (checkpoints never delete rows) but the
+            // enemy is not restored. The population step spawns a wolf when none is active.
+            if (!ContentCatalog.Shipped.TryGetEnemy(enemy.EnemyKind, out EnemyTemplate? template))
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.persistence.restore-skipped-enemy",
+                    $"objectId={enemy.ObjectId} kind={enemy.EnemyKind} reason=unknown-enemy-kind");
+                continue;
+            }
+
             if (!_host.TryAllocateEnemyActorId(out int actorId))
             {
                 // No enemy id left: restore the world without it.
                 continue;
             }
 
-            _enemies.Add(CreatePersistedEnemy(enemy, actorId));
+            _enemies.Add(CreatePersistedEnemy(enemy, template, actorId));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
         }
     }
 
-    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy, int actorId)
+    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy, EnemyTemplate template, int actorId)
     {
         EnemyCombatant combatant = new(
             () => enemy.Position,
@@ -404,8 +415,8 @@ internal sealed partial class RuntimePersistenceBridge
         EnemyActor actor = new(
             combatant,
             enemy.Position,
-            aggroRange: 10f,
-            attackRange: 1.35f,
+            aggroRange: template.AggroRange,
+            attackRange: template.AttackRange,
             moveSpeed: Math.Max(0f, enemy.Stats.MovementSpeed),
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,

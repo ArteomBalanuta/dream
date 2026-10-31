@@ -221,9 +221,12 @@ public partial class PlayScene
         if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
         {
             heldItemId = equippedItem.VisualId;
-            ToolDefinition definition = ToolCatalog.Resolve(equippedItem.ItemKind);
-            modifier = definition.StatModifier;
-            heldLight = definition.HeldLight;
+            // A kind this client does not know is inert: no modifier, no light, no throw.
+            if (ToolCatalog.TryResolve(equippedItem.ItemKind, out ToolDefinition definition))
+            {
+                modifier = definition.StatModifier;
+                heldLight = definition.HeldLight;
+            }
         }
         else
         {

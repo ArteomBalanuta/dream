@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "enemies": [
+    {
+      "key": "Wolf",
+      "displayName": "Wolf",
+      "level": 1,
+      "maxHealth": 100,
+      "attackDamage": 12,
+      "attackIntervalSeconds": 1.05,
+      "aggroRange": 10,
+      "attackRange": 1.35,
+      "moveSpeed": 2.8
+    }
+  ]
+}
