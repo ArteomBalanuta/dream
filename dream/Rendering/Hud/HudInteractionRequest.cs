@@ -44,7 +44,7 @@ public enum InventoryHudActionKind : byte
 {
     // Equip the backpack item in SlotIndex into the equipment slot index Target (100..103).
     EquipTo,
-    // Empty the equipment slot SlotIndex (100..103 or a backpack slot holding the equipped item).
+    // Empty the equipment slot SlotIndex (100..103). The server refuses any other index.
     Unequip,
     // Move or swap the backpack slot SlotIndex with the backpack slot Target.
     Move,

@@ -1,8 +1,12 @@
 using System.Reflection;
+using Dream.Client.Scenes;
+using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Hud;
 using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.Stats;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Tests.Support;
@@ -300,6 +304,96 @@ public sealed class EquipmentSqliteActionTests
         Assert.Empty(restarted.Rows());
         Assert.Equal(90L, restarted.Rows("Bob")[0]);
         Assert.True(restarted.HasItem(90));
+    }
+
+    // H3 assumes the server sends an inert item with no modifiers and no light: a retired kind, rolled
+    // or not, and an item in a slot it may not occupy. The client and server loadouts are both empty.
+    [Fact]
+    public void InertItems_ReachTheClient_WithNoModifiersAndNoLight()
+    {
+        using MigrationTestDatabase db = Migrated();
+        ItemRoll roll = new(ItemRarity.Rare, [new StatModifier(StatId.Strength, StatOp.Flat, 9f)]);
+        using (Run setup = new(db))
+        {
+            setup.World.SaveItemInstance(EquipmentTestWorld.MakeItem(90, Player, "tool.torch", roll) with { ItemKind = "tool.retired" });
+            setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 100, 90, DateTime.UtcNow));
+            setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 0, 90, DateTime.UtcNow));
+            Give(setup.World, Player, 1, 91, "tool.torch");
+            setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 102, 91, DateTime.UtcNow));
+            setup.World.SaveStarterKitGrant(Player, ToolCatalog.CurrentStarterKitVersion);
+        }
+
+        using Run run = new(db);
+        Assert.True(run.Inventory.Ensure(Player));
+        PlayerInventorySnapshot snapshot = run.Inventory.BuildSnapshot(Player);
+
+        InventoryItemSnapshot retired = snapshot.EquippedSlot!.Value.Item!.Value;
+        Assert.Equal("tool.retired", retired.ItemKind);
+        Assert.Null(retired.Modifiers);
+        Assert.Equal(HeldLightKind.None, retired.HeldLight);
+        InventoryItemSnapshot wrongSlot = Assert.Single(snapshot.Equipment!).Item!.Value;
+        Assert.Null(wrongSlot.Modifiers);
+        Assert.Equal(HeldLightKind.None, wrongSlot.HeldLight);
+
+        EquipmentLoadout client = new();
+        Assert.Equal(HeldLightKind.None, PlayScene.ReadEquipment(snapshot, client).HeldLight);
+        EquipmentLoadout server = new();
+        run.Inventory.CopyEquipment(Player, server);
+        Assert.Equal(HeldLightKind.None, run.Inventory.ResolveEquippedHeldLight(Player));
+        foreach (EquipmentSlot slot in Enum.GetValues<EquipmentSlot>())
+        {
+            Assert.True(client.Get(slot).IsEmpty);
+            Assert.True(server.Get(slot).IsEmpty);
+        }
+    }
+
+    // What H3's panel sends for an unequip, from each of its two menus, is what TryUnequip takes.
+    [Fact]
+    public void TheHudsUnequipIntents_FromEitherMenu_AreAcceptedForAllFourSlots()
+    {
+        using MigrationTestDatabase db = Migrated();
+        using Run run = new(db);
+        string[] gear = ["gear.iron-blade", "gear.ward-lantern", "gear.leather-cap", "gear.leather-vest"];
+        Assert.True(run.Inventory.Ensure(Player));
+        for (int i = 0; i < gear.Length; i++)
+        {
+            ItemRollSeed seed = new(1, 2, 3, 4, i);
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryGrantRolled(Player, gear[i], ItemRarity.Common, in seed));
+        }
+
+        void EquipAll()
+        {
+            foreach (string kind in gear)
+            {
+                int slot = run.Inventory.BuildSnapshot(Player).Slots.First(row => row.Item?.ItemKind == kind).SlotIndex;
+                Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, slot));
+            }
+        }
+
+        InventoryEquipOutcome Send(InventoryHudAction action)
+        {
+            InventoryUnequipIntent intent = Assert.IsType<InventoryUnequipIntent>(PlayScene.ToInventoryIntent(in action));
+            Assert.InRange(intent.SlotIndex, EquipmentSlots.FirstSlotIndex, EquipmentSlots.LastSlotIndex);
+            return run.Inventory.TryUnequip(Player, intent.SlotIndex);
+        }
+
+        EquipAll();
+        foreach (EquipmentSlot slot in Enum.GetValues<EquipmentSlot>())
+        {
+            Assert.Equal(InventoryEquipOutcome.Equipped, Send(CharacterPanelModel.EquipmentMenu(slot).Single().Action));
+        }
+
+        EquipAll();
+        foreach (string kind in gear)
+        {
+            PlayerInventorySnapshot snapshot = run.Inventory.BuildSnapshot(Player);
+            InventorySlotSnapshot row = snapshot.Slots.First(s => s.Item?.ItemKind == kind);
+            InventoryItemSnapshot item = row.Item!.Value;
+            CharacterMenuEntry unequip = CharacterPanelModel.BackpackMenu(in snapshot, row.SlotIndex, in item).Single(entry => entry.Label == "Unequip");
+            Assert.Equal(InventoryEquipOutcome.Equipped, Send(unequip.Action));
+        }
+
+        Assert.DoesNotContain(run.Rows().Keys, slot => slot >= EquipmentSlots.FirstSlotIndex);
     }
 
     [Fact]
