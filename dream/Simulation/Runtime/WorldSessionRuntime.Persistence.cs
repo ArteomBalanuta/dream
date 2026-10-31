@@ -31,11 +31,30 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
     public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null) =>
         _persistence.DiscardPersistedPlayerPrefetch(playerName, account);
 
-    public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
+    // What the join's prefetch read (or, with none, a synchronous read after the queued writes) about the
+    // character the typed name reaches; see RuntimePersistenceBridge.ResolveCharacterLookup.
+    public CharacterLookup ResolveCharacterLookup(string typedName, AccountKey? account) =>
+        _persistence.ResolveCharacterLookup(typedName, account);
+
+    // Queues the account row and ownership write of a checked join that was applied (G-D2).
+    public void CommitCharacterAccess(string typedName, in CharacterAccessDecision access) =>
+        _persistence.CommitCharacterAccess(typedName, access);
+
+    public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName) =>
+        RestorePersistedPlayerState(sessionId, playerName, playerName, account: null);
+
+    // playerName is the character key; prefetchName and account find the join's prefetch.
+    public void RestorePersistedPlayerState(
+        PlayerSessionId sessionId,
+        string playerName,
+        string prefetchName,
+        AccountKey? account)
     {
         if (!_persistence.TryLoadPlayerForRestore(
             sessionId,
             playerName,
+            prefetchName,
+            account,
             out PersistedPlayerProfile profile,
             out PersistedPlayerWorldState? worldState,
             out PersistedPlayerInventory? inventory))

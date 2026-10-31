@@ -25,13 +25,13 @@ public sealed partial class WorldSessionRuntime
             return null;
         }
 
-        if (!_inventory.Ensure(player.DisplayName))
+        if (!_inventory.Ensure(player.CharacterKey.Value))
         {
             return null;
         }
 
         RefreshAuthoritativePlayerCombatStats(sessionId);
-        return _inventory.BuildSnapshot(player.DisplayName);
+        return _inventory.BuildSnapshot(player.CharacterKey.Value);
     }
 
     private AuthoritativeActionResult ProcessInventoryEquipAction(
@@ -39,7 +39,7 @@ public sealed partial class WorldSessionRuntime
         ConnectedPlayer player,
         InventoryEquipIntent intent)
     {
-        switch (_inventory.TryEquip(player.DisplayName, intent.SlotIndex))
+        switch (_inventory.TryEquip(player.CharacterKey.Value, intent.SlotIndex))
         {
             case InventoryEquipOutcome.SlotOutOfRange:
                 return CreateRejectedActionResult(message, "Inventory equip rejected because the slot index is out of range.");
@@ -60,7 +60,7 @@ public sealed partial class WorldSessionRuntime
             message.ActionSequence,
             CurrentServerTick,
             Accepted: true,
-            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.DisplayName)));
+            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.CharacterKey.Value)));
     }
 
     // See PlayerInventoryService.ApplyLoaded.
@@ -92,6 +92,6 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        target.Combatant.ApplyEquippedToolModifier(_inventory.ResolveEquippedToolModifier(player.DisplayName));
+        target.Combatant.ApplyEquippedToolModifier(_inventory.ResolveEquippedToolModifier(player.CharacterKey.Value));
     }
 }

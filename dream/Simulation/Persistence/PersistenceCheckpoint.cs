@@ -78,7 +78,7 @@ public sealed record PersistenceCheckpoint(
                 : newer with { WorldTimeTicks = older.WorldTimeTicks };
         }
 
-        StringComparer names = StringComparer.OrdinalIgnoreCase;
+        StringComparer names = StringComparer.Ordinal;
         (IReadOnlyList<PersistedPlacedCube> cubes, IReadOnlyList<ObjectId> removedCubes) = MergeKeyed(
             older.PlacedCubes,
             older.RemovedCubeObjectIds,

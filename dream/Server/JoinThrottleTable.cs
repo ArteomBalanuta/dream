@@ -50,9 +50,9 @@ internal sealed class JoinThrottleTable
         return connectionId;
     }
 
-    public static Key SessionKey(string source, string sessionId) => new(source, IsSession: true, sessionId);
+    public static Key SessionKey(string source, string sessionId, string? account = null) => new(source, IsSession: true, sessionId, account);
 
-    public static Key PlayerNameKey(string source, string playerName) => new(source, IsSession: false, playerName);
+    public static Key PlayerNameKey(string source, string playerName, string? account = null) => new(source, IsSession: false, playerName, account);
 
     // Whether the key is inside its throttle interval. An expired entry is removed.
     public bool IsThrottled(Key key, long nowTimestamp, long timestampFrequency)
@@ -175,7 +175,9 @@ internal sealed class JoinThrottleTable
         return (long)(interval.TotalSeconds * timestampFrequency);
     }
 
-    internal readonly record struct Key(string Source, bool IsSession, string Value);
+    // Account: the joining token's hash (hex), or null on hosts without accounts. Part of the key, so a
+    // spammer on the owner's address (different token) never throttles the owner.
+    internal readonly record struct Key(string Source, bool IsSession, string Value, string? Account = null);
 
     private sealed class Entry
     {
@@ -184,7 +186,7 @@ internal sealed class JoinThrottleTable
         public int DroppedJoinAttempts;
     }
 
-    // Session ids compare ordinally (TryClaimSession); player names case-insensitively, like the
+    // Session ids compare ordinally (TryClaimSession); player names like a character name (ASCII case folded), like the
     // runtime's duplicate-display-name check.
     private sealed class KeyComparer : IEqualityComparer<Key>
     {
@@ -194,15 +196,17 @@ internal sealed class JoinThrottleTable
         {
             return x.IsSession == y.IsSession
                 && string.Equals(x.Source, y.Source, StringComparison.Ordinal)
-                && string.Equals(x.Value, y.Value, x.IsSession ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+                && string.Equals(x.Account, y.Account, StringComparison.Ordinal)
+                && (x.IsSession ? string.Equals(x.Value, y.Value, StringComparison.Ordinal) : Dream.Simulation.Characters.CharacterNames.Comparer.Equals(x.Value, y.Value));
         }
 
         public int GetHashCode(Key key)
         {
             return HashCode.Combine(
                 StringComparer.Ordinal.GetHashCode(key.Source),
+                key.Account == null ? 0 : StringComparer.Ordinal.GetHashCode(key.Account),
                 key.IsSession,
-                key.IsSession ? StringComparer.Ordinal.GetHashCode(key.Value) : StringComparer.OrdinalIgnoreCase.GetHashCode(key.Value));
+                key.IsSession ? StringComparer.Ordinal.GetHashCode(key.Value) : Dream.Simulation.Characters.CharacterNames.Comparer.GetHashCode(key.Value));
         }
     }
 }

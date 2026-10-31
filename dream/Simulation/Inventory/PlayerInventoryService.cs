@@ -34,18 +34,18 @@ internal sealed class PlayerInventoryService
     // in the database. A name is a key of _slotsByPlayer exactly when its inventory is loaded
     // (possibly empty).
     private readonly Dictionary<long, PersistedItemInstance> _itemInstances = [];
-    private readonly Dictionary<string, Dictionary<int, long>> _slotsByPlayer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<int, long>> _slotsByPlayer = new(StringComparer.Ordinal);
 
     // The starter kit version each loaded inventory has received (see GrantStarterKit). A loaded
     // inventory without an entry has no recorded grant yet.
-    private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.Ordinal);
 
     // Inventory write outcomes, by player name. The write queue drops a write that fails (other than
     // on a lock) and only counts it in FailedWrites, so an inventory whose writes may have failed is
     // the only current copy and must not be replaced by its rows. An entry is made when a loaded
     // inventory queues its first write and lives while that inventory is loaded, or while an
     // evicted inventory waits for its writes to be confirmed (see Evict).
-    private readonly Dictionary<string, InventoryWriteTracker> _writeTrackers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, InventoryWriteTracker> _writeTrackers = new(StringComparer.Ordinal);
 
     public PlayerInventoryService(IWorldPersistenceRepository? worldPersistence, PersistenceWriteQueue? writes, ObjectIdAllocator objectIds)
     {
