@@ -1,3 +1,4 @@
+using Dream.Client.Identity;
 using Dream.Client.Networking;
 using Dream.Server;
 
@@ -11,14 +12,23 @@ public sealed class NetworkSessionCoordinator
     private RemoteClientSession? _connectedSession;
 
     private readonly string? _contentError;
+    private readonly IClientIdentityStore? _identity;
+    private readonly int? _endedLocalPort;
 
     // contentError (ClientContentCheck) is why the game's content files cannot be used; with it the
     // connection screen shows the message, no local server starts and Connect does nothing.
     public NetworkSessionCoordinator(
         ILocalServerHandle localServer,
         IRemoteSessionConnector connector,
-        string? contentError = null)
+        string? contentError = null,
+        IClientIdentityStore? identity = null,
+        int? endedLocalPort = null)
     {
+        // A null identity store leaves the join token null, so a test coordinator never touches the
+        // real token file. endedLocalPort is the port of the integrated server that just ended: its
+        // replacement runs on a new port but is still the same "local" server for the identity.
+        _identity = identity;
+        _endedLocalPort = endedLocalPort;
         _localServer = localServer;
         _connector = connector;
         _contentError = contentError;
@@ -134,6 +144,21 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
+        if (_identity != null)
+        {
+            try
+            {
+                resolved = resolved! with { AccountToken = _identity.GetOrCreateToken(ServerKeyFor(resolved)) };
+            }
+            catch (IOException ex)
+            {
+                State = ConnectionFlowState.Failed;
+                StatusMessage = ex.Message;
+                _pendingConnectionTask = Task.CompletedTask;
+                return;
+            }
+        }
+
         State = ConnectionFlowState.Connecting;
         StatusMessage = $"Connecting to {resolved!.Host}:{resolved.Port}...";
         _pendingConnectionTask = ConnectInternalAsync(resolved);
@@ -224,6 +249,15 @@ public sealed class NetworkSessionCoordinator
 
         State = ConnectionFlowState.WaitingForLocalServer;
         StatusMessage = _localServer.StartingStatus ?? "Starting local server...";
+    }
+
+    // "local" for the integrated server (stable across ephemeral ports and relaunches), else host:port.
+    private string ServerKeyFor(RemoteClientOptions options)
+    {
+        bool isLocal = IsLoopbackHost(options.Host)
+            && ((_localServer.IsReady && options.Port == _localServer.BoundPort)
+                || (_endedLocalPort.HasValue && options.Port == _endedLocalPort.Value));
+        return ClientIdentityStore.ServerKeyFor(options.Host, options.Port, isLocal);
     }
 
     private static bool IsLoopbackHost(string host) => LoopbackHost.IsLoopback(host);

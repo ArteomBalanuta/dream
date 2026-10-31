@@ -29,9 +29,6 @@ public class DesktopClientTextConfigTests
         Assert.Equal(2.5f, settings.MouseSensitivity);
         Assert.Equal(18f, settings.NoclipSpeed);
         Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
-        Assert.Equal(10, settings.Strength);
-        Assert.Equal(2f, settings.AttackSpeed);
-        Assert.Equal(10, settings.Vitality);
         Assert.Equal(FloatingCombatTextTuning.Default, settings.FloatingCombatText);
     }
 
@@ -66,9 +63,12 @@ public class DesktopClientTextConfigTests
         Assert.Equal(3.25f, settings.MouseSensitivity);
         Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
         Assert.Equal(44f, settings.NoclipSpeed);
-        Assert.Equal(PlayerCombatStats.MaxStrength, settings.Strength);
-        Assert.Equal(PlayerCombatStats.MinAttackSpeed, settings.AttackSpeed);
-        Assert.Equal(12, settings.Vitality);
+        // The old stat keys in the file are ignored (the server owns the stats) and the next save drops them.
+        DesktopClientTextConfig.Save(path, settings);
+        string saved = File.ReadAllText(path);
+        Assert.DoesNotContain("strength=", saved);
+        Assert.DoesNotContain("attack_speed=", saved);
+        Assert.DoesNotContain("vitality=", saved);
         Assert.Equal(2.75f, settings.FloatingCombatText.SizeMultiplier);
         Assert.Equal(0.55f, settings.FloatingCombatText.MotionSpeedMultiplier);
         Assert.Equal(5.5f, settings.FloatingCombatText.CriticalDepthMultiplier);

@@ -7,8 +7,20 @@ public sealed record RemoteClientOptions(
     int Port,
     string SessionId,
     string DisplayName,
-    string ClientName)
+    string ClientName,
+    string? AccountToken = null)
 {
+    // Prints everything but the token: the token is a secret and must never reach a log or message.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Host = ").Append(Host)
+            .Append(", Port = ").Append(Port)
+            .Append(", SessionId = ").Append(SessionId)
+            .Append(", DisplayName = ").Append(DisplayName)
+            .Append(", ClientName = ").Append(ClientName);
+        return true;
+    }
+
     public const string HostEnvironmentVariable = "DREAM_SERVER_HOST";
     public const string PortEnvironmentVariable = "DREAM_SERVER_PORT";
     public const string SessionIdEnvironmentVariable = "DREAM_CLIENT_SESSION_ID";

@@ -47,4 +47,15 @@ public class ClientConnectionOptionsTests
         Assert.Equal("player-a", resolved.ClientName);
         Assert.StartsWith("client-", resolved.SessionId);
     }
+
+    [Fact]
+    public void TryCreateRemoteOptions_CarriesTheAccountToken_AndNeverPrintsIt()
+    {
+        ClientConnectionOptions options = new("127.0.0.1", "5057", "player-a");
+
+        options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out _, accountToken: "secret-token-value");
+
+        Assert.Equal("secret-token-value", resolved!.AccountToken);
+        Assert.DoesNotContain("secret-token-value", resolved.ToString());
+    }
 }

@@ -2,7 +2,6 @@ using Dream.Application;
 using Dream.Client.Startup;
 using Dream.Rendering.Hud;
 using Dream.Server;
-using Dream.Simulation.Players;
 
 namespace Dream.Configuration;
 
@@ -22,12 +21,6 @@ public sealed class DesktopClientConfig
 
     public CameraViewMode CameraViewMode { get; set; } = CameraViewMode.FirstPerson;
 
-    public int Strength { get; set; } = 10;
-
-    public float AttackSpeed { get; set; } = 2f;
-
-    public int Vitality { get; set; } = 10;
-
     public FloatingCombatTextTuning FloatingCombatText { get; set; } = FloatingCombatTextTuning.Default;
 
     // Render frame cap in FPS; 0 means uncapped.
@@ -37,17 +30,6 @@ public sealed class DesktopClientConfig
     {
         Sanitize();
         return new ClientConnectionOptions(Host, Port.ToString(), PlayerName);
-    }
-
-    public PlayerCombatStats ToPlayerCombatStats()
-    {
-        Sanitize();
-        return new PlayerCombatStats
-        {
-            Strength = Strength,
-            AttackSpeed = AttackSpeed,
-            Vitality = Vitality
-        };
     }
 
     public void ApplyConnectionOptions(ClientConnectionOptions options)
@@ -62,16 +44,13 @@ public sealed class DesktopClientConfig
         Sanitize();
     }
 
-    public void CaptureRuntime(GameSettings settings, PlayerCombatStats stats)
+    public void CaptureRuntime(GameSettings settings)
     {
         FieldOfViewDegrees = settings.FieldOfViewDegrees;
         MouseSensitivity = settings.MouseSensitivity;
         NoclipSpeed = settings.NoclipSpeed;
         CameraViewMode = settings.CameraViewMode;
         FloatingCombatText = settings.FloatingCombatText;
-        Strength = stats.Strength;
-        AttackSpeed = stats.AttackSpeed;
-        Vitality = stats.Vitality;
         Sanitize();
     }
 
@@ -88,9 +67,6 @@ public sealed class DesktopClientConfig
             CameraViewMode = CameraViewMode.FirstPerson;
         }
 
-        Strength = Math.Clamp(Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
-        AttackSpeed = Math.Clamp(AttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed);
-        Vitality = Math.Clamp(Vitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality);
         FloatingCombatText = FloatingCombatText.Clamp();
         MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
     }

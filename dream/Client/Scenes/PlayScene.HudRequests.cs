@@ -120,7 +120,7 @@ public partial class PlayScene
             return;
         }
 
-        _desktopClientConfig.CaptureRuntime(_settings, _runtime.Player.Combatant.BaseStats);
+        _desktopClientConfig.CaptureRuntime(_settings);
         _persistDesktopClientConfig();
     }
 }

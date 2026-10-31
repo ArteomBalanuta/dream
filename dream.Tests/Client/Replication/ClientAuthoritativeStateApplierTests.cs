@@ -492,6 +492,26 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
+    public void FreshRuntimeWithNoStoredStats_ShowsTheServerStatsAfterTheFirstCorrection()
+    {
+        using ClientWorldSession runtime = CreateRuntime();
+        int initialStrength = runtime.Player.Combatant.Stats.Strength;
+        float initialAttackSpeed = runtime.Player.Combatant.Stats.AttackSpeed;
+        AuthoritativeActionResult correction = new(
+            "session-a",
+            1,
+            1,
+            Accepted: true,
+            Payload: new PlayerStatsUpdateResult(new PlayerCombatStatsSnapshot(23, initialAttackSpeed, 19)));
+
+        ClientAuthoritativeActionApplier.ApplyActionResult(runtime, new SceneEventHub(), correction);
+
+        Assert.NotEqual(23, initialStrength);
+        Assert.Equal(23, runtime.Player.Combatant.Stats.Strength);
+        Assert.Equal(19, runtime.Player.Combatant.Stats.Vitality);
+    }
+
+    [Fact]
     public void ClientAuthoritativeActionApplier_ApplyActionResult_AppliesPlayerStatsUpdateToRuntime()
     {
         using ClientWorldSession runtime = CreateRuntime();

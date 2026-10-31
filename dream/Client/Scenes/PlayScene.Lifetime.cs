@@ -47,10 +47,6 @@ public partial class PlayScene
             _settings.FloorSize,
             playerStartPosition,
             _events);
-        if (_desktopClientConfig != null)
-        {
-            _runtime.Player.Combatant.ApplyStats(_desktopClientConfig.ToPlayerCombatStats());
-        }
 
         _scenePresenter = new ClientScenePresenter(_remoteClient.SessionId);
         _render = new Render(_settings);
