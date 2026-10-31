@@ -61,8 +61,7 @@ public sealed class IntegratedServerIdentityTests
             NetworkSessionCoordinator coordinator = new(
                 local,
                 new LocalServerRelaunchConnector(new RemoteSessionConnector(), local, "127.0.0.1", endedPort),
-                identity: store,
-                endedLocalPort: endedPort);
+                identity: store);
             await using RemoteClientSession session = await ConnectAsync(
                 coordinator,
                 new ClientConnectionOptions("127.0.0.1", endedPort.ToString(), Hero));
@@ -76,5 +75,63 @@ public sealed class IntegratedServerIdentityTests
         string text = File.ReadAllText(file);
         Assert.Contains("\"local\"", text, StringComparison.Ordinal);
         Assert.DoesNotContain("127.0.0.1", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheCharacter_IsKeptWhenAnIntegratedServersDatabaseIsLaterServedByADedicatedServerOnLoopback()
+    {
+        using MigrationTestDatabase db = new();
+        ClientIdentityStore store = new(Path.Combine(db.RootDirectory, "tokens.json"));
+
+        await using (OnDemandLocalServerHandle local = LocalServerOn(db))
+        {
+            NetworkSessionCoordinator coordinator = new(local, new RemoteSessionConnector(), identity: store);
+            Assert.True(coordinator.TryUseLocalServer(Hero, out ClientConnectionOptions? options), coordinator.LocalServerStatus);
+            await using RemoteClientSession session = await ConnectAsync(coordinator, options!);
+            await WaitUntilSettledAsync(session);
+            Assert.True(session.IsJoined, session.DisconnectReason);
+        }
+
+        // A server this window did not start, reached by host and port like any dedicated server.
+        await using (OnDemandLocalServerHandle dedicated = LocalServerOn(db))
+        {
+            dedicated.EnsureStarted();
+            await dedicated.WaitForStartAsync();
+            await using OnDemandLocalServerHandle idle = LocalServerOn(db);
+            NetworkSessionCoordinator coordinator = new(idle, new RemoteSessionConnector(), identity: store);
+            await using RemoteClientSession session = await ConnectAsync(
+                coordinator,
+                new ClientConnectionOptions("localhost", dedicated.BoundPort.ToString(), Hero));
+            await WaitUntilSettledAsync(session);
+            Assert.True(session.IsJoined, session.DisconnectReason);
+        }
+
+        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM accounts;"));
+        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM player_profiles WHERE account_id IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task ASecondWindow_JoiningTheFirstWindowsEphemeralPort_KeepsItsCharacter()
+    {
+        using MigrationTestDatabase db = new();
+        string file = Path.Combine(db.RootDirectory, "tokens.json");
+        await using OnDemandLocalServerHandle first = LocalServerOn(db);
+        NetworkSessionCoordinator firstWindow = new(first, new RemoteSessionConnector(), identity: new ClientIdentityStore(file));
+        Assert.True(firstWindow.TryUseLocalServer(Hero, out ClientConnectionOptions? options), firstWindow.LocalServerStatus);
+        await using (RemoteClientSession joined = await ConnectAsync(firstWindow, options!))
+        {
+            await WaitUntilSettledAsync(joined);
+            Assert.True(joined.IsJoined, joined.DisconnectReason);
+        }
+
+        // The second window has its own coordinator and token store over the same file, and no server of its own.
+        await using OnDemandLocalServerHandle none = LocalServerOn(db);
+        NetworkSessionCoordinator secondWindow = new(none, new RemoteSessionConnector(), identity: new ClientIdentityStore(file));
+        await using RemoteClientSession session = await ConnectAsync(secondWindow, options!);
+        await WaitUntilSettledAsync(session);
+
+        Assert.True(session.IsJoined, session.DisconnectReason);
+        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM accounts;"));
+        Assert.DoesNotContain("127.0.0.1", File.ReadAllText(file), StringComparison.Ordinal);
     }
 }

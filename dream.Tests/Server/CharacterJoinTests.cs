@@ -386,4 +386,17 @@ public sealed class CharacterJoinTests
         Assert.Single(harness.Runtime.Sessions.Players, p => !p.IsLocal && p.IsSpawned);
         Assert.Equal(AccountOf("idem"), harness.Accounts.OwnerOf("Idem"));
     }
+
+    [Fact]
+    public void ANetworkJoin_OfTheServersLocalSeat_IsRejectedOnAnAccountHost_AndNothingIsBound()
+    {
+        using AccountHostHarness harness = new();
+
+        string reason = harness.JoinRejectionOf("c1", PlayerSessionId.LocalDefault.Value, "Intruder", TokenOf("intruder"));
+
+        Assert.Equal(Dream.Server.DedicatedServerHost.SessionInUseRejectionReason, reason);
+        Assert.False(harness.Host.IsConnectionJoined("c1"));
+        Assert.Equal(0, harness.Database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name = 'Intruder';"));
+        Assert.Equal(0, harness.Database.Count("SELECT COUNT(*) FROM accounts;"));
+    }
 }

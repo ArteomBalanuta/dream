@@ -179,14 +179,19 @@ public class NetworkSessionCoordinatorTests
         Assert.Equal(["local", "local"], store.Keys);
     }
 
-    [Fact]
-    public async Task BeginConnect_ToTheEndedLocalServerPort_UsesTheLocalKey()
+    [Theory]
+    [InlineData("localhost", "50123")]
+    [InlineData("127.0.0.1", "5057")]
+    [InlineData("127.0.0.2", "6000")]
+    [InlineData("::1", "5057")]
+    [InlineData("[::1]", "5057")]
+    public async Task BeginConnect_ToAnyLoopbackAddressAndPort_UsesTheLocalKey(string host, string port)
     {
         RecordingIdentityStore store = new();
         NetworkSessionCoordinator coordinator = new(
-            new FakeLocalServerHandle(isReady: false, boundPort: 0), new CapturingConnector(), identity: store, endedLocalPort: 50123);
+            new FakeLocalServerHandle(isReady: false, boundPort: 0), new CapturingConnector(), identity: store);
 
-        coordinator.BeginConnect(new ClientConnectionOptions("localhost", "50123", "player-a"));
+        coordinator.BeginConnect(new ClientConnectionOptions(host, port, "player-a"));
         await coordinator.WaitForPendingConnectionAsync();
 
         Assert.Equal(["local"], store.Keys);

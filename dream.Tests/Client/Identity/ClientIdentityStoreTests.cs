@@ -59,15 +59,40 @@ public class ClientIdentityStoreTests
     }
 
     [Fact]
-    public void FileOfAnotherVersion_IsMovedAside_NotOverwritten()
+    public void FileOfANewerVersion_IsRefusedClearly_AndLeftWhereItIs()
     {
         string path = NewPath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, "{\"version\":2,\"servers\":{\"local\":\"x\"}}");
+        const string Text = "{\"version\":2,\"servers\":{\"local\":\"x\"}}";
+        File.WriteAllText(path, Text);
+
+        IOException error = Assert.ThrowsAny<IOException>(() => new ClientIdentityStore(path).GetOrCreateToken("local"));
+
+        Assert.Contains("newer version", error.Message);
+        Assert.Equal(Text, File.ReadAllText(path));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "account-tokens.json.bad-*"));
+    }
+
+    [Fact]
+    public void FileOfAnOlderUnknownVersion_IsMovedAside_NotOverwritten()
+    {
+        string path = NewPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"version\":0,\"servers\":{\"local\":\"x\"}}");
 
         new ClientIdentityStore(path).GetOrCreateToken("local");
 
         Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!, "account-tokens.json.bad-*"));
+    }
+
+    [Theory]
+    [InlineData("Play.Example.COM.", "play.example.com")]
+    [InlineData("[::1]", "::1")]
+    [InlineData("[2001:DB8::1]", "2001:db8::1")]
+    [InlineData("2001:0db8:0:0:0:0:0:1", "2001:db8::1")]
+    public void ServerKey_CanonicalizesTheHost(string typed, string expected)
+    {
+        Assert.Equal($"{expected}:5057", ClientIdentityStore.ServerKeyFor(typed, 5057, isLocalServer: false));
     }
 
     [Fact]
