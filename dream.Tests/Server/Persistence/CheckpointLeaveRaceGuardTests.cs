@@ -433,7 +433,7 @@ public sealed class CheckpointLeaveRaceGuardTests
     // loaded, then applies it on a tick (which saves the profile through the write queue).
     private static void Join(DedicatedServerHost host, string connectionId)
     {
-        Assert.Empty(host.HandleClientMessage(connectionId, new ClientJoinRequestMessage(Session, PlayerName)));
+        Assert.Empty(host.HandleClientMessage(connectionId, new ClientJoinRequestMessage(Session, PlayerName, Dream.Tests.Support.TestAccountTokens.For(PlayerName))));
         Flush(host);
         AdvanceOneTick(host);
         List<PendingConnectionReply> replies = [];

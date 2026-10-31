@@ -489,7 +489,7 @@ public class LongRunServerChurnIntegrationTests(ITestOutputHelper output)
             _connectionBySession[session] = connection;
             IReadOnlyList<IServerToClientMessage> replies = _host.HandleClientMessage(
                 connection,
-                new ClientJoinRequestMessage(session, $"Name {session}"));
+                new ClientJoinRequestMessage(session, $"Name {session}", Dream.Tests.Support.TestAccountTokens.For($"Name {session}")));
             JoinAcceptedMessage accepted = Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies));
             Assert.Equal(session, accepted.SessionId);
             _departedActorIds.Remove(session);

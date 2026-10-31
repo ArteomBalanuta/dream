@@ -70,7 +70,9 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             // server reads the join request) makes the first tick apply the join, so the join lands
             // on the same tick however loaded the machine is.
             string playerName = WorldSessionRuntime.ResolveJoinPlayerName(sessionId, $"Name {sessionId}");
-            while (Runtime.GetPersistedPlayerLoadState(playerName) != PersistedPlayerLoadState.Ready)
+            // The prefetch is keyed by (name, account) on a host with accounts.
+            Dream.Simulation.Characters.AccountKey? account = Runtime.HasAccounts ? Dream.Tests.Support.TestAccountTokens.KeyFor(playerName) : null;
+            while (Runtime.GetPersistedPlayerLoadState(playerName, account) != PersistedPlayerLoadState.Ready)
             {
                 Assert.True(DateTime.UtcNow < deadline, $"{sessionId}'s persisted state never loaded");
                 await Task.Delay(1);
@@ -88,6 +90,37 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
 
         await client.WaitForJoinAcceptedAsync();
         return client;
+    }
+
+    // A client that joins with the given name and token and is refused: ticks until the JoinRejected
+    // arrives, closes the client and returns the rejection. (Wave G: a stranger asking for an owned character.)
+    public async Task<JoinRejectedMessage> ConnectAndGetJoinRejectionAsync(string sessionId, string displayName, string? token)
+    {
+        Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
+        WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(Port, sessionId);
+        ServerConnection connection = await accept.WaitAsync(Timeout);
+        _connections[client] = connection;
+        try
+        {
+            await client.SendAsync(new ClientHelloMessage($"wire-{sessionId}"));
+            await client.SendAsync(new ClientJoinRequestMessage(sessionId, displayName, token));
+            DateTime deadline = DateTime.UtcNow + Timeout;
+            JoinRejectedMessage? rejected = null;
+            while (rejected == null)
+            {
+                Assert.True(DateTime.UtcNow < deadline, $"{sessionId} was never answered");
+                await Task.Delay(5);
+                await TickAsync();
+                Assert.True(await FlushAllAsync());
+                rejected = client.Frames.Select(frame => frame.Decoded.Message).OfType<JoinRejectedMessage>().FirstOrDefault();
+            }
+
+            return rejected;
+        }
+        finally
+        {
+            await DisconnectAsync(client);
+        }
     }
 
     public ServerConnection ConnectionFor(WireLoopbackClient client) => _connections[client];

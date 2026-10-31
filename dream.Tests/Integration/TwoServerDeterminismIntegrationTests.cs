@@ -243,7 +243,7 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
                 _connectionBySession[joinOrder[i]] = connection;
                 IReadOnlyList<IServerToClientMessage> replies = _host.HandleClientMessage(
                     connection,
-                    new ClientJoinRequestMessage(joinOrder[i], $"Name {joinOrder[i]}"));
+                    new ClientJoinRequestMessage(joinOrder[i], $"Name {joinOrder[i]}", Dream.Tests.Support.TestAccountTokens.For($"Name {joinOrder[i]}")));
                 if (deferJoinsToTick)
                 {
                     Assert.Empty(replies);
