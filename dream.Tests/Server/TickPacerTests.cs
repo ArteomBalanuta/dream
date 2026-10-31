@@ -30,34 +30,34 @@ public class TickPacerTests
     public void WaitFor_OvershootsDeadlineByOnlyAFewMilliseconds()
     {
         using TickPacer pacer = new();
-        const int waits = 20;
-        // An early wake (negative overshoot) is a pacer bug, not CPU starvation, so "best" is the
-        // smallest non-negative mean; a run that woke early is kept only if no run was on time.
-        double bestMeanOvershoot = double.NaN;
+        const int waits = 21;
+        // The statistic is the MEDIAN overshoot, not the mean: a mean lets one descheduled wait
+        // (a 40 ms pause from another process) move 20 samples by 2 ms, which failed the 4 ms
+        // bound at 4.1 to 4.4 ms on a busy machine. A pacer that really rounds up to the 15.6 ms
+        // timer period (the old Task.Delay(1) loop) overshoots on nearly every wait, so its
+        // median stays far above the bound. An early wake (negative overshoot) is a pacer bug,
+        // not CPU starvation, so any negative sample fails outright.
+        double bestMedianOvershoot = double.PositiveInfinity;
         for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            double totalOvershoot = 0d;
+            double[] overshoots = new double[waits];
             for (int index = 0; index < waits; index++)
             {
                 Stopwatch stopwatch = Stopwatch.StartNew();
                 pacer.WaitFor(SimulationClock.FixedDeltaSeconds, CancellationToken.None);
-                totalOvershoot += stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
+                overshoots[index] = stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
             }
 
-            double meanOvershoot = totalOvershoot / waits;
-            if (double.IsNaN(bestMeanOvershoot)
-                || (meanOvershoot >= 0d && (bestMeanOvershoot < 0d || meanOvershoot < bestMeanOvershoot)))
-            {
-                bestMeanOvershoot = meanOvershoot;
-            }
-
-            if (bestMeanOvershoot is >= 0d and <= 0.004)
+            Assert.True(overshoots.Min() >= 0d, $"WaitFor returned {-overshoots.Min() * 1000d:F3} ms early.");
+            Array.Sort(overshoots);
+            bestMedianOvershoot = Math.Min(bestMedianOvershoot, overshoots[waits / 2]);
+            if (bestMedianOvershoot <= 0.004)
             {
                 break;
             }
         }
 
-        Assert.InRange(bestMeanOvershoot, 0d, 0.004);
+        Assert.InRange(bestMedianOvershoot, 0d, 0.004);
     }
 
     [Fact]
