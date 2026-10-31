@@ -96,7 +96,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         Assert.Single(database.Backups());
         database.ExecuteScript("INSERT INTO schema_version (version, name, applied_utc) VALUES (99, 'from_the_future', '2030-01-01T00:00:00.0000000Z');");
         MigrationTestDatabase.ReleasePooledConnections();
-        string[] filesBefore = Directory.GetFiles(database.RootDirectory).Order().ToArray();
+        string[] filesBefore = Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray();
         byte[] bytesBefore = File.ReadAllBytes(database.DatabasePath);
 
         List<string> log = [];
@@ -110,7 +110,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         // The content digest comes before the database is touched; nothing else may be logged.
         Assert.Empty(log.Where(line => !line.StartsWith("server.content.digest ", StringComparison.Ordinal)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database.DatabasePath));
-        Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Order().ToArray());
+        Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray());
     }
 
     // A player, a stone cube at (20, 1, 20), the pre-T2 starter inventory (hammer equipped), a

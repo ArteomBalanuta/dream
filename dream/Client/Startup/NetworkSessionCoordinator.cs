@@ -10,12 +10,18 @@ public sealed class NetworkSessionCoordinator
     private Task? _pendingConnectionTask;
     private RemoteClientSession? _connectedSession;
 
+    private readonly string? _contentError;
+
+    // contentError (ClientContentCheck) is why the game's content files cannot be used; with it the
+    // connection screen shows the message, no local server starts and Connect does nothing.
     public NetworkSessionCoordinator(
         ILocalServerHandle localServer,
-        IRemoteSessionConnector connector)
+        IRemoteSessionConnector connector,
+        string? contentError = null)
     {
         _localServer = localServer;
         _connector = connector;
+        _contentError = contentError;
         RefreshIdleState();
     }
 
@@ -43,13 +49,36 @@ public sealed class NetworkSessionCoordinator
     // is actually used instead of on every launch.
     public void EnsureLocalServerStarted()
     {
-        if (_localServer.IsStarted)
+        if (_contentError != null || _localServer.IsStarted)
         {
             return;
         }
 
         _localServer.EnsureStarted();
         RefreshIdleState();
+    }
+
+    // The Use Local Server button: starts the local server (again, when the last start failed, so a
+    // second window can host after the first one closed) and returns its endpoint. False, with the
+    // status refreshed, when the server is not ready: the caller then leaves the host and port the
+    // player entered alone, and nothing is persisted.
+    public bool TryUseLocalServer(string playerName, out ClientConnectionOptions? options)
+    {
+        if (_localServer.ErrorMessage != null)
+        {
+            _localServer.ResetFailure();
+        }
+
+        EnsureLocalServerStarted();
+        RefreshIdleState();
+        if (!_localServer.IsReady)
+        {
+            options = null;
+            return false;
+        }
+
+        options = UseLocalServerDefaults(playerName);
+        return true;
     }
 
     public ClientConnectionOptions UseLocalServerDefaults(string playerName)
@@ -81,6 +110,13 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
+        if (_contentError != null)
+        {
+            State = ConnectionFlowState.Failed;
+            StatusMessage = _contentError;
+            _pendingConnectionTask = Task.CompletedTask;
+            return;
+        }
 
         if (!options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out string? error))
         {
@@ -150,6 +186,13 @@ public sealed class NetworkSessionCoordinator
 
     private void RefreshIdleState()
     {
+        if (_contentError != null)
+        {
+            State = ConnectionFlowState.Failed;
+            StatusMessage = _contentError;
+            return;
+        }
+
         if (_localServer.ErrorMessage != null)
         {
             State = ConnectionFlowState.Failed;
