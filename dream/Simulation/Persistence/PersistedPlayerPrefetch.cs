@@ -38,6 +38,10 @@ public sealed class PersistedPlayerPrefetch
 
     public string PlayerName { get; }
 
+    // When the prefetch was started (before its read was queued). A profile save this runtime queued
+    // after that may be missing from the row it reads.
+    public DateTime StartedUtc { get; internal set; } = DateTime.UtcNow;
+
     public AccountKey? Account { get; }
 
     // What the account lookup read; null until completed, and when the runtime has no accounts.

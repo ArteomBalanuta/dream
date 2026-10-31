@@ -253,15 +253,5 @@ public sealed class NetworkSessionCoordinator
     private string ServerKeyFor(RemoteClientOptions options) =>
         ClientIdentityStore.ServerKeyFor(options.Host, options.Port, IsLoopbackHost(options.Host));
 
-    private static bool IsLoopbackHost(string host)
-    {
-        if (LoopbackHost.IsLoopback(host))
-        {
-            return true;
-        }
-
-        return host != null
-            && System.Net.IPAddress.TryParse(host.Trim().Trim('[', ']'), out System.Net.IPAddress? address)
-            && System.Net.IPAddress.IsLoopback(address);
-    }
+    private static bool IsLoopbackHost(string host) => LoopbackHost.IsLoopback(host);
 }

@@ -39,3 +39,21 @@ Run on copies of the 4 local legacy databases (`legacy-e`), Debug build.
 - `local` and `127.0.0.1:5057` are different tokens, so one player using both on one database is two accounts. See `docs/configuration.md`.
 - Account ids skip: the upsert uses up an AUTOINCREMENT value on every join.
 - `DREAM_CLIENT_SESSION_ID` has no effect on the desktop client; `Game` keeps only host, port and name. This was so before wave G.
+
+## Fix loop 2
+
+- Log lines are sanitized in `NetworkDiagnosticsLog.WriteEnabled` (`Sanitize`): control characters and bidi formatting characters are written as `\uXXXX`, so a join name with a newline cannot start a second line in `server.rx`, `server.join-rejected`, `authority.join.*` or any other line.
+- New accounts are limited per source address (`NewAccountLimiter`): a burst of 5, then 3 a minute. Loopback is exempt and existing accounts are never limited. See `docs/configuration.md`.
+- `launch-and-summarize.ps1` saves `config\desktop-client.txt` before the run and restores it after the clients stop, and its summary has a `JoinRejectedLines` column. The shared `local`/loopback token does not fix the stale name by itself: the harness clients use their own identity files, so a leftover `player_name=codex-client-N` is a character another account owns.
+- `ServerConnectionTerrainTransferTests.FaultMidTerrain_ReleasesTheCapture_AndSendsNoMoreTerrain` waits for the release. `Fault` sets `IsFaulted` in the write loop's catch and the capture goes back to the pool in its `finally`, a moment later. Release is guaranteed, only asynchronous; there is no production race.
+
+### Measurement note
+
+`JoinTick_WithAWriteBacklog`'s mean is no longer comparable: the join now lands a tick later. Judge the gate on the join-window total: baseline 12.7 to 12.8 ms, tip 12.7 to 13.0 ms. The heaviest tick is 33.9 to 34.1 ms against 31.6 ms.
+
+### Known limits (accepted)
+
+- The stat sliders (U4) are as documented.
+- Hopping between worlds works as a revive. Wave I's respawn work revisits it.
+- Homoglyph names (look-alike characters from other scripts) are allowed by policy. Names reserve their exact-case key, and display names are unique only ignoring ASCII case.
+- A token whose characters were all released counts as a new account for the per-source limit, since the limit reads the character count from the join's prefetch.

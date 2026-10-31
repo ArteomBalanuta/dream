@@ -25,6 +25,39 @@ public class ClientIdentityStoreTests
     }
 
     [Fact]
+    public void AFileHeldByAnotherProcess_ReportsInUse_NotACheckTheFolderError()
+    {
+        string path = NewPath();
+        ClientIdentityStore store = new(path) { MutexWait = TimeSpan.FromMilliseconds(200) };
+        using ManualResetEventSlim held = new(false);
+        using ManualResetEventSlim release = new(false);
+        // A mutex belongs to the thread that took it, so another thread plays the other window.
+        Thread holder = new(() =>
+        {
+            using Mutex mutex = new(false, ClientIdentityStore.MutexNameFor(Path.GetFullPath(path)));
+            mutex.WaitOne();
+            held.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+            mutex.ReleaseMutex();
+        });
+        holder.Start();
+        try
+        {
+            Assert.True(held.Wait(TimeSpan.FromSeconds(10)));
+
+            IOException error = Assert.ThrowsAny<IOException>(() => store.GetOrCreateToken("play.example.com:5057"));
+
+            Assert.Contains("in use by another process", error.Message);
+            Assert.DoesNotContain("Check the folder", error.Message);
+        }
+        finally
+        {
+            release.Set();
+            holder.Join();
+        }
+    }
+
+    [Fact]
     public void DifferentServers_GetDifferentTokens()
     {
         ClientIdentityStore store = new(NewPath());

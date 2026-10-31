@@ -24,5 +24,14 @@ public interface IServerSessionClaimRegistry
         return TryClaimSession(connectionId, sessionId, displayName, out rejectionReason);
     }
 
+    // Per-source limit on creating new accounts (a join whose token owns no character yet). Null when the
+    // join may create one, else the rejection text. The default allows everything.
+    string? CheckNewAccountLimit(string connectionId) => null;
+
+    // Counts a new account that the connection's source just created.
+    void RecordNewAccount(string connectionId)
+    {
+    }
+
     void ReleaseConnection(string connectionId);
 }

@@ -69,6 +69,18 @@ public sealed class ClientIdentityStore : IClientIdentityStore
     // The file was written by a newer build: it is not corrupt, so it is neither read nor moved aside.
     private sealed class NewerFileException(string message) : IOException(message);
 
+    // Another process holds the file's mutex past the wait. Its message is the one to show, not "check the folder".
+    private sealed class FileInUseException(string message) : IOException(message);
+
+    // How long to wait for another window holding the file; settable for tests.
+    internal TimeSpan MutexWait { get; set; } = TimeSpan.FromSeconds(10);
+
+    internal static string MutexNameFor(string fullPath)
+    {
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(fullPath.ToUpperInvariant()));
+        return "Dream.IdentityStore." + Convert.ToHexString(hash, 0, 8);
+    }
+
     public string GetOrCreateToken(string serverKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serverKey);
@@ -80,7 +92,7 @@ public sealed class ClientIdentityStore : IClientIdentityStore
                 if (mutex != null && !owned)
                 {
                     // Another process holds the file for longer than the wait: do not write beside it.
-                    throw new IOException("The player identity file is in use by another process.");
+                    throw new FileInUseException("The player identity file is in use by another process. Close the other Dream window and try again.");
                 }
 
                 try
@@ -96,7 +108,7 @@ public sealed class ClientIdentityStore : IClientIdentityStore
                 }
             }
         }
-        catch (Exception ex) when (ex is not NewerFileException
+        catch (Exception ex) when (ex is not NewerFileException and not FileInUseException
             && ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             // The inner exception is not chained: nothing from the file may reach a message.
@@ -274,11 +286,10 @@ public sealed class ClientIdentityStore : IClientIdentityStore
         owned = false;
         try
         {
-            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(_path.ToUpperInvariant()));
-            Mutex mutex = new(false, "Dream.IdentityStore." + Convert.ToHexString(hash, 0, 8));
+            Mutex mutex = new(false, MutexNameFor(_path));
             try
             {
-                owned = mutex.WaitOne(TimeSpan.FromSeconds(10));
+                owned = mutex.WaitOne(MutexWait);
             }
             catch (AbandonedMutexException)
             {

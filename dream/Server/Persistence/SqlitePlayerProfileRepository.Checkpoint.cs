@@ -20,9 +20,10 @@ public sealed partial class SqlitePlayerProfileRepository
     // stand. That needs the leave to queue its world state BEFORE its profile
     // (WorldSessionRuntime.DetachRemoteSession): a checkpoint written between the two then skips.
     //
-    // Why not the profile's own updated_utc: every immediate profile save (XP, level, stats) also
-    // stamps its worker time, so a save queued before a capture but run after it would make the
-    // capture's vitals skip, depending only on how far the queue worker lagged the tick. Two servers
+    // Why not the profile's own updated_utc: a profile save (XP, level, stats) moves it too, so a save
+    // queued before a capture but run after it could make the capture's vitals skip, depending only on
+    // how far the queue worker lagged the tick. (Immediate saves now store the time they were queued,
+    // RuntimePersistenceBridge.SaveProfile, but a checkpoint's own vitals update stamps the row too.) Two servers
     // running the same script would then persist different HP. Strict > keeps this independent of
     // whether the world-state upsert of the same checkpoint already ran (it writes the capture time).
     // A NULL $capturedUtc (the default CapturedUtc) makes the comparison NULL, so the row is

@@ -138,6 +138,22 @@ if ($Port -ne 5057) {
     Write-Warning "The current dedicated server bootstrap uses its default port. Verify server code supports overriding $Port before trusting endpoint results."
 }
 
+# The clients persist their DREAM_CLIENT_NAME into config\desktop-client.txt (player_name=codex-client-N), which
+# would make the next plain local launch join as that name. Keep the file as it was and put it back after the run.
+$clientConfigPath = Join-Path (Split-Path $exe) 'config\desktop-client.txt'
+$clientConfigBackup = if (Test-Path $clientConfigPath) { [IO.File]::ReadAllBytes($clientConfigPath) } else { $null }
+
+function Restore-ClientConfig {
+    if ($null -ne $clientConfigBackup) {
+        [IO.File]::WriteAllBytes($clientConfigPath, $clientConfigBackup)
+        Write-Output "Restored $clientConfigPath"
+    }
+    elseif (Test-Path $clientConfigPath) {
+        Remove-Item $clientConfigPath -Force
+        Write-Output "Removed $clientConfigPath (it did not exist before the run)"
+    }
+}
+
 $processes = New-Object System.Collections.Generic.List[object]
 $commonEnv = @{
     DREAM_RENDER_PERF_LOG = '1'
@@ -222,6 +238,8 @@ foreach ($file in $allLogs | Sort-Object Name) {
     $sendMs = Get-NumberMatches -Lines $lines -Regex 'sendMs=([0-9.]+)'
     $advanceMs = Get-NumberMatches -Lines $lines -Regex 'advanceMs=([0-9.]+)'
     $broadcastMs = Get-NumberMatches -Lines $lines -Regex 'broadcastMs=([0-9.]+)'
+    # A run where nobody joined looks clean otherwise: count the joins the server (or a client) saw refused.
+    $joinRejected = ($lines | Where-Object { $_ -match 'server\.join-rejected|Join rejected|server\.join\.rejected|authority\.join\.reject' }).Count
     $players2 = ($lines | Where-Object { $_ -match 'players=2' }).Count
     $remoteVisible = ($lines | Where-Object { $_ -match 'client\.render\.remote' -and $_ -match 'visible=[1-9]' }).Count
     $renderPerf = ($lines | Where-Object { $_ -match 'render-perf|renderPerf|chunk|physicsMs|drawMs' }).Count
@@ -229,6 +247,7 @@ foreach ($file in $allLogs | Sort-Object Name) {
     [pscustomobject]@{
         Log = $file.Name
         Lines = $lines.Count
+        JoinRejectedLines = $joinRejected
         Players2Lines = $players2
         RemoteVisibleLines = $remoteVisible
         SlowOrQueuedLines = $slowLines.Count
@@ -256,10 +275,14 @@ if (-not $KeepRunning) {
             Write-Output "Stopped $($processInfo.Name) pid=$($process.Id)"
         }
     }
+
+    Start-Sleep -Seconds 1
+    Restore-ClientConfig
 }
 else {
     Write-Section 'Left Running'
     $processes | ForEach-Object { Write-Output "$($_.Name) pid=$($_.Process.Id)" }
+    Write-Warning "Clients are still running, so $clientConfigPath was not restored; it may now hold player_name=codex-client-N."
 }
 
 Write-Section 'Done'

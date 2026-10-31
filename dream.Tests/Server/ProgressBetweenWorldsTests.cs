@@ -81,6 +81,52 @@ public sealed class ProgressBetweenWorldsTests
         AssertRow(database, 9, 5, 27, 20);
     }
 
+    // A rejoin's prefetch is queued BEFORE the old connection's leave save (the queue lags behind a gate), so
+    // it reads a row without that save. stampAhead also queues, ahead of the prefetch, a write that stamps
+    // the row later than the leave save without any progress in it (a checkpoint's vitals update, a claim,
+    // `release`): the row the prefetch reads is then "newer" than the cached copy but still lacks the progress.
+    private static void RejoinWithPrefetchQueuedBeforeTheLeave(bool stampAhead)
+    {
+        using PersistenceTestDatabase database = new();
+        using AccountHostHarness world = AccountHostHarness.OverSqlite(database);
+        world.JoinAccepted("c1", "s1", Hero, Token);
+        Assert.True(world.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+        PersistedPlayerProfile oldRow = profiles.TryGet(Hero)!.Value;
+        Play(world, "s1", 4, 10, 14, 11);
+
+        using ManualResetEventSlim gate = new(false);
+        Assert.True(world.Runtime.PersistenceWrites.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30))));
+        if (stampAhead)
+        {
+            Assert.True(world.Runtime.PersistenceWrites.Enqueue(
+                () => profiles.Save(oldRow with { UpdatedUtc = DateTime.UtcNow.AddSeconds(5) })));
+        }
+
+        world.SendJoin("c2", "s2", Hero, Token);
+        world.Host.ReleaseConnection("c1");
+        gate.Set();
+        world.Tick();
+        world.Tick();
+
+        Assert.IsType<JoinAcceptedMessage>(world.RepliesOf("c2")[^1]);
+        AssertProgress(world, 4, 10, 14, 11);
+        world.Leave("c2");
+        AssertRow(database, 4, 10, 14, 11);
+    }
+
+    [Fact]
+    public void ARejoinPrefetchQueuedBeforeTheLeaveSave_DoesNotLoseTheProgress()
+    {
+        RejoinWithPrefetchQueuedBeforeTheLeave(stampAhead: false);
+    }
+
+    [Fact]
+    public void ARowStampedAfterThePrefetchBegan_WithoutProgress_DoesNotBeatTheCachedSave()
+    {
+        RejoinWithPrefetchQueuedBeforeTheLeave(stampAhead: true);
+    }
+
     [Fact]
     public void LeavingAndRejoiningTheSameWorldAtOnce_StillGetsTheNewestData()
     {

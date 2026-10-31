@@ -22,7 +22,8 @@ public readonly record struct CharacterAccessDecision(
     CharacterKey Key,
     string DisplayName,
     AccountKey? Account,
-    string? RejectionReason)
+    string? RejectionReason,
+    bool IsNewAccount = false)
 {
     public bool IsRejected => Outcome == CharacterAccessOutcome.Rejected;
 
@@ -54,7 +55,7 @@ public static class CharacterAccessRules
 
             return lookup.OwnedByAccount >= CharacterNames.MaxCharactersPerAccount
                 ? Reject(trimmedName, JoinRejectionReasons.CharacterLimit)
-                : new(CharacterAccessOutcome.ClaimUnowned, existing.Key, existing.DisplayName, account, null);
+                : new(CharacterAccessOutcome.ClaimUnowned, existing.Key, existing.DisplayName, account, null, lookup.OwnedByAccount == 0);
         }
 
         if (lookup.KeyReserved)
@@ -69,7 +70,7 @@ public static class CharacterAccessRules
 
         return lookup.OwnedByAccount >= CharacterNames.MaxCharactersPerAccount
             ? Reject(trimmedName, JoinRejectionReasons.CharacterLimit)
-            : new(CharacterAccessOutcome.CreateNew, new CharacterKey(trimmedName), trimmedName, account, null);
+            : new(CharacterAccessOutcome.CreateNew, new CharacterKey(trimmedName), trimmedName, account, null, lookup.OwnedByAccount == 0);
     }
 
     private static CharacterAccessDecision Reject(string trimmedName, string reason) =>

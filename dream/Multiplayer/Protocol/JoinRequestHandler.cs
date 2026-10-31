@@ -55,6 +55,12 @@ public sealed class JoinRequestHandler : IServerMessageHandler
             return;
         }
 
+        if (access.IsNewAccount && context.SessionClaims?.CheckNewAccountLimit(context.ConnectionId) is { } limitReason)
+        {
+            context.OutboundMessages.Add(new JoinRejectedMessage(limitReason));
+            return;
+        }
+
         if (context.SessionClaims != null
             && !context.SessionClaims.TryClaimSession(
                 context.ConnectionId,
@@ -76,6 +82,11 @@ public sealed class JoinRequestHandler : IServerMessageHandler
                 access);
             context.LastJoinRequest = joinRequest;
             context.JoinedIdentity = holder;
+            if (access.IsNewAccount)
+            {
+                context.SessionClaims?.RecordNewAccount(context.ConnectionId);
+            }
+
             context.OutboundMessages.Add(accepted);
         }
         catch (InvalidOperationException ex)

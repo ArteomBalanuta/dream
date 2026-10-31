@@ -164,6 +164,11 @@ public sealed class ServerConnectionTerrainTransferTests
 
         await WaitUntilAsync(() => connection.IsFaulted);
 
+        // The write loop marks the connection faulted in its catch, then releases the unfinished transfer's
+        // capture in its finally: a moment later, on the writer's thread. Under load the test can look in
+        // between, so wait for the release (bounded by WaitUntilAsync's deadline) instead of asserting at once.
+        await WaitUntilAsync(() => capture.IsReleased);
+
         Assert.True(capture.IsReleased);
         Assert.Equal(0, connection.WorldChunksSent);
         Assert.Equal(1, connection.TerrainFragmentsSent);

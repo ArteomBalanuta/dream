@@ -13,9 +13,9 @@ public static class LoopbackHost
             return false;
         }
 
-        string trimmed = host.Trim();
+        // Brackets and a trailing dot are how a host is sometimes typed ("[::1]", "localhost.").
+        string trimmed = host.Trim().Trim('[', ']').TrimEnd('.');
         return string.Equals(trimmed, "localhost", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(trimmed, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(trimmed, "::1", StringComparison.OrdinalIgnoreCase);
+            || (System.Net.IPAddress.TryParse(trimmed, out System.Net.IPAddress? address) && System.Net.IPAddress.IsLoopback(address));
     }
 }

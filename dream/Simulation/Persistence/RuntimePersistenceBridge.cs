@@ -376,13 +376,18 @@ internal sealed partial class RuntimePersistenceBridge
             && prefetch!.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
         {
             // Every profile save this runtime queues goes through SaveProfile, which caches it with the
-            // time it was queued. The cached copy wins unless the prefetched row is strictly newer: a
-            // row another world wrote since (profiles are global, two worlds can be hosted at once) is
-            // newer than a copy cached when this player left. A prefetch that read before our own queued
-            // save (a reconnect whose old connection is released, and its profile saved, after the new
-            // connection asked to join) carries an older stamp and loses; so does an equal one.
+            // time it was queued. The cached copy wins unless the prefetched row is strictly newer AND
+            // the cached copy was saved before the prefetch began. A row another world wrote since
+            // (profiles are global, two worlds can be hosted at once) is newer than a copy cached when
+            // this player left, and a prefetch started after that save reads behind it. But a save made
+            // after the prefetch began (a reconnect whose old connection is released after the new one
+            // asked to join) may be missing from the row the prefetch read, and a later write that
+            // bumps updated_utc without progress (checkpoint vitals, a claim, `release`) must not make
+            // that stale row win; so the cached copy stands.
             if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached)
-                && !(prefetched is { } newer && newer.UpdatedUtc > cached.UpdatedUtc))
+                && !(prefetched is { } newer
+                    && newer.UpdatedUtc > cached.UpdatedUtc
+                    && cached.UpdatedUtc < prefetch.StartedUtc))
             {
                 profile = cached;
             }
@@ -395,7 +400,7 @@ internal sealed partial class RuntimePersistenceBridge
                 // A new player: the read-only prefetch found no row and the join is now applied, so
                 // the row is created here, on the write queue rather than the tick.
                 profile = PersistedPlayerProfile.CreateDefault(playerName, DateTime.UtcNow);
-                SaveProfile(playerName, profile);
+                profile = SaveProfile(playerName, profile);
             }
 
             worldState = prefetchedWorld;
@@ -873,7 +878,8 @@ internal sealed partial class RuntimePersistenceBridge
         return false;
     }
 
-    public void SaveProfile(string playerName, PersistedPlayerProfile profile)
+    // Returns the profile as cached and queued, with its stamp.
+    public PersistedPlayerProfile SaveProfile(string playerName, PersistedPlayerProfile profile)
     {
         // Stamped when queued, and strictly after the copy it replaces (the clock may not have moved):
         // the repository stores this stamp, and a restore compares it with a prefetched row's.
@@ -887,6 +893,7 @@ internal sealed partial class RuntimePersistenceBridge
         CacheProfile(playerName, profile);
         IPlayerProfileRepository profiles = _playerProfiles!;
         _writes?.Enqueue(() => profiles.Save(profile));
+        return profile;
     }
 
     // Loads the rubble groups, prunes the stale ones and heals lost terrain overrides; returns the kept

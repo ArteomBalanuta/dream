@@ -61,6 +61,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public const string JoinThrottledRejectionReason =
         "Too many join attempts for this name.";
 
+    public const string NewAccountRejectionReason =
+        "Too many new players have joined from this address. Existing characters can still join.";
+
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
     private readonly ITickDrivenAuthoritativeSessionHost? _tickDrivenAuthority;
@@ -171,6 +174,32 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // Join throttle (ServerRoutingContext.JoinThrottleInitialInterval): per source address and
     // contested session id or player name, touched only under _authoritySync.
     private readonly JoinThrottleTable _joinThrottle = new();
+
+    // Per-source limit on new accounts (NewAccountLimiter), touched only under _authoritySync.
+    internal NewAccountLimiter NewAccountLimits { get; set; } = NewAccountLimiter.FromEnvironment();
+
+    public string? CheckNewAccountLimit(string connectionId)
+    {
+        lock (_authoritySync)
+        {
+            int seconds = NewAccountLimits.SecondsUntilAllowed(
+                JoinThrottleTable.ResolveSource(connectionId),
+                TimeProvider.GetTimestamp(),
+                TimeProvider.TimestampFrequency);
+            return seconds == 0 ? null : $"{NewAccountRejectionReason} Try again in {seconds} s.";
+        }
+    }
+
+    public void RecordNewAccount(string connectionId)
+    {
+        lock (_authoritySync)
+        {
+            NewAccountLimits.Record(
+                JoinThrottleTable.ResolveSource(connectionId),
+                TimeProvider.GetTimestamp(),
+                TimeProvider.TimestampFrequency);
+        }
+    }
 
     // Joins the join throttle refused (dropped, or answered with JoinThrottledRejectionReason).
     private long _throttledJoinAttempts;
