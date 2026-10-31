@@ -131,6 +131,39 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void TheBudget_IsSpentForTheSendingSessionOnly_WhenTwoSessionsInterleave()
+    {
+        EquipmentTestWorld world = new();
+        using WorldSessionRuntime runtime = CreateRuntime(world);
+        using RuntimeAuthoritativeSessionHost host = new(runtime);
+        host.JoinSession("a", Alice);
+        host.JoinSession("b", Bob);
+        ulong sequence = 0;
+
+        // Alice alone empties her budget; Bob's is untouched.
+        int aliceAccepted = 0;
+        for (int i = 0; i < 40; i++)
+        {
+            IPlayerActionPayload move = aliceAccepted % 2 == 0 ? new InventoryMoveIntent(1, 12) : new InventoryMoveIntent(12, 1);
+            aliceAccepted += Act(runtime, "a", ref sequence, move).Accepted ? 1 : 0;
+        }
+
+        Assert.Equal(InventoryActionBudget.Burst, aliceAccepted);
+
+        // Interleaved, Bob gets his whole burst and every one of Alice's is still refused.
+        int bobAccepted = 0;
+        for (int i = 0; i < InventoryActionBudget.Burst; i++)
+        {
+            Assert.False(Act(runtime, "a", ref sequence, new InventoryMoveIntent(1, 13)).Accepted);
+            IPlayerActionPayload move = i % 2 == 0 ? new InventoryMoveIntent(1, 12) : new InventoryMoveIntent(12, 1);
+            bobAccepted += Act(runtime, "b", ref sequence, move).Accepted ? 1 : 0;
+        }
+
+        Assert.Equal(InventoryActionBudget.Burst, bobAccepted);
+        Assert.False(Act(runtime, "b", ref sequence, new InventoryMoveIntent(1, 13)).Accepted);
+    }
+
+    [Fact]
     public async Task AFloodOfHostileAndLegitimateIntents_OverARealConnection_LeavesTheClientConnectedAndTheInventoryIntact()
     {
         await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);

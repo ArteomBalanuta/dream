@@ -136,7 +136,10 @@ public sealed partial class WorldSessionRuntime : IDisposable
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _events = events;
         _playerProfiles = playerProfiles;
-        _inventory = new PlayerInventoryService(worldPersistence, _writes, _objectIds);
+        _inventory = new PlayerInventoryService(worldPersistence, _writes, _objectIds)
+        {
+            ActionGate = SpendInventoryActionBudget,
+        };
         IPersistenceCheckpointWriter? resolvedCheckpointWriter = checkpointWriter ??
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;

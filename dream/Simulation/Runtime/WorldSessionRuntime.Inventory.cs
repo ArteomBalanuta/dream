@@ -37,7 +37,10 @@ public sealed partial class WorldSessionRuntime
     }
 
     // The session whose inventory action is being processed; its budget is the one spent (H-D18).
-    // Set only around a service call, on the main thread.
+    // Set only by RunInventoryAction, around the service call and on the main thread, and every client
+    // inventory action goes through it. The service calls the gate inside that call, once it has decided
+    // the action would write, so the gate cannot run for any other session. Unset means no client
+    // action is running (a test driving the service directly), which has no budget to spend.
     private ConnectedPlayer? _inventoryActionPlayer;
 
     private AuthoritativeActionResult ProcessInventoryEquipAction(
@@ -93,7 +96,6 @@ public sealed partial class WorldSessionRuntime
         Func<PlayerInventoryService, string, TIntent, InventoryEquipOutcome> action,
         TIntent intent)
     {
-        _inventory.ActionGate ??= SpendInventoryActionBudget;
         _inventoryActionPlayer = player;
         try
         {
