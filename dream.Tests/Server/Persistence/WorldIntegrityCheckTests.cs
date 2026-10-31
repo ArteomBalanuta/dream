@@ -3,6 +3,7 @@ using Xunit;
 using Xunit.Abstractions;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Simulation.Content;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
 
@@ -176,23 +177,38 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void TheKindPredicates_CanBeInstalledOnTheBootstrap()
+    public void TheKindPredicates_CanBeGivenToOneStart()
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(Profile + Item(10, "tool.mystery") + Slot(0, 10));
-        WorldIntegrityOptions previous = ServerBootstrap.IntegrityCheckOptions;
-        try
-        {
-            ServerBootstrap.IntegrityCheckOptions = new WorldIntegrityOptions { IsKnownItemKind = _ => false };
-            List<string> log = [];
-            using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
-                db.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add);
-            Assert.Contains(log, l => l.Contains("unknown kinds: 1 item", StringComparison.Ordinal));
-        }
-        finally
-        {
-            ServerBootstrap.IntegrityCheckOptions = previous;
-        }
+        List<string> log = [];
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath,
+            MigrationTestDatabase.InitScriptPath,
+            log: log.Add,
+            integrityOptions: new WorldIntegrityOptions { IsKnownItemKind = _ => false });
+        Assert.Contains(log, l => l.Contains("unknown kinds: 1 item", StringComparison.Ordinal));
+    }
+
+    // The production default: the shipped content decides which kinds are known.
+    [Fact]
+    public void AProductionStart_ChecksKindsAgainstTheShippedContent()
+    {
+        using MigrationTestDatabase db = Migrated();
+        string known = ContentCatalog.Shipped.Items[0].Key;
+        db.ExecuteScript(
+            Profile + Item(10, "tool.mystery") + Item(11, known) +
+            "INSERT INTO enemy_instances (world_id, object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp) " +
+            $"VALUES (1, 21, 'dragon', 'Dragon', 1, 1, 1, 0, 0, 1, 10, 10), (1, 22, '{ContentCatalog.WolfKey}', 'Wolf', 1, 1, 1, 0, 0, 1, 10, 10);");
+
+        List<string> log = [];
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add);
+
+        string line = Assert.Single(log, l => l.Contains("unknown kinds", StringComparison.Ordinal));
+        Assert.Contains("unknown kinds: 1 item row(s), 1 enemy row(s)", line, StringComparison.Ordinal);
+        Assert.Contains("tool.mystery", line, StringComparison.Ordinal);
+        Assert.Contains("dragon", line, StringComparison.Ordinal);
     }
 
     // A real database from before worlds existed (real-legacy-v1.db), migrated to the current schema by
@@ -205,34 +221,26 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         File.Copy(
             Path.Combine(Dream.Tests.Integration.RepoRoot.Find(), "dream.Tests", "Server", "Persistence", "Migrations", "Fixtures", "real-legacy-v1.db"),
             db.DatabasePath);
-        WorldIntegrityOptions previous = ServerBootstrap.IntegrityCheckOptions;
-        try
+        WorldIntegrityOptions knowsNothing = new()
         {
-            ServerBootstrap.IntegrityCheckOptions = new WorldIntegrityOptions
-            {
-                IsKnownItemKind = _ => false,
-                IsKnownEnemyKind = _ => false
-            };
-            List<string> log = [];
-            using (ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
-                db.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add))
-            {
-                Assert.Equal(WorldId.Default, bundle.WorldId);
-            }
-
-            foreach (string line in log)
-            {
-                output.WriteLine(line);
-            }
-
-            Assert.Contains(log, l => l.Contains("integrity check", StringComparison.Ordinal));
-            WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityCheckOptions);
-            Assert.False(report.IsFatal);
-            output.WriteLine($"legacy soft findings: oob={report.ObjectsOutOfBounds} unknownItems={report.UnknownItemKinds} unknownEnemies={report.UnknownEnemyKinds}");
-        }
-        finally
+            IsKnownItemKind = _ => false,
+            IsKnownEnemyKind = _ => false
+        };
+        List<string> log = [];
+        using (ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add, integrityOptions: knowsNothing))
         {
-            ServerBootstrap.IntegrityCheckOptions = previous;
+            Assert.Equal(WorldId.Default, bundle.WorldId);
         }
+
+        foreach (string line in log)
+        {
+            output.WriteLine(line);
+        }
+
+        Assert.Contains(log, l => l.Contains("integrity check", StringComparison.Ordinal));
+        WorldIntegrityReport report = Check(db, knowsNothing);
+        Assert.False(report.IsFatal);
+        output.WriteLine($"legacy soft findings: oob={report.ObjectsOutOfBounds} unknownItems={report.UnknownItemKinds} unknownEnemies={report.UnknownEnemyKinds}");
     }
 }

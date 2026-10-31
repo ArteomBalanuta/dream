@@ -2,6 +2,7 @@ using System.Net;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
+using Dream.Server.Hosting;
 
 namespace Dream.Client.Startup;
 
@@ -92,6 +93,13 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             // A failed start (the port is taken, say) must still release the host: it owns the
             // runtime's native physics world and, with persistence, the open database.
             host?.Dispose();
+            // The connection screen shows the message and Connect stays usable, so a client whose
+            // local server stayed off can still join another server.
+            string message = ex is WorldHeldException held
+                ? $"World {held.WorldId} is already in use by another Dream window or server on this computer. " +
+                  "Close it to host here, or enter a server address to join."
+                : ex.Message;
+            Console.Error.WriteLine($"[startup] local server not started: {message}");
             return ValueTask.FromResult(new IntegratedLocalServerHandle(
                 host: null,
                 service: null,
@@ -99,7 +107,7 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 runTask: null,
                 isReady: false,
                 boundPort: 0,
-                errorMessage: ex.Message));
+                errorMessage: message));
         }
     }
 

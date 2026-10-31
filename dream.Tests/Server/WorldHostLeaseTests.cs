@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using Microsoft.Data.Sqlite;
 using Xunit;
+using Dream.Client.Networking;
 using Dream.Client.Startup;
 using Dream.Server;
 using Dream.Server.Hosting;
@@ -149,6 +150,52 @@ public sealed class WorldHostLeaseTests
         Assert.False(handle.IsReady);
         Assert.Contains("already in use", handle.ErrorMessage, StringComparison.Ordinal);
         Assert.True(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
+    }
+
+    // Two desktop clients on one database: the second one's local server stays off, the screen says
+    // why, and Connect still goes out to the endpoint the player entered.
+    [Theory]
+    [InlineData("127.0.0.1", "5057")]
+    [InlineData("play.example.com", "6000")]
+    public async Task ASecondClient_WhoseWorldIsHeld_StaysUsableAndCanConnectElsewhere(string host, string port)
+    {
+        using MigrationTestDatabase db = new();
+        using ServerPersistenceBundle held = Open(db);
+
+        await using OnDemandLocalServerHandle local = new(() => IntegratedLocalServerHandle.StartAsync(
+            hostFactory: () => ServerBootstrap.CreateAuthoritativeHost(Open(db))).AsTask().GetAwaiter().GetResult());
+        RecordingConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(local, connector);
+        ClientConnectionOptions configured = new(host, port, "second");
+
+        ClientConnectionOptions initial = coordinator.ResolveInitialOptions(configured);
+
+        Assert.Equal(configured, initial);
+        if (host == "127.0.0.1")
+        {
+            Assert.False(local.IsReady);
+            Assert.Contains("already in use by another Dream window", coordinator.LocalServerStatus, StringComparison.Ordinal);
+            Assert.Contains("already in use by another Dream window", coordinator.StatusMessage, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.False(local.IsStarted);
+        }
+
+        coordinator.BeginConnect(initial);
+        await coordinator.WaitForPendingConnectionAsync();
+        Assert.Equal((host, int.Parse(port)), connector.Target);
+    }
+
+    private sealed class RecordingConnector : IRemoteSessionConnector
+    {
+        public (string Host, int Port)? Target { get; private set; }
+
+        public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
+        {
+            Target = (options.Host, options.Port);
+            throw new IOException("no server in this test");
+        }
     }
 
     // The offline --worlds commands, run with the production lease wiring against a temp database.

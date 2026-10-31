@@ -8,6 +8,7 @@ using Dream.Client.World;
 using Dream.Server;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence;
+using Dream.Simulation.Content;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -67,6 +68,20 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 Assert.Contains(player, after.Profiles);
             }
         }),
+        ("items keep their kind, and every stored item and enemy kind is in the shipped content", (before, after) =>
+        {
+            foreach ((long item, string kind) in before.ItemKinds)
+            {
+                Assert.Equal(kind, after.ItemKinds[item]);
+            }
+
+            foreach (RestartObservation o in new[] { before, after })
+            {
+                Assert.NotEmpty(o.ItemKinds);
+                Assert.All(o.ItemKinds.Values, kind => Assert.True(ContentCatalog.Shipped.TryGetItem(kind, out _), kind));
+                Assert.All(o.EnemyKinds, kind => Assert.True(ContentCatalog.Shipped.TryGetEnemy(kind, out _), kind));
+            }
+        }),
     ];
 
     internal sealed record RestartObservation(
@@ -74,7 +89,9 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         string IntegrityCheck,
         WorldIntegrityReport Report,
         IReadOnlyDictionary<string, long[]> ItemsByPlayer,
-        IReadOnlyCollection<string> Profiles);
+        IReadOnlyCollection<string> Profiles,
+        IReadOnlyDictionary<long, string> ItemKinds,
+        IReadOnlyList<string> EnemyKinds);
 
     [Fact]
     public async Task AServerStoppedMidSession_RestartsWithTheInvariantsIntact_AndTheRejoinedClientsMatch()
@@ -115,7 +132,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the stop released the world");
         RestartObservation before = Observe(db);
-        output.WriteLine($"after the stop: {before.Ids.AllObjects.Count} objects, {before.ItemsByPlayer.Count} players with items, counter {before.Ids.NextObjectId}");
+        output.WriteLine($"after the stop: {before.Ids.AllObjects.Count} objects, {before.ItemsByPlayer.Count} players with items, {before.EnemyKinds.Count} enemies, counter {before.Ids.NextObjectId}");
         Assert.Equal(Sessions.Length, before.ItemsByPlayer.Count);
 
         // Run 2: restart and rejoin; each client must build the server's map.
@@ -254,6 +271,8 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         ObjectIdTestSupport.PersistedIds ids = ObjectIdTestSupport.ReadIds(db.DatabasePath);
         Dictionary<string, long[]> items = [];
         List<string> profiles = [];
+        Dictionary<long, string> itemKinds = [];
+        List<string> enemyKinds = [];
         string integrity;
         WorldIntegrityReport report;
         using (SqliteConnection connection = db.Schema.CreateOpenConnection())
@@ -292,14 +311,37 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
             using (SqliteCommand command = connection.CreateCommand())
             {
+                command.CommandText = "SELECT item_instance_id, item_kind FROM item_instances WHERE world_id = 1;";
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    itemKinds[reader.GetInt64(0)] = reader.GetString(1);
+                }
+            }
+
+            using (SqliteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT enemy_kind FROM enemy_instances WHERE world_id = 1;";
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    enemyKinds.Add(reader.GetString(0));
+                }
+            }
+
+            using (SqliteCommand command = connection.CreateCommand())
+            {
                 command.CommandText = "PRAGMA integrity_check;";
                 integrity = Convert.ToString(command.ExecuteScalar(), CultureInfo.InvariantCulture) ?? string.Empty;
             }
 
-            report = WorldIntegrityCheck.Run(connection, WorldDescriptor.Default, new WorldIntegrityOptions { QuickCheck = false });
+            report = WorldIntegrityCheck.Run(
+                connection,
+                WorldDescriptor.Default,
+                ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped) with { QuickCheck = false });
         }
 
         SqliteConnection.ClearAllPools();
-        return new RestartObservation(ids, integrity, report, items, profiles);
+        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds);
     }
 }

@@ -9,6 +9,7 @@ using Dream.Server.Persistence.Migrations;
 using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
+using Dream.Simulation.Content;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -172,6 +173,9 @@ public static class ServerBootstrap
     // The dedicated server's exit code when another process already hosts the selected world.
     public const int WorldHeldExitCode = 7;
 
+    // The dedicated server's exit code when a content file (config/content) is missing or invalid.
+    public const int ContentInvalidExitCode = 8;
+
     // The host, or null after logging why the server cannot start: a database at a schema version
     // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
     internal static DedicatedServerHost? TryCreateServerModeHost(
@@ -184,6 +188,12 @@ public static class ServerBootstrap
         {
             exitCode = 0;
             return createHost();
+        }
+        catch (ContentValidationException ex)
+        {
+            log($"Server not started: the game content is invalid: {ex.Message}");
+            exitCode = ContentInvalidExitCode;
+            return null;
         }
         catch (SchemaTooNewException ex)
         {
@@ -334,7 +344,8 @@ public static class ServerBootstrap
     // the world (name and id) and never the seed. catalog is a test seam; it defaults to the
     // database's SqliteWorldCatalog. worldEnvironmentValue is the DREAM_WORLD value the caller read
     // (the entry points above read it); it defaults to none, so a direct call never depends on the
-    // process environment.
+    // process environment. integrityOptions overrides the load-time check's options for this start;
+    // it defaults to the shipped content's known kinds.
     public static ServerPersistenceBundle CreatePersistenceBundle(
         string databasePath,
         string schemaScriptPath,
@@ -342,8 +353,13 @@ public static class ServerBootstrap
         Action<string>? log = null,
         ServerStartOptions? start = null,
         IWorldCatalog? catalog = null,
-        string? worldEnvironmentValue = null)
+        string? worldEnvironmentValue = null,
+        WorldIntegrityOptions? integrityOptions = null)
     {
+        // Every dedicated and integrated start comes through here, so a bad content file stops the
+        // start before the database is touched, and JSON is never first parsed on a tick.
+        ContentCatalog content = ReadStartupContent(static () => ContentCatalog.Shipped, log);
+
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
         schema.EnsureSchema(log);
 
@@ -365,7 +381,7 @@ public static class ServerBootstrap
         try
         {
             return OpenWorldBundle(
-                schema, record, created, simulationSeedOverride, log, lease, IntegrityCheckOptions);
+                schema, record, created, simulationSeedOverride, log, lease, integrityOptions ?? IntegrityOptionsFor(content));
         }
         catch
         {
@@ -374,9 +390,27 @@ public static class ServerBootstrap
         }
     }
 
-    // The integrity check's known-kind predicates and options. Accept-all by default; the glue that
-    // knows the content catalog replaces it once at process start.
-    public static WorldIntegrityOptions IntegrityCheckOptions { get; set; } = WorldIntegrityOptions.Default;
+    // Reads the content a start runs with and logs its digest, which tells apart servers whose
+    // content differs. A ContentValidationException from read stops the start (ContentInvalidExitCode).
+    internal static ContentCatalog ReadStartupContent(Func<ContentCatalog> read, Action<string>? log)
+    {
+        ContentCatalog content = read();
+        log?.Invoke(
+            $"server.content.digest digest={content.ContentDigest} " +
+            $"items={content.Items.Count} enemies={content.Enemies.Count}");
+        return content;
+    }
+
+    // The integrity check's options for a build that knows content's kinds.
+    public static WorldIntegrityOptions IntegrityOptionsFor(ContentCatalog content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return new WorldIntegrityOptions
+        {
+            IsKnownItemKind = kind => content.TryGetItem(kind, out _),
+            IsKnownEnemyKind = kind => content.TryGetEnemy(kind, out _)
+        };
+    }
 
     private static ServerPersistenceBundle OpenWorldBundle(
         SqliteSchemaBootstrapper schema,

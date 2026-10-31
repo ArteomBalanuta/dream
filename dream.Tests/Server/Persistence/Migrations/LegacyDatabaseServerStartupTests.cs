@@ -107,7 +107,8 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         output.WriteLine(error.Message);
         Assert.Equal(99, error.StoredVersion);
         Assert.Contains("99", error.Message, StringComparison.Ordinal);
-        Assert.Empty(log);
+        // The content digest comes before the database is touched; nothing else may be logged.
+        Assert.Empty(log.Where(line => !line.StartsWith("server.content.digest ", StringComparison.Ordinal)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database.DatabasePath));
         Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Order().ToArray());
     }
