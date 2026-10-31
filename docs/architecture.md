@@ -140,7 +140,20 @@ How the seam is wired:
 - `PersistenceWriteQueue` runs its writes inside an `IPersistenceWriteBatch` from `WriteBatchFactory`. The default is a pass-through batch. `Dream.Server.Persistence.SqliteWriteBatch` replaces that default through a `[ModuleInitializer]` when the assembly loads, before any queue can start a worker. The initializer only sets a factory default inside the same assembly.
 - The SQLite repositories, the store, the schema bootstrap and the migrations stay in `Dream.Server.Persistence` (with the `.Store`, `.Repositories` and `.Migrations` sub-namespaces).
 
+### Join flow with accounts (wave G)
+
+Plan: `docs/ledger/plans/2026-10-31-wave-g-plan.md`. Every dedicated and integrated host has an `IAccountRepository` (`SqliteAccountRepository`, global, not bound to a world).
+
+1. `DedicatedServerHost.HandleClientMessage` checks the token (`AccountKey.TryFromToken`). A missing or malformed token and a blank name are refused at once, with no prefetch. The message goes on with `AccountToken = null` and `ResolvedAccount` set, so the token is held nowhere past this point.
+2. The throttle runs, then the join is queued and its prefetch started, keyed by (name, account). The prefetch reads only: `Lookup` first, then the profile, world state and inventory under the character's key.
+3. When the prefetch is ready, `JoinRequestHandler` runs on the tick and reads only memory: `AuthorizeJoin` (`CharacterAccessRules.Decide`), the `AlreadyJoined` check, `TryClaimSession` with the holder's identity, then `JoinSession`. Ownership comes before the claim, so a stranger can never kick the owner.
+4. `JoinSession` attaches the player, restores by key and calls `CommitCharacterAccess`, which queues `RecordJoin` behind the profile save that creates a new row. The write queue runs them in order on one connection and transaction, so a claim always finds its row. A claim or a creation drops every other prefetch for that character or account: those joins see `Missing`, reload behind the queued claim and read the new owner.
+
+A failed claim write is dropped like any other queued write: the player plays on unowned and the next join claims. `DisplayName` is what people type and see; `CharacterKey` (`player_profiles.player_name`, ordinal, never changed) keys all persistence. Hosts with no repository, used by tests and tools, check nothing and behave as before, and the in-process two-argument `JoinSession` is trusted.
+
 ### Stale-session takeover (NETR-8)
+
+This applies to hosts without accounts. On hosts with accounts, a takeover is immediate for the owning account and never happens for another one (see `docs/configuration.md`, Connection liveness).
 
 A client that lost its connection (crash, network drop) often rejoins before the server has noticed the old socket is dead. `DedicatedServerHost` handles the rejoin by measuring the silence of the connection that holds the seat.
 

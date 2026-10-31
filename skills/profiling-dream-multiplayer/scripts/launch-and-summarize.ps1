@@ -160,6 +160,9 @@ for ($i = 1; $i -le $ClientCount; $i++) {
     $clientEnv['DREAM_SERVER_PORT'] = [string]$Port
     $clientEnv['DREAM_CLIENT_NAME'] = "codex-client-$i"
     $clientEnv['DREAM_CLIENT_SESSION_ID'] = "client-codex-$i"
+    # One stable identity per client, kept beside the exe's database: the names stay owned across runs, more
+    # than 5 clients do not hit the per-account character limit, and the real token file is never touched.
+    $clientEnv['DREAM_IDENTITY_FILE'] = Join-Path (Split-Path $exe) "perf-identity-client$i.json"
     $clientEnv['DREAM_NET_DIAGNOSTICS_PATH'] = Join-Path $logDir "client$i.net.log"
     $client = Start-DreamProcess -Exe $exe -WorkingDirectory (Split-Path $exe) -Name "client$i" -Arguments '' -LogDir $logDir -Environment $clientEnv -Hidden $false
     $processes.Add($client)
