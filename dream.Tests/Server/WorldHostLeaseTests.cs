@@ -9,6 +9,7 @@ using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
 
@@ -272,5 +273,209 @@ public sealed class WorldHostLeaseTests
 
         using WorldHostLease command = WorldHostLease.Acquire(db.DatabasePath, WorldId.Default);
         Assert.Throws<WorldHeldException>(() => Open(db));
+    }
+
+    private static string LegacyFixture(string name) => Path.Combine(
+        Dream.Tests.Integration.RepoRoot.Find(), "dream.Tests", "Server", "Persistence", "Migrations", "Fixtures", name);
+
+    [Fact]
+    public void ARefusedStart_DoesNotMigrateADatabase_WhileAnotherProcessHoldsAWorld()
+    {
+        using MigrationTestDatabase db = new();
+        File.Copy(LegacyFixture("real-legacy-v1.db"), db.DatabasePath);
+        byte[] before = File.ReadAllBytes(db.DatabasePath);
+        using WorldHostLease holder = WorldHostLease.Acquire(db.DatabasePath, WorldId.Default);
+
+        WorldHeldException ex = Assert.Throws<WorldHeldException>(() => Open(db));
+
+        Assert.Equal(WorldId.Default, ex.WorldId);
+        SqliteConnection.ClearAllPools();
+        Assert.Equal(before, File.ReadAllBytes(db.DatabasePath));
+        Assert.Empty(db.Backups());
+    }
+
+    [Fact]
+    public void AnOfflineWorldsCommand_DoesNotMigrateADatabase_WhileAWorldIsHeld()
+    {
+        using MigrationTestDatabase db = new();
+        File.Copy(LegacyFixture("real-legacy-v1.db"), db.DatabasePath);
+        byte[] before = File.ReadAllBytes(db.DatabasePath);
+        using WorldHostLease holder = WorldHostLease.Acquire(db.DatabasePath, WorldId.Default);
+
+        Assert.Throws<WorldHeldException>(
+            () => DatabaseMaintenanceLock.EnsureSchemaGuarded(db.Schema, db.DatabasePath, log: null));
+
+        SqliteConnection.ClearAllPools();
+        Assert.Equal(before, File.ReadAllBytes(db.DatabasePath));
+        // The maintenance lock was released on the way out.
+        using DatabaseMaintenanceLock free = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void AStart_ThatNeedsNoMigration_ProceedsWhileAnotherWorldIsHeld()
+    {
+        using MigrationTestDatabase db = new();
+        using ServerPersistenceBundle one = Open(db);
+        SqliteConnection.ClearAllPools();
+        new SqliteWorldCatalog(db.Schema).Create(new WorldCreateOptions("second", 20));
+        using ServerPersistenceBundle two = Open(db, "second");
+        Assert.NotEqual(one.WorldId, two.WorldId);
+    }
+
+    [Fact]
+    public void AStart_ReadsTheWorldRecordAfterTakingTheLease()
+    {
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        SqliteConnection.ClearAllPools();
+        List<WorldId> asked = [];
+        RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), asked);
+        using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath, MigrationTestDatabase.InitScriptPath, catalog: catalog);
+
+        Assert.Equal([WorldId.Default], asked);
+    }
+
+    private sealed class RecordingCatalog(IWorldCatalog inner, List<WorldId> asked) : IWorldCatalog
+    {
+        public IReadOnlyList<WorldRecord> List() => inner.List();
+
+        public WorldRecord? TryGet(WorldId id)
+        {
+            asked.Add(id);
+            return inner.TryGet(id);
+        }
+
+        public WorldRecord? TryGetByName(string name) => inner.TryGetByName(name);
+
+        public WorldRecord Create(WorldCreateOptions options) => inner.Create(options);
+
+        public WorldRecord Copy(WorldId source, string newName) => inner.Copy(source, newName);
+
+        public bool Delete(WorldId id) => inner.Delete(id);
+
+        public WorldTerrainSource ReadTerrainSource(WorldId id) => inner.ReadTerrainSource(id);
+
+        public WorldRecord CreateStored(WorldId source, string newName, IReadOnlyList<PersistedTerrainChunk> chunks, bool terrainOnly) =>
+            inner.CreateStored(source, newName, chunks, terrainOnly);
+
+        public TerrainResetResult ResetTerrain(WorldId id) => inner.ResetTerrain(id);
+
+        public WorldRecord Resolve(WorldSelector selector, int newWorldSize, out bool created) =>
+            inner.Resolve(selector, newWorldSize, out created);
+    }
+
+    // A lock file that cannot be opened for a reason other than a live holder is a clear error, not
+    // a "held" world and not a stack trace.
+    private static void MakeReadOnlyLockFile(MigrationTestDatabase db, WorldId world)
+    {
+        string path = WorldHostLease.GetLockPath(db.DatabasePath, world);
+        File.WriteAllText(path, string.Empty);
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+    }
+
+    [Fact]
+    public void AReadOnlyLockFile_IsNotReportedAsHeld()
+    {
+        using MigrationTestDatabase db = new();
+        MakeReadOnlyLockFile(db, WorldId.Default);
+        try
+        {
+            LockFileUnavailableException ex = Assert.Throws<LockFileUnavailableException>(
+                () => WorldHostLease.TryAcquire(db.DatabasePath, WorldId.Default));
+            Assert.Contains(".world-1.lock", ex.Message, StringComparison.Ordinal);
+            Assert.Throws<LockFileUnavailableException>(() => WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
+        }
+        finally
+        {
+            File.SetAttributes(WorldHostLease.GetLockPath(db.DatabasePath, WorldId.Default), FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public void AReadOnlyLockFile_StopsAServerStartWithExitCode5_AndAWorldsCommandWithExitCode2()
+    {
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        SqliteConnection.ClearAllPools();
+        MakeReadOnlyLockFile(db, WorldId.Default);
+        try
+        {
+            List<string> log = [];
+            using DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+                () => ServerBootstrap.CreateAuthoritativeHost(Open(db)), log.Add, out int exitCode);
+            Assert.Null(host);
+            Assert.Equal(5, exitCode);
+            Assert.Contains("cannot create the lock file", Assert.Single(log), StringComparison.Ordinal);
+
+            (int exit, _, string error) = Cli(db, "delete", "1", "--yes");
+            Assert.Equal(WorldCli.ExitNotFoundOrConflict, exit);
+            Assert.Contains("lock file", error, StringComparison.Ordinal);
+            Assert.DoesNotContain("   at ", error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.SetAttributes(WorldHostLease.GetLockPath(db.DatabasePath, WorldId.Default), FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public void AWorldsCommand_OnADamagedDatabase_ExitsCleanlyInsteadOfThrowing()
+    {
+        using MigrationTestDatabase db = new();
+        File.WriteAllBytes(db.DatabasePath, Enumerable.Repeat((byte)0x41, 8192).ToArray());
+        StringWriter error = new();
+
+        int exit = WorldCli.Run(
+            ["list"], () => new SqliteWorldCatalog(db.Schema), new StringWriter(), error);
+        SqliteConnection.ClearAllPools();
+
+        Assert.Equal(WorldCli.ExitNotFoundOrConflict, exit);
+        Assert.Contains("--db restore", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheOfflineWorldsCommands_ReallyHoldTheLease_DuringTheCommand()
+    {
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        List<bool> heldAtRelease = [];
+        StringWriter output = new();
+        int exit = WorldCli.Run(
+            ["copy", "1", "copy-of-default"],
+            () =>
+            {
+                db.Schema.EnsureSchema();
+                return new SqliteWorldCatalog(db.Schema);
+            },
+            output,
+            new StringWriter(),
+            worldId => new ReleaseProbe(
+                WorldHostLease.TryAcquire(db.DatabasePath, worldId)!,
+                () => heldAtRelease.Add(WorldHostLease.IsHeld(db.DatabasePath, worldId))));
+        SqliteConnection.ClearAllPools();
+
+        Assert.Equal(0, exit);
+        Assert.StartsWith("2\tcopy-of-default\t", output.ToString(), StringComparison.Ordinal);
+        Assert.Equal([true], heldAtRelease);
+        Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
+    }
+
+    private sealed class ReleaseProbe(WorldHostLease lease, Action beforeRelease) : IDisposable
+    {
+        public void Dispose()
+        {
+            beforeRelease();
+            lease.Dispose();
+        }
     }
 }

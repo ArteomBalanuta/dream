@@ -220,6 +220,22 @@ public static class ServerBootstrap
             exitCode = WorldHeldExitCode;
             return null;
         }
+        catch (LockFileUnavailableException ex)
+        {
+            log(
+                $"Server not started: cannot create the lock file {ex.LockPath}: {ex.InnerException?.Message ?? ex.Message}. " +
+                "Check that the database directory exists and is writable.");
+            exitCode = WorldCannotBeOpenedExitCode;
+            return null;
+        }
+        catch (DatabaseBusyException ex)
+        {
+            log(
+                $"Server not started: the database is being restored or migrated by another process " +
+                $"(lock file {ex.LockPath}). Try again when it has finished.");
+            exitCode = WorldHeldExitCode;
+            return null;
+        }
         catch (DatabaseIntegrityException ex)
         {
             log($"Server not started: {ex.Message}. Restore a backup (--db restore <path> --yes) or repair the database.");
@@ -361,25 +377,52 @@ public static class ServerBootstrap
         ContentCatalog content = ReadStartupContent(static () => ContentCatalog.Shipped, log);
 
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
-        schema.EnsureSchema(log);
 
         WorldSelector selector = ResolveWorldSelector(
             start?.WorldSelector,
             worldEnvironmentValue);
         int newWorldSize = start?.NewWorldSize ?? WorldDefaults.StartupFloorSize;
+        IWorldCatalog worlds = catalog ?? new SqliteWorldCatalog(schema);
 
-        WorldRecord record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out bool created);
+        // The database's maintenance lock covers the migration, the world resolve and the lease
+        // acquisition, so a --db restore cannot swap the file between them and two starts never
+        // migrate at once. A migration that is pending also needs every world's lease (a server
+        // holding a world is never migrated under). A database that is not a file takes neither.
+        WorldRecord record;
+        bool created;
+        WorldHostLease? lease;
+        using (DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, databasePath, log))
+        {
+            record = worlds.Resolve(selector, newWorldSize, out created);
 
-        WorldDescriptor descriptor = record.Descriptor;
-        descriptor.Validate();
+            WorldDescriptor resolved = record.Descriptor;
+            resolved.Validate();
 
-        // One server per world on a database file. A database that is not a file takes no lease.
-        // The lease belongs to the bundle from here on; a failure before the bundle exists releases it.
-        WorldHostLease? lease = WorldHostLease.AppliesTo(databasePath)
-            ? WorldHostLease.Acquire(databasePath, descriptor.Id)
-            : null;
+            // One server per world on a database file. A database that is not a file takes no lease.
+            // The lease belongs to the bundle from here on; a failure before the bundle exists
+            // releases it.
+            lease = WorldHostLease.AppliesTo(databasePath)
+                ? WorldHostLease.Acquire(databasePath, resolved.Id)
+                : null;
+            if (lease != null)
+            {
+                // The record read before the lease can be stale (another process held the world, then
+                // saved its world time and seed): read what the previous holder left.
+                try
+                {
+                    record = worlds.TryGet(resolved.Id) ?? record;
+                }
+                catch
+                {
+                    lease.Dispose();
+                    throw;
+                }
+            }
+        }
+
         try
         {
+            record.Descriptor.Validate();
             return OpenWorldBundle(
                 schema, record, created, simulationSeedOverride, log, lease, integrityOptions ?? IntegrityOptionsFor(content));
         }
