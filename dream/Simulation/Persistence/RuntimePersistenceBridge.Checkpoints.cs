@@ -359,13 +359,13 @@ internal sealed partial class RuntimePersistenceBridge
             if (_departedWorldStates.Count > 0)
             {
                 // Another session under this name is attached, so its state is now the newer one.
-                _departedWorldStates.Remove(player.DisplayName);
+                _departedWorldStates.Remove(player.CharacterKey.Value);
             }
 
             // Both rows carry the capture time, which guards them against a leave that runs after
             // this capture but is saved before the checkpoint is written (see PlayerCheckpointVitals).
             playerVitals.Add(new PlayerCheckpointVitals(
-                player.DisplayName,
+                player.CharacterKey.Value,
                 _host.GetSessionInteractionMode(player.SessionId),
                 currentHealth,
                 maxHealth)
@@ -373,7 +373,7 @@ internal sealed partial class RuntimePersistenceBridge
                 CapturedUtc = now
             });
             states.Add(new PersistedPlayerWorldState(
-                player.DisplayName,
+                player.CharacterKey.Value,
                 position,
                 facing,
                 CurrentHealth: currentHealth,

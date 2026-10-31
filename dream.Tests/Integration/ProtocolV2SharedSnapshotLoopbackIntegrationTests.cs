@@ -442,7 +442,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         public async Task HandshakeAsync()
         {
             await SendAsync(new ClientHelloMessage($"raw-{SessionId}"));
-            await SendAsync(new ClientJoinRequestMessage(SessionId, $"Name {SessionId}"));
+            await SendAsync(new ClientJoinRequestMessage(SessionId, $"Name {SessionId}", Dream.Tests.Support.TestAccountTokens.For($"Name {SessionId}")));
         }
 
         public Task WaitForJoinAcceptedAsync()

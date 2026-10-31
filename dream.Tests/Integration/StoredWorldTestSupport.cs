@@ -257,7 +257,7 @@ internal sealed class SoakServer : IDisposable
         Runtime = host.Runtime!;
         foreach (string session in new[] { Primary, Secondary })
         {
-            Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}")));
+            Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}", Dream.Tests.Support.TestAccountTokens.For($"Name {session}"))));
         }
 
         Assert.True(Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);

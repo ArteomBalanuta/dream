@@ -19,11 +19,21 @@ public sealed partial class WorldSessionRuntime
     private int _nextRemoteActorId = 2;
     private readonly SortedSet<int> _releasedRemoteActorIds = [];
 
-    public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
+    // character: the persistence key and display name a checked join resolved (JoinSession with an
+    // access decision); null leaves the key following the typed display name, as on hosts without accounts.
+    public ConnectedPlayer AttachRemoteSession(
+        PlayerSessionId sessionId,
+        string? displayName = null,
+        Dream.Simulation.Characters.CharacterKey? character = null)
     {
         ConnectedPlayer attached = AttachRemoteSessionCore(sessionId, displayName);
+        if (character is { } key)
+        {
+            attached.BindCharacter(key, displayName ?? key.Value);
+        }
+
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
-        MarkProfileActive(attached.DisplayName);
+        MarkProfileActive(attached.CharacterKey.Value);
         return attached;
     }
 
@@ -149,7 +159,7 @@ public sealed partial class WorldSessionRuntime
         player.ResetAcceptedSequences();
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.
-        MarkProfileDeparted(player.DisplayName);
+        MarkProfileDeparted(player.CharacterKey.Value);
         _primaryPlayerTarget = null;
 
         if (PrimaryRemoteSessionId == sessionId)
@@ -225,8 +235,8 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        PersistedPlayerProfile profile = GetCachedProfile(player.DisplayName);
-        SaveProfile(player.DisplayName, profile with
+        PersistedPlayerProfile profile = GetCachedProfile(player.CharacterKey.Value);
+        SaveProfile(player.CharacterKey.Value, profile with
         {
             DisplayName = player.DisplayName,
             InteractionMode = interactionMode
@@ -302,10 +312,19 @@ public sealed partial class WorldSessionRuntime
             Math.Clamp(basePosition.Z + 2f, 0.5f, Map.Depth - 0.5f));
     }
 
+    // Display text only (rosters, actor names). Persistence uses TryResolveCharacterKey.
     private string TryResolveDisplayName(PlayerSessionId sessionId)
     {
         return _sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null
             ? player.DisplayName
+            : sessionId.Value;
+    }
+
+    // The persistence key of the session's character (the session id for an unknown session).
+    private string TryResolveCharacterKey(PlayerSessionId sessionId)
+    {
+        return _sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null
+            ? player.CharacterKey.Value
             : sessionId.Value;
     }
 }

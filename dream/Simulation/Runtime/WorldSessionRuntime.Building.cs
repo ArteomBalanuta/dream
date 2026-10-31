@@ -39,7 +39,7 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Build placement rejected by authoritative validation.");
         }
 
-        string ownerPlayerName = TryResolveDisplayName(message.SessionId);
+        string ownerPlayerName = TryResolveCharacterKey(message.SessionId);
         // The CubePlaced delta below carries the new id, so no CubeIdentified is exported for it.
         WorldObjectRecord record;
         _suppressCubeIdExports = true;

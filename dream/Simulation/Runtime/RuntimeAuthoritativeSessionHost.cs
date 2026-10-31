@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -67,16 +68,94 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
     public WorldSessionRuntime Runtime { get; }
 
-    public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName)
+    // Decides, from memory, whether the account may play the named character (G-D1). Without accounts
+    // nothing is checked. With them: a missing token, a blank name and the ownership rules of
+    // CharacterAccessRules.Decide apply. The lookup comes from the join's prefetch (see
+    // WorldSessionRuntime.ResolveCharacterLookup); no database read on the tick.
+    public CharacterAccessDecision AuthorizeJoin(string requestedSessionId, string displayName, AccountKey? account)
+    {
+        string typedName = string.IsNullOrWhiteSpace(displayName) ? string.Empty : displayName.Trim();
+        if (!Runtime.HasAccounts)
+        {
+            return CharacterAccessDecision.Unchecked(string.IsNullOrWhiteSpace(displayName) ? requestedSessionId : typedName);
+        }
+
+        if (account is not { } joinAccount)
+        {
+            return Rejected(typedName, JoinRejectionReasons.TokenRequired);
+        }
+
+        if (typedName.Length == 0)
+        {
+            return Rejected(typedName, JoinRejectionReasons.NameInvalid);
+        }
+
+        CharacterLookup lookup = Runtime.ResolveCharacterLookup(typedName, joinAccount);
+        return CharacterAccessRules.Decide(typedName, joinAccount, lookup);
+    }
+
+    private static CharacterAccessDecision Rejected(string name, string reason) =>
+        new(CharacterAccessOutcome.Rejected, default, name, null, reason);
+
+    public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName) =>
+        JoinSession(requestedSessionId, displayName, CharacterAccessDecision.Unchecked(string.Empty));
+
+    // The access decision comes from AuthorizeJoin. Unchecked is the trusted in-process path (G-D10): on a
+    // host with accounts it resolves the key through the lookup (so typing "bob" for "Bob" reaches that
+    // row) but checks no owner and records nothing.
+    public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName, in CharacterAccessDecision access)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestedSessionId);
+        if (access.IsRejected)
+        {
+            throw new InvalidOperationException(access.RejectionReason ?? JoinRejectionReasons.NameInvalid);
+        }
+
         PlayerSessionId sessionId = new(requestedSessionId);
         string normalizedDisplayName = string.IsNullOrWhiteSpace(displayName)
             ? requestedSessionId
             : displayName.Trim();
 
+        // The persistence key and the name shown to clients. Without accounts the key is the typed name
+        // (null: ConnectedPlayer's key follows its display name, as before).
+        CharacterKey? characterKey = null;
+        string shownName = normalizedDisplayName;
+        AccountKey? account = null;
+        if (access.Holder is { } holder)
+        {
+            characterKey = holder.Character;
+            shownName = access.DisplayName;
+            account = holder.Account;
+        }
+        else if (Runtime.HasAccounts)
+        {
+            CharacterLookup lookup = Runtime.ResolveCharacterLookup(normalizedDisplayName, null);
+            if (lookup.Existing is { } known)
+            {
+                characterKey = known.Key;
+                shownName = known.DisplayName;
+            }
+            else if (lookup.KeyReserved)
+            {
+                throw new InvalidOperationException(JoinRejectionReasons.NameTaken);
+            }
+            else
+            {
+                characterKey = new CharacterKey(normalizedDisplayName);
+            }
+        }
+
         if (Runtime.Sessions.TryGet(sessionId, out ConnectedPlayer? existing) && existing != null)
         {
+            if (characterKey is { } requestedKey
+                && existing.IsSpawned
+                && !existing.IsLocal
+                && !existing.CharacterKey.Equals(requestedKey))
+            {
+                // A connection plays one character (G-D17); the seat is not switched.
+                throw new InvalidOperationException(JoinRejectionReasons.AlreadyJoined);
+            }
+
             // A session that left stays registered (DetachRemoteSession only despawns it) while it
             // is among the registry's most recently left sessions
             // (PlayerSessionRegistry.MaxDepartedSessions), so a reconnect lands here; an older one
@@ -93,12 +172,14 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             }
             else
             {
-                existing = Runtime.AttachRemoteSession(sessionId, normalizedDisplayName);
+                existing = Runtime.AttachRemoteSession(sessionId, shownName, characterKey);
                 if (returning)
                 {
                     // DetachRemoteSession saved the profile; a recreated player starts from it.
-                    Runtime.RestorePersistedPlayerState(sessionId, existing.DisplayName);
+                    Runtime.RestorePersistedPlayerState(sessionId, existing.CharacterKey.Value, normalizedDisplayName, account);
                 }
+
+                Runtime.CommitCharacterAccess(normalizedDisplayName, access);
             }
 
             existing.ResetAcceptedSequences();
@@ -126,18 +207,22 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             !player.IsLocal &&
             player.IsSpawned &&
             player.SessionId != sessionId &&
-            string.Equals(player.DisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase));
+            (characterKey is { } wantedKey
+                ? player.CharacterKey.Equals(wantedKey)
+                : string.Equals(player.DisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase)));
         if (duplicateNameInUse)
         {
             NetworkDiagnosticsLog.Write(
                 "authority.join.reject",
                 $"session={requestedSessionId} name={normalizedDisplayName} reason=duplicate-display-name");
-            throw new InvalidOperationException(
-                $"Display name '{normalizedDisplayName}' is already claimed by another active player.");
+            throw new InvalidOperationException(characterKey != null
+                ? JoinRejectionReasons.CharacterInUse
+                : $"Display name '{normalizedDisplayName}' is already claimed by another active player.");
         }
 
-        ConnectedPlayer player = Runtime.AttachRemoteSession(sessionId, normalizedDisplayName);
-        Runtime.RestorePersistedPlayerState(sessionId, player.DisplayName);
+        ConnectedPlayer player = Runtime.AttachRemoteSession(sessionId, shownName, characterKey);
+        Runtime.RestorePersistedPlayerState(sessionId, player.CharacterKey.Value, normalizedDisplayName, account);
+        Runtime.CommitCharacterAccess(normalizedDisplayName, access);
         PlayerInventorySnapshot? inventory = Runtime.TryCaptureInventorySnapshot(player.SessionId);
         JoinAcceptedMessage accepted = new(
             player.SessionId.Value,

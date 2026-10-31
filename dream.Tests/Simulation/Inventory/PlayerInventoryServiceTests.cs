@@ -133,8 +133,11 @@ public sealed class PlayerInventoryServiceTests
                 new PersistedInventorySlot("Bob", 5, 12, DateTime.UtcNow)
             ],
             [Item(11, "Bob"), Item(12, "Bob")]));
-        Assert.True(inventory.IsLoaded("bob"));
-        Assert.True(inventory.LoadedSlotsByPlayer.ContainsKey("BOB"));
+        // Wave G (G-D7): keys compare ordinally, so another casing is another character.
+        Assert.True(inventory.IsLoaded("Bob"));
+        Assert.False(inventory.IsLoaded("bob"));
+        Assert.True(inventory.LoadedSlotsByPlayer.ContainsKey("Bob"));
+        Assert.False(inventory.LoadedSlotsByPlayer.ContainsKey("BOB"));
 
         inventory.ApplyLoaded("Bob", new PersistedPlayerInventory(
             [new PersistedInventorySlot("Bob", 0, 99, DateTime.UtcNow)],
@@ -224,7 +227,7 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Eve"));
 
-        inventory.Evict("eve");
+        inventory.Evict("Eve");
 
         Assert.Equal(0, inventory.LoadedInventoryCount);
         Assert.Equal(0, inventory.LoadedItemInstanceCount);
@@ -371,7 +374,7 @@ public sealed class PlayerInventoryServiceTests
         int lanternSlot = IndexOfStarter("tool.survey-lantern");
 
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", torchSlot));
-        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("judy"));
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Judy"));
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", lanternSlot));
         Assert.Equal(HeldLightKind.Lantern, inventory.ResolveEquippedHeldLight("Judy"));
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", 0));

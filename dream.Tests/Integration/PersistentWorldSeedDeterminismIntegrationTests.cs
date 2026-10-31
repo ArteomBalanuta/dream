@@ -315,7 +315,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
             foreach (string session in Sessions)
             {
-                Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}")));
+                Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}", Dream.Tests.Support.TestAccountTokens.For($"Name {session}"))));
             }
 
             // The host defers a join until its player's saved state is loaded on the persistence

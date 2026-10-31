@@ -5,14 +5,17 @@ using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
 using Dream.Client.World;
+using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Content;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Integration;
+using Dream.Tests.Support;
 using Dream.Tests.Server.Persistence.Migrations;
 
 namespace Dream.Tests.Load;
@@ -82,6 +85,26 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 Assert.All(o.EnemyKinds, kind => Assert.True(ContentCatalog.Shipped.TryGetEnemy(kind, out _), kind));
             }
         }),
+        ("every session's character is owned, and the owners survive the restart unchanged", (before, after) =>
+        {
+            // Checked when the run's hosts had accounts wired (the SQLite account repository in the bundle).
+            if (!after.AccountsWired)
+            {
+                return;
+            }
+
+            foreach (string session in Sessions)
+            {
+                string player = WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
+                Assert.NotNull(before.OwnerByCharacter[player]);
+                Assert.Equal(before.OwnerByCharacter[player], after.OwnerByCharacter[player]);
+            }
+
+            Assert.Equal(before.AccountCount, after.AccountCount);
+            Assert.Equal(Sessions.Length, after.AccountCount);
+            Assert.Equal(0, before.AccountsOverLimit);
+            Assert.Equal(0, after.AccountsOverLimit);
+        }),
     ];
 
     internal sealed record RestartObservation(
@@ -91,7 +114,14 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         IReadOnlyDictionary<string, long[]> ItemsByPlayer,
         IReadOnlyCollection<string> Profiles,
         IReadOnlyDictionary<long, string> ItemKinds,
-        IReadOnlyList<string> EnemyKinds);
+        IReadOnlyList<string> EnemyKinds,
+        // Wave G: the owning account of each character (null: unowned), the number of accounts, how many
+        // accounts own more than 5 characters, and whether the run's hosts had accounts wired at all
+        // (a host built without a SQLite account repository leaves every owner null).
+        IReadOnlyDictionary<string, long?> OwnerByCharacter,
+        int AccountCount,
+        int AccountsOverLimit,
+        bool AccountsWired);
 
     [Fact]
     public async Task AServerStoppedMidSession_RestartsWithTheInvariantsIntact_AndTheRejoinedClientsMatch()
@@ -101,6 +131,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         // Run 1: three clients connected and moving; the stop leaves them connected.
         Stopwatch firstStart = Stopwatch.StartNew();
         DedicatedServerHost host1 = Bootstrap(db, out _);
+        bool accountsWired = host1.Runtime!.HasAccounts;
         firstStart.Stop();
         Assert.True(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
         WireLoopbackServer server1 = await WireLoopbackServer.StartAsync(host1);
@@ -131,7 +162,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the stop released the world");
-        RestartObservation before = Observe(db);
+        RestartObservation before = Observe(db, accountsWired);
         output.WriteLine($"after the stop: {before.Ids.AllObjects.Count} objects, {before.ItemsByPlayer.Count} players with items, {before.EnemyKinds.Count} enemies, counter {before.Ids.NextObjectId}");
         Assert.Equal(Sessions.Length, before.ItemsByPlayer.Count);
 
@@ -155,6 +186,15 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 Assert.True(await server2.FlushAllAsync());
             }
 
+            if (accountsWired)
+            {
+                // A client with another token asking for an owned character is refused, and the owner stays seated.
+                JoinRejectedMessage refused = await server2.ConnectAndGetJoinRejectionAsync(
+                    "restart-stranger", $"Name {Sessions[0]}", TestAccountTokens.For("someone else"));
+                Assert.Equal(JoinRejectionReasons.CharacterOwned, refused.Reason);
+                Assert.True(server2.Host.IsConnectionJoined(server2.ConnectionFor(rejoined[0]).ConnectionId));
+            }
+
             ulong serverChecksum = WorldStateChecksum.Compute(server2.Runtime.Map);
             foreach (WireLoopbackClient client in rejoined)
             {
@@ -171,7 +211,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
-        RestartObservation after = Observe(db);
+        RestartObservation after = Observe(db, accountsWired);
         foreach ((string name, Action<RestartObservation, RestartObservation> check) in Invariants)
         {
             try
@@ -270,7 +310,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         return host;
     }
 
-    private static RestartObservation Observe(MigrationTestDatabase db)
+    private static RestartObservation Observe(MigrationTestDatabase db, bool accountsWired)
     {
         SqliteConnection.ClearAllPools();
         ObjectIdTestSupport.PersistedIds ids = ObjectIdTestSupport.ReadIds(db.DatabasePath);
@@ -278,6 +318,9 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         List<string> profiles = [];
         Dictionary<long, string> itemKinds = [];
         List<string> enemyKinds = [];
+        Dictionary<string, long?> owners = [];
+        int accountCount;
+        int accountsOverLimit;
         string integrity;
         WorldIntegrityReport report;
         using (SqliteConnection connection = db.Schema.CreateOpenConnection())
@@ -336,6 +379,28 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
             using (SqliteCommand command = connection.CreateCommand())
             {
+                command.CommandText = "SELECT p.player_name, p.account_id FROM player_profiles AS p;";
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    owners[reader.GetString(0)] = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+                }
+            }
+
+            using (SqliteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT COUNT(*) FROM accounts;";
+                accountCount = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+
+            using (SqliteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT COUNT(*) FROM (SELECT account_id FROM player_profiles WHERE account_id IS NOT NULL GROUP BY account_id HAVING COUNT(*) > 5);";
+                accountsOverLimit = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+
+            using (SqliteCommand command = connection.CreateCommand())
+            {
                 command.CommandText = "PRAGMA integrity_check;";
                 integrity = Convert.ToString(command.ExecuteScalar(), CultureInfo.InvariantCulture) ?? string.Empty;
             }
@@ -347,6 +412,6 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         SqliteConnection.ClearAllPools();
-        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds);
+        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired);
     }
 }
