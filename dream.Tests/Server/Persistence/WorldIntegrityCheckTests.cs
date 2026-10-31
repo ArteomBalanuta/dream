@@ -286,4 +286,76 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.False(report.IsFatal);
         output.WriteLine($"legacy soft findings: oob={report.ObjectsOutOfBounds} unknownItems={report.UnknownItemKinds} unknownEnemies={report.UnknownEnemyKinds}");
     }
+
+    [Fact]
+    public void SixCharactersOnOneAccount_IsASoftFinding_AndTheServerStillStarts()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            "INSERT INTO accounts (account_id, token_hash, created_utc, last_seen_utc) VALUES (1, zeroblob(32), 'x', 'x');" +
+            string.Concat(Enumerable.Range(1, 6).Select(i =>
+                $"INSERT INTO player_profiles (player_name, display_name, account_id) VALUES ('c{i}', 'C{i}', 1);")));
+
+        WorldIntegrityReport report = Check(db);
+
+        Assert.Equal(1, report.AccountsOverLimit);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("more than 5 characters", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FiveCharactersOnOneAccount_IsNotAFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            "INSERT INTO accounts (account_id, token_hash, created_utc, last_seen_utc) VALUES (1, zeroblob(32), 'x', 'x');" +
+            string.Concat(Enumerable.Range(1, 5).Select(i =>
+                $"INSERT INTO player_profiles (player_name, display_name, account_id) VALUES ('c{i}', 'C{i}', 1);")));
+
+        Assert.Equal(0, Check(db).AccountsOverLimit);
+    }
+
+    [Fact]
+    public void ADroppedUniqueIndexWithDuplicateDisplayNames_IsASoftFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            "DROP INDEX ux_player_profiles_display_name;" +
+            "INSERT INTO player_profiles (player_name, display_name) VALUES ('k1', 'Bob'), ('k2', 'BOB'), ('k3', 'Carol');");
+
+        WorldIntegrityReport report = Check(db);
+
+        Assert.Equal(1, report.DuplicateDisplayNames);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+    }
+
+    [Fact]
+    public void UnownedCharacters_AreCountedInTheHeadLine_ButAreNoSoftFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('k1', 'Bob'), ('k2', 'Carol');");
+
+        WorldIntegrityReport report = Check(db);
+
+        Assert.Equal(2, report.UnownedCharacters);
+        Assert.False(report.HasSoftFindings);
+        string line = Assert.Single(report.ToLogLines(WorldDescriptor.Default));
+        Assert.Contains("2 unowned character(s)", line, StringComparison.Ordinal);
+        Assert.Contains("no findings", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABadAccountId_IsFatalThroughTheForeignKeyCheck()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            "PRAGMA foreign_keys = OFF; INSERT INTO player_profiles (player_name, display_name, account_id) VALUES ('k', 'K', 99);");
+
+        WorldIntegrityReport report = Check(db);
+
+        Assert.True(report.IsFatal);
+        Assert.True(report.ForeignKeyViolations >= 1);
+    }
 }

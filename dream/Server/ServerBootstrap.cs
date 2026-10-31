@@ -6,6 +6,7 @@ using Dream.Multiplayer.Transport;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
+using Dream.Server.Persistence.Repositories;
 using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
@@ -543,7 +544,8 @@ public static class ServerBootstrap
             descriptor,
             storedTerrain: storedTerrain,
             terrainPayload: terrainPayload,
-            hostLease: lease);
+            hostLease: lease,
+            accounts: new SqliteAccountRepository(schema));
     }
 
     // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the
