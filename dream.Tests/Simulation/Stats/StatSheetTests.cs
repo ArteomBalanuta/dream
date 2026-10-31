@@ -1,0 +1,190 @@
+using Xunit;
+using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
+using Dream.Simulation.Stats;
+
+namespace Dream.Tests.Simulation.Stats;
+
+public class StatSheetTests
+{
+    private static StatBlock BlockOf(float strength, float attackSpeed, float vitality)
+    {
+        StatBlock block = default;
+        block[StatId.Strength] = strength;
+        block[StatId.AttackSpeed] = attackSpeed;
+        block[StatId.Vitality] = vitality;
+        return block;
+    }
+
+    private static StatModifier[] ModifiersOf(ToolStatModifier tool) =>
+    [
+        new(StatId.Strength, StatOp.Flat, tool.StrengthBonus),
+        new(StatId.AttackSpeed, StatOp.Flat, tool.AttackSpeedBonus),
+        new(StatId.Vitality, StatOp.Flat, tool.VitalityBonus)
+    ];
+
+    private static IEnumerable<ToolStatModifier> AllToolModifiers()
+    {
+        yield return default;
+        foreach (string kind in ToolCatalog.StarterItemKinds)
+        {
+            yield return ToolCatalog.Resolve(kind).StatModifier;
+        }
+    }
+
+    [Fact]
+    public void Resolution_EqualsLegacyCombine_ForEveryToolAcrossBaseRange_BitForBit()
+    {
+        const int stride = 13;
+        int lowBits = BitConverter.SingleToInt32Bits(PlayerCombatStats.MinAttackSpeed);
+        int highBits = BitConverter.SingleToInt32Bits(PlayerCombatStats.MaxAttackSpeed);
+        StatSheet sheet = new();
+        long compared = 0;
+
+        foreach (ToolStatModifier tool in AllToolModifiers())
+        {
+            StatModifier[] modifiers = ModifiersOf(tool);
+            int step = 0;
+            for (int bits = lowBits; ; bits = Math.Min(highBits, bits + stride))
+            {
+                float attackSpeed = BitConverter.Int32BitsToSingle(bits);
+                int strength = 1 + step % 50;
+                int vitality = 1 + step * 7 % 50;
+                step++;
+
+                PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
+                PlayerCombatStats legacy = PlayerCombatStats.Combine(baseStats, tool);
+
+                sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
+                sheet.SetSource(0, modifiers);
+
+                Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]));
+                Assert.Equal(legacy.Strength, (int)sheet.Effective[StatId.Strength]);
+                Assert.Equal(legacy.Vitality, (int)sheet.Effective[StatId.Vitality]);
+                compared++;
+
+                if (bits == highBits)
+                {
+                    break;
+                }
+            }
+        }
+
+        Assert.True(compared > 1_000_000);
+    }
+
+    [Fact]
+    public void Resolution_EqualsLegacyCombine_ForEveryStrengthAndVitalityWithEveryTool()
+    {
+        StatSheet sheet = new();
+        foreach (ToolStatModifier tool in AllToolModifiers())
+        {
+            StatModifier[] modifiers = ModifiersOf(tool);
+            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength++)
+            {
+                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality++)
+                {
+                    foreach (float attackSpeed in new[] { 0.5f, 1.0f, 2.0f, 4.99f, 5.0f })
+                    {
+                        PlayerCombatStats legacy = PlayerCombatStats.Combine(
+                            new PlayerCombatStats { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality },
+                            tool);
+                        sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
+                        sheet.SetSource(0, modifiers);
+
+                        Assert.Equal((float)legacy.Strength, sheet.Effective[StatId.Strength]);
+                        Assert.Equal((float)legacy.Vitality, sheet.Effective[StatId.Vitality]);
+                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]));
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void PlayerCombatant_StatsMatchLegacyCombine_ForEveryTool()
+    {
+        foreach (ToolStatModifier tool in AllToolModifiers())
+        {
+            PlayerCombatStats baseStats = new() { Strength = 48, AttackSpeed = 4.5f, Vitality = 3 };
+            PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
+            combatant.ApplyEquippedToolModifier(tool);
+
+            PlayerCombatStats legacy = PlayerCombatStats.Combine(combatant.BaseStats, tool);
+            Assert.Equal(legacy.Strength, combatant.Stats.Strength);
+            Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
+            Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
+            Assert.Equal(combatant.Stats.Strength, (int)combatant.StatSheet.Effective[StatId.Strength]);
+        }
+    }
+
+    [Fact]
+    public void Resolution_AppliesFlatThenPercent_InSlotOrder()
+    {
+        StatSheet sheet = new();
+        sheet.SetBase(BlockOf(10f, 2f, 10f));
+        sheet.SetSource(3, [new StatModifier(StatId.Strength, StatOp.Percent, 0.5f)]);
+        sheet.SetSource(1, [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.Strength, StatOp.Flat, 2f)]);
+
+        Assert.Equal((10f + (0f + 4f + 2f)) * (1f + 0.5f), sheet.Effective[StatId.Strength]);
+
+        sheet.ClearSource(1);
+        Assert.Equal(15f, sheet.Effective[StatId.Strength]);
+        sheet.ClearSource(3);
+        Assert.Equal(10f, sheet.Effective[StatId.Strength]);
+    }
+
+    [Fact]
+    public void Resolution_ClampsEffectiveAndBase()
+    {
+        StatSheet sheet = new();
+        sheet.SetBase(BlockOf(500f, -3f, 0f));
+        Assert.Equal(50f, sheet.Base[StatId.Strength]);
+        Assert.Equal(0.5f, sheet.Base[StatId.AttackSpeed]);
+        Assert.Equal(1f, sheet.Base[StatId.Vitality]);
+
+        sheet.SetBase(BlockOf(50f, 5f, 1f));
+        sheet.SetSource(0, [new StatModifier(StatId.Strength, StatOp.Flat, 8f), new StatModifier(StatId.Vitality, StatOp.Percent, -2f)]);
+        Assert.Equal(50f, sheet.Effective[StatId.Strength]);
+        Assert.Equal(1f, sheet.Effective[StatId.Vitality]);
+    }
+
+    [Fact]
+    public void SetSource_RejectsBadSlotsAndOversizedSources()
+    {
+        StatSheet sheet = new();
+        Assert.Throws<ArgumentOutOfRangeException>(() => sheet.SetSource(StatSheet.SourceCapacity, []));
+        Assert.Throws<ArgumentOutOfRangeException>(() => sheet.ClearSource(-1));
+        Assert.Throws<ArgumentException>(() => sheet.SetSource(0, new StatModifier[StatSheet.MaxModifiersPerSource + 1]));
+        Assert.Throws<ArgumentException>(() => sheet.SetSource(0, [new StatModifier(StatId.Count, StatOp.Flat, 1f)]));
+    }
+
+    [Fact]
+    public void Resolution_AllocatesNothing()
+    {
+        StatSheet sheet = new();
+        StatBlock block = BlockOf(20f, 2f, 20f);
+        StatModifier[] modifiers = ModifiersOf(ToolCatalog.Resolve("tool.field-blade").StatModifier);
+
+        for (int i = 0; i < 100; i++)
+        {
+            sheet.SetBase(block);
+            sheet.SetSource(0, modifiers);
+            sheet.ClearSource(0);
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        float sink = 0f;
+        for (int i = 0; i < 10_000; i++)
+        {
+            sheet.SetBase(block);
+            sheet.SetSource(i & 15, modifiers);
+            sink += sheet.Effective[StatId.Strength];
+            sheet.ClearSource(i & 15);
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(sink > 0f);
+        Assert.Equal(0, allocated);
+    }
+}

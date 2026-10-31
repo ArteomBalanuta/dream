@@ -3,6 +3,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.Rules;
+using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Players;
 
@@ -14,11 +15,15 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
     private float _attackCooldownRemaining;
+    private const int EquippedToolSourceSlot = 0;
+    private readonly StatSheet _statSheet = new();
     private ToolStatModifier _equippedToolModifier;
 
     public PlayerCombatStats BaseStats { get; }
 
     public PlayerCombatStats Stats { get; }
+
+    public StatSheet StatSheet => _statSheet;
 
     public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
@@ -97,10 +102,35 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     private void RecalculateEffectiveStats()
     {
-        PlayerCombatStats effectiveStats = PlayerCombatStats.Combine(BaseStats, _equippedToolModifier);
-        Stats.Strength = effectiveStats.Strength;
-        Stats.AttackSpeed = effectiveStats.AttackSpeed;
-        Stats.Vitality = effectiveStats.Vitality;
+        StatBlock baseBlock = default;
+        baseBlock[StatId.Strength] = BaseStats.Strength;
+        baseBlock[StatId.AttackSpeed] = BaseStats.AttackSpeed;
+        baseBlock[StatId.Vitality] = BaseStats.Vitality;
+        _statSheet.SetBase(baseBlock);
+
+        Span<StatModifier> toolModifiers = stackalloc StatModifier[3];
+        int count = 0;
+        if (_equippedToolModifier.StrengthBonus != 0)
+        {
+            toolModifiers[count++] = new StatModifier(StatId.Strength, StatOp.Flat, _equippedToolModifier.StrengthBonus);
+        }
+
+        if (_equippedToolModifier.AttackSpeedBonus != 0f)
+        {
+            toolModifiers[count++] = new StatModifier(StatId.AttackSpeed, StatOp.Flat, _equippedToolModifier.AttackSpeedBonus);
+        }
+
+        if (_equippedToolModifier.VitalityBonus != 0)
+        {
+            toolModifiers[count++] = new StatModifier(StatId.Vitality, StatOp.Flat, _equippedToolModifier.VitalityBonus);
+        }
+
+        _statSheet.SetSource(EquippedToolSourceSlot, toolModifiers[..count]);
+
+        ref readonly StatBlock effective = ref _statSheet.Effective;
+        Stats.Strength = (int)effective[StatId.Strength];
+        Stats.AttackSpeed = effective[StatId.AttackSpeed];
+        Stats.Vitality = (int)effective[StatId.Vitality];
         DerivedStats = Stats.Derive(_combatFormulaService, Level);
         if (Health != null)
         {
