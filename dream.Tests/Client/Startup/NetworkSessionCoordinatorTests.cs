@@ -114,6 +114,50 @@ public class NetworkSessionCoordinatorTests
         await session!.DisposeAsync();
     }
 
+    [Fact]
+    public async Task TryUseLocalServer_WhileAConnectIsInFlight_IsRefused_AndDoesNotStartASecondConnect()
+    {
+        FakeLocalServerHandle localServer = new(isReady: true, boundPort: 6123);
+        SlowConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(localServer, connector);
+        ClientConnectionOptions slowHost = new("slow.example.net", "5057", "player-a");
+
+        coordinator.BeginConnect(slowHost);
+        Assert.True(coordinator.IsBusy);
+
+        bool used = coordinator.TryUseLocalServer("player-a", out ClientConnectionOptions? options);
+
+        Assert.False(used);
+        Assert.Null(options);
+        Assert.Equal(ConnectionFlowState.Connecting, coordinator.State);
+        coordinator.BeginConnect(slowHost);
+        Assert.Equal(1, connector.Calls);
+
+        connector.Release();
+        await coordinator.WaitForPendingConnectionAsync();
+        Assert.Equal(ConnectionFlowState.Connected, coordinator.State);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    private sealed class SlowConnector : IRemoteSessionConnector
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls { get; private set; }
+
+        public void Release() => _gate.SetResult();
+
+        public async ValueTask<RemoteClientSession> ConnectAsync(
+            RemoteClientOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            await _gate.Task.ConfigureAwait(false);
+            return await new FakeRemoteSessionConnector().ConnectAsync(options, cancellationToken);
+        }
+    }
+
     private sealed class FakeLocalServerHandle : ILocalServerHandle
     {
         public FakeLocalServerHandle(bool isReady, int boundPort, string? errorMessage = null)

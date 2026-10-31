@@ -216,7 +216,7 @@ public static class ServerBootstrap
         {
             log(
                 $"Server not started: world {ex.WorldId} is already hosted by another process " +
-                $"(lock file {ex.LockPath}). Stop that server, or select another world (--world, or DREAM_WORLD).");
+                $"(lock file {ex.LockPath}). Stop that server. Selecting another world (--world, or DREAM_WORLD) only helps when no database migration is pending: a pending migration needs every world idle.");
             exitCode = WorldHeldExitCode;
             return null;
         }
@@ -391,7 +391,7 @@ public static class ServerBootstrap
         WorldRecord record;
         bool created;
         WorldHostLease? lease;
-        using (DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, databasePath, log))
+        using (DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, databasePath, log, start?.MaintenanceWait))
         {
             record = worlds.Resolve(selector, newWorldSize, out created);
 
@@ -410,7 +410,8 @@ public static class ServerBootstrap
                 // saved its world time and seed): read what the previous holder left.
                 try
                 {
-                    record = worlds.TryGet(resolved.Id) ?? record;
+                    // A null here is a world deleted between the resolve and the lease.
+                    record = worlds.TryGet(resolved.Id) ?? throw new WorldNotFoundException(resolved.Id.ToString());
                 }
                 catch
                 {

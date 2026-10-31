@@ -13,8 +13,12 @@ namespace Dream.Server.Hosting;
 // operating system drops it when the holder dies. A database that is not a file takes no lock.
 public sealed class DatabaseMaintenanceLock : IDisposable
 {
-    // How long a start waits for a restore or another start's migration to finish.
+    // How long a dedicated start waits for a restore or another start's migration to finish.
     public static readonly TimeSpan StartWait = TimeSpan.FromSeconds(20);
+
+    // The integrated server starts on the client's update thread, which must not freeze for the
+    // dedicated wait: it gives up quickly and the connection screen's retry button starts it again.
+    public static readonly TimeSpan IntegratedStartWait = TimeSpan.FromMilliseconds(250);
 
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(25);
 
@@ -38,7 +42,15 @@ public sealed class DatabaseMaintenanceLock : IDisposable
     public static DatabaseMaintenanceLock? TryAcquire(string databasePath, TimeSpan wait)
     {
         string lockPath = GetLockPath(databasePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(lockPath)) ?? ".");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(lockPath)) ?? ".");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            throw new LockFileUnavailableException(lockPath, ex);
+        }
+
         DateTime deadline = DateTime.UtcNow + wait;
         while (true)
         {
@@ -76,7 +88,8 @@ public sealed class DatabaseMaintenanceLock : IDisposable
     public static DatabaseMaintenanceLock? EnsureSchemaGuarded(
         SqliteSchemaBootstrapper schema,
         string databasePath,
-        Action<string>? log)
+        Action<string>? log,
+        TimeSpan? wait = null)
     {
         ArgumentNullException.ThrowIfNull(schema);
         if (!WorldHostLease.AppliesTo(databasePath))
@@ -85,7 +98,7 @@ public sealed class DatabaseMaintenanceLock : IDisposable
             return null;
         }
 
-        DatabaseMaintenanceLock gate = Acquire(databasePath, StartWait);
+        DatabaseMaintenanceLock gate = Acquire(databasePath, wait ?? StartWait);
         List<WorldHostLease> leases = [];
         try
         {

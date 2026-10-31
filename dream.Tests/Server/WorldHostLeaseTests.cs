@@ -332,21 +332,137 @@ public sealed class WorldHostLeaseTests
 
         SqliteConnection.ClearAllPools();
         List<WorldId> asked = [];
-        RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), asked);
+        bool heldDuringRead = false;
+        RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), asked)
+        {
+            OnTryGet = (id, stored) =>
+            {
+                heldDuringRead = WorldHostLease.IsHeld(db.DatabasePath, id);
+                return stored! with { WorldTimeTicks = 987_654_321L };
+            }
+        };
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
             db.DatabasePath, MigrationTestDatabase.InitScriptPath, catalog: catalog);
 
         Assert.Equal([WorldId.Default], asked);
+        Assert.True(heldDuringRead);
+        Assert.Equal(987_654_321L, bundle.WorldTimeTicks);
+    }
+
+    [Fact]
+    public void AStart_WhoseWorldVanishesBetweenResolveAndLease_ThrowsWorldNotFound_AndReleasesTheLease()
+    {
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        SqliteConnection.ClearAllPools();
+        RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), [])
+        {
+            OnTryGet = (_, _) => null
+        };
+
+        WorldNotFoundException ex = Assert.Throws<WorldNotFoundException>(() => ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath, MigrationTestDatabase.InitScriptPath, catalog: catalog));
+
+        Assert.Equal(WorldId.Default.ToString(), ex.Selector);
+        Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
+
+        List<string> log = [];
+        using DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+            () => ServerBootstrap.CreateAuthoritativeHost(ServerBootstrap.CreatePersistenceBundle(
+                db.DatabasePath, MigrationTestDatabase.InitScriptPath, catalog: catalog)),
+            log.Add,
+            out int exitCode);
+        Assert.Null(host);
+        Assert.Equal(ServerBootstrap.WorldNotFoundExitCode, exitCode);
+    }
+
+    [Fact]
+    public void AnIntegratedStart_GivesUpQuicklyOnABusyDatabase_WhileTheDedicatedWaitIsLong()
+    {
+        Assert.True(DatabaseMaintenanceLock.IntegratedStartWait <= TimeSpan.FromSeconds(1));
+        Assert.True(DatabaseMaintenanceLock.StartWait >= TimeSpan.FromSeconds(10));
+
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        SqliteConnection.ClearAllPools();
+        using DatabaseMaintenanceLock restoring = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        Assert.Throws<DatabaseBusyException>(() => ServerBootstrap.CreatePersistenceBundle(
+            db.DatabasePath,
+            MigrationTestDatabase.InitScriptPath,
+            start: new ServerStartOptions(MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait)));
+
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void AServerStart_OnABusyDatabase_ExitsWithTheWorldHeldCode()
+    {
+        using MigrationTestDatabase db = new();
+        using (Open(db))
+        {
+        }
+
+        SqliteConnection.ClearAllPools();
+        using DatabaseMaintenanceLock restoring = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
+        List<string> log = [];
+
+        using DedicatedServerHost? host = ServerBootstrap.TryCreateServerModeHost(
+            () => ServerBootstrap.CreateAuthoritativeHost(ServerBootstrap.CreatePersistenceBundle(
+                db.DatabasePath,
+                MigrationTestDatabase.InitScriptPath,
+                start: new ServerStartOptions(MaintenanceWait: TimeSpan.Zero))),
+            log.Add,
+            out int exitCode);
+
+        Assert.Null(host);
+        Assert.Equal(ServerBootstrap.WorldHeldExitCode, exitCode);
+    }
+
+    [Fact]
+    public void AWorldsCommand_OnABusyDatabase_ExitsWithTheWorldHeldCode()
+    {
+        StringWriter error = new();
+        int exit = WorldCli.Run(
+            ["list"],
+            () => throw new DatabaseBusyException("db.maintenance.lock"),
+            new StringWriter(),
+            error);
+
+        Assert.Equal(WorldCli.ExitWorldHeld, exit);
+        Assert.Contains("Try again", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheMaintenanceLock_WhoseDirectoryCannotBeCreated_IsALockFileError()
+    {
+        using MigrationTestDatabase db = new();
+        string blocker = Path.Combine(db.RootDirectory, "not-a-directory");
+        File.WriteAllText(blocker, "x");
+
+        Assert.Throws<LockFileUnavailableException>(
+            () => DatabaseMaintenanceLock.TryAcquire(Path.Combine(blocker, "world.db"), TimeSpan.Zero));
     }
 
     private sealed class RecordingCatalog(IWorldCatalog inner, List<WorldId> asked) : IWorldCatalog
     {
+        // Sees the id and the stored record, and returns what TryGet reports.
+        public Func<WorldId, WorldRecord?, WorldRecord?>? OnTryGet { get; init; }
+
         public IReadOnlyList<WorldRecord> List() => inner.List();
 
         public WorldRecord? TryGet(WorldId id)
         {
             asked.Add(id);
-            return inner.TryGet(id);
+            WorldRecord? stored = inner.TryGet(id);
+            return OnTryGet == null ? stored : OnTryGet(id, stored);
         }
 
         public WorldRecord? TryGetByName(string name) => inner.TryGetByName(name);

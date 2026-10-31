@@ -240,6 +240,70 @@ public sealed class DatabaseCliTests
         Assert.Equal(1L, CountPlayers(db.DatabasePath, "bob"));
     }
 
+    // SQLite itself removes a stray -wal when it opens the file, so the sidecar handling is tested on the
+    // two internal steps that see them: the swap and the safety copy.
+    [Fact]
+    public void SwapIn_ReplacesTheFile_AndRemovesTheOldWalAndShm()
+    {
+        using MigrationTestDatabase db = new();
+        File.WriteAllText(db.DatabasePath, "old");
+        File.WriteAllText(db.DatabasePath + "-wal", "old-wal");
+        File.WriteAllText(db.DatabasePath + "-shm", "old-shm");
+        string staged = db.DatabasePath + ".restore.tmp";
+        File.WriteAllText(staged, "new");
+
+        DatabaseCli.SwapIn(staged, db.DatabasePath);
+
+        Assert.Equal("new", File.ReadAllText(db.DatabasePath));
+        Assert.False(File.Exists(db.DatabasePath + "-wal"));
+        Assert.False(File.Exists(db.DatabasePath + "-shm"));
+        Assert.Empty(Directory.GetFiles(db.RootDirectory, "*.restore-aside"));
+    }
+
+    [Fact]
+    public void SwapIn_WhenItFailsAfterTheWalMovedAside_PutsTheWalAndShmBack()
+    {
+        using MigrationTestDatabase db = new();
+        File.WriteAllText(db.DatabasePath, "old");
+        File.WriteAllText(db.DatabasePath + "-wal", "old-wal");
+        File.WriteAllText(db.DatabasePath + "-shm", "old-shm");
+        string staged = db.DatabasePath + ".restore.tmp";
+        File.WriteAllText(staged, "new");
+
+        // The final move fails: the live file is held open without sharing.
+        using (new FileStream(db.DatabasePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.ThrowsAny<Exception>(() => DatabaseCli.SwapIn(staged, db.DatabasePath));
+        }
+
+        Assert.Equal("old", File.ReadAllText(db.DatabasePath));
+        Assert.Equal("old-wal", File.ReadAllText(db.DatabasePath + "-wal"));
+        Assert.Equal("old-shm", File.ReadAllText(db.DatabasePath + "-shm"));
+        Assert.Empty(Directory.GetFiles(db.RootDirectory, "*.restore-aside"));
+    }
+
+    [Fact]
+    public void SafetyCopy_OfADamagedLiveFile_KeepsItsWalAndShmBesideTheRawCopy()
+    {
+        using MigrationTestDatabase db = new();
+        byte[] damaged = Enumerable.Repeat((byte)0x41, 6000).ToArray();
+        File.WriteAllBytes(db.DatabasePath, damaged);
+        File.WriteAllText(db.DatabasePath + "-wal", "wal-bytes");
+        File.WriteAllText(db.DatabasePath + "-shm", "shm-bytes");
+        string safety = db.DatabasePath + ".pre-restore.test.bak";
+
+        // SQLite deletes a stray -wal it can; held open (readable, not deletable) they survive its attempt.
+        using (new FileStream(db.DatabasePath + "-wal", FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (new FileStream(db.DatabasePath + "-shm", FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            DatabaseCli.SafetyCopy(db.DatabasePath, safety);
+        }
+
+        Assert.Equal(damaged, File.ReadAllBytes(safety));
+        Assert.Equal("wal-bytes", File.ReadAllText(safety + "-wal"));
+        Assert.Equal("shm-bytes", File.ReadAllText(safety + "-shm"));
+    }
+
     [Fact]
     public void Restore_WhenEvenTheRawSafetyCopyFails_AbortsAndLeavesTheLiveFileAlone()
     {

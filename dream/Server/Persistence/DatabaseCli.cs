@@ -221,9 +221,7 @@ public static class DatabaseCli
                     }
                 }
 
-                DeleteIfExists(databasePath + "-wal");
-                DeleteIfExists(databasePath + "-shm");
-                File.Move(staged, databasePath, overwrite: true);
+                SwapIn(staged, databasePath);
                 output.WriteLine(
                     $"restored\t{source}" + (hadDatabase ? $"\tprevious database kept as {safety}" : string.Empty));
                 return ExitOk;
@@ -262,7 +260,7 @@ public static class DatabaseCli
     // (a consistent snapshot), and when that fails (a damaged header is error 26, a truncated file
     // 11) a raw copy of the file with its -wal and -shm. When even that fails the partial copy is
     // removed and the exception goes to the caller, which aborts the restore.
-    private static void SafetyCopy(string databasePath, string safety)
+    internal static void SafetyCopy(string databasePath, string safety)
     {
         try
         {
@@ -271,7 +269,8 @@ public static class DatabaseCli
             current.BackupDatabase(copy);
             return;
         }
-        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            || ex is SqliteException { SqliteErrorCode: 11 or 26 })
         {
             DeleteSafetyCopy(safety);
         }
@@ -291,6 +290,56 @@ public static class DatabaseCli
         {
             DeleteSafetyCopy(safety);
             throw;
+        }
+    }
+
+    // Puts the staged copy in place of the live file. The live WAL and shared-memory files belong to the
+    // old database: they move aside (not deleted) so a failed swap can put them back and leave the live
+    // database exactly as it was; after a good swap they are removed.
+    internal static void SwapIn(string staged, string databasePath)
+    {
+        List<(string Original, string Aside)> asides = [];
+        try
+        {
+            foreach (string suffix in new[] { "-wal", "-shm" })
+            {
+                string original = databasePath + suffix;
+                if (File.Exists(original))
+                {
+                    string aside = original + ".restore-aside";
+                    DeleteIfExists(aside);
+                    File.Move(original, aside);
+                    asides.Add((original, aside));
+                }
+            }
+
+            File.Move(staged, databasePath, overwrite: true);
+        }
+        catch
+        {
+            foreach ((string original, string aside) in asides)
+            {
+                TryRestoreAside(aside, original);
+            }
+
+            throw;
+        }
+
+        foreach ((_, string aside) in asides)
+        {
+            TryDelete(aside);
+        }
+    }
+
+    private static void TryRestoreAside(string aside, string original)
+    {
+        try
+        {
+            File.Move(aside, original, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Left beside the database under the aside name; the failure message still names the safety copy.
         }
     }
 

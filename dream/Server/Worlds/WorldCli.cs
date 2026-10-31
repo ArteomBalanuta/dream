@@ -30,14 +30,31 @@ public static class WorldCli
     internal const string OfflineNote = "Note: stop the server hosting this world first.";
 
     // Runs against the default database (migrating it first). args are the arguments after --worlds.
+    // The database's maintenance lock is taken for the migration and kept until the command ends, so
+    // a --db restore cannot swap the file between the lease check and the command's writes, and
+    // `create` (which takes no lease) cannot interleave with a restore either.
     public static int Run(string[] args)
     {
-        return Run(
-            args,
-            OpenDefaultCatalog,
-            Console.Out,
-            Console.Error,
-            worldId => WorldHostLease.TryAcquire(ServerBootstrap.DefaultDatabasePath, worldId));
+        DatabaseMaintenanceLock? maintenance = null;
+        try
+        {
+            return Run(
+                args,
+                () =>
+                {
+                    SqliteSchemaBootstrapper schema = new(ServerBootstrap.DefaultDatabasePath, ServerBootstrap.DefaultSchemaScriptPath);
+                    // With every world's lease too when a migration is pending.
+                    maintenance = DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, ServerBootstrap.DefaultDatabasePath, log: null);
+                    return new SqliteWorldCatalog(schema);
+                },
+                Console.Out,
+                Console.Error,
+                worldId => WorldHostLease.TryAcquire(ServerBootstrap.DefaultDatabasePath, worldId));
+        }
+        finally
+        {
+            maintenance?.Dispose();
+        }
     }
 
     // acquireLease returns the world's lease, or null when another holder has it; null (the
@@ -109,14 +126,6 @@ public static class WorldCli
             error.WriteLine(Usage);
             return ExitUsage;
         }
-    }
-
-    private static IWorldCatalog OpenDefaultCatalog()
-    {
-        SqliteSchemaBootstrapper schema = new(ServerBootstrap.DefaultDatabasePath, ServerBootstrap.DefaultSchemaScriptPath);
-        // Under the maintenance lock, and with every world's lease when a migration is pending.
-        DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, ServerBootstrap.DefaultDatabasePath, log: null)?.Dispose();
-        return new SqliteWorldCatalog(schema);
     }
 
     private static Func<IWorldCatalog, int>? Parse(

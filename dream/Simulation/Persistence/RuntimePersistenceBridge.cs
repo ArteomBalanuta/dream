@@ -407,9 +407,10 @@ internal sealed partial class RuntimePersistenceBridge
             _events,
             actorId: actorId,
             maxHealth: enemy.Stats.MaxHealth,
-            // From the template, as for a freshly spawned enemy: every row written so far has
-            // Strength 10 (damage 12), and a stored stat must not make behaviour depend on the
-            // restart history after enemies.json is edited.
+            // Attack damage comes from the template, as for a freshly spawned enemy: every row
+            // written so far has Strength 10 (damage 12), and a stored strength must not make damage
+            // depend on the restart history after enemies.json is edited. Max health, attack
+            // interval (from the row's attack speed) and move speed are still read from the row.
             attackDamage: template.AttackDamage,
             attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight);

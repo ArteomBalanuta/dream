@@ -64,6 +64,14 @@ public sealed class NetworkSessionCoordinator
     // player entered alone, and nothing is persisted.
     public bool TryUseLocalServer(string playerName, out ClientConnectionOptions? options)
     {
+        // A connect is in flight: refreshing the idle state would flip Connecting to ReadyToConnect and
+        // let a second BeginConnect run beside it (one session would leak).
+        if (IsBusy)
+        {
+            options = null;
+            return false;
+        }
+
         if (_localServer.ErrorMessage != null)
         {
             _localServer.ResetFailure();

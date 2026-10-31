@@ -30,7 +30,7 @@ public sealed class UnknownEnemyKindRestoreTests
             // Wolf numbers still come from the template: range and aggro are not the row's.
             Assert.Equal(10f, restored.AggroRange);
             Assert.Equal(1.35f, restored.AttackRange);
-            // Damage is the template's, not derived from the stored Strength.
+            // Damage is the template's, not derived from the stored Strength (30 here: a derivation would give 32).
             Assert.Equal(12, restored.Combatant.AttackDamage);
 
             // Checkpoints never delete rows: one full checkpoint later, the Dragon row is still there.
@@ -95,7 +95,7 @@ public sealed class UnknownEnemyKindRestoreTests
             kind,
             new Vector3(9f + (id % 3), 1f, 9f),
             Vector3.UnitZ,
-            new PersistedCreatureStats(40, 100, 10, 10, 10, 0, 2.8f, 1f, 1),
+            new PersistedCreatureStats(40, 100, 30, 10, 10, 0, 2.8f, 1f, 1),
             now,
             now);
     }
