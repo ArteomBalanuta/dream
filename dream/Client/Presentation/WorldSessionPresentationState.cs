@@ -33,7 +33,9 @@ public sealed record WorldSessionPresentationState(
         int level,
         int experience,
         int experienceToNextLevel,
-        FramePerformanceSnapshot performance = default)
+        FramePerformanceSnapshot performance = default,
+        PlayerCombatStats? baseStats = null,
+        int armor = 0)
     {
         return new WorldSessionPresentationState(
             camera,
@@ -52,7 +54,12 @@ public sealed record WorldSessionPresentationState(
                 playerStats.Vitality,
                 level,
                 experience,
-                experienceToNextLevel),
+                experienceToNextLevel,
+                // Without a base block the effective stats stand in, as before gear existed.
+                baseStats?.Strength ?? playerStats.Strength,
+                baseStats?.AttackSpeed ?? playerStats.AttackSpeed,
+                baseStats?.Vitality ?? playerStats.Vitality,
+                armor),
             performance);
     }
 

@@ -178,7 +178,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 0,
                 0,
                 0,
-                Physics.MapCubeBodies.Count));
+                Physics.MapCubeBodies.Count),
+            Player.Combatant.BaseStats,
+            Player.Combatant.EffectiveArmor);
     }
 
     public void RebuildMapForWorld(WorldDescriptor world, IMapSource? source = null)
