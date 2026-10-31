@@ -2,7 +2,7 @@
 
 Purpose: give multiple players different names, stats and items, let individual items differ, and put enemies on the same system. Also place the remaining persistence Phase 5 hardening.
 
-Status: accepted as the working plan; wave F starts now. The user decisions in section 3 are still open. Analysed read-only on `integrate/engine-iteration` at `d504d4d` (schema v6, protocol v8). Nothing has been implemented. No test was run for this analysis.
+Status: accepted. Wave F is done. On 2026-10-31 the user accepted the recommended default for all ten decisions in section 3 (U1-U10), so they are settled as written there. Analysed read-only on `integrate/engine-iteration` at `d504d4d` (schema v6, protocol v8). Nothing has been implemented. No test was run for this analysis.
 
 ## 1. Where Things Stand
 
