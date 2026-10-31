@@ -25,6 +25,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
     private const string C0Sha256 = "40391109031e35d04b26c1232579691b99ac37bd1d68166b003232bed4b42a42";
+    private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
     public async Task GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture()
@@ -39,6 +40,30 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         Assert.Equal(C0FrameKinds, first.Kinds);
         Assert.Equal(C0TotalBytes, first.TotalBytes);
         Assert.Equal(C0FrameCount, first.Kinds.Split(',').Length);
+
+        // The real frame, before any normalisation. Wave H's gate is 3,565 B + 15%.
+        output.WriteLine($"server.join-accepted, starter kit: {first.JoinAcceptedBytes:N0} B");
+        Assert.True(first.JoinAcceptedBytes <= JoinAcceptedGateBytes, $"{first.JoinAcceptedBytes} B");
+    }
+
+    // The normalisation may remove only the three new fields, in their place behind detailLines: rarity,
+    // isRolled, an item's other fields and a field out of order must all stay and fail the capture.
+    [Theory]
+    [InlineData(
+        "\"detailLines\":[\"a\"],\"modifiers\":[{\"stat\":0,\"op\":0,\"value\":1}],\"heldLight\":1,\"equipSlots\":3,\"stackCount\":1",
+        "\"detailLines\":[\"a\"],\"stackCount\":1")]
+    [InlineData(
+        "\"detailLines\":[],\"equipSlots\":1,\"rarity\":2,\"isRolled\":true",
+        "\"detailLines\":[],\"rarity\":2,\"isRolled\":true")]
+    [InlineData(
+        "\"detailLines\":[],\"heldLight\":1,\"modifiers\":[]",
+        "\"detailLines\":[],\"modifiers\":[]")]
+    [InlineData(
+        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3",
+        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3")]
+    public void TheEquipmentFieldNormalisation_RemovesOnlyTheThreeNewFieldsAfterDetailLines(string frame, string expected)
+    {
+        Assert.Equal(expected, ItemEquipmentFields().Replace(frame, "$1"));
     }
 
     // Over real TCP a client joins a stored World10k: checksum, raised key sets and rubble equal.
@@ -154,7 +179,8 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         string kinds = string.Join(",", frames.Select(frame => frame.Decoded.Envelope.MessageKind));
         return new FrameCapture(kinds, total, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant())
         {
-            Texts = [.. texts]
+            Texts = [.. texts],
+            JoinAcceptedBytes = frames.Single(frame => frame.Decoded.Envelope.MessageKind == "server.join-accepted").Payload.Length
         };
     }
 
@@ -167,6 +193,9 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     private sealed record FrameCapture(string Kinds, long TotalBytes, string Sha256)
     {
         public string[] Texts { get; init; } = [];
+
+        // The join-accepted frame's real payload length, before normalisation.
+        public int JoinAcceptedBytes { get; init; }
 
         public bool Equals(FrameCapture? other) => other != null && Kinds == other.Kinds && TotalBytes == other.TotalBytes && Sha256 == other.Sha256;
 

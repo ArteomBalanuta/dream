@@ -6,11 +6,13 @@ using Xunit;
 using Xunit.Abstractions;
 using Dream.Client.World;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Simulation.Characters;
 using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -27,15 +29,19 @@ namespace Dream.Tests.Load;
 // session ids rejoin.
 //
 // Later waves add their data to this test in one place: append an entry to Invariants (and a field
-// to RestartObservation if it needs a new read). Each entry is checked after the restart against
-// what the database held right after the stop, and on the observation of the first run.
+// to RestartObservation if it needs a new read). Each entry is checked after the last restart against
+// what the database held right after the stop before it. The server stops mid-session twice: run 2 adds
+// rolled gear, so that stop is the one the entries compare with.
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 {
     private static readonly string[] Sessions = ["restart-a", "restart-b", "restart-c"];
 
-    // Name, check. before: the database right after the stop. after: the database after the restart
-    // server joined the same sessions and stopped again.
+    // What run 2 grants and equips on the last session, one item for each equipment slot.
+    private static readonly string[] RolledGear = ["gear.iron-blade", "gear.ward-lantern", "gear.leather-cap", "gear.leather-vest"];
+
+    // Name, check. before: the database right after the stop that ends run 2. after: the database after
+    // the restart server joined the same sessions and stopped again.
     internal static readonly (string Name, Action<RestartObservation, RestartObservation> Check)[] Invariants =
     [
         ("object ids are unique and below the stored counter", (before, after) =>
@@ -107,19 +113,19 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }),
         ("every character's stored rolls and equipment rows are unchanged by the restart", (before, after) =>
         {
-            // Wave H2. No run creates a rolled item yet; the glue adds one to run 2 (a rolled, fully equipped character).
+            // Wave H. Run 2 gives one character four rolled, equipped items, so these are never empty sets.
+            Assert.Contains(before.RollsByCharacter.Values, rolls => rolls.Length == RolledGear.Length);
+            Assert.Contains(before.EquipmentByCharacter.Values, rows => rows.Length == RolledGear.Length);
             Assert.Equal(before.RollsByCharacter.Keys.Order(StringComparer.Ordinal), after.RollsByCharacter.Keys.Order(StringComparer.Ordinal));
             foreach ((string player, string[] rolls) in before.RollsByCharacter)
             {
                 Assert.Equal(rolls, after.RollsByCharacter[player]);
             }
 
-            foreach (string session in Sessions)
+            Assert.Equal(before.EquipmentByCharacter.Keys.Order(StringComparer.Ordinal), after.EquipmentByCharacter.Keys.Order(StringComparer.Ordinal));
+            foreach ((string player, string[] rows) in before.EquipmentByCharacter)
             {
-                string player = WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
-                Assert.Equal(
-                    before.EquipmentByCharacter.GetValueOrDefault(player, []),
-                    after.EquipmentByCharacter.GetValueOrDefault(player, []));
+                Assert.Equal(rows, after.EquipmentByCharacter[player]);
             }
         }),
     ];
@@ -183,51 +189,103 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the stop released the world");
-        RestartObservation before = Observe(db, accountsWired);
-        output.WriteLine($"after the stop: {before.Ids.AllObjects.Count} objects, {before.ItemsByPlayer.Count} players with items, {before.EnemyKinds.Count} enemies, counter {before.Ids.NextObjectId}");
-        Assert.Equal(Sessions.Length, before.ItemsByPlayer.Count);
+        RestartObservation firstStop = Observe(db, accountsWired);
+        output.WriteLine($"after the stop: {firstStop.Ids.AllObjects.Count} objects, {firstStop.ItemsByPlayer.Count} players with items, {firstStop.EnemyKinds.Count} enemies, counter {firstStop.Ids.NextObjectId}");
+        Assert.Equal(Sessions.Length, firstStop.ItemsByPlayer.Count);
 
-        // Run 2: restart and rejoin; each client must build the server's map.
+        // Run 2: restart and rejoin; each client must build the server's map. One character then gets
+        // rolled gear in all four slots (H1's service on H2's repository, the equips as client intents),
+        // and this run ends in a stop in the middle of the session too.
         Stopwatch secondStart = Stopwatch.StartNew();
         DedicatedServerHost host2 = Bootstrap(db, out List<string> log2);
         secondStart.Stop();
         Assert.Contains(log2, l => l.Contains("integrity check", StringComparison.Ordinal));
         output.WriteLine($"server start (bootstrap + host): first {firstStart.Elapsed.TotalMilliseconds:0.0} ms, restart {secondStart.Elapsed.TotalMilliseconds:0.0} ms");
-        await using (WireLoopbackServer server2 = await WireLoopbackServer.StartAsync(host2))
+        WireLoopbackServer server2 = await WireLoopbackServer.StartAsync(host2);
+        List<WireLoopbackClient> rejoined = [];
+        foreach (string session in Sessions)
         {
-            List<WireLoopbackClient> rejoined = [];
+            rejoined.Add(await server2.ConnectAndJoinAsync(session));
+        }
+
+        for (int tick = 0; tick < 5; tick++)
+        {
+            await server2.TickAsync();
+            Assert.True(await server2.FlushAllAsync());
+        }
+
+        if (accountsWired)
+        {
+            // A client with another token asking for an owned character is refused, and the owner stays seated.
+            JoinRejectedMessage refused = await server2.ConnectAndGetJoinRejectionAsync(
+                "restart-stranger", $"Name {Sessions[0]}", TestAccountTokens.For("someone else"));
+            Assert.Equal(JoinRejectionReasons.CharacterOwned, refused.Reason);
+            Assert.True(server2.Host.IsConnectionJoined(server2.ConnectionFor(rejoined[0]).ConnectionId));
+        }
+
+        AssertClientsBuiltTheServersMap(server2, rejoined);
+
+        string geared = WorldSessionRuntime.ResolveJoinPlayerName(Sessions[^1], $"Name {Sessions[^1]}");
+        PlayerInventoryService inventory = server2.Runtime.InventoryService;
+        for (int i = 0; i < RolledGear.Length; i++)
+        {
+            ItemRollSeed seed = new(1, server2.Runtime.CurrentServerTick, 7, 0, i);
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryGrantRolled(geared, RolledGear[i], ItemRarity.Rare, in seed));
+            int slot = inventory.BuildSnapshot(geared).Slots.First(s => s.Item?.ItemKind == RolledGear[i]).SlotIndex;
+            await rejoined[^1].SendActionAsync(new InventoryEquipIntent(slot));
+            await server2.TickAsync();
+            Assert.True(await server2.FlushAllAsync());
+        }
+
+        PlayerSessionId gearedSession = new(Sessions[^1]);
+        PlayerInventorySnapshot gearedInventory = server2.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
+        Assert.Equal(RolledGear[0], gearedInventory.EquippedSlot!.Value.Item!.Value.ItemKind);
+        Assert.Equal(RolledGear[1..], gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemKind));
+
+        await server2.Service.DisposeAsync();
+        server2.Runtime.DisposeWithoutFinalCheckpoint();
+        server2.Host.Dispose();
+        foreach (WireLoopbackClient client in rejoined)
+        {
+            await client.DisposeAsync();
+        }
+
+        Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the second stop released the world");
+        RestartObservation before = Observe(db, accountsWired);
+        Assert.Equal(RolledGear.Length, before.RollsByCharacter[geared].Length);
+        Assert.Equal(RolledGear.Length, before.EquipmentByCharacter[geared].Length);
+
+        // What run 1 stored outlived run 2. The gear is new, so this is a subset check.
+        Assert.Empty(firstStop.Ids.Items.Except(before.Ids.Items));
+        Assert.Empty(firstStop.Ids.Cubes.Except(before.Ids.Cubes));
+        Assert.True(before.Ids.NextObjectId >= firstStop.Ids.NextObjectId);
+
+        // Run 3: restart and rejoin again; the gear is worn and the rows checked below are unchanged.
+        DedicatedServerHost host3 = Bootstrap(db, out _);
+        await using (WireLoopbackServer server3 = await WireLoopbackServer.StartAsync(host3))
+        {
+            List<WireLoopbackClient> again = [];
             foreach (string session in Sessions)
             {
-                rejoined.Add(await server2.ConnectAndJoinAsync(session));
+                again.Add(await server3.ConnectAndJoinAsync(session));
             }
 
             for (int tick = 0; tick < 5; tick++)
             {
-                await server2.TickAsync();
-                Assert.True(await server2.FlushAllAsync());
+                await server3.TickAsync();
+                Assert.True(await server3.FlushAllAsync());
             }
 
-            if (accountsWired)
-            {
-                // A client with another token asking for an owned character is refused, and the owner stays seated.
-                JoinRejectedMessage refused = await server2.ConnectAndGetJoinRejectionAsync(
-                    "restart-stranger", $"Name {Sessions[0]}", TestAccountTokens.For("someone else"));
-                Assert.Equal(JoinRejectionReasons.CharacterOwned, refused.Reason);
-                Assert.True(server2.Host.IsConnectionJoined(server2.ConnectionFor(rejoined[0]).ConnectionId));
-            }
+            AssertClientsBuiltTheServersMap(server3, again);
+            PlayerInventorySnapshot worn = server3.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
+            Assert.Equal(gearedInventory.EquippedSlot!.Value.Item!.Value.ItemInstanceId, worn.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
+            Assert.Equal(
+                gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemInstanceId),
+                worn.Equipment!.Select(row => row.Item!.Value.ItemInstanceId));
 
-            ulong serverChecksum = WorldStateChecksum.Compute(server2.Runtime.Map);
-            foreach (WireLoopbackClient client in rejoined)
+            foreach (WireLoopbackClient client in again)
             {
-                using ClientWorldSession world = new(server2.Runtime.Map.Width, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
-                TerrainPersistenceLoopbackTests.ApplyAllFrames(client, world);
-                Assert.Equal(serverChecksum, WorldStateChecksum.Compute(world.Map));
-                Assert.Empty(world.Map.FindInvariantViolations());
-            }
-
-            foreach (WireLoopbackClient client in rejoined)
-            {
-                await server2.DisconnectAsync(client);
+                await server3.DisconnectAsync(client);
             }
         }
 
@@ -245,6 +303,18 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             }
         }
 
+    }
+
+    private static void AssertClientsBuiltTheServersMap(WireLoopbackServer server, List<WireLoopbackClient> clients)
+    {
+        ulong serverChecksum = WorldStateChecksum.Compute(server.Runtime.Map);
+        foreach (WireLoopbackClient client in clients)
+        {
+            using ClientWorldSession world = new(server.Runtime.Map.Width, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+            TerrainPersistenceLoopbackTests.ApplyAllFrames(client, world);
+            Assert.Equal(serverChecksum, WorldStateChecksum.Compute(world.Map));
+            Assert.Empty(world.Map.FindInvariantViolations());
+        }
     }
 
     // The integrity check's cost on the seeded World10k database (DREAM_LOAD_TEST=1): the numbers the
