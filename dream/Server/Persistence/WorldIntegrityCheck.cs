@@ -40,14 +40,20 @@ public sealed record WorldIntegrityReport(
     int UnknownItemKinds,
     int UnknownEnemyKinds,
     IReadOnlyList<string> UnknownKindNames,
-    TimeSpan Elapsed)
+    TimeSpan Elapsed,
+    int AccountsOverLimit = 0,
+    int DuplicateDisplayNames = 0,
+    int UnownedCharacters = 0)
 {
+    // UnownedCharacters is information only (every legacy character is unowned until a token claims it):
+    // it is in the head line and never in HasSoftFindings.
     // Foreign-key violations or corruption: the start must stop.
     public bool IsFatal => ForeignKeyViolations > 0 || CorruptionMessage != null;
 
     public bool HasSoftFindings =>
         ObjectsOutOfBounds > 0 || SlotsMissingItem > 0 || EquippedWithoutBackpackItem > 0
-        || SharedItemReferences > 0 || UnknownItemKinds > 0 || UnknownEnemyKinds > 0;
+        || SharedItemReferences > 0 || UnknownItemKinds > 0 || UnknownEnemyKinds > 0
+        || AccountsOverLimit > 0 || DuplicateDisplayNames > 0;
 
     public string FatalMessage =>
         CorruptionMessage != null
@@ -59,6 +65,11 @@ public sealed record WorldIntegrityReport(
     {
         string head = $"World '{descriptor.Name}' (id {descriptor.Id}) integrity check: " +
             $"{Elapsed.TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)} ms";
+        if (UnownedCharacters > 0)
+        {
+            head += $", {UnownedCharacters} unowned character(s)";
+        }
+
         if (!IsFatal && !HasSoftFindings)
         {
             yield return head + ", no findings.";
@@ -96,6 +107,16 @@ public sealed record WorldIntegrityReport(
             yield return $"  {SharedItemReferences} extra inventory slot reference(s) to an item already held in another slot or by another player.";
         }
 
+        if (AccountsOverLimit > 0)
+        {
+            yield return $"  {AccountsOverLimit} account(s) own more than {Dream.Simulation.Characters.CharacterNames.MaxCharactersPerAccount} characters (kept).";
+        }
+
+        if (DuplicateDisplayNames > 0)
+        {
+            yield return $"  {DuplicateDisplayNames} character display name(s) shared ignoring case (kept).";
+        }
+
         if (UnknownItemKinds > 0 || UnknownEnemyKinds > 0)
         {
             yield return $"  unknown kinds: {UnknownItemKinds} item row(s), {UnknownEnemyKinds} enemy row(s) " +
@@ -128,6 +149,9 @@ public static class WorldIntegrityCheck
         int shared = 0;
         int unknownItems = 0;
         int unknownEnemies = 0;
+        int overLimit = 0;
+        int duplicateNames = 0;
+        int unowned = 0;
         List<string> unknownNames = [];
         try
         {
@@ -144,6 +168,9 @@ public static class WorldIntegrityCheck
             shared = Count(connection, SharedItemReferencesSql, worldId, descriptor: null);
             unknownItems = CountUnknown(connection, "item_instances", "item_kind", worldId, options.IsKnownItemKind, unknownNames);
             unknownEnemies = CountUnknown(connection, "enemy_instances", "enemy_kind", worldId, options.IsKnownEnemyKind, unknownNames);
+            overLimit = Count(connection, AccountsOverLimitSql, worldId: null, descriptor: null);
+            duplicateNames = Count(connection, DuplicateDisplayNamesSql, worldId: null, descriptor: null);
+            unowned = Count(connection, UnownedCharactersSql, worldId: null, descriptor: null);
         }
         catch (SqliteException ex) when (IsCorruption(ex))
         {
@@ -160,7 +187,10 @@ public static class WorldIntegrityCheck
             unknownItems,
             unknownEnemies,
             unknownNames,
-            Stopwatch.GetElapsedTime(started));
+            Stopwatch.GetElapsedTime(started),
+            overLimit,
+            duplicateNames,
+            unowned);
     }
 
     // SQLITE_CORRUPT (11) and SQLITE_NOTADB (26).
@@ -191,11 +221,15 @@ public static class WorldIntegrityCheck
         return rows;
     }
 
-    private static int Count(SqliteConnection connection, string sql, long worldId, WorldDescriptor? descriptor)
+    private static int Count(SqliteConnection connection, string sql, long? worldId, WorldDescriptor? descriptor)
     {
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = sql;
-        command.Parameters.AddWithValue("$world", worldId);
+        if (worldId is { } world)
+        {
+            command.Parameters.AddWithValue("$world", world);
+        }
+
         if (descriptor != null)
         {
             command.Parameters.AddWithValue("$w", descriptor.Width);
@@ -236,6 +270,19 @@ public static class WorldIntegrityCheck
 
         return unknown;
     }
+
+    // Accounts holding more characters than the limit (two processes can breach it; see the wave G plan).
+    private static readonly string AccountsOverLimitSql = $"""
+        SELECT COUNT(*) FROM (SELECT account_id FROM player_profiles WHERE account_id IS NOT NULL
+          GROUP BY account_id HAVING COUNT(*) > {Dream.Simulation.Characters.CharacterNames.MaxCharactersPerAccount});
+        """;
+
+    // Display names shared ignoring ASCII case; only possible when the unique index is missing.
+    private const string DuplicateDisplayNamesSql = """
+        SELECT COUNT(*) FROM (SELECT 1 FROM player_profiles GROUP BY display_name COLLATE NOCASE HAVING COUNT(*) > 1);
+        """;
+
+    private const string UnownedCharactersSql = "SELECT COUNT(*) FROM player_profiles WHERE account_id IS NULL;";
 
     // Cube cells, rubble parent cells and terrain override cells outside [0,width) x [0,height) x [0,depth).
     private const string OutOfBoundsSql = """
