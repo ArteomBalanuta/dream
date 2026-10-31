@@ -214,30 +214,76 @@ public partial class PlayScene
 
     private readonly EquipmentLoadout _equipmentLoadout = new();
 
+    // What the local player's inventory snapshot says to show: the visual of each hand and the one
+    // held light. Built from the snapshot alone; the client reads no item catalog.
+    internal readonly record struct EquipmentPresentation(
+        string MainHandVisualId,
+        string? OffHandVisualId,
+        HeldLightKind HeldLight);
+
+    // Fills the loadout (modifiers per slot) from the snapshot and returns the visuals and light.
+    // The snapshot is the server's word and may be hostile: EquipmentLoadout skips non-finite values
+    // and unknown stats and stops at 8 modifiers per slot, an unknown light is None, and a missing
+    // or odd entry is an empty slot. It never throws.
+    internal static EquipmentPresentation ReadEquipment(PlayerInventorySnapshot? inventory, EquipmentLoadout loadout)
+    {
+        loadout.Clear();
+        if (inventory is not PlayerInventorySnapshot snapshot)
+        {
+            // Before the first snapshot the default loadout shows.
+            return new EquipmentPresentation(ViewModelAssets.DefaultLoadout.HeldItemId, null, HeldLightKind.None);
+        }
+
+        HeldLightKind mainLight = HeldLightKind.None;
+        HeldLightKind offLight = HeldLightKind.None;
+        string mainVisual = ViewModelAssets.EmptyHeldItemId;
+        string? offVisual = null;
+
+        if (snapshot.EquippedSlot?.Item is InventoryItemSnapshot mainItem)
+        {
+            mainVisual = mainItem.VisualId ?? string.Empty;
+            loadout.Set(EquipmentSlot.MainHand, mainItem.Modifiers!);
+            mainLight = KnownLight(mainItem.HeldLight);
+        }
+
+        IReadOnlyList<InventorySlotSnapshot>? equipment = snapshot.Equipment;
+        if (equipment is not null)
+        {
+            for (int i = 0; i < equipment.Count; i++)
+            {
+                InventorySlotSnapshot entry = equipment[i];
+                // 100 is the main hand's own field; anything outside 101..103 is not a slot.
+                if (entry.Item is not InventoryItemSnapshot item
+                    || !EquipmentSlots.TryFromSlotIndex(entry.SlotIndex, out EquipmentSlot slot)
+                    || slot == EquipmentSlot.MainHand)
+                {
+                    continue;
+                }
+
+                loadout.Set(slot, item.Modifiers!);
+                if (slot == EquipmentSlot.OffHand)
+                {
+                    offVisual = item.VisualId ?? string.Empty;
+                    offLight = KnownLight(item.HeldLight);
+                }
+            }
+        }
+
+        return new EquipmentPresentation(mainVisual, offVisual, EquipmentSlots.ResolveHeldLight(mainLight, offLight));
+    }
+
+    private static HeldLightKind KnownLight(HeldLightKind light) =>
+        Enum.IsDefined(light) ? light : HeldLightKind.None;
+
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
-        string heldItemId;
-        _equipmentLoadout.Clear();
-        HeldLightKind heldLight = HeldLightKind.None;
-        if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
-        {
-            heldItemId = equippedItem.VisualId;
-            // A kind this client does not know is inert: no modifier, no light, no throw.
-            if (ToolCatalog.TryResolve(equippedItem.ItemKind, out ToolDefinition definition))
-            {
-                _equipmentLoadout.Set(EquipmentSlot.MainHand, definition.Modifiers);
-                heldLight = definition.HeldLight;
-            }
-        }
-        else
-        {
-            heldItemId = ViewModelAssets.DefaultLoadout.HeldItemId;
-        }
+        EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
 
         _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);
-        _viewModelController.SetHeldItem(heldItemId);
+        _viewModelController.SetHeldItem(presentation.MainHandVisualId);
+        _viewModelController.SetOffHandItem(presentation.OffHandVisualId);
         // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
-        _localHeldLight = heldLight;
+        _localHeldLight = presentation.HeldLight;
     }
 }

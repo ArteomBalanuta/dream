@@ -14,7 +14,11 @@ public readonly record struct HudStatusSnapshot(
     int Vitality,
     int Level,
     int Experience,
-    int ExperienceToNextLevel)
+    int ExperienceToNextLevel,
+    int BaseStrength = 0,
+    float BaseAttackSpeed = 0f,
+    int BaseVitality = 0,
+    int Armor = 0)
 {
     // The HUD reads these every frame, so each label is rebuilt only when its values change.
     private static readonly LastLabelCache<(int Current, int Max)> HealthLabels =

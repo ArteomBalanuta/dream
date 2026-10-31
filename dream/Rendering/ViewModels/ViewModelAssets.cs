@@ -77,6 +77,20 @@ public static class ViewModelAssets
         new Vector3(-6f, 12f, -4f),
         0.26f);
 
+    // The main hand is empty: nothing is drawn. The empty ModelPath is how the renderer knows;
+    // it is kept out of BuiltInDefinitions because that list is preloaded as model paths.
+    public const string EmptyHeldItemId = "held.none";
+
+    public static readonly ViewModelDefinition EmptyHeldItemDefinition = new(
+        EmptyHeldItemId,
+        ViewModelSlot.HeldItem,
+        string.Empty,
+        null,
+        null,
+        Vector3.Zero,
+        Vector3.Zero,
+        1f);
+
     public static readonly IReadOnlyList<ViewModelDefinition> BuiltInDefinitions =
         Array.AsReadOnly(new[]
         {

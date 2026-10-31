@@ -82,6 +82,14 @@ public partial class PlayScene
                 new InventoryEquipIntent(request.EquipInventorySlotIndex.Value)));
         }
 
+        if (request.InventoryAction is InventoryHudAction inventoryAction)
+        {
+            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
+                new PlayerSessionId(_remoteClient.SessionId),
+                _actionSequences.NextActionSequence(),
+                ToInventoryIntent(inventoryAction)));
+        }
+
         if (request.BuildMaterial is BuildMaterialChoice buildMaterial)
         {
             // The server keeps the pick per session and places it from the next build on; the HUD
@@ -112,6 +120,16 @@ public partial class PlayScene
             PersistDesktopClientConfig();
         }
     }
+
+    // One panel action, one intent. Slots and the item id are what the panel showed; the server
+    // validates every one of them and creates nothing from them.
+    internal static IPlayerActionPayload ToInventoryIntent(in InventoryHudAction action) => action.Kind switch
+    {
+        InventoryHudActionKind.Unequip => new InventoryUnequipIntent(action.SlotIndex),
+        InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
+        InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
+        _ => new InventoryEquipIntent(action.SlotIndex, action.Target)
+    };
 
     private void PersistDesktopClientConfig()
     {
