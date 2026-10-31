@@ -57,3 +57,11 @@ Run on copies of the 4 local legacy databases (`legacy-e`), Debug build.
 - Hopping between worlds works as a revive. Wave I's respawn work revisits it.
 - Homoglyph names (look-alike characters from other scripts) are allowed by policy. Names reserve their exact-case key, and display names are unique only ignoring ASCII case.
 - A token whose characters were all released counts as a new account for the per-source limit, since the limit reads the character count from the join's prefetch.
+
+## Verification After The Fix Loops
+
+- **Review:** 1 Must fix (a running server overwrote progress made in another world), fixed in loop 1. The re-review found no Must fix; its two Should fix items went into loop 2. One of them was a narrow regression in the loop 1 stamp rule, now fixed by comparing against the time the prefetch started.
+- **Full suite on `78d0178`:** 4,096 passed, 43 skipped (load tests only), 0 failed.
+- **Perf script after its edit:** both clients joined, `desktop-client.txt` was restored byte for byte, and no process was left running.
+- **Not repeated after the fix loops:** the Release gates and the real-process attacks. Loop 1 and 2 touched the join pre-step, profile restore, logging and client identity, so the join-window figures above were measured before those changes.
+- **Process slip:** the loop 1 implementer ran the full suite three times, over the limit of two.
