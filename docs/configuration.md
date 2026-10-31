@@ -381,7 +381,7 @@ dream --items list <world> <character>
 
 `grant` is offline: it takes the world's lease, so it refuses a world a server is hosting. There is no live grant. The character must have joined that world once, because the starter grant row has to exist: without it the next join would treat the inventory as a pre-kit one. Only a kind with a `rolls` table in `items.json` can be granted (`gear.iron-blade`, `gear.ward-lantern`, `gear.leather-cap`, `gear.leather-vest`). `list` takes no lease.
 
-Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or backpack full, 3 the database is newer than this build, 7 the world is held, 8 invalid content.
+Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or backpack full, 3 the database is newer than this build, 7 the world is held or the database is busy (a maintenance lock or a SQLite busy error), 8 invalid content.
 
 ### Equipment slots
 

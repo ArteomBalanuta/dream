@@ -199,12 +199,16 @@ public sealed class EquipmentTestWorld : IWorldPersistenceRepository
         }
     }
 
-    public void DeleteInventorySlot(string playerName, int slotIndex)
+    public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
     {
         lock (_gate)
         {
             Interlocked.Increment(ref _slotWrites);
-            _slots.Remove((playerName.Trim(), slotIndex));
+            if (_slots.TryGetValue((playerName.Trim(), slotIndex), out PersistedInventorySlot row)
+                && row.ItemInstanceId == expectedItemInstanceId)
+            {
+                _slots.Remove((playerName.Trim(), slotIndex));
+            }
         }
     }
 

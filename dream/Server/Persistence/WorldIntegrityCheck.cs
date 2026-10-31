@@ -400,7 +400,9 @@ public static class WorldIntegrityCheck
 
     // Extra references beyond the first to the same item, over backpack slots and players. The equipped
     // slots (100..103) legitimately alias a backpack slot of the same player, so that pair is not counted; an
-    // equipped slot with no such alias is counted as a reference of its own.
+    // equipped slot with no such alias is counted as a reference of its own. An item in several equipment
+    // slots of one player is one reference at most (the extra rows are ItemsInTwoEquipmentSlots), so it is
+    // not counted twice.
     private static readonly string SharedItemReferencesSql = $"""
         SELECT COALESCE(SUM(n - 1), 0) FROM (
           SELECT COUNT(*) AS n FROM player_inventory_slots AS s
@@ -410,6 +412,12 @@ public static class WorldIntegrityCheck
               WHERE b.world_id = s.world_id AND b.player_name = s.player_name
                 AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
                 AND b.item_instance_id = s.item_instance_id))
+            AND NOT (s.slot_index BETWEEN {FirstEquip} AND {LastEquip} AND EXISTS (
+              SELECT 1 FROM player_inventory_slots AS e2
+              WHERE e2.world_id = s.world_id AND e2.player_name = s.player_name
+                AND e2.item_instance_id = s.item_instance_id
+                AND e2.slot_index BETWEEN {FirstEquip} AND {LastEquip}
+                AND e2.slot_index < s.slot_index))
           GROUP BY s.item_instance_id
           HAVING COUNT(*) > 1);
         """;

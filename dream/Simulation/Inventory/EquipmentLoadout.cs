@@ -14,7 +14,9 @@ public sealed class EquipmentLoadout
 
     public void Clear() => Array.Clear(_counts);
 
-    public void Set(EquipmentSlot slot, IReadOnlyList<StatModifier> modifiers)
+    // flatOnly also skips Percent modifiers: no shipped item gives one, so a Percent in a server
+    // snapshot is hostile (a finite overflow times zero is NaN).
+    public void Set(EquipmentSlot slot, IReadOnlyList<StatModifier> modifiers, bool flatOnly = false)
     {
         int index = (int)slot;
         if ((uint)index >= EquipmentSlots.Count)
@@ -31,6 +33,7 @@ public sealed class EquipmentLoadout
                 StatModifier modifier = modifiers[i];
                 if ((uint)modifier.Stat >= (uint)StatId.Count
                     || (uint)modifier.Op > (uint)StatOp.Percent
+                    || (flatOnly && modifier.Op != StatOp.Flat)
                     || !float.IsFinite(modifier.Value))
                 {
                     continue;

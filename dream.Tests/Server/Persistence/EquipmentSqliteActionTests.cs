@@ -75,8 +75,8 @@ public sealed class EquipmentSqliteActionTests
     [Fact]
     public void TheProductionFacade_ImplementsEveryRepositoryMember_NoInterfaceDefaultStandsIn()
     {
-        // The wave H repository methods have do-nothing default bodies, for the test fakes. On the facade
-        // one of those would silently drop the write.
+        // The repository interfaces have no default bodies (a missing forward does not compile), but a
+        // default member added later would silently drop the write on the facade. This catches it.
         foreach (Type contract in typeof(IWorldPersistenceRepository).GetInterfaces().Append(typeof(IWorldPersistenceRepository)))
         {
             InterfaceMapping map = typeof(SqliteWorldPersistenceRepository).GetInterfaceMap(contract);

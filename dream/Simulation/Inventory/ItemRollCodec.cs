@@ -156,8 +156,10 @@ public static class ItemRollCodec
                 || !float.IsFinite(value)
                 || !TryGetValueRange(stat, out float min, out float max)
                 || value < min
-                || value > max)
+                || value > max
+                || (stat != StatId.AttackSpeed && value != MathF.Floor(value)))
             {
+                // Strength, Vitality and Armor are whole numbers, as in content validation.
                 return false;
             }
 

@@ -949,6 +949,10 @@ public sealed class PlayerInventoryServiceTests
 
         public void DeleteInventorySlots(string playerName) { }
 
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) { }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId) { }
+
         public void SaveStarterKitGrant(string playerName, int kitVersion)
         {
             Interlocked.Increment(ref _grantSaves);

@@ -222,8 +222,8 @@ public partial class PlayScene
         HeldLightKind HeldLight);
 
     // Fills the loadout (modifiers per slot) from the snapshot and returns the visuals and light.
-    // The snapshot is the server's word and may be hostile: EquipmentLoadout skips non-finite values
-    // and unknown stats and stops at 8 modifiers per slot, an unknown light is None, and a missing
+    // The snapshot is the server's word and may be hostile: EquipmentLoadout skips non-finite values,
+    // Percent modifiers and unknown stats and stops at 8 modifiers per slot, an unknown light is None, and a missing
     // or odd entry is an empty slot. It never throws.
     internal static EquipmentPresentation ReadEquipment(PlayerInventorySnapshot? inventory, EquipmentLoadout loadout)
     {
@@ -242,7 +242,7 @@ public partial class PlayScene
         if (snapshot.EquippedSlot?.Item is InventoryItemSnapshot mainItem)
         {
             mainVisual = mainItem.VisualId ?? string.Empty;
-            loadout.Set(EquipmentSlot.MainHand, mainItem.Modifiers!);
+            loadout.Set(EquipmentSlot.MainHand, mainItem.Modifiers!, flatOnly: true);
             mainLight = KnownLight(mainItem.HeldLight);
         }
 
@@ -260,7 +260,7 @@ public partial class PlayScene
                     continue;
                 }
 
-                loadout.Set(slot, item.Modifiers!);
+                loadout.Set(slot, item.Modifiers!, flatOnly: true);
                 if (slot == EquipmentSlot.OffHand)
                 {
                     offVisual = item.VisualId ?? string.Empty;

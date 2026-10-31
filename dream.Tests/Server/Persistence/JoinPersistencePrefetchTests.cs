@@ -540,6 +540,12 @@ public sealed class JoinPersistencePrefetchTests
 
         public void DeleteInventorySlots(string playerName) => Call(nameof(DeleteInventorySlots), () => inner.DeleteInventorySlots(playerName));
 
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) =>
+            Call(nameof(DeleteInventorySlot), () => inner.DeleteInventorySlot(playerName, slotIndex, expectedItemInstanceId));
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId) =>
+            Call(nameof(DestroyInventoryItem), () => inner.DestroyInventoryItem(playerName, itemInstanceId));
+
         public void SaveStarterKitGrant(string playerName, int kitVersion) =>
             Call(nameof(SaveStarterKitGrant), () => inner.SaveStarterKitGrant(playerName, kitVersion));
 

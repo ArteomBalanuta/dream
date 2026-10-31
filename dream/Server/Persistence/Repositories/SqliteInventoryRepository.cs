@@ -94,7 +94,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
 
     private const string DeleteSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName;";
 
-    private const string DeleteSlotSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName AND slot_index = $slotIndex;";
+    private const string DeleteSlotSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName AND slot_index = $slotIndex AND item_instance_id = $expectedItemInstanceId;";
 
     private const string DestroyItemSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName AND item_instance_id = $itemInstanceId;";
 
@@ -175,11 +175,12 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
     public void DeleteInventorySlots(string playerName) =>
         Execute(DeleteSlotsSql, playerName, static (command, name) => command.BindText("$playerName", name.Trim()));
 
-    public void DeleteInventorySlot(string playerName, int slotIndex) =>
-        Execute(DeleteSlotSql, (playerName, slotIndex), static (command, d) =>
+    public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) =>
+        Execute(DeleteSlotSql, (playerName, slotIndex, expectedItemInstanceId), static (command, d) =>
         {
             command.BindText("$playerName", d.playerName.Trim());
             command.BindInt64("$slotIndex", d.slotIndex);
+            command.BindInt64("$expectedItemInstanceId", d.expectedItemInstanceId);
         });
 
     public void DestroyInventoryItem(string playerName, long itemInstanceId)

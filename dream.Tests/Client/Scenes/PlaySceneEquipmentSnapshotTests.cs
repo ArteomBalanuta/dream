@@ -1,3 +1,4 @@
+using System.Text;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Scenes;
@@ -213,6 +214,64 @@ public sealed class PlaySceneEquipmentSnapshotTests
         PlayScene.ReadEquipment(PlayerInventorySnapshot.Empty("p"), loadout);
 
         Assert.Equal(0, loadout.Get(EquipmentSlot.Head).Length);
+    }
+
+    [Fact]
+    public void AHostileSnapshotWithA1e99Value_DecodedFromRealJson_NeverThrowsAndStaysInRange()
+    {
+        TransportJsonCodec codec = new();
+        InventoryItemSnapshot item = new(
+            1, "gear.iron-blade", "Iron Blade", "held.tool.blade", 1, "d", [],
+            Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.Armor, StatOp.Flat, 4f)],
+            EquipSlots: 1);
+        ServerActionMessage message = new(new AuthoritativeActionResult(
+            "s", 1, 1, Accepted: true, Payload: new InventoryChangedResult(new PlayerInventorySnapshot("p", 4, 4, [new InventorySlotSnapshot(0, item)]))));
+        string json = Encoding.UTF8.GetString(codec.Encode(
+            new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message));
+        Assert.Contains("\"value\":4}", json);
+        string hostile = json.Replace("\"value\":4}", "\"value\":1e99}");
+
+        PlayerInventorySnapshot decoded;
+        try
+        {
+            decoded = Assert.IsType<InventoryChangedResult>(
+                Assert.IsType<ServerActionMessage>(codec.Decode(Encoding.UTF8.GetBytes(hostile)).Message).Result.Payload).Inventory;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // The decoder refused the value: nothing reaches the loadout at all.
+            return;
+        }
+
+        EquipmentLoadout loadout = new();
+        PlayerInventorySnapshot withEquipment = new(
+            decoded.PlayerName, decoded.Columns, decoded.Rows, decoded.Slots,
+            new InventorySlotSnapshot(100, decoded.Slots[0].Item));
+        PlayScene.ReadEquipment(withEquipment, loadout);
+        PlayerCombatant player = NewPlayer();
+        player.ApplyEquipment(loadout);
+
+        Assert.InRange(player.Stats.Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
+        Assert.All(loadout.Get(EquipmentSlot.MainHand).ToArray(), m => Assert.True(float.IsFinite(m.Value)));
+    }
+
+    [Fact]
+    public void APercentModifierInASnapshot_IsDropped_AndOverflowTimesZeroCannotMakeNaN()
+    {
+        EquipmentLoadout loadout = new();
+        InventoryItemSnapshot hostile = Item(
+            "x", "held.debug", HeldLightKind.None,
+            new StatModifier(StatId.Strength, StatOp.Flat, float.MaxValue),
+            new StatModifier(StatId.Strength, StatOp.Percent, -1f));
+        PlayerInventorySnapshot inventory = new(
+            "p", 4, 4, [], new InventorySlotSnapshot(100, hostile), []);
+
+        PlayScene.ReadEquipment(inventory, loadout);
+
+        Assert.All(loadout.Get(EquipmentSlot.MainHand).ToArray(), m => Assert.Equal(StatOp.Flat, m.Op));
+        PlayerCombatant player = NewPlayer();
+        player.ApplyEquipment(loadout);
+        Assert.InRange(player.Stats.Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
     }
 
     [Theory]

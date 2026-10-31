@@ -116,7 +116,7 @@ public sealed class ItemRollPersistenceTests
         inventory.SaveInventorySlot(new PersistedInventorySlot(Player, 101, 10, default));
         Give(items, inventory, "p2", 101, Item(11, "tool.torch"));
 
-        inventory.DeleteInventorySlot(Player, 101);
+        inventory.DeleteInventorySlot(Player, 101, 10);
 
         Assert.Equal([3], inventory.LoadPlayerInventory(Player).Slots.Select(s => s.SlotIndex).ToArray());
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE player_name = 'p2';"));
