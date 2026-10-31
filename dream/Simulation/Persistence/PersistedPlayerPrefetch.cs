@@ -1,3 +1,5 @@
+using Dream.Simulation.Characters;
+
 namespace Dream.Simulation.Persistence;
 
 // Where a joining player's persisted-state load stands (WorldSessionRuntime.GetPersistedPlayerLoadState).
@@ -26,12 +28,20 @@ public sealed class PersistedPlayerPrefetch
     private PersistedPlayerInventory? _inventory;
     private Exception? _error;
 
-    public PersistedPlayerPrefetch(string playerName)
+    private CharacterLookup? _lookup;
+
+    public PersistedPlayerPrefetch(string playerName, AccountKey? account = null)
     {
         PlayerName = playerName;
+        Account = account;
     }
 
     public string PlayerName { get; }
+
+    public AccountKey? Account { get; }
+
+    // What the account lookup read; null until completed, and when the runtime has no accounts.
+    public CharacterLookup? Lookup => _done.IsSet ? _lookup : null;
 
     public bool IsCompleted => _done.IsSet;
 
@@ -95,13 +105,15 @@ public sealed class PersistedPlayerPrefetch
     internal void Complete(
         PersistedPlayerProfile? profile,
         PersistedPlayerWorldState? worldState,
-        PersistedPlayerInventory? inventory = null)
+        PersistedPlayerInventory? inventory = null,
+        CharacterLookup? lookup = null)
     {
         if (_done.IsSet)
         {
             return;
         }
 
+        _lookup = lookup;
         _profile = profile;
         _worldState = worldState;
         _inventory = inventory;

@@ -12,5 +12,17 @@ public interface IServerSessionClaimRegistry
     // session id (see DedicatedServerHost.TryClaimSession).
     bool TryClaimSession(string connectionId, string sessionId, string? displayName, out string? rejectionReason);
 
+    // holder is the character and account the join was authorised for, or null when the join was not
+    // checked (no accounts). The default ignores it and forwards to the overload above.
+    bool TryClaimSession(
+        string connectionId,
+        string sessionId,
+        string? displayName,
+        Dream.Simulation.Characters.JoinHolderIdentity? holder,
+        out string? rejectionReason)
+    {
+        return TryClaimSession(connectionId, sessionId, displayName, out rejectionReason);
+    }
+
     void ReleaseConnection(string connectionId);
 }

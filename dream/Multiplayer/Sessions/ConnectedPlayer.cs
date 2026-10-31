@@ -13,6 +13,7 @@ public sealed class ConnectedPlayer
         ActorId = actorId;
         IsLocal = isLocal;
         DisplayName = NormalizeDisplayName(displayName, sessionId);
+        CharacterKey = new Dream.Simulation.Characters.CharacterKey(DisplayName);
         IsSpawned = isSpawned;
     }
 
@@ -23,6 +24,11 @@ public sealed class ConnectedPlayer
     public bool IsLocal { get; }
 
     public string DisplayName { get; private set; }
+
+    // The persistence key. Follows the display name until BindCharacter fixes it.
+    public Dream.Simulation.Characters.CharacterKey CharacterKey { get; private set; }
+
+    private bool _characterBound;
 
     public bool IsSpawned { get; private set; }
 
@@ -57,6 +63,18 @@ public sealed class ConnectedPlayer
 
     public void UpdateDisplayName(string? displayName)
     {
+        DisplayName = NormalizeDisplayName(displayName, SessionId);
+        if (!_characterBound)
+        {
+            CharacterKey = new Dream.Simulation.Characters.CharacterKey(DisplayName);
+        }
+    }
+
+    // Fixes the persistence key and the display name shown to clients (from the character's row).
+    public void BindCharacter(Dream.Simulation.Characters.CharacterKey key, string displayName)
+    {
+        CharacterKey = key;
+        _characterBound = true;
         DisplayName = NormalizeDisplayName(displayName, SessionId);
     }
 

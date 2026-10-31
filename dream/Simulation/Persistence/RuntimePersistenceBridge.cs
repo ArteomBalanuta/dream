@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -74,7 +75,9 @@ internal sealed partial class RuntimePersistenceBridge
 
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
     // on receive threads, consumed on the tick.
-    private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
+    // Keyed by (name, account): part of a result (how many characters the token owns) is per token.
+    private readonly ConcurrentDictionary<PrefetchKey, PersistedPlayerPrefetch> _playerPrefetches = new(PrefetchKeyComparer.Instance);
+    private readonly IAccountRepository? _accounts;
 
     // The ports are already resolved by the runtime (an inline write queue and a repository
     // checkpoint writer when only repositories were given); any of them may be null.
@@ -88,8 +91,10 @@ internal sealed partial class RuntimePersistenceBridge
         EnemyRegistry enemies,
         SceneEventHub events,
         ObjectIdAllocator objectIds,
-        ObjectIdentityMap objectIdentities)
+        ObjectIdentityMap objectIdentities,
+        IAccountRepository? accounts = null)
     {
+        _accounts = accounts;
         _host = host;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
@@ -125,7 +130,9 @@ internal sealed partial class RuntimePersistenceBridge
     // The load is read-only (TryGet): a join request that is never applied creates no profile row;
     // TryLoadPlayerForRestore creates it when the join is applied. Null when the runtime has
     // no profiles; a prefetch that cannot be queued (the queue is closed) completes as failed.
-    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName)
+    public bool HasAccounts => _accounts != null;
+
+    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
         // A join request read while the server shuts down must not restart the drained write queue
@@ -137,17 +144,23 @@ internal sealed partial class RuntimePersistenceBridge
 
         IPlayerProfileRepository profiles = _playerProfiles;
         IWorldPersistenceRepository? world = _worldPersistence;
-        PersistedPlayerPrefetch prefetch = new(playerName);
-        _playerPrefetches[playerName] = prefetch;
+        IAccountRepository? accounts = _accounts;
+        PersistedPlayerPrefetch prefetch = new(playerName, account);
+        _playerPrefetches[new PrefetchKey(playerName, account)] = prefetch;
         void Load()
         {
             try
             {
-                PersistedPlayerProfile? profile = profiles.TryGet(playerName);
+                // The lookup comes first: an existing character is loaded under its own key, which
+                // may differ from the typed name.
+                CharacterLookup? lookup = accounts?.Lookup(playerName, account);
+                string key = lookup?.Existing?.Key.Value ?? playerName;
+                PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(
                     profile,
-                    world?.TryGetPlayerWorldState(playerName),
-                    world?.LoadPlayerInventory(playerName));
+                    world?.TryGetPlayerWorldState(key),
+                    world?.LoadPlayerInventory(key),
+                    lookup);
             }
             catch (Exception ex)
             {
@@ -177,14 +190,14 @@ internal sealed partial class RuntimePersistenceBridge
     // without touching the database (no profiles, or the prefetch loaded); Pending while it runs;
     // Failed when it failed; Missing when there is none (another join consumed it, or it was
     // discarded). Reads only memory.
-    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName)
+    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName, AccountKey? account = null)
     {
         if (_playerProfiles == null)
         {
             return PersistedPlayerLoadState.Ready;
         }
 
-        if (!_playerPrefetches.TryGetValue(playerName, out PersistedPlayerPrefetch? prefetch))
+        if (!_playerPrefetches.TryGetValue(new PrefetchKey(playerName, account), out PersistedPlayerPrefetch? prefetch))
         {
             return PersistedPlayerLoadState.Missing;
         }
@@ -199,21 +212,56 @@ internal sealed partial class RuntimePersistenceBridge
 
     // True when the name's state is Ready. With startIfMissing a name with no prefetch starts one
     // and reports false, so the caller defers the join.
-    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing)
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing, AccountKey? account = null)
     {
-        PersistedPlayerLoadState state = GetPersistedPlayerLoadState(playerName);
+        PersistedPlayerLoadState state = GetPersistedPlayerLoadState(playerName, account);
         if (state == PersistedPlayerLoadState.Missing && startIfMissing)
         {
-            BeginPersistedPlayerPrefetch(playerName);
+            BeginPersistedPlayerPrefetch(playerName, account);
         }
 
         return state == PersistedPlayerLoadState.Ready;
     }
 
     // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
-    public void DiscardPersistedPlayerPrefetch(string playerName)
+    public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
     {
-        _playerPrefetches.TryRemove(playerName, out _);
+        _playerPrefetches.TryRemove(new PrefetchKey(playerName, account), out _);
+    }
+
+    // Removes the prefetch for a name whatever its account (the restore and eviction paths do not know
+    // the account yet); the one without an account first.
+    private bool TryRemovePrefetchByName(string playerName, out PersistedPlayerPrefetch? prefetch)
+    {
+        if (_playerPrefetches.TryRemove(new PrefetchKey(playerName, null), out prefetch))
+        {
+            return true;
+        }
+
+        foreach (PrefetchKey key in _playerPrefetches.Keys)
+        {
+            if (CharacterNames.Comparer.Equals(key.Name, playerName)
+                && _playerPrefetches.TryRemove(key, out prefetch))
+            {
+                return true;
+            }
+        }
+
+        prefetch = null;
+        return false;
+    }
+
+    private readonly record struct PrefetchKey(string Name, AccountKey? Account);
+
+    private sealed class PrefetchKeyComparer : IEqualityComparer<PrefetchKey>
+    {
+        public static readonly PrefetchKeyComparer Instance = new();
+
+        public bool Equals(PrefetchKey x, PrefetchKey y) =>
+            CharacterNames.Comparer.Equals(x.Name, y.Name) && x.Account.Equals(y.Account);
+
+        public int GetHashCode(PrefetchKey key) =>
+            HashCode.Combine(CharacterNames.Comparer.GetHashCode(key.Name), key.Account);
     }
 
     // The persistence half of WorldSessionRuntime.RestorePersistedPlayerState: resolves the joining
@@ -236,8 +284,8 @@ internal sealed partial class RuntimePersistenceBridge
             return false;
         }
 
-        if (_playerPrefetches.TryRemove(playerName, out PersistedPlayerPrefetch? prefetch)
-            && prefetch.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
+        if (TryRemovePrefetchByName(playerName, out PersistedPlayerPrefetch? prefetch)
+            && prefetch!.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
         {
             // Every profile save this runtime queues goes through SaveProfile, which caches it, so a
             // cached profile is at least as new as the row the prefetch read. That covers a save
@@ -687,7 +735,7 @@ internal sealed partial class RuntimePersistenceBridge
 
         // A prefetch already loaded for this name may predate the save the cache held; with the
         // cache entry gone a join would apply it, so drop it and let the join load afresh.
-        _playerPrefetches.TryRemove(playerName, out _);
+        TryRemovePrefetchByName(playerName, out _);
     }
 
     private void EvictDepartedPlayerState(string playerName)

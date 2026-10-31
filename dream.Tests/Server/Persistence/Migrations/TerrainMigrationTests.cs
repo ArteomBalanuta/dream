@@ -24,7 +24,7 @@ public sealed class TerrainMigrationTests
 
     [Theory]
     [MemberData(nameof(FromVersions))]
-    public void EveryEarlierVersion_MigratesToSix_Clean(int fromVersion)
+    public void EveryEarlierVersion_MigratesToTheLatest_Clean(int fromVersion)
     {
         using MigrationTestDatabase database = new();
         if (fromVersion == 0)
@@ -40,8 +40,8 @@ public sealed class TerrainMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(fromVersion, result.FromVersion);
-        Assert.Equal(6, result.ToVersion);
-        Assert.Equal(6, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(7, result.ToVersion);
+        Assert.Equal(7, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Equal(0L, Scalar(c, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));
@@ -62,7 +62,7 @@ public sealed class TerrainMigrationTests
         string before = Dump(database);
         object? counter = database.Scalar("SELECT next_object_id FROM worlds WHERE world_id = 1;");
 
-        Assert.Equal(6, database.Schema.EnsureSchema().ToVersion);
+        Assert.Equal(6, database.Schema.EnsureSchema(UpTo(6)).ToVersion);
 
         Assert.Equal(before, Dump(database));
         Assert.Equal(counter, database.Scalar("SELECT next_object_id FROM worlds WHERE world_id = 1;"));
