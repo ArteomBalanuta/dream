@@ -33,7 +33,7 @@ public sealed class SqlitePersistenceRepositoryTests
                 Level: 5,
                 Experience: 222),
             createdUtc,
-            createdUtc);
+            default); // a default stamp is the save time; a given one is kept (SqliteStoreTests)
 
         repository.Save(profile);
         PersistedPlayerProfile? loaded = repository.TryGet(" player-one ");

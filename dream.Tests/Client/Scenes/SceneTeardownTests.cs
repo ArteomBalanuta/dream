@@ -202,7 +202,7 @@ public class SceneTeardownTests
         Assert.Contains("sessionEndReason);", show);
         Assert.Contains("IRemoteSessionConnector connector = new RemoteSessionConnector();", show);
         Assert.Matches(@"if \(relaunchLocalServerFor != null\)\s*\{\s*connector = new LocalServerRelaunchConnector\(\s*connector,\s*_localServer,", show);
-        Assert.Matches(@"NetworkSessionCoordinator coordinator = new\(\s*_localServer,\s*connector,\s*_contentError,\s*ClientIdentityStore\.ForCurrentUser\(\),\s*relaunchLocalServerFor\?\.Port\);", show);
+        Assert.Matches(@"NetworkSessionCoordinator coordinator = new\(\s*_localServer,\s*connector,\s*_contentError,\s*ClientIdentityStore\.ForCurrentUser\(\)\);", show);
     }
 
     [Fact]

@@ -205,7 +205,7 @@ public sealed class SqliteStoreTests
     }
 
     [Fact]
-    public void ProfileSave_StampsUpdatedUtcWithNow_AndKeepsCreatedUtc()
+    public void ProfileSave_StampsADefaultUpdatedUtcWithNow_KeepsAGivenOne_AndKeepsCreatedUtc()
     {
         using PersistenceTestDatabase database = new();
         SqlitePlayerProfileRepository profiles = new(database.Schema);
@@ -214,7 +214,7 @@ public sealed class SqliteStoreTests
         {
             DisplayName = " ",
             CreatedUtc = created,
-            UpdatedUtc = new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            UpdatedUtc = default,
         };
 
         DateTime before = DateTime.UtcNow;
@@ -229,6 +229,12 @@ public sealed class SqliteStoreTests
         Assert.InRange(read.Value.UpdatedUtc, before, after);
         Assert.Equal(profile.Stats, read.Value.Stats);
         Assert.Equal(profile.InteractionMode, read.Value.InteractionMode);
+
+        // A stamp the caller gave (the runtime stamps a profile when it queues the save) is stored as it is.
+        DateTime given = new(2001, 1, 1, 0, 0, 0, 123, DateTimeKind.Utc);
+        given = given.AddTicks(567);
+        profiles.Save(profile with { UpdatedUtc = given });
+        Assert.Equal(given, profiles.TryGet("stamped")!.Value.UpdatedUtc);
     }
 
     [Fact]
