@@ -137,8 +137,8 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         {
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
-            // Protocol v9 (wave G) changes only the version digit of these frames; compare as v8.
-            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":9", "\"protocolVersion\":8");
+            // Protocols v9 (wave G) and v10 (wave H) change only the version digit of these frames; compare as v8.
+            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":10", "\"protocolVersion\":8");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));

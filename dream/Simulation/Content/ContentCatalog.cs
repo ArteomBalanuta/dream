@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Content;
 
@@ -20,9 +21,7 @@ public sealed class ContentCatalog
     public const string ItemsFileName = "items.json";
     public const string EnemiesFileName = "enemies.json";
 
-    // Strength and Vitality bonuses stay inside the base stat range; attack speed inside its own.
-    private const int MaxIntegerBonus = 50;
-    private const float MaxAttackSpeedBonus = 5f;
+    // Modifier and roll values stay inside ItemRollCodec.TryGetValueRange, the limits a stored roll must meet too.
 
     private static readonly Lazy<ContentCatalog> ShippedCatalog = new(LoadShipped, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -159,7 +158,7 @@ public sealed class ContentCatalog
             root,
             ["version", "starterKitVersion", "unrecordedStarterKitVersion", "starterKit", "items"]);
 
-        _ = ReadInt(ItemsFileName, "$.version", properties["version"], 1, 1);
+        _ = ReadInt(ItemsFileName, "$.version", properties["version"], 2, 2);
         int starterKitVersion = ReadInt(ItemsFileName, "$.starterKitVersion", properties["starterKitVersion"], 1, 1000);
         int unrecordedVersion = ReadInt(ItemsFileName, "$.unrecordedStarterKitVersion", properties["unrecordedStarterKitVersion"], 0, starterKitVersion);
 
@@ -231,7 +230,8 @@ public sealed class ContentCatalog
             ItemsFileName,
             path,
             element,
-            ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers"]);
+            ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
+            optional: ["rolls"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
@@ -260,61 +260,11 @@ public sealed class ContentCatalog
             throw Fail(ItemsFileName, $"{path}.heldLight", $"unknown held light '{heldLightName}'");
         }
 
-        List<ItemModifierDefinition> modifiers = [];
-        int strength = 0;
-        float attackSpeed = 0f;
-        int vitality = 0;
-        HashSet<ContentStat> seen = [];
-        JsonElement modifiersElement = properties["modifiers"];
-        ExpectArray(ItemsFileName, $"{path}.modifiers", modifiersElement);
-        int modifierIndex = 0;
-        foreach (JsonElement modifierElement in modifiersElement.EnumerateArray())
-        {
-            string modifierPath = $"{path}.modifiers[{modifierIndex}]";
-            ExpectObject(ItemsFileName, modifierPath, modifierElement);
-            Dictionary<string, JsonElement> modifier = ReadProperties(ItemsFileName, modifierPath, modifierElement, ["stat", "op", "value"]);
-            string statName = ReadString(ItemsFileName, $"{modifierPath}.stat", modifier["stat"]);
-            if (!Enum.TryParse(statName, ignoreCase: false, out ContentStat stat)
-                || !string.Equals(stat.ToString(), statName, StringComparison.Ordinal))
-            {
-                throw Fail(ItemsFileName, $"{modifierPath}.stat", $"unknown stat '{statName}'");
-            }
-
-            string op = ReadString(ItemsFileName, $"{modifierPath}.op", modifier["op"]);
-            if (!string.Equals(op, "Flat", StringComparison.Ordinal))
-            {
-                throw Fail(ItemsFileName, $"{modifierPath}.op", $"unsupported modifier op '{op}' (only 'Flat')");
-            }
-
-            if (!seen.Add(stat))
-            {
-                throw Fail(ItemsFileName, modifierPath, $"item '{key}' modifies {stat} twice");
-            }
-
-            JsonElement valueElement = modifier["value"];
-            if (stat == ContentStat.AttackSpeed)
-            {
-                float value = ReadFloat(ItemsFileName, $"{modifierPath}.value", valueElement, -MaxAttackSpeedBonus, MaxAttackSpeedBonus);
-                attackSpeed = value;
-                modifiers.Add(new ItemModifierDefinition(stat, value));
-            }
-            else
-            {
-                int value = ReadInt(ItemsFileName, $"{modifierPath}.value", valueElement, -MaxIntegerBonus, MaxIntegerBonus);
-                if (stat == ContentStat.Strength)
-                {
-                    strength = value;
-                }
-                else
-                {
-                    vitality = value;
-                }
-
-                modifiers.Add(new ItemModifierDefinition(stat, value));
-            }
-
-            modifierIndex++;
-        }
+        List<StatModifier> modifiers = ParseModifiers(path, key, properties["modifiers"]);
+        (int equipSlotMask, List<EquipmentSlot> equipSlots) = ParseEquipSlots($"{path}.equipSlots", properties["equipSlots"]);
+        ItemRollTable? rolls = properties.TryGetValue("rolls", out JsonElement rollsElement)
+            ? ParseRolls($"{path}.rolls", rollsElement)
+            : null;
 
         return new ItemDefinition(
             key,
@@ -324,7 +274,161 @@ public sealed class ContentCatalog
             detailLines,
             heldLight,
             modifiers,
-            new ToolStatModifier(strength, attackSpeed, vitality));
+            equipSlotMask,
+            equipSlots,
+            rolls);
+    }
+
+    // Only the live stats may be modified, Flat only, each at most once, at most StatSheet.MaxModifiersPerSource.
+    private static List<StatModifier> ParseModifiers(string path, string itemKey, JsonElement modifiersElement)
+    {
+        List<StatModifier> modifiers = [];
+        uint seen = 0;
+        ExpectArray(ItemsFileName, $"{path}.modifiers", modifiersElement);
+        if (modifiersElement.GetArrayLength() > StatSheet.MaxModifiersPerSource)
+        {
+            throw Fail(ItemsFileName, $"{path}.modifiers", $"has more than {StatSheet.MaxModifiersPerSource} modifiers");
+        }
+
+        int modifierIndex = 0;
+        foreach (JsonElement modifierElement in modifiersElement.EnumerateArray())
+        {
+            string modifierPath = $"{path}.modifiers[{modifierIndex}]";
+            ExpectObject(ItemsFileName, modifierPath, modifierElement);
+            Dictionary<string, JsonElement> modifier = ReadProperties(ItemsFileName, modifierPath, modifierElement, ["stat", "op", "value"]);
+            StatId stat = ReadLiveStat($"{modifierPath}.stat", modifier["stat"]);
+
+            string op = ReadString(ItemsFileName, $"{modifierPath}.op", modifier["op"]);
+            if (!string.Equals(op, "Flat", StringComparison.Ordinal))
+            {
+                throw Fail(ItemsFileName, $"{modifierPath}.op", $"unsupported modifier op '{op}' (only 'Flat')");
+            }
+
+            if ((seen & (1u << (int)stat)) != 0)
+            {
+                throw Fail(ItemsFileName, modifierPath, $"item '{itemKey}' modifies {stat} twice");
+            }
+
+            seen |= 1u << (int)stat;
+            modifiers.Add(new StatModifier(stat, StatOp.Flat, ReadStatValue($"{modifierPath}.value", modifier["value"], stat)));
+            modifierIndex++;
+        }
+
+        return modifiers;
+    }
+
+    private static StatId ReadLiveStat(string path, JsonElement element)
+    {
+        string statName = ReadString(ItemsFileName, path, element);
+        switch (statName)
+        {
+            case "Strength":
+                return StatId.Strength;
+            case "AttackSpeed":
+                return StatId.AttackSpeed;
+            case "Vitality":
+                return StatId.Vitality;
+            case "Armor":
+                return StatId.Armor;
+            case "Agility":
+            case "Energy":
+            case "MovementSpeed":
+                throw Fail(ItemsFileName, path, $"stat '{statName}' has no effect yet and cannot be modified");
+            default:
+                throw Fail(ItemsFileName, path, $"unknown stat '{Truncate(statName)}'");
+        }
+    }
+
+    // Strength, Vitality and Armor are whole numbers; Attack Speed is a float.
+    private static float ReadStatValue(string path, JsonElement element, StatId stat)
+    {
+        ItemRollCodec.TryGetValueRange(stat, out float min, out float max);
+        return stat == StatId.AttackSpeed
+            ? ReadFloat(ItemsFileName, path, element, min, max)
+            : ReadInt(ItemsFileName, path, element, (int)min, (int)max);
+    }
+
+    private static (int Mask, List<EquipmentSlot> Slots) ParseEquipSlots(string path, JsonElement element)
+    {
+        ExpectArray(ItemsFileName, path, element);
+        List<EquipmentSlot> slots = [];
+        int mask = 0;
+        int index = 0;
+        foreach (JsonElement slotElement in element.EnumerateArray())
+        {
+            string slotPath = $"{path}[{index}]";
+            string name = ReadString(ItemsFileName, slotPath, slotElement);
+            EquipmentSlot slot = name switch
+            {
+                "MainHand" => EquipmentSlot.MainHand,
+                "OffHand" => EquipmentSlot.OffHand,
+                "Head" => EquipmentSlot.Head,
+                "Body" => EquipmentSlot.Body,
+                _ => throw Fail(ItemsFileName, slotPath, $"unknown equipment slot '{Truncate(name)}'"),
+            };
+            if ((mask & EquipmentSlots.MaskOf(slot)) != 0)
+            {
+                throw Fail(ItemsFileName, slotPath, $"duplicate equipment slot '{name}'");
+            }
+
+            mask |= EquipmentSlots.MaskOf(slot);
+            slots.Add(slot);
+            index++;
+        }
+
+        if (slots.Count == 0)
+        {
+            throw Fail(ItemsFileName, path, "must list at least one equipment slot");
+        }
+
+        return (mask, slots);
+    }
+
+    private static ItemRollTable ParseRolls(string path, JsonElement element)
+    {
+        ExpectObject(ItemsFileName, path, element);
+        Dictionary<string, JsonElement> rarities = ReadProperties(ItemsFileName, path, element, ["common", "uncommon", "rare"]);
+        return new ItemRollTable(
+            ParseRollRanges($"{path}.common", rarities["common"]),
+            ParseRollRanges($"{path}.uncommon", rarities["uncommon"]),
+            ParseRollRanges($"{path}.rare", rarities["rare"]));
+    }
+
+    private static List<ItemRollRange> ParseRollRanges(string path, JsonElement element)
+    {
+        ExpectArray(ItemsFileName, path, element);
+        if (element.GetArrayLength() > StatSheet.MaxModifiersPerSource)
+        {
+            throw Fail(ItemsFileName, path, $"has more than {StatSheet.MaxModifiersPerSource} ranges");
+        }
+
+        List<ItemRollRange> ranges = [];
+        uint seen = 0;
+        int index = 0;
+        foreach (JsonElement rangeElement in element.EnumerateArray())
+        {
+            string rangePath = $"{path}[{index}]";
+            ExpectObject(ItemsFileName, rangePath, rangeElement);
+            Dictionary<string, JsonElement> range = ReadProperties(ItemsFileName, rangePath, rangeElement, ["stat", "min", "max"]);
+            StatId stat = ReadLiveStat($"{rangePath}.stat", range["stat"]);
+            if ((seen & (1u << (int)stat)) != 0)
+            {
+                throw Fail(ItemsFileName, rangePath, $"rolls {stat} twice");
+            }
+
+            seen |= 1u << (int)stat;
+            float min = ReadStatValue($"{rangePath}.min", range["min"], stat);
+            float max = ReadStatValue($"{rangePath}.max", range["max"], stat);
+            if (min > max)
+            {
+                throw Fail(ItemsFileName, rangePath, $"min {min.ToString(CultureInfo.InvariantCulture)} is above max {max.ToString(CultureInfo.InvariantCulture)}");
+            }
+
+            ranges.Add(new ItemRollRange(stat, min, max));
+            index++;
+        }
+
+        return ranges;
     }
 
     // ---- enemies ----
@@ -390,7 +494,7 @@ public sealed class ContentCatalog
         StringBuilder text = new();
         // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
         // cannot shift into the next field and make two different catalogs hash alike.
-        text.Append("items.v2;kit=").Append(items.StarterKitVersion.ToString(c))
+        text.Append("items.v3;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
@@ -412,10 +516,24 @@ public sealed class ContentCatalog
                 AppendField(text, line).Append('\n');
             }
 
-            foreach (ItemModifierDefinition modifier in item.Modifiers)
+            foreach (StatModifier modifier in item.Modifiers)
             {
                 text.Append("mod|").Append(modifier.Stat.ToString()).Append("|Flat|")
                     .Append(modifier.Value.ToString("R", c)).Append('\n');
+            }
+
+            text.Append("slots|");
+            foreach (EquipmentSlot slot in item.EquipSlots)
+            {
+                text.Append(slot.ToString()).Append(',');
+            }
+
+            text.Append('\n');
+            if (item.Rolls != null)
+            {
+                AppendRolls(text, "common", item.Rolls.Common);
+                AppendRolls(text, "uncommon", item.Rolls.Uncommon);
+                AppendRolls(text, "rare", item.Rolls.Rare);
             }
         }
 
@@ -433,6 +551,16 @@ public sealed class ContentCatalog
 
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()));
         return Convert.ToHexStringLower(hash);
+    }
+
+    private static void AppendRolls(StringBuilder text, string rarity, IReadOnlyList<ItemRollRange> ranges)
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        foreach (ItemRollRange range in ranges)
+        {
+            text.Append("roll|").Append(rarity).Append('|').Append(range.Stat.ToString()).Append('|')
+                .Append(range.Min.ToString("R", c)).Append('|').Append(range.Max.ToString("R", c)).Append('\n');
+        }
     }
 
     private static StringBuilder AppendField(StringBuilder text, string value) =>
@@ -475,13 +603,14 @@ public sealed class ContentCatalog
         }
     }
 
-    // Every property must be known, none repeated, and all present.
-    private static Dictionary<string, JsonElement> ReadProperties(string file, string path, JsonElement element, string[] allowed)
+    // Every property must be known, none repeated, and all required ones present. Optional names are
+    // allowed and may be absent.
+    private static Dictionary<string, JsonElement> ReadProperties(string file, string path, JsonElement element, string[] allowed, string[]? optional = null)
     {
         Dictionary<string, JsonElement> result = new(StringComparer.Ordinal);
         foreach (JsonProperty property in element.EnumerateObject())
         {
-            if (Array.IndexOf(allowed, property.Name) < 0)
+            if (Array.IndexOf(allowed, property.Name) < 0 && (optional == null || Array.IndexOf(optional, property.Name) < 0))
             {
                 throw Fail(file, $"{path}.{property.Name}", "unknown property");
             }

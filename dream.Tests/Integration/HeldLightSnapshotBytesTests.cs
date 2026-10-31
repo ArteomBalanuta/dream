@@ -16,10 +16,11 @@ namespace Dream.Tests.Integration;
 // Equipment group, on the frames that carry it.
 public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
 {
-    private const long WaveT1SnapshotBytes = 58_107;
+    // 58,107 B at protocol v9; v10 widens the envelope's "protocolVersion" by one digit in each of the 200 frames.
+    private const long WaveT1SnapshotBytes = 58_307;
 
     [Fact]
-    public void NoLight_200Ticks_IsStill58107Bytes()
+    public void NoLight_200Ticks_IsStill58307Bytes()
     {
         using WorldSessionRuntime runtime = CreateRuntime();
         long[] frames = Run(runtime, equipSlot: null);

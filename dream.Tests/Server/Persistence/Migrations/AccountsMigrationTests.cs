@@ -36,7 +36,7 @@ public sealed class AccountsMigrationTests
             database.Schema.EnsureSchema(UpTo(fromVersion));
         }
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(7));
 
         Assert.Equal(fromVersion, result.FromVersion);
         Assert.Equal(7, result.ToVersion);
@@ -129,7 +129,7 @@ public sealed class AccountsMigrationTests
         string other = DumpTables(database);
         string profilesBefore = DumpExcept(database, "player_profiles");
 
-        database.Schema.EnsureSchema();
+        database.Schema.EnsureSchema(UpTo(7));
 
         Assert.Equal(before, DumpExcept(database, "player_profiles", "display_name", "updated_utc"));
         Assert.Equal(other, DumpTables(database));
@@ -167,7 +167,7 @@ public sealed class AccountsMigrationTests
         Profile(database, "k1", "Bob", "2026-01-01T00:00:01.000Z");
         Profile(database, "k2", "BOB", "2026-01-01T00:00:02.000Z");
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(7));
 
         Assert.Equal(7, result.ToVersion);
         string backup = Assert.Single(database.Backups());

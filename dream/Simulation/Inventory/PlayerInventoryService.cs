@@ -11,6 +11,12 @@ public enum InventoryEquipOutcome
     SlotOutOfRange = 1,
     StillLoading = 2,
     SlotEmpty = 3,
+    TargetOutOfRange = 4,
+    NotEquippable = 5,
+    BackpackFull = 6,
+    ItemEquipped = 7,
+    ItemMismatch = 8,
+    Throttled = 9,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id
@@ -176,11 +182,22 @@ internal sealed class PlayerInventoryService
 
     // Equips the item in a backpack slot and queues the equipped slot's write. The caller refreshes
     // the player's combat stats on Equipped.
-    public InventoryEquipOutcome TryEquip(string playerName, int slotIndex)
+    //
+    // Wave H, C0: a target other than the main hand is not implemented until H1 fills it in; it is
+    // rejected (TargetOutOfRange for an index that is no equipment slot, else NotEquippable).
+    public InventoryEquipOutcome TryEquip(string playerName, int slotIndex, int? targetSlotIndex = null)
     {
         if (slotIndex < 0 || slotIndex >= InventoryConstants.BackpackSlotCount)
         {
             return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (targetSlotIndex is int target
+            && (!EquipmentSlots.TryFromSlotIndex(target, out EquipmentSlot targetSlot) || targetSlot != EquipmentSlot.MainHand))
+        {
+            return EquipmentSlots.TryFromSlotIndex(target, out _)
+                ? InventoryEquipOutcome.NotEquippable
+                : InventoryEquipOutcome.TargetOutOfRange;
         }
 
         if (!Ensure(playerName))
@@ -199,6 +216,19 @@ internal sealed class PlayerInventoryService
         PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
         return InventoryEquipOutcome.Equipped;
     }
+
+    // Wave H, C0 stubs: H1 implements these. Until then they change nothing and reject.
+    public InventoryEquipOutcome TryUnequip(string playerName, int slotIndex) => InventoryEquipOutcome.NotEquippable;
+
+    public InventoryEquipOutcome TryMove(string playerName, int from, int to) => InventoryEquipOutcome.NotEquippable;
+
+    public InventoryEquipOutcome TryDestroy(string playerName, int slotIndex, long itemInstanceId) => InventoryEquipOutcome.NotEquippable;
+
+    internal InventoryEquipOutcome TryGrantRolled(string playerName, string kind, ItemRarity rarity, in ItemRollSeed seed)
+        => InventoryEquipOutcome.NotEquippable;
+
+    // The digest of the rolled modifiers of the equipped items (SimulationStateChecksum). Zero until H1.
+    public ulong ResolveModifierDigest(string playerName) => 0UL;
 
     // Drops a departed player's loaded inventory. Its changes were queued as they happened, but the
     // queue drops a write that fails and only counts it in FailedWrites, so:

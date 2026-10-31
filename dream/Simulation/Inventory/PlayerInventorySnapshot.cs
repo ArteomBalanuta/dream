@@ -5,7 +5,8 @@ public readonly record struct PlayerInventorySnapshot(
     int Columns,
     int Rows,
     IReadOnlyList<InventorySlotSnapshot> Slots,
-    InventorySlotSnapshot? EquippedSlot = null)
+    InventorySlotSnapshot? EquippedSlot = null,
+    IReadOnlyList<InventorySlotSnapshot>? Equipment = null)
 {
     public static PlayerInventorySnapshot Empty(string playerName)
     {
