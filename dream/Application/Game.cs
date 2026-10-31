@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using Dream.Assets;
+using Dream.Client.Identity;
 using Dream.Client.Networking;
 using Dream.Client.Scenes;
 using Dream.Client.Startup;
@@ -144,7 +145,12 @@ public class Game : GameWindow
                 relaunchLocalServerFor.Port);
         }
 
-        NetworkSessionCoordinator coordinator = new(_localServer, connector, _contentError);
+        NetworkSessionCoordinator coordinator = new(
+            _localServer,
+            connector,
+            _contentError,
+            ClientIdentityStore.ForCurrentUser(),
+            relaunchLocalServerFor?.Port);
         ClientConnectionOptions initialOptions = resolveLocalPort
             ? coordinator.ResolveInitialOptions(options)
             : options;

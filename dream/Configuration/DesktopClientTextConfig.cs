@@ -68,9 +68,6 @@ public static class DesktopClientTextConfig
             $"mouse_sensitivity={Format(config.MouseSensitivity)}",
             $"camera_view={SerializeCameraViewMode(config.CameraViewMode)}",
             $"noclip_speed={Format(config.NoclipSpeed)}",
-            $"strength={config.Strength}",
-            $"attack_speed={Format(config.AttackSpeed)}",
-            $"vitality={config.Vitality}",
             $"damage_text_size={Format(config.FloatingCombatText.SizeMultiplier)}",
             $"damage_text_speed={Format(config.FloatingCombatText.MotionSpeedMultiplier)}",
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
@@ -114,12 +111,6 @@ public static class DesktopClientTextConfig
             {
                 switch (key)
                 {
-                    case "strength":
-                        config.Strength = integer;
-                        break;
-                    case "vitality":
-                        config.Vitality = integer;
-                        break;
                     case "max_fps":
                         config.MaxFramesPerSecond = integer;
                         break;
@@ -139,15 +130,6 @@ public static class DesktopClientTextConfig
                 break;
             case "noclip_speed":
                 config.NoclipSpeed = parsed;
-                break;
-            case "strength":
-                config.Strength = (int)MathF.Round(parsed);
-                break;
-            case "attack_speed":
-                config.AttackSpeed = parsed;
-                break;
-            case "vitality":
-                config.Vitality = (int)MathF.Round(parsed);
                 break;
             case "max_fps":
                 config.MaxFramesPerSecond = (int)MathF.Round(parsed);

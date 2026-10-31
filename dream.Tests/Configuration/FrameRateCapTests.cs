@@ -75,7 +75,7 @@ public class FrameRateCapTests
 
         DesktopClientTextConfig.Save(path, new DesktopClientConfig { MaxFramesPerSecond = 75 });
         DesktopClientConfig reloaded = DesktopClientTextConfig.LoadOrCreate(path);
-        reloaded.Strength = 12;
+        reloaded.PlayerName = "changed";
         DesktopClientTextConfig.Save(path, reloaded);
         DesktopClientConfig reloadedAgain = DesktopClientTextConfig.LoadOrCreate(path);
 
