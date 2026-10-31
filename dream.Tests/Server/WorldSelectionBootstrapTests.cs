@@ -371,7 +371,7 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
 
         public IReadOnlyList<WorldRecord> List() => throw new NotSupportedException();
 
-        public WorldRecord? TryGet(WorldId id) => throw new NotSupportedException();
+        public WorldRecord? TryGet(WorldId id) => record;
 
         public WorldRecord? TryGetByName(string name) => throw new NotSupportedException();
 

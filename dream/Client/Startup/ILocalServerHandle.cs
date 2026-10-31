@@ -26,4 +26,10 @@ public interface ILocalServerHandle : IAsyncDisposable
 
     // What the connection screen shows while a requested start is still waiting, or null.
     string? StartingStatus => null;
+
+    // Forgets a failed start (ErrorMessage set) so EnsureStarted can try again, for example after
+    // the window that held the world was closed. A running or still-starting server is unaffected.
+    void ResetFailure()
+    {
+    }
 }

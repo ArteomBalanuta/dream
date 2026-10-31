@@ -79,6 +79,21 @@ public sealed class SqliteSchemaBootstrapper
         return SchemaMigrations.LoadFromDirectory(directory);
     }
 
+    // Whether the existing database file is behind the newest migration (a file this build has not
+    // created yet counts as not pending: it has no worlds to protect). A newer database is not pending
+    // either; EnsureSchema reports that one.
+    public bool HasPendingMigrations()
+    {
+        if (!File.Exists(_databasePath))
+        {
+            return false;
+        }
+
+        SqliteSchemaMigrator migrator = new(LoadMigrations());
+        using SqliteConnection connection = CreateOpenConnection();
+        return migrator.GetCurrentVersion(connection) < migrator.LatestVersion;
+    }
+
     public SchemaMigrationResult EnsureSchema(ISchemaMigrator migrator, Action<string>? log = null)
     {
         ArgumentNullException.ThrowIfNull(migrator);

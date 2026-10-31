@@ -121,6 +121,8 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
             Item(10, "tool.mystery") + Slot(100, 10) +
             // A cube outside the 56x8x56 world, and one rubble piece outside.
             "INSERT INTO placed_cube_instances (world_id, object_id, cell_x, cell_y, cell_z, material_id, current_health, max_health) VALUES (1, 20, 99, 1, 3, 'stone', 5, 5);" +
+            "INSERT INTO cube_fracture_pieces (world_id, object_id, origin_object_id, piece_index, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id) " +
+            "VALUES (1, 22, 20, 0, 99, 1, 3, 99.5, 1.5, 3.5, 0.5, 'stone');" +
             "INSERT INTO enemy_instances (world_id, object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, current_hp, max_hp) " +
             "VALUES (1, 21, 'dragon', 'Dragon', 1, 1, 1, 0, 0, 1, 10, 10);");
 
@@ -132,7 +134,8 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         WorldIntegrityReport report = Check(db, strict);
 
         Assert.False(report.IsFatal);
-        Assert.Equal(1, report.ObjectsOutOfBounds);
+        // The cube and its rubble piece.
+        Assert.Equal(2, report.ObjectsOutOfBounds);
         Assert.Equal(1, report.EquippedWithoutBackpackItem);
         Assert.Equal(0, report.SlotsMissingItem);
         Assert.Equal(1, report.UnknownItemKinds);

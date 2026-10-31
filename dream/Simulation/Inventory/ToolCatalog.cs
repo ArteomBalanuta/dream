@@ -11,7 +11,13 @@ public static class ToolCatalog
     // The description of an item whose kind is not in the catalog. Its row is left untouched.
     public const string UnknownItemDescription = "Unknown item";
 
-    private static readonly IReadOnlyDictionary<string, ToolDefinition> Definitions = BuildDefinitions();
+    // Built on first use, not in a static initialiser: a content file that fails to load must not
+    // surface as a TypeInitializationException that poisons every later use of this type. The load
+    // failure (ContentValidationException) is raised from the first call instead.
+    private static readonly Lazy<IReadOnlyDictionary<string, ToolDefinition>> DefinitionsLazy =
+        new(BuildDefinitions, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static IReadOnlyDictionary<string, ToolDefinition> Definitions => DefinitionsLazy.Value;
 
     // The starter kit, in seeding order, with the kit version that introduced each kind. A player's
     // inventory records the kit version it has received (player_starter_grants); PlayerInventoryService
@@ -27,7 +33,10 @@ public static class ToolCatalog
     // before kit versions were recorded got at least the pre-T2 kit (v1).
     public static int UnrecordedStarterKitVersion => ContentCatalog.Shipped.UnrecordedStarterKitVersion;
 
-    public static IReadOnlyList<string> StarterItemKinds { get; } = [.. ContentCatalog.Shipped.StarterKit.Select(entry => entry.ItemKind)];
+    public static IReadOnlyList<string> StarterItemKinds => StarterItemKindsLazy.Value;
+
+    private static readonly Lazy<IReadOnlyList<string>> StarterItemKindsLazy =
+        new(static () => [.. ContentCatalog.Shipped.StarterKit.Select(entry => entry.ItemKind)], LazyThreadSafetyMode.ExecutionAndPublication);
 
     // False for an unknown kind. Allocates nothing.
     public static bool TryResolve(string itemKind, out ToolDefinition definition)

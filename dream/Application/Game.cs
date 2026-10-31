@@ -28,6 +28,7 @@ public class Game : GameWindow
     // Replaced with a fresh, unstarted handle when a play session ends: the ended session's
     // integrated server is stopped with it, and the next local session starts a new one.
     private ILocalServerHandle _localServer;
+    private string? _contentError;
     // The stops of the integrated servers let go of so far. They all share one world database, so
     // a new integrated server starts only after them, and the window close waits for them.
     private readonly LocalServerShutdownGate _localServerShutdown = new();
@@ -74,6 +75,14 @@ public class Game : GameWindow
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
         _localServer = CreateLocalServerHandle();
+        // A client that only joins a remote server never passes ServerBootstrap's content check, so
+        // the content is read once here; a failure is shown on the connection screen.
+        _contentError = ClientContentCheck.TryReadShipped();
+        if (_contentError != null)
+        {
+            Console.Error.WriteLine($"[startup] {_contentError}");
+        }
+
         if (RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions))
         {
             ShowStartupScene(
@@ -132,7 +141,7 @@ public class Game : GameWindow
                 relaunchLocalServerFor.Port);
         }
 
-        NetworkSessionCoordinator coordinator = new(_localServer, connector);
+        NetworkSessionCoordinator coordinator = new(_localServer, connector, _contentError);
         ClientConnectionOptions initialOptions = resolveLocalPort
             ? coordinator.ResolveInitialOptions(options)
             : options;

@@ -4,6 +4,7 @@ using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
 using Dream.Server.Persistence.Worlds;
 using Dream.Simulation.World;
+using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Worlds;
 
@@ -72,6 +73,26 @@ public static class WorldCli
                 $"{ex.LatestVersion} this build knows. Run a newer build.");
             return ExitSchemaTooNew;
         }
+        catch (WorldHeldException ex)
+        {
+            error.WriteLine($"{ex.Message} Stop the server hosting it first.");
+            return ExitWorldHeld;
+        }
+        catch (DatabaseBusyException ex)
+        {
+            error.WriteLine($"{ex.Message} Try again when it has finished.");
+            return ExitWorldHeld;
+        }
+        catch (LockFileUnavailableException ex)
+        {
+            error.WriteLine($"Cannot create the lock file {ex.LockPath}: {ex.InnerException?.Message ?? ex.Message}");
+            return ExitNotFoundOrConflict;
+        }
+        catch (SqliteException ex)
+        {
+            error.WriteLine($"The database could not be used: {ex.Message}. If the file is damaged, restore a backup (--db restore <path> --yes).");
+            return ExitNotFoundOrConflict;
+        }
         catch (WorldNotFoundException ex)
         {
             error.WriteLine(ex.Message);
@@ -93,7 +114,8 @@ public static class WorldCli
     private static IWorldCatalog OpenDefaultCatalog()
     {
         SqliteSchemaBootstrapper schema = new(ServerBootstrap.DefaultDatabasePath, ServerBootstrap.DefaultSchemaScriptPath);
-        schema.EnsureSchema();
+        // Under the maintenance lock, and with every world's lease when a migration is pending.
+        DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, ServerBootstrap.DefaultDatabasePath, log: null)?.Dispose();
         return new SqliteWorldCatalog(schema);
     }
 

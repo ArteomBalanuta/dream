@@ -188,6 +188,8 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
     // The integrity check's cost on the seeded World10k database (DREAM_LOAD_TEST=1): the numbers the
     // wave F3 report quotes. Also the whole bootstrap, with and without the check, for the start cost.
+    private const double IntegrityCheckBudgetMilliseconds = 15.0;
+
     [LoadFact]
     public void World10k_IntegrityCheckCost()
     {
@@ -224,6 +226,9 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             output.WriteLine($"With quick_check added: median {quick[3]:0.0} ms (min {quick[0]:0.0}, max {quick[^1]:0.0}).");
             output.WriteLine(string.Join(" | ", last!.ToLogLines(WorldDescriptor.Default)));
             Assert.False(last.IsFatal);
+            // A budget, not just a printout: the check runs on every start, so a regression that makes
+            // it scan a table per row would show here.
+            Assert.True(standard[3] < IntegrityCheckBudgetMilliseconds, $"integrity check median {standard[3]:0.0} ms");
 
             // The first run in a fresh process-like state is the cold cost: reopen after pools are cleared.
             SqliteConnection.ClearAllPools();

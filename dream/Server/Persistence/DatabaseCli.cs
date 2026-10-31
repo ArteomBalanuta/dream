@@ -1,7 +1,6 @@
 using System.Globalization;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence.Migrations;
-using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Persistence;
@@ -10,9 +9,12 @@ namespace Dream.Server.Persistence;
 // one world (profiles are global, so a per-world restore would orphan them).
 //
 // backup copies with SqliteConnection.BackupDatabase and is safe while a server runs: SQLite
-// copies a consistent snapshot. restore is offline: it refuses while any world's lease is held,
-// validates the source first (schema version not newer than this build, integrity_check ok),
-// keeps the current file as "{db}.pre-restore.{timestamp}.bak", and swaps the file in.
+// copies a consistent snapshot. restore is offline: it takes the database's maintenance lock (so
+// no start can create or open a world meanwhile), refuses while any world's lease is held,
+// validates the source first (a Dream database, schema version not newer than this build,
+// integrity_check ok), keeps the current file as "{db}.pre-restore.{timestamp}.bak", and swaps the
+// file in. The safety copy never depends on the health of the file being replaced: a damaged live
+// file (the very reason to restore) is copied raw, with its -wal and -shm.
 public static class DatabaseCli
 {
     public const int ExitOk = 0;
@@ -23,6 +25,9 @@ public static class DatabaseCli
     public const int ExitWorldHeld = 7;
 
     public const string Usage = "Usage: --db backup <path> | restore <path> --yes";
+
+    private const int SqliteCorrupt = 11;
+    private const int SqliteNotADatabase = 26;
 
     public static int Run(string[] args)
     {
@@ -108,16 +113,22 @@ public static class DatabaseCli
             string? problem = IntegrityProblem(temporary);
             if (problem != null)
             {
-                DeleteIfExists(temporary);
+                TryDelete(temporary);
                 error.WriteLine($"The backup failed its integrity check: {problem}");
                 return ExitIntegrity;
             }
 
             File.Move(temporary, destination);
         }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is SqliteCorrupt or SqliteNotADatabase)
+        {
+            TryDelete(temporary);
+            error.WriteLine($"The backup failed: the database is damaged ({ex.Message}). Restore an earlier backup.");
+            return ExitIntegrity;
+        }
         catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
         {
-            DeleteIfExists(temporary);
+            TryDelete(temporary);
             error.WriteLine($"The backup failed: {ex.Message}");
             return ExitSourceOrTargetInvalid;
         }
@@ -140,16 +151,31 @@ public static class DatabaseCli
             return ExitSourceOrTargetInvalid;
         }
 
-        if (string.Equals(source, Path.GetFullPath(databasePath), StringComparison.OrdinalIgnoreCase))
+        StringComparison pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(source, Path.GetFullPath(databasePath), pathComparison))
         {
             error.WriteLine("The source is the live database itself.");
             return ExitSourceOrTargetInvalid;
         }
 
         List<WorldHostLease> leases = [];
+        DatabaseMaintenanceLock? maintenance = null;
         try
         {
-            if (!TryHoldEveryWorld(databasePath, leases, out string? heldPath))
+            // The maintenance lock keeps every start from creating or opening a world between the
+            // lease check below and the swap. A start holds it only briefly.
+            maintenance = DatabaseMaintenanceLock.TryAcquire(databasePath, TimeSpan.FromSeconds(2));
+            if (maintenance == null)
+            {
+                error.WriteLine(
+                    "Not restored: another process is restoring or starting this database " +
+                    $"(lock file {DatabaseMaintenanceLock.GetLockPath(databasePath)}). Try again.");
+                return ExitWorldHeld;
+            }
+
+            if (!DatabaseMaintenanceLock.TryHoldEveryWorld(databasePath, leases, out _, out string? heldPath))
             {
                 error.WriteLine(
                     $"Not restored: a server (or an offline command) holds a world of this database ({heldPath}). " +
@@ -165,7 +191,13 @@ public static class DatabaseCli
 
             string stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
             string safety = $"{databasePath}.pre-restore.{stamp}.bak";
+            for (int attempt = 1; File.Exists(safety); attempt++)
+            {
+                safety = $"{databasePath}.pre-restore.{stamp}-{attempt}.bak";
+            }
+
             string staged = $"{databasePath}.restore.tmp";
+            bool safetyWritten = false;
             try
             {
                 DeleteIfExists(staged);
@@ -179,10 +211,14 @@ public static class DatabaseCli
                 bool hadDatabase = File.Exists(databasePath);
                 if (hadDatabase)
                 {
-                    DeleteIfExists(safety);
-                    using SqliteConnection current = Open(databasePath);
-                    using SqliteConnection copy = Open(safety);
-                    current.BackupDatabase(copy);
+                    SafetyCopy(databasePath, safety);
+                    safetyWritten = true;
+
+                    // The swap needs the live file free; find out before the WAL is touched, so a
+                    // locked file leaves the live database exactly as it was.
+                    using (new FileStream(databasePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                    }
                 }
 
                 DeleteIfExists(databasePath + "-wal");
@@ -194,10 +230,22 @@ public static class DatabaseCli
             }
             catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
             {
-                DeleteIfExists(staged);
-                error.WriteLine($"The restore failed: {ex.Message}");
+                TryDelete(staged);
+                if (!safetyWritten)
+                {
+                    DeleteSafetyCopy(safety);
+                }
+
+                error.WriteLine(
+                    $"The restore failed and the live database was left as it was: {ex.Message}" +
+                    (safetyWritten ? $" (a copy of it was kept as {safety})" : string.Empty));
                 return ExitSourceOrTargetInvalid;
             }
+        }
+        catch (LockFileUnavailableException ex)
+        {
+            error.WriteLine($"Not restored: cannot create the lock file {ex.LockPath}: {ex.InnerException?.Message ?? ex.Message}");
+            return ExitSourceOrTargetInvalid;
         }
         finally
         {
@@ -205,62 +253,52 @@ public static class DatabaseCli
             {
                 lease.Dispose();
             }
+
+            maintenance?.Dispose();
         }
     }
 
-    // Takes the lease of every world the database lists plus every existing lock file, so a world
-    // that a server holds (or is about to open) stops the restore.
-    private static bool TryHoldEveryWorld(string databasePath, List<WorldHostLease> leases, out string? heldPath)
+    // A copy of the live database that does not depend on its health: the SQLite backup API first
+    // (a consistent snapshot), and when that fails (a damaged header is error 26, a truncated file
+    // 11) a raw copy of the file with its -wal and -shm. When even that fails the partial copy is
+    // removed and the exception goes to the caller, which aborts the restore.
+    private static void SafetyCopy(string databasePath, string safety)
     {
-        heldPath = null;
-        HashSet<long> ids = [];
-        if (File.Exists(databasePath))
+        try
         {
-            try
-            {
-                using SqliteConnection connection = Open(databasePath);
-                using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "SELECT world_id FROM worlds;";
-                using SqliteDataReader reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    ids.Add(reader.GetInt64(0));
-                }
-            }
-            catch (SqliteException)
-            {
-                // No worlds table (a v0 or damaged file): only existing lock files count.
-            }
+            using SqliteConnection current = Open(databasePath);
+            using SqliteConnection copy = Open(safety);
+            current.BackupDatabase(copy);
+            return;
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+        {
+            DeleteSafetyCopy(safety);
         }
 
-        string directory = Path.GetDirectoryName(Path.GetFullPath(databasePath)) ?? ".";
-        string prefix = Path.GetFileName(databasePath) + ".world-";
-        if (Directory.Exists(directory))
+        try
         {
-            foreach (string file in Directory.EnumerateFiles(directory, prefix + "*.lock"))
+            File.Copy(databasePath, safety, overwrite: false);
+            foreach (string suffix in new[] { "-wal", "-shm" })
             {
-                string name = Path.GetFileName(file);
-                string number = name[prefix.Length..^".lock".Length];
-                if (long.TryParse(number, NumberStyles.None, CultureInfo.InvariantCulture, out long id) && id >= 1)
+                if (File.Exists(databasePath + suffix))
                 {
-                    ids.Add(id);
+                    File.Copy(databasePath + suffix, safety + suffix, overwrite: false);
                 }
             }
         }
-
-        foreach (long id in ids.Order())
+        catch
         {
-            WorldHostLease? lease = WorldHostLease.TryAcquire(databasePath, new WorldId(id));
-            if (lease == null)
-            {
-                heldPath = WorldHostLease.GetLockPath(databasePath, new WorldId(id));
-                return false;
-            }
-
-            leases.Add(lease);
+            DeleteSafetyCopy(safety);
+            throw;
         }
+    }
 
-        return true;
+    private static void DeleteSafetyCopy(string safety)
+    {
+        TryDelete(safety);
+        TryDelete(safety + "-wal");
+        TryDelete(safety + "-shm");
     }
 
     // ExitOk, or the code for a source that cannot be restored (already reported on error).
@@ -280,6 +318,16 @@ public static class DatabaseCli
                 return ExitSchemaTooNew;
             }
 
+            // A zero-byte or foreign SQLite file passes integrity_check and reads as version 0, and
+            // would restore into an empty world. A real database has the world or the profile table
+            // (a legacy v0 database, from before schema_version, has player_profiles).
+            if (!HasDreamTable(connection))
+            {
+                error.WriteLine(
+                    $"Not restored: {source} is not a Dream database (it has neither a worlds nor a player_profiles table).");
+                return ExitSourceOrTargetInvalid;
+            }
+
             string? problem = IntegrityProblem(connection);
             if (problem != null)
             {
@@ -289,11 +337,24 @@ public static class DatabaseCli
 
             return ExitOk;
         }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == SqliteCorrupt)
+        {
+            error.WriteLine($"Not restored: the backup failed its integrity check: {ex.Message}");
+            return ExitIntegrity;
+        }
         catch (SqliteException ex)
         {
             error.WriteLine($"Not restored: {source} is not a readable database: {ex.Message}");
             return ExitSourceOrTargetInvalid;
         }
+    }
+
+    private static bool HasDreamTable(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('worlds', 'player_profiles');";
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
     }
 
     private static string? IntegrityProblem(string path)
@@ -338,6 +399,18 @@ public static class DatabaseCli
         if (File.Exists(path))
         {
             File.Delete(path);
+        }
+    }
+
+    // For cleanup inside a catch: a failure to delete must not replace the error being reported.
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            DeleteIfExists(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 }

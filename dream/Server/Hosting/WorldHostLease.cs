@@ -2,6 +2,32 @@ using Dream.Simulation.World;
 
 namespace Dream.Server.Hosting;
 
+// Thrown when the lock file of a world (or of the database) cannot be created or opened for a
+// reason other than another holder: no permission, a read-only file, a missing directory.
+public sealed class LockFileUnavailableException : InvalidOperationException
+{
+    public LockFileUnavailableException(string lockPath, Exception inner)
+        : base($"Cannot create or open the lock file {lockPath}: {inner.Message}", inner)
+    {
+        LockPath = lockPath;
+    }
+
+    public string LockPath { get; }
+}
+
+// Thrown when another process holds the database's maintenance lock (a restore, or a migration in
+// progress) for longer than a start is willing to wait.
+public sealed class DatabaseBusyException : InvalidOperationException
+{
+    public DatabaseBusyException(string lockPath)
+        : base($"The database is being restored or migrated by another process; lock file {lockPath}.")
+    {
+        LockPath = lockPath;
+    }
+
+    public string LockPath { get; }
+}
+
 // Thrown when a world is already hosted (or being edited by an offline command) by another holder.
 public sealed class WorldHeldException : InvalidOperationException
 {
@@ -51,26 +77,50 @@ public sealed class WorldHostLease : IDisposable
             && !databasePath.Contains("mode=memory", StringComparison.OrdinalIgnoreCase);
     }
 
-    // The lease, or null when another holder has the world.
+    // The lease, or null when another holder has the world. Anything else that stops the lock file
+    // from opening (a read-only file, a missing directory, a denied path) is not "held": it throws
+    // LockFileUnavailableException, which the entry points report as a clear error.
     public static WorldHostLease? TryAcquire(string databasePath, WorldId worldId)
     {
         string lockPath = GetLockPath(databasePath, worldId);
+        FileStream? stream = TryOpenExclusive(lockPath);
+        return stream == null ? null : new WorldHostLease(stream, worldId, lockPath);
+    }
+
+    // The exclusively opened lock file, or null on a sharing violation (a live holder).
+    internal static FileStream? TryOpenExclusive(string lockPath)
+    {
         try
         {
-            FileStream stream = new(
+            return new FileStream(
                 lockPath,
                 FileMode.OpenOrCreate,
                 FileAccess.ReadWrite,
                 FileShare.None,
                 bufferSize: 1,
                 FileOptions.None);
-            return new WorldHostLease(stream, worldId, lockPath);
         }
-        catch (IOException)
+        catch (IOException ex) when (IsSharingViolation(ex))
         {
-            // A sharing violation: the file is open with FileShare.None by a live holder.
             return null;
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            throw new LockFileUnavailableException(lockPath, ex);
+        }
+    }
+
+    // Windows reports ERROR_SHARING_VIOLATION (32) or ERROR_LOCK_VIOLATION (33) in the HResult's low
+    // word. On Unix .NET takes an flock and reports a refused one as an IOException whose HResult is
+    // the raw errno EWOULDBLOCK (11 on Linux, 35 on macOS); not verifiable on this Windows machine.
+    private static bool IsSharingViolation(IOException ex)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return ((uint)ex.HResult >> 16) == 0x8007 && (ex.HResult & 0xFFFF) is 32 or 33;
+        }
+
+        return ex.HResult is 11 or 35;
     }
 
     // The lease; throws WorldHeldException when another holder has the world.

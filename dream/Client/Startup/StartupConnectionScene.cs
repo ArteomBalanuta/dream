@@ -93,10 +93,14 @@ public sealed class StartupConnectionScene : IDisposable
         _portText = request.PortText;
         _playerName = request.PlayerName;
 
-        if (request.UseLocalServerPressed)
+        if (request.UseLocalServerPressed
+            && _coordinator.TryUseLocalServer(
+                string.IsNullOrWhiteSpace(_playerName) ? "dream-client" : _playerName,
+                out ClientConnectionOptions? localDefaults))
         {
-            ClientConnectionOptions localDefaults = _coordinator.UseLocalServerDefaults(string.IsNullOrWhiteSpace(_playerName) ? "dream-client" : _playerName);
-            _host = localDefaults.Host;
+            // Only a ready server changes the fields; otherwise the status line says why and the
+            // entered endpoint stays (and is not persisted).
+            _host = localDefaults!.Host;
             _portText = localDefaults.PortText;
             _playerName = localDefaults.PlayerName;
             _appliedLocalDefaults = true;
