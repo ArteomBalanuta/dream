@@ -27,6 +27,9 @@ public sealed record WorldIntegrityOptions
 
     public Func<string, bool> IsKnownEnemyKind { get; init; } = static _ => true;
 
+    // Whether an item kind may sit in the given equipment slot index (100..103). The default accepts all.
+    public Func<string, int, bool> CanOccupy { get; init; } = static (_, _) => true;
+
     public bool QuickCheck { get; init; } = true;
 }
 
@@ -43,7 +46,11 @@ public sealed record WorldIntegrityReport(
     TimeSpan Elapsed,
     int AccountsOverLimit = 0,
     int DuplicateDisplayNames = 0,
-    int UnownedCharacters = 0)
+    int UnownedCharacters = 0,
+    int ItemsInTwoEquipmentSlots = 0,
+    int UnknownSlotIndexes = 0,
+    int EquipmentSlotMismatches = 0,
+    int DamagedItemRolls = 0)
 {
     // UnownedCharacters is information only (every legacy character is unowned until a token claims it):
     // it is in the head line and never in HasSoftFindings.
@@ -53,7 +60,8 @@ public sealed record WorldIntegrityReport(
     public bool HasSoftFindings =>
         ObjectsOutOfBounds > 0 || SlotsMissingItem > 0 || EquippedWithoutBackpackItem > 0
         || SharedItemReferences > 0 || UnknownItemKinds > 0 || UnknownEnemyKinds > 0
-        || AccountsOverLimit > 0 || DuplicateDisplayNames > 0;
+        || AccountsOverLimit > 0 || DuplicateDisplayNames > 0
+        || ItemsInTwoEquipmentSlots > 0 || UnknownSlotIndexes > 0 || EquipmentSlotMismatches > 0 || DamagedItemRolls > 0;
 
     public string FatalMessage =>
         CorruptionMessage != null
@@ -107,6 +115,26 @@ public sealed record WorldIntegrityReport(
             yield return $"  {SharedItemReferences} extra inventory slot reference(s) to an item already held in another slot or by another player.";
         }
 
+        if (ItemsInTwoEquipmentSlots > 0)
+        {
+            yield return $"  {ItemsInTwoEquipmentSlots} extra equipment slot row(s) hold an item already in another equipment slot (kept).";
+        }
+
+        if (UnknownSlotIndexes > 0)
+        {
+            yield return $"  {UnknownSlotIndexes} inventory slot row(s) outside the backpack and equipment ranges (kept).";
+        }
+
+        if (EquipmentSlotMismatches > 0)
+        {
+            yield return $"  {EquipmentSlotMismatches} equipped item(s) sit in a slot their kind does not allow (kept, inert).";
+        }
+
+        if (DamagedItemRolls > 0)
+        {
+            yield return $"  {DamagedItemRolls} item(s) have a damaged stored roll (kept, no stats).";
+        }
+
         if (AccountsOverLimit > 0)
         {
             yield return $"  {AccountsOverLimit} account(s) own more than {Dream.Simulation.Characters.CharacterNames.MaxCharactersPerAccount} characters (kept).";
@@ -152,6 +180,10 @@ public static class WorldIntegrityCheck
         int overLimit = 0;
         int duplicateNames = 0;
         int unowned = 0;
+        int twoSlots = 0;
+        int badIndexes = 0;
+        int mismatches = 0;
+        int damaged = 0;
         List<string> unknownNames = [];
         try
         {
@@ -171,6 +203,10 @@ public static class WorldIntegrityCheck
             overLimit = Count(connection, AccountsOverLimitSql, worldId: null, descriptor: null);
             duplicateNames = Count(connection, DuplicateDisplayNamesSql, worldId: null, descriptor: null);
             unowned = Count(connection, UnownedCharactersSql, worldId: null, descriptor: null);
+            twoSlots = Count(connection, ItemsInTwoEquipmentSlotsSql, worldId, descriptor: null);
+            badIndexes = Count(connection, UnknownSlotIndexesSql, worldId, descriptor: null);
+            mismatches = CountSlotMismatches(connection, worldId, options.CanOccupy);
+            damaged = CountDamagedRolls(connection, worldId);
         }
         catch (SqliteException ex) when (IsCorruption(ex))
         {
@@ -190,7 +226,11 @@ public static class WorldIntegrityCheck
             Stopwatch.GetElapsedTime(started),
             overLimit,
             duplicateNames,
-            unowned);
+            unowned,
+            twoSlots,
+            badIndexes,
+            mismatches,
+            damaged);
     }
 
     // SQLITE_CORRUPT (11) and SQLITE_NOTADB (26).
@@ -271,6 +311,44 @@ public static class WorldIntegrityCheck
         return unknown;
     }
 
+    // Equipped rows whose kind does not allow their slot. CanOccupy decides; the SQL only lists the rows.
+    private static int CountSlotMismatches(SqliteConnection connection, long worldId, Func<string, int, bool> canOccupy)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = EquippedKindsSql;
+        command.Parameters.AddWithValue("$world", worldId);
+        using SqliteDataReader reader = command.ExecuteReader();
+        int mismatches = 0;
+        while (reader.Read())
+        {
+            if (!canOccupy(reader.GetString(0), reader.GetInt32(1)))
+            {
+                mismatches++;
+            }
+        }
+
+        return mismatches;
+    }
+
+    // Only rows with a stored roll are read; each is parsed, which never throws.
+    private static int CountDamagedRolls(SqliteConnection connection, long worldId)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT rolled_modifiers FROM item_instances WHERE world_id = $world AND rolled_modifiers IS NOT NULL;";
+        command.Parameters.AddWithValue("$world", worldId);
+        using SqliteDataReader reader = command.ExecuteReader();
+        int damaged = 0;
+        while (reader.Read())
+        {
+            if (ItemRollCodec.Parse(reader.GetString(0))?.IsDamaged == true)
+            {
+                damaged++;
+            }
+        }
+
+        return damaged;
+    }
+
     // Accounts holding more characters than the limit (two processes can breach it; see the wave G plan).
     private static readonly string AccountsOverLimitSql = $"""
         SELECT COUNT(*) FROM (SELECT account_id FROM player_profiles WHERE account_id IS NOT NULL
@@ -307,9 +385,12 @@ public static class WorldIntegrityCheck
         WHERE s.world_id = $world AND i.item_instance_id IS NULL;
         """;
 
+    private const int FirstEquip = EquipmentSlots.FirstSlotIndex;
+    private const int LastEquip = EquipmentSlots.LastSlotIndex;
+
     private static readonly string EquippedWithoutBackpackSql = $"""
         SELECT COUNT(*) FROM player_inventory_slots AS e
-        WHERE e.world_id = $world AND e.slot_index = {InventoryConstants.EquippedSlotIndex}
+        WHERE e.world_id = $world AND e.slot_index BETWEEN {FirstEquip} AND {LastEquip}
           AND NOT EXISTS (
             SELECT 1 FROM player_inventory_slots AS b
             WHERE b.world_id = e.world_id AND b.player_name = e.player_name
@@ -318,18 +399,40 @@ public static class WorldIntegrityCheck
         """;
 
     // Extra references beyond the first to the same item, over backpack slots and players. The equipped
-    // slot legitimately aliases a backpack slot of the same player, so that pair is not counted; an
+    // slots (100..103) legitimately alias a backpack slot of the same player, so that pair is not counted; an
     // equipped slot with no such alias is counted as a reference of its own.
     private static readonly string SharedItemReferencesSql = $"""
         SELECT COALESCE(SUM(n - 1), 0) FROM (
           SELECT COUNT(*) AS n FROM player_inventory_slots AS s
           WHERE s.world_id = $world
-            AND NOT (s.slot_index = {InventoryConstants.EquippedSlotIndex} AND EXISTS (
+            AND NOT (s.slot_index BETWEEN {FirstEquip} AND {LastEquip} AND EXISTS (
               SELECT 1 FROM player_inventory_slots AS b
               WHERE b.world_id = s.world_id AND b.player_name = s.player_name
                 AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
                 AND b.item_instance_id = s.item_instance_id))
           GROUP BY s.item_instance_id
           HAVING COUNT(*) > 1);
+        """;
+
+    // Extra equipment rows beyond the first for one item of one player.
+    private static readonly string ItemsInTwoEquipmentSlotsSql = $"""
+        SELECT COALESCE(SUM(n - 1), 0) FROM (
+          SELECT COUNT(*) AS n FROM player_inventory_slots
+          WHERE world_id = $world AND slot_index BETWEEN {FirstEquip} AND {LastEquip}
+          GROUP BY player_name, item_instance_id
+          HAVING COUNT(*) > 1);
+        """;
+
+    private static readonly string UnknownSlotIndexesSql = $"""
+        SELECT COUNT(*) FROM player_inventory_slots
+        WHERE world_id = $world
+          AND NOT (slot_index >= 0 AND slot_index < {InventoryConstants.BackpackSlotCount})
+          AND NOT (slot_index BETWEEN {FirstEquip} AND {LastEquip});
+        """;
+
+    private static readonly string EquippedKindsSql = $"""
+        SELECT i.item_kind, s.slot_index FROM player_inventory_slots AS s
+        JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
+        WHERE s.world_id = $world AND s.slot_index BETWEEN {FirstEquip} AND {LastEquip};
         """;
 }

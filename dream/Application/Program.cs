@@ -1,6 +1,7 @@
 using System;
 using Dream.Server;
 using Dream.Server.Characters;
+using Dream.Server.Items;
 using Dream.Server.Persistence;
 using Dream.Server.Worlds;
 
@@ -13,7 +14,8 @@ internal enum ProcessMode
     Server,
     Worlds,
     Database,
-    Characters
+    Characters,
+    Items
 }
 
 public static class Program
@@ -33,6 +35,7 @@ public static class Program
             ProcessMode.Worlds => WorldCli.Run(args[1..]),
             ProcessMode.Database => DatabaseCli.Run(args[1..]),
             ProcessMode.Characters => CharacterCli.Run(args[1..]),
+            ProcessMode.Items => ItemCli.Run(args[1..]),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown process mode.")
         };
     }
@@ -63,6 +66,13 @@ public static class Program
         if (string.Equals(args[0], "--characters", StringComparison.OrdinalIgnoreCase))
         {
             mode = ProcessMode.Characters;
+            errorMessage = null;
+            return true;
+        }
+
+        if (string.Equals(args[0], "--items", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = ProcessMode.Items;
             errorMessage = null;
             return true;
         }
@@ -101,7 +111,7 @@ public static class Program
         errorMessage =
             $"Unsupported startup argument(s): {string.Join(", ", args)}. " +
             "Supported modes: no arguments for desktop, --server [--world <id|name>] for the dedicated server, " +
-            "or --worlds list|create|copy|delete for the world catalog, or --characters list|release|rename for characters, or --db backup|restore for the database file.";
+            "or --worlds list|create|copy|delete for the world catalog, or --characters list|release|rename for characters, or --items grant|list for item rolls, or --db backup|restore for the database file.";
         return false;
     }
 

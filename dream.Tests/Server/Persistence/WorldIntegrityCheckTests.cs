@@ -358,4 +358,113 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.True(report.IsFatal);
         Assert.True(report.ForeignKeyViolations >= 1);
     }
+
+    // Wave H2: equipment slots 100..103.
+    [Theory]
+    [InlineData(101)]
+    [InlineData(102)]
+    [InlineData(103)]
+    public void AnEquipmentAliasOfABackpackItem_IsNotAFinding(int equipmentSlot)
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(equipmentSlot, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.False(report.HasSoftFindings);
+        Assert.Equal(0, report.EquippedWithoutBackpackItem);
+        Assert.Equal(0, report.SharedItemReferences);
+    }
+
+    [Fact]
+    public void AnOffHandRowWithNoBackpackRow_IsAnEquippedWithoutBackpackFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(101, 10));
+        Assert.Equal(1, Check(db).EquippedWithoutBackpackItem);
+    }
+
+    [Fact]
+    public void OneItemInTwoEquipmentSlots_IsCountedOnItsOwn()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(100, 10) + Slot(101, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(1, report.ItemsInTwoEquipmentSlots);
+        Assert.Equal(0, report.SharedItemReferences);
+        Assert.Equal(0, report.UnknownSlotIndexes);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("another equipment slot", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(99)]
+    [InlineData(104)]
+    public void ASlotIndexOutsideTheKnownRanges_IsCountedOnItsOwn(int slotIndex)
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(slotIndex, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(1, report.UnknownSlotIndexes);
+        Assert.Equal(0, report.ItemsInTwoEquipmentSlots);
+        Assert.Equal(0, report.EquipmentSlotMismatches);
+        Assert.True(report.HasSoftFindings);
+    }
+
+    [Fact]
+    public void AKindInASlotItDoesNotAllow_IsAMismatch_AndTheDefaultAcceptsAll()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "gear.leather-cap") + Slot(3, 10) + Slot(100, 10) + Item(11, "tool.torch") + Slot(4, 11) + Slot(101, 11));
+
+        Assert.Equal(0, Check(db).EquipmentSlotMismatches);
+
+        WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
+
+        // The cap in the main hand; the torch is fine in the off hand.
+        Assert.Equal(1, report.EquipmentSlotMismatches);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("slot their kind does not allow", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnUnknownKindInTheMainHand_IsNotAlsoASlotMismatch()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.retired") + Slot(0, 10) + Slot(100, 10));
+        WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
+        Assert.Equal(0, report.EquipmentSlotMismatches);
+        Assert.Equal(1, report.UnknownItemKinds);
+    }
+
+    [Fact]
+    public void ADamagedStoredRoll_IsCounted_AndGoodAndMissingRollsAreNot()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            Profile + Item(10, "gear.iron-blade") + Item(11, "gear.iron-blade") + Item(12, "tool.torch") +
+            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Strength\",\"Flat\",6]]}' WHERE item_instance_id = 10;" +
+            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Agility\",\"Flat\",6]]}' WHERE item_instance_id = 11;");
+
+        WorldIntegrityReport report = Check(db);
+
+        Assert.Equal(1, report.DamagedItemRolls);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("damaged stored roll", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ACleanMigratedDatabaseWithRolledGear_HasNoSoftFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            Profile + Item(10, "gear.iron-blade") + Slot(0, 10) + Slot(100, 10) + Item(11, "gear.ward-lantern") + Slot(1, 11) + Slot(101, 11) +
+            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Strength\",\"Flat\",6]]}' WHERE item_instance_id = 10;");
+
+        WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
+
+        Assert.False(report.HasSoftFindings);
+    }
 }

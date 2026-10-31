@@ -105,6 +105,23 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             Assert.Equal(0, before.AccountsOverLimit);
             Assert.Equal(0, after.AccountsOverLimit);
         }),
+        ("every character's stored rolls and equipment rows are unchanged by the restart", (before, after) =>
+        {
+            // Wave H2. No run creates a rolled item yet; the glue adds one to run 2 (a rolled, fully equipped character).
+            Assert.Equal(before.RollsByCharacter.Keys.Order(StringComparer.Ordinal), after.RollsByCharacter.Keys.Order(StringComparer.Ordinal));
+            foreach ((string player, string[] rolls) in before.RollsByCharacter)
+            {
+                Assert.Equal(rolls, after.RollsByCharacter[player]);
+            }
+
+            foreach (string session in Sessions)
+            {
+                string player = WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
+                Assert.Equal(
+                    before.EquipmentByCharacter.GetValueOrDefault(player, []),
+                    after.EquipmentByCharacter.GetValueOrDefault(player, []));
+            }
+        }),
     ];
 
     internal sealed record RestartObservation(
@@ -121,7 +138,11 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         IReadOnlyDictionary<string, long?> OwnerByCharacter,
         int AccountCount,
         int AccountsOverLimit,
-        bool AccountsWired);
+        bool AccountsWired,
+        // Wave H2: per character, "itemId=storedRollText" of each item that has a stored roll (sorted), and
+        // "slot=itemId" of each equipment row (slots 100..103, sorted by slot).
+        IReadOnlyDictionary<string, string[]> RollsByCharacter,
+        IReadOnlyDictionary<string, string[]> EquipmentByCharacter);
 
     [Fact]
     public async Task AServerStoppedMidSession_RestartsWithTheInvariantsIntact_AndTheRejoinedClientsMatch()
@@ -319,6 +340,8 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         Dictionary<long, string> itemKinds = [];
         List<string> enemyKinds = [];
         Dictionary<string, long?> owners = [];
+        Dictionary<string, string[]> rolls = [];
+        Dictionary<string, string[]> equipment = [];
         int accountCount;
         int accountsOverLimit;
         string integrity;
@@ -367,6 +390,17 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 }
             }
 
+            ReadGrouped(
+                connection,
+                "SELECT owner_player_name, item_instance_id || '=' || rolled_modifiers FROM item_instances " +
+                "WHERE world_id = 1 AND owner_player_name IS NOT NULL AND rolled_modifiers IS NOT NULL ORDER BY owner_player_name, item_instance_id;",
+                rolls);
+            ReadGrouped(
+                connection,
+                "SELECT player_name, slot_index || '=' || item_instance_id FROM player_inventory_slots " +
+                "WHERE world_id = 1 AND slot_index >= 100 ORDER BY player_name, slot_index;",
+                equipment);
+
             using (SqliteCommand command = connection.CreateCommand())
             {
                 command.CommandText = "SELECT enemy_kind FROM enemy_instances WHERE world_id = 1;";
@@ -412,6 +446,30 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         SqliteConnection.ClearAllPools();
-        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired);
+        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired, rolls, equipment);
+    }
+
+    // Rows of (key, value) in query order, grouped by key.
+    private static void ReadGrouped(SqliteConnection connection, string sql, Dictionary<string, string[]> into)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        using SqliteDataReader reader = command.ExecuteReader();
+        Dictionary<string, List<string>> grouped = [];
+        while (reader.Read())
+        {
+            string key = reader.GetString(0);
+            if (!grouped.TryGetValue(key, out List<string>? list))
+            {
+                grouped[key] = list = [];
+            }
+
+            list.Add(reader.GetString(1));
+        }
+
+        foreach ((string key, List<string> list) in grouped)
+        {
+            into[key] = [.. list];
+        }
     }
 }

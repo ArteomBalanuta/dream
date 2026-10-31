@@ -338,4 +338,27 @@ public sealed class SqliteWorldCatalogTests
         Assert.Equal(40, Assert.Single(source.Overrides).ObjectId.Value);
         Assert.Throws<WorldNotFoundException>(() => db.Catalog.ReadTerrainSource(new WorldId(9)));
     }
+
+    private const string RollText = "{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Strength\",\"Flat\",6],[\"AttackSpeed\",\"Flat\",1.75]]}";
+
+    // Wave H2: the stored roll is copied byte for byte, by Copy and by a full export; a terrain-only export has no items.
+    [Fact]
+    public void Copy_AndFullExport_KeepTheRolledModifiersByteEqual_AndTerrainOnlyHasNoItems()
+    {
+        using WorldCatalogTestDatabase db = new();
+        db.SeedWorldOne();
+        db.Execute($"UPDATE item_instances SET rolled_modifiers = '{RollText}' WHERE world_id = 1;");
+        Dream.Simulation.Persistence.PersistedTerrainChunk chunk = new(0, 0, 1, 0, new byte[23]);
+
+        WorldRecord copy = db.Catalog.Copy(WorldId.Default, "Copy");
+        WorldRecord full = db.Catalog.CreateStored(WorldId.Default, "baked", [chunk], terrainOnly: false);
+        WorldRecord template = db.Catalog.CreateStored(WorldId.Default, "template", [chunk], terrainOnly: true);
+
+        foreach (WorldRecord world in new[] { copy, full })
+        {
+            Assert.Equal(RollText, db.Scalar($"SELECT rolled_modifiers FROM item_instances WHERE world_id = {world.Descriptor.Id.Value};"));
+        }
+
+        Assert.Equal(0L, db.Count("item_instances", template.Descriptor.Id.Value));
+    }
 }
