@@ -1,4 +1,3 @@
-using Dream.Simulation.Inventory;
 using Dream.Simulation.Rules;
 
 namespace Dream.Simulation.Players;
@@ -74,16 +73,5 @@ public sealed class PlayerCombatStats
     {
         return (formulaService ?? CombatFormulaService.Default)
             .EvaluatePlayerDerivedStats(this, level);
-    }
-
-    public static PlayerCombatStats Combine(PlayerCombatStats baseStats, ToolStatModifier modifier)
-    {
-        ArgumentNullException.ThrowIfNull(baseStats);
-        return new PlayerCombatStats
-        {
-            Strength = baseStats.Strength + modifier.StrengthBonus,
-            AttackSpeed = baseStats.AttackSpeed + modifier.AttackSpeedBonus,
-            Vitality = baseStats.Vitality + modifier.VitalityBonus
-        };
     }
 }

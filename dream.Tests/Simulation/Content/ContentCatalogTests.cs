@@ -31,23 +31,23 @@ public sealed class ContentCatalogTests
         AssertTool(catalog, "tool.builder-hammer", "Builder Hammer",
             "Reliable close-range construction tool for quick world edits.", "held.tool.builder",
             ["Role: Building", "Impact: +2 Strength", "Tempo: +0.25 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 2, AttackSpeedBonus: 0.25f), HeldLightKind.None);
+            [Flat(StatId.Strength, 2f), Flat(StatId.AttackSpeed, 0.25f)], HeldLightKind.None);
         AssertTool(catalog, "tool.field-blade", "Field Blade",
             "Short combat blade with quick recovery and clean follow-up swings.", "held.tool.blade",
             ["Role: Combat", "Impact: +4 Strength", "Tempo: +1.50 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 4, AttackSpeedBonus: 1.50f), HeldLightKind.None);
+            [Flat(StatId.Strength, 4f), Flat(StatId.AttackSpeed, 1.50f)], HeldLightKind.None);
         AssertTool(catalog, "tool.stone-maul", "Stone Maul",
             "Heavy breaker meant for deliberate hits and strong stagger pressure.", "held.tool.maul",
             ["Role: Breaker", "Impact: +8 Strength", "Tempo: -0.75 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 8, AttackSpeedBonus: -0.75f), HeldLightKind.None);
+            [Flat(StatId.Strength, 8f), Flat(StatId.AttackSpeed, -0.75f)], HeldLightKind.None);
         AssertTool(catalog, "tool.survey-lantern", "Survey Lantern",
             "Utility tool for traversal loadouts and world inspection passes.", "held.tool.lantern",
             ["Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 1, AttackSpeedBonus: 0.10f), HeldLightKind.Lantern);
+            [Flat(StatId.Strength, 1f), Flat(StatId.AttackSpeed, 0.10f)], HeldLightKind.Lantern);
         AssertTool(catalog, "tool.torch", "Torch",
             "A burning torch that lights the ground around you after dark.", "held.tool.torch",
             ["Role: Light", "Light: warm, radius 8"],
-            default, HeldLightKind.Torch);
+            [], HeldLightKind.Torch);
     }
 
     private static void AssertTool(
@@ -57,7 +57,7 @@ public sealed class ContentCatalogTests
         string description,
         string visualId,
         string[] detailLines,
-        ToolStatModifier modifier,
+        StatModifier[] modifiers,
         HeldLightKind heldLight)
     {
         Assert.True(catalog.TryGetItem(key, out ItemDefinition item), key);
@@ -66,39 +66,19 @@ public sealed class ContentCatalogTests
         Assert.Equal(description, item.Description);
         Assert.Equal(visualId, item.VisualId);
         Assert.Equal(detailLines, item.DetailLines);
-        Assert.Equal(ExpectedModifiers(modifier), item.Modifiers);
+        Assert.Equal(modifiers, item.Modifiers);
         Assert.Equal(heldLight, item.HeldLight);
 
         // The facade hands out the same values.
         Assert.True(ToolCatalog.TryResolve(key, out ToolDefinition tool));
         Assert.Equal(key, tool.ItemKind);
         Assert.Equal(displayName, tool.DisplayName);
-        Assert.Equal(modifier, tool.StatModifier);
+        Assert.Equal(modifiers, tool.Modifiers);
         Assert.Equal(heldLight, tool.HeldLight);
         Assert.Equal(detailLines, tool.DetailLines);
     }
 
-    // The flat modifiers a legacy tool modifier stands for, in the order the file lists them.
-    private static StatModifier[] ExpectedModifiers(ToolStatModifier tool)
-    {
-        List<StatModifier> modifiers = [];
-        if (tool.StrengthBonus != 0)
-        {
-            modifiers.Add(new StatModifier(StatId.Strength, StatOp.Flat, tool.StrengthBonus));
-        }
-
-        if (tool.AttackSpeedBonus != 0f)
-        {
-            modifiers.Add(new StatModifier(StatId.AttackSpeed, StatOp.Flat, tool.AttackSpeedBonus));
-        }
-
-        if (tool.VitalityBonus != 0)
-        {
-            modifiers.Add(new StatModifier(StatId.Vitality, StatOp.Flat, tool.VitalityBonus));
-        }
-
-        return [.. modifiers];
-    }
+    private static StatModifier Flat(StatId stat, float value) => new(stat, StatOp.Flat, value);
 
     [Fact]
     public void ShippedItems_ListTheirEquipSlots_InFileOrder()

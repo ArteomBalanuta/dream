@@ -26,7 +26,9 @@ public sealed class UnknownItemKindTests
 
         // The paths CaptureActorSnapshots and the join/inventory snapshot take.
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Zed"));
-        Assert.Equal(default, inventory.ResolveEquippedToolModifier("Zed"));
+        EquipmentLoadout loadout = new();
+        inventory.CopyEquipment("Zed", loadout);
+        Assert.True(loadout.Get(EquipmentSlot.MainHand).IsEmpty);
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Zed");
 
         InventoryItemSnapshot equipped = snapshot.EquippedSlot!.Value.Item!.Value;

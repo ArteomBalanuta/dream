@@ -71,36 +71,11 @@ public static class ToolCatalog
                 item.Description,
                 item.VisualId,
                 item.DetailLines,
-                ToLegacyModifier(item.Modifiers),
+                item.Modifiers,
                 item.HeldLight);
         }
 
         return definitions;
-    }
-
-    // Until ToolStatModifier is retired (wave H, C0b): the three legacy stats of a definition.
-    private static ToolStatModifier ToLegacyModifier(IReadOnlyList<Stats.StatModifier> modifiers)
-    {
-        int strength = 0;
-        float attackSpeed = 0f;
-        int vitality = 0;
-        foreach (Stats.StatModifier modifier in modifiers)
-        {
-            switch (modifier.Stat)
-            {
-                case Stats.StatId.Strength:
-                    strength = (int)modifier.Value;
-                    break;
-                case Stats.StatId.AttackSpeed:
-                    attackSpeed = modifier.Value;
-                    break;
-                case Stats.StatId.Vitality:
-                    vitality = (int)modifier.Value;
-                    break;
-            }
-        }
-
-        return new ToolStatModifier(strength, attackSpeed, vitality);
     }
 }
 

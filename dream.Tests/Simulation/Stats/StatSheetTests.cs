@@ -2,6 +2,7 @@ using Xunit;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
+using Dream.Tests.Support;
 using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Simulation.Stats;
@@ -17,20 +18,30 @@ public class StatSheetTests
         return block;
     }
 
-    private static StatModifier[] ModifiersOf(ToolStatModifier tool) =>
+    private static StatModifier[] ModifiersOf(LegacyToolStats tool) =>
     [
         new(StatId.Strength, StatOp.Flat, tool.StrengthBonus),
         new(StatId.AttackSpeed, StatOp.Flat, tool.AttackSpeedBonus),
         new(StatId.Vitality, StatOp.Flat, tool.VitalityBonus)
     ];
 
-    private static IEnumerable<ToolStatModifier> AllToolModifiers()
+    // Each starter tool as the legacy three-stat modifier (the oracle) and as the definition's modifiers
+    // (what production hands to PlayerCombatant.ApplyEquipment).
+    private static IEnumerable<(LegacyToolStats Legacy, IReadOnlyList<StatModifier> Definition)> AllTools()
     {
-        yield return default;
+        yield return (default, []);
         foreach (string kind in ToolCatalog.StarterItemKinds)
         {
-            yield return ToolCatalog.Resolve(kind).StatModifier;
+            IReadOnlyList<StatModifier> modifiers = ToolCatalog.Resolve(kind).Modifiers;
+            yield return (LegacyToolStats.From(modifiers), modifiers);
         }
+    }
+
+    private static void EquipInMainHand(PlayerCombatant combatant, IReadOnlyList<StatModifier> definition)
+    {
+        EquipmentLoadout loadout = new();
+        loadout.Set(EquipmentSlot.MainHand, definition);
+        combatant.ApplyEquipment(loadout);
     }
 
     [Fact]
@@ -44,7 +55,7 @@ public class StatSheetTests
         StatSheet sheet = new();
         long compared = 0;
 
-        foreach (ToolStatModifier tool in AllToolModifiers())
+        foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             StatModifier[] modifiers = ModifiersOf(tool);
             int step = 0;
@@ -56,7 +67,7 @@ public class StatSheetTests
                 step++;
 
                 PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
-                PlayerCombatStats legacy = PlayerCombatStats.Combine(baseStats, tool);
+                PlayerCombatStats legacy = LegacyToolStats.Combine(baseStats, tool);
 
                 sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
                 sheet.SetSource(0, modifiers);
@@ -80,7 +91,7 @@ public class StatSheetTests
     public void Resolution_EqualsLegacyCombine_ForEveryStrengthAndVitalityWithEveryTool()
     {
         StatSheet sheet = new();
-        foreach (ToolStatModifier tool in AllToolModifiers())
+        foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             StatModifier[] modifiers = ModifiersOf(tool);
             for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength++)
@@ -89,7 +100,7 @@ public class StatSheetTests
                 {
                     foreach (float attackSpeed in new[] { 0.5f, 1.0f, 2.0f, 4.99f, 5.0f })
                     {
-                        PlayerCombatStats legacy = PlayerCombatStats.Combine(
+                        PlayerCombatStats legacy = LegacyToolStats.Combine(
                             new PlayerCombatStats { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality },
                             tool);
                         sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
@@ -107,13 +118,13 @@ public class StatSheetTests
     [Fact]
     public void PlayerCombatant_StatsMatchLegacyCombine_ForEveryTool()
     {
-        foreach (ToolStatModifier tool in AllToolModifiers())
+        foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             PlayerCombatStats baseStats = new() { Strength = 48, AttackSpeed = 4.5f, Vitality = 3 };
             PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
-            combatant.ApplyEquippedToolModifier(tool);
+            EquipInMainHand(combatant, definition);
 
-            PlayerCombatStats legacy = PlayerCombatStats.Combine(combatant.BaseStats, tool);
+            PlayerCombatStats legacy = LegacyToolStats.Combine(combatant.BaseStats, tool);
             Assert.Equal(legacy.Strength, combatant.Stats.Strength);
             Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
             Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
@@ -126,7 +137,7 @@ public class StatSheetTests
     {
         // The production path: PlayerCombatant leaves zero-valued bonuses out of the source it sets.
         float[] attackSpeeds = [0.5f, 0.75f, 1.0f, 2.5f, 4.99f, 5.0f];
-        foreach (ToolStatModifier tool in AllToolModifiers())
+        foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength += 7)
             {
@@ -136,9 +147,9 @@ public class StatSheetTests
                     {
                         PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
                         PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
-                        combatant.ApplyEquippedToolModifier(tool);
+                        EquipInMainHand(combatant, definition);
 
-                        PlayerCombatStats legacy = PlayerCombatStats.Combine(combatant.BaseStats, tool);
+                        PlayerCombatStats legacy = LegacyToolStats.Combine(combatant.BaseStats, tool);
                         Assert.Equal(legacy.Strength, combatant.Stats.Strength);
                         Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
                         Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
@@ -223,7 +234,7 @@ public class StatSheetTests
     {
         StatSheet sheet = new();
         StatBlock block = BlockOf(20f, 2f, 20f);
-        StatModifier[] modifiers = ModifiersOf(ToolCatalog.Resolve("tool.field-blade").StatModifier);
+        StatModifier[] modifiers = ModifiersOf(LegacyToolStats.From(ToolCatalog.Resolve("tool.field-blade").Modifiers));
         float sink = 0f;
         int cycle = 0;
 

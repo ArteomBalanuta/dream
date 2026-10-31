@@ -212,11 +212,13 @@ public partial class PlayScene
         _remoteClient.QueueWorldResyncRequest(clientChecksum);
     }
 
+    private readonly EquipmentLoadout _equipmentLoadout = new();
+
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
         string heldItemId;
-        ToolStatModifier modifier = default;
+        _equipmentLoadout.Clear();
         HeldLightKind heldLight = HeldLightKind.None;
         if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
         {
@@ -224,7 +226,7 @@ public partial class PlayScene
             // A kind this client does not know is inert: no modifier, no light, no throw.
             if (ToolCatalog.TryResolve(equippedItem.ItemKind, out ToolDefinition definition))
             {
-                modifier = definition.StatModifier;
+                _equipmentLoadout.Set(EquipmentSlot.MainHand, definition.Modifiers);
                 heldLight = definition.HeldLight;
             }
         }
@@ -233,7 +235,7 @@ public partial class PlayScene
             heldItemId = ViewModelAssets.DefaultLoadout.HeldItemId;
         }
 
-        _runtime.Player.Combatant.ApplyEquippedToolModifier(modifier);
+        _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);
         _viewModelController.SetHeldItem(heldItemId);
         // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
         _localHeldLight = heldLight;

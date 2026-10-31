@@ -323,20 +323,28 @@ internal sealed class PlayerInventoryService
             new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, equippedItem, equippedItem.HasValue));
     }
 
-    public ToolStatModifier ResolveEquippedToolModifier(string playerName)
+    // Fills the loadout with the modifiers of what the player has equipped; replaces
+    // ResolveEquippedToolModifier. Wave H, C0: the main hand (slot 100) only; H1 reads all four slots.
+    // A kind the catalog no longer knows is inert: no modifiers, no throw (the row stays as it is).
+    // Allocates nothing.
+    public void CopyEquipment(string playerName, EquipmentLoadout into)
     {
+        ArgumentNullException.ThrowIfNull(into);
+        into.Clear();
         if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
             || !slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long itemInstanceId)
             || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
         {
-            return default;
+            return;
         }
 
-        // A retired kind is inert: no modifier, no throw (the row stays as it is).
-        return ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition) ? definition.StatModifier : default;
+        if (ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition))
+        {
+            into.Set(EquipmentSlot.MainHand, definition.Modifiers);
+        }
     }
 
-    // The light the equipped item casts; mirrors ResolveEquippedToolModifier and allocates nothing.
+    // The light the equipped item casts; mirrors CopyEquipment and allocates nothing.
     public HeldLightKind ResolveEquippedHeldLight(string playerName)
     {
         if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
