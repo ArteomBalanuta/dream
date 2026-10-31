@@ -239,8 +239,11 @@ public sealed class WorldSimulationSeedTests
             Assert.Equal(overrideSeed, host.Runtime!.SimulationSeed);
         }
 
-        using ServerPersistenceBundle afterwards = world.OpenBundle();
-        Assert.Equal(stored, afterwards.SimulationSeed);
+        // One bundle at a time: an open bundle holds its world's lease.
+        using (ServerPersistenceBundle afterwards = world.OpenBundle())
+        {
+            Assert.Equal(stored, afterwards.SimulationSeed);
+        }
 
         using ServerPersistenceBundle invalid = world.OpenBundle(simulationSeedOverride: "garbage");
         Assert.Equal(stored, invalid.SimulationSeed);
