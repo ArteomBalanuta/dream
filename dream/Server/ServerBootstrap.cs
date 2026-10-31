@@ -11,6 +11,7 @@ using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
 using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -454,7 +455,12 @@ public static class ServerBootstrap
         return new WorldIntegrityOptions
         {
             IsKnownItemKind = kind => content.TryGetItem(kind, out _),
-            IsKnownEnemyKind = kind => content.TryGetEnemy(kind, out _)
+            IsKnownEnemyKind = kind => content.TryGetEnemy(kind, out _),
+            // An unknown kind is counted as such already, so it is not also a slot mismatch.
+            CanOccupy = (kind, slotIndex) =>
+                !content.TryGetItem(kind, out ItemDefinition? item)
+                || (EquipmentSlots.TryFromSlotIndex(slotIndex, out EquipmentSlot slot)
+                    && (item.EquipSlotMask & EquipmentSlots.MaskOf(slot)) != 0)
         };
     }
 

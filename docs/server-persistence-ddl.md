@@ -236,6 +236,18 @@ Persistence wave E (plan `docs/ledger/plans/2026-10-29-wave-e-plan.md`) hosts wo
 
 No schema change. `WorldHostLease` (`Server/Hosting`) holds one exclusive `FileStream` per world; a crash frees it. `WorldIntegrityCheck` (`Server/Persistence`) runs `quick_check`, `foreign_key_check`, bounds, slot and kind checks when a world loads; foreign-key violations or corruption stop the start with exit code 6, the rest is logged with counts. `--db backup <path>` uses `SqliteConnection.BackupDatabase` (safe while running); `--db restore <path> --yes` swaps the file offline after validating the source (version not newer, `integrity_check`) and keeps the old file as `{db}.pre-restore.{timestamp}.bak`. Details and exit codes are in `docs/configuration.md`.
 
+## Rolled item stats (migration 0008, wave H)
+
+Schema version 8 (plan `docs/ledger/plans/2026-11-01-wave-h-plan.md`). `item_instances` gains `rolled_modifiers TEXT NULL`, `CHECK (rolled_modifiers IS NULL OR (length(rolled_modifiers) <= 1024 AND json_valid(rolled_modifiers)))`. NULL is an unrolled item, whose stats come from its definition (every starter-kit item and every row from before the migration). Otherwise the value is versioned JSON written by `ItemRollCodec`, for example `{"v":1,"r":"Rare","m":[["Strength","Flat",6],["AttackSpeed","Flat",1.75]]}`: stat names are text so `StatId` can be reordered, and floats are written round-trip. No table is rebuilt, so the five object-id triggers stay.
+
+- The column is last among the item columns in `SqliteItemRepository.LoadSql` and in `SqliteInventoryRepository.LoadPlayerInventorySql` (the grant branch of its `UNION ALL` gains one NULL, and the kit version is now column 17). `ReadItem` parses it with `ItemRollCodec.Parse`, which never throws: a bad value reads as `ItemRoll.Damaged`, which is inert (no stats), loads, and is counted by the integrity check.
+- The roll never changes after the item is created. `UpsertSql` inserts the column but its `ON CONFLICT DO UPDATE` branch does not name it, so no later save can alter a stored roll (pinned by `ItemRollPersistenceTests`).
+- `--worlds copy` and a full `export` carry the column (`SqliteWorldCatalog.CopyTables` drives both); `--terrain-only` has no items.
+- Slot indices `101..103` (off hand, head, body) need no schema change: `CHECK (slot_index >= 0)` already allows them. Slot 100 is the main hand, as before. An equipment row aliases the backpack row of the same item; the backpack row is what keeps the item when it is unequipped.
+- `IInventoryRepository.DeleteInventorySlot(player, slot)` deletes one slot row (unequip). `DestroyInventoryItem(player, itemId)` deletes this player's rows for the item and then the item row if no slot of any player still references it (a legacy shared item keeps its row for the other holder).
+- The integrity check treats a `100..103` row as a legitimate alias of a same-player backpack row, and adds four soft counts: `ItemsInTwoEquipmentSlots` (extra equipment rows of one item of one player), `UnknownSlotIndexes` (outside `0..15` and `100..103`), `EquipmentSlotMismatches` (a kind in a slot its definition does not allow; decided by `WorldIntegrityOptions.CanOccupy`, wired in `ServerBootstrap.IntegrityOptionsFor`, and an unknown kind is not also counted here) and `DamagedItemRolls` (reads only rows with a stored roll).
+- `dream --items grant <world> <character> <item kind> [--rarity common|uncommon|rare]` and `dream --items list <world> <character>` (`Server/Items/ItemCli.cs`) are tab-separated. `grant` is offline: it takes the world's lease (exit 7 when held), needs a `player_starter_grants` row for the character in that world (else exit 2, so the next join does not take the inventory for a pre-kit one), writes the item row (owner = the character key, state `Inventory`, stack 1) and the lowest free backpack slot in one transaction, and prints item id, slot, rarity and modifiers. The roll is seeded with `(worlds.seed, worlds.world_time_ticks, StableHash.Of(key), 0, item id)`; the item id as drop index is fine because the command is not lockstep. `list` takes no lease and prints slot, item id, kind, rarity and modifiers (`-` for an unrolled item, `damaged` for a damaged roll). Exit codes: 0 ok, 1 usage, 2 not found, no grant row, kind not rollable or backpack full, 3 schema too new, 7 held, 8 invalid content.
+
 ## Accounts and characters (migration 0007, wave G)
 
 Schema version 7 (plan `docs/ledger/plans/2026-10-31-wave-g-plan.md`). `accounts` holds `account_id` (AUTOINCREMENT), `token_hash` (BLOB, `CHECK (length(token_hash) = 32)`, unique), `created_utc` and `last_seen_utc`. The hash is the SHA-256 of the player's 32-byte token; the token itself is never stored, so a database backup holds no usable secret. `player_profiles` gains `account_id INTEGER NULL REFERENCES accounts(account_id) ON DELETE SET NULL` (partial index `ix_player_profiles_account_id`). A character with `account_id IS NULL` is unowned (a legacy character, or one released with `--characters release`); the first token to join it claims it, up to 5 characters per account. `player_name` stays the immutable key. `display_name` is what people type and see, and is unique ignoring ASCII case (`ux_player_profiles_display_name`, `COLLATE NOCASE`). Migration 0007 renames duplicate display names to `<name>~<n>`; the `.bak` taken before it holds the originals.
@@ -408,6 +420,7 @@ Key fields:
 - `world_position_*`: nullable world-drop coordinates
 - `state`: current ownership/state marker
 - `stack_count`
+- `rolled_modifiers`: nullable, versioned JSON written once (migration 0008); NULL for an unrolled item
 - timestamps
 
 Used for:
@@ -428,8 +441,8 @@ Key fields:
 
 Used for:
 
-- 4x4 backpack slot assignment
-- dedicated equipped-slot assignment
+- 4x4 backpack slot assignment (`0..15`)
+- equipment slots `100..103` (main hand, off hand, head, body)
 - reconnect restore of tool selection
 
 ### `player_starter_grants` (migration 0002)
@@ -545,7 +558,7 @@ The details and measurements are in `docs/performance-and-optimizations.md`, Che
 The gameplay inventory slice uses:
 
 - backpack slots `0..15`
-- one equipped slot stored separately
+- equipment slots `100..103`, each an alias of the item's backpack row when it has one
 - item definitions resolved in code by `item_kind`
 - per-item held-viewmodel selection resolved by `visual_id`
 
