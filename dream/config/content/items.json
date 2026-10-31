@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "starterKitVersion": 2,
+  "unrecordedStarterKitVersion": 1,
+  "starterKit": [
+    { "item": "tool.builder-hammer", "version": 1 },
+    { "item": "tool.field-blade", "version": 1 },
+    { "item": "tool.stone-maul", "version": 1 },
+    { "item": "tool.survey-lantern", "version": 1 },
+    { "item": "tool.torch", "version": 2 }
+  ],
+  "items": [
+    {
+      "key": "tool.builder-hammer",
+      "displayName": "Builder Hammer",
+      "description": "Reliable close-range construction tool for quick world edits.",
+      "visualId": "held.tool.builder",
+      "detailLines": [ "Role: Building", "Impact: +2 Strength", "Tempo: +0.25 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 2 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 0.25 }
+      ]
+    },
+    {
+      "key": "tool.field-blade",
+      "displayName": "Field Blade",
+      "description": "Short combat blade with quick recovery and clean follow-up swings.",
+      "visualId": "held.tool.blade",
+      "detailLines": [ "Role: Combat", "Impact: +4 Strength", "Tempo: +1.50 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 4 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 1.5 }
+      ]
+    },
+    {
+      "key": "tool.stone-maul",
+      "displayName": "Stone Maul",
+      "description": "Heavy breaker meant for deliberate hits and strong stagger pressure.",
+      "visualId": "held.tool.maul",
+      "detailLines": [ "Role: Breaker", "Impact: +8 Strength", "Tempo: -0.75 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 8 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": -0.75 }
+      ]
+    },
+    {
+      "key": "tool.survey-lantern",
+      "displayName": "Survey Lantern",
+      "description": "Utility tool for traversal loadouts and world inspection passes.",
+      "visualId": "held.tool.lantern",
+      "detailLines": [ "Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed" ],
+      "heldLight": "Lantern",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 1 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 0.1 }
+      ]
+    },
+    {
+      "key": "tool.torch",
+      "displayName": "Torch",
+      "description": "A burning torch that lights the ground around you after dark.",
+      "visualId": "held.tool.torch",
+      "detailLines": [ "Role: Light", "Light: warm, radius 8" ],
+      "heldLight": "Torch",
+      "modifiers": []
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -40,26 +41,28 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
+        // Every number comes from enemies.json (loaded at startup, never parsed here).
+        EnemyTemplate template = ContentCatalog.Shipped.Wolf;
         EnemyCombatant combatant = new(
             () => spawnPosition,
             _events,
             actorId: actorId,
-            maxHealth: 100,
-            attackDamage: 12,
-            attackIntervalSeconds: 1.05f,
+            maxHealth: template.MaxHealth,
+            attackDamage: template.AttackDamage,
+            attackIntervalSeconds: template.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
         EnemyActor wolf = new(
             combatant,
             spawnPosition,
-            aggroRange: 10f,
-            attackRange: 1.35f,
-            moveSpeed: 2.8f,
+            aggroRange: template.AggroRange,
+            attackRange: template.AttackRange,
+            moveSpeed: template.MoveSpeed,
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
             collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: "Wolf",
-            enemyKind: "Wolf",
-            level: 1);
+            displayName: template.DisplayName,
+            enemyKind: template.Key,
+            level: template.Level);
         _enemies.Add(wolf);
         PersistEnemy(wolf);
     }

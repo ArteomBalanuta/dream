@@ -302,7 +302,8 @@ internal sealed class PlayerInventoryService
             return default;
         }
 
-        return ToolCatalog.Resolve(item.ItemKind).StatModifier;
+        // A retired kind is inert: no modifier, no throw (the row stays as it is).
+        return ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition) ? definition.StatModifier : default;
     }
 
     // The light the equipped item casts; mirrors ResolveEquippedToolModifier and allocates nothing.
@@ -315,7 +316,7 @@ internal sealed class PlayerInventoryService
             return HeldLightKind.None;
         }
 
-        return ToolCatalog.Resolve(item.ItemKind).HeldLight;
+        return ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition) ? definition.HeldLight : HeldLightKind.None;
     }
 
     // Loads a player's inventory that no join loaded (a direct caller of a runtime without profiles,
@@ -549,15 +550,17 @@ internal sealed class PlayerInventoryService
             return null;
         }
 
-        ToolDefinition definition = ToolCatalog.Resolve(item.ItemKind);
+        // A kind the catalog no longer knows is shown as an inert "Unknown item": the row's own
+        // fields are kept and nothing throws.
+        bool known = ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition);
         return new InventoryItemSnapshot(
             item.ItemInstanceId,
             item.ItemKind,
             item.DisplayName,
             item.VisualId,
             item.StackCount,
-            definition.Description,
-            definition.DetailLines);
+            known ? definition.Description : ToolCatalog.UnknownItemDescription,
+            known ? definition.DetailLines : Array.Empty<string>());
     }
 
     private Dictionary<int, long> GetOrCreateSlots(string playerName)
