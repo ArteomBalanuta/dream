@@ -14,7 +14,8 @@ namespace Dream.Tests.Integration;
 // is unchanged by wave E.
 public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper output)
 {
-    // Measured at wave E C0 (3e30c12, protocol v8) before A, B or C merged: a client joins the
+    // Measured at wave E C0 (3e30c12, protocol v8) before A, B or C merged (the protocol digit is
+    // normalised to 8 below, so wave G's v9 changes nothing else in these frames): a client joins the
     // generated 56x8x56 world of StoredWorldDb(stored: false) (seed 20261029) and the server ticks
     // three more times with a snapshot per tick; the pinned frames are the join's (the snapshot frames
     // are checked to arrive but not byte-compared, see CaptureGeneratedJoinAsync). Generated worlds send no terrain manifest and no
@@ -136,7 +137,8 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         {
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
-            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0");
+            // Protocol v9 (wave G) changes only the version digit of these frames; compare as v8.
+            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":9", "\"protocolVersion\":8");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));

@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -15,17 +16,20 @@ namespace Dream.Simulation.Runtime;
 // The runtime implements IRuntimePersistenceHost for the bridge's callbacks.
 public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 {
-    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName) =>
-        _persistence.BeginPersistedPlayerPrefetch(playerName);
+    // True when the runtime was built with an account repository (joins are checked against accounts).
+    public bool HasAccounts => _persistence.HasAccounts;
 
-    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName) =>
-        _persistence.GetPersistedPlayerLoadState(playerName);
+    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName, AccountKey? account = null) =>
+        _persistence.BeginPersistedPlayerPrefetch(playerName, account);
 
-    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing) =>
-        _persistence.IsPersistedPlayerReady(playerName, startIfMissing);
+    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName, AccountKey? account = null) =>
+        _persistence.GetPersistedPlayerLoadState(playerName, account);
 
-    public void DiscardPersistedPlayerPrefetch(string playerName) =>
-        _persistence.DiscardPersistedPlayerPrefetch(playerName);
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing, AccountKey? account = null) =>
+        _persistence.IsPersistedPlayerReady(playerName, startIfMissing, account);
+
+    public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null) =>
+        _persistence.DiscardPersistedPlayerPrefetch(playerName, account);
 
     public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
     {

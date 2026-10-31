@@ -18,8 +18,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         ITerrainChunkRepository? terrainChunks = null,
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
         Dream.Multiplayer.Protocol.TerrainTransferPayload? terrainPayload = null,
-        IDisposable? hostLease = null)
+        IDisposable? hostLease = null,
+        IAccountRepository? accounts = null)
     {
+        Accounts = accounts;
         HostLease = hostLease;
         TerrainPayload = terrainPayload;
         StoredTerrain = storedTerrain;
@@ -43,6 +45,9 @@ public sealed class ServerPersistenceBundle : IDisposable
     public IDisposable? HostLease { get; }
 
     public IPlayerProfileRepository PlayerProfiles { get; }
+
+    // Accounts and character ownership; null when the bundle was built without them.
+    public IAccountRepository? Accounts { get; }
 
     public IWorldPersistenceRepository World { get; }
 

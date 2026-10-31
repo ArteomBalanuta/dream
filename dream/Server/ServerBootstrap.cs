@@ -142,6 +142,7 @@ public static class ServerBootstrap
             Descriptor = persistence.Descriptor,
             StoredTerrain = persistence.StoredTerrain,
             TerrainPayload = persistence.TerrainPayload,
+            Accounts = persistence.Accounts,
         };
     }
 

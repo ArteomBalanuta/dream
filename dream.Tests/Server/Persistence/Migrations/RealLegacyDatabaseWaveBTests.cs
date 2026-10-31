@@ -241,7 +241,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 {
                     string name = reader.GetString(1);
                     // Migration 0005 renumbers the ids of cubes, rubble and enemies, so they are not compared.
-                    if (name != "world_id" && !RenumberedColumns.Contains(name))
+                    if (name != "world_id" && name != "account_id" && !RenumberedColumns.Contains(name))
                     {
                         columns.Add(name);
                     }

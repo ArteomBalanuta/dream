@@ -330,7 +330,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             checkpointWriter: persistence?.CheckpointWriter,
             persistenceWrites: persistence?.PersistenceWrites,
             simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed,
-            storedTerrain: persistence?.StoredTerrain);
+            storedTerrain: persistence?.StoredTerrain,
+            accounts: persistence?.Accounts);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner, persistence?.TerrainPayload);
     }
 

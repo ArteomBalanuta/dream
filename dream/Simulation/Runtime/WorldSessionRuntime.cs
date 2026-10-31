@@ -124,7 +124,8 @@ public sealed partial class WorldSessionRuntime : IDisposable
         PersistenceWriteQueue? persistenceWrites = null,
         ulong simulationSeed = DefaultSimulationSeed,
         bool headlessMap = true,
-        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null)
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
+        IAccountRepository? accounts = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         World = world;
@@ -169,7 +170,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         _enemies = new EnemyRegistry();
         _combatResolver = CreateCombatResolver();
         _persistence = new RuntimePersistenceBridge(
-            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities);
+            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities, accounts);
         SubscribeReplicationExports();
 
         try
