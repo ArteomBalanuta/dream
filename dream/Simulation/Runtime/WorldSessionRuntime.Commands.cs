@@ -219,6 +219,12 @@ public sealed partial class WorldSessionRuntime
                     context.Combatant),
             InventoryEquipIntent equipIntent
                 => ProcessInventoryEquipAction(message, context.Player, equipIntent),
+            InventoryUnequipIntent unequipIntent
+                => ProcessInventoryUnequipAction(message, context.Player, unequipIntent),
+            InventoryMoveIntent moveIntent
+                => ProcessInventoryMoveAction(message, context.Player, moveIntent),
+            InventoryDestroyIntent destroyIntent
+                => ProcessInventoryDestroyAction(message, context.Player, destroyIntent),
             BuildMaterialSelectIntent materialIntent
                 => ProcessBuildMaterialSelectAction(message, context.Player, materialIntent),
             PlayerStatsUpdateIntent statsIntent

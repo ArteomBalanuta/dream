@@ -138,7 +138,12 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
             // Protocols v9 (wave G) and v10 (wave H) change only the version digit of these frames; compare as v8.
-            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":10", "\"protocolVersion\":8");
+            // Wave H also adds the item fields of the equipment model (modifiers, heldLight, equipSlots, after
+            // an item's detailLines) to the inventory in join-accepted; they are stripped here so every other
+            // byte still matches the capture. Their size is pinned by StarterKitInventoryBytesTests.
+            string text = ItemEquipmentFields().Replace(
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":10", "\"protocolVersion\":8"),
+                "$1");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));
@@ -155,6 +160,9 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
 
     [System.Text.RegularExpressions.GeneratedRegex(@"""(currentServerTick|serverTick)"":\d+")]
     private static partial System.Text.RegularExpressions.Regex TickNumber();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(""detailLines"":\[[^\]]*\])(?:,""modifiers"":\[[^\]]*\])?(?:,""heldLight"":\d+)?(?:,""equipSlots"":\d+)?")]
+    private static partial System.Text.RegularExpressions.Regex ItemEquipmentFields();
 
     private sealed record FrameCapture(string Kinds, long TotalBytes, string Sha256)
     {

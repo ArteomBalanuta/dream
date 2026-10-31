@@ -66,6 +66,7 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         ApplyLoadedInventory(profile.PlayerName, inventory);
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
+        ReapplyPersistedHealth(sessionId, worldState);
     }
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
@@ -99,21 +100,47 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
+        playerTarget.SetWorldPosition(persistedPosition);
+        if (sessionId == ResolvePrimaryControlledSessionId())
+        {
+            Player.SetFacing(persistedFacing);
+        }
+        else if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
+        {
+            remote.SetFacing(persistedFacing);
+        }
+
+        ApplyPersistedHealth(sessionId, playerTarget, worldState);
+    }
+
+    // The join set health against the base max, before equipment; the equipment refresh then rescaled
+    // it by ratio, so a vest would heal or hurt on every rejoin (H-D17). Sets it again against the
+    // final max.
+    private void ReapplyPersistedHealth(PlayerSessionId sessionId, PersistedPlayerWorldState? worldState)
+    {
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? playerTarget)
+            && playerTarget != null)
+        {
+            ApplyPersistedHealth(sessionId, playerTarget, worldState);
+        }
+    }
+
+    private void ApplyPersistedHealth(
+        PlayerSessionId sessionId,
+        IAuthoritativePlayerTarget playerTarget,
+        PersistedPlayerWorldState? worldState)
+    {
         // Health belongs to a world (U2): the world-state row holds it. The profile is global, so its
         // HP is whatever the character had in the last world it left; a character with no row here
         // has not been to this world and arrives at full health.
         int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
         int currentHealth = worldState?.CurrentHealth ?? maxHealth;
-
-        playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())
         {
-            Player.SetFacing(persistedFacing);
             Player.SetHealth(currentHealth, maxHealth);
         }
         else if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
         {
-            remote.SetFacing(persistedFacing);
             remote.SetHealth(currentHealth, maxHealth);
         }
     }
