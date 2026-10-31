@@ -1,7 +1,17 @@
+using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Server.Persistence;
+using Dream.Server.Persistence.Repositories;
+using Dream.Server.Persistence.Worlds;
+using Dream.Server.Worlds;
 using Dream.Simulation.Characters;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
+using Dream.Tests.Server.Persistence;
 using Dream.Tests.Support;
 
 namespace Dream.Tests.Server;
@@ -13,6 +23,12 @@ public sealed class CharacterJoinTests
     private static string TokenOf(string who) => TestAccountTokens.For(who);
 
     private static AccountKey AccountOf(string who) => TestAccountTokens.KeyFor(who);
+
+    private static Vector3 PositionOf(AccountHostHarness harness, PlayerSessionId session)
+    {
+        Assert.True(((IRuntimePersistenceHost)harness.Runtime).TryGetPlayerCheckpointState(session, out Vector3 position, out _, out _, out _));
+        return position;
+    }
 
     [Fact]
     public void NullToken_IsRejectedWithTokenRequired_BeforeAnyPrefetch_AndSeatsNobody()
@@ -261,12 +277,87 @@ public sealed class CharacterJoinTests
         Assert.Equal(1, new[] { "c-1", "c-2" }.Count(c => harness.RepliesOf(c).OfType<JoinAcceptedMessage>().Any()));
     }
 
-    [Fact(Skip = "wave G: needs the SQLite account repository in ServerBootstrap's bundle (G1) and two worlds in one database, unskip at glue")]
+    // The U2 acceptance test: one database, two worlds, the real SqliteAccountRepository. Level, experience
+    // and base stats are the global profile row; position, health and items are per world; ownership is
+    // global, so a stranger is refused in both.
+    [Fact]
     public void TheSameCharacter_JoinsWorldOneAndLaterWorldTwo_LevelAndBaseStatsFollow_ItemsPositionAndHealthStayPerWorld_AStrangerIsRejectedInBoth()
     {
-        // Glue: world 1 and world 2 of one database, each hosted in turn with the bundle's real
-        // SqliteAccountRepository. Level, experience and base stats come from the global profile row; the
-        // inventory, world state and health rows are per world; a second token is refused in both worlds.
+        const string Hero = "Wanderer";
+        PlayerSessionId session = new("s1");
+        Vector3 worldOneSpot = new(11.5f, 1.5f, 13.5f);
+        Vector3 worldTwoSpot = new(17.5f, 1.5f, 19.5f);
+        using PersistenceTestDatabase database = new();
+        WorldRecord two = new SqliteWorldCatalog(database.Schema).Create(new WorldCreateOptions("second world"));
+        using SqliteWorldPersistenceRepository oneRows = new(database.Schema, WorldId.Default);
+        using SqliteWorldPersistenceRepository twoRows = new(database.Schema, two.Descriptor.Id);
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+
+        // World one: the first join creates and claims the character, and play changes everything.
+        using (AccountHostHarness world = AccountHostHarness.OverSqlite(database))
+        {
+            world.JoinAccepted("c1", "s1", Hero, TokenOf("hero"));
+            PersistedPlayerProfile profile = profiles.TryGet(Hero)!.Value;
+            world.Runtime.ApplyPersistedPlayerState(
+                session,
+                profile with { Stats = profile.Stats with { Level = 7, Experience = 321, Strength = 25, Vitality = 18, AttackSpeed = 1.75f } },
+                new PersistedPlayerWorldState(Hero, worldOneSpot, Vector3.UnitZ, 23, 0, DateTime.UtcNow));
+            world.Leave("c1");
+            Assert.Equal(JoinRejectionReasons.CharacterOwned, world.JoinRejectionOf("c2", "s2", Hero, TokenOf("stranger")));
+        }
+
+        PersistedPlayerInventory oneItems = oneRows.LoadPlayerInventory(Hero);
+        Assert.NotEmpty(oneItems.Items);
+        Assert.Empty(twoRows.LoadPlayerInventory(Hero).Items);
+        Assert.Null(twoRows.TryGetPlayerWorldState(Hero));
+        Assert.Equal(AccountOf("hero"), new SqliteAccountRepository(database.Schema).Lookup(Hero, null).Existing!.Value.Owner);
+
+        // World two, later: the same token. Progress came along; the place and the body's state did not.
+        using (AccountHostHarness world = AccountHostHarness.OverSqlite(database, "second world"))
+        {
+            Assert.Equal(JoinRejectionReasons.CharacterOwned, world.JoinRejectionOf("c0", "s0", Hero, TokenOf("stranger")));
+            world.JoinAccepted("c1", "s1", Hero, TokenOf("hero"));
+            Player target = world.Runtime.Player; // the only player holds the primary seat
+            PlayerCombatant combatant = target.Combatant;
+            Assert.Equal(7, combatant.Level);
+            Assert.Equal(321, combatant.Experience);
+            Assert.Equal(25, combatant.BaseStats.Strength);
+            Assert.Equal(18, combatant.BaseStats.Vitality);
+            Assert.Equal(1.75f, combatant.BaseStats.AttackSpeed);
+            Assert.Equal(combatant.Health.MaxHealth, combatant.Health.CurrentHealth);
+            Assert.NotEqual(worldOneSpot, PositionOf(world, session));
+
+            PersistedPlayerProfile current = profiles.TryGet(Hero)!.Value;
+            world.Runtime.ApplyPersistedPlayerState(
+                session,
+                current with { Stats = current.Stats with { Level = 8, Strength = 26 } },
+                new PersistedPlayerWorldState(Hero, worldTwoSpot, Vector3.UnitX, 31, 0, DateTime.UtcNow));
+            world.Leave("c1");
+        }
+
+        PersistedPlayerInventory twoItems = twoRows.LoadPlayerInventory(Hero);
+        Assert.NotEmpty(twoItems.Items);
+        Assert.Empty(oneItems.Items.Select(item => item.ItemInstanceId).Intersect(twoItems.Items.Select(item => item.ItemInstanceId)));
+        Assert.Equal(oneItems.Items.Count, oneRows.LoadPlayerInventory(Hero).Items.Count);
+        Assert.Equal(worldOneSpot, oneRows.TryGetPlayerWorldState(Hero)!.Value.Position);
+        Assert.Equal(23, oneRows.TryGetPlayerWorldState(Hero)!.Value.CurrentHealth);
+        Assert.Equal(worldTwoSpot, twoRows.TryGetPlayerWorldState(Hero)!.Value.Position);
+        Assert.Equal(31, twoRows.TryGetPlayerWorldState(Hero)!.Value.CurrentHealth);
+
+        // Back in world one: its own place and health, with the progress made in world two.
+        using (AccountHostHarness world = AccountHostHarness.OverSqlite(database))
+        {
+            world.JoinAccepted("c1", "s1", Hero, TokenOf("hero"));
+            Player target = world.Runtime.Player; // the only player holds the primary seat
+            Assert.Equal(8, target.Combatant.Level);
+            Assert.Equal(26, target.Combatant.BaseStats.Strength);
+            Assert.Equal(23, target.Combatant.Health.CurrentHealth);
+            Assert.Equal(worldOneSpot, PositionOf(world, session));
+            world.Leave("c1");
+        }
+
+        Assert.Equal(1, database.Count("SELECT COUNT(*) FROM accounts;"));
+        Assert.Equal(1, database.Count("SELECT COUNT(*) FROM player_profiles;"));
     }
 
     [Fact]

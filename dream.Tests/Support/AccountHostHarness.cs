@@ -1,6 +1,7 @@
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Persistence;
+using Dream.Server.Persistence.Repositories;
 using Dream.Simulation.Characters;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
@@ -18,6 +19,33 @@ internal sealed class AccountHostHarness : IDisposable
 {
     private readonly bool _ownsDatabase;
     private readonly Dictionary<string, List<IServerToClientMessage>> _replies = new(StringComparer.Ordinal);
+
+    // The real thing: the production host over the bundle's own SqliteAccountRepository, in the given world
+    // (null: the default world). wrap decorates the repository, to fail a write on purpose. Accounts (the
+    // in-memory stand-in) is not wired here; read ownership through Sqlite or the database. Disposing the
+    // harness releases the world, so a database can be hosted again world after world.
+    public static AccountHostHarness OverSqlite(
+        PersistenceTestDatabase? database = null,
+        string? world = null,
+        Func<IAccountRepository, IAccountRepository>? wrap = null) =>
+        new(database, world, wrap);
+
+    private AccountHostHarness(PersistenceTestDatabase? database, string? world, Func<IAccountRepository, IAccountRepository>? wrap)
+    {
+        _ownsDatabase = database == null;
+        Database = database ?? new PersistenceTestDatabase();
+        Accounts = new CountingAccountRepository();
+        Clock = new ServerConnectionTestFixtures.ManualTimeProvider();
+        Sqlite = new SqliteAccountRepository(Database.Schema);
+        ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
+            Database.DatabasePath,
+            Database.SchemaPath,
+            start: new ServerStartOptions(WorldSelector: world));
+        Assert.IsType<SqliteAccountRepository>(bundle.Accounts);
+        Host = ServerBootstrap.CreateAuthoritativeHost(wrap == null ? bundle : WithAccounts(bundle, wrap(bundle.Accounts!)));
+        Host.TimeProvider = Clock;
+        RuntimeHost = null!;
+    }
 
     public AccountHostHarness(PersistenceTestDatabase? database = null, CountingAccountRepository? accounts = null)
     {
@@ -47,7 +75,11 @@ internal sealed class AccountHostHarness : IDisposable
     public static DedicatedServerHost CreateProductionHost(PersistenceTestDatabase database, IAccountRepository? accounts)
     {
         ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, database.SchemaPath);
-        return ServerBootstrap.CreateAuthoritativeHost(new ServerPersistenceBundle(
+        return ServerBootstrap.CreateAuthoritativeHost(WithAccounts(bundle, accounts));
+    }
+
+    private static ServerPersistenceBundle WithAccounts(ServerPersistenceBundle bundle, IAccountRepository? accounts) =>
+        new(
             bundle.Schema,
             bundle.PlayerProfiles,
             bundle.World,
@@ -61,12 +93,14 @@ internal sealed class AccountHostHarness : IDisposable
             bundle.StoredTerrain,
             bundle.TerrainPayload,
             bundle.HostLease,
-            accounts));
-    }
+            accounts);
 
     public PersistenceTestDatabase Database { get; }
 
     public CountingAccountRepository Accounts { get; }
+
+    // OverSqlite only: the database's accounts, for the test's own reads.
+    public SqliteAccountRepository? Sqlite { get; }
 
     public RuntimeAuthoritativeSessionHost RuntimeHost { get; }
 

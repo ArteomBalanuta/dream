@@ -8,6 +8,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
+using Dream.Tests.Support;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -376,7 +377,7 @@ public sealed class Wave12DeltaActorLoopbackTests(ITestOutputHelper output)
             Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
             GatedConnector? connector = slowLink || gated ? new GatedConnector(slowLink) : null;
             RemoteClientSession session = await RemoteClientSession.ConnectAsync(
-                new RemoteClientOptions("127.0.0.1", Service.Port, sessionId, $"Name {sessionId}", "w12-test"),
+                new RemoteClientOptions("127.0.0.1", Service.Port, sessionId, $"Name {sessionId}", "w12-test", AccountToken: TestAccountTokens.For($"Name {sessionId}")),
                 connector).AsTask().WaitAsync(Deadline);
             ServerConnection connection = await accept.WaitAsync(Deadline);
             Peer peer = new(sessionId, session, connection, connector?.Connection) { ServerLink = _transport.LastAccepted };
