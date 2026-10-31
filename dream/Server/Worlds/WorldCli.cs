@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
 using Dream.Server.Persistence.Worlds;
@@ -16,28 +17,43 @@ public static class WorldCli
     public const int ExitNotFoundOrConflict = 2;
     public const int ExitSchemaTooNew = 3;
     public const int ExitTerrainInvalid = 4;
+    public const int ExitWorldHeld = 7;
 
     public const string Usage =
         "Usage: --worlds list | create <name> [--size N] | copy <id|name> <new name> | delete <id|name> --yes | " +
         "export <id|name> <new name> [--terrain-only] | reset-terrain <id|name> --yes";
 
-    // Export and reset are offline commands: nothing detects a running server (a hosting lease is Phase 5).
+    // Copy, delete, export and reset are offline commands. Against the default database they hold the
+    // world's lease and refuse a held world; a run without a lease (a test seam) only prints this
+    // note for export and reset.
     internal const string OfflineNote = "Note: stop the server hosting this world first.";
 
     // Runs against the default database (migrating it first). args are the arguments after --worlds.
     public static int Run(string[] args)
     {
-        return Run(args, OpenDefaultCatalog, Console.Out, Console.Error);
+        return Run(
+            args,
+            OpenDefaultCatalog,
+            Console.Out,
+            Console.Error,
+            worldId => WorldHostLease.TryAcquire(ServerBootstrap.DefaultDatabasePath, worldId));
     }
 
-    public static int Run(string[] args, Func<IWorldCatalog> openCatalog, TextWriter output, TextWriter error)
+    // acquireLease returns the world's lease, or null when another holder has it; null (the
+    // default) takes no lease.
+    public static int Run(
+        string[] args,
+        Func<IWorldCatalog> openCatalog,
+        TextWriter output,
+        TextWriter error,
+        Func<WorldId, IDisposable?>? acquireLease = null)
     {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(openCatalog);
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(error);
 
-        Func<IWorldCatalog, int>? command = Parse(args, output, error, out string? usageError);
+        Func<IWorldCatalog, int>? command = Parse(args, output, error, acquireLease, out string? usageError);
         if (command == null)
         {
             error.WriteLine(usageError);
@@ -81,7 +97,12 @@ public static class WorldCli
         return new SqliteWorldCatalog(schema);
     }
 
-    private static Func<IWorldCatalog, int>? Parse(string[] args, TextWriter output, TextWriter error, out string? usageError)
+    private static Func<IWorldCatalog, int>? Parse(
+        string[] args,
+        TextWriter output,
+        TextWriter error,
+        Func<WorldId, IDisposable?>? acquireLease,
+        out string? usageError)
     {
         usageError = null;
         if (args.Length == 0)
@@ -132,6 +153,12 @@ public static class WorldCli
                 return catalog =>
                 {
                     WorldRecord source = ResolveExisting(catalog, copySource);
+                    using IDisposable? lease = Hold(acquireLease, source.Descriptor.Id, error, printNote: false, out bool held);
+                    if (held)
+                    {
+                        return ExitWorldHeld;
+                    }
+
                     output.WriteLine(Format(catalog.Copy(source.Descriptor.Id, copyName)));
                     return ExitOk;
                 };
@@ -162,6 +189,12 @@ public static class WorldCli
                 return catalog =>
                 {
                     WorldRecord target = ResolveExisting(catalog, deleteTarget);
+                    using IDisposable? lease = Hold(acquireLease, target.Descriptor.Id, error, printNote: false, out bool held);
+                    if (held)
+                    {
+                        return ExitWorldHeld;
+                    }
+
                     if (!catalog.Delete(target.Descriptor.Id))
                     {
                         throw new WorldNotFoundException(target.Descriptor.Id.ToString());
@@ -191,8 +224,13 @@ public static class WorldCli
                 string exportName = positional[1];
                 return catalog =>
                 {
-                    error.WriteLine(OfflineNote);
                     WorldRecord source = ResolveExisting(catalog, exportSource);
+                    using IDisposable? lease = Hold(acquireLease, source.Descriptor.Id, error, printNote: true, out bool held);
+                    if (held)
+                    {
+                        return ExitWorldHeld;
+                    }
+
                     string trimmed = exportName.Trim();
                     if (catalog.TryGetByName(trimmed) != null)
                     {
@@ -241,8 +279,13 @@ public static class WorldCli
 
                 return catalog =>
                 {
-                    error.WriteLine(OfflineNote);
                     WorldRecord target = ResolveExisting(catalog, resetTarget);
+                    using IDisposable? lease = Hold(acquireLease, target.Descriptor.Id, error, printNote: true, out bool held);
+                    if (held)
+                    {
+                        return ExitWorldHeld;
+                    }
+
                     TerrainResetResult result = catalog.ResetTerrain(target.Descriptor.Id);
                     output.WriteLine(
                         $"reset-terrain\t{target.Descriptor.Id}\t{target.Descriptor.Name}\t" +
@@ -321,6 +364,38 @@ public static class WorldCli
             output.WriteLine(Format(catalog.Create(new WorldCreateOptions(createName, createSize))));
             return ExitOk;
         };
+    }
+
+    // Takes the world's lease for the command. held is true (and a message is written) when another
+    // holder has the world. Without acquireLease nothing is held and printNote writes OfflineNote.
+    private static IDisposable? Hold(
+        Func<WorldId, IDisposable?>? acquireLease,
+        WorldId worldId,
+        TextWriter error,
+        bool printNote,
+        out bool held)
+    {
+        held = false;
+        if (acquireLease == null)
+        {
+            if (printNote)
+            {
+                error.WriteLine(OfflineNote);
+            }
+
+            return null;
+        }
+
+        IDisposable? lease = acquireLease(worldId);
+        if (lease == null)
+        {
+            held = true;
+            error.WriteLine(
+                $"World {worldId} is in use by a running server or another command; " +
+                "stop it first. Nothing was changed.");
+        }
+
+        return lease;
     }
 
     // An id or name that must already exist (never creates).

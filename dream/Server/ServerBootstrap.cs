@@ -3,8 +3,10 @@ using System.Net;
 using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
+using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
+using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
 using Dream.Simulation.Persistence;
@@ -163,6 +165,13 @@ public static class ServerBootstrap
     // (over 64 characters), or a stored world this build cannot host (size, height, generator).
     public const int WorldCannotBeOpenedExitCode = 5;
 
+    // The dedicated server's exit code when the database fails its start-up integrity check: a
+    // foreign-key violation, or a damaged file. Only these stop a start; soft findings are logged.
+    public const int DatabaseIntegrityExitCode = 6;
+
+    // The dedicated server's exit code when another process already hosts the selected world.
+    public const int WorldHeldExitCode = 7;
+
     // The host, or null after logging why the server cannot start: a database at a schema version
     // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
     internal static DedicatedServerHost? TryCreateServerModeHost(
@@ -191,6 +200,29 @@ public static class ServerBootstrap
                 $"Server not started: world '{ex.Selector}' does not exist. " +
                 "Select an existing world id or name (--world, or DREAM_WORLD).");
             exitCode = WorldNotFoundExitCode;
+            return null;
+        }
+        catch (WorldHeldException ex)
+        {
+            log(
+                $"Server not started: world {ex.WorldId} is already hosted by another process " +
+                $"(lock file {ex.LockPath}). Stop that server, or select another world (--world, or DREAM_WORLD).");
+            exitCode = WorldHeldExitCode;
+            return null;
+        }
+        catch (DatabaseIntegrityException ex)
+        {
+            log($"Server not started: {ex.Message}. Restore a backup (--db restore <path> --yes) or repair the database.");
+            exitCode = DatabaseIntegrityExitCode;
+            return null;
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is 11 or 26)
+        {
+            // SQLITE_CORRUPT or SQLITE_NOTADB from anywhere in the start (the migrator, say), before
+            // the integrity check had a chance to run.
+            log($"Server not started: the database file is damaged (SQLite error {ex.SqliteErrorCode}: {ex.Message}). " +
+                "Restore a backup (--db restore <path> --yes).");
+            exitCode = DatabaseIntegrityExitCode;
             return null;
         }
         catch (ArgumentException ex)
@@ -325,7 +357,55 @@ public static class ServerBootstrap
         WorldDescriptor descriptor = record.Descriptor;
         descriptor.Validate();
 
+        // One server per world on a database file. A database that is not a file takes no lease.
+        // The lease belongs to the bundle from here on; a failure before the bundle exists releases it.
+        WorldHostLease? lease = WorldHostLease.AppliesTo(databasePath)
+            ? WorldHostLease.Acquire(databasePath, descriptor.Id)
+            : null;
+        try
+        {
+            return OpenWorldBundle(
+                schema, record, created, simulationSeedOverride, log, lease, IntegrityCheckOptions);
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
+
+    // The integrity check's known-kind predicates and options. Accept-all by default; the glue that
+    // knows the content catalog replaces it once at process start.
+    public static WorldIntegrityOptions IntegrityCheckOptions { get; set; } = WorldIntegrityOptions.Default;
+
+    private static ServerPersistenceBundle OpenWorldBundle(
+        SqliteSchemaBootstrapper schema,
+        WorldRecord record,
+        bool created,
+        string? simulationSeedOverride,
+        Action<string>? log,
+        WorldHostLease? lease,
+        WorldIntegrityOptions integrityOptions)
+    {
+        WorldDescriptor descriptor = record.Descriptor;
         WorldId worldId = descriptor.Id;
+
+        WorldIntegrityReport integrity;
+        using (SqliteConnection connection = schema.CreateOpenConnection())
+        {
+            integrity = WorldIntegrityCheck.Run(connection, descriptor, integrityOptions);
+        }
+
+        foreach (string line in integrity.ToLogLines(descriptor))
+        {
+            log?.Invoke(line);
+        }
+
+        if (integrity.IsFatal)
+        {
+            throw new DatabaseIntegrityException(integrity.FatalMessage);
+        }
+
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null;
         TerrainTransferPayload? terrainPayload = null;
         if (descriptor.MapSource == WorldMapSource.Stored)
@@ -383,7 +463,8 @@ public static class ServerBootstrap
             worldId,
             descriptor,
             storedTerrain: storedTerrain,
-            terrainPayload: terrainPayload);
+            terrainPayload: terrainPayload,
+            hostLease: lease);
     }
 
     // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the
