@@ -55,6 +55,11 @@ public sealed class StatSheet
             {
                 throw new ArgumentException("Modifier has an unknown stat or op.", nameof(modifiers));
             }
+
+            if (!float.IsFinite(modifiers[i].Value))
+            {
+                throw new ArgumentException("Modifier value must be finite.", nameof(modifiers));
+            }
         }
 
         modifiers.CopyTo(_modifiers.AsSpan(slot * MaxModifiersPerSource, MaxModifiersPerSource));

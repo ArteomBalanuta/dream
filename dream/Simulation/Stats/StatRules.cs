@@ -1,3 +1,5 @@
+using Dream.Simulation.Players;
+
 namespace Dream.Simulation.Stats;
 
 /// <summary>
@@ -10,17 +12,17 @@ public static class StatRules
 
     public static float MinBase(StatId stat) => stat switch
     {
-        StatId.Strength => 1f,
-        StatId.Vitality => 1f,
-        StatId.AttackSpeed => 0.5f,
+        StatId.Strength => PlayerCombatStats.MinStrength,
+        StatId.Vitality => PlayerCombatStats.MinVitality,
+        StatId.AttackSpeed => PlayerCombatStats.MinAttackSpeed,
         _ => 0f
     };
 
     public static float MaxBase(StatId stat) => stat switch
     {
-        StatId.Strength => 50f,
-        StatId.Vitality => 50f,
-        StatId.AttackSpeed => 5.0f,
+        StatId.Strength => PlayerCombatStats.MaxStrength,
+        StatId.Vitality => PlayerCombatStats.MaxVitality,
+        StatId.AttackSpeed => PlayerCombatStats.MaxAttackSpeed,
         _ => DefaultMaxUnused
     };
 

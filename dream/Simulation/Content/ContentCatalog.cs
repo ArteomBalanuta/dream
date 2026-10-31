@@ -232,7 +232,7 @@ public sealed class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers"]);
-        string key = ReadNonEmptyString(ItemsFileName, $"{path}.key", properties["key"]);
+        string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadNonEmptyString(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadString(ItemsFileName, $"{path}.description", properties["description"]);
         string visualId = ReadNonEmptyString(ItemsFileName, $"{path}.visualId", properties["visualId"]);
@@ -349,7 +349,7 @@ public sealed class ContentCatalog
                 enemyElement,
                 ["key", "displayName", "level", "maxHealth", "attackDamage", "attackIntervalSeconds", "aggroRange", "attackRange", "moveSpeed"]);
             EnemyTemplate template = new(
-                ReadNonEmptyString(EnemiesFileName, $"{path}.key", enemy["key"]),
+                ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
                 ReadNonEmptyString(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
                 ReadInt(EnemiesFileName, $"{path}.level", enemy["level"], 1, 1000),
                 ReadInt(EnemiesFileName, $"{path}.maxHealth", enemy["maxHealth"], 1, 1_000_000),
@@ -367,9 +367,11 @@ public sealed class ContentCatalog
             index++;
         }
 
-        if (!byKey.ContainsKey(WolfKey))
+        // The persisted enemy_kind of a spawned wolf is this exact text; a differently cased key
+        // would find the template but write rows under another spelling.
+        if (!byKey.TryGetValue(WolfKey, out EnemyTemplate? wolf) || !string.Equals(wolf.Key, WolfKey, StringComparison.Ordinal))
         {
-            throw Fail(EnemiesFileName, "$.enemies", $"required enemy '{WolfKey}' is missing (the population step spawns it)");
+            throw Fail(EnemiesFileName, "$.enemies", $"required enemy '{WolfKey}' is missing (the population step spawns it; the key is case-sensitive)");
         }
 
         return new ParsedEnemies(byKey, list);
@@ -381,21 +383,28 @@ public sealed class ContentCatalog
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
-        text.Append("items.v1;kit=").Append(items.StarterKitVersion.ToString(c))
+        // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
+        // cannot shift into the next field and make two different catalogs hash alike.
+        text.Append("items.v2;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
-            text.Append("kit|").Append(entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c)).Append('\n');
+            text.Append("kit|");
+            AppendField(text, entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c)).Append('\n');
         }
 
         foreach (ItemDefinition item in items.List.OrderBy(i => i.Key, StringComparer.Ordinal))
         {
-            text.Append("item|").Append(item.Key).Append('|').Append(item.DisplayName).Append('|')
-                .Append(item.Description).Append('|').Append(item.VisualId).Append('|')
-                .Append(item.HeldLight.ToString()).Append('\n');
+            text.Append("item|");
+            AppendField(text, item.Key).Append('|');
+            AppendField(text, item.DisplayName).Append('|');
+            AppendField(text, item.Description).Append('|');
+            AppendField(text, item.VisualId).Append('|');
+            text.Append(item.HeldLight.ToString()).Append('\n');
             foreach (string line in item.DetailLines)
             {
-                text.Append("detail|").Append(line).Append('\n');
+                text.Append("detail|");
+                AppendField(text, line).Append('\n');
             }
 
             foreach (ItemModifierDefinition modifier in item.Modifiers)
@@ -405,10 +414,12 @@ public sealed class ContentCatalog
             }
         }
 
-        text.Append("enemies.v1\n");
+        text.Append("enemies.v2\n");
         foreach (EnemyTemplate enemy in enemies.List.OrderBy(e => e.Key, StringComparer.Ordinal))
         {
-            text.Append("enemy|").Append(enemy.Key).Append('|').Append(enemy.DisplayName).Append('|')
+            text.Append("enemy|");
+            AppendField(text, enemy.Key).Append('|');
+            AppendField(text, enemy.DisplayName).Append('|')
                 .Append(enemy.Level.ToString(c)).Append('|').Append(enemy.MaxHealth.ToString(c)).Append('|')
                 .Append(enemy.AttackDamage.ToString(c)).Append('|').Append(enemy.AttackIntervalSeconds.ToString("R", c)).Append('|')
                 .Append(enemy.AggroRange.ToString("R", c)).Append('|').Append(enemy.AttackRange.ToString("R", c)).Append('|')
@@ -418,6 +429,9 @@ public sealed class ContentCatalog
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()));
         return Convert.ToHexStringLower(hash);
     }
+
+    private static StringBuilder AppendField(StringBuilder text, string value) =>
+        text.Append(value.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(value);
 
     // ---- JSON helpers ----
 
@@ -500,6 +514,19 @@ public sealed class ContentCatalog
         if (string.IsNullOrWhiteSpace(value))
         {
             throw Fail(file, path, "must not be blank");
+        }
+
+        return value;
+    }
+
+    // A content key is looked up by value (case-insensitively), so surrounding whitespace would make a
+    // key that no lookup finds.
+    private static string ReadKey(string file, string path, JsonElement element)
+    {
+        string value = ReadNonEmptyString(file, path, element);
+        if (!string.Equals(value, value.Trim(), StringComparison.Ordinal))
+        {
+            throw Fail(file, path, "must not have leading or trailing whitespace");
         }
 
         return value;
