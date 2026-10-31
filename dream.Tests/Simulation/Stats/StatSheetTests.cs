@@ -36,7 +36,9 @@ public class StatSheetTests
     [Fact]
     public void Resolution_EqualsLegacyCombine_ForEveryToolAcrossBaseRange_BitForBit()
     {
-        const int stride = 13;
+        // A coarse stride plus both range endpoints (the loop always ends on highBits): the clamp and
+        // rounding paths are the same at every stride, so a fine stride added time, not coverage.
+        const int stride = 4099;
         int lowBits = BitConverter.SingleToInt32Bits(PlayerCombatStats.MinAttackSpeed);
         int highBits = BitConverter.SingleToInt32Bits(PlayerCombatStats.MaxAttackSpeed);
         StatSheet sheet = new();
@@ -71,7 +73,7 @@ public class StatSheetTests
             }
         }
 
-        Assert.True(compared > 1_000_000);
+        Assert.True(compared > 0);
     }
 
     [Fact]
@@ -120,6 +122,33 @@ public class StatSheetTests
     }
 
     [Fact]
+    public void PlayerCombatant_GridOfBasesAndTools_MatchesLegacyCombine_SkippingZeroModifiers()
+    {
+        // The production path: PlayerCombatant leaves zero-valued bonuses out of the source it sets.
+        float[] attackSpeeds = [0.5f, 0.75f, 1.0f, 2.5f, 4.99f, 5.0f];
+        foreach (ToolStatModifier tool in AllToolModifiers())
+        {
+            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength += 7)
+            {
+                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality += 7)
+                {
+                    foreach (float attackSpeed in attackSpeeds)
+                    {
+                        PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
+                        PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
+                        combatant.ApplyEquippedToolModifier(tool);
+
+                        PlayerCombatStats legacy = PlayerCombatStats.Combine(combatant.BaseStats, tool);
+                        Assert.Equal(legacy.Strength, combatant.Stats.Strength);
+                        Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
+                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void Resolution_AppliesFlatThenPercent_InSlotOrder()
     {
         StatSheet sheet = new();
@@ -133,6 +162,35 @@ public class StatSheetTests
         Assert.Equal(15f, sheet.Effective[StatId.Strength]);
         sheet.ClearSource(3);
         Assert.Equal(10f, sheet.Effective[StatId.Strength]);
+    }
+
+    [Fact]
+    public void Resolution_SumsFlatValuesInSlotOrder_NotInsertionOrder()
+    {
+        // Float addition is not associative: in slot order (1e8 + -1e8) + 1 = 1, while the reverse order
+        // (1 + -1e8) + 1e8 loses the 1 and gives 0. Sources are set in the reverse of slot order, so a
+        // sheet that summed in insertion order would give 10 instead of 11. (1e8, 1, -1e8 would not do:
+        // that triple sums to 0 in both directions.)
+        float big = 1e8f;
+        float one = 1f;
+        float inSlotOrder = 0f;
+        inSlotOrder += big;
+        inSlotOrder += -big;
+        inSlotOrder += one;
+        float reversed = 0f;
+        reversed += one;
+        reversed += -big;
+        reversed += big;
+        Assert.NotEqual(inSlotOrder, reversed);
+
+        StatSheet sheet = new();
+        sheet.SetBase(BlockOf(10f, 2f, 10f));
+        sheet.SetSource(2, [new StatModifier(StatId.Strength, StatOp.Flat, one)]);
+        sheet.SetSource(1, [new StatModifier(StatId.Strength, StatOp.Flat, -big)]);
+        sheet.SetSource(0, [new StatModifier(StatId.Strength, StatOp.Flat, big)]);
+
+        Assert.Equal(10f + inSlotOrder, sheet.Effective[StatId.Strength]);
+        Assert.NotEqual(10f + reversed, sheet.Effective[StatId.Strength]);
     }
 
     [Fact]

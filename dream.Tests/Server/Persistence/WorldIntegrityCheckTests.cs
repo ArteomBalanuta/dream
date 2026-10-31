@@ -169,6 +169,46 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.Equal(0, report.EquippedWithoutBackpackItem);
     }
 
+    private const string SecondProfile = "INSERT INTO player_profiles (player_name, display_name) VALUES ('p2', 'P2');";
+
+    private static string SlotOf(string player, int slot, long item) =>
+        $"INSERT INTO player_inventory_slots (world_id, player_name, slot_index, item_instance_id) VALUES (1, '{player}', {slot}, {item});";
+
+    [Fact]
+    public void OneItemInSeveralBackpackSlots_IsASoftFinding_ThatIsNeverFatal()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(1, 10) + Slot(2, 10) + Slot(3, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(2, report.SharedItemReferences);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("2 extra inventory slot reference", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OneItemHeldByTwoPlayers_IsASoftFinding_EvenWithTheEquippedAlias()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            Profile + SecondProfile + Item(10, "tool.a") +
+            SlotOf("p1", 0, 10) + SlotOf("p1", 100, 10) + SlotOf("p2", 4, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(1, report.SharedItemReferences);
+        Assert.False(report.IsFatal);
+    }
+
+    [Fact]
+    public void TheNormalEquippedAlias_IsNotASharedReference()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + SecondProfile + Item(10, "tool.a") + Item(11, "tool.b") +
+            SlotOf("p1", 3, 10) + SlotOf("p1", 100, 10) + SlotOf("p2", 0, 11) + SlotOf("p2", 100, 11));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(0, report.SharedItemReferences);
+        Assert.False(report.HasSoftFindings);
+    }
+
     [Fact]
     public void ASlotPointingAtAMissingItem_IsCountedAndAlsoAForeignKeyViolation()
     {

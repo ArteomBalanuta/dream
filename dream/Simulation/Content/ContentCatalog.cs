@@ -233,9 +233,9 @@ public sealed class ContentCatalog
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
-        string displayName = ReadNonEmptyString(ItemsFileName, $"{path}.displayName", properties["displayName"]);
-        string description = ReadString(ItemsFileName, $"{path}.description", properties["description"]);
-        string visualId = ReadNonEmptyString(ItemsFileName, $"{path}.visualId", properties["visualId"]);
+        string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
+        string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
+        string visualId = ReadVisualId(ItemsFileName, $"{path}.visualId", properties["visualId"]);
 
         List<string> detailLines = [];
         JsonElement detailsElement = properties["detailLines"];
@@ -243,7 +243,12 @@ public sealed class ContentCatalog
         int lineIndex = 0;
         foreach (JsonElement line in detailsElement.EnumerateArray())
         {
-            detailLines.Add(ReadString(ItemsFileName, $"{path}.detailLines[{lineIndex}]", line));
+            if (lineIndex >= MaxDetailLines)
+            {
+                throw Fail(ItemsFileName, $"{path}.detailLines", $"has more than {MaxDetailLines} lines");
+            }
+
+            detailLines.Add(ReadText(ItemsFileName, $"{path}.detailLines[{lineIndex}]", line, MaxDetailLineLength));
             lineIndex++;
         }
 
@@ -350,14 +355,14 @@ public sealed class ContentCatalog
                 ["key", "displayName", "level", "maxHealth", "attackDamage", "attackIntervalSeconds", "aggroRange", "attackRange", "moveSpeed"]);
             EnemyTemplate template = new(
                 ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
-                ReadNonEmptyString(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
+                ReadName(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
                 ReadInt(EnemiesFileName, $"{path}.level", enemy["level"], 1, 1000),
                 ReadInt(EnemiesFileName, $"{path}.maxHealth", enemy["maxHealth"], 1, 1_000_000),
                 ReadInt(EnemiesFileName, $"{path}.attackDamage", enemy["attackDamage"], 1, 1_000_000),
                 ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", enemy["attackIntervalSeconds"], 0.05f, 3600f),
                 ReadFloat(EnemiesFileName, $"{path}.aggroRange", enemy["aggroRange"], 0.1f, 1000f),
                 ReadFloat(EnemiesFileName, $"{path}.attackRange", enemy["attackRange"], 0.1f, 1000f),
-                ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], 0f, 100f));
+                ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f));
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -519,11 +524,103 @@ public sealed class ContentCatalog
         return value;
     }
 
+    // Limits in UTF-16 chars. Names and descriptions travel in inventory snapshots, which have a frame
+    // cap, so a content file cannot make one item arbitrarily large.
+    public const int MaxKeyLength = 64;
+    public const int MaxDisplayNameLength = 64;
+    public const int MaxVisualIdLength = 64;
+    public const int MaxDescriptionLength = 512;
+    public const int MaxDetailLineLength = 256;
+    public const int MaxDetailLines = 16;
+
+    // An enemy that cannot move at all (0, -0.0) or moves a hair per second is a content mistake.
+    public const float MinMoveSpeed = 0.01f;
+
+    // Free text may hold line breaks and tabs, no other control character (NUL included).
+    private static string ReadText(string file, string path, JsonElement element, int maxLength)
+    {
+        string value = ReadString(file, path, element);
+        if (value.Length > maxLength)
+        {
+            throw Fail(file, path, $"is {value.Length} characters long (at most {maxLength})");
+        }
+
+        foreach (char c in value)
+        {
+            if (char.IsControl(c) && c is not ('\n' or '\r' or '\t'))
+            {
+                throw Fail(file, path, "must not contain control characters");
+            }
+        }
+
+        return value;
+    }
+
+    private static string ReadName(string file, string path, JsonElement element)
+    {
+        string value = ReadText(file, path, element, MaxDisplayNameLength);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw Fail(file, path, "must not be blank");
+        }
+
+        if (value.AsSpan().IndexOfAny('\n', '\r', '\t') >= 0)
+        {
+            throw Fail(file, path, "must be a single line");
+        }
+
+        return value;
+    }
+
+    // Lower-case dotted ids such as "held.tool.blade".
+    private static string ReadVisualId(string file, string path, JsonElement element)
+    {
+        string value = ReadString(file, path, element);
+        if (value.Length == 0 || value.Length > MaxVisualIdLength || !IsVisualId(value))
+        {
+            throw Fail(file, path, $"'{Truncate(value)}' is not a visual id (1..{MaxVisualIdLength} characters of a-z, 0-9, '.', '-', '_', starting and ending with a letter or digit)");
+        }
+
+        return value;
+    }
+
+    private static bool IsVisualId(string value)
+    {
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            bool alnum = c is (>= 'a' and <= 'z') or (>= '0' and <= '9');
+            bool joiner = c is '.' or '-' or '_';
+            if (!alnum && !(joiner && i > 0 && i < value.Length - 1))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string Truncate(string value) =>
+        (value.Length > 32 ? value[..32] + "..." : value).Replace("\0", "\\0", StringComparison.Ordinal);
+
     // A content key is looked up by value (case-insensitively), so surrounding whitespace would make a
     // key that no lookup finds.
     private static string ReadKey(string file, string path, JsonElement element)
     {
         string value = ReadNonEmptyString(file, path, element);
+        if (value.Length > MaxKeyLength)
+        {
+            throw Fail(file, path, $"is {value.Length} characters long (a key is at most {MaxKeyLength})");
+        }
+
+        foreach (char c in value)
+        {
+            if (char.IsControl(c))
+            {
+                throw Fail(file, path, "must not contain control characters");
+            }
+        }
+
         if (!string.Equals(value, value.Trim(), StringComparison.Ordinal))
         {
             throw Fail(file, path, "must not have leading or trailing whitespace");

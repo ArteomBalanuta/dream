@@ -36,6 +36,7 @@ public sealed record WorldIntegrityReport(
     int ObjectsOutOfBounds,
     int SlotsMissingItem,
     int EquippedWithoutBackpackItem,
+    int SharedItemReferences,
     int UnknownItemKinds,
     int UnknownEnemyKinds,
     IReadOnlyList<string> UnknownKindNames,
@@ -46,7 +47,7 @@ public sealed record WorldIntegrityReport(
 
     public bool HasSoftFindings =>
         ObjectsOutOfBounds > 0 || SlotsMissingItem > 0 || EquippedWithoutBackpackItem > 0
-        || UnknownItemKinds > 0 || UnknownEnemyKinds > 0;
+        || SharedItemReferences > 0 || UnknownItemKinds > 0 || UnknownEnemyKinds > 0;
 
     public string FatalMessage =>
         CorruptionMessage != null
@@ -90,6 +91,11 @@ public sealed record WorldIntegrityReport(
             yield return $"  {EquippedWithoutBackpackItem} equipped slot(s) match no backpack item.";
         }
 
+        if (SharedItemReferences > 0)
+        {
+            yield return $"  {SharedItemReferences} extra inventory slot reference(s) to an item already held in another slot or by another player.";
+        }
+
         if (UnknownItemKinds > 0 || UnknownEnemyKinds > 0)
         {
             yield return $"  unknown kinds: {UnknownItemKinds} item row(s), {UnknownEnemyKinds} enemy row(s) " +
@@ -119,6 +125,7 @@ public static class WorldIntegrityCheck
         int outOfBounds = 0;
         int missingItem = 0;
         int equipped = 0;
+        int shared = 0;
         int unknownItems = 0;
         int unknownEnemies = 0;
         List<string> unknownNames = [];
@@ -134,6 +141,7 @@ public static class WorldIntegrityCheck
             outOfBounds = Count(connection, OutOfBoundsSql, worldId, descriptor);
             missingItem = Count(connection, SlotsMissingItemSql, worldId, descriptor: null);
             equipped = Count(connection, EquippedWithoutBackpackSql, worldId, descriptor: null);
+            shared = Count(connection, SharedItemReferencesSql, worldId, descriptor: null);
             unknownItems = CountUnknown(connection, "item_instances", "item_kind", worldId, options.IsKnownItemKind, unknownNames);
             unknownEnemies = CountUnknown(connection, "enemy_instances", "enemy_kind", worldId, options.IsKnownEnemyKind, unknownNames);
         }
@@ -148,6 +156,7 @@ public static class WorldIntegrityCheck
             outOfBounds,
             missingItem,
             equipped,
+            shared,
             unknownItems,
             unknownEnemies,
             unknownNames,
@@ -240,6 +249,10 @@ public static class WorldIntegrityCheck
              (cell_x >= $w OR cell_y >= $h OR cell_z >= $d));
         """;
 
+    // Slots whose item does not exist. The slot table has a foreign key to item_instances, so a
+    // non-empty result is also a foreign_key_check violation, which is fatal and reported first: this
+    // soft count can only show up when foreign keys are not enforced by the file's schema (a legacy or
+    // hand-built database). It is kept as a cheap second view, not because it can normally fire.
     private const string SlotsMissingItemSql = """
         SELECT COUNT(*) FROM player_inventory_slots AS s
         LEFT JOIN item_instances AS i
@@ -255,5 +268,21 @@ public static class WorldIntegrityCheck
             WHERE b.world_id = e.world_id AND b.player_name = e.player_name
               AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
               AND b.item_instance_id = e.item_instance_id);
+        """;
+
+    // Extra references beyond the first to the same item, over backpack slots and players. The equipped
+    // slot legitimately aliases a backpack slot of the same player, so that pair is not counted; an
+    // equipped slot with no such alias is counted as a reference of its own.
+    private static readonly string SharedItemReferencesSql = $"""
+        SELECT COALESCE(SUM(n - 1), 0) FROM (
+          SELECT COUNT(*) AS n FROM player_inventory_slots AS s
+          WHERE s.world_id = $world
+            AND NOT (s.slot_index = {InventoryConstants.EquippedSlotIndex} AND EXISTS (
+              SELECT 1 FROM player_inventory_slots AS b
+              WHERE b.world_id = s.world_id AND b.player_name = s.player_name
+                AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
+                AND b.item_instance_id = s.item_instance_id))
+          GROUP BY s.item_instance_id
+          HAVING COUNT(*) > 1);
         """;
 }

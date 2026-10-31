@@ -11,7 +11,8 @@ namespace Dream.Tests.Load;
 // Wave F measurement (DREAM_LOAD_TEST=1, Release): what the load-time integrity check costs on the
 // seeded World10k database, with and without PRAGMA quick_check, and what a whole persistence
 // bundle open (content read, schema, world resolve, lease, check) costs. The database is migrated
-// by the first open, so every measured open is a warm restart of an existing file.
+// by the first open, so every measured open is a warm restart of an existing file. Printout only: the
+// integrity budget assertion lives in RestartMidSessionMeasurementTests.World10k_IntegrityCheckCost.
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class WorldIntegrityCheckMeasurementTests
 {
@@ -59,9 +60,12 @@ public sealed class WorldIntegrityCheckMeasurementTests
                 }
             }
 
+            // The data may sit in the write-ahead log (the main file alone can read 4096 B), so report both.
             long length = new FileInfo(databasePath).Length;
+            string walPath = databasePath + "-wal";
+            long walLength = File.Exists(walPath) ? new FileInfo(walPath).Length : 0;
             _output.WriteLine(
-                $"World10k db {length} B: integrity check with quick_check {withQuick:0.00} ms mean, " +
+                $"World10k db {length} B (+ {walLength} B -wal): integrity check with quick_check {withQuick:0.00} ms mean, " +
                 $"without {withoutQuick:0.00} ms mean, bundle open (whole, includes the check) {opens.Average():0.00} ms mean / {opens.Min():0.00} min");
         }
         finally
