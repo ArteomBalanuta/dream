@@ -129,7 +129,9 @@ public static class CharacterCli
         }
         catch (SqliteException ex)
         {
-            error.WriteLine($"The database could not be used: {ex.Message}. If the file is damaged, restore a backup (--db restore <path> --yes).");
+            // Only a damaged file (SQLITE_CORRUPT 11, SQLITE_NOTADB 26) is helped by a restore.
+            string advice = ex.SqliteErrorCode is 11 or 26 ? " If the file is damaged, restore a backup (--db restore <path> --yes)." : string.Empty;
+            error.WriteLine($"The database could not be used: {ex.Message}.{advice}");
             return ExitNotFoundOrConflict;
         }
     }

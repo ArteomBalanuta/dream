@@ -149,8 +149,7 @@ public class Game : GameWindow
             _localServer,
             connector,
             _contentError,
-            ClientIdentityStore.ForCurrentUser(),
-            relaunchLocalServerFor?.Port);
+            ClientIdentityStore.ForCurrentUser());
         ClientConnectionOptions initialOptions = resolveLocalPort
             ? coordinator.ResolveInitialOptions(options)
             : options;

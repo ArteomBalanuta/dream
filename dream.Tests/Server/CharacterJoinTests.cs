@@ -308,9 +308,11 @@ public sealed class CharacterJoinTests
 
         PersistedPlayerInventory oneItems = oneRows.LoadPlayerInventory(Hero);
         Assert.NotEmpty(oneItems.Items);
-        // World one's bag is emptied; world two must not notice.
-        oneRows.DeleteInventorySlots(Hero);
+        // World one's bag exists and stays; world two has no bag of its own yet.
+        long[] oneItemIds = oneItems.Items.Select(i => i.ItemInstanceId).Order().ToArray();
+        (int Slot, long Item)[] oneSlots = oneItems.Slots.Select(s => (s.SlotIndex, s.ItemInstanceId)).Order().ToArray();
         Assert.Empty(twoRows.LoadPlayerInventory(Hero).Items);
+        Assert.Empty(twoRows.LoadPlayerInventory(Hero).Slots);
         Assert.Null(twoRows.TryGetPlayerWorldState(Hero));
         Assert.Equal(AccountOf("hero"), new SqliteAccountRepository(database.Schema).Lookup(Hero, null).Existing!.Value.Owner);
 
@@ -340,7 +342,10 @@ public sealed class CharacterJoinTests
         PersistedPlayerInventory twoItems = twoRows.LoadPlayerInventory(Hero);
         Assert.NotEmpty(twoItems.Items);
         Assert.NotEmpty(twoItems.Slots);
-        Assert.Empty(oneRows.LoadPlayerInventory(Hero).Slots);
+        // World one's bag is exactly as it was left (item ids are per world, so bags are compared row by row).
+        PersistedPlayerInventory oneAfterTwo = oneRows.LoadPlayerInventory(Hero);
+        Assert.Equal(oneItemIds, oneAfterTwo.Items.Select(i => i.ItemInstanceId).Order().ToArray());
+        Assert.Equal(oneSlots, oneAfterTwo.Slots.Select(s => (s.SlotIndex, s.ItemInstanceId)).Order().ToArray());
         Assert.Equal(worldOneSpot, oneRows.TryGetPlayerWorldState(Hero)!.Value.Position);
         Assert.Equal(23, oneRows.TryGetPlayerWorldState(Hero)!.Value.CurrentHealth);
         Assert.Equal(worldTwoSpot, twoRows.TryGetPlayerWorldState(Hero)!.Value.Position);
@@ -359,6 +364,13 @@ public sealed class CharacterJoinTests
             world.Leave("c1");
         }
 
+        // World one's bag came back as it was, and world two's was not touched by the visit.
+        PersistedPlayerInventory oneBack = oneRows.LoadPlayerInventory(Hero);
+        Assert.Equal(oneSlots, oneBack.Slots.Select(s => (s.SlotIndex, s.ItemInstanceId)).Order().ToArray());
+        Assert.Equal(
+            twoItems.Slots.Select(s => (s.SlotIndex, s.ItemInstanceId)).Order().ToArray(),
+            twoRows.LoadPlayerInventory(Hero).Slots.Select(s => (s.SlotIndex, s.ItemInstanceId)).Order().ToArray());
+
         Assert.Equal(1, database.Count("SELECT COUNT(*) FROM accounts;"));
         Assert.Equal(1, database.Count("SELECT COUNT(*) FROM player_profiles;"));
     }
@@ -373,5 +385,18 @@ public sealed class CharacterJoinTests
 
         Assert.Single(harness.Runtime.Sessions.Players, p => !p.IsLocal && p.IsSpawned);
         Assert.Equal(AccountOf("idem"), harness.Accounts.OwnerOf("Idem"));
+    }
+
+    [Fact]
+    public void ANetworkJoin_OfTheServersLocalSeat_IsRejectedOnAnAccountHost_AndNothingIsBound()
+    {
+        using AccountHostHarness harness = new();
+
+        string reason = harness.JoinRejectionOf("c1", PlayerSessionId.LocalDefault.Value, "Intruder", TokenOf("intruder"));
+
+        Assert.Equal(Dream.Server.DedicatedServerHost.SessionInUseRejectionReason, reason);
+        Assert.False(harness.Host.IsConnectionJoined("c1"));
+        Assert.Equal(0, harness.Database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name = 'Intruder';"));
+        Assert.Equal(0, harness.Database.Count("SELECT COUNT(*) FROM accounts;"));
     }
 }

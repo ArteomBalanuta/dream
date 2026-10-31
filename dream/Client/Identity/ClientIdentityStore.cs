@@ -42,13 +42,32 @@ public sealed class ClientIdentityStore : IClientIdentityStore
         return new ClientIdentityStore(Path.Combine(root, "Dream", "account-tokens.json"));
     }
 
-    // Lowercase host:port, or the literal "local" for the integrated server.
+    // Lowercase host:port, or the literal "local" for a loopback server. The host is canonical: brackets
+    // and a trailing dot are dropped and an IP literal is written the way IPAddress prints it, so one
+    // server never gets two tokens by how its address was typed.
     public static string ServerKeyFor(string host, int port, bool isLocalServer)
     {
         return isLocalServer
             ? LocalServerKey
-            : $"{host.Trim().ToLowerInvariant()}:{port.ToString(CultureInfo.InvariantCulture)}";
+            : $"{CanonicalHost(host)}:{port.ToString(CultureInfo.InvariantCulture)}";
     }
+
+    private static string CanonicalHost(string host)
+    {
+        string trimmed = host.Trim();
+        if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+        {
+            trimmed = trimmed[1..^1];
+        }
+
+        trimmed = trimmed.TrimEnd('.');
+        return System.Net.IPAddress.TryParse(trimmed, out System.Net.IPAddress? address)
+            ? address.ToString().ToLowerInvariant()
+            : trimmed.ToLowerInvariant();
+    }
+
+    // The file was written by a newer build: it is not corrupt, so it is neither read nor moved aside.
+    private sealed class NewerFileException(string message) : IOException(message);
 
     public string GetOrCreateToken(string serverKey)
     {
@@ -58,6 +77,12 @@ public sealed class ClientIdentityStore : IClientIdentityStore
             lock (ProcessLock)
             {
                 using Mutex? mutex = TryAcquireMutex(out bool owned);
+                if (mutex != null && !owned)
+                {
+                    // Another process holds the file for longer than the wait: do not write beside it.
+                    throw new IOException("The player identity file is in use by another process.");
+                }
+
                 try
                 {
                     return GetOrCreateLocked(serverKey);
@@ -71,7 +96,8 @@ public sealed class ClientIdentityStore : IClientIdentityStore
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception ex) when (ex is not NewerFileException
+            && ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             // The inner exception is not chained: nothing from the file may reach a message.
             throw new IOException(
@@ -108,6 +134,12 @@ public sealed class ClientIdentityStore : IClientIdentityStore
         }
 
         string text = File.ReadAllText(_path);
+        if (IsNewerVersion(text))
+        {
+            throw new NewerFileException(
+                $"The player identity file at '{_path}' was written by a newer version of Dream and was left as it is. Update the game, or set {PathEnvironmentVariable} to another file.");
+        }
+
         if (TryParse(text, out JsonObject? servers))
         {
             return servers!;
@@ -115,6 +147,21 @@ public sealed class ClientIdentityStore : IClientIdentityStore
 
         MoveAside();
         return new JsonObject();
+    }
+
+    private static bool IsNewerVersion(string text)
+    {
+        try
+        {
+            return JsonNode.Parse(text) is JsonObject root
+                && root["version"] is JsonValue version
+                && version.TryGetValue(out int v)
+                && v > FileVersion;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
     }
 
     private static bool TryParse(string text, out JsonObject? servers)
@@ -175,9 +222,14 @@ public sealed class ClientIdentityStore : IClientIdentityStore
         try
         {
             using (FileStream stream = CreateTempFile(temp))
-            using (Utf8JsonWriter writer = new(stream, new JsonWriterOptions { Indented = true }))
             {
-                root.WriteTo(writer);
+                using (Utf8JsonWriter writer = new(stream, new JsonWriterOptions { Indented = true }))
+                {
+                    root.WriteTo(writer);
+                }
+
+                // On disk before the move makes it the token file: a crash must not leave an empty one.
+                stream.Flush(true);
             }
 
             File.Move(temp, _path, overwrite: true);

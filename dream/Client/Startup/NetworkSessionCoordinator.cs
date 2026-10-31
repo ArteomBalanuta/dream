@@ -13,7 +13,6 @@ public sealed class NetworkSessionCoordinator
 
     private readonly string? _contentError;
     private readonly IClientIdentityStore? _identity;
-    private readonly int? _endedLocalPort;
 
     // contentError (ClientContentCheck) is why the game's content files cannot be used; with it the
     // connection screen shows the message, no local server starts and Connect does nothing.
@@ -21,14 +20,11 @@ public sealed class NetworkSessionCoordinator
         ILocalServerHandle localServer,
         IRemoteSessionConnector connector,
         string? contentError = null,
-        IClientIdentityStore? identity = null,
-        int? endedLocalPort = null)
+        IClientIdentityStore? identity = null)
     {
         // A null identity store leaves the join token null, so a test coordinator never touches the
-        // real token file. endedLocalPort is the port of the integrated server that just ended: its
-        // replacement runs on a new port but is still the same "local" server for the identity.
+        // real token file.
         _identity = identity;
-        _endedLocalPort = endedLocalPort;
         _localServer = localServer;
         _connector = connector;
         _contentError = contentError;
@@ -251,14 +247,21 @@ public sealed class NetworkSessionCoordinator
         StatusMessage = _localServer.StartingStatus ?? "Starting local server...";
     }
 
-    // "local" for the integrated server (stable across ephemeral ports and relaunches), else host:port.
-    private string ServerKeyFor(RemoteClientOptions options)
-    {
-        bool isLocal = IsLoopbackHost(options.Host)
-            && ((_localServer.IsReady && options.Port == _localServer.BoundPort)
-                || (_endedLocalPort.HasValue && options.Port == _endedLocalPort.Value));
-        return ClientIdentityStore.ServerKeyFor(options.Host, options.Port, isLocal);
-    }
+    // "local" for every loopback address and port (the integrated server on whatever port it gets, a
+    // dedicated server on this computer, another window's server), else host:port. One person keeps one
+    // account across them.
+    private string ServerKeyFor(RemoteClientOptions options) =>
+        ClientIdentityStore.ServerKeyFor(options.Host, options.Port, IsLoopbackHost(options.Host));
 
-    private static bool IsLoopbackHost(string host) => LoopbackHost.IsLoopback(host);
+    private static bool IsLoopbackHost(string host)
+    {
+        if (LoopbackHost.IsLoopback(host))
+        {
+            return true;
+        }
+
+        return host != null
+            && System.Net.IPAddress.TryParse(host.Trim().Trim('[', ']'), out System.Net.IPAddress? address)
+            && System.Net.IPAddress.IsLoopback(address);
+    }
 }

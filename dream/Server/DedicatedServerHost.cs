@@ -59,7 +59,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         "Session already in use: another connection is still active for it.";
 
     public const string JoinThrottledRejectionReason =
-        "Too many joins for a player that is still connected.";
+        "Too many join attempts for this name.";
 
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
@@ -287,6 +287,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 ClientJoinRequestMessage joinRequest = rawJoinRequest;
                 if (Runtime is { HasAccounts: true })
                 {
+                    // The server's own seat is not joinable from the network: the local branch of the join
+                    // skips character binding, restore and the access commit.
+                    if (string.Equals(rawJoinRequest.RequestedSessionId, PlayerSessionId.LocalDefault.Value, StringComparison.Ordinal))
+                    {
+                        return RejectJoinBeforeQueue(context, SessionInUseRejectionReason);
+                    }
+
                     if (!AccountKey.TryFromToken(rawJoinRequest.AccountToken, out AccountKey account))
                     {
                         return RejectJoinBeforeQueue(

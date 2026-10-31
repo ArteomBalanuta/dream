@@ -341,19 +341,20 @@ A second desktop client on the same database and world does not get a local serv
 
 ## Characters And Accounts
 
-One account owns up to 5 characters. Level, experience and base stats follow a character between the worlds of a database; items, position and health stay in each world, and a first visit to a world starts at full health. A character can be joined only by the account that owns it. An unowned character (from an older database, or released) goes to the first token that joins it. Names are matched ignoring ASCII case. A new name must be 1 to 32 characters with no control characters; existing names keep working whatever their length.
+One account owns up to 5 characters. Level, experience and base stats follow a character between the worlds of a database; items, position and health stay in each world, and a first visit to a world starts at full health. A character can be joined only by the account that owns it. An unowned character (from an older database, or released) goes to the first token that joins it. Names are matched ignoring ASCII case. A new name must be 1 to 32 UTF-16 code units after trimming, with no control, format, line or paragraph separator or private-use characters and no unpaired surrogates; existing names keep working whatever they contain.
 
 ### Token file
 
 | Item | Value |
 | --- | --- |
 | Location | `%LOCALAPPDATA%\Dream\account-tokens.json` (the per-user local application data folder on other systems). `DREAM_IDENTITY_FILE` replaces the path, for tests and for two accounts on one machine. |
-| Tokens | One per server, keyed by lowercase `host:port`, so `localhost` and `127.0.0.1` are two servers. The integrated server uses the key `local`, whatever port it gets. |
+| Tokens | One per server, keyed by lowercase `host:port`. Every loopback address and port (`localhost`, `127.0.0.1`, `::1`, the integrated server on whatever port it gets, a dedicated server or another window's server on this computer) shares the key `local`, so one person is one account there. Older entries such as `127.0.0.1:5057` stay in the file, unused. |
+| Stat sliders | `PlayerStatsUpdateIntent` is a development tool (decision U4): any client can set its own base stats within the validated range, and they persist and travel between worlds with the character. Removed when levels give stat points. |
 | Corrupt file | Moved aside to `.bad-<UTC stamp>`, never overwritten. A new file starts, which means new accounts. |
 
 **Two clients on one machine** share the token file, so they are one account. With the same name the second window takes the seat and closes the first; use different names, or give each its own `DREAM_IDENTITY_FILE`.
 
-**The integrated server and a dedicated server on the same database are two accounts** for one player: the keys `local` and `127.0.0.1:5057` hold different tokens. A character claimed through one is refused through the other with "belongs to someone else" until it is released. This also applies to names the perf harness (`launch-and-summarize.ps1`) writes into `desktop-client.txt`: after a harness run, change the name, or `--characters release` it. Each harness client has a stable identity file beside the executable (`perf-identity-client<n>.json`). A harness run whose names are owned by other tokens joins nobody; check for `server.join-rejected` in the client logs.
+**The integrated server and a dedicated server on the same computer are one account** for one player: both are loopback, so both use the key `local`. A dedicated server on another machine is another account; a character claimed through one is refused through the other with "belongs to someone else" until it is released. Names the perf harness (`launch-and-summarize.ps1`) writes into `desktop-client.txt`: after a harness run, change the name, or `--characters release` it. Each harness client has a stable identity file beside the executable (`perf-identity-client<n>.json`). A harness run whose names are owned by other tokens joins nobody; check for `server.join-rejected` in the client logs.
 
 ### Managing characters: `--characters`
 

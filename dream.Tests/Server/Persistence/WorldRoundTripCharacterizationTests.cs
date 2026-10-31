@@ -147,7 +147,7 @@ public sealed class WorldRoundTripCharacterizationTests
             PlayerInteractionMode.Combat,
             new PersistedCreatureStats(87, 120, 19, 14, 16, 22, 7.5f, 3.25f, 5, 222),
             CreatedUtc,
-            CreatedUtc);
+            default); // a default stamp is the save time; a given one is kept (SqliteStoreTests)
         // Padded name and blank display name: the repository trims the key and falls back to it.
         PersistedPlayerProfile beta = new(
             "  beta  ",

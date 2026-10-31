@@ -49,7 +49,7 @@ public sealed class JoinRequestHandler : IServerMessageHandler
         JoinHolderIdentity? holder = access.Holder;
         if (holder is { } requested
             && context.JoinedIdentity is { } joined
-            && !joined.Character.Equals(requested.Character))
+            && !joined.Equals(requested))
         {
             context.OutboundMessages.Add(new JoinRejectedMessage(JoinRejectionReasons.AlreadyJoined));
             return;
