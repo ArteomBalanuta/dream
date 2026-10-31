@@ -22,8 +22,13 @@ public readonly record struct TransportEnvelope(
     // (JoinAcceptedMessage.Terrain) and the server.terrain-chunk transfer of stored worlds; a v7 client could not
     // build a stored world, so both sides refuse it. Version 9 (persistence wave G) adds the optional
     // accountToken to the join request (ClientJoinRequestMessage.AccountToken); a v8 client could not
-    // identify its account, so both sides refuse it. Snapshot payloads are unchanged. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 9;
+    // identify its account, so both sides refuse it. Version 10 (persistence wave H) adds the
+    // inventory unequip, move and destroy intents and the equip intent's target slot, and the stats,
+    // light slots, rarity and equipment slots of an inventory snapshot's items (InventoryItemSnapshot,
+    // PlayerInventorySnapshot.Equipment); a v9 client would show no gear and could not use the new
+    // slots, so both sides refuse it. Actor snapshots are unchanged apart from this envelope's version
+    // digit. Decode rejects any other version.
+    public const int CurrentProtocolVersion = 10;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

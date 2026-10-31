@@ -77,7 +77,8 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // character. It goes away when levels give stat points.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
-        return payload is InventoryEquipIntent or PlayerStatsUpdateIntent or BuildMaterialSelectIntent;
+        return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
+            or PlayerStatsUpdateIntent or BuildMaterialSelectIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

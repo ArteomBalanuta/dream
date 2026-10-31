@@ -15,15 +15,17 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
     private float _attackCooldownRemaining;
-    private const int EquippedToolSourceSlot = 0;
     private readonly StatSheet _statSheet = new();
-    private ToolStatModifier _equippedToolModifier;
 
     public PlayerCombatStats BaseStats { get; }
 
     public PlayerCombatStats Stats { get; }
 
     public StatSheet StatSheet => _statSheet;
+
+    // The Armor the equipment adds up to (base 0, effective range 0..1000). In wave H it is only
+    // read and shown: no damage calculation uses it yet.
+    public int EffectiveArmor => (int)_statSheet.Effective[StatId.Armor];
 
     public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
@@ -94,10 +96,18 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         RecalculateEffectiveStats();
     }
 
-    public void ApplyEquippedToolModifier(ToolStatModifier modifier)
+    // Sets all four equipment sources (source slot = EquipmentSlot value: 0 main hand, 1 off hand,
+    // 2 head, 3 body, resolved in ascending order), then derives once, so max health is rescaled a
+    // single time. The loadout's modifiers are already screened by EquipmentLoadout.Set.
+    public void ApplyEquipment(EquipmentLoadout equipment)
     {
-        _equippedToolModifier = modifier;
-        RecalculateEffectiveStats();
+        ArgumentNullException.ThrowIfNull(equipment);
+        for (int slot = 0; slot < EquipmentSlots.Count; slot++)
+        {
+            _statSheet.SetSource(slot, equipment.Get((EquipmentSlot)slot));
+        }
+
+        DeriveFromSheet();
     }
 
     private void RecalculateEffectiveStats()
@@ -107,26 +117,11 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         baseBlock[StatId.AttackSpeed] = BaseStats.AttackSpeed;
         baseBlock[StatId.Vitality] = BaseStats.Vitality;
         _statSheet.SetBase(baseBlock);
+        DeriveFromSheet();
+    }
 
-        Span<StatModifier> toolModifiers = stackalloc StatModifier[3];
-        int count = 0;
-        if (_equippedToolModifier.StrengthBonus != 0)
-        {
-            toolModifiers[count++] = new StatModifier(StatId.Strength, StatOp.Flat, _equippedToolModifier.StrengthBonus);
-        }
-
-        if (_equippedToolModifier.AttackSpeedBonus != 0f)
-        {
-            toolModifiers[count++] = new StatModifier(StatId.AttackSpeed, StatOp.Flat, _equippedToolModifier.AttackSpeedBonus);
-        }
-
-        if (_equippedToolModifier.VitalityBonus != 0)
-        {
-            toolModifiers[count++] = new StatModifier(StatId.Vitality, StatOp.Flat, _equippedToolModifier.VitalityBonus);
-        }
-
-        _statSheet.SetSource(EquippedToolSourceSlot, toolModifiers[..count]);
-
+    private void DeriveFromSheet()
+    {
         ref readonly StatBlock effective = ref _statSheet.Effective;
         Stats.Strength = (int)effective[StatId.Strength];
         Stats.AttackSpeed = effective[StatId.AttackSpeed];

@@ -1,3 +1,5 @@
+using Dream.Simulation.Stats;
+
 namespace Dream.Simulation.Inventory;
 
 public readonly record struct ToolDefinition(
@@ -6,5 +8,5 @@ public readonly record struct ToolDefinition(
     string Description,
     string VisualId,
     IReadOnlyList<string> DetailLines,
-    ToolStatModifier StatModifier,
+    IReadOnlyList<StatModifier> Modifiers,
     HeldLightKind HeldLight = HeldLightKind.None);

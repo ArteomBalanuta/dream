@@ -71,7 +71,7 @@ public static class ToolCatalog
                 item.Description,
                 item.VisualId,
                 item.DetailLines,
-                item.StatModifier,
+                item.Modifiers,
                 item.HeldLight);
         }
 

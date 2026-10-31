@@ -306,7 +306,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
 
         runtime.Dispose();
         output.WriteLine($"snapshots: {total} B over 200 ticks");
-        Assert.Equal(58_107L, total);
+        Assert.Equal(58_307L, total); // 58,107 B at protocol v9 plus one digit per frame
     }
 
     [Fact]
@@ -314,12 +314,12 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
     {
         TransportJsonCodec codec = new();
         ClientHelloMessage hello = new("tester");
-        byte[] v7 = codec.Encode(new TransportEnvelope(9, hello.MessageKind, 1), hello);
+        byte[] v7 = codec.Encode(new TransportEnvelope(10, hello.MessageKind, 1), hello);
         Assert.Equal(hello.MessageKind, codec.DecodeFromClient(v7).Envelope.MessageKind);
 
-        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":9", "\"protocolVersion\":6", StringComparison.Ordinal));
+        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":10", "\"protocolVersion\":6", StringComparison.Ordinal));
         Assert.NotEqual(v7, v6);
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => codec.DecodeFromClient(v6));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 9.", error.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 10.", error.Message);
     }
 }

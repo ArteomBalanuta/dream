@@ -1,6 +1,7 @@
 using System.IO;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Stats;
 using Xunit;
 
 namespace Dream.Tests.Simulation.Content;
@@ -18,7 +19,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(5, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(9, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -30,23 +31,23 @@ public sealed class ContentCatalogTests
         AssertTool(catalog, "tool.builder-hammer", "Builder Hammer",
             "Reliable close-range construction tool for quick world edits.", "held.tool.builder",
             ["Role: Building", "Impact: +2 Strength", "Tempo: +0.25 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 2, AttackSpeedBonus: 0.25f), HeldLightKind.None);
+            [Flat(StatId.Strength, 2f), Flat(StatId.AttackSpeed, 0.25f)], HeldLightKind.None);
         AssertTool(catalog, "tool.field-blade", "Field Blade",
             "Short combat blade with quick recovery and clean follow-up swings.", "held.tool.blade",
             ["Role: Combat", "Impact: +4 Strength", "Tempo: +1.50 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 4, AttackSpeedBonus: 1.50f), HeldLightKind.None);
+            [Flat(StatId.Strength, 4f), Flat(StatId.AttackSpeed, 1.50f)], HeldLightKind.None);
         AssertTool(catalog, "tool.stone-maul", "Stone Maul",
             "Heavy breaker meant for deliberate hits and strong stagger pressure.", "held.tool.maul",
             ["Role: Breaker", "Impact: +8 Strength", "Tempo: -0.75 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 8, AttackSpeedBonus: -0.75f), HeldLightKind.None);
+            [Flat(StatId.Strength, 8f), Flat(StatId.AttackSpeed, -0.75f)], HeldLightKind.None);
         AssertTool(catalog, "tool.survey-lantern", "Survey Lantern",
             "Utility tool for traversal loadouts and world inspection passes.", "held.tool.lantern",
             ["Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed"],
-            new ToolStatModifier(StrengthBonus: 1, AttackSpeedBonus: 0.10f), HeldLightKind.Lantern);
+            [Flat(StatId.Strength, 1f), Flat(StatId.AttackSpeed, 0.10f)], HeldLightKind.Lantern);
         AssertTool(catalog, "tool.torch", "Torch",
             "A burning torch that lights the ground around you after dark.", "held.tool.torch",
             ["Role: Light", "Light: warm, radius 8"],
-            default, HeldLightKind.Torch);
+            [], HeldLightKind.Torch);
     }
 
     private static void AssertTool(
@@ -56,7 +57,7 @@ public sealed class ContentCatalogTests
         string description,
         string visualId,
         string[] detailLines,
-        ToolStatModifier modifier,
+        StatModifier[] modifiers,
         HeldLightKind heldLight)
     {
         Assert.True(catalog.TryGetItem(key, out ItemDefinition item), key);
@@ -65,16 +66,64 @@ public sealed class ContentCatalogTests
         Assert.Equal(description, item.Description);
         Assert.Equal(visualId, item.VisualId);
         Assert.Equal(detailLines, item.DetailLines);
-        Assert.Equal(modifier, item.StatModifier);
+        Assert.Equal(modifiers, item.Modifiers);
         Assert.Equal(heldLight, item.HeldLight);
 
         // The facade hands out the same values.
         Assert.True(ToolCatalog.TryResolve(key, out ToolDefinition tool));
         Assert.Equal(key, tool.ItemKind);
         Assert.Equal(displayName, tool.DisplayName);
-        Assert.Equal(modifier, tool.StatModifier);
+        Assert.Equal(modifiers, tool.Modifiers);
         Assert.Equal(heldLight, tool.HeldLight);
         Assert.Equal(detailLines, tool.DetailLines);
+    }
+
+    private static StatModifier Flat(StatId stat, float value) => new(stat, StatOp.Flat, value);
+
+    [Fact]
+    public void ShippedItems_ListTheirEquipSlots_InFileOrder()
+    {
+        ContentCatalog catalog = ContentCatalog.Shipped;
+        AssertSlots(catalog, "tool.builder-hammer", EquipmentSlot.MainHand);
+        AssertSlots(catalog, "tool.field-blade", EquipmentSlot.MainHand);
+        AssertSlots(catalog, "tool.stone-maul", EquipmentSlot.MainHand);
+        AssertSlots(catalog, "tool.survey-lantern", EquipmentSlot.MainHand, EquipmentSlot.OffHand);
+        AssertSlots(catalog, "tool.torch", EquipmentSlot.MainHand, EquipmentSlot.OffHand);
+        AssertSlots(catalog, "gear.iron-blade", EquipmentSlot.MainHand);
+        AssertSlots(catalog, "gear.ward-lantern", EquipmentSlot.OffHand);
+        AssertSlots(catalog, "gear.leather-cap", EquipmentSlot.Head);
+        AssertSlots(catalog, "gear.leather-vest", EquipmentSlot.Body);
+    }
+
+    private static void AssertSlots(ContentCatalog catalog, string key, params EquipmentSlot[] expected)
+    {
+        Assert.True(catalog.TryGetItem(key, out ItemDefinition item), key);
+        Assert.Equal(expected, item.EquipSlots);
+        Assert.Equal(expected.Aggregate(0, (mask, slot) => mask | EquipmentSlots.MaskOf(slot)), item.EquipSlotMask);
+    }
+
+    [Fact]
+    public void ShippedGear_HasRollTables_AndTheStartersHaveNone()
+    {
+        ContentCatalog catalog = ContentCatalog.Shipped;
+        foreach (string key in new[] { "tool.builder-hammer", "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch" })
+        {
+            Assert.True(catalog.TryGetItem(key, out ItemDefinition starter));
+            Assert.Null(starter.Rolls);
+        }
+
+        Assert.True(catalog.TryGetItem("gear.iron-blade", out ItemDefinition blade));
+        Assert.Equal(
+            [new ItemRollRange(StatId.Strength, 7, 9), new ItemRollRange(StatId.AttackSpeed, 1.5f, 2.0f)],
+            blade.Rolls!.Rare);
+        Assert.True(catalog.TryGetItem("gear.ward-lantern", out ItemDefinition lantern));
+        Assert.Equal(HeldLightKind.Lantern, lantern.HeldLight);
+        Assert.Equal([new ItemRollRange(StatId.Armor, 2, 4)], lantern.Rolls!.Uncommon);
+        Assert.True(catalog.TryGetItem("gear.leather-vest", out ItemDefinition vest));
+        Assert.Equal(
+            [new ItemRollRange(StatId.Armor, 2, 4), new ItemRollRange(StatId.Vitality, 1, 2)],
+            vest.Rolls!.Common);
+        Assert.Empty(vest.Modifiers);
     }
 
     [Fact]
@@ -164,6 +213,58 @@ public sealed class ContentCatalogTests
 
         Assert.Contains(expectedFragment, exception.Message);
         Assert.Contains("items.json", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Agility\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Energy\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"MovementSpeed\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": 101", "outside the range")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": -1", "outside the range")]
+    [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": [\"Feet\"]", "unknown equipment slot")]
+    [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": [\"OffHand\", \"OffHand\"]", "duplicate equipment slot")]
+    [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": []", "at least one equipment slot")]
+    [InlineData("\"equipSlots\": [\"OffHand\"],", "", "missing required property")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 3, \"max\": 2 }", "is above max")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }, { \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "rolls Armor twice")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Agility\", \"min\": 1, \"max\": 2 }", "cannot be modified")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1.5, \"max\": 2 }", "expected an integer")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1, \"max\": 101 }", "outside the range")]
+    [InlineData("\"uncommon\": [ { \"stat\": \"Armor\", \"min\": 2, \"max\": 4 } ],", "", "missing required property")]
+    [InlineData("\"version\": 2,\n  \"starterKitVersion\"", "\"version\": 1,\n  \"starterKitVersion\"", "outside the range")]
+    public void Load_RejectsInvalidSlotsStatsAndRolls_WithAClearMessage(string find, string replace, string expectedFragment)
+    {
+        string items = ShippedItemsJson.Replace("\r\n", "\n");
+        Assert.Contains(find, items);
+        ContentValidationException exception = Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(items.Replace(find, replace), ShippedEnemiesJson));
+
+        Assert.Contains(expectedFragment, exception.Message);
+        Assert.Contains("items.json", exception.Message);
+    }
+
+    [Fact]
+    public void Load_RejectsMoreThanEightModifiers()
+    {
+        string items = ShippedItemsJson;
+        string nine = string.Join(",", Enumerable.Range(0, 9).Select(_ => "{ \"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 1 }"));
+        int at = items.IndexOf("\"heldLight\": \"Torch\",", StringComparison.Ordinal);
+        int open = items.IndexOf('[', items.IndexOf("\"modifiers\"", at, StringComparison.Ordinal));
+        int close = items.IndexOf(']', open);
+        ContentValidationException exception = Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(items[..(open + 1)] + nine + items[close..], ShippedEnemiesJson));
+        Assert.Contains("more than 8 modifiers", exception.Message);
+    }
+
+    [Fact]
+    public void ContentDigest_ChangesWithSlotsAndRolls()
+    {
+        string items = ShippedItemsJson;
+        ContentCatalog first = ContentCatalog.Load(items, ShippedEnemiesJson);
+        ContentCatalog slots = ContentCatalog.Load(items.Replace("\"equipSlots\": [\"Head\"]", "\"equipSlots\": [\"Body\"]"), ShippedEnemiesJson);
+        ContentCatalog rolls = ContentCatalog.Load(items.Replace("\"min\": 7, \"max\": 9", "\"min\": 7, \"max\": 10"), ShippedEnemiesJson);
+        Assert.NotEqual(first.ContentDigest, slots.ContentDigest);
+        Assert.NotEqual(first.ContentDigest, rolls.ContentDigest);
     }
 
     [Theory]

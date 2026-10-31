@@ -37,11 +37,10 @@ public sealed class TerrainMigrationTests
             Assert.Equal((long)fromVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         }
 
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(7));
 
         Assert.Equal(fromVersion, result.FromVersion);
         Assert.Equal(7, result.ToVersion);
-        Assert.Equal(7, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Equal(0L, Scalar(c, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));

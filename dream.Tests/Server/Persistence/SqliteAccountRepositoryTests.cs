@@ -183,7 +183,7 @@ public sealed class SqliteAccountRepositoryTests
         target.Schema.EnsureSchema();
         SqliteConnection.ClearAllPools();
 
-        Assert.Equal(7L, target.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, target.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(0L, target.Scalar("SELECT COUNT(*) FROM accounts;"));
     }
 

@@ -19,6 +19,10 @@ namespace Dream.Simulation.World;
 // draw a remote player's torch. It is derived from the inventory, so it stays out of
 // SimulationStateChecksum. None, the common case, is left off the wire the same way, so a world
 // with no light equipped keeps its v5 snapshot bytes.
+//
+// ModifierDigest (wave H) is a digest of the rolled modifiers of the player's equipped items, for
+// SimulationStateChecksum only. It never travels (clients decode 0), is zero when nothing rolled is
+// equipped, and zero is not mixed into the hash.
 public readonly record struct ActorSnapshot(
     int ActorId,
     CreatureKind Kind,
@@ -34,4 +38,5 @@ public readonly record struct ActorSnapshot(
     PlayerProgressionSnapshot? Progression = null,
     EnemyBehaviorState? EnemyBehaviorState = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int StarvedTicks = 0,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] HeldLightKind HeldLight = HeldLightKind.None);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] HeldLightKind HeldLight = HeldLightKind.None,
+    [property: JsonIgnore] ulong ModifierDigest = 0);

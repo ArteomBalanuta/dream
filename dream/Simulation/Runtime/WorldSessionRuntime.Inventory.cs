@@ -17,6 +17,9 @@ public sealed partial class WorldSessionRuntime
     // Constructed in the constructor, before RestorePersistedWorldState seeds its item id counter.
     private readonly PlayerInventoryService _inventory;
 
+    // Reused by RefreshAuthoritativePlayerCombatStats (main thread, never re-entered).
+    private readonly EquipmentLoadout _equipmentScratch = new();
+
 
     public PlayerInventorySnapshot? TryCaptureInventorySnapshot(PlayerSessionId sessionId)
     {
@@ -92,6 +95,7 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        target.Combatant.ApplyEquippedToolModifier(_inventory.ResolveEquippedToolModifier(player.CharacterKey.Value));
+        _inventory.CopyEquipment(player.CharacterKey.Value, _equipmentScratch);
+        target.Combatant.ApplyEquipment(_equipmentScratch);
     }
 }

@@ -1,19 +1,31 @@
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Content;
 
-// The stats an item modifier can touch today. Matches what ToolStatModifier can carry.
-public enum ContentStat : byte
+// One stat range of a roll table. Strength, Vitality and Armor roll integers inclusive; Attack Speed
+// rolls min + k * 0.05 up to max.
+public readonly record struct ItemRollRange(StatId Stat, float Min, float Max);
+
+// The ranges a rolled item draws, per rarity, in file order (which is the order of the rolled modifiers).
+public sealed record ItemRollTable(
+    IReadOnlyList<ItemRollRange> Common,
+    IReadOnlyList<ItemRollRange> Uncommon,
+    IReadOnlyList<ItemRollRange> Rare)
 {
-    Strength = 0,
-    AttackSpeed = 1,
-    Vitality = 2,
+    public IReadOnlyList<ItemRollRange> For(ItemRarity rarity) => rarity switch
+    {
+        ItemRarity.Common => Common,
+        ItemRarity.Uncommon => Uncommon,
+        ItemRarity.Rare => Rare,
+        _ => throw new ArgumentOutOfRangeException(nameof(rarity), rarity, "Unknown item rarity."),
+    };
 }
 
-// One flat modifier of an item definition, in file order.
-public readonly record struct ItemModifierDefinition(ContentStat Stat, float Value);
-
 // An item as authored in items.json. Instances reference it by Key (item_kind), with no foreign key.
+// Modifiers are the flat modifiers of an unrolled instance, in file order. EquipSlots is in file
+// order and its first entry is the default target; EquipSlotMask is the same set as a bit mask
+// (EquipmentSlots.MaskOf). Rolls is null for an item that cannot be rolled.
 public sealed record ItemDefinition(
     string Key,
     string DisplayName,
@@ -21,5 +33,7 @@ public sealed record ItemDefinition(
     string VisualId,
     IReadOnlyList<string> DetailLines,
     HeldLightKind HeldLight,
-    IReadOnlyList<ItemModifierDefinition> Modifiers,
-    ToolStatModifier StatModifier);
+    IReadOnlyList<StatModifier> Modifiers,
+    int EquipSlotMask,
+    IReadOnlyList<EquipmentSlot> EquipSlots,
+    ItemRollTable? Rolls);
