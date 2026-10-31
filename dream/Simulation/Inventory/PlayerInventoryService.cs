@@ -1,5 +1,8 @@
 using Dream.Multiplayer.Diagnostics;
+using Dream.Simulation.Content;
+using Dream.Simulation.Determinism;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.Stats;
 using Dream.Simulation.World;
 
 namespace Dream.Simulation.Inventory;
@@ -24,6 +27,12 @@ public enum InventoryEquipOutcome
 // the snapshot and equipped-tool stat queries. Main-thread state (the simulation tick), except the
 // write trackers' verdicts, which the write worker settles. It knows players only by name; the
 // runtime maps sessions to names and refreshes combat stats after a change.
+//
+// Equipment (wave H): a player has four equipment slots, rows 100..103 of the slot map (EquipmentSlots).
+// A row holds the id of an item that normally also has a backpack row (the alias, H-D1), so moving or
+// swapping backpack slots never touches the equipment rows. A legacy row may have no backpack row.
+// Which slots an item may occupy comes from its content definition; a kind the catalog no longer
+// knows, or a slot it may not occupy, is inert (no stats, no light) with its row kept.
 //
 // Its only dependencies are the world repository (reads) and the ordered write queue (writes and
 // the confirming reads); both are null when the runtime has no persistence.
@@ -52,6 +61,17 @@ internal sealed class PlayerInventoryService
     // inventory queues its first write and lives while that inventory is loaded, or while an
     // evicted inventory waits for its writes to be confirmed (see Evict).
     private readonly Dictionary<string, InventoryWriteTracker> _writeTrackers = new(StringComparer.Ordinal);
+
+    // What each loaded inventory's equipment gives the replicated actor: the held light and the
+    // digest of the rolled modifiers. Recomputed by RefreshEquippedSummary on every change, so the
+    // tick path (CaptureActorSnapshots) only reads it.
+    private readonly Dictionary<string, EquippedSummary> _equippedSummaryByPlayer = new(StringComparer.Ordinal);
+
+    private const ulong ModifierDigestSalt = 0x6D6F642D64696765UL; // "mod-dige"
+
+    // Spent by an action that would write (H-D18); null means unlimited (a service used on its own).
+    // The runtime sets it and spends the budget of the session making the request.
+    internal Func<bool>? ActionGate { get; set; }
 
     public PlayerInventoryService(IWorldPersistenceRepository? worldPersistence, PersistenceWriteQueue? writes, ObjectIdAllocator objectIds)
     {
@@ -139,6 +159,8 @@ internal sealed class PlayerInventoryService
                 "server.persistence.inventory-invalid-item-id",
                 $"player={playerName} count={unreservableIds}");
         }
+
+        RefreshEquippedSummary(playerName);
     }
 
     private bool TryReserve(long itemInstanceId)
@@ -154,8 +176,10 @@ internal sealed class PlayerInventoryService
 
     // Makes sure the player's inventory is loaded and usable: loads it if no join did, grants the
     // starter kinds introduced after the kit version the player has received (the whole kit for a
-    // new player; see GrantStarterKit) and equips the first occupied backpack slot when nothing is
-    // equipped. False when the inventory could not be loaded yet (see TryLoadSynchronously).
+    // new player; see GrantStarterKit) and, on first sight of the inventory only (no starter grant
+    // recorded yet, H-D3), equips the lowest occupied slot whose item may be held in the main hand
+    // when the main hand is empty. After that an empty hand stays empty. False when the inventory
+    // could not be loaded yet (see TryLoadSynchronously).
     public bool Ensure(string playerName)
     {
         if (!TryLoadSynchronously(playerName))
@@ -164,27 +188,32 @@ internal sealed class PlayerInventoryService
         }
 
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
+        bool firstSight = !_starterKitByPlayer.ContainsKey(playerName);
         bool hasBackpackContent = HasBackpackContent(slots);
-        if (hasBackpackContent)
+        if (hasBackpackContent && firstSight)
         {
             // An existing inventory keeps the item it had first; a new one equips the first kit item.
             EquipFirstOccupiedSlotIfNone(playerName, slots);
         }
 
         GrantStarterKit(playerName, slots, isTopUp: hasBackpackContent);
-        if (!hasBackpackContent)
+        if (!hasBackpackContent && firstSight)
         {
             EquipFirstOccupiedSlotIfNone(playerName, slots);
         }
 
+        RefreshEquippedSummary(playerName);
         return true;
     }
 
-    // Equips the item in a backpack slot and queues the equipped slot's write. The caller refreshes
-    // the player's combat stats on Equipped.
-    //
-    // Wave H, C0: a target other than the main hand is not implemented until H1 fills it in; it is
-    // rejected (TargetOutOfRange for an index that is no equipment slot, else NotEquippable).
+    // Equips the item in a backpack slot into an equipment slot and queues the writes. With no target
+    // the item's first listed slot is used (H-D8). Checks run in a fixed order, and a rejection changes
+    // nothing and queues nothing: backpack range, target range, loading, occupied, equippable and slot
+    // allowed, then (only for an action that would write) the budget. Equipping what the target
+    // already holds is accepted and writes nothing. An item that sits in another equipment slot
+    // leaves it; the item the target held is only displaced, and stays in the backpack (a legacy one
+    // with no backpack row first moves to the lowest free slot, or the equip is rejected as
+    // BackpackFull so it is never lost). The caller refreshes the player's combat stats on Equipped.
     public InventoryEquipOutcome TryEquip(string playerName, int slotIndex, int? targetSlotIndex = null)
     {
         if (slotIndex < 0 || slotIndex >= InventoryConstants.BackpackSlotCount)
@@ -192,12 +221,16 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.SlotOutOfRange;
         }
 
-        if (targetSlotIndex is int target
-            && (!EquipmentSlots.TryFromSlotIndex(target, out EquipmentSlot targetSlot) || targetSlot != EquipmentSlot.MainHand))
+        EquipmentSlot target = default;
+        bool hasTarget = false;
+        if (targetSlotIndex is int targetIndexValue)
         {
-            return EquipmentSlots.TryFromSlotIndex(target, out _)
-                ? InventoryEquipOutcome.NotEquippable
-                : InventoryEquipOutcome.TargetOutOfRange;
+            if (!EquipmentSlots.TryFromSlotIndex(targetIndexValue, out target))
+            {
+                return InventoryEquipOutcome.TargetOutOfRange;
+            }
+
+            hasTarget = true;
         }
 
         if (!Ensure(playerName))
@@ -206,29 +239,269 @@ internal sealed class PlayerInventoryService
         }
 
         if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
-            || !slots.TryGetValue(slotIndex, out long itemInstanceId)
-            || !_itemInstances.ContainsKey(itemInstanceId))
+            || !TryGetItem(slots, slotIndex, out PersistedItemInstance item))
         {
             return InventoryEquipOutcome.SlotEmpty;
         }
 
-        slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
-        PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+        if (!ContentCatalog.Shipped.TryGetItem(item.ItemKind, out ItemDefinition? definition))
+        {
+            return InventoryEquipOutcome.NotEquippable;
+        }
+
+        if (!hasTarget)
+        {
+            if (definition.EquipSlots.Count == 0)
+            {
+                return InventoryEquipOutcome.NotEquippable;
+            }
+
+            target = definition.EquipSlots[0];
+        }
+
+        if ((definition.EquipSlotMask & EquipmentSlots.MaskOf(target)) == 0)
+        {
+            return InventoryEquipOutcome.NotEquippable;
+        }
+
+        long itemInstanceId = item.ItemInstanceId;
+        int targetIndex = EquipmentSlots.ToSlotIndex(target);
+        bool targetHeld = slots.TryGetValue(targetIndex, out long displacedId);
+        if (targetHeld && displacedId == itemInstanceId)
+        {
+            return InventoryEquipOutcome.Equipped;
+        }
+
+        int rescueSlot = -1;
+        if (targetHeld && _itemInstances.ContainsKey(displacedId) && !BackpackHolds(slots, displacedId))
+        {
+            rescueSlot = FindLowestFreeBackpackSlot(slots);
+            if (rescueSlot < 0)
+            {
+                return InventoryEquipOutcome.BackpackFull;
+            }
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        int previousIndex = FindEquipmentSlotOf(slots, itemInstanceId);
+        DateTime now = DateTime.UtcNow;
+        PersistedInventorySlot? rescueRow = null;
+        if (rescueSlot >= 0)
+        {
+            slots[rescueSlot] = displacedId;
+            rescueRow = new PersistedInventorySlot(playerName, rescueSlot, displacedId, now);
+        }
+
+        slots[targetIndex] = itemInstanceId;
+        if (previousIndex >= 0)
+        {
+            slots.Remove(previousIndex);
+        }
+
+        QueueSlotWrites(
+            playerName,
+            rescueRow,
+            new PersistedInventorySlot(playerName, targetIndex, itemInstanceId, now),
+            previousIndex);
+        RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
 
-    // Wave H, C0 stubs: H1 implements these. Until then they change nothing and reject.
-    public InventoryEquipOutcome TryUnequip(string playerName, int slotIndex) => InventoryEquipOutcome.NotEquippable;
+    // Empties an equipment slot (slotIndex is 100..103). The item keeps its backpack row; a legacy item
+    // with no backpack row first moves to the lowest free backpack slot, or the unequip is rejected as
+    // BackpackFull so the item is never lost.
+    public InventoryEquipOutcome TryUnequip(string playerName, int slotIndex)
+    {
+        if (!EquipmentSlots.TryFromSlotIndex(slotIndex, out _))
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
 
-    public InventoryEquipOutcome TryMove(string playerName, int from, int to) => InventoryEquipOutcome.NotEquippable;
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
 
-    public InventoryEquipOutcome TryDestroy(string playerName, int slotIndex, long itemInstanceId) => InventoryEquipOutcome.NotEquippable;
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !TryGetItem(slots, slotIndex, out PersistedItemInstance item))
+        {
+            return InventoryEquipOutcome.SlotEmpty;
+        }
 
+        int rescueSlot = -1;
+        if (!BackpackHolds(slots, item.ItemInstanceId))
+        {
+            rescueSlot = FindLowestFreeBackpackSlot(slots);
+            if (rescueSlot < 0)
+            {
+                return InventoryEquipOutcome.BackpackFull;
+            }
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        PersistedInventorySlot? rescueRow = null;
+        if (rescueSlot >= 0)
+        {
+            slots[rescueSlot] = item.ItemInstanceId;
+            rescueRow = new PersistedInventorySlot(playerName, rescueSlot, item.ItemInstanceId, DateTime.UtcNow);
+        }
+
+        slots.Remove(slotIndex);
+        QueueSlotWrites(playerName, rescueRow, null, slotIndex);
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // Moves the item of a backpack slot to another, or swaps the two when both are occupied. Both
+    // slots are 0..15. Equipment rows follow by item id, so an equipped item stays equipped.
+    // From == To is accepted and writes nothing.
+    public InventoryEquipOutcome TryMove(string playerName, int from, int to)
+    {
+        if (from < 0 || from >= InventoryConstants.BackpackSlotCount
+            || to < 0 || to >= InventoryConstants.BackpackSlotCount)
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
+
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !TryGetItem(slots, from, out PersistedItemInstance moving))
+        {
+            return InventoryEquipOutcome.SlotEmpty;
+        }
+
+        if (from == to)
+        {
+            return InventoryEquipOutcome.Equipped;
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        DateTime now = DateTime.UtcNow;
+        PersistedInventorySlot toRow = new(playerName, to, moving.ItemInstanceId, now);
+        if (TryGetItem(slots, to, out PersistedItemInstance other))
+        {
+            slots[from] = other.ItemInstanceId;
+            slots[to] = moving.ItemInstanceId;
+            QueueSlotWrites(
+                playerName,
+                new PersistedInventorySlot(playerName, from, other.ItemInstanceId, now),
+                toRow,
+                -1);
+        }
+        else
+        {
+            slots.Remove(from);
+            slots[to] = moving.ItemInstanceId;
+            QueueSlotWrites(playerName, toRow, null, from);
+        }
+
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // Destroys the item of a backpack slot for good. The request names the item, so a queued destroy
+    // cannot hit whatever moved into the slot. An equipped item is never destroyed. The item row is
+    // removed too unless another loaded inventory still references it (only corrupted data).
+    public InventoryEquipOutcome TryDestroy(string playerName, int slotIndex, long itemInstanceId)
+    {
+        if (slotIndex < 0 || slotIndex >= InventoryConstants.BackpackSlotCount)
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
+
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !TryGetItem(slots, slotIndex, out PersistedItemInstance item))
+        {
+            return InventoryEquipOutcome.SlotEmpty;
+        }
+
+        if (item.ItemInstanceId != itemInstanceId)
+        {
+            return InventoryEquipOutcome.ItemMismatch;
+        }
+
+        if (FindEquipmentSlotOf(slots, itemInstanceId) >= 0)
+        {
+            return InventoryEquipOutcome.ItemEquipped;
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        for (int index = 0; index < InventoryConstants.BackpackSlotCount; index++)
+        {
+            if (slots.TryGetValue(index, out long held) && held == itemInstanceId)
+            {
+                slots.Remove(index);
+            }
+        }
+
+        if (!IsReferencedByOtherInventory(playerName, itemInstanceId))
+        {
+            _itemInstances.Remove(itemInstanceId);
+        }
+
+        NoteWriteQueued(playerName);
+        EnqueueWorldWrite(world => world.DestroyInventoryItem(playerName, itemInstanceId));
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // Creates a rolled item of the kind in the lowest free backpack slot. Not a client action and not
+    // budgeted: wave I's loot and tests call it. NotEquippable when the kind is unknown or has no roll
+    // table; BackpackFull when there is no free slot.
     internal InventoryEquipOutcome TryGrantRolled(string playerName, string kind, ItemRarity rarity, in ItemRollSeed seed)
-        => InventoryEquipOutcome.NotEquippable;
+    {
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
 
-    // The digest of the rolled modifiers of the equipped items (SimulationStateChecksum). Zero until H1.
-    public ulong ResolveModifierDigest(string playerName) => 0UL;
+        if (!ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition)
+            || definition.Rolls == null
+            || !Enum.IsDefined(rarity))
+        {
+            return InventoryEquipOutcome.NotEquippable;
+        }
+
+        Dictionary<int, long> slots = GetOrCreateSlots(playerName);
+        int freeSlot = FindLowestFreeBackpackSlot(slots);
+        if (freeSlot < 0)
+        {
+            return InventoryEquipOutcome.BackpackFull;
+        }
+
+        GrantItem(playerName, slots, definition.Key, freeSlot, ItemRoller.Roll(definition, rarity, in seed));
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // The digest of the rolled modifiers of the equipped items (SimulationStateChecksum); zero when
+    // none is rolled. Read from the cache. Allocates nothing.
+    public ulong ResolveModifierDigest(string playerName)
+        => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.Digest : 0UL;
 
     // Drops a departed player's loaded inventory. Its changes were queued as they happened, but the
     // queue drops a write that fails and only counts it in FailedWrites, so:
@@ -273,6 +546,7 @@ internal sealed class PlayerInventoryService
             }
 
             _slotsByPlayer.Remove(playerName);
+            _equippedSummaryByPlayer.Remove(playerName);
             tracker.EvictedSlots = slots;
             tracker.EvictedItems = items;
             tracker.EvictedStarterKitVersion = _starterKitByPlayer.Remove(playerName, out int starterKitVersion)
@@ -294,6 +568,7 @@ internal sealed class PlayerInventoryService
 
         _writeTrackers.Remove(playerName);
         _slotsByPlayer.Remove(playerName);
+        _equippedSummaryByPlayer.Remove(playerName);
         _starterKitByPlayer.Remove(playerName);
         foreach (long itemInstanceId in slots.Values)
         {
@@ -308,54 +583,211 @@ internal sealed class PlayerInventoryService
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
             InventoryItemSnapshot? item = TryResolveItem(slots, slotIndex);
-            bool equipped = slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long equippedItemId)
-                && item.HasValue
-                && item.Value.ItemInstanceId == equippedItemId;
+            bool equipped = item.HasValue && FindEquipmentSlotOf(slots, item.Value.ItemInstanceId) >= 0;
             backpack.Add(new InventorySlotSnapshot(slotIndex, item, equipped));
         }
 
-        InventoryItemSnapshot? equippedItem = TryResolveItem(slots, InventoryConstants.EquippedSlotIndex);
+        InventoryItemSnapshot? mainHand = TryResolveItem(slots, EquipmentSlots.FirstSlotIndex);
+        List<InventorySlotSnapshot>? equipment = null;
+        for (int slotIndex = EquipmentSlots.FirstSlotIndex + 1; slotIndex <= EquipmentSlots.LastSlotIndex; slotIndex++)
+        {
+            InventoryItemSnapshot? item = TryResolveItem(slots, slotIndex);
+            if (item.HasValue)
+            {
+                (equipment ??= []).Add(new InventorySlotSnapshot(slotIndex, item, true));
+            }
+        }
+
         return new PlayerInventorySnapshot(
             playerName,
             InventoryConstants.GridColumns,
             InventoryConstants.GridRows,
             backpack,
-            new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, equippedItem, equippedItem.HasValue));
+            new InventorySlotSnapshot(EquipmentSlots.FirstSlotIndex, mainHand, mainHand.HasValue),
+            equipment);
     }
 
-    // Fills the loadout with the modifiers of what the player has equipped; replaces
-    // ResolveEquippedToolModifier. Wave H, C0: the main hand (slot 100) only; H1 reads all four slots.
-    // A kind the catalog no longer knows is inert: no modifiers, no throw (the row stays as it is).
+    // Fills the loadout with the modifiers of what the player has equipped, per slot. A rolled item's
+    // modifiers replace its definition's (H-D4). A kind the catalog no longer knows, a slot the item
+    // may not occupy and a damaged roll give no modifiers: the row stays and is inert, nothing throws.
     // Allocates nothing.
     public void CopyEquipment(string playerName, EquipmentLoadout into)
     {
         ArgumentNullException.ThrowIfNull(into);
         into.Clear();
-        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
-            || !slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long itemInstanceId)
-            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots))
         {
             return;
         }
 
-        if (ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition))
+        for (int index = 0; index < EquipmentSlots.Count; index++)
         {
-            into.Set(EquipmentSlot.MainHand, definition.Modifiers);
+            EquipmentSlot slot = (EquipmentSlot)index;
+            if (TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition))
+            {
+                into.Set(slot, EffectiveModifiers(in item, definition));
+            }
         }
     }
 
-    // The light the equipped item casts; mirrors CopyEquipment and allocates nothing.
+    // The light the equipped items cast (EquipmentSlots.ResolveHeldLight); read from the cache.
+    // Allocates nothing.
     public HeldLightKind ResolveEquippedHeldLight(string playerName)
+        => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.Light : HeldLightKind.None;
+
+    // Recomputes the cached summary of a loaded inventory; called from every path that changes the
+    // slots or loads an inventory.
+    private void RefreshEquippedSummary(string playerName)
     {
-        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
-            || !slots.TryGetValue(InventoryConstants.EquippedSlotIndex, out long itemInstanceId)
-            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots))
         {
-            return HeldLightKind.None;
+            _equippedSummaryByPlayer.Remove(playerName);
+            return;
         }
 
-        return ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition) ? definition.HeldLight : HeldLightKind.None;
+        HeldLightKind mainLight = HeldLightKind.None;
+        HeldLightKind offLight = HeldLightKind.None;
+        ulong digest = ModifierDigestSalt;
+        bool anyRolled = false;
+        for (int index = 0; index < EquipmentSlots.Count; index++)
+        {
+            EquipmentSlot slot = (EquipmentSlot)index;
+            if (!TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition))
+            {
+                continue;
+            }
+
+            if (slot == EquipmentSlot.MainHand)
+            {
+                mainLight = definition.HeldLight;
+            }
+            else if (slot == EquipmentSlot.OffHand)
+            {
+                offLight = definition.HeldLight;
+            }
+
+            if (item.Roll == null)
+            {
+                continue;
+            }
+
+            IReadOnlyList<StatModifier> modifiers = item.Roll.Modifiers;
+            int counted = 0;
+            for (int m = 0; m < modifiers.Count && counted < StatSheet.MaxModifiersPerSource; m++)
+            {
+                StatModifier modifier = modifiers[m];
+                if (!IsApplicable(modifier))
+                {
+                    continue;
+                }
+
+                counted++;
+                anyRolled = true;
+                digest = Seed.Combine(
+                    digest,
+                    (ulong)index,
+                    ((ulong)(uint)modifier.Stat << 8) | (uint)modifier.Op,
+                    BitConverter.SingleToUInt32Bits(modifier.Value));
+            }
+        }
+
+        if (anyRolled && digest == 0UL)
+        {
+            digest = 1UL;
+        }
+
+        _equippedSummaryByPlayer[playerName] = new EquippedSummary(
+            EquipmentSlots.ResolveHeldLight(mainLight, offLight),
+            anyRolled ? digest : 0UL);
     }
+
+    private static bool IsApplicable(StatModifier modifier)
+        => (uint)modifier.Stat < (uint)StatId.Count
+            && (uint)modifier.Op <= (uint)StatOp.Percent
+            && float.IsFinite(modifier.Value);
+
+    private static IReadOnlyList<StatModifier> EffectiveModifiers(in PersistedItemInstance item, ItemDefinition definition)
+        => item.Roll != null ? item.Roll.Modifiers : definition.Modifiers;
+
+    // The item in an equipment slot, when it is live: the instance exists, its kind is in the catalog
+    // and the definition lets it occupy the slot.
+    private bool TryResolveEquipped(
+        Dictionary<int, long> slots,
+        EquipmentSlot slot,
+        out PersistedItemInstance item,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ItemDefinition? definition)
+    {
+        if (TryGetItem(slots, EquipmentSlots.ToSlotIndex(slot), out item)
+            && ContentCatalog.Shipped.TryGetItem(item.ItemKind, out definition)
+            && (definition.EquipSlotMask & EquipmentSlots.MaskOf(slot)) != 0)
+        {
+            return true;
+        }
+
+        definition = null;
+        return false;
+    }
+
+    private bool TryGetItem(Dictionary<int, long> slots, int slotIndex, out PersistedItemInstance item)
+    {
+        if (slots.TryGetValue(slotIndex, out long itemInstanceId) && _itemInstances.TryGetValue(itemInstanceId, out item))
+        {
+            return true;
+        }
+
+        item = default;
+        return false;
+    }
+
+    // The equipment slot index (100..103) holding the item, or -1.
+    private static int FindEquipmentSlotOf(Dictionary<int, long> slots, long itemInstanceId)
+    {
+        for (int slotIndex = EquipmentSlots.FirstSlotIndex; slotIndex <= EquipmentSlots.LastSlotIndex; slotIndex++)
+        {
+            if (slots.TryGetValue(slotIndex, out long held) && held == itemInstanceId)
+            {
+                return slotIndex;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool BackpackHolds(Dictionary<int, long> slots, long itemInstanceId)
+    {
+        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        {
+            if (slots.TryGetValue(slotIndex, out long held) && held == itemInstanceId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsReferencedByOtherInventory(string playerName, long itemInstanceId)
+    {
+        foreach (KeyValuePair<string, Dictionary<int, long>> entry in _slotsByPlayer)
+        {
+            if (string.Equals(entry.Key, playerName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (long held in entry.Value.Values)
+            {
+                if (held == itemInstanceId)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool TrySpendAction() => ActionGate?.Invoke() ?? true;
 
     // Loads a player's inventory that no join loaded (a direct caller of a runtime without profiles,
     // such as a tool or test): the queued writes are flushed first so the read is current. False
@@ -417,6 +849,7 @@ internal sealed class PlayerInventoryService
         tracker.EvictedItems = null;
         tracker.EvictedStarterKitVersion = null;
         tracker.Retained = true;
+        RefreshEquippedSummary(playerName);
         NetworkDiagnosticsLog.Write(
             "server.persistence.inventory-restored",
             $"player={playerName} verdict={tracker.Verdict}");
@@ -509,7 +942,8 @@ internal sealed class PlayerInventoryService
         return false;
     }
 
-    // Equips the item of the lowest occupied backpack slot when nothing is equipped.
+    // Equips the item of the lowest occupied backpack slot that may be held in the main hand, when the
+    // main hand is empty.
     private void EquipFirstOccupiedSlotIfNone(string playerName, Dictionary<int, long> slots)
     {
         if (slots.ContainsKey(InventoryConstants.EquippedSlotIndex))
@@ -519,7 +953,10 @@ internal sealed class PlayerInventoryService
 
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
-            if (slots.TryGetValue(slotIndex, out long itemInstanceId))
+            if (slots.TryGetValue(slotIndex, out long itemInstanceId)
+                && _itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance candidate)
+                && ContentCatalog.Shipped.TryGetItem(candidate.ItemKind, out ItemDefinition? candidateDefinition)
+                && (candidateDefinition.EquipSlotMask & EquipmentSlots.MaskOf(EquipmentSlot.MainHand)) != 0)
             {
                 slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
                 PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
@@ -557,7 +994,7 @@ internal sealed class PlayerInventoryService
     }
 
     // Creates a new item of the kind in the backpack slot and queues its item and slot writes.
-    private long GrantItem(string playerName, Dictionary<int, long> slots, string itemKind, int slotIndex)
+    private long GrantItem(string playerName, Dictionary<int, long> slots, string itemKind, int slotIndex, ItemRoll? roll = null)
     {
         ToolDefinition definition = ToolCatalog.Resolve(itemKind);
         long itemInstanceId = _objectIds.Take().Value;
@@ -571,7 +1008,8 @@ internal sealed class PlayerInventoryService
             State: "Inventory",
             StackCount: 1,
             CreatedUtc: DateTime.UtcNow,
-            UpdatedUtc: DateTime.UtcNow);
+            UpdatedUtc: DateTime.UtcNow,
+            Roll: roll);
         _itemInstances[item.ItemInstanceId] = item;
         slots[slotIndex] = itemInstanceId;
         NoteWriteQueued(playerName);
@@ -580,25 +1018,41 @@ internal sealed class PlayerInventoryService
         return itemInstanceId;
     }
 
+    // A kind the catalog no longer knows, and an item in an equipment slot it may not occupy, are
+    // inert: no modifiers and no light, the row's own fields kept, nothing throws. The modifiers of
+    // an item in the backpack are those it would give when equipped (a rolled item's roll, else the
+    // definition's); null, never empty, when there are none.
     private InventoryItemSnapshot? TryResolveItem(Dictionary<int, long> slots, int slotIndex)
     {
-        if (!slots.TryGetValue(slotIndex, out long itemInstanceId)
-            || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item))
+        if (!TryGetItem(slots, slotIndex, out PersistedItemInstance item))
         {
             return null;
         }
 
-        // A kind the catalog no longer knows is shown as an inert "Unknown item": the row's own
-        // fields are kept and nothing throws.
-        bool known = ToolCatalog.TryResolve(item.ItemKind, out ToolDefinition definition);
+        bool known = ContentCatalog.Shipped.TryGetItem(item.ItemKind, out ItemDefinition? definition);
+        bool inert = !known
+            || (EquipmentSlots.TryFromSlotIndex(slotIndex, out EquipmentSlot equipmentSlot)
+                && (definition!.EquipSlotMask & EquipmentSlots.MaskOf(equipmentSlot)) == 0);
+        IReadOnlyList<StatModifier>? modifiers = null;
+        if (!inert)
+        {
+            IReadOnlyList<StatModifier> effective = EffectiveModifiers(in item, definition!);
+            modifiers = effective.Count == 0 ? null : effective;
+        }
+
         return new InventoryItemSnapshot(
             item.ItemInstanceId,
             item.ItemKind,
             item.DisplayName,
             item.VisualId,
             item.StackCount,
-            known ? definition.Description : ToolCatalog.UnknownItemDescription,
-            known ? definition.DetailLines : Array.Empty<string>());
+            known ? definition!.Description : ToolCatalog.UnknownItemDescription,
+            known ? definition!.DetailLines : Array.Empty<string>(),
+            modifiers,
+            inert ? HeldLightKind.None : definition!.HeldLight,
+            known ? definition!.EquipSlotMask : 0,
+            item.Roll?.Rarity ?? ItemRarity.Common,
+            item.Roll != null);
     }
 
     private Dictionary<int, long> GetOrCreateSlots(string playerName)
@@ -623,6 +1077,34 @@ internal sealed class PlayerInventoryService
         EnqueueWorldWrite(world => world.SaveInventorySlot(slot));
     }
 
+    // One queued closure for writes that belong together, so the queue's savepoint makes them atomic:
+    // up to two slot upserts, then the delete of a vacated slot row (-1 for none).
+    private void QueueSlotWrites(
+        string playerName,
+        PersistedInventorySlot? first,
+        PersistedInventorySlot? second,
+        int deleteSlotIndex)
+    {
+        NoteWriteQueued(playerName);
+        EnqueueWorldWrite(world =>
+        {
+            if (first is PersistedInventorySlot firstRow)
+            {
+                world.SaveInventorySlot(firstRow);
+            }
+
+            if (second is PersistedInventorySlot secondRow)
+            {
+                world.SaveInventorySlot(secondRow);
+            }
+
+            if (deleteSlotIndex >= 0)
+            {
+                world.DeleteInventorySlot(playerName, deleteSlotIndex);
+            }
+        });
+    }
+
     private void EnqueueWorldWrite(Action<IWorldPersistenceRepository> write)
     {
         if (_worldPersistence == null || _writes == null)
@@ -645,6 +1127,9 @@ internal sealed class PlayerInventoryService
 
         _writeTrackers[playerName] = new InventoryWriteTracker(_writes.FailedWrites);
     }
+
+    // The held light and rolled-modifier digest an inventory's equipment gives its actor.
+    private readonly record struct EquippedSummary(HeldLightKind Light, ulong Digest);
 
     private enum InventoryWriteVerdict
     {

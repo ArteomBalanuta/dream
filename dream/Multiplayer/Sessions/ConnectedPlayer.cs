@@ -36,6 +36,10 @@ public sealed class ConnectedPlayer
 
     public ulong? LastAcceptedActionSequence { get; private set; }
 
+    // Spent by inventory actions that would write (wave H, H-D18). A field so the runtime spends it in
+    // place; it is counted in server ticks, never wall time.
+    internal InventoryActionBudget InventoryBudget;
+
     // The registry this player is registered in (null once it forgets the player); told when the
     // spawn state changes so it can keep its active and departed sets (PlayerSessionRegistry).
     internal PlayerSessionRegistry? Registry { get; set; }
@@ -111,5 +115,43 @@ public sealed class ConnectedPlayer
         return string.IsNullOrWhiteSpace(displayName)
             ? sessionId.Value
             : displayName.Trim();
+    }
+}
+
+// A token bucket counted in server ticks: a burst of 16 actions, refilling 8 per second. Tokens are
+// kept in tick units (one action costs TicksPerAction), so the arithmetic is integer and exact.
+internal struct InventoryActionBudget
+{
+    public const int Burst = 16;
+    public const int RefillPerSecond = 8;
+    public const int TicksPerAction = Dream.Simulation.Runtime.SimulationClock.AuthoritativeTicksPerSecond / RefillPerSecond;
+    private const long Capacity = (long)Burst * TicksPerAction;
+
+    private long _units;
+    private ulong _lastTick;
+    private bool _started;
+
+    // Spends one action at the tick; false (and nothing spent) when the bucket holds less than one.
+    public bool TrySpend(ulong currentTick)
+    {
+        if (!_started)
+        {
+            _started = true;
+            _units = Capacity;
+        }
+        else if (currentTick > _lastTick)
+        {
+            ulong elapsed = currentTick - _lastTick;
+            _units = elapsed >= (ulong)Capacity ? Capacity : Math.Min(Capacity, _units + (long)elapsed);
+        }
+
+        _lastTick = Math.Max(_lastTick, currentTick);
+        if (_units < TicksPerAction)
+        {
+            return false;
+        }
+
+        _units -= TicksPerAction;
+        return true;
     }
 }
