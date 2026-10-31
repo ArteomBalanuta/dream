@@ -99,11 +99,11 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
-        // The world-state row is the newest written HP: checkpoints write it with the profile's
-        // vitals, and a leave writes both (DetachRemoteSession), so the two agree after a leave.
-        // The profile's HP is only the fallback for a player without a world-state row.
-        int currentHealth = worldState?.CurrentHealth ?? profile.Stats.CurrentHealth;
+        // Health belongs to a world (U2): the world-state row holds it. The profile is global, so its
+        // HP is whatever the character had in the last world it left; a character with no row here
+        // has not been to this world and arrives at full health.
         int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
+        int currentHealth = worldState?.CurrentHealth ?? maxHealth;
 
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())

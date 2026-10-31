@@ -308,6 +308,8 @@ public sealed class CharacterJoinTests
 
         PersistedPlayerInventory oneItems = oneRows.LoadPlayerInventory(Hero);
         Assert.NotEmpty(oneItems.Items);
+        // World one's bag is emptied; world two must not notice.
+        oneRows.DeleteInventorySlots(Hero);
         Assert.Empty(twoRows.LoadPlayerInventory(Hero).Items);
         Assert.Null(twoRows.TryGetPlayerWorldState(Hero));
         Assert.Equal(AccountOf("hero"), new SqliteAccountRepository(database.Schema).Lookup(Hero, null).Existing!.Value.Owner);
@@ -337,8 +339,8 @@ public sealed class CharacterJoinTests
 
         PersistedPlayerInventory twoItems = twoRows.LoadPlayerInventory(Hero);
         Assert.NotEmpty(twoItems.Items);
-        Assert.Empty(oneItems.Items.Select(item => item.ItemInstanceId).Intersect(twoItems.Items.Select(item => item.ItemInstanceId)));
-        Assert.Equal(oneItems.Items.Count, oneRows.LoadPlayerInventory(Hero).Items.Count);
+        Assert.NotEmpty(twoItems.Slots);
+        Assert.Empty(oneRows.LoadPlayerInventory(Hero).Slots);
         Assert.Equal(worldOneSpot, oneRows.TryGetPlayerWorldState(Hero)!.Value.Position);
         Assert.Equal(23, oneRows.TryGetPlayerWorldState(Hero)!.Value.CurrentHealth);
         Assert.Equal(worldTwoSpot, twoRows.TryGetPlayerWorldState(Hero)!.Value.Position);
@@ -352,7 +354,8 @@ public sealed class CharacterJoinTests
             Assert.Equal(8, target.Combatant.Level);
             Assert.Equal(26, target.Combatant.BaseStats.Strength);
             Assert.Equal(23, target.Combatant.Health.CurrentHealth);
-            Assert.Equal(worldOneSpot, PositionOf(world, session));
+            // Near, not equal: the ticks after the join can push the player out of a collision.
+            Assert.InRange((worldOneSpot - PositionOf(world, session)).Length, 0f, 1f);
             world.Leave("c1");
         }
 
