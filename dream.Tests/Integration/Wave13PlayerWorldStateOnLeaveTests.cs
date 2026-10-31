@@ -111,8 +111,9 @@ public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
     private async Task<(Vector3 Position, int Health)> PlayAsync(Wave12DeltaActorLoopbackTests.Rig rig, PersistenceTestDatabase database, bool waitForCheckpoint)
     {
         WorldSessionRuntime runtime = rig.Runtime;
-        await rig.JoinAsync(Anchor);
-        Wave12DeltaActorLoopbackTests.Peer bob = await rig.JoinAsync(Bob);
+        // The run counts ticks against the checkpoint interval, so a slow load must not play any.
+        await rig.JoinAsync(Anchor, awaitPrefetchBeforeTicking: true);
+        Wave12DeltaActorLoopbackTests.Peer bob = await rig.JoinAsync(Bob, awaitPrefetchBeforeTicking: true);
         string worldStateRows = WorldStateRows;
         for (int i = 0; waitForCheckpoint && i < 1000 && database.Count(worldStateRows) == 0; i++)
         {
