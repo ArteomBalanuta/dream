@@ -54,7 +54,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
             Assert.True(after.Ids.NextObjectId >= before.Ids.NextObjectId);
         }),
-        ("ids that survived the first run are not reissued", (before, after) =>
+        ("ids stored when the second run stopped are not reissued by the third", (before, after) =>
         {
             Assert.Empty(before.Ids.Items.Except(after.Ids.Items));
             Assert.Empty(before.Ids.Cubes.Except(after.Ids.Cubes));
@@ -67,7 +67,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             Assert.False(after.Report.IsFatal);
             Assert.False(after.Report.HasSoftFindings, string.Join(" | ", after.Report.ToLogLines(WorldDescriptor.Default)));
         }),
-        ("every session's profile and starter items survive the restart", (before, after) =>
+        ("every session's profile and items (starter kit and gear) survive the last restart", (before, after) =>
         {
             foreach (string session in Sessions)
             {
@@ -203,51 +203,59 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         output.WriteLine($"server start (bootstrap + host): first {firstStart.Elapsed.TotalMilliseconds:0.0} ms, restart {secondStart.Elapsed.TotalMilliseconds:0.0} ms");
         WireLoopbackServer server2 = await WireLoopbackServer.StartAsync(host2);
         List<WireLoopbackClient> rejoined = [];
-        foreach (string session in Sessions)
+        string geared;
+        PlayerSessionId gearedSession;
+        PlayerInventorySnapshot gearedInventory;
+        try
         {
-            rejoined.Add(await server2.ConnectAndJoinAsync(session));
+            foreach (string session in Sessions)
+            {
+                rejoined.Add(await server2.ConnectAndJoinAsync(session));
+            }
+
+            for (int tick = 0; tick < 5; tick++)
+            {
+                await server2.TickAsync();
+                Assert.True(await server2.FlushAllAsync());
+            }
+
+            if (accountsWired)
+            {
+                // A client with another token asking for an owned character is refused, and the owner stays seated.
+                JoinRejectedMessage refused = await server2.ConnectAndGetJoinRejectionAsync(
+                    "restart-stranger", $"Name {Sessions[0]}", TestAccountTokens.For("someone else"));
+                Assert.Equal(JoinRejectionReasons.CharacterOwned, refused.Reason);
+                Assert.True(server2.Host.IsConnectionJoined(server2.ConnectionFor(rejoined[0]).ConnectionId));
+            }
+
+            AssertClientsBuiltTheServersMap(server2, rejoined);
+
+            geared = WorldSessionRuntime.ResolveJoinPlayerName(Sessions[^1], $"Name {Sessions[^1]}");
+            PlayerInventoryService inventory = server2.Runtime.InventoryService;
+            for (int i = 0; i < RolledGear.Length; i++)
+            {
+                ItemRollSeed seed = new(1, server2.Runtime.CurrentServerTick, 7, 0, i);
+                Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryGrantRolled(geared, RolledGear[i], ItemRarity.Rare, in seed));
+                int slot = inventory.BuildSnapshot(geared).Slots.First(s => s.Item?.ItemKind == RolledGear[i]).SlotIndex;
+                await rejoined[^1].SendActionAsync(new InventoryEquipIntent(slot));
+                await server2.TickAsync();
+                Assert.True(await server2.FlushAllAsync());
+            }
+
+            gearedSession = new(Sessions[^1]);
+            gearedInventory = server2.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
+            Assert.Equal(RolledGear[0], gearedInventory.EquippedSlot!.Value.Item!.Value.ItemKind);
+            Assert.Equal(RolledGear[1..], gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemKind));
         }
-
-        for (int tick = 0; tick < 5; tick++)
+        finally
         {
-            await server2.TickAsync();
-            Assert.True(await server2.FlushAllAsync());
-        }
-
-        if (accountsWired)
-        {
-            // A client with another token asking for an owned character is refused, and the owner stays seated.
-            JoinRejectedMessage refused = await server2.ConnectAndGetJoinRejectionAsync(
-                "restart-stranger", $"Name {Sessions[0]}", TestAccountTokens.For("someone else"));
-            Assert.Equal(JoinRejectionReasons.CharacterOwned, refused.Reason);
-            Assert.True(server2.Host.IsConnectionJoined(server2.ConnectionFor(rejoined[0]).ConnectionId));
-        }
-
-        AssertClientsBuiltTheServersMap(server2, rejoined);
-
-        string geared = WorldSessionRuntime.ResolveJoinPlayerName(Sessions[^1], $"Name {Sessions[^1]}");
-        PlayerInventoryService inventory = server2.Runtime.InventoryService;
-        for (int i = 0; i < RolledGear.Length; i++)
-        {
-            ItemRollSeed seed = new(1, server2.Runtime.CurrentServerTick, 7, 0, i);
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryGrantRolled(geared, RolledGear[i], ItemRarity.Rare, in seed));
-            int slot = inventory.BuildSnapshot(geared).Slots.First(s => s.Item?.ItemKind == RolledGear[i]).SlotIndex;
-            await rejoined[^1].SendActionAsync(new InventoryEquipIntent(slot));
-            await server2.TickAsync();
-            Assert.True(await server2.FlushAllAsync());
-        }
-
-        PlayerSessionId gearedSession = new(Sessions[^1]);
-        PlayerInventorySnapshot gearedInventory = server2.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
-        Assert.Equal(RolledGear[0], gearedInventory.EquippedSlot!.Value.Item!.Value.ItemKind);
-        Assert.Equal(RolledGear[1..], gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemKind));
-
-        await server2.Service.DisposeAsync();
-        server2.Runtime.DisposeWithoutFinalCheckpoint();
-        server2.Host.Dispose();
-        foreach (WireLoopbackClient client in rejoined)
-        {
-            await client.DisposeAsync();
+            await server2.Service.DisposeAsync();
+            server2.Runtime.DisposeWithoutFinalCheckpoint();
+            server2.Host.Dispose();
+            foreach (WireLoopbackClient client in rejoined)
+            {
+                await client.DisposeAsync();
+            }
         }
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the second stop released the world");
@@ -259,6 +267,34 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         Assert.Empty(firstStop.Ids.Items.Except(before.Ids.Items));
         Assert.Empty(firstStop.Ids.Cubes.Except(before.Ids.Cubes));
         Assert.True(before.Ids.NextObjectId >= firstStop.Ids.NextObjectId);
+
+        // Run 2 changed only the geared session. The other two hold exactly what run 1 left, and the
+        // geared one holds that plus exactly the rolled gear.
+        foreach (string session in Sessions)
+        {
+            string player = WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
+            Assert.Contains(player, firstStop.Profiles);
+            Assert.Contains(player, before.Profiles);
+            if (accountsWired)
+            {
+                Assert.Equal(firstStop.OwnerByCharacter[player], before.OwnerByCharacter[player]);
+            }
+
+            if (player == geared)
+            {
+                Assert.Equal(firstStop.ItemsByPlayer[player].Length + RolledGear.Length, before.ItemsByPlayer[player].Length);
+                Assert.Empty(firstStop.ItemsByPlayer[player].Except(before.ItemsByPlayer[player]));
+            }
+            else
+            {
+                Assert.Equal(firstStop.ItemsByPlayer[player], before.ItemsByPlayer[player]);
+            }
+        }
+
+        foreach ((long item, string kind) in firstStop.ItemKinds)
+        {
+            Assert.Equal(kind, before.ItemKinds[item]);
+        }
 
         // Run 3: restart and rejoin again; the gear is worn and the rows checked below are unchanged.
         DedicatedServerHost host3 = Bootstrap(db, out _);

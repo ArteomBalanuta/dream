@@ -190,6 +190,12 @@ public static class ItemCli
         }
         catch (SqliteException ex)
         {
+            if (ex.SqliteErrorCode is 5 or 6)
+            {
+                error.WriteLine($"The database is busy: {ex.Message}. Try again when the other process has finished.");
+                return ExitWorldHeld;
+            }
+
             string advice = ex.SqliteErrorCode is 11 or 26 ? " If the file is damaged, restore a backup (--db restore <path> --yes)." : string.Empty;
             error.WriteLine($"The database could not be used: {ex.Message}.{advice}");
             return ExitNotFound;

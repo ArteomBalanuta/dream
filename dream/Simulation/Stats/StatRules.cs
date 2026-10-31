@@ -30,7 +30,8 @@ public static class StatRules
 
     public static float MaxEffective(StatId stat) => MaxBase(stat);
 
-    public static float ClampBase(StatId stat, float value) => Math.Clamp(value, MinBase(stat), MaxBase(stat));
+    // Math.Clamp keeps a NaN, so it is mapped to the minimum.
+    public static float ClampBase(StatId stat, float value) => float.IsNaN(value) ? MinBase(stat) : Math.Clamp(value, MinBase(stat), MaxBase(stat));
 
-    public static float ClampEffective(StatId stat, float value) => Math.Clamp(value, MinEffective(stat), MaxEffective(stat));
+    public static float ClampEffective(StatId stat, float value) => float.IsNaN(value) ? MinEffective(stat) : Math.Clamp(value, MinEffective(stat), MaxEffective(stat));
 }

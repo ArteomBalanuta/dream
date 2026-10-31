@@ -633,6 +633,21 @@ public sealed class PerPlayerInventoryPersistenceTests
             }
         }
 
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
+        {
+            Count(nameof(DeleteInventorySlot));
+            (string, int) key = (playerName.Trim(), slotIndex);
+            if (_slots.TryGetValue(key, out PersistedInventorySlot row) && row.ItemInstanceId == expectedItemInstanceId)
+            {
+                _slots.Remove(key);
+            }
+        }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId)
+        {
+            Count(nameof(DestroyInventoryItem));
+        }
+
         public void SaveStarterKitGrant(string playerName, int kitVersion)
         {
             Count(nameof(SaveStarterKitGrant));

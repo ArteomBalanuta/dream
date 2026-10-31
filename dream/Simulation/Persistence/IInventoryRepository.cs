@@ -14,11 +14,12 @@ public interface IInventoryRepository
 
     void DeleteInventorySlots(string playerName);
 
-    // Deletes one of the player's slot rows. The default does nothing so existing fakes compile.
-    void DeleteInventorySlot(string playerName, int slotIndex) { }
+    // Deletes one of the player's slot rows, but only while it still holds expectedItemInstanceId: a
+    // row that diverged from the caller's view (an earlier write failed) is left alone.
+    void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId);
 
     // Deletes this player's rows for the item, then the item row if no slot still references it.
-    void DestroyInventoryItem(string playerName, long itemInstanceId) { }
+    void DestroyInventoryItem(string playerName, long itemInstanceId);
 
     // Records that the player has received the starter kit up to kitVersion (see
     // ToolCatalog.StarterKit). Never lowers a recorded version; DeleteInventorySlots keeps it.

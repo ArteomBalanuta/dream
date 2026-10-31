@@ -396,6 +396,16 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("another equipment slot", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void OneItemInTwoEquipmentSlots_WithNoBackpackRow_IsNotAlsoASharedReference()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(100, 10) + Slot(101, 10));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(1, report.ItemsInTwoEquipmentSlots);
+        Assert.Equal(0, report.SharedItemReferences);
+    }
+
     [Theory]
     [InlineData(16)]
     [InlineData(99)]

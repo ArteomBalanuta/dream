@@ -196,10 +196,16 @@ internal sealed class PlayerInventoryService
             EquipFirstOccupiedSlotIfNone(playerName, slots);
         }
 
-        GrantStarterKit(playerName, slots, isTopUp: hasBackpackContent);
+        int? grantedVersion = GrantStarterKit(playerName, slots, isTopUp: hasBackpackContent);
         if (!hasBackpackContent && firstSight)
         {
             EquipFirstOccupiedSlotIfNone(playerName, slots);
+        }
+
+        // Last, so a crash before it leaves no grant record and the next join repairs the inventory.
+        if (grantedVersion is int version)
+        {
+            RecordStarterKitGrant(playerName, version);
         }
 
         RefreshEquippedSummary(playerName);
@@ -306,7 +312,8 @@ internal sealed class PlayerInventoryService
             playerName,
             rescueRow,
             new PersistedInventorySlot(playerName, targetIndex, itemInstanceId, now),
-            previousIndex);
+            previousIndex,
+            itemInstanceId);
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
@@ -355,7 +362,7 @@ internal sealed class PlayerInventoryService
         }
 
         slots.Remove(slotIndex);
-        QueueSlotWrites(playerName, rescueRow, null, slotIndex);
+        QueueSlotWrites(playerName, rescueRow, null, slotIndex, item.ItemInstanceId);
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
@@ -408,7 +415,7 @@ internal sealed class PlayerInventoryService
         {
             slots.Remove(from);
             slots[to] = moving.ItemInstanceId;
-            QueueSlotWrites(playerName, toRow, null, from);
+            QueueSlotWrites(playerName, toRow, null, from, moving.ItemInstanceId);
         }
 
         RefreshEquippedSummary(playerName);
@@ -878,9 +885,11 @@ internal sealed class PlayerInventoryService
     //   top-up may have granted it).
     // - A full backpack receives nothing; the version recorded then stops below the first kind that
     //   did not fit, so it is granted once a slot is free.
-    // - The grant record is queued after the item and slot writes, so they share the write queue's
-    //   group commit. Writing it only when the version rises makes a second call write nothing.
-    private void GrantStarterKit(string playerName, Dictionary<int, long> slots, bool isTopUp)
+    // - The grant record is not queued here: the caller queues it (RecordStarterKitGrant) after the
+    //   first-sight main-hand equip, so a crash between the kit and the equip leaves no record and the
+    //   next join repairs the empty hand (H-D3). Returns the version to record, or null when it does
+    //   not rise, which makes a second call write nothing.
+    private int? GrantStarterKit(string playerName, Dictionary<int, long> slots, bool isTopUp)
     {
         bool recorded = _starterKitByPlayer.TryGetValue(playerName, out int receivedVersion);
         if (!recorded)
@@ -890,7 +899,7 @@ internal sealed class PlayerInventoryService
 
         if (recorded && receivedVersion >= ToolCatalog.CurrentStarterKitVersion)
         {
-            return;
+            return null;
         }
 
         int grantedVersion = ToolCatalog.CurrentStarterKitVersion;
@@ -919,11 +928,11 @@ internal sealed class PlayerInventoryService
             }
         }
 
-        if (recorded && grantedVersion <= receivedVersion)
-        {
-            return;
-        }
+        return recorded && grantedVersion <= receivedVersion ? null : grantedVersion;
+    }
 
+    private void RecordStarterKitGrant(string playerName, int grantedVersion)
+    {
         _starterKitByPlayer[playerName] = grantedVersion;
         NoteWriteQueued(playerName);
         EnqueueWorldWrite(world => world.SaveStarterKitGrant(playerName, grantedVersion));
@@ -1012,9 +1021,14 @@ internal sealed class PlayerInventoryService
             Roll: roll);
         _itemInstances[item.ItemInstanceId] = item;
         slots[slotIndex] = itemInstanceId;
+        PersistedInventorySlot slot = new(playerName, slotIndex, itemInstanceId, DateTime.UtcNow);
         NoteWriteQueued(playerName);
-        EnqueueWorldWrite(world => world.SaveItemInstance(item));
-        PersistSlot(playerName, slotIndex, itemInstanceId);
+        EnqueueWorldWrite(world =>
+        {
+            // One closure, so the queue's savepoint lands the item and its slot together.
+            world.SaveItemInstance(item);
+            world.SaveInventorySlot(slot);
+        });
         return itemInstanceId;
     }
 
@@ -1078,12 +1092,14 @@ internal sealed class PlayerInventoryService
     }
 
     // One queued closure for writes that belong together, so the queue's savepoint makes them atomic:
-    // up to two slot upserts, then the delete of a vacated slot row (-1 for none).
+    // up to two slot upserts, then the delete of a vacated slot row (-1 for none), which only removes
+    // the row while it still holds deleteExpectedItemId.
     private void QueueSlotWrites(
         string playerName,
         PersistedInventorySlot? first,
         PersistedInventorySlot? second,
-        int deleteSlotIndex)
+        int deleteSlotIndex,
+        long deleteExpectedItemId = 0)
     {
         NoteWriteQueued(playerName);
         EnqueueWorldWrite(world =>
@@ -1100,7 +1116,7 @@ internal sealed class PlayerInventoryService
 
             if (deleteSlotIndex >= 0)
             {
-                world.DeleteInventorySlot(playerName, deleteSlotIndex);
+                world.DeleteInventorySlot(playerName, deleteSlotIndex, deleteExpectedItemId);
             }
         });
     }
