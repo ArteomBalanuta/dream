@@ -59,6 +59,19 @@ public class WorldCursorPickerTests
     }
 
     [Fact]
+    public void AnEnemyBehindACube_LosesTheClick_ButOneInFrontKeepsIt()
+    {
+        Vector3 origin = new(6.5f, 1.5f, 10.5f);
+
+        ClickPick hidden = WorldCursorPicker.Pick(new FloorWorld(), origin, Vector3.UnitX, (o, d) => new FakeTarget(new Vector3(12.5f, 1.5f, 10.5f)));
+        ClickPick visible = WorldCursorPicker.Pick(new FloorWorld(), origin, Vector3.UnitX, (o, d) => new FakeTarget(new Vector3(8.5f, 1.5f, 10.5f)));
+
+        Assert.Equal(ClickPickKind.Ground, hidden.Kind);
+        Assert.Equal(new NavCell(9, 1, 10), hidden.Cell);
+        Assert.Equal(ClickPickKind.Enemy, visible.Kind);
+    }
+
+    [Fact]
     public void TheCentreOfTheScreen_UnprojectsToTheCameraForwardRay()
     {
         Matrix4 view = Matrix4.LookAt(new Vector3(0f, 10f, 0f), new Vector3(0f, 0f, 0f), -Vector3.UnitZ);
@@ -77,11 +90,11 @@ public class WorldCursorPickerTests
         Assert.False(WorldCursorPicker.TryBuildRay(Matrix4.Identity, Matrix4.Identity, Vector2.Zero, new Vector2i(0, 0), out _, out _));
     }
 
-    private sealed class FakeTarget : IClickTarget
+    private sealed class FakeTarget(Vector3? anchor = null) : IClickTarget
     {
         public bool IsAlive => true;
 
-        public Vector3 Anchor => new(5.5f, 1.5f, 5.5f);
+        public Vector3 Anchor => anchor ?? new(5.5f, 1.5f, 5.5f);
     }
 
     private static EnemyActor Wolf(int actorId, Vector3 position)

@@ -251,7 +251,7 @@ public partial class Render
 
         if (status.InteractionMode == PlayerInteractionMode.Building)
         {
-            DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
+            DrawBuildMaterialPanel(BuildMaterialSelection, ref buildMaterial);
         }
 
         if (imGuiSurface)
@@ -288,18 +288,16 @@ public partial class Render
     private const float UiScaleSliderMax = 4f;
 
     // The "Build" window, shown in Building mode: Auto (the supporting cell's material) or one of
-    // BuildMaterialCatalog.Placeable. It takes clicks only while an overlay has freed the mouse
-    // (Esc or V), like the HUD panel; otherwise it just shows the current pick.
+    // BuildMaterialCatalog.Placeable. Always clickable, so ImGui captures the mouse over it and the
+    // click never reaches the world.
     private static void DrawBuildMaterialPanel(
         GeometryMaterialId? selection,
-        bool interactive,
         ref BuildMaterialChoice? buildMaterial)
     {
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10f, 300f), ImGuiCond.FirstUseEver);
         ImGui.Begin("Build",
             ImGuiWindowFlags.AlwaysAutoResize |
-            ImGuiWindowFlags.NoFocusOnAppearing |
-            (interactive ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs));
+            ImGuiWindowFlags.NoFocusOnAppearing);
 
         DrawBuildMaterialButton(null, selection, ref buildMaterial);
         IReadOnlyList<GeometryMaterialId> placeable = BuildMaterialCatalog.Placeable;
@@ -307,11 +305,6 @@ public partial class Render
         {
             ImGui.SameLine();
             DrawBuildMaterialButton(placeable[i], selection, ref buildMaterial);
-        }
-
-        if (!interactive)
-        {
-            ImGui.TextDisabled("Esc or V to choose");
         }
 
         ImGui.End();
