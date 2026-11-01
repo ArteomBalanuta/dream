@@ -412,7 +412,7 @@ The user judged the result good enough on 2026-11-01 and parked these for later.
 - Common items can roll +0 Vitality; tooltip display not checked.
 - `EquipFirstOccupiedSlotIfNone` frees cells without draining held-back rows.
 - A wolf nameplate behind the destroy confirm makes 17 draw commands against a budget of 16.
-- Well to bag drops and hand-edited rows at 20016+ are parked and stay unreachable.
+- Hand-edited rows moved to 20016+ by the migration stay unreachable.
 
 **Art (5 `check_art.py --art` gates fail)**
 
