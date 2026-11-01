@@ -24,6 +24,10 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
 
     private readonly IDisposable? _ownedDependency;
 
+    // Whether clients may use noclip, freeze and the stat sliders (see IAuthoritativeSessionHost).
+    // The dedicated bootstrap sets it from DREAM_DEV_COMMANDS; the integrated server turns it on.
+    public bool DevCommandsAllowed { get; set; }
+
     // The join-accepted descriptor, cached for the runtime's current WorldDescriptor.
     private WorldDescriptorWire? _worldWire;
     private WorldDescriptor? _worldWireSource;

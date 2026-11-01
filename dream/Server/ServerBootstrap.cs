@@ -39,6 +39,10 @@ public static class ServerBootstrap
     // (see WorldTimeOfDay.TryParse for the accepted formats). Unset changes nothing.
     public const string TimeOfDayEnvironmentVariable = "DREAM_TIME_OF_DAY";
 
+    // "1" lets clients use noclip, freeze and the stat sliders on the dedicated server. Off by default;
+    // the integrated server turns it on itself.
+    public const string DevCommandsEnvironmentVariable = "DREAM_DEV_COMMANDS";
+
     // Selects the world a dedicated server opens when no --world argument is given: a world id or
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
@@ -95,6 +99,8 @@ public static class ServerBootstrap
         try
         {
             host = RuntimeAuthoritativeSessionHost.CreateDefault(ports);
+            host.DevCommandsAllowed = string.Equals(
+                Environment.GetEnvironmentVariable(DevCommandsEnvironmentVariable), "1", StringComparison.Ordinal);
             double dayLengthMinutes = ResolveDayLengthMinutes(
                 Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
                 log);

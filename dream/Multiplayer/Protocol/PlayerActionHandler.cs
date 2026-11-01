@@ -60,6 +60,15 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             return;
         }
 
+        if (actionMessage.Payload is PlayerStatsUpdateIntent && !context.Authority.DevCommandsAllowed)
+        {
+            context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                actionMessage,
+                serverTick: 0,
+                "Stat changes are disabled on this server.")));
+            return;
+        }
+
         if (!context.ActionQueue.TryEnqueue(actionMessage, out _))
         {
             context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
