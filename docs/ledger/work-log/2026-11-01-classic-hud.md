@@ -278,3 +278,7 @@ Base 0cfab49 (tip of `integrate/classic-hud`). Simulation and server code are un
 ## Lockstep failure
 
 `WaveCTesterLockstepTwoRestartsTests` failed once in a full run at `Assert.Null` in the `PersistentScriptedServer` constructor (a Dirt cube in the build cell at the start of phase 2). That assertion assumes the build cell is empty. After phase 1 the cell holds the built cube if it did not break within 600 ticks, and whether it breaks depends on the world's seed, which is random per database (`PersistentWorldSeedDeterminismIntegrationTests` says so, and handles both cases on its single restart). Both servers hold equal copies of the database, so equality still held. This points to a test race on a random seed, not nondeterminism in the simulation, but I did not reproduce the failure with a chosen seed. The constructor takes `allowOccupiedBuildCell`, which the lockstep test passes. Other tests that start a second server on the same database (`ObjectIdCrashSafetyTests`, `BuildingsOutliveBuilderTests`, `ObjectIdRestartLoopbackTests`) still use the strict constructor and could meet the same case.
+
+## Verification
+
+- `dotnet build dream/dream.csproj`: 0 errors. Full suite, 1 run at this commit: 5,328 passed, 0 failed, 46 skipped of 5,374, 3 m 41 s.
