@@ -2,7 +2,7 @@
 
 Purpose: record wave I of `docs/ledger/plans/2026-10-31-characters-items-enemies-roadmap.md`. Plan: `docs/ledger/plans/2026-11-01-wave-i-plan.md`.
 
-Status: integrated on `integrate/engine-iteration`. Not pushed. Not merged into `master`. Tester and reviewer have not run yet, so this log has no Release measurements. The table below has rows for them.
+Status: integrated on `integrate/engine-iteration`. Not pushed. Not merged into `master`. The tester's Release measurements and adversarial tests are below.
 
 ## Process
 
@@ -79,30 +79,40 @@ No Firewall prompt window was detected, by window title, and none was clicked.
 
 ## Measured
 
-To be filled in by the tester, Release, `DREAM_LOAD_TEST=1`, against C0b.
+Tester, Release, `DREAM_LOAD_TEST=1`, tip `f635442`-based (tests only; no production code changed by the tester). C0 is `de4c374`. C0 and tip binaries were built into separate output folders and alternated.
 
 | Measurement | Gate | Result |
 | --- | --- | --- |
-| Tick allocation, including a dead session and 4 rolled items | 0 B | |
-| Hit with Armor > 0 | 0 B | |
-| `NoLight_200Ticks` | 58,307 B | |
-| Actor bytes with a Dire | at most 24 B per Full record, none on a delta | |
-| `server.join-accepted`, starter kit | 4,099 B | |
-| World10k join 0 | identical to C0b | |
-| Join with 9 items, fully rolled | 9,400 B | |
-| Lost-only push | 256 B | |
-| World10k full checkpoint | C0b × 1.05 | |
-| Join-window total | C0b × 1.10 | |
-| Integrity check, World10k | 15 ms | |
-| Migration 0009 | 50 ms | |
-| Kill burst: queue drained after the last kill | 100 ms | |
-| Kill burst: failed writes, items lost | 0, 0 | |
-| Kill burst: tick p99 | 15.6 ms, and C0b fight-only p99 × 1.25 | |
-| 1,000-write drain | 32.1 ms | |
+| Tick allocation, with a dead session and 4 rolled items | 0 B | pass: `RespawnAllocationTests` (2), `WorldSessionRuntimeEquipmentAllocationTests`, `WorldSessionRuntimeTickAllocationTests` |
+| Hit with Armor > 0 | 0 B | pass: `AHitWithArmor40_AllocatesNothing` |
+| Tick goldens, checksum goldens, wolf interval bits | unchanged | pass (`TickEquivalence` 2, `SimulationStateChecksumTests` golden 2, `WolfIntervalBitsTest` 5) |
+| `NoLight_200Ticks` | 58,307 B | 58,307 B |
+| Actor bytes with a Dire | at most 24 B per Full record, none on a delta | 20 B per Full record by the pinned wire text (`,3,"enemy.dire-wolf"`); a delta carries nothing for an unchanged presentation (asserted) |
+| `server.join-accepted`, starter kit | 4,099 B | 4,048 B |
+| World10k join 0 (bytes per join) | identical to C0 | 233,182 B at C0 and at tip |
+| Join with 9 items, fully rolled | 9,400 B | not measured: no test in the tree builds that case. Worst case (16 rolled, 4 worn) join is 9,351 B, push 8,423 B, push with 8 notices 8,857 B, gate 16,000 B |
+| Lost-only push | 256 B | `ALostOnlyPush_HasNoInventory_AndStaysSmall` passes (asserts at most 256 B; the value is not printed) |
+| World10k full checkpoint | C0 x 1.05 | **fails numerically.** Full-every-capture write mean, 12 paired runs: C0 34.6-35.2 ms, tip 37.5-39.0 ms (+9 to +11%); tip max 83-90 ms against 60-66 ms. Bisect: I1 merge 34, I2 merge 35.5-37.9, I3 merge and tip 38. I3 changes only Client, Rendering and a shader, and no checkpoint code changed in the wave, so the cause is not found in server code. Unexplained; not a settled regression |
+| Join-window total | C0 x 1.10 | C0 15.0 ms, tip 13.5 ms per round |
+| Integrity check, World10k | 15 ms | 7.20 ms (C0 7.15) |
+| Migration 0009 | 50 ms | 0008 and 0009 together on 100,003 items: 108-141 ms (v7 to v9, two runs). The two are not split, so the 0009 figure alone is not measured |
+| Kill burst: queue drained after the last kill | 100 ms | 0.3 ms (4 runs) |
+| Kill burst: failed writes, items lost | 0, 0 | 0, 0 (100 pushes, 100 items, peak pending 2) |
+| Kill burst: tick p99 | 15.6 ms, and C0 fight-only p99 x 1.25 | 0.20-0.22 ms in 6 runs; single worst tick 6.9-7.3 ms. C0 fight-only p99 0.16-0.19 ms (4 runs) so the limit is about 0.22 ms: passes with no margin. Tip fight-only 0.18-0.23 ms. Fight-only is `KillBurstFightOnlyBaselineTests`, run on both commits |
+| 1,000-write drain | 32.1 ms | 25.9-26.1 ms (C0 26.8) |
+
+Load harness (`ServerLoadTests`): Smoke8, Light8 and Players32 pass with tick-loop p99 0.98, 0.35 and 6.27 ms. World10k tick-loop p99 416 ms, 347 dropped ticks (the old known cannot-keep-real-time scenario; no baseline taken at C0). Soak (30 min) and the stored-world soaks were not run.
 
 `KillBurstMeasurementTests` runs 100 real kills at 5 a second, in real time, across 10 characters. Seating them with `AttachRemoteSession` alone gave 10 failed writes, one each, because no profile row existed. That was the test's mistake, and it now seats them as a join does.
 
+## Tester findings
+
+- **The load bots were rejected on every join since wave G.** `BotClient` sent no account token, so `Players32` failed with "needs a player identity" and every scenario built on it measured nothing. Fixed in the test (`BotClient` sends `TestAccountTokens.For`). Not a wave I defect.
+- **Adversarial tests** (`WaveIAdversarialTests`, `WaveIAdversarialLockstepTests`, `WaveIAdversarialLoopbackTests`, plus `OldClient...` cases for protocol v8 to v10): kill and leave in one tick, death and leave in one tick, a stranger taking a dead player's primary seat, two kills filling a pack in one tick, equip and unequip around death and respawn, rename and release with loot or a respawn pending, restart with two dead seats, extreme armor modifiers (overflow to infinity, NaN, negatives), the Dire at the dawn and nightfall ticks, two lockstep servers over 1,500 ticks of kills, deaths and respawns, a death during the join's world transfer over TCP, and a neighbour's inventory actions against a push. All pass; no production defect found by them.
+- **Flakes.** `TwoHostsOnTheSameDatabaseFile_AWriteLockHeldPastBusyTimeout_LosesNoWrites`: 0 failures in 13 runs (7 under 64 CPU spinners, 6 unloaded). `ChunkEncode_OfRestingCubes_AllocatesNothingPerCube`: 0 failures in 50 runs (20 under 64 spinners, 30 unloaded). `APushAndAWorldResyncOnOneConnection_LoseNothing_InEitherOrder(resyncFirst: False)` failed once in a clean full run (resync index -1, so the resync message was not in the applied list when the test counted a completed transfer) and passed 15 of 15 isolated, 10 of 10 under 48 spinners and 3 of 3 in a class run. Likely a race in the test's wait condition; not fixed.
+- **Full suite.** Run 1 (Debug, clean): 4,699 passed, 1 failed (the test above), 46 skipped. Run 2 was invalid: 48 of my CPU spinners were still running, and 7 failed (the same test and six timing tests); those six passed 3 of 3 afterwards on a quiet machine.
+
 ## Not done
 
-- **Perf harness and screenshots.** Plan glue step 7 is left to the tester. Nobody has seen the Dire Wolf, labels, death overlay or loot feed on screen.
+- **Perf harness and screenshots.** Tried once. The harness starts the server from a new exe path and binds all interfaces, so Windows Firewall showed its prompt. I did not click it, stopped my three processes by PID, and left the prompt on screen for the user to dismiss. Nobody has seen the Dire Wolf, labels, death overlay or loot feed. A world with a Dire next to the spawn at night was prepared in `artifacts/perf-release` (not committed).
 - **Reconciler's respawn snap with a real `Update`.** Covered by I3's unit tests, not by `HeadlessPlayScene`.
