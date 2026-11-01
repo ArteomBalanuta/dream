@@ -13,4 +13,11 @@ public interface IAccountRepository
     // is true, set account_id where player_name matches and account_id IS NULL. False when claim was
     // requested and no row changed (lost a race, or no row).
     bool RecordJoin(AccountKey account, CharacterKey character, bool claim, DateTime utcNow);
+
+    // Read-only, like Lookup. The characters this account owns (most recently saved first), at most max.
+    // Only the account's own rows are returned. A repository that cannot list returns none.
+    IReadOnlyList<AccountCharacterSummary> ListCharacters(AccountKey account, int max) => [];
 }
+
+// One character of an account, for the character picker. Characters are global (not per world).
+public readonly record struct AccountCharacterSummary(string DisplayName, int Level);

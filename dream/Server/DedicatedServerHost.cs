@@ -253,11 +253,16 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
+    // M1-C: queues the answer to a character-list read as a reply for the connection (sent after the next tick).
+    internal void EnqueueConnectionReply(string connectionId, IServerToClientMessage message) =>
+        _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, message));
+
     public static DedicatedServerHost CreateDefault()
     {
         ProtocolRouter router = new(
             [
                 new ClientHelloHandler(),
+                new CharacterListHandler(),
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
                 new PlayerActionHandler(),
@@ -273,9 +278,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         Dream.Server.Persistence.ServerPersistenceBundle? persistence = null,
         bool deferJoinsToTick = false)
     {
+        CharacterListHandler characterLists = new();
         ProtocolRouter router = new(
             [
                 new ClientHelloHandler(),
+                characterLists,
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
                 new PlayerActionHandler(),
@@ -287,7 +294,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         RuntimeAuthoritativeSessionHost runtimeHost = ServerBootstrap.CreateRuntimeHost(persistence);
         try
         {
-            return new DedicatedServerHost(runtimeHost, router, deferJoinsToTick);
+            DedicatedServerHost host = new(runtimeHost, router, deferJoinsToTick);
+            characterLists.Attach(persistence?.Accounts, runtimeHost.Runtime.PersistenceWrites);
+            characterLists.Deliver = host.EnqueueConnectionReply;
+            return host;
         }
         catch
         {
