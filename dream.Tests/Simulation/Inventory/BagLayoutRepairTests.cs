@@ -275,12 +275,80 @@ public sealed class BagLayoutRepairTests
             Assert.Equal(40, rows.Values.Distinct().Count());
             Assert.Equal(40, rows.Count);
 
-            // Parked rows are kept and inert: they are not shown, and a destroy that frees room drains the
-            // held-back rows only.
+            // Parked rows are not shown, but a destroy that frees room drains one held-back row onto the
+            // board and the lowest parked row takes the freed held-back row at once.
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryDestroy(Player, 0, snapshot.IdAt(0)));
             Dictionary<int, long> after = world.SlotsOf(Player);
-            Assert.Equal(16, after.Keys.Count(row => row >= InventoryConstants.ParkedFirstIndex));
-            Assert.Equal(15, after.Keys.Count(row => row is >= 200 and <= 215));
+            Assert.Equal(15, after.Keys.Count(row => row >= InventoryConstants.ParkedFirstIndex));
+            Assert.Equal(16, after.Keys.Count(row => row is >= 200 and <= 215));
+            Assert.Equal(16, inventory.BuildSnapshot(Player).HeldBackItems().Count());
+        }
+    }
+
+    [Fact]
+    public void SixtyFourOneByOneBecomingTwoByTwo_EveryItemReachesTheBoardAsRoomAppears_NoneLost()
+    {
+        // 64 items laid out one per cell when they were 1x1; the content now makes each 2x2. Sixteen
+        // place, sixteen are held back and thirty-two are parked.
+        EquipmentTestWorld world = WorldWith([.. Enumerable.Range(0, 64).Select(i => ((long)(100 + i), "gear.leather-cap", i))]);
+        PlayerInventoryService inventory = EquipmentSlotTests.Create(world, out PersistenceWriteQueue writes);
+        using (writes)
+        {
+            Assert.True(inventory.Ensure(Player));
+            Assert.Equal(16, inventory.BuildSnapshot(Player).BagItems().Count());
+            Assert.Equal(32, world.SlotsOf(Player).Keys.Count(row => row >= InventoryConstants.ParkedFirstIndex));
+
+            HashSet<long> destroyed = [];
+            HashSet<long> seenOnBoard = [.. inventory.BuildSnapshot(Player).BagItems().Select(slot => slot.Item!.Value.ItemInstanceId)];
+            for (int step = 0; step < 64; step++)
+            {
+                PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
+                foreach (InventorySlotSnapshot slot in snapshot.BagItems())
+                {
+                    seenOnBoard.Add(slot.Item!.Value.ItemInstanceId);
+                }
+
+                if (!snapshot.HeldBackItems().Any() && !world.SlotsOf(Player).Keys.Any(row => row >= InventoryConstants.ParkedFirstIndex))
+                {
+                    break;
+                }
+
+                InventorySlotSnapshot first = snapshot.BagItems().First();
+                long id = first.Item!.Value.ItemInstanceId;
+                Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryDestroy(Player, first.SlotIndex, id));
+                destroyed.Add(id);
+
+                // Nothing is lost: every item is destroyed or still has exactly one row.
+                Dictionary<int, long> rows = world.SlotsOf(Player);
+                Assert.Equal(64 - destroyed.Count, rows.Values.Distinct().Count());
+                Assert.Equal(64 - destroyed.Count, rows.Count);
+            }
+
+            PlayerInventorySnapshot final = inventory.BuildSnapshot(Player);
+            Assert.Empty(final.HeldBackItems());
+            Assert.DoesNotContain(world.SlotsOf(Player).Keys, row => row >= InventoryConstants.ParkedFirstIndex);
+            Assert.True(final.BoardIsConsistent());
+            foreach (InventorySlotSnapshot slot in final.BagItems())
+            {
+                seenOnBoard.Add(slot.Item!.Value.ItemInstanceId);
+            }
+
+            // Every one of the 64 was on the board at some time, or is on it now.
+            Assert.Equal(64, seenOnBoard.Count);
+        }
+    }
+
+    [Fact]
+    public void ARowRemappedToTwentyThousandUp_IsNeverPromoted()
+    {
+        EquipmentTestWorld world = WorldWith((50, "gear.iron-band", 20016));
+        PlayerInventoryService inventory = EquipmentSlotTests.Create(world, out PersistenceWriteQueue writes);
+        using (writes)
+        {
+            Assert.True(inventory.Ensure(Player));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryGrantRolled(Player, "gear.iron-band", ItemRarity.Common, new ItemRollSeed(1, 2, 3, 4, 6)));
+            Assert.Equal(50, world.SlotsOf(Player)[20016]);
+            Assert.Empty(inventory.BuildSnapshot(Player).HeldBackItems());
         }
     }
 

@@ -535,12 +535,12 @@ public static class InventoryWindow
             c.Sprite(well, r, White);
         }
 
-        if (s.TryGet(d.Silhouette, out UiSprite sil))
+        bool has = TryItem(v.Worn, w, out _);
+        if (!has && s.TryGet(d.Silhouette, out UiSprite sil))
         {
             c.Sprite(sil, r, White);
         }
 
-        bool has = TryItem(v.Worn, w, out _);
         if (has && live)
         {
             if (!dragging && i.Hovered(IdWell + w, r))

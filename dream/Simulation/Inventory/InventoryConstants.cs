@@ -4,7 +4,10 @@ namespace Dream.Simulation.Inventory;
 //   0..63     bag anchors: the top-left cell (row * 8 + col) of an item on the 8x8 bag board
 //   100..111  worn: one row per equipment slot (EquipmentSlots)
 //   200..215  held back: items that did not fit the board on load, waiting for room (never used for loot)
-//   300 up    parked: overflow of the held-back rows (hand-edited data only), kept and inert
+//   300..19999 parked: overflow of the held-back rows. Written by the layout repair when all sixteen
+//              held-back rows are taken (a content footprint increase can do that); the drain
+//              promotes them into held-back rows as those free up, lowest first
+//   20000 up   unknown rows: kept and inert (migration 0010 moves hand-edited rows 16..99 to 20016..20099)
 // Any other index is an unknown row: kept and inert.
 public static class InventoryConstants
 {
@@ -28,6 +31,9 @@ public static class InventoryConstants
 
     // The first index overflow rows are parked at when all held-back rows are taken.
     public const int ParkedFirstIndex = 300;
+
+    // The first index of the inert unknown rows; parked rows are below it.
+    public const int UnknownRowsFirstIndex = 20000;
 
     public static bool IsBagAnchor(int slotIndex) => (uint)slotIndex < (uint)BackpackSlotCount;
 

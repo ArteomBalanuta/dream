@@ -1379,6 +1379,7 @@ internal sealed partial class PlayerInventoryService
                 SlotChanges changes = new();
                 ClearSlot(slots, changes, anchor);
                 SetSlot(slots, changes, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+                DrainHeldBack(slots, changes);
                 QueueChanges(playerName, changes);
                 return;
             }
@@ -1544,10 +1545,45 @@ internal sealed partial class PlayerInventoryService
         return -1;
     }
 
+    // Moves the lowest parked rows (300 up, below the remapped hand-edited range) into free held-back
+    // rows, so that an item parked while all sixteen were taken is reachable once one frees up. Rows
+    // from InventoryConstants.UnknownRowsFirstIndex up stay where they are.
+    private static void PromoteParked(Dictionary<int, long> slots, SlotChanges changes)
+    {
+        List<int>? parked = null;
+        foreach (int index in slots.Keys)
+        {
+            if (index >= InventoryConstants.ParkedFirstIndex && index < InventoryConstants.UnknownRowsFirstIndex)
+            {
+                (parked ??= []).Add(index);
+            }
+        }
+
+        if (parked is null)
+        {
+            return;
+        }
+
+        parked.Sort();
+        foreach (int index in parked)
+        {
+            int held = FirstFreeRow(slots, InventoryConstants.HeldBackFirstIndex, InventoryConstants.HeldBackCount);
+            if (held < 0)
+            {
+                return;
+            }
+
+            long itemInstanceId = slots[index];
+            ClearSlot(slots, changes, index);
+            SetSlot(slots, changes, held, itemInstanceId);
+        }
+    }
+
     // Moves the held-back rows, in ascending order, to the first fit of the bag where there is room.
     // Called after every accepted action that can free cells; does nothing when nothing is held back.
     private void DrainHeldBack(Dictionary<int, long> slots, SlotChanges changes)
     {
+        PromoteParked(slots, changes);
         bool any = false;
         for (int index = InventoryConstants.HeldBackFirstIndex; index <= InventoryConstants.HeldBackLastIndex && !any; index++)
         {
@@ -1578,6 +1614,9 @@ internal sealed partial class PlayerInventoryService
             ClearSlot(slots, changes, index);
             SetSlot(slots, changes, fit, itemInstanceId);
         }
+
+        // Rows freed by the drain are taken by the next parked ones at once, so a snapshot shows them.
+        PromoteParked(slots, changes);
     }
 
     // Creates a new item of the kind with its top-left cell at the bag anchor and queues its item and
