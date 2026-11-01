@@ -143,6 +143,44 @@ public sealed class ServerRoutingContext
         return true;
     }
 
+    // Chat (M1-A). Clock is the host's clock, set by DedicatedServerHost before it routes a message;
+    // the chat token bucket reads it. PendingChats holds cleaned lines until the host delivers them
+    // (right after routing, under the tick lock).
+    public TimeProvider? Clock { get; set; }
+
+    public List<ClientChatMessage> PendingChats { get; } = [];
+
+    public const int ChatBurst = 5;
+    public const double ChatRefillPerSecond = 1.0;
+
+    private bool _chatBucketStarted;
+    private double _chatTokens;
+    private long _chatLastRefillTimestamp;
+
+    // Token bucket: burst ChatBurst, refilling ChatRefillPerSecond. Timestamps are at the given frequency.
+    public bool TryConsumeChatToken(long nowTimestamp, long timestampFrequency)
+    {
+        if (!_chatBucketStarted)
+        {
+            _chatBucketStarted = true;
+            _chatTokens = ChatBurst;
+        }
+        else
+        {
+            double elapsedSeconds = Math.Max(0, nowTimestamp - _chatLastRefillTimestamp) / (double)timestampFrequency;
+            _chatTokens = Math.Min(ChatBurst, _chatTokens + elapsedSeconds * ChatRefillPerSecond);
+        }
+
+        _chatLastRefillTimestamp = nowTimestamp;
+        if (_chatTokens < 1.0)
+        {
+            return false;
+        }
+
+        _chatTokens -= 1.0;
+        return true;
+    }
+
     public void ClearOutboundMessages()
     {
         OutboundMessages.Clear();
