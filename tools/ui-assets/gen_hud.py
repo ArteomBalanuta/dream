@@ -298,17 +298,17 @@ def gapfill():
 GEM_U = 50
 
 
-def gp(x, y):
-    """Gem polygon coordinates (03 s5) to sprite u."""
-    return ((x - 275) / 2.86 + 0.15, (y - 144.6) / 2.817)
-
-
-def P(*pts):
-    return [gp(*p) for p in pts]
-
-
-SIL = P((302, 150), (372, 149), (410, 194), (417, 234), (392, 278), (286, 278), (275, 200), (277, 186))
-TABLE = ((321, 151), (369, 151), (392, 182), (398, 219), (383, 233), (329, 225), (309, 181))
+# Original cut: a ten-sided stone narrowing to a short keel, drawn in sprite u. Three rings of
+# vertices give the classic table, star, bezel and girdle planes.
+GIRDLE = [(14, 2.5), (34, 2.5), (45, 11), (48.5, 24), (43, 36), (30, 47), (20, 47), (7, 36), (1.5, 24), (5, 11)]
+N_SIDES = len(GIRDLE)
+TABLE_C = (24.0, 23.0)  # the table sits a touch up and left of the stone's centre
+STONE_C = (25.0, 24.0)
+TABLE = [(TABLE_C[0] + (x - STONE_C[0]) * 0.60, TABLE_C[1] + (y - STONE_C[1]) * 0.60) for x, y in GIRDLE]
+BEZEL = []
+for _i in range(N_SIDES):
+    _a, _b = GIRDLE[_i], GIRDLE[(_i + 1) % N_SIDES]
+    BEZEL.append((STONE_C[0] + ((_a[0] + _b[0]) / 2 - STONE_C[0]) * 0.80, STONE_C[1] + ((_a[1] + _b[1]) / 2 - STONE_C[1]) * 0.80))
 
 
 def gem_palette(kind):
@@ -323,43 +323,41 @@ def gem_palette(kind):
     )
 
 
+def facet_tone(pts):
+    """0..1 from which way a plane leans: upper left catches the light, the keel falls dark."""
+    x = sum(p[0] for p in pts) / len(pts) - STONE_C[0]
+    y = sum(p[1] for p in pts) / len(pts) - STONE_C[1]
+    d = math.hypot(x, y) or 1
+    return 0.5 + 0.5 * (x * -0.5 + y * -0.87) / d
+
+
+def tone_colour(c, t):
+    ramp = ("void", "deep", "wash", "mid", "bright", "lit", "pale")
+    return c[ramp[min(int(max(t, 0) * len(ramp)), len(ramp) - 1)]]
+
+
 def gem_facets(c):
-    """Faceted brilliant cut. Painted back to front; every facet is a flat polygon."""
-    f = [(SIL, c["void"])]
-    # upper-left crown
-    f.append((P((302, 150), (321, 151), (309, 181), (277, 187)), c["bright"], c["lit"]))
-    f.append((P((302, 150), (321, 151), (296, 165)), c["lit"]))
-    f.append((P((277, 187), (296, 165), (309, 181)), c["pale"], c["bright"]))
-    # left pavilion, stepped
-    f.append((P((275, 200), (277, 187), (309, 181), (318, 205)), c["mid"], c["wash"]))
-    f.append((P((275, 200), (318, 205), (306, 250), (286, 278)), c["mid"], c["deep"]))
-    f.append((P((318, 205), (329, 225), (306, 250)), c["wash"]))
-    f.append((P((286, 278), (306, 250), (329, 225), (297, 275)), c["deep"], c["void"]))
-    # bottom run
-    f.append((P((325, 232), (384, 240), (345, 275), (297, 275)), c["deep"], c["void"]))
-    f.append((P((286, 278), (297, 275), (345, 275), (392, 278)), c["void"]))
-    f.append((P((345, 275), (384, 240), (390, 262), (392, 278)), c["deep"], c["wash"]))
-    f.append((P((329, 225), (383, 233), (384, 240), (325, 232)), c["void"]))
-    f.append((P((340, 238), (368, 240), (345, 275)), c["wash"], c["deep"]))
-    f.append((P((325, 232), (340, 238), (345, 275), (312, 262)), c["void"], c["deep"]))
-    # right side
-    f.append((P((384, 240), (417, 234), (390, 262)), c["glow"], c["mid"]))
-    f.append((P((417, 234), (392, 278), (390, 262)), c["deep"]))
-    f.append((P((383, 233), (398, 219), (417, 234), (384, 240)), c["mid"], c["glow"]))
-    f.append((P((398, 219), (410, 194), (417, 234)), c["wash"], c["mid"]))
-    f.append((P((392, 182), (410, 194), (398, 219)), c["mid"], c["bright"]))
-    f.append((P((369, 151), (372, 149), (410, 194), (392, 182)), c["bright"], c["mid"]))
-    # table: a star of shallow planes, all near the two brightest values
-    t = (352, 193)
-    vals = ["bright", "mid", "bright", "mid", "bright", "mid", "bright"]
-    for i in range(len(TABLE)):
-        f.append((P(TABLE[i], TABLE[(i + 1) % len(TABLE)], t), c[vals[i]]))
-    # refraction shards inside the table
-    f.append((P((336, 158), (360, 156), (352, 193)), c["lit"]))
-    f.append((P((352, 193), (392, 182), (372, 170)), c["bright"]))
-    f.append((P((352, 193), (398, 219), (374, 214)), c["lit"]))
-    f.append((P((316, 196), (352, 193), (331, 214)), c["mid"]))
-    f.append((P((352, 193), (361, 226), (344, 222)), c["mid"]))
+    """Painted flat: girdle planes, then bezel kites and stars, then the table's shallow star."""
+    f = [(GIRDLE, c["void"])]
+    n = N_SIDES
+    for i in range(n):
+        g0, g1 = GIRDLE[i], GIRDLE[(i + 1) % n]
+        m, m0 = BEZEL[i], BEZEL[i - 1]
+        tri = [m, g0, g1]
+        f.append((tri, tone_colour(c, facet_tone(tri) * 0.8 + (0.0 if i % 2 else 0.1))))
+        kite = [m0, TABLE[i], m, g0]
+        f.append((kite, tone_colour(c, facet_tone(kite) * 0.95 + (0.12 if i % 2 else 0.0)), tone_colour(c, facet_tone(kite) * 0.72)))
+    for i in range(n):
+        star = [TABLE[i], TABLE[(i + 1) % n], BEZEL[i]]
+        f.append((star, tone_colour(c, facet_tone(star) * 0.7 + 0.26)))
+    apex = (TABLE_C[0] + 2.5, TABLE_C[1] - 1.5)
+    for i in range(n):
+        tri = [TABLE[i], TABLE[(i + 1) % n], apex]
+        f.append((tri, c["bright"] if i % 2 else c["mid"]))
+    # three long refraction shards, off the apex
+    f.append(([TABLE[9], TABLE[0], apex], c["lit"]))
+    f.append(([TABLE[2], TABLE[3], apex], c["lit"]))
+    f.append(([apex, TABLE[6], TABLE[5]], c["bright"]))
     return f
 
 
@@ -375,7 +373,9 @@ def catmull(pts, n=10):
 
 
 def rim_path():
-    return P(*catmull([(324, 151), (314, 165), (309, 181), (315, 203), (329, 223), (356, 229), (381, 233), (392, 227), (398, 218)], 12))
+    """Follows the table from top left, down the left, along the keel, up to the right; open top right."""
+    pts = [TABLE[0], TABLE[9], TABLE[8], TABLE[7], TABLE[6], TABLE[5], TABLE[4], ((TABLE[4][0] + TABLE[3][0]) / 2, (TABLE[4][1] + TABLE[3][1]) / 2)]
+    return catmull(pts, 12)
 
 
 def rim_layers(kind):
@@ -383,45 +383,40 @@ def rim_layers(kind):
     c = gem_palette(kind)
     path = rim_path()
     n = len(path)
-    w = [0.25 + 0.75 * math.sin(math.pi * min(i / (n - 1) * 1.06 + 0.02, 1)) ** 0.6 for i in range(n)]
+    w = [0.2 + 0.8 * math.sin(math.pi * i / (n - 1)) ** 0.6 for i in range(n)]
     r = Relief(GEM_U, GEM_U)
     r.sweep(path, [0.5 * v for v in w])
     core = r.a.copy()
     r = Relief(GEM_U, GEM_U)
     r.sweep(path, [0.85 * v for v in w])
-    flat = U.stroke_mask(GEM_U, GEM_U, P((326, 151), (366, 151)), 1.0)
     a = np.clip(np.maximum(fblur(r.a, 0.3 * PPU) * 1.3, core), 0, 1)
-    colour = np.broadcast_to(rgb(c["rim"]), a.shape + (3,)).copy()
-    # the flat where the stone meets the rail is the one place that goes near white
-    colour = colour * (1 - flat[..., None]) + rgb(c["top"]) * flat[..., None]
-    return np.dstack((colour, np.maximum(a, flat))).astype(np.float32)
+    # the arc dissolves as it climbs, so it never forms a bright bar along the top
+    a = a * smooth(TABLE[0][1] - 0.5, TABLE[0][1] + 7.0, r.yu)
+    return np.dstack((np.broadcast_to(rgb(c["rim"]), a.shape + (3,)), a)).astype(np.float32)
 
 
 def gem_layers(kind):
     c = gem_palette(kind)
     img = U.facet_gem(GEM_U, GEM_U, gem_facets(c))
-    sil = U.poly_mask(GEM_U, GEM_U, SIL)
+    sil = U.poly_mask(GEM_U, GEM_U, GIRDLE)
     h, w = sil.shape
-    # thin ridge lines where planes meet
-    ridges = (
-        ((321, 151), (309, 181)), ((309, 181), (277, 187)), ((309, 181), (318, 205)), ((318, 205), (306, 250)),
-        ((306, 250), (286, 278)), ((325, 232), (297, 275)), ((384, 240), (345, 275)), ((384, 240), (390, 262)),
-        ((390, 262), (392, 278)), ((392, 182), (410, 194)), ((398, 219), (417, 234)), ((398, 219), (410, 194)),
-        ((369, 151), (392, 182)), ((321, 151), (296, 165)), ((296, 165), (277, 187)),
-    )
-    for a, b in ridges:
-        img = U.over(img, solid(c["pale"], U.stroke_mask(GEM_U, GEM_U, P(a, b), 0.28) * 0.42))
+    # thin ridge lines where planes meet, strongest on the lit side
+    for i in range(N_SIDES):
+        m0 = BEZEL[i - 1]
+        for a, b in ((m0, GIRDLE[i]), (TABLE[i], m0), (TABLE[i], BEZEL[i])):
+            k = 0.16 + 0.34 * facet_tone([a, b])
+            img = U.over(img, solid(c["pale"], U.stroke_mask(GEM_U, GEM_U, [a, b], 0.28) * k))
     # the two soft shapes the spec allows: depth core and pink glint
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     xu, yu = (xx + 0.5) / PPU, (yy + 0.5) / PPU
-    cx, cy = gp(337, 195)
+    cx, cy = TABLE_C[0] - 6.0, TABLE_C[1] + 2.0
     core = np.exp(-(((xu - cx) / 5.2) ** 2 + ((yu - cy) / 6.2) ** 2))
-    gx, gy = gp(362, 188)
+    gx, gy = TABLE_C[0] + 7.0, TABLE_C[1] - 3.0
     glint = np.exp(-(((xu - gx) / 3.8) ** 2 + ((yu - gy) / 4.6) ** 2))
     img[..., :3] = img[..., :3] * (1 - 0.85 * core[..., None]) + rgb(c["deep"]) * 0.85 * core[..., None]
     img[..., :3] = img[..., :3] + (rgb(c["pale"]) - img[..., :3]) * 0.30 * glint[..., None]
     # small pale glint on the crown's lower edge
-    g = U.ellipse_mask(GEM_U, GEM_U, *gp(290, 185), 2.2, 0.7, -12)
+    g = U.ellipse_mask(GEM_U, GEM_U, 8.2, 13.0, 2.0, 0.65, -52)
     img = U.over(img, solid(c["rim"], fblur(g, 0.2 * PPU)))
     # girdle darkening, so the outline turns away rather than stopping
     e = 1 - smooth(0.0, 0.9 * PPU, U.sdf(sil))
@@ -738,8 +733,8 @@ def talon():
         r.sweep(path, [rad * (1 - k / 40) ** 0.75 + 0.03 for k in range(41)], 4.5, gloss=1.0, step_px=2.0)
     for (x, y, rr) in rings:
         p = [(x - 0.2, y - rr), (x + 0.5, y), (x - 0.2, y + rr)]
-        r.sweep(p, [0.8, 1.15, 0.8], 7.0, alb="hud.gold.mid", gloss=0.5, step_px=2.0)
-        r.sweep([(x + 1.3, y - rr), (x + 1.8, y), (x + 1.3, y + rr)], [0.5, 0.75, 0.5], 6.8, alb="#8A6F36", gloss=0.4, step_px=2.0)
+        r.sweep(p, [0.8, 1.15, 0.8], 12.0, alb="hud.gold.mid", gloss=0.5, step_px=2.0)
+        r.sweep([(x + 1.3, y - rr), (x + 1.8, y), (x + 1.3, y + rr)], [0.5, 0.75, 0.5], 11.8, alb="#8A6F36", gloss=0.4, step_px=2.0)
     r.h = r.h + fblur(r.a, 2.0 * PPU) * 2.0
     return r.render(amb=1.0, dif=0.9, key=1.15, fill=0.45, ao=0.75, ao_r=1.5, soften=0.1)
 
@@ -768,9 +763,10 @@ def raised(w, h, face, state, seed, base, top, side, surround, drop=2.2):
         x, y = x + 0.6, y + 0.6
     tex = stone_rgb(H, W, base, seed)
     if state == "h":
-        tex = np.clip(tex * 1.10, 0, 1)
+        tex = np.clip(tex * 1.30, 0, 1)
+        top, side = "#E0DBD6", "#B4B5B0"
     if press:
-        tex = tex * 0.86
+        tex = tex * 0.7
     m = U.rect_mask(w, h, (x, y, fw, fh))
     img = U.over(img, np.dstack((tex, m)))
     lip = 1.5
@@ -830,23 +826,16 @@ def icon_scroll():
     return U.halo(img, 0.75)
 
 
-def figure(r, x, y0, flip=1):
-    tan = "#C8A878"
-    r.sweep([(x, y0 + 2.2), (x, y0 + 2.3)], 2.1, 2.0, alb=tan, gloss=0.2, flatten=0.8)
-    r.plate([(x - 3.8, y0 + 5.6), (x + 3.8, y0 + 5.6), (x + 3.0, y0 + 11), (x + 2.4, y0 + 15), (x - 2.4, y0 + 15), (x - 3.0, y0 + 11)], 1.0, 1.8, "round", alb=tan, gloss=0.2)
-    r.sweep([(x - 3.9, y0 + 6.4), (x - 4.9, y0 + 10), (x - 4.2, y0 + 13)], 1.05, 1.6, alb=tan, gloss=0.2)
-
-
 def icon_party():
+    """Two interlocked gold rings: the left passes over the right at the top, under at the bottom."""
     w, h = 26, 16
-    r = Relief(w, h, "#C8A878", 0.0, 0.2)
-    figure(r, 9.2, 0.6)
-    figure(r, 16.6, 0.6)
-    # shared arm over the shoulder
-    r.sweep([(12.4, 7.3), (15.2, 6.4), (18.2, 7.2)], 1.05, 3.4, alb="#C8A878", gloss=0.2)
-    r.sweep([(20.5, 7.0), (21.5, 10), (20.9, 13)], 1.05, 1.6, alb="#C8A878", gloss=0.2)
-    img = r.render(amb=0.82, dif=0.8, key=0.3, ao=0.5, ao_r=0.8)
-    return U.halo(img, 0.75)
+    a = [(9.5 + 5.6 * math.cos(t), 8 + 5.6 * math.sin(t)) for t in np.linspace(0, math.tau, 90)]
+    b = [(16.5 + 5.6 * math.cos(t), 8 + 5.6 * math.sin(t)) for t in np.linspace(0, math.tau, 90)]
+    r = Relief(w, h, "#000000", 0.0, 0.7)
+    r.sweep(a, 1.25, 1.0, alb="#C8A860", step_px=2.0)
+    # z dips and rises so each ring crosses over the other once
+    r.sweep(b, 1.25, [2.2 if p[1] > 8 else 0.0 for p in b], alb="#D8C490", step_px=2.0)
+    return U.halo(r.render(amb=1.0, dif=0.9, key=0.95, ao=0.3, ao_r=0.5), 0.75)
 
 
 def sword(img, w, h, base, tip, seed):
@@ -944,8 +933,8 @@ def ivory_lines(w, h, rects, seed):
         m = np.maximum(m, U.rect_mask(w, h, r))
     n = U.fbm(H, W, seed, 2.2, 3)
     fleck = smooth(0.70, 0.84, n)[..., None]
-    c = rgb("hud.ivory.line")[None, None, :] * (1 - fleck) + rgb("#B79A58") * fleck
-    c = np.clip(c * (0.86 + 0.28 * smooth(0.3, 0.6, n))[..., None], 0, 1)
+    c = rgb("#B8B2A4")[None, None, :] * (1 - fleck) + rgb("#B79A58") * fleck
+    c = np.clip(c * (0.82 + 0.18 * smooth(0.3, 0.6, n))[..., None], 0, 1)
     shadow = U.over(U.canvas(w, h), solid("#000000", np.clip(fblur(m, 0.3 * PPU) * 1.6, 0, 0.8)))
     return U.over(shadow, np.dstack((c, m)).astype(np.float32))
 
@@ -963,7 +952,7 @@ def qwe_slot(w, state, cheek=0.0):
         img = U.over(img, np.dstack((stone, U.rect_mask(w, h, (0, 1.6, cheek + 1, 25)))))
     stops = [(0, "#1B1B19"), (0.45, "#222220"), (0.92, "#4C4C4A"), (1, "#4C4C4A")]
     if state == "h":
-        stops = [(0, "#26262A"), (0.45, "#2E2E30"), (0.92, "#5C5C5A"), (1, "#5C5C5A")]
+        stops = [(0, "#32323A"), (0.45, "#3C3C40"), (0.92, "#6E6E6A"), (1, "#6E6E6A")]
     if state == "p":
         stops = [(0, "#0A0A09"), (0.45, "#141413"), (0.92, "#2C2C2B"), (1, "#2C2C2B")]
     g = U.gradient(H, W, stops)
@@ -976,7 +965,7 @@ def qwe_slot(w, state, cheek=0.0):
         img = U.over(img, solid("#000000", U.rect_mask(w, h, (x0 + t, t, 1.6, h - t))))
     lines = ivory_lines(w, h, rects, f"qwe.frame{w}")
     if state == "h":
-        lines[..., :3] = np.clip(lines[..., :3] * 1.12, 0, 1)
+        lines[..., :3] = np.clip(lines[..., :3] * 1.2, 0, 1)
     return U.over(img, lines)
 
 
@@ -1101,7 +1090,7 @@ def iconbtn_frame(state):
     t = (v**1.3)[..., None]
     col = dark * (1 - t) + tex * t
     if state == "h":
-        col = np.clip(col * 1.18, 0, 1)
+        col = np.clip(col * 1.4, 0, 1)
     if state == "p":
         col = col * 0.8
     off = 0.7 if state == "p" else 0.0
@@ -1204,8 +1193,9 @@ def chat_rock():
     light = np.array(LIGHT_TL, np.float32)
     light /= np.linalg.norm(light)
     d = np.clip((nx * light[0] + ny * light[1] + light[2]) / nl, 0, 1) / light[2]
-    occ = np.clip(0.35 + 0.65 * smooth(0.0, 0.8, border) * (0.45 + 0.55 * n * 1.4), 0, 1.2)
+    occ = np.clip(0.68 + 0.32 * smooth(0.0, 0.8, border) * (0.45 + 0.55 * n * 1.4), 0, 1.2)
     lum = d**2.0 * occ
+    lum = lum.mean() + (lum - lum.mean()) * 0.5
     lo, mid, hi = rgb("#0A0906"), rgb("#15120B"), rgb("chat.bg.high")
     t = lum[..., None]
     a = np.clip(t / 0.75, 0, 1)
@@ -1357,13 +1347,14 @@ def gauntlet(pose):
     if pose == "point":
         segs = [(0.0, 5.0, 1.0, 1.35), (5.0, 9.6, 1.35, 1.5), (9.6, 13.6, 1.5, 1.6)]
     elif pose == "press":
-        segs = [(1.8, 6.0, 1.0, 1.35), (6.0, 10.0, 1.35, 1.5), (10.0, 13.6, 1.5, 1.6)]
+        segs = []
+        r.sweep([cp(13.6, -1.3), cp(9.0, -1.5), cp(6.4, -0.6), cp(6.6, 1.4)], [1.6, 1.5, 1.35, 1.0], 5.0, alb=steel, step_px=2.0)
     else:
         segs = []
     for i, (a0, a1, r0, r1) in enumerate(segs):
         o = -1.3
         r.sweep([cp(a0 + 0.2, o), cp(a1, o)], [r0, r1], 4.8 - i * 0.2, alb=steel, step_px=2.0)
-    if pose == "point" or pose == "press":
+    if pose == "point":
         r.plate([cp(segs[0][0] - 0.0, -1.3), cp(segs[0][0] + 2.4, 0.0), cp(segs[0][0] + 2.4, -2.6)], 6.2, 0.7, "round", alb="#9A9CA0")
     if pose in ("fist", "grip"):
         for i, b in enumerate((-4.2, -1.4, 1.4, 4.2)):
@@ -1382,7 +1373,8 @@ def cursor_pointer():
 
 
 def cursor_pressed():
-    return cursor_render(gauntlet("press"))
+    """Index curled in, and the whole hand pushed 1 u toward the wrist as it clicks."""
+    return np.roll(cursor_render(gauntlet("press")), (PPU, PPU), axis=(0, 1))
 
 
 def cursor_grab():
@@ -1498,7 +1490,7 @@ def cursor_sprites():
     piv = (int(TIP[0] * 4) + 2, int(TIP[1] * 4) + 2)
     return [
         U.Sprite("cursor.pointer", cursor_pointer(), pivot=piv),
-        U.Sprite("cursor.pressed", cursor_pressed(), pivot=(piv[0] + 6, piv[1] + 6)),
+        U.Sprite("cursor.pressed", cursor_pressed(), pivot=tuple(int((v + 1) * 4) for v in cp(6.0, -0.6))),
         U.Sprite("cursor.grab", cursor_grab(), pivot=(44, 44)),
         U.Sprite("cursor.attack", cursor_attack(), pivot=piv),
         U.Sprite("cursor.forbid", cursor_forbid(), pivot=piv),
