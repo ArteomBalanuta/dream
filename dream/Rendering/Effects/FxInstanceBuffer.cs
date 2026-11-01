@@ -60,7 +60,7 @@ public sealed class FxInstanceBuffer : IDisposable
         GL.VertexAttribPointer(FxInstance.ColorLocation, 4, VertexAttribPointerType.UnsignedByte, true, FxInstance.Stride, FxInstance.ColorOffset);
         GL.VertexAttribDivisor(FxInstance.ColorLocation, 1);
         GL.EnableVertexAttribArray(FxInstance.RotationFrameBiasLocation);
-        GL.VertexAttribPointer(FxInstance.RotationFrameBiasLocation, 3, VertexAttribPointerType.Float, false, FxInstance.Stride, FxInstance.RotationOffset);
+        GL.VertexAttribPointer(FxInstance.RotationFrameBiasLocation, 4, VertexAttribPointerType.Float, false, FxInstance.Stride, FxInstance.RotationOffset);
         GL.VertexAttribDivisor(FxInstance.RotationFrameBiasLocation, 1);
     }
 

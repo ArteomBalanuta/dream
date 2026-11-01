@@ -436,6 +436,36 @@ public class FxSimulationTests
     }
 
     [Fact]
+    public void WriteInstances_Starts_At_The_Given_Index_And_Never_Writes_Past_A_Short_Destination()
+    {
+        FxSimulation simulation = Warm();
+        FxInstance[] small = new FxInstance[10];
+        FxInstance sentinel = new() { HalfSize = 123f, Stretch = 7f };
+        Array.Fill(small, sentinel);
+
+        int written = simulation.WriteInstances(small, 4);
+
+        Assert.Equal(10, written);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.Equal(123f, small[i].HalfSize);
+        }
+
+        for (int i = 4; i < 10; i++)
+        {
+            Assert.NotEqual(123f, small[i].HalfSize);
+            Assert.Equal(0f, small[i].Stretch);
+        }
+
+        Assert.Equal(10, simulation.WriteInstances(small, 10));
+
+        FxInstance[] roomy = new FxInstance[FxLimits.MaxInstances];
+        int end = simulation.WriteInstances(roomy, 100);
+        Assert.Equal(100 + simulation.ActiveParticles + simulation.ActiveHalos, end);
+        Assert.Throws<ArgumentOutOfRangeException>(() => simulation.WriteInstances(small, 11));
+    }
+
+    [Fact]
     public void FxInstance_Packs_Red_In_The_Low_Byte_And_Clamps()
     {
         uint color = FxInstance.PackColor(1f, 0.5f, 0f, 2f);

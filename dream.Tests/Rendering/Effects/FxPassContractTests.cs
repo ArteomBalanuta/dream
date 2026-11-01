@@ -15,9 +15,9 @@ public class FxPassContractTests
     private static readonly Regex UniformDeclaration = new(@"\buniform\s+\w+\s+(\w+)\s*;");
 
     [Fact]
-    public void Instance_Is_Thirty_Two_Bytes_With_The_Documented_Offsets()
+    public void Instance_Is_Thirty_Six_Bytes_With_The_Documented_Offsets()
     {
-        Assert.Equal(32, Unsafe.SizeOf<FxInstance>());
+        Assert.Equal(36, Unsafe.SizeOf<FxInstance>());
         Assert.Equal(FxInstance.Stride, Unsafe.SizeOf<FxInstance>());
         Assert.Equal(0, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.Position)));
         Assert.Equal(12, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.HalfSize)));
@@ -25,6 +25,7 @@ public class FxPassContractTests
         Assert.Equal(FxInstance.RotationOffset, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.Rotation)));
         Assert.Equal(24, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.Frame)));
         Assert.Equal(28, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.DepthBias)));
+        Assert.Equal(32, (int)Marshal.OffsetOf<FxInstance>(nameof(FxInstance.Stretch)));
     }
 
     [Fact]
@@ -33,7 +34,7 @@ public class FxPassContractTests
         string vertex = StripComments(ReadShader(FxRenderer.VertexShaderFile));
         Assert.Matches(@"layout\(location = 0\) in vec4 iPositionHalfSize;", vertex);
         Assert.Matches(@"layout\(location = 1\) in vec4 iColor;", vertex);
-        Assert.Matches(@"layout\(location = 2\) in vec3 iRotationFrameBias;", vertex);
+        Assert.Matches(@"layout\(location = 2\) in vec4 iRotationFrameBiasStretch;", vertex);
         Assert.Equal(0, FxInstance.PositionHalfSizeLocation);
         Assert.Equal(1, FxInstance.ColorLocation);
         Assert.Equal(2, FxInstance.RotationFrameBiasLocation);
@@ -41,7 +42,7 @@ public class FxPassContractTests
         string bind = Method(ReadSource("dream/Rendering/Effects/FxInstanceBuffer.cs"), "public void BindAttributes()");
         Assert.Contains("VertexAttribPointer(FxInstance.PositionHalfSizeLocation, 4, VertexAttribPointerType.Float, false, FxInstance.Stride, 0);", bind);
         Assert.Contains("VertexAttribPointer(FxInstance.ColorLocation, 4, VertexAttribPointerType.UnsignedByte, true, FxInstance.Stride, FxInstance.ColorOffset);", bind);
-        Assert.Contains("VertexAttribPointer(FxInstance.RotationFrameBiasLocation, 3, VertexAttribPointerType.Float, false, FxInstance.Stride, FxInstance.RotationOffset);", bind);
+        Assert.Contains("VertexAttribPointer(FxInstance.RotationFrameBiasLocation, 4, VertexAttribPointerType.Float, false, FxInstance.Stride, FxInstance.RotationOffset);", bind);
         Assert.Equal(3, Regex.Matches(bind, @"VertexAttribDivisor\(FxInstance\.\w+, 1\);").Count);
     }
 
@@ -63,14 +64,16 @@ public class FxPassContractTests
     {
         Assert.Equal(2048, FxLimits.MaxInstances);
         Assert.Equal(128, FxLimits.HaloBudget);
-        Assert.Equal(FxLimits.MaxInstances - FxLimits.HaloBudget, FxLimits.ParticleCapacity);
+        Assert.Equal(32, FxLimits.ShadowBudget);
+        Assert.Equal(1888, FxLimits.ParticleCapacity);
+        Assert.Equal(FxLimits.MaxInstances - FxLimits.HaloBudget - FxLimits.ShadowBudget, FxLimits.ParticleCapacity);
         Assert.Equal(8, FxAtlas.Columns);
         Assert.Equal(4, FxAtlas.Rows);
         Assert.Equal(64, FxAtlas.CellPixels);
         Assert.Equal(2, FxAtlas.MaxMipLevel);
         Assert.Equal("particles/particles.png", FxAtlas.RelativePath);
-        Assert.Equal(new byte[] { 0, 4, 8, 12, 16, 17 },
-            new[] { FxFrame.Spark0, FxFrame.Ember0, FxFrame.Dust0, FxFrame.Ash0, FxFrame.Halo, FxFrame.HaloCore }.Select(f => (byte)f));
+        Assert.Equal(new byte[] { 0, 4, 8, 12, 16, 17, 18, 22 },
+            new[] { FxFrame.Spark0, FxFrame.Ember0, FxFrame.Dust0, FxFrame.Ash0, FxFrame.Halo, FxFrame.HaloCore, FxFrame.Flame0, FxFrame.Blob }.Select(f => (byte)f));
 
         string vertex = StripComments(ReadShader(FxRenderer.VertexShaderFile));
         Assert.Contains($"const float AtlasColumns = {FxAtlas.Columns}.0;", vertex);
@@ -110,7 +113,9 @@ public class FxPassContractTests
         Assert.DoesNotContain("uCameraPosition", vertex);
         Assert.DoesNotContain("#include", vertex);
         Assert.Matches(@"uCameraRight \* rotated\.x \+ uCameraUp \* rotated\.y", vertex);
-        Assert.Matches(@"uCameraBack \* iRotationFrameBias\.z", vertex);
+        Assert.Matches(@"uCameraBack \* iRotationFrameBiasStretch\.z", vertex);
+        Assert.Contains("scaled.x *= max(shape, 1.0);", vertex);
+        Assert.Contains("shape < 0.0", vertex);
         // The atlas is y-down and uploaded unflipped.
         Assert.Matches(@"\(row \+ 1\.0 - corner\.y\) / AtlasRows", vertex);
     }
@@ -200,13 +205,14 @@ public class FxPassContractTests
     {
         string pass = Method(ReadSource("dream/Client/Scenes/PlayScene.cs"), "private void DrawEffectsPass(");
 
+        int basisAt = IndexOf(pass, "FxViewBasis basis = FxViewBasis.FromView(in view);");
         int advanceAt = IndexOf(pass, "simulation.Advance(in inputs, _render.Lights.Lights);");
         int writeAt = IndexOf(pass, "simulation.WriteInstances(_fxInstances);");
         int beginAt = IndexOf(pass, "gpuTimer.BeginSection(GpuTimerSection.Effects);");
         int drawAt = IndexOf(pass, "renderer.Draw(_fxInstances, count, in basis, view * _render.ProjectionMatrix);");
         int endAt = IndexOf(pass, "gpuTimer.EndSection();");
 
-        Assert.True(advanceAt < writeAt && writeAt < beginAt && beginAt < drawAt && drawAt < endAt);
+        Assert.True(basisAt < advanceAt && advanceAt < writeAt && writeAt < beginAt && beginAt < drawAt && drawAt < endAt);
         Assert.Contains("sky.StarVisibility", pass);
         Assert.Contains("FxViewBasis.FromView(in view)", pass);
         Assert.DoesNotContain("new FxInstance", pass);

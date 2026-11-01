@@ -12,7 +12,8 @@ public readonly record struct FxFrameInputs(
     Vector3 CameraPosition,
     Vector3 CameraFront,
     Vector3 PlayerPosition,
-    float NightFactor);
+    float NightFactor,
+    FxViewBasis Basis = default);
 
 // The effects pass's state: a particle pool (hit sparks, death bursts, torch embers, ambient dust)
 // and a small list of light halos rebuilt from the frame's point lights. Pure CPU and client only;
@@ -141,12 +142,15 @@ public sealed class FxSimulation
     }
 
     // Particles first (ordered by pool slot, which swap-removal shuffles), then at most
-    // HaloBudget halos. Never writes past the destination.
-    public int WriteInstances(FxInstance[] destination)
+    // HaloBudget halos, written from index `start`. Returns the end index and never writes past
+    // the destination.
+    public int WriteInstances(FxInstance[] destination, int start = 0)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        int written = 0;
-        int particleCount = Math.Min(_pool.Count, destination.Length);
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(start, destination.Length);
+        int written = start;
+        int particleCount = Math.Min(_pool.Count, destination.Length - start);
         for (int i = 0; i < particleCount; i++)
         {
             WriteParticle(ref _pool[i], ref destination[written]);
@@ -340,6 +344,7 @@ public sealed class FxSimulation
         instance.Rotation = p.Rotation;
         instance.Frame = p.Frame;
         instance.DepthBias = 0f;
+        instance.Stretch = 0f;
     }
 
     private void EmitSpark(Vector3 anchor, Vector3 rgb, float speedMin, float speedMax, float sizeScale)

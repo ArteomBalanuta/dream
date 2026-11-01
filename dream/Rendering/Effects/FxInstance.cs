@@ -12,7 +12,9 @@ public enum FxFrame : byte
     Dust0 = 8,
     Ash0 = 12,
     Halo = 16,
-    HaloCore = 17
+    HaloCore = 17,
+    Flame0 = 18,
+    Blob = 22
 }
 
 public static class FxAtlas
@@ -28,16 +30,17 @@ public static class FxLimits
 {
     public const int MaxInstances = 2048;
     public const int HaloBudget = 128;
-    public const int ParticleCapacity = MaxInstances - HaloBudget;
+    public const int ShadowBudget = 32;
+    public const int ParticleCapacity = MaxInstances - HaloBudget - ShadowBudget;
 }
 
-// One billboard as the GPU reads it: three per-instance attributes, divisor 1, stride 32.
+// One billboard as the GPU reads it: three per-instance attributes, divisor 1, stride 36.
 // Color is premultiplied RGBA with R in the low byte; A is how much the quad occludes what is
 // behind it, so A = 0 is pure additive light. Lifetime fade scales all four channels.
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct FxInstance
 {
-    public const int Stride = 32;
+    public const int Stride = 36;
     public const int PositionHalfSizeLocation = 0;
     public const int ColorLocation = 1;
     public const int RotationFrameBiasLocation = 2;
@@ -51,6 +54,10 @@ public struct FxInstance
     public float Frame;
     // World units toward the camera, so a halo at a cube's centre is not cut by the cube's depth.
     public float DepthBias;
+    // 0 or 1 is a square camera-facing billboard, above 1 stretches the quad along its local +X,
+    // and a negative value (GroundAligned) lays it flat on the XZ plane.
+    public float Stretch;
+    public const float GroundAligned = -1f;
 
     public static uint PackColor(float r, float g, float b, float a)
     {

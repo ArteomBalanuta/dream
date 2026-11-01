@@ -29,17 +29,18 @@ public partial class PlayScene
         }
 
         Matrix4 view = presentation.Camera.GetViewMatrix();
+        FxViewBasis basis = FxViewBasis.FromView(in view);
         FxFrameInputs inputs = new(
             deltaSeconds,
             presentation.Camera.Position,
             presentation.Camera.Front,
             _runtime.Player.GetWorldPosition(),
-            sky.StarVisibility);
+            sky.StarVisibility,
+            basis);
         simulation.Advance(in inputs, _render.Lights.Lights);
         int count = simulation.WriteInstances(_fxInstances);
 
         gpuTimer.BeginSection(GpuTimerSection.Effects);
-        FxViewBasis basis = FxViewBasis.FromView(in view);
         renderer.Draw(_fxInstances, count, in basis, view * _render.ProjectionMatrix);
         gpuTimer.EndSection();
     }
