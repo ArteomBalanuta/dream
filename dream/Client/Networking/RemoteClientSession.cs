@@ -463,6 +463,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
         SignalSendLoop();
     }
 
+    public void QueueChat(ClientChatMessage chatMessage)
+    {
+        ArgumentNullException.ThrowIfNull(chatMessage);
+        _pendingMessages.Enqueue(chatMessage);
+        SignalSendLoop();
+    }
+
     public void QueuePlayerAction(PlayerActionMessage actionMessage)
     {
         ArgumentNullException.ThrowIfNull(actionMessage);
@@ -954,6 +961,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 break;
             case ClientWorldResyncRequestMessage resync:
                 _codec.Encode(envelope, resync, _frameWriter);
+                break;
+            case ClientChatMessage chat:
+                _codec.Encode(envelope, chat, _frameWriter);
                 break;
             default:
                 throw new InvalidOperationException(
