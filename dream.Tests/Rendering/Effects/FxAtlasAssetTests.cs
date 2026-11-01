@@ -1,0 +1,174 @@
+using System.IO;
+using Dream.Assets;
+using Dream.Rendering.Core;
+using Xunit;
+
+namespace Dream.Tests.Rendering.Effects;
+
+// The particle atlas is checked as shipped: size, grid, zero margins, and the alpha rules per frame
+// group. Literal numbers on purpose: they are the contract with the renderer, not derived from it.
+public class FxAtlasAssetTests
+{
+    private const int Columns = 8;
+    private const int Rows = 4;
+    private const int Cell = 64;
+    private const int Margin = 4;
+    private const string RelativePath = "particles/particles.png";
+
+    private static readonly Lazy<DecodedTexture> Atlas = new(() => TextureDecoder.DecodeRgba(AssetPaths.Ui(RelativePath)));
+
+    private static int Index(int frame, int px, int py) =>
+        (((frame / Columns * Cell) + py) * Columns * Cell + (frame % Columns * Cell) + px) * 4;
+
+    private static byte Channel(int frame, int px, int py, int channel) => Atlas.Value.Rgba[Index(frame, px, py) + channel];
+
+    private static IEnumerable<(int Px, int Py)> Pixels(bool marginOnly)
+    {
+        for (int py = 0; py < Cell; py++)
+        {
+            for (int px = 0; px < Cell; px++)
+            {
+                bool inside = px >= Margin && px < Cell - Margin && py >= Margin && py < Cell - Margin;
+                if (inside != marginOnly)
+                {
+                    yield return (px, py);
+                }
+            }
+        }
+    }
+
+    private static int MaxAlpha(int frame) => Pixels(false).Max(p => Channel(frame, p.Px, p.Py, 3));
+
+    private static int MaxRgb(int frame) => Pixels(false).Max(p => Math.Max(Channel(frame, p.Px, p.Py, 0), Math.Max(Channel(frame, p.Px, p.Py, 1), Channel(frame, p.Px, p.Py, 2))));
+
+    [Fact]
+    public void Atlas_File_Exists_And_Is_512_By_256()
+    {
+        Assert.True(File.Exists(AssetPaths.Ui(RelativePath)));
+        Assert.Equal(512, Atlas.Value.Width);
+        Assert.Equal(256, Atlas.Value.Height);
+        Assert.Equal(512 * 256 * 4, Atlas.Value.Rgba.Length);
+        Assert.Equal(Columns * Cell, Atlas.Value.Width);
+        Assert.Equal(Rows * Cell, Atlas.Value.Height);
+    }
+
+    [Fact]
+    public void Descriptor_Matches_The_Grid()
+    {
+        string json = File.ReadAllText(AssetPaths.Ui("particles/particles.json"));
+        using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(json);
+        System.Text.Json.JsonElement root = doc.RootElement;
+
+        Assert.Equal("particles.png", root.GetProperty("image").GetString());
+        Assert.Equal(Columns, root.GetProperty("columns").GetInt32());
+        Assert.Equal(Rows, root.GetProperty("rows").GetInt32());
+        Assert.Equal(Cell, root.GetProperty("cell").GetInt32());
+        Assert.Equal(Margin, root.GetProperty("margin").GetInt32());
+        Assert.True(root.GetProperty("yDown").GetBoolean());
+        Assert.Equal("premultiplied", root.GetProperty("alpha").GetString());
+    }
+
+    [Fact]
+    public void Every_Cell_Margin_Is_Fully_Zero()
+    {
+        for (int frame = 0; frame < Columns * Rows; frame++)
+        {
+            foreach ((int px, int py) in Pixels(marginOnly: true))
+            {
+                for (int channel = 0; channel < 4; channel++)
+                {
+                    Assert.True(Channel(frame, px, py, channel) == 0, $"frame {frame} margin pixel ({px},{py}) channel {channel}");
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(16)]
+    [InlineData(17)]
+    public void Additive_Frames_Have_Zero_Alpha_And_Visible_Emission(int frame)
+    {
+        Assert.Equal(0, MaxAlpha(frame));
+        Assert.True(MaxRgb(frame) >= 100, $"frame {frame} emission peaks at {MaxRgb(frame)}");
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
+    [InlineData(11)]
+    public void Dust_Frames_Have_Low_Positive_Alpha(int frame)
+    {
+        int alpha = MaxAlpha(frame);
+        Assert.InRange(alpha, 1, 128);
+    }
+
+    [Theory]
+    [InlineData(12)]
+    [InlineData(13)]
+    [InlineData(14)]
+    [InlineData(15)]
+    public void Ash_Frames_Cover_And_Stay_Dark(int frame)
+    {
+        Assert.True(MaxAlpha(frame) >= 90, $"frame {frame} alpha peaks at {MaxAlpha(frame)}");
+        Assert.True(MaxRgb(frame) <= 90, $"frame {frame} RGB peaks at {MaxRgb(frame)}");
+    }
+
+    [Fact]
+    public void Premultiplied_Frames_Never_Exceed_Their_Alpha()
+    {
+        for (int frame = 8; frame < 16; frame++)
+        {
+            foreach ((int px, int py) in Pixels(marginOnly: false))
+            {
+                int alpha = Channel(frame, px, py, 3);
+                for (int channel = 0; channel < 3; channel++)
+                {
+                    Assert.True(Channel(frame, px, py, channel) <= alpha, $"frame {frame} ({px},{py}) channel {channel}");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void Halo_Frames_Peak_At_The_Centre_And_Are_Dark_At_The_Edge()
+    {
+        foreach (int frame in new[] { 16, 17 })
+        {
+            int centre = Channel(frame, Cell / 2, Cell / 2, 0);
+            int edge = Channel(frame, Margin, Cell / 2, 0);
+            Assert.True(centre >= 100, $"frame {frame} centre {centre}");
+            Assert.Equal(0, edge);
+        }
+
+        // The core variant is tighter: less of the cell is lit above 20/255.
+        int Lit(int frame) => Pixels(false).Count(p => Channel(frame, p.Px, p.Py, 0) > 20);
+        Assert.True(Lit(17) < Lit(16));
+    }
+
+    [Fact]
+    public void Reserved_Cells_Are_Empty()
+    {
+        for (int frame = 18; frame < Columns * Rows; frame++)
+        {
+            for (int py = 0; py < Cell; py++)
+            {
+                for (int px = 0; px < Cell; px++)
+                {
+                    for (int channel = 0; channel < 4; channel++)
+                    {
+                        Assert.True(Channel(frame, px, py, channel) == 0, $"frame {frame} ({px},{py})");
+                    }
+                }
+            }
+        }
+    }
+}

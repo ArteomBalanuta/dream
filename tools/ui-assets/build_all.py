@@ -3,7 +3,7 @@ import importlib
 import sys
 from pathlib import Path
 
-GENERATORS = ("gen_window", "gen_hud", "gen_items", "gen_fx")
+GENERATORS = ("gen_window", "gen_hud", "gen_items", "gen_fx", "gen_particles")
 
 
 def main() -> None:
