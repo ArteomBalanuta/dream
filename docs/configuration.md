@@ -333,13 +333,15 @@ Names are 1 to 64 characters after trimming and unique ignoring case. A name can
 
 A second desktop client on the same database and world does not get a local server: it stays open on the connection screen, shows `Local server failed: World <id> is already in use by another Dream window or server on this computer...`, logs `[startup] local server not started: ...`, and Connect still joins any other server. After closing the first window, press **Use Local Server** in the second client: it clears the failed start and tries again, and fills in the host and port only once the server is ready (while it is not, the entered host and port stay as they are and nothing is saved). To join the first window instead, leave the second client's local server off and type the first window's `127.0.0.1:<port>` (the port its connection screen shows as `Local server ready on 127.0.0.1:<port>`) as the host and port, then Connect. A client whose content files are missing or invalid shows the reason on the connection screen and does not connect. Clients started with `DREAM_SERVER_HOST` never start a local server and are not affected; to run two clients in one world, start `dream --server` and give both clients `DREAM_SERVER_HOST=127.0.0.1`.
 
-**Content check at start.** Every dedicated or integrated start reads `config/content/items.json` and `enemies.json` once (`ContentCatalog.Shipped`), before it opens the database, and logs `server.content.digest digest=<sha256> items=<n> enemies=<n>`. Two servers with different digests run different content. A missing or invalid file stops a dedicated server with exit code **8** and the log line `Server not started: the game content is invalid: <reason>`; an integrated server shows the reason on the connection screen.
+**Content check at start.** Every dedicated or integrated start reads `config/content/items.json`, `enemies.json` and `loot.json` once (`ContentCatalog.Shipped`), before it opens the database, and logs `server.content.digest digest=<sha256> items=<n> enemies=<n>`. Two servers with different digests run different content. A missing or invalid file stops a dedicated server with exit code **8** and the log line `Server not started: the game content is invalid: <reason>`; an integrated server shows the reason on the connection screen. A client that only joins a remote server does not need these files: a content error blocks Use Local Server, not a remote connect.
+
+**Formula probe at start (wave I).** Before the world opens, the server evaluates the enemy formulas for every enemy template and `player.damage_taken_factor` for armor 1..1000. A formula that fails, for example a hand-edited row that divides by zero, stops it with exit code **8** and the name of the formula, instead of failing on a spawn tick.
 
 **Integrity check on load.** After the lease and before the stored terrain is read, the server runs `WorldIntegrityCheck` over its world: `PRAGMA quick_check`, `PRAGMA foreign_key_check`, objects outside the world's bounds (cubes, rubble parent cells, terrain overrides), inventory slots that point at a missing item, an equipment slot (100..103) that matches no backpack slot of the same player, and item or enemy kinds the build does not know. Wave H adds four counts: an item in two equipment slots, a slot index outside 0..15 and 100..103, an item in an equipment slot its content does not allow, and a damaged stored roll (read only for rows that have one). An alias of a same-player backpack slot in 100..103 is no finding. A foreign-key violation or a damaged file (also a `SQLITE_CORRUPT` or `SQLITE_NOTADB` raised earlier in the start) stops the server with exit code **6**. Everything else is only counted, in one log line per finding, and never refuses the start, so a real legacy database is not rejected for soft problems. The known-kind predicates (`Func<string, bool>`) come from `ContentCatalog.Shipped` (`ServerBootstrap.IntegrityOptionsFor`); `WorldIntegrityCheck` itself accepts every kind unless it is given them. Cost on the World10k database (2.6 MB): about 2 ms without `quick_check` and about 7 ms with it. `quick_check` reads the whole file, so its cost grows with the file size; it stays on because that is one pass at start.
 
 **Backup and restore.** `dream --db backup <path>` copies the whole database file with `SqliteConnection.BackupDatabase`, checks the copy with `integrity_check`, and moves it into place. It is safe while a server runs and refuses an existing destination. `dream --db restore <path> --yes` is an offline file swap. It takes the maintenance lock (so no start can create or open a world between its checks and the swap) and every world's lease (the worlds in the database plus every existing lock file), and exits **7** if either is held. It validates the source first: a schema version newer than this build exits **3**; a failed `integrity_check` or damaged pages (SQLite error 11) exit **6**; a missing source, a file that is not a SQLite database, a zero-byte file, or a SQLite file with neither a `worlds` nor a `player_profiles` table exits **2**. A legacy database from before `schema_version` has `player_profiles` and restores. It keeps the current file as `{db}.pre-restore.{timestamp}.bak` (a `-1`, `-2`... suffix if that name exists), then swaps the source in. The safety copy never depends on the health of the file being replaced: it uses the SQLite backup API and, when that fails because the live file is damaged (a bad header is error 26, a truncated file 11), a raw copy of the file with its `-wal` and `-shm`; so restoring over a damaged database, the case exit 6 tells the operator to fix, works. If the raw copy also fails, or the live file cannot be replaced (locked), the restore stops with exit **2**, the live file is left as it was and the staging file is removed; the next start migrates an older source with the usual backup. There is no per-world restore: player profiles are global, so restoring one world would leave orphans.
 
-**Process exit codes.** Server: **3** schema newer than this build, **4** world not found, **5** world cannot be opened, **6** database integrity failure, **7** world held, **8** invalid content file. `--worlds`: 1 usage, 2 not found or conflict, 3 schema too new, 4 terrain invalid, 7 world held. `--db`: 1 usage, 2 source or target invalid, 3 schema too new, 6 integrity failure, 7 world held. `--characters` and `--items` are listed in their own sections below.
+**Process exit codes.** Server: **3** schema newer than this build, **4** world not found, **5** world cannot be opened, **6** database integrity failure, **7** world held, **8** invalid content file or a formula that fails the start probe. `--worlds`: 1 usage, 2 not found or conflict, 3 schema too new, 4 terrain invalid, 7 world held. `--db`: 1 usage, 2 source or target invalid, 3 schema too new, 6 integrity failure, 7 world held. `--characters` and `--items` are listed in their own sections below.
 
 ## Characters And Accounts
 
@@ -394,6 +396,30 @@ Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or back
 | 103 | Body. |
 
 A row in 100..103 holds the id of an item that normally also has a backpack row, and one item may be in one equipment slot. An older row in slot 100 may have no backpack row; it moves to the lowest free backpack slot when it is unequipped or displaced, and a full backpack rejects that action. Which slots an item may occupy comes from `equipSlots` in `items.json`. Armor is shown and summed but changes no combat result yet. Inventory actions have a budget per session: a burst of 16 actions that would write, refilling 8 a second, counted in server ticks. A dead player can still use inventory actions (equip, move, unequip); that is harmless, because none of them revives the player.
+
+### Loot tables: `config/content/loot.json`
+
+Read at start with the other content files, and part of the content digest. `enemies.json` names a table per enemy with `lootTable`, and a reference to a missing table stops the server. Editing a table needs a restart. The shipped numbers are placeholders for a balance pass.
+
+```json
+{"version":1,"tables":[
+ {"key":"wolf","drops":1,"nothingWeight":75,
+  "items":[{"item":"gear.leather-cap","weight":10}],
+  "rarity":{"common":85,"uncommon":13,"rare":2}}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `drops` | Rolls per kill, 1..4. |
+| `nothingWeight` | Weight of dropping nothing on one roll. |
+| `items` | The item kinds a roll can give. Each must exist in `items.json` and have `rolls`. |
+| `rarity` | Weights of the rarity the item is rolled at. |
+
+Weights are 0..1,000,000 with an int total and at least one above 0. Duplicates and unknown properties fail at load. The killing blow takes the drop. A dropped item goes into the backpack, and with a full backpack it is lost with a notice. There are no ground drops.
+
+### Enemies: `config/content/enemies.json` (version 2)
+
+`strength`, `vitality`, `attackSpeed`, `level`, `visualKey` and `spawnRole` are required. `attackIntervalSeconds` and `lootTable` are optional. Strength and Vitality are 1..50, Attack Speed 0.5..5, level 1 or more. Damage, health and interval come from the `enemy.*` formulas in `combat_formulas` (schema 9). `spawnRole` is `Primary` or `NightExtra`, and at least one `Primary` is required. A spawn copies its stats into its row, so an edit reaches new spawns only, never an enemy already stored.
 
 ## Project Content Layout
 

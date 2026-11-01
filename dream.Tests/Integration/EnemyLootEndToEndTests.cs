@@ -322,6 +322,47 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
         Assert.Equal(2, client.Inventory!.Value.Slots.Count(slot => slot.Item is { IsRolled: true }));
     }
 
+    // Closes wave H's "inventory actions while dead were not run over real TCP": equip works, the dead stay
+    // at 0 (Vitality raises the maximum, not the health), and the respawn fills the new maximum.
+    [Fact]
+    public async Task AnEquipWhileDead_WorksOverRealTcp_StaysDead_AndTheRespawnUsesTheNewMaximum()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using HeadlessPlayScene client = await EnterAtNightAsync(server);
+        await WaitForDireAsync(server, client);
+        await KillDireForLootAsync(server, client);
+        InventorySlotSnapshot looted = RolledSlot(client.Inventory!.Value);
+        IAuthoritativePlayerTarget target = Target(server);
+        int maximumBefore = target.Combatant.Health.MaxHealth;
+
+        target.Combatant.Health.ApplyDamage(1_000_000);
+        await StepAsync(server, client);
+        Assert.True(client.Death.IsDead);
+
+        ulong sequence = await client.SendActionAsync(new InventoryEquipIntent(looted.SlotIndex));
+        await StepAsync(server, client);
+        await client.PumpUntilAsync(
+            c => c.Applied.OfType<ServerActionMessage>().Any(m => m.Result.ActionSequence == sequence),
+            "the equip result");
+        ServerActionMessage result = client.Applied.OfType<ServerActionMessage>().Single(m => m.Result.ActionSequence == sequence);
+        Assert.True(result.Result.Accepted, result.Result.Rejection?.Reason);
+        Assert.True(target.Combatant.EffectiveArmor > 0);
+        Assert.Equal(0, target.Combatant.Health.CurrentHealth);
+        Assert.False(target.IsAlive);
+        Assert.True(target.Combatant.Health.MaxHealth > maximumBefore);
+
+        for (int i = 0; i < PlayerRespawnRules.DelayTicks + 1 && !target.IsAlive; i++)
+        {
+            await StepAsync(server, client);
+        }
+
+        Assert.True(target.IsAlive);
+        Assert.Equal(target.Combatant.Health.MaxHealth, target.Combatant.Health.CurrentHealth);
+        Assert.Equal(target.Combatant.Health.MaxHealth, client.World.Player.Combatant.Health.CurrentHealth);
+        Assert.False(client.Death.IsDead);
+    }
+
     // Plan risk 10 and I2's note: a world resync is a snapshot, so it touches neither the inventory nor the
     // feed, in either order, and a push behind its carrier is held with the rest until the final chunk.
     [Theory]
