@@ -183,7 +183,7 @@ The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the autom
 - Without admin availability, Settings hides the developer controls (Fly Speed, stats, collision geometry, performance counters, new world size, viewmodel tuning, time of day). Field of view, mouse sensitivity, third person, floating damage text, resolution presets, connection info and UI Scale stay. Set `admin_hud=1` to get them back.
 - `DREAM_HUD=imgui` forces the ImGui HUD for the run (baseline comparison); F3 is inert then.
 - The environment overrides are never written back to the file. Nothing about the admin setting is sent to the server: it hides and shows client-side UI only, and the server accepts the same intents either way.
-- `DREAM_HUD_CAPTURE=<dir>` and `DREAM_HUD_CAPTURE_SCRIPT=play,inventory,settings,admin` write one PNG per step (`NN-<step>.png`) of the real back buffer after a short warm-up, then close the window. The `admin` step needs `DREAM_ADMIN_HUD=1`. Verification tool only.
+- `DREAM_HUD_CAPTURE=<dir>` and `DREAM_HUD_CAPTURE_SCRIPT=play,inventory,settings,admin` write one PNG per step (`NN-<step>.png`) of the real back buffer after a short warm-up, then close the window. `DREAM_HUD_CAPTURE_SETTLE=<frames>` holds each step longer (default 20), so `DREAM_RENDER_PERF_LOG=1` gets lines from each state. The `admin` step needs `DREAM_ADMIN_HUD=1`. Verification tool only.
 
 ## Profiling Environment Flags
 

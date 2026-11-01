@@ -36,6 +36,8 @@ public partial class Render
 
     public int ClassicHudCommandCount => _uiBatch?.CommandCount ?? 0;
 
+    public int ClassicHudDroppedQuads => _uiBatch?.DroppedQuads ?? 0;
+
     // Called once per frame before building. First call starts the background atlas decode and
     // creates the GL objects; later calls upload at most one atlas page. Returns the state.
     public UiAtlasState BeginHudFrame()

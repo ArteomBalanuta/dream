@@ -191,7 +191,30 @@ The first-person rig now resolves viewmodel poses through `ViewModelPoseResolver
 
 ## HUD Rendering
 
-The HUD currently includes:
+There are two HUD surfaces. The classic sprite HUD is the default; the ImGui HUD described after it is the automatic fallback and the admin view (F3). Settings, the Build panel and the startup menu stay ImGui on both. The switches are in `docs/configuration.md`.
+
+### Classic HUD
+
+`Dream.Rendering.Ui` is GL-free; only `Dream.Rendering.Ui.Gl` touches OpenGL, and a source test enforces that. One frame, inside `Render.DrawHUD`:
+
+1. Crosshair, then `ObserveClassicHud`: `BeginHudFrame` advances the atlas load and `HudSurfaceSelector` decides the surface.
+2. `ClassicHudSurface.Draw`: `HudViewBuilder` refills the reused `HudView`, `UiInputRouter.BeginFrame` takes the pointer, the backend resets `UiBatch` for the `UiLayout`, and `ClassicHud.Build` runs the panels. This is the only caller of `ClassicHud.Build`, and it makes no GL call.
+3. `GlClassicHudBackend.Submit` calls `UiGlRenderer.Submit`: one `BufferSubData`, one draw per command, GL state restored.
+4. ImGui windows on top.
+
+Layers:
+
+- **Atlas.** `UiSpriteTable` reads the JSON in `dream/ui/`; `UiAtlasStore` decodes off-thread and uploads one page per frame (`LinearMipmapLinear`, max level 2, clamp). Uncommon and Rare icons are whole pages with the same rects as `items.png`, so `ItemTierStyle.IconFor` only swaps the page.
+- **Batch.** `UiBatch : IUiCanvas` holds 8192 quads and merges neighbours by page and scissor. Quads keep draw order, so alternating pages cost a draw each. Output is premultiplied (`uiVertex.glsl`, `uiFragment.glsl`; blend `ONE, ONE_MINUS_SRC_ALPHA`). Mode 0 is texture times tint, 1 the two-channel digit mask, 2 a flat colour.
+- **Scale.** 1 unit is `UiLayout.Scale` pixels, and the art is 4 texels per unit. Panels place rects in units. `UiBatch.UnitScale` is pixels per texel (`UiLayout.PixelsPerTexel`, Scale / 4), which sizes 9-slice borders and tile steps. `UiBatch.TextScale` is `UiLayout.TextScale`: panels lay text out in baked pixels (13 and 26), so it is 1 below scale 4 and 2 at scale 4.
+- **Input.** `UiInputRouter` is the only `IUiInput` in the game, and `IUiInput.Pointer` the only pointer. The hot widget is the last one hit in the previous frame. `BeginDrag` fires once past 4 px, `TryEndDrag` once on release. A panel sets `ModalActive` right before its widgets; widgets built earlier in a frame after a modal frame are ignored, and the frame that opens a modal is guarded by `InventoryUiState.ModalFresh`. A changed inventory snapshot cancels a drag and forgets the press; a status change does not.
+- **Combat text.** `Render.ProjectClassicCombatText` projects `WorldAnchor` alone into `ScreenAnchor` and drops states it cannot project. `CombatTextPanel` adds the rise and jitter in pixels. The ImGui path keeps its own offsets.
+
+`RenderFaultLog` gets one `hud-classic` line when the surface latches to ImGui (bad atlas, shader or font failure, an exception in build or submit, or Loading past 5 s).
+
+### ImGui HUD
+
+The ImGui HUD includes:
 
 - A red crosshair drawn with line primitives when gameplay is active
 - A lightweight ImGui `HUD` window with status text
@@ -302,6 +325,7 @@ Texture handles are stored for disposal later.
 The repository currently includes:
 
 - World and HUD shaders under `dream/shaders/`
+- Classic HUD atlases and their sprite JSON under `dream/ui/` (`window`, `hud`, `items`, `fx`)
 - An animated wolf asset under `dream/animations/enemies/wolf.glb`
 - A Kenney blocky player model under `dream/animations/players/`
 - First-person hands and held-item blockout assets under `dream/animations/viewmodels/`

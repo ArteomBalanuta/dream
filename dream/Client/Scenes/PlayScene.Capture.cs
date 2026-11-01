@@ -11,6 +11,7 @@ internal sealed class HudCaptureScript
 {
     public const string DirectoryVariable = "DREAM_HUD_CAPTURE";
     public const string ScriptVariable = "DREAM_HUD_CAPTURE_SCRIPT";
+    public const string SettleVariable = "DREAM_HUD_CAPTURE_SETTLE";
     public const string StepPlay = "play";
     public const string StepInventory = "inventory";
     public const string StepSettings = "settings";
@@ -66,6 +67,12 @@ internal sealed class HudCaptureScript
         Environment.GetEnvironmentVariable(DirectoryVariable),
         Environment.GetEnvironmentVariable(ScriptVariable));
 
+    // Frames per step; DREAM_HUD_CAPTURE_SETTLE raises it so the perf log gets lines from each state.
+    public static int SettleFromEnvironment() =>
+        int.TryParse(Environment.GetEnvironmentVariable(SettleVariable), out int frames) && frames > 0
+            ? frames
+            : SettleFrames;
+
     public string FilePath(int index) => Path.Combine(Directory, $"{index + 1:00}-{Steps[index]}.png");
 }
 
@@ -75,6 +82,7 @@ public partial class PlayScene
     private int _hudCaptureFrames;
     private int _hudCaptureStep;
     private int _hudCaptureSettle;
+    private readonly int _hudCaptureSettleFrames = HudCaptureScript.SettleFromEnvironment();
     private bool _hudCaptureDone;
 
     // Called at the end of Render, before the swap.
@@ -108,7 +116,7 @@ public partial class PlayScene
             ApplyHudCaptureState(script.Steps[_hudCaptureStep]);
         }
 
-        if (++_hudCaptureSettle <= HudCaptureScript.SettleFrames)
+        if (++_hudCaptureSettle <= _hudCaptureSettleFrames)
         {
             return;
         }
@@ -117,7 +125,7 @@ public partial class PlayScene
         try
         {
             _render.CaptureBackBufferPng(path);
-            Console.WriteLine($"[hud-capture] wrote {path} surface={_render.CurrentHudSurface(_settings)}");
+            Console.WriteLine($"[hud-capture] wrote {path} surface={_render.CurrentHudSurface(_settings)} quads={_render.ClassicHudQuadCount} commands={_render.ClassicHudCommandCount} dropped={_render.ClassicHudDroppedQuads}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {

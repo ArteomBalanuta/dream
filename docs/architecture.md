@@ -25,9 +25,9 @@ Inside the `Game` constructor:
 
 When the play session ends on its own (NETR-2: a lost connection, the 8 s server-silence watchdog, a rejected or timed-out join), `PlayScene.SessionEndReason` becomes non-null and `Game` returns to the connection screen instead of leaving a dead scene running. After that frame's update it clears the play scene, swaps in a fresh on-demand local server handle, and calls `PlaySessionEndTransition.TearDown`. That disposes the play scene (GL resources first, on the render thread) and the old local server handle (stopping the integrated server if it was started), each exactly once. Teardown failures are logged, not thrown. The new connection scene keeps the endpoint and player name, shows "Session ended: <reason>", and does not auto-connect again. The liveness timeouts are listed in `docs/configuration.md`, Connection liveness.
 
-### Client session lifecycle (protocol version 8)
+### Client session lifecycle (protocol version 12)
 
-`RemoteClientSession` (`dream/Client/Networking/RemoteClientSession.cs`) speaks protocol version `TransportEnvelope.CurrentProtocolVersion` = 8 (`TransportEnvelope.cs`; v8 is persistence wave E, below); a peer on another version is refused with `ProtocolVersionMismatchException`. Its timers, all listed with the server-side ones in `docs/configuration.md`, Connection liveness:
+`RemoteClientSession` (`dream/Client/Networking/RemoteClientSession.cs`) speaks protocol version `TransportEnvelope.CurrentProtocolVersion` = 12 (`TransportEnvelope.cs`; the versions are described below, v12 last); a peer on another version is refused with `ProtocolVersionMismatchException`. Its timers, all listed with the server-side ones in `docs/configuration.md`, Connection liveness:
 
 - Keepalive: when no frame has gone out for `KeepaliveInterval` (1 s, `RemoteClientSession.cs:98`), the send loop writes one empty frame, so a frozen game loop does not look dead to the server (server idle timeout 10 s, `ServerConnectionOptions.cs:12`).
 - Server-silence watchdog: `ServerSilenceTimeout` (8 s, line 117) ends a joined session that receives no inbound bytes, with `ServerSilenceDisconnectReason`.
@@ -144,6 +144,10 @@ Plan: `docs/ledger/plans/2026-11-01-wave-i-plan.md`.
 - **Client.** `ClientDeathTracker` counts down from the first dead snapshot, for display only. Commands keep flowing while dead, with gameplay input off, because the reconciler compares only on a new ack. Dead remote players are hidden, and their interpolation buffer is cleared on dead to alive, so a respawn does not slide. The client no longer reads `ContentCatalog` for a remote session.
 - **Tint.** `enemyFragment.glsl` multiplies base colour by `max(1 + uActorTintOffset, 0)`. The player renderers share this program and its MASK variant. `EnemyRenderer` writes the base program, `AnimatedModel.ActorTintOffset` carries the value to the MASK variant on each program switch (`BindProgram`), and `ResetTint` zeroes all of it after the enemies. A frame draws enemies first, then players.
 - **Protocol v11, schema 9.** Migration 0009 seeds four formulas and rebuilds nothing.
+
+### Combat text and protocol v12
+
+`DamageEventDelta` gains a trailing `HitKind` (`FloatingCombatTextKind`), copied from `DamageAppliedEvent.Kind` in `WorldSessionRuntime.Replication.cs`. The JSON key is `hit`, written only when the value is not Regular, so a non-critical snapshot differs from v11 only in the version digit, and the client reads an undefined value as Regular. `CombatResolutionResult` does not change, so the tick goldens do not move. There is no schema change. The attacker's client now publishes one `DamageAppliedEvent` per hit (the snapshot applier; the action applier no longer does), and `CombatFeedbackSystem` turns a hit on the local actor into Incoming on the client.
 
 ## Namespace And Source Boundaries
 

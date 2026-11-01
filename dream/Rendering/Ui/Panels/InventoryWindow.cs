@@ -472,12 +472,12 @@ public static class InventoryWindow
 
         if (s.TryGet(UiSpriteNames.WinSideLeft, out UiSprite left))
         {
-            c.Tile(left, l.FromUnits(win, 0f, 41f, 12f, 375f), White);
+            c.Tile(left, l.FromUnits(win, 0f, crownH, 12f, 416f - crownH), White);
         }
 
         if (s.TryGet(UiSpriteNames.WinSideRight, out UiSprite right))
         {
-            c.Tile(right, l.FromUnits(win, 177f, 41f, 13f, 375f), White);
+            c.Tile(right, l.FromUnits(win, 177f, crownH, 13f, 416f - crownH), White);
         }
 
         if (s.TryGet(inventoryKind ? UiSpriteNames.WinCrownInventory : UiSpriteNames.WinCrownCombine, out UiSprite crown))
