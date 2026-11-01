@@ -30,6 +30,7 @@ public partial class PlayScene
         // poll the model cache, so a model never loads synchronously inside a draw call.
         // The counters cover the previous frame from here to here, HUD included.
         _captureApplyClientSize = applyClientSize;
+        _windowFocused = windowFocused;
         _lastFrameCounters = RenderCounters.CaptureAndReset();
         GpuFrameTimer gpuTimer = _gpuTimer ??= new GpuFrameTimer(GlGpuQueryApi.Instance);
         gpuTimer.BeginFrame();

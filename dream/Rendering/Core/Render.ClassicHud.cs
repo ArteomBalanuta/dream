@@ -134,6 +134,11 @@ public partial class Render
         ClassicHudSurface? surface = _classicSurface;
         _classicSurface = null;
         _uiBatch = null;
+        if (surface is not null)
+        {
+            // The panels' hover, menu and drag state is static; a new session starts clean.
+            Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
+        }
         try
         {
             surface?.Dispose();

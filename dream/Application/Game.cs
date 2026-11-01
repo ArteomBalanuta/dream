@@ -204,6 +204,8 @@ public class Game : GameWindow
                     PersistDesktopClientConfig,
                     PlayScene.ResolveLoopbackRemotePlayersEnabled(),
                     _localServer);
+                // The classic inventory's static panel state belongs to one scene.
+                Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
                 // The replaced startup scene releases its menu renderer and ImGui context here;
                 // the play scene's Render has already created and made current its own context.
                 _startupScene.Dispose();
@@ -236,6 +238,7 @@ public class Game : GameWindow
 
         PlayScene endedScene = _playScene;
         _playScene = null;
+        Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
         ILocalServerHandle endedLocalServer = _localServer;
         _localServer = CreateLocalServerHandle();
         RemoteClientOptions endedOptions = endedScene.SessionOptions;
