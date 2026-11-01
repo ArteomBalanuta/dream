@@ -69,6 +69,25 @@ public sealed class CharacterWindowTests : IDisposable
         Assert.True(_scene.Canvas.HasText("7"));
     }
 
+    [Theory]
+    [InlineData(6f)]
+    [InlineData(7f)]
+    [InlineData(8f)]
+    public void Rows_NeverTouchTheirValue_AtScale1_25(float charWidth)
+    {
+        Fill(Status(10, 12, 1f, 1.25f, 0));
+        UiLayout layout = UiLayout.Create(1100, 700, 0f);
+        Assert.Equal(1.25f, layout.Scale);
+        InventoryFakeCanvas canvas = new(_scene.Table) { CharWidth = charWidth };
+
+        CharacterWindow.Build(canvas, _scene.Input, _scene.View, layout, _scene.Table, _scene.Actions);
+
+        CanvasCall label = canvas.Texts.Last(t => t.Text == "Attack Speed");
+        CanvasCall value = canvas.Texts.Last(t => t.Text.EndsWith("1.25", StringComparison.Ordinal));
+        float gap = value.TextPos.X - (label.TextPos.X + (label.Text.Length * charWidth));
+        Assert.True(gap >= 6f, $"gap {gap} between label and value at char width {charWidth}");
+    }
+
     [Fact]
     public void Rows_WithoutABonusShowOnlyTheEffectiveValue()
     {

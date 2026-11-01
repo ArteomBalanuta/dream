@@ -3,8 +3,9 @@ using Dream.Simulation.Inventory;
 
 namespace Dream.Rendering.Ui;
 
-// Refills one reused HudView. The rows (stats, equipment, backpack, worn) are rebuilt only when the
-// status or the inventory snapshot changed; an unchanged frame allocates nothing. A hostile or
+// Refills one reused HudView. The stat rows are rebuilt only when the status changed, and the item
+// rows (equipment, backpack, worn) only when the inventory snapshot changed, so a health tick does
+// not rebuild the items; an unchanged frame allocates nothing. A hostile or
 // partial snapshot never throws: bad slot indices are skipped, missing lists read as empty and an
 // unknown item kind just has no icon.
 public sealed class HudViewBuilder
@@ -39,20 +40,37 @@ public sealed class HudViewBuilder
         // progress must survive that.
         view.Inventory = sameInventory && _haveRows ? _inventory : inventory;
         InventoryChanged = _haveRows && !sameInventory;
-        if (_haveRows && sameInventory && _status.Equals(status))
+        bool statusChanged = !_haveRows || !_status.Equals(status);
+        bool itemsChanged = !_haveRows || !sameInventory;
+        if (!statusChanged && !itemsChanged)
         {
             return false;
         }
 
         _haveRows = true;
-        _status = status;
-        _inventory = view.Inventory;
-        view.StatRows = CharacterPanelModel.BuildStatRows(status);
-        view.Equipment = CharacterPanelModel.BuildSlotRows(inventory);
-        FillBackpack(view.Backpack, inventory);
-        FillWorn(view.Worn, view.Equipment);
+        if (statusChanged)
+        {
+            _status = status;
+            view.StatRows = CharacterPanelModel.BuildStatRows(status);
+            StatRowRebuilds++;
+        }
+
+        if (itemsChanged)
+        {
+            _inventory = view.Inventory;
+            view.Equipment = CharacterPanelModel.BuildSlotRows(inventory);
+            FillBackpack(view.Backpack, inventory);
+            FillWorn(view.Worn, view.Equipment);
+            ItemRowRebuilds++;
+        }
+
         return true;
     }
+
+    // How often each half was rebuilt (for tests).
+    public int StatRowRebuilds { get; private set; }
+
+    public int ItemRowRebuilds { get; private set; }
 
     // Same contents, not the same list objects: every decoded snapshot has fresh lists, and the
     // record's own Equals would call them all different.

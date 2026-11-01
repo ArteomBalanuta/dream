@@ -162,6 +162,31 @@ public class HudViewBuilderTests
     }
 
     [Fact]
+    public void Refresh_AHealthChange_RebuildsTheStatRowsButNotTheItems_AndAnInventoryChangeTheReverse()
+    {
+        HudViewBuilder builder = new(Sprites(), new HudView());
+        PlayerInventorySnapshot inv = Inventory(new InventorySlotSnapshot(0, Item(1, "axe.twinbit")));
+        builder.Refresh(Status(), inv);
+        HudItemView[] bagBefore = builder.View.Backpack;
+        CharacterSlotRow[] equipmentBefore = builder.View.Equipment;
+        Assert.Equal((1, 1), (builder.StatRowRebuilds, builder.ItemRowRebuilds));
+
+        builder.Refresh(Status(health: 50), inv);
+        CharacterStatRow[] statsAfterHealth = builder.View.StatRows;
+
+        Assert.Equal((2, 1), (builder.StatRowRebuilds, builder.ItemRowRebuilds));
+        Assert.Same(equipmentBefore, builder.View.Equipment);
+        Assert.Same(bagBefore, builder.View.Backpack);
+        Assert.True(builder.View.Backpack[0].HasIcon);
+
+        builder.Refresh(Status(health: 50), Inventory(new InventorySlotSnapshot(0, Item(2, "axe.twinbit"))));
+
+        Assert.Equal((2, 2), (builder.StatRowRebuilds, builder.ItemRowRebuilds));
+        Assert.Same(statsAfterHealth, builder.View.StatRows);
+        Assert.Equal(2L, builder.View.Backpack[0].Item.ItemInstanceId);
+    }
+
+    [Fact]
     public void Refresh_AnUnchangedFrame_AllocatesNothing()
     {
         HudViewBuilder builder = new(Sprites(), new HudView());
