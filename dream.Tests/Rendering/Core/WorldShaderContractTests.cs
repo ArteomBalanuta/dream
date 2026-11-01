@@ -95,6 +95,20 @@ public class WorldShaderContractTests
         Assert.DoesNotContain("GetUniformLocation", setEmissive);
         Assert.Contains("emissiveFactor.Equals(_uploadedEmissiveFactor)", setEmissive);
         Assert.Single(Regex.Matches(setEmissive, @"RenderCounters\.CountUniformUpload\(\);"));
+        // The emissive texture flag, scroll and time are cached the same way.
+        foreach ((string signature, string cached) in new[]
+        {
+            ("public void SetHasEmissiveTexture(bool hasEmissiveTexture)", "value == _uploadedHasEmissiveTexture"),
+            ("public void SetEmissiveUvScroll(Vector2 uvScroll)", "uvScroll.Equals(_uploadedEmissiveUvScroll)"),
+            ("public void SetTime(float seconds)", "seconds.Equals(_uploadedTime)"),
+        })
+        {
+            string body = MethodBody(shader, signature);
+            Assert.DoesNotContain("GetUniformLocation", body);
+            Assert.Contains(cached, body);
+            Assert.Single(Regex.Matches(body, @"RenderCounters\.CountUniformUpload\(\);"));
+        }
+
         string rendering = Path.Combine(RepoRoot(), "dream", "Rendering");
         foreach (string file in Directory.EnumerateFiles(rendering, "*.cs", SearchOption.AllDirectories))
         {

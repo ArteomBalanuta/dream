@@ -21,6 +21,9 @@ public sealed class Shader : IDisposable
     public const string NormalMatrixUniformName = "normalMatrix";
     public const string AlphaCutoffUniformName = "material.alphaCutoff";
     public const string EmissiveFactorUniformName = "material.emissiveFactor";
+    public const string HasEmissiveTextureUniformName = "material.hasEmissiveTexture";
+    public const string EmissiveUvScrollUniformName = "material.emissiveUvScroll";
+    public const string TimeUniformName = "uTime";
 
     // Defined in the fragment source of a world program's MASK variant only. The cutoff discard
     // sits behind it: a fragment shader that can discard loses early depth optimizations even when
@@ -32,6 +35,9 @@ public sealed class Shader : IDisposable
     private int _normalMatrixLocation = -1;
     private int _alphaCutoffLocation = -1;
     private int _emissiveFactorLocation = -1;
+    private int _hasEmissiveTextureLocation = -1;
+    private int _emissiveUvScrollLocation = -1;
+    private int _timeLocation = -1;
 
     // Last cutoff uploaded. Uniform values live in the program, so a value already there is not
     // uploaded again. Unknown until the first upload.
@@ -40,6 +46,12 @@ public sealed class Shader : IDisposable
     // Last emissive factor uploaded, cached the same way. Almost every material is non-emissive
     // (0), so binding one after another uploads nothing. Unknown (NaN) until the first upload.
     private Vector3 _uploadedEmissiveFactor = new(float.NaN);
+
+    // Last emissive texture flag, scroll and frame time uploaded, cached the same way. Unknown
+    // (-1 / NaN) until the first upload.
+    private int _uploadedHasEmissiveTexture = -1;
+    private Vector2 _uploadedEmissiveUvScroll = new(float.NaN);
+    private float _uploadedTime = float.NaN;
 
     public Shader(string vertexPath, string fragmentPath, string? fragmentDefine = null)
     {
@@ -120,6 +132,9 @@ public sealed class Shader : IDisposable
         _normalMatrixLocation = GetUniformLocation(NormalMatrixUniformName);
         _alphaCutoffLocation = GetUniformLocation(AlphaCutoffUniformName);
         _emissiveFactorLocation = GetUniformLocation(EmissiveFactorUniformName);
+        _hasEmissiveTextureLocation = GetUniformLocation(HasEmissiveTextureUniformName);
+        _emissiveUvScrollLocation = GetUniformLocation(EmissiveUvScrollUniformName);
+        _timeLocation = GetUniformLocation(TimeUniformName);
         // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
         // lighting.glsl) and the LightList block (pointLights.glsl) are pointed at their binding
         // points here, once per program. Programs that do not declare a block are left alone.
@@ -348,6 +363,47 @@ public sealed class Shader : IDisposable
         _uploadedEmissiveFactor = emissiveFactor;
     }
 
+    // `material.hasEmissiveTexture`: gates the emissive sample in both world fragment shaders. A
+    // program without it uploads nothing.
+    public void SetHasEmissiveTexture(bool hasEmissiveTexture)
+    {
+        int value = hasEmissiveTexture ? 1 : 0;
+        if (_hasEmissiveTextureLocation < 0 || value == _uploadedHasEmissiveTexture)
+        {
+            return;
+        }
+
+        GL.Uniform1(_hasEmissiveTextureLocation, value);
+        RenderCounters.CountUniformUpload();
+        _uploadedHasEmissiveTexture = value;
+    }
+
+    // `material.emissiveUvScroll`: emissive UV offset per second (zero = still).
+    public void SetEmissiveUvScroll(Vector2 uvScroll)
+    {
+        if (_emissiveUvScrollLocation < 0 || uvScroll.Equals(_uploadedEmissiveUvScroll))
+        {
+            return;
+        }
+
+        GL.Uniform2(_emissiveUvScrollLocation, uvScroll);
+        RenderCounters.CountUniformUpload();
+        _uploadedEmissiveUvScroll = uvScroll;
+    }
+
+    // `uTime`: seconds from RenderFrameClock, read only by scrolling emissive materials.
+    public void SetTime(float seconds)
+    {
+        if (_timeLocation < 0 || seconds.Equals(_uploadedTime))
+        {
+            return;
+        }
+
+        GL.Uniform1(_timeLocation, seconds);
+        RenderCounters.CountUniformUpload();
+        _uploadedTime = seconds;
+    }
+
     public void SetVector4(string uniformName, Vector4 vector)
     {
         int location = GetUniformLocation(uniformName);
@@ -446,6 +502,9 @@ public sealed class Shader : IDisposable
             _normalMatrixLocation = -1;
             _alphaCutoffLocation = -1;
             _emissiveFactorLocation = -1;
+            _hasEmissiveTextureLocation = -1;
+            _emissiveUvScrollLocation = -1;
+            _timeLocation = -1;
         }
     }
     #endregion

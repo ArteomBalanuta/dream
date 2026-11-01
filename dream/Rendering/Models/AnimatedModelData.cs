@@ -160,6 +160,32 @@ public sealed class AnimatedModelData
         return joints;
     }
 
+    public const string EmissiveScrollExtrasKey = "dreamEmissiveScroll";
+
+    // Reads the material extra `dreamEmissiveScroll: [u, v]`. Absent, not an array of two
+    // numbers, or non-finite gives zero (no scroll).
+    public static Vector2 ReadEmissiveUvScroll(System.Text.Json.Nodes.JsonNode? extras)
+    {
+        if (extras is not System.Text.Json.Nodes.JsonObject obj
+            || !obj.TryGetPropertyValue(EmissiveScrollExtrasKey, out System.Text.Json.Nodes.JsonNode? node)
+            || node is not System.Text.Json.Nodes.JsonArray array
+            || array.Count != 2)
+        {
+            return Vector2.Zero;
+        }
+
+        try
+        {
+            float u = array[0]!.GetValue<float>();
+            float v = array[1]!.GetValue<float>();
+            return float.IsFinite(u) && float.IsFinite(v) ? new Vector2(u, v) : Vector2.Zero;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or NullReferenceException)
+        {
+            return Vector2.Zero;
+        }
+    }
+
     private static AnimatedModelMaterialData[] LoadMaterials(ModelRoot model)
     {
         AnimatedModelMaterialData[] materials = new AnimatedModelMaterialData[model.LogicalMaterials.Count];
@@ -207,6 +233,8 @@ public sealed class AnimatedModelData
             materialData.EmissiveFactor = emissive.HasValue
                 ? emissive.Value.Color.ToOpenTK().Xyz
                 : Vector3.Zero;
+
+            materialData.EmissiveUvScroll = ReadEmissiveUvScroll(material.Extras);
 
             // Decode textures
             materialData.BaseColorTexture = DecodeTexture(material, "BaseColor");
@@ -344,6 +372,8 @@ public sealed class AnimatedModelMaterialData
 {
     public Vector4 BaseColorFactor;
     public Vector3 EmissiveFactor;
+    // UV per second from the glTF material extra `dreamEmissiveScroll` (zero = still).
+    public Vector2 EmissiveUvScroll;
     public float MetallicFactor;
     public float RoughnessFactor;
     public float AlphaCutoff;
