@@ -142,14 +142,23 @@ public partial class Render
         UiGlRenderer? gl = _uiGl;
         _uiAtlas = null;
         _uiGl = null;
+        ClassicHudSurface? surface = _classicSurface;
+        _classicSurface = null;
         _uiBatch = null;
         try
         {
-            atlas?.Dispose();
+            surface?.Dispose();
         }
         finally
         {
-            gl?.Dispose();
+            try
+            {
+                atlas?.Dispose();
+            }
+            finally
+            {
+                gl?.Dispose();
+            }
         }
     }
 }

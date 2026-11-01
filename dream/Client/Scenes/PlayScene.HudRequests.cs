@@ -74,6 +74,18 @@ public partial class PlayScene
             persistDesktopConfig = true;
         }
 
+        if (request.UiScale.HasValue)
+        {
+            _settings.SetUiScale(request.UiScale.Value);
+            persistDesktopConfig = true;
+        }
+
+        if (request.CloseInventory && _settings.InventoryVisible)
+        {
+            // The classic satchel button. GameplayInputResumeFilter swallows a click still held.
+            _settings.ToggleInventory();
+        }
+
         if (request.EquipInventorySlotIndex.HasValue)
         {
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(

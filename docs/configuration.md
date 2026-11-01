@@ -173,6 +173,18 @@ The `camera_view` key currently accepts `first_person` or `third_person`.
 
 The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. VSync stays off. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
 
+The `admin_hud` key (`0` or `1`, default `0`) makes the F3 key and the developer controls in Settings available. The `ui_scale` key sets the classic HUD scale: `0` (default) fits the window, other values snap to quarter steps from 1 to 4. The Settings window has a UI Scale slider that writes `ui_scale` back. Missing keys use these defaults. The shipped `dream/config/desktop-client.txt` is not changed; the game adds the keys the next time it saves.
+
+### HUD (classic and ImGui)
+
+The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the automatic fallback: if the sprite atlas is missing, corrupt, fails to upload or is still loading after 5 s, or if drawing throws, the game switches to ImGui for the rest of the run and writes one `[render-fault] [hud-classic]` line. This is independent of `admin_hud`.
+
+- `admin_hud=1` (or `DREAM_ADMIN_HUD=1` for one run; `DREAM_ADMIN_HUD=0` turns a configured `1` off for one run): F3 swaps between the classic and the ImGui HUD, in-session only. Without it F3 does nothing. Once the classic HUD has failed, F3 is inert too.
+- Without admin availability, Settings hides the developer controls (Fly Speed, stats, collision geometry, performance counters, new world size, viewmodel tuning, time of day). Field of view, mouse sensitivity, third person, floating damage text, resolution presets, connection info and UI Scale stay. Set `admin_hud=1` to get them back.
+- `DREAM_HUD=imgui` forces the ImGui HUD for the run (baseline comparison); F3 is inert then.
+- The environment overrides are never written back to the file. Nothing about the admin setting is sent to the server: it hides and shows client-side UI only, and the server accepts the same intents either way.
+- `DREAM_HUD_CAPTURE=<dir>` and `DREAM_HUD_CAPTURE_SCRIPT=play,inventory,settings,admin` write one PNG per step (`NN-<step>.png`) of the real back buffer after a short warm-up, then close the window. The `admin` step needs `DREAM_ADMIN_HUD=1`. Verification tool only.
+
 ## Profiling Environment Flags
 
 For repeatable local profiling, set `DREAM_AUTO_CONNECT=1` before launching the desktop client. The startup scene waits for the integrated loopback server, applies its current local endpoint, and begins the same connection flow as the Connect button without requiring UI input.

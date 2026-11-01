@@ -65,6 +65,7 @@ public partial class PlayScene : IDisposable
     private bool _wasSettingsTogglePressed;
     private bool _wasInventoryTogglePressed;
     private bool _wasCameraViewTogglePressed;
+    private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
@@ -97,7 +98,12 @@ public partial class PlayScene : IDisposable
 
     private double RemotePlayerRenderTick => _serverTickClock.RenderTick;
 
-    public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
+    // The classic inventory draws its own cursor, so the OS cursor hides (it can still leave the
+    // window; a drop outside cancels). Settings and the ImGui surface keep the normal cursor.
+    public CursorState DesiredCursorState =>
+        _render.ClassicHudCursorActive && _settings.InventoryVisible && !_settings.SettingsVisible
+            ? CursorState.Hidden
+            : _settings.CurrentRuntimeState.DesiredCursorState;
 
     public Vector3 LastReportedPlayerPosition => _runtime.Player.LastReportedPosition;
 

@@ -22,7 +22,9 @@ public readonly record struct HudInteractionRequest(
     int? EquipInventorySlotIndex,
     BuildMaterialChoice? BuildMaterial = null,
     InventoryHudAction? InventoryAction = null,
-    bool CloseInventory = false)
+    bool CloseInventory = false,
+    // A UI scale picked in Settings: 0 is auto, other values snap to quarter steps (GameSettings.SetUiScale).
+    float? UiScale = null)
 {
     public static HudInteractionRequest None => new(
         null,

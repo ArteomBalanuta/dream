@@ -23,4 +23,8 @@ public interface IUiInput
     int ActiveDragPayload { get; }
 
     bool ModalActive { get; set; }
+
+    // This frame's pointer (additive after C0, with a default so existing fakes still compile):
+    // the cursor panel and the drag ghost need the position.
+    UiPointer Pointer => default;
 }

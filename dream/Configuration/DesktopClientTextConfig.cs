@@ -71,7 +71,9 @@ public static class DesktopClientTextConfig
             $"damage_text_size={Format(config.FloatingCombatText.SizeMultiplier)}",
             $"damage_text_speed={Format(config.FloatingCombatText.MotionSpeedMultiplier)}",
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
-            $"max_fps={config.MaxFramesPerSecond}"
+            $"max_fps={config.MaxFramesPerSecond}",
+            $"admin_hud={(config.AdminHud ? 1 : 0)}",
+            $"ui_scale={Format(config.UiScale)}"
         }) + Environment.NewLine;
     }
 
@@ -96,6 +98,12 @@ public static class DesktopClientTextConfig
                 config.Port = port;
             }
 
+            return;
+        }
+
+        if (key == "admin_hud")
+        {
+            config.AdminHud = HudOptions.ParseFlag(value) ?? false;
             return;
         }
 
@@ -133,6 +141,9 @@ public static class DesktopClientTextConfig
                 break;
             case "max_fps":
                 config.MaxFramesPerSecond = (int)MathF.Round(parsed);
+                break;
+            case "ui_scale":
+                config.UiScale = parsed;
                 break;
             case "damage_text_size":
                 config.FloatingCombatText = config.FloatingCombatText with { SizeMultiplier = parsed };

@@ -39,57 +39,67 @@ public partial class Render
         int? equipInventorySlotIndex = null;
         BuildMaterialChoice? buildMaterial = null;
         InventoryHudAction? inventoryAction = null;
+        float? uiScale = null;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
-
-        ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
-        ImGui.Begin("HUD",
-            ImGuiWindowFlags.NoTitleBar |
-            ImGuiWindowFlags.AlwaysAutoResize |
-            ImGuiWindowFlags.NoMove |
-            (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
-            ImGuiWindowFlags.NoFocusOnAppearing );
-
+        // The classic surface draws the status, inventory, loot lines and death text itself; ImGui
+        // keeps only Settings and the Build panel then.
+        bool imGuiSurface = !_classicSurfaceActive;
+        // The developer controls show only where the admin setting is available (admin_hud or
+        // DREAM_ADMIN_HUD). Display only: nothing is sent, and the server enforces nothing here.
+        bool devControls = settings.AdminHudAvailable;
         Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
-        DrawWorldTransferIndicator(worldTransfer, hudText);
-        ImGui.TextUnformatted(status.HealthLabel);
-        ImGui.TextUnformatted(status.ModeLabel);
-        ImGui.TextUnformatted(status.DamageLabel);
-        ImGui.TextUnformatted(status.LevelLabel);
-        ImGui.TextUnformatted(status.ExperiencePercentLabel);
-        ImGui.TextUnformatted(status.ExperienceProgressLabel);
-        if (!string.IsNullOrWhiteSpace(connectionLabel))
+
+        if (imGuiSurface)
         {
-            HudText.Text(hudText, $"Server: {connectionLabel}");
-        }
-        if (playerRoster.Count > 0)
-        {
-            HudText.Text(hudText, $"Players: {playerRoster.Count}");
-        }
-        if (!string.IsNullOrWhiteSpace(rejectionMessage))
-        {
-            // TextColored is a printf format, so the colour is pushed around unformatted text.
-            ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f));
-            ImGui.TextUnformatted(rejectionMessage);
-            ImGui.PopStyleColor();
-        }
-        HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
-        if (settings.ShowPerformanceCounters && performance.HasCounters)
-        {
-            for (int lineIndex = 0; lineIndex < FramePerformanceSnapshot.HudLineCount; lineIndex++)
+            ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
+            ImGui.Begin("HUD",
+                ImGuiWindowFlags.NoTitleBar |
+                ImGuiWindowFlags.AlwaysAutoResize |
+                ImGuiWindowFlags.NoMove |
+                (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
+                ImGuiWindowFlags.NoFocusOnAppearing );
+
+            DrawWorldTransferIndicator(worldTransfer, hudText);
+            ImGui.TextUnformatted(status.HealthLabel);
+            ImGui.TextUnformatted(status.ModeLabel);
+            ImGui.TextUnformatted(status.DamageLabel);
+            ImGui.TextUnformatted(status.LevelLabel);
+            ImGui.TextUnformatted(status.ExperiencePercentLabel);
+            ImGui.TextUnformatted(status.ExperienceProgressLabel);
+            if (!string.IsNullOrWhiteSpace(connectionLabel))
             {
-                if (performance.TryFormatHudLine(lineIndex, hudText, out int lineBytes))
+                HudText.Text(hudText, $"Server: {connectionLabel}");
+            }
+            if (playerRoster.Count > 0)
+            {
+                HudText.Text(hudText, $"Players: {playerRoster.Count}");
+            }
+            if (!string.IsNullOrWhiteSpace(rejectionMessage))
+            {
+                // TextColored is a printf format, so the colour is pushed around unformatted text.
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f));
+                ImGui.TextUnformatted(rejectionMessage);
+                ImGui.PopStyleColor();
+            }
+            HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
+            if (settings.ShowPerformanceCounters && performance.HasCounters)
+            {
+                for (int lineIndex = 0; lineIndex < FramePerformanceSnapshot.HudLineCount; lineIndex++)
                 {
-                    HudText.TextUnformatted(hudText[..lineBytes]);
-                }
-                else
-                {
-                    ImGui.TextUnformatted(performance.FormatHudLine(lineIndex));
+                    if (performance.TryFormatHudLine(lineIndex, hudText, out int lineBytes))
+                    {
+                        HudText.TextUnformatted(hudText[..lineBytes]);
+                    }
+                    else
+                    {
+                        ImGui.TextUnformatted(performance.FormatHudLine(lineIndex));
+                    }
                 }
             }
+            ImGui.Text("Press Esc for settings");
+            ImGui.Text("Press V for inventory");
+            ImGui.End();
         }
-        ImGui.Text("Press Esc for settings");
-        ImGui.Text("Press V for inventory");
-        ImGui.End();
 
         if (settings.SettingsVisible)
         {
@@ -129,29 +139,32 @@ public partial class Render
                     : CameraViewMode.FirstPerson;
             }
 
-            float currentNoclipSpeed = settings.NoclipSpeed;
-            if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+            if (devControls)
             {
-                noclipSpeed = currentNoclipSpeed;
-            }
+                float currentNoclipSpeed = settings.NoclipSpeed;
+                if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+                {
+                    noclipSpeed = currentNoclipSpeed;
+                }
 
-            // The sliders edit the base stats; the effective ones (gear included) are only shown.
-            int currentStrength = status.BaseStrength;
-            if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
-            {
-                strength = currentStrength;
-            }
+                // The sliders edit the base stats; the effective ones (gear included) are only shown.
+                int currentStrength = status.BaseStrength;
+                if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
+                {
+                    strength = currentStrength;
+                }
 
-            float currentAttackSpeed = status.BaseAttackSpeed;
-            if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
-            {
-                attackSpeed = currentAttackSpeed;
-            }
+                float currentAttackSpeed = status.BaseAttackSpeed;
+                if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
+                {
+                    attackSpeed = currentAttackSpeed;
+                }
 
-            int currentVitality = status.BaseVitality;
-            if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
-            {
-                vitality = currentVitality;
+                int currentVitality = status.BaseVitality;
+                if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
+                {
+                    vitality = currentVitality;
+                }
             }
 
             FloatingCombatTextTuning textTuning = settings.FloatingCombatText;
@@ -186,30 +199,40 @@ public partial class Render
                 }
             }
 
-            DrawViewModelControls(settings);
-            DrawTimeOfDayControls(TimeOfDayOverride);
-
-            bool showCollision = settings.ShowCollisionGeometry;
-            if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
+            // HUD scale: 0 is auto (fit the window). Shown always; the classic HUD reads it.
+            float uiScaleValue = settings.UiScaleSetting;
+            if (ImGui.SliderFloat("UI Scale (0 = auto)", ref uiScaleValue, 0f, UiScaleSliderMax, "%.2f"))
             {
-                showCollisionGeometry = showCollision;
+                uiScale = uiScaleValue;
             }
 
-            bool showPerformance = settings.ShowPerformanceCounters;
-            if (ImGui.Checkbox("Show Performance Counters", ref showPerformance))
+            if (devControls)
             {
-                showPerformanceCounters = showPerformance;
-            }
+                DrawViewModelControls(settings);
+                DrawTimeOfDayControls(TimeOfDayOverride);
 
-            int floorSize = settings.PendingFloorSize;
-            if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
-            {
-                stagedFloorSize = floorSize;
-            }
-            if (ImGui.Button("Set new world size"))
-            {
-                requestedFloorSize = floorSize;
-                stagedFloorSize = floorSize;
+                bool showCollision = settings.ShowCollisionGeometry;
+                if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
+                {
+                    showCollisionGeometry = showCollision;
+                }
+
+                bool showPerformance = settings.ShowPerformanceCounters;
+                if (ImGui.Checkbox("Show Performance Counters", ref showPerformance))
+                {
+                    showPerformanceCounters = showPerformance;
+                }
+
+                int floorSize = settings.PendingFloorSize;
+                if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
+                {
+                    stagedFloorSize = floorSize;
+                }
+                if (ImGui.Button("Set new world size"))
+                {
+                    requestedFloorSize = floorSize;
+                    stagedFloorSize = floorSize;
+                }
             }
 
             ImGui.Text("Resolution Presets");
@@ -232,7 +255,7 @@ public partial class Render
             ImGui.End();
         }
 
-        if (settings.InventoryVisible)
+        if (imGuiSurface && settings.InventoryVisible)
         {
             DrawInventoryOverlay(inventory, status, ref equipInventorySlotIndex, ref inventoryAction);
         }
@@ -242,8 +265,12 @@ public partial class Render
             DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
         }
 
-        DrawLootFeed(settings);
-        if (status.IsDead)
+        if (imGuiSurface)
+        {
+            DrawLootFeed(settings);
+        }
+
+        if (imGuiSurface && status.IsDead)
         {
             DrawDeathOverlay(settings, status);
         }
@@ -264,8 +291,11 @@ public partial class Render
             floatingCombatText,
             equipInventorySlotIndex,
             buildMaterial,
-            inventoryAction);
+            inventoryAction,
+            UiScale: uiScale);
     }
+
+    private const float UiScaleSliderMax = 4f;
 
     // The "Build" window, shown in Building mode: Auto (the supporting cell's material) or one of
     // BuildMaterialCatalog.Placeable. It takes clicks only while an overlay has freed the mouse

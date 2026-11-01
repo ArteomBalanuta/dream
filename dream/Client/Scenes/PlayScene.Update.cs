@@ -132,6 +132,16 @@ public partial class PlayScene
         }
 
         _wasCameraViewTogglePressed = cameraViewTogglePressed;
+
+        // F3 swaps the classic HUD for the ImGui one and back. Display only: a no-op unless the
+        // admin setting is available, in-session, never saved, and nothing is sent.
+        bool adminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);
+        if (adminHudTogglePressed && !_wasAdminHudTogglePressed)
+        {
+            _render.ToggleAdminHud(_settings);
+        }
+
+        _wasAdminHudTogglePressed = adminHudTogglePressed;
     }
 
     private void QueueRemoteCommandFrame(PlayerCommandFrame localCommandFrame)

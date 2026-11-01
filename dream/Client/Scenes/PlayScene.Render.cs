@@ -175,6 +175,7 @@ public partial class PlayScene
         long hudDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.Hud);
         _render.WorldTransferHud = CaptureWorldTransferHudState(_remoteClient);
+        _render.HudScene = new HudSceneState(LastReportedPlayerPosition);
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -196,6 +197,7 @@ public partial class PlayScene
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
+        CaptureHudFrameIfRequested();
     }
 
     public void Resize(Vector2i size)
