@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
@@ -10,46 +11,65 @@ using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Inventory;
 
-// Wave H1: what the equipment fields add to the inventory a joining player receives
-// (JoinAcceptedMessage.Inventory), for the starter kit. At C0 the join-accepted frame for the
-// starter kit measured 3,566 B and the wave H gate is 4,099 B, so the new fields have 533 B.
+// What the inventory a joining player receives (JoinAcceptedMessage.Inventory) costs for the starter kit.
+// At wave H C0 the whole join-accepted frame for the kit measured 3,566 B and the wave H gate was 4,099 B.
+// Classic HUD iteration 2 (protocol v13) sends the snapshot compactly (PlayerInventorySnapshotJsonConverter):
+// the item text travels once, in the client's catalog, not once per copy. The inventory must get smaller than
+// the v12 shape of the same kit, and its bytes are pinned.
 public sealed class StarterKitInventoryBytesTests(ITestOutputHelper output)
 {
-    private const int GateHeadroomBytes = 4_099 - 3_566;
+    private static int Bytes(PlayerInventorySnapshot inventory, JsonSerializerOptions options)
+        => JsonSerializer.SerializeToUtf8Bytes(inventory, options).Length;
 
-    private static int InventoryBytes(PlayerInventorySnapshot inventory)
-        => JsonSerializer.SerializeToUtf8Bytes(inventory, ProtocolWireOptions.V3).Length;
-
-    // The inventory as the C0 server sent it: none of the wave H item fields.
-    private static PlayerInventorySnapshot AsAtC0(PlayerInventorySnapshot inventory)
+    private static PlayerInventorySnapshot Starter()
     {
-        static InventorySlotSnapshot Strip(InventorySlotSnapshot slot) => slot with
-        {
-            Item = slot.Item is { } item
-                ? item with { Modifiers = null, HeldLight = HeldLightKind.None, EquipSlots = 0, Rarity = ItemRarity.Common, IsRolled = false }
-                : null,
-        };
+        EquipmentTestWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
+        Assert.True(inventory.Ensure("Alice"));
+        return inventory.BuildSnapshot("Alice");
+    }
 
-        return inventory with
+    // The kit as the v12 server laid it out: sixteen slots in a row, the kit in slots 0 to 4, the hammer also
+    // worn (the alias), and every item with its full text.
+    private static PlayerInventorySnapshot AsV12(PlayerInventorySnapshot snapshot)
+    {
+        string[] kinds = ToolCatalog.StarterItemKinds.ToArray();
+        InventorySlotSnapshot[] slots = new InventorySlotSnapshot[16];
+        for (int i = 0; i < slots.Length; i++)
         {
-            Slots = inventory.Slots.Select(Strip).ToArray(),
-            EquippedSlot = inventory.EquippedSlot is { } equipped ? Strip(equipped) : null,
+            slots[i] = i < kinds.Length
+                ? new InventorySlotSnapshot(i, InventoryWireSamples.Item(kinds[i], i + 1), IsEquipped: i == 0)
+                : new InventorySlotSnapshot(i, null);
+        }
+
+        return snapshot with
+        {
+            Columns = 4,
+            Rows = 4,
+            Slots = slots,
+            EquippedSlot = new InventorySlotSnapshot(EquipmentSlots.FirstSlotIndex, InventoryWireSamples.Item(kinds[0], 1), true),
+            Equipment = null,
         };
     }
 
     [Fact]
-    public void TheEquipmentFields_AddNoMoreThanTheGateAllows_ToTheStarterKitInventory()
+    public void TheCompactStarterKit_IsSmallerThanTheV12Shape_AndItsBytesArePinned()
     {
-        EquipmentTestWorld world = new();
-        using Dream.Simulation.Persistence.PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-        Assert.True(inventory.Ensure("Alice"));
-        PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Alice");
+        PlayerInventorySnapshot snapshot = Starter();
 
-        int now = InventoryBytes(snapshot);
-        int atC0 = InventoryBytes(AsAtC0(snapshot));
+        int compact = Bytes(snapshot, ProtocolWireOptions.V3);
+        int v12 = Bytes(AsV12(snapshot), ProtocolWireOptions.V3Reflection);
+        string json = Encoding.UTF8.GetString(JsonSerializer.SerializeToUtf8Bytes(snapshot, ProtocolWireOptions.V3));
 
-        output.WriteLine($"starter kit inventory: {atC0} B at C0, {now} B now, +{now - atC0} B (headroom {GateHeadroomBytes} B)");
-        Assert.True(now - atC0 <= GateHeadroomBytes, $"+{now - atC0} B exceeds the {GateHeadroomBytes} B headroom");
+        output.WriteLine($"starter kit inventory: {v12} B as v12, {compact} B compact ({compact - v12:+0;-0} B)");
+        output.WriteLine(json);
+        Assert.True(compact < v12, $"{compact} B is not smaller than the v12 shape's {v12} B");
+        Assert.True(compact * 3 < v12, $"{compact} B is not under a third of {v12} B");
+
+        // The kit in its first fits: the hammer worn, the blade, maul, lantern and torch beside each other.
+        Assert.Equal(
+            """{"playerName":"Alice","columns":8,"rows":8,"bag":[[2,2,"tool.field-blade",0,[]],[4,3,"tool.stone-maul",0,[]],[6,4,"tool.survey-lantern",0,[]],[7,5,"tool.torch",0,[]]],"worn":[[100,1,"tool.builder-hammer",0,[]]]}""",
+            json);
     }
 }

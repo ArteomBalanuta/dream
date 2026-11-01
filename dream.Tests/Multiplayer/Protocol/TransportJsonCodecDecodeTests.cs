@@ -42,12 +42,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
                 22,
                 InitialWorld: null,
                 Roster: [new PlayerRosterEntry("session-a", 101, "Player A")],
-                Inventory: new PlayerInventorySnapshot(
-                    "Player A",
-                    4,
-                    4,
-                    [new InventorySlotSnapshot(0, new InventoryItemSnapshot(101, "tool.builder-hammer", "Builder Hammer", "held.tool.builder", 1, "Builder", ["Role: Building"]))],
-                    new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, null, true)),
+                Inventory: InventoryWireSamples.Starter("Player A"),
                 InitialActors: [CreateActor(0)],
                 InitialWorldMutationSequence: 5),
             new JoinRejectedMessage("server full"),
@@ -103,7 +98,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     public void Decode_AcceptsPayloadBeforeMessageKind()
     {
         DecodedProtocolMessage decoded = DecodeJson(
-            """{"payload":{"clientName":"client-a"},"protocolVersion":12,"messageKind":"client.hello","sequence":7}""");
+            """{"payload":{"clientName":"client-a"},"protocolVersion":13,"messageKind":"client.hello","sequence":7}""");
 
         Assert.Equal(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, "client.hello", 7), decoded.Envelope);
         Assert.Equal(new ClientHelloMessage("client-a"), decoded.Message);
@@ -116,7 +111,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
             """
             {
               "extra": {"nested": [1, 2, {"payload": 3}], "messageKind": "server.hello"},
-              "protocolVersion":12,
+              "protocolVersion":13,
               "payload": {"reason": "full", "unknown": true},
               "other": "value",
               "messageKind": "server.join-rejected",
@@ -133,7 +128,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     public void Decode_MissingSequence_DefaultsToZero()
     {
         DecodedProtocolMessage decoded = DecodeJson(
-            """{"protocolVersion":12,"messageKind":"client.hello","payload":{"clientName":"a"}}""");
+            """{"protocolVersion":13,"messageKind":"client.hello","payload":{"clientName":"a"}}""");
 
         Assert.Equal((ulong)0, decoded.Envelope.Sequence);
     }
@@ -144,7 +139,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"protocolVersion":999,"messageKind":"client.hello","sequence":1,"payload":{"clientName":"a"}}"""));
 
-        Assert.Equal("Unsupported protocol version 999. Supported version: 12.", ex.Message);
+        Assert.Equal("Unsupported protocol version 999. Supported version: 13.", ex.Message);
     }
 
     [Fact]
@@ -153,14 +148,14 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"messageKind":"client.hello","payload":{"clientName":"a"}}"""));
 
-        Assert.Equal("Unsupported protocol version 0. Supported version: 12.", ex.Message);
+        Assert.Equal("Unsupported protocol version 0. Supported version: 13.", ex.Message);
     }
 
     [Fact]
     public void Decode_RejectsUnknownMessageKind_WithUnchangedMessage()
     {
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
-            """{"protocolVersion":12,"messageKind":"client.bogus","sequence":1,"payload":{"clientName":"a"}}"""));
+            """{"protocolVersion":13,"messageKind":"client.bogus","sequence":1,"payload":{"clientName":"a"}}"""));
 
         Assert.Equal("Unknown protocol message kind 'client.bogus'.", ex.Message);
     }
@@ -169,14 +164,14 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     public void Decode_UnknownMessageKind_IsRejectedBeforePayloadIsRead()
     {
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
-            """{"protocolVersion":12,"messageKind":"client.bogus","payload":[1,2,3]}"""));
+            """{"protocolVersion":13,"messageKind":"client.bogus","payload":[1,2,3]}"""));
 
         Assert.Equal("Unknown protocol message kind 'client.bogus'.", ex.Message);
     }
 
     [Theory]
-    [InlineData("""{"protocolVersion":12,"sequence":1,"payload":{"clientName":"a"}}""")]
-    [InlineData("""{"protocolVersion":12,"messageKind":null,"sequence":1,"payload":{"clientName":"a"}}""")]
+    [InlineData("""{"protocolVersion":13,"sequence":1,"payload":{"clientName":"a"}}""")]
+    [InlineData("""{"protocolVersion":13,"messageKind":null,"sequence":1,"payload":{"clientName":"a"}}""")]
     [InlineData("""{"protocolVersion":999,"sequence":1}""")]
     public void Decode_RejectsMissingMessageKind_WithUnchangedMessage(string json)
     {
@@ -191,7 +186,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"protocolVersion":999,"messageKind":"client.bogus","sequence":1}"""));
 
-        Assert.Equal("Unsupported protocol version 999. Supported version: 12.", ex.Message);
+        Assert.Equal("Unsupported protocol version 999. Supported version: 13.", ex.Message);
     }
 
     [Fact]
@@ -206,7 +201,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     public void Decode_NullPayload_IsRejectedWithMessageTypeName()
     {
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
-            """{"protocolVersion":12,"messageKind":"client.hello","sequence":1,"payload":null}"""));
+            """{"protocolVersion":13,"messageKind":"client.hello","sequence":1,"payload":null}"""));
 
         Assert.Equal("Failed to deserialize message 'ClientHelloMessage'.", ex.Message);
     }
@@ -215,7 +210,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     public void Decode_MissingPayload_IsRejectedWithInvalidOperationException()
     {
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
-            """{"protocolVersion":12,"messageKind":"client.hello","sequence":1}"""));
+            """{"protocolVersion":13,"messageKind":"client.hello","sequence":1}"""));
 
         Assert.Equal(new InvalidOperationException().Message, ex.Message);
     }
@@ -223,10 +218,10 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
     [Theory]
     [InlineData("""[1,2]""")]
     [InlineData("""{"protocolVersion":"1","messageKind":"client.hello","payload":{"clientName":"a"}}""")]
-    [InlineData("""{"protocolVersion":12,"messageKind":5,"payload":{"clientName":"a"}}""")]
-    [InlineData("""{"protocolVersion":12,"messageKind":"client.hello","sequence":-1,"payload":{"clientName":"a"}}""")]
-    [InlineData("""{"protocolVersion":12,"messageKind":"client.hello","payload":{"clientName":"a"}} x""")]
-    [InlineData("""{"protocolVersion":12,"messageKind":"client.hello","payload":{"clientName":"a"}""")]
+    [InlineData("""{"protocolVersion":13,"messageKind":5,"payload":{"clientName":"a"}}""")]
+    [InlineData("""{"protocolVersion":13,"messageKind":"client.hello","sequence":-1,"payload":{"clientName":"a"}}""")]
+    [InlineData("""{"protocolVersion":13,"messageKind":"client.hello","payload":{"clientName":"a"}} x""")]
+    [InlineData("""{"protocolVersion":13,"messageKind":"client.hello","payload":{"clientName":"a"}""")]
     public void Decode_RejectsMalformedJson_WithJsonException(string json)
     {
         Assert.ThrowsAny<JsonException>(() => DecodeJson(json));

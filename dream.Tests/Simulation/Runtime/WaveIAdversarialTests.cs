@@ -13,6 +13,7 @@ using Dream.Simulation.Runtime;
 using Dream.Simulation.Stats;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -207,18 +208,15 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
     public void TwoKillsInOneTick_IntoAPackWithOneFreeSlot_GiveOneItemAndOneLostNotice_InOrder()
     {
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
-        runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1);
+        // Every drop is a 1x1 ring, so "one free slot" is one free cell.
+        runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1, kinds: ["gear.iron-band"]);
         ConnectedPlayer player = runtime.AttachRemoteSession(A, A.Value);
         string key = player.CharacterKey.Value;
         Assert.True(runtime.InventoryService.Ensure(key));
-        int existing = runtime.InventoryService.BuildSnapshot(key).Slots.Count(slot => slot.Item != null);
-        for (int i = 0; i < InventoryConstants.BackpackSlotCount - existing - 1; i++)
-        {
-            Assert.Equal(InventoryEquipOutcome.Equipped, runtime.InventoryService.TryGrantRolled(key, "gear.leather-cap", ItemRarity.Common, new ItemRollSeed(3, 3, 3, 3, i)));
-        }
+        runtime.InventoryService.FillBagLeaving(key, freeCells: 1);
 
         string[] beforeKills = Backpack(runtime, A);
-        Assert.Equal(InventoryConstants.BackpackSlotCount - 1, beforeKills.Length);
+        Assert.Equal(1, runtime.InventoryService.BuildSnapshot(key).FreeCells());
 
         runtime.GrantLoot(A, "Wolf", enemyActorId: 9000, tick: 50);
         runtime.GrantLoot(A, "Wolf", enemyActorId: 9001, tick: 50);
@@ -228,7 +226,9 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         InventoryPushMessage push = Assert.Single(pushes).Message;
         Assert.Equal([false, true], push.Notices.Select(notice => notice.Lost).ToArray());
         Assert.NotNull(push.Inventory);
-        Assert.Equal(InventoryConstants.BackpackSlotCount, push.Inventory!.Value.Slots.Count(slot => slot.Item != null));
+        Assert.Equal(0, push.Inventory!.Value.FreeCells());
+        Assert.Equal(beforeKills.Length + 1, push.Inventory.Value.Slots.Count(slot => slot.Item != null));
+        // The new ring took the last free cell; nothing that was there moved.
         Assert.Equal(beforeKills, Backpack(runtime, A).Take(beforeKills.Length).ToArray());
     }
 
@@ -236,18 +236,14 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
     public void AFourDropTableIntoThreeFreeSlots_GainsThree_LosesOne_AndTheLossesOfOtherPlayersAreTheirOwn()
     {
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
-        runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 4);
+        // Every drop is a 1x1 ring, so "free slots" are free cells.
+        runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 4, kinds: ["gear.iron-band"]);
         foreach (PlayerSessionId session in new[] { A, B })
         {
             ConnectedPlayer player = runtime.AttachRemoteSession(session, session.Value);
             string key = player.CharacterKey.Value;
             Assert.True(runtime.InventoryService.Ensure(key));
-            int existing = runtime.InventoryService.BuildSnapshot(key).Slots.Count(slot => slot.Item != null);
-            int fill = InventoryConstants.BackpackSlotCount - existing - (session == A ? 3 : 4);
-            for (int i = 0; i < fill; i++)
-            {
-                Assert.Equal(InventoryEquipOutcome.Equipped, runtime.InventoryService.TryGrantRolled(key, "gear.leather-cap", ItemRarity.Common, new ItemRollSeed(4, 4, 4, 4, i)));
-            }
+            runtime.InventoryService.FillBagLeaving(key, freeCells: session == A ? 3 : 4);
         }
 
         // One tick, two killers: A has 3 free slots for 4 drops, B has exactly 4.
@@ -263,8 +259,8 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         Assert.Equal(1, a.Notices.Count(notice => notice.Lost));
         Assert.Equal(4, b.Notices.Count(notice => !notice.Lost));
         Assert.DoesNotContain(b.Notices, notice => notice.Lost);
-        Assert.Equal(InventoryConstants.BackpackSlotCount, a.Inventory!.Value.Slots.Count(slot => slot.Item != null));
-        Assert.Equal(InventoryConstants.BackpackSlotCount, b.Inventory!.Value.Slots.Count(slot => slot.Item != null));
+        Assert.Equal(0, a.Inventory!.Value.FreeCells());
+        Assert.Equal(0, b.Inventory!.Value.FreeCells());
     }
 
     // ---- equip and unequip around death and respawn ----

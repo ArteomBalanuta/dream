@@ -13,6 +13,8 @@ namespace Dream.Tests.Server.Persistence;
 // Wave H fix loop 1: how the inventory's queued writes behave on real SQLite when one of them fails
 // (a trigger aborts it, the queue counts it in FailedWrites and drops it) and when the process stops
 // between two of them. The service keeps its in-memory copy, so the rows can fall behind it.
+// Classic HUD iteration 2: the bag is a footprint board (a slot index is an anchor cell) and a worn item
+// has no bag row, so a new player's rows are the hammer worn and four bag rows.
 public sealed class InventoryWriteFailureTests
 {
     private const string Player = "Alice";
@@ -63,11 +65,12 @@ public sealed class InventoryWriteFailureTests
         world.SaveInventorySlot(new PersistedInventorySlot(Player, slot, id, DateTime.UtcNow));
     }
 
+    // Two torches (1x2) side by side: anchor 0 and anchor 1, so a swap is in place.
     private static void SeedTwoItems(MigrationTestDatabase db)
     {
         using Run setup = new(db);
         Give(setup.World, 0, 10, "tool.torch");
-        Give(setup.World, 1, 11, "tool.builder-hammer");
+        Give(setup.World, 1, 11, "tool.torch");
         setup.World.SaveStarterKitGrant(Player, ToolCatalog.CurrentStarterKitVersion);
     }
 
@@ -79,7 +82,8 @@ public sealed class InventoryWriteFailureTests
         using Run run = new(db);
         Assert.True(run.Inventory.Ensure(Player));
 
-        // The swap's closure aborts: memory says 0=B, 1=A, the rows still say 0=A, 1=B.
+        // The swap's closure aborts: memory says 0=B, 1=A, the rows still say 0=A, 1=B. (Two torches of the
+        // same size swap in place: each takes the other's anchor.)
         db.ExecuteScript("CREATE TRIGGER fail_swap BEFORE UPDATE ON player_inventory_slots WHEN NEW.slot_index = 0 BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
         Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 0, 1));
         run.Flush();
@@ -144,7 +148,8 @@ public sealed class InventoryWriteFailureTests
             first.Flush();
         }
 
-        db.ExecuteScript("DELETE FROM player_starter_grants; DELETE FROM player_inventory_slots WHERE slot_index = 100;");
+        // The hammer goes back to the bag, where it was before it was equipped.
+        db.ExecuteScript("DELETE FROM player_starter_grants; UPDATE player_inventory_slots SET slot_index = 0 WHERE slot_index = 100;");
 
         using Run restarted = new(db);
         Assert.True(restarted.Inventory.Ensure(Player));
@@ -154,9 +159,11 @@ public sealed class InventoryWriteFailureTests
         Assert.NotNull(restarted.Inventory.BuildSnapshot(Player).EquippedSlot!.Value.Item);
         Assert.True(restarted.Rows().ContainsKey(100));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
+        // Every kit item is in the bag or worn, each in exactly one row.
         Assert.Equal(
-            (long)ToolCatalog.StarterKit.Count,
+            (long)ToolCatalog.StarterKit.Count - 1,
             db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
+        Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(DISTINCT item_instance_id) FROM player_inventory_slots;"));
     }
 
     [Fact]
@@ -194,8 +201,10 @@ public sealed class InventoryWriteFailureTests
             Assert.Equal(1L, db.Scalar($"SELECT COUNT(*) FROM item_instances WHERE item_kind = '{entry.ItemKind}';"));
         }
 
-        Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
+        // The first kit item is in the main hand and the rest are in the bag: no item has two rows.
+        Assert.Equal((long)ToolCatalog.StarterKit.Count - 1, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index = 100;"));
+        Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(DISTINCT item_instance_id) FROM player_inventory_slots;"));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
     }
 
@@ -253,10 +262,11 @@ public sealed class InventoryWriteFailureTests
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
         {
+            // The pre-T2 kit as migration 0010 leaves it: old slot i at anchor 2 * i.
             IReadOnlyList<StarterKitEntry> kit = ToolCatalog.StarterKit;
             for (int old = 0; kit[old].IntroducedVersion <= ToolCatalog.UnrecordedStarterKitVersion; old++)
             {
-                Give(setup.World, old, 10 + old, kit[old].ItemKind);
+                Give(setup.World, old * 2, 10 + old, kit[old].ItemKind);
             }
         }
 
@@ -274,8 +284,9 @@ public sealed class InventoryWriteFailureTests
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
         {
-            // One hammer in slot 5 and nothing else: a pre-kit player who got rid of the rest.
-            Give(setup.World, 5, 10, ToolCatalog.StarterKit[0].ItemKind);
+            // One maul and nothing else: not a prefix of the kit (the hammer is missing), so a pre-kit
+            // player who got rid of the rest.
+            Give(setup.World, 5, 10, ToolCatalog.StarterKit[2].ItemKind);
         }
 
         using Run run = new(db);
@@ -297,10 +308,11 @@ public sealed class InventoryWriteFailureTests
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
         {
-            // What the old per-item seeding left after a crash: the first kit items, no grant row.
+            // What the old per-item seeding left after a crash (old slots 0..k-1, which migration 0010 put
+            // at anchors 0, 2, 4): the first kit items, no grant row.
             for (int index = 0; index < present; index++)
             {
-                Give(setup.World, index, 10 + index, ToolCatalog.StarterKit[index].ItemKind);
+                Give(setup.World, index * 2, 10 + index, ToolCatalog.StarterKit[index].ItemKind);
             }
         }
 

@@ -8,6 +8,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Stats;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -68,8 +69,14 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
                 EscapedName,
                 2,
                 2,
-                [new InventorySlotSnapshot(0, new InventoryItemSnapshot(1, "tool.x", EscapedName, "held.tool.x", 3, "Tool", ["<line>", EAcute]))],
-                new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, null, true))))));
+                [
+                    // A kind the catalog does not know travels with its own name and visual (escaped).
+                    new InventorySlotSnapshot(0, InventoryWireSamples.Unknown("tool.x", 1, EscapedName, "held." + EscapedName, stackCount: 3)),
+                    new InventorySlotSnapshot(10, InventoryWireSamples.Item("gear.iron-blade", 2, ItemRarity.Rare, rolled: true, [new StatModifier(StatId.Strength, StatOp.Flat, 6f)])),
+                    new InventorySlotSnapshot(200, InventoryWireSamples.Item("gear.leather-cap", 3)),
+                ],
+                new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, InventoryWireSamples.Item("tool.torch", 4), true),
+                [new InventorySlotSnapshot(102, InventoryWireSamples.Item("gear.leather-cap", 5, ItemRarity.Uncommon, rolled: true, [new StatModifier(StatId.Armor, StatOp.Flat, 3f)]), true)])))));
         data.Add(new ServerActionMessage(new AuthoritativeActionResult(
             "session-a", 7, 8, true, new PlayerStatsUpdateResult(new PlayerCombatStatsSnapshot(1, 0.1f, 1)))));
         data.Add(new ServerActionMessage(new AuthoritativeActionResult(
@@ -229,7 +236,7 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
         InvalidOperationException version = Assert.Throws<InvalidOperationException>(
             () => codec.Encode(new TransportEnvelope(1, message.MessageKind, 1), message, buffer));
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 12.", version.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 13.", version.Message);
 
         InvalidOperationException kind = Assert.Throws<InvalidOperationException>(
             () => codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, "server.hello", 1), message));
@@ -237,7 +244,7 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
         InvalidOperationException envelopeVersion = Assert.Throws<InvalidOperationException>(
             () => codec.WriteEnvelope(new TransportEnvelope(0, message.MessageKind, 1), "{}"u8, buffer));
-        Assert.Equal("Cannot encode protocol version 0. Supported version: 12.", envelopeVersion.Message);
+        Assert.Equal("Cannot encode protocol version 0. Supported version: 13.", envelopeVersion.Message);
 
         Assert.Throws<ArgumentException>(
             () => codec.WriteEnvelope(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));

@@ -31,11 +31,20 @@ public enum InventoryEquipOutcome
 // write trackers' verdicts, which the write worker settles. It knows players only by name; the
 // runtime maps sessions to names and refreshes combat stats after a change.
 //
-// Equipment (wave H): a player has four equipment slots, rows 100..103 of the slot map (EquipmentSlots).
-// A row holds the id of an item that normally also has a backpack row (the alias, H-D1), so moving or
-// swapping backpack slots never touches the equipment rows. A legacy row may have no backpack row.
-// Which slots an item may occupy comes from its content definition; a kind the catalog no longer
-// knows, or a slot it may not occupy, is inert (no stats, no light) with its row kept.
+// The bag and the worn slots (classic HUD iteration 2). A player's rows by slot index
+// (InventoryConstants): 0..63 are the anchors of items on the 8x8 bag board (an item covers its
+// footprint from its top-left cell; BagGrid and BagBoard hold the placement rules), 100..111 are the
+// twelve equipment slots (EquipmentSlots) and 200..215 are held-back rows. A worn item leaves the bag:
+// its worn row is the only row it has (the wave H alias, one row in each, is gone). Which slots an
+// item may occupy comes from its content definition; a kind the catalog no longer knows, or a slot
+// it may not occupy, is inert (no stats, no light) with its row kept.
+//
+// Load-time repair (the first Ensure of each loaded inventory): rows that are out of bounds or
+// overlap an earlier item are re-homed (largest first, first fit) and what still does not fit becomes
+// a held-back row. Held-back rows wait for room and drain, in order, after every accepted move,
+// destroy, equip or unequip; loot never enters them. Every action checks its input in a fixed order
+// and spends the action budget last, so a rejection changes and queues nothing; an accepted action
+// queues one closure (guarded deletes, then upserts), so its rows land together or not at all.
 //
 // Its only dependencies are the world repository (reads) and the ordered write queue (writes and
 // the confirming reads); both are null when the runtime has no persistence.
@@ -57,6 +66,10 @@ internal sealed class PlayerInventoryService
     // The starter kit version each loaded inventory has received (see GrantStarterKit). A loaded
     // inventory without an entry has no recorded grant yet.
     private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.Ordinal);
+
+    // The loaded inventories whose layout has been repaired (RepairLayout): done once per load, on the
+    // first Ensure, and forgotten on Evict, so a reloaded inventory is checked again.
+    private readonly HashSet<string> _repairedLayouts = new(StringComparer.Ordinal);
 
     // Inventory write outcomes, by player name. The write queue drops a write that fails (other than
     // on a lock) and only counts it in FailedWrites, so an inventory whose writes may have failed is
@@ -177,15 +190,16 @@ internal sealed class PlayerInventoryService
         return true;
     }
 
-    // Makes sure the player's inventory is loaded and usable: loads it if no join did, grants the
-    // starter kinds introduced after the kit version the player has received (the whole kit for a
-    // new player; see GrantStarterKit) and, on first sight of the inventory only (no starter grant
-    // recorded yet, H-D3), equips the lowest occupied slot whose item may be held in the main hand
-    // when the main hand is empty. After that an empty hand stays empty. The writes of one call
-    // (items, slots, equip, grant record) are buffered into ONE queued closure, so they land
-    // together or not at all: a crash or a failed write leaves the player as before (a new player
-    // is seeded again by the next join) or with the complete grant. False when the inventory
-    // could not be loaded yet (see TryLoadSynchronously).
+    // Makes sure the player's inventory is loaded and usable: loads it if no join did, repairs its
+    // layout once per load (RepairLayout), grants the starter kinds introduced after the kit version
+    // the player has received (the whole kit for a new player; see GrantStarterKit) and, on first
+    // sight of the inventory only (no starter grant recorded yet, H-D3), moves the item of the lowest
+    // occupied anchor that may be held in the main hand into the main hand when it is empty. After
+    // that an empty hand stays empty. The writes of one call (repair, items, slots, equip, grant
+    // record) are buffered into ONE queued closure, so they land together or not at all: a crash or
+    // a failed write leaves the player as before (a new player is seeded again by the next join) or
+    // with the complete grant. False when the inventory could not be loaded yet (see
+    // TryLoadSynchronously).
     public bool Ensure(string playerName)
     {
         if (!TryLoadSynchronously(playerName))
@@ -222,8 +236,13 @@ internal sealed class PlayerInventoryService
     private void EnsureCore(string playerName)
     {
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
+        if (_repairedLayouts.Add(playerName))
+        {
+            RepairLayout(playerName, slots);
+        }
+
         bool firstSight = !_starterKitByPlayer.ContainsKey(playerName);
-        bool hasBackpackContent = HasBackpackContent(slots);
+        bool hasBackpackContent = HasInventoryContent(slots);
         if (hasBackpackContent && firstSight)
         {
             // An existing inventory keeps the item it had first; a new one equips the first kit item.
@@ -243,17 +262,23 @@ internal sealed class PlayerInventoryService
         }
     }
 
-    // Equips the item in a backpack slot into an equipment slot and queues the writes. With no target
-    // the item's first listed slot is used (H-D8). Checks run in a fixed order, and a rejection changes
-    // nothing and queues nothing: backpack range, target range, loading, occupied, equippable and slot
-    // allowed, then (only for an action that would write) the budget. Equipping what the target
-    // already holds is accepted and writes nothing. An item that sits in another equipment slot
-    // leaves it; the item the target held is only displaced, and stays in the backpack (a legacy one
-    // with no backpack row first moves to the lowest free slot, or the equip is rejected as
-    // BackpackFull so it is never lost). The caller refreshes the player's combat stats on Equipped.
+    // Equips an item into an equipment slot and queues the writes. slotIndex is the item's bag anchor
+    // (0..63), or an equipment slot (100..111) to move a worn item to another equipment slot, which
+    // needs a target (an unequip empties a slot). With no target the item's first listed slot is used
+    // (H-D8), except that an item whose first listed slot is a ring takes the first empty ring slot it
+    // lists, else its first (D13). Checks run in a fixed order, and a rejection changes nothing and
+    // queues nothing: source range, target range, loading, occupied, equippable and slot allowed,
+    // room for the item the target holds, then (only for an action that would write) the budget.
+    // Equipping what the target already holds is accepted and writes nothing.
+    //
+    // From the bag the item leaves the bag. The item the target held goes to the vacated anchor when
+    // it fits there, else to the first fit, else the equip is rejected as BackpackFull (D10). From an
+    // equipment slot the two items swap when the target is occupied and the other item may occupy the
+    // source slot, else NotEquippable. The caller refreshes the player's combat stats on Equipped.
     public InventoryEquipOutcome TryEquip(string playerName, int slotIndex, int? targetSlotIndex = null)
     {
-        if (slotIndex < 0 || slotIndex >= InventoryConstants.BackpackSlotCount)
+        bool fromWell = EquipmentSlots.TryFromSlotIndex(slotIndex, out EquipmentSlot sourceWell);
+        if (!fromWell && !InventoryConstants.IsBagAnchor(slotIndex))
         {
             return InventoryEquipOutcome.SlotOutOfRange;
         }
@@ -288,12 +313,12 @@ internal sealed class PlayerInventoryService
 
         if (!hasTarget)
         {
-            if (definition.EquipSlots.Count == 0)
+            if (fromWell || definition.EquipSlots.Count == 0)
             {
                 return InventoryEquipOutcome.NotEquippable;
             }
 
-            target = definition.EquipSlots[0];
+            target = DefaultTarget(slots, definition);
         }
 
         if ((definition.EquipSlotMask & EquipmentSlots.MaskOf(target)) == 0)
@@ -301,6 +326,45 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.NotEquippable;
         }
 
+        return fromWell
+            ? EquipFromWell(playerName, slots, sourceWell, item, target)
+            : EquipFromBag(playerName, slots, slotIndex, item, target);
+    }
+
+    // The slot an equip with no target goes to: the item's first listed slot (H-D8). When that is a
+    // ring, the first listed ring slot that is empty, so a second ring fills the free ring slot instead
+    // of displacing the first (D13); with both taken, the first listed (the left ring is displaced).
+    private EquipmentSlot DefaultTarget(Dictionary<int, long> slots, ItemDefinition definition)
+    {
+        EquipmentSlot first = definition.EquipSlots[0];
+        if (!IsRingSlot(first))
+        {
+            return first;
+        }
+
+        foreach (EquipmentSlot listed in definition.EquipSlots)
+        {
+            if (IsRingSlot(listed) && !HoldsLiveItem(slots, EquipmentSlots.ToSlotIndex(listed)))
+            {
+                return listed;
+            }
+        }
+
+        return first;
+    }
+
+    private static bool IsRingSlot(EquipmentSlot slot) => slot is EquipmentSlot.RingLeft or EquipmentSlot.RingRight;
+
+    private bool HoldsLiveItem(Dictionary<int, long> slots, int slotIndex)
+        => slots.TryGetValue(slotIndex, out long itemInstanceId) && _itemInstances.ContainsKey(itemInstanceId);
+
+    private InventoryEquipOutcome EquipFromBag(
+        string playerName,
+        Dictionary<int, long> slots,
+        int anchor,
+        PersistedItemInstance item,
+        EquipmentSlot target)
+    {
         long itemInstanceId = item.ItemInstanceId;
         int targetIndex = EquipmentSlots.ToSlotIndex(target);
         bool targetHeld = slots.TryGetValue(targetIndex, out long displacedId);
@@ -309,11 +373,16 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.Equipped;
         }
 
-        int rescueSlot = -1;
-        if (targetHeld && _itemInstances.ContainsKey(displacedId) && !BackpackHolds(slots, displacedId))
+        // The item the target held needs a place in the bag (a hand-edited alias already has one): the
+        // anchor this item leaves if its footprint fits there, else the first fit, else nothing happens.
+        int displacedAnchor = -1;
+        if (targetHeld && _itemInstances.ContainsKey(displacedId) && !BagHolds(slots, displacedId))
         {
-            rescueSlot = FindLowestFreeBackpackSlot(slots);
-            if (rescueSlot < 0)
+            BagBoard board = BuildBoard(slots);
+            board.Remove(anchor);
+            ItemFootprint footprint = FootprintOfItem(displacedId);
+            displacedAnchor = board.Fits(anchor, footprint) ? anchor : board.FirstFit(footprint);
+            if (displacedAnchor < 0)
             {
                 return InventoryEquipOutcome.BackpackFull;
             }
@@ -324,37 +393,93 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.Throttled;
         }
 
+        // An item that sits in another equipment slot (only a hand-edited row) leaves it.
         int previousIndex = FindEquipmentSlotOf(slots, itemInstanceId);
-        DateTime now = DateTime.UtcNow;
-        PersistedInventorySlot? rescueRow = null;
-        if (rescueSlot >= 0)
-        {
-            slots[rescueSlot] = displacedId;
-            rescueRow = new PersistedInventorySlot(playerName, rescueSlot, displacedId, now);
-        }
-
-        slots[targetIndex] = itemInstanceId;
+        SlotChanges changes = new();
+        ClearSlot(slots, changes, anchor);
         if (previousIndex >= 0)
         {
-            slots.Remove(previousIndex);
+            ClearSlot(slots, changes, previousIndex);
         }
 
-        QueueSlotWrites(
-            playerName,
-            rescueRow,
-            new PersistedInventorySlot(playerName, targetIndex, itemInstanceId, now),
-            previousIndex,
-            itemInstanceId);
+        SetSlot(slots, changes, targetIndex, itemInstanceId);
+        if (displacedAnchor >= 0)
+        {
+            SetSlot(slots, changes, displacedAnchor, displacedId);
+        }
+
+        DrainHeldBack(slots, changes);
+        QueueChanges(playerName, changes);
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
 
-    // Empties an equipment slot (slotIndex is 100..103). The item keeps its backpack row; a legacy item
-    // with no backpack row first moves to the lowest free backpack slot, or the unequip is rejected as
-    // BackpackFull so the item is never lost.
-    public InventoryEquipOutcome TryUnequip(string playerName, int slotIndex)
+    private InventoryEquipOutcome EquipFromWell(
+        string playerName,
+        Dictionary<int, long> slots,
+        EquipmentSlot source,
+        PersistedItemInstance item,
+        EquipmentSlot target)
+    {
+        if (source == target)
+        {
+            return InventoryEquipOutcome.Equipped;
+        }
+
+        int sourceIndex = EquipmentSlots.ToSlotIndex(source);
+        int targetIndex = EquipmentSlots.ToSlotIndex(target);
+        bool targetHeld = slots.TryGetValue(targetIndex, out long otherId);
+        if (targetHeld && otherId == item.ItemInstanceId)
+        {
+            return InventoryEquipOutcome.Equipped;
+        }
+
+        // The other item swaps into the source slot when its kind may occupy it; a row that holds no
+        // live item is simply overwritten.
+        PersistedItemInstance otherItem = default;
+        bool swap = targetHeld && _itemInstances.TryGetValue(otherId, out otherItem);
+        if (swap)
+        {
+            if (!ContentCatalog.Shipped.TryGetItem(otherItem.ItemKind, out ItemDefinition? otherDefinition)
+                || (otherDefinition.EquipSlotMask & EquipmentSlots.MaskOf(source)) == 0)
+            {
+                return InventoryEquipOutcome.NotEquippable;
+            }
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        SlotChanges changes = new();
+        if (swap)
+        {
+            SetSlot(slots, changes, sourceIndex, otherId);
+        }
+        else
+        {
+            ClearSlot(slots, changes, sourceIndex);
+        }
+
+        SetSlot(slots, changes, targetIndex, item.ItemInstanceId);
+        QueueChanges(playerName, changes);
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // Empties an equipment slot (slotIndex is 100..111). The item goes back into the bag: onto
+    // targetCell (a bag anchor, 0..63) when one is named, which must hold the item's whole footprint on
+    // free cells, else NoRoom; at the first fit when none is named, else BackpackFull. Either way a
+    // rejection changes nothing. A hand-edited item that still has a bag row only loses its worn row.
+    public InventoryEquipOutcome TryUnequip(string playerName, int slotIndex, int? targetCell = null)
     {
         if (!EquipmentSlots.TryFromSlotIndex(slotIndex, out _))
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (targetCell is int cell && !InventoryConstants.IsBagAnchor(cell))
         {
             return InventoryEquipOutcome.SlotOutOfRange;
         }
@@ -370,13 +495,27 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.SlotEmpty;
         }
 
-        int rescueSlot = -1;
-        if (!BackpackHolds(slots, item.ItemInstanceId))
+        int place = -1;
+        if (!BagHolds(slots, item.ItemInstanceId))
         {
-            rescueSlot = FindLowestFreeBackpackSlot(slots);
-            if (rescueSlot < 0)
+            BagBoard board = BuildBoard(slots);
+            ItemFootprint footprint = BagGrid.FootprintOf(item.ItemKind);
+            if (targetCell is int wanted)
             {
-                return InventoryEquipOutcome.BackpackFull;
+                if (!board.Fits(wanted, footprint))
+                {
+                    return InventoryEquipOutcome.NoRoom;
+                }
+
+                place = wanted;
+            }
+            else
+            {
+                place = board.FirstFit(footprint);
+                if (place < 0)
+                {
+                    return InventoryEquipOutcome.BackpackFull;
+                }
             }
         }
 
@@ -385,26 +524,27 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.Throttled;
         }
 
-        PersistedInventorySlot? rescueRow = null;
-        if (rescueSlot >= 0)
+        SlotChanges changes = new();
+        ClearSlot(slots, changes, slotIndex);
+        if (place >= 0)
         {
-            slots[rescueSlot] = item.ItemInstanceId;
-            rescueRow = new PersistedInventorySlot(playerName, rescueSlot, item.ItemInstanceId, DateTime.UtcNow);
+            SetSlot(slots, changes, place, item.ItemInstanceId);
         }
 
-        slots.Remove(slotIndex);
-        QueueSlotWrites(playerName, rescueRow, null, slotIndex, item.ItemInstanceId);
+        DrainHeldBack(slots, changes);
+        QueueChanges(playerName, changes);
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
 
-    // Moves the item of a backpack slot to another, or swaps the two when both are occupied. Both
-    // slots are 0..15. Equipment rows follow by item id, so an equipped item stays equipped.
-    // From == To is accepted and writes nothing.
+    // Moves the item anchored at bag cell from so that its top-left cell is on to (both 0..63), or
+    // swaps it with the one item it lands on (BagGrid.PlanMove, D10). Two or more items under the new
+    // area, a position off the board, or nowhere for the swapped item to go is NoRoom; a from that is
+    // not the anchor of an item (an empty cell, or a cell an item covers without being its anchor) is
+    // SlotEmpty. Equipment rows are not touched. From == To is accepted and writes nothing.
     public InventoryEquipOutcome TryMove(string playerName, int from, int to)
     {
-        if (from < 0 || from >= InventoryConstants.BackpackSlotCount
-            || to < 0 || to >= InventoryConstants.BackpackSlotCount)
+        if (!InventoryConstants.IsBagAnchor(from) || !InventoryConstants.IsBagAnchor(to))
         {
             return InventoryEquipOutcome.SlotOutOfRange;
         }
@@ -425,41 +565,47 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.Equipped;
         }
 
+        BagMovePlan plan = BuildBoard(slots).PlanMove(from, to);
+        if (plan.Verdict is BagMoveVerdict.Blocked or BagMoveVerdict.Same
+            || (plan.Verdict == BagMoveVerdict.Swap && !_itemInstances.ContainsKey(slots[plan.OtherAnchor])))
+        {
+            // A row whose item is missing (stale data) is kept as it is; nothing is swapped onto it.
+            return InventoryEquipOutcome.NoRoom;
+        }
+
         if (!TrySpendAction())
         {
             return InventoryEquipOutcome.Throttled;
         }
 
-        DateTime now = DateTime.UtcNow;
-        PersistedInventorySlot toRow = new(playerName, to, moving.ItemInstanceId, now);
-        if (TryGetItem(slots, to, out PersistedItemInstance other))
+        SlotChanges changes = new();
+        long movingId = moving.ItemInstanceId;
+        if (plan.Verdict == BagMoveVerdict.Swap)
         {
-            slots[from] = other.ItemInstanceId;
-            slots[to] = moving.ItemInstanceId;
-            QueueSlotWrites(
-                playerName,
-                new PersistedInventorySlot(playerName, from, other.ItemInstanceId, now),
-                toRow,
-                -1,
-                0);
+            long otherId = slots[plan.OtherAnchor];
+            ClearSlot(slots, changes, plan.OtherAnchor);
+            ClearSlot(slots, changes, from);
+            SetSlot(slots, changes, to, movingId);
+            SetSlot(slots, changes, plan.OtherTo, otherId);
         }
         else
         {
-            slots.Remove(from);
-            slots[to] = moving.ItemInstanceId;
-            QueueSlotWrites(playerName, toRow, null, from, moving.ItemInstanceId);
+            ClearSlot(slots, changes, from);
+            SetSlot(slots, changes, to, movingId);
         }
 
+        DrainHeldBack(slots, changes);
+        QueueChanges(playerName, changes);
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
 
-    // Destroys the item of a backpack slot for good. The request names the item, so a queued destroy
-    // cannot hit whatever moved into the slot. An equipped item is never destroyed. The item row is
+    // Destroys the item anchored at a bag cell (0..63) for good. The request names the item, so a
+    // queued destroy cannot hit whatever moved there. A worn item is never destroyed. The item row is
     // removed too unless another loaded inventory still references it (only corrupted data).
     public InventoryEquipOutcome TryDestroy(string playerName, int slotIndex, long itemInstanceId)
     {
-        if (slotIndex < 0 || slotIndex >= InventoryConstants.BackpackSlotCount)
+        if (!InventoryConstants.IsBagAnchor(slotIndex))
         {
             return InventoryEquipOutcome.SlotOutOfRange;
         }
@@ -490,12 +636,19 @@ internal sealed class PlayerInventoryService
             return InventoryEquipOutcome.Throttled;
         }
 
-        for (int index = 0; index < InventoryConstants.BackpackSlotCount; index++)
+        // Every row of the player that holds the item goes (the repository's destroy deletes them all).
+        List<int> rows = [];
+        foreach (KeyValuePair<int, long> row in slots)
         {
-            if (slots.TryGetValue(index, out long held) && held == itemInstanceId)
+            if (row.Value == itemInstanceId)
             {
-                slots.Remove(index);
+                rows.Add(row.Key);
             }
+        }
+
+        foreach (int row in rows)
+        {
+            slots.Remove(row);
         }
 
         if (!IsReferencedByOtherInventory(playerName, itemInstanceId))
@@ -503,15 +656,16 @@ internal sealed class PlayerInventoryService
             _itemInstances.Remove(itemInstanceId);
         }
 
-        NoteWriteQueued(playerName);
-        EnqueueWorldWrite(world => world.DestroyInventoryItem(playerName, itemInstanceId));
+        SlotChanges changes = new();
+        DrainHeldBack(slots, changes);
+        QueueChanges(playerName, changes, world => world.DestroyInventoryItem(playerName, itemInstanceId));
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
     }
 
-    // Creates a rolled item of the kind in the lowest free backpack slot. Not a client action and not
+    // Creates a rolled item of the kind at the first fit of the bag. Not a client action and not
     // budgeted: wave I's loot and tests call it. NotEquippable when the kind is unknown or has no roll
-    // table; BackpackFull when there is no free slot.
+    // table; BackpackFull when the item fits nowhere. Never touches the held-back rows.
     internal InventoryEquipOutcome TryGrantRolled(string playerName, string kind, ItemRarity rarity, in ItemRollSeed seed)
     {
         if (!Ensure(playerName))
@@ -527,7 +681,7 @@ internal sealed class PlayerInventoryService
         }
 
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
-        int freeSlot = FindLowestFreeBackpackSlot(slots);
+        int freeSlot = BuildBoard(slots).FirstFit(definition.Footprint);
         if (freeSlot < 0)
         {
             return InventoryEquipOutcome.BackpackFull;
@@ -560,6 +714,9 @@ internal sealed class PlayerInventoryService
         {
             return;
         }
+
+        // A reloaded inventory is repaired again (a restored one finds nothing to do).
+        _repairedLayouts.Remove(playerName);
 
         if (_writes != null && _writeTrackers.TryGetValue(playerName, out InventoryWriteTracker? tracker))
         {
@@ -617,13 +774,24 @@ internal sealed class PlayerInventoryService
 
     public PlayerInventorySnapshot BuildSnapshot(string playerName)
     {
+        // Slots is sparse: the items on the board, by anchor, then the held-back rows. Worn items are
+        // not in it; they are EquippedSlot (the main hand, always present) and Equipment (the rest).
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
         List<InventorySlotSnapshot> backpack = [];
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
-            InventoryItemSnapshot? item = TryResolveItem(slots, slotIndex);
-            bool equipped = item.HasValue && FindEquipmentSlotOf(slots, item.Value.ItemInstanceId) >= 0;
-            backpack.Add(new InventorySlotSnapshot(slotIndex, item, equipped));
+            if (TryResolveItem(slots, slotIndex) is InventoryItemSnapshot item)
+            {
+                backpack.Add(new InventorySlotSnapshot(slotIndex, item));
+            }
+        }
+
+        for (int slotIndex = InventoryConstants.HeldBackFirstIndex; slotIndex <= InventoryConstants.HeldBackLastIndex; slotIndex++)
+        {
+            if (TryResolveItem(slots, slotIndex) is InventoryItemSnapshot item)
+            {
+                backpack.Add(new InventorySlotSnapshot(slotIndex, item));
+            }
         }
 
         InventoryItemSnapshot? mainHand = TryResolveItem(slots, EquipmentSlots.FirstSlotIndex);
@@ -649,7 +817,8 @@ internal sealed class PlayerInventoryService
     // Fills the loadout with the modifiers of what the player has equipped, per slot. A rolled item's
     // modifiers replace its definition's (H-D4). A kind the catalog no longer knows, a slot the item
     // may not occupy and a damaged roll give no modifiers: the row stays and is inert, nothing throws.
-    // Allocates nothing.
+    // An item id that sits in several equipment slots (only a hand-edited row) counts once, in the
+    // lowest slot. Allocates nothing.
     public void CopyEquipment(string playerName, EquipmentLoadout into)
     {
         ArgumentNullException.ThrowIfNull(into);
@@ -659,14 +828,32 @@ internal sealed class PlayerInventoryService
             return;
         }
 
+        Span<long> seen = stackalloc long[EquipmentSlots.Count];
+        int seenCount = 0;
         for (int index = 0; index < EquipmentSlots.Count; index++)
         {
             EquipmentSlot slot = (EquipmentSlot)index;
-            if (TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition))
+            if (TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition)
+                && NoteCounted(seen, ref seenCount, item.ItemInstanceId))
             {
                 into.Set(slot, EffectiveModifiers(in item, definition));
             }
         }
+    }
+
+    // True the first time an item id is seen, recording it; false for an id already counted.
+    private static bool NoteCounted(Span<long> seen, ref int seenCount, long itemInstanceId)
+    {
+        for (int i = 0; i < seenCount; i++)
+        {
+            if (seen[i] == itemInstanceId)
+            {
+                return false;
+            }
+        }
+
+        seen[seenCount++] = itemInstanceId;
+        return true;
     }
 
     // The light the equipped items cast (EquipmentSlots.ResolveHeldLight); read from the cache.
@@ -688,10 +875,13 @@ internal sealed class PlayerInventoryService
         HeldLightKind offLight = HeldLightKind.None;
         ulong digest = ModifierDigestSalt;
         bool anyRolled = false;
+        Span<long> seen = stackalloc long[EquipmentSlots.Count];
+        int seenCount = 0;
         for (int index = 0; index < EquipmentSlots.Count; index++)
         {
             EquipmentSlot slot = (EquipmentSlot)index;
-            if (!TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition))
+            if (!TryResolveEquipped(slots, slot, out PersistedItemInstance item, out ItemDefinition? definition)
+                || !NoteCounted(seen, ref seenCount, item.ItemInstanceId))
             {
                 continue;
             }
@@ -778,7 +968,7 @@ internal sealed class PlayerInventoryService
         return false;
     }
 
-    // The equipment slot index (100..103) holding the item, or -1.
+    // The equipment slot index (100..111) holding the item, or -1.
     private static int FindEquipmentSlotOf(Dictionary<int, long> slots, long itemInstanceId)
     {
         for (int slotIndex = EquipmentSlots.FirstSlotIndex; slotIndex <= EquipmentSlots.LastSlotIndex; slotIndex++)
@@ -792,7 +982,8 @@ internal sealed class PlayerInventoryService
         return -1;
     }
 
-    private static bool BackpackHolds(Dictionary<int, long> slots, long itemInstanceId)
+    // True when a bag anchor (0..63) holds the item.
+    private static bool BagHolds(Dictionary<int, long> slots, long itemInstanceId)
     {
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
@@ -907,23 +1098,24 @@ internal sealed class PlayerInventoryService
         }
     }
 
-    // Grants the starter kinds introduced after the kit version the player has received, each into
-    // the lowest free backpack slot, then records the new version. The received version is the
-    // recorded one; without a record, an inventory with backpack items predates kit versions and is
+    // Grants the starter kinds introduced after the kit version the player has received, each at the
+    // first fit of the bag, then records the new version. The received version is the recorded one;
+    // without a record, an inventory with items (bag, worn or held back) predates kit versions and is
     // taken to hold ToolCatalog.UnrecordedStarterKitVersion (the pre-T2 kit), and an empty one is a
     // new player's, which receives the whole kit. So a kind is granted once: an item the player
     // later gets rid of is not granted again, even into an empty backpack.
-    // - A kind the backpack already holds is not granted again but counts as received (a pre-record
-    //   top-up may have granted it).
-    // - A full backpack receives nothing; the version recorded then stops below the first kind that
-    //   did not fit, so it is granted once a slot is free.
+    // - A kind the player already holds, in the bag or worn, is not granted again but counts as
+    //   received (a pre-record top-up may have granted it).
+    // - A kind that fits nowhere is not granted; the version recorded then stops below the first kind
+    //   that did not fit, so it is granted once there is room.
     // - The grant record is not queued here: the caller records it (RecordStarterKitGrant) after the
     //   first-sight main-hand equip. Ensure buffers the kit, the equip and the record into one queued
     //   closure, so they land together or not at all. Returns the version to record, or null when it
     //   does not rise, which makes a second call write nothing.
-    // - With no record, a backpack holding exactly the first k (1 to kit size - 1) version-1 kinds in
-    //   slots 0..k-1 and nothing else is the leftover of a seed that was cut short (written before
-    //   seeding was one closure): it is taken as a new player's, so the missing kinds arrive.
+    // - With no record, an inventory holding exactly the first k (1 to kit size - 1) version-1 kinds,
+    //   one each, in the bag or worn, and nothing else is the leftover of a seed that was cut short
+    //   (written before seeding was one closure): it is taken as a new player's, so the missing kinds
+    //   arrive.
     private int? GrantStarterKit(string playerName, Dictionary<int, long> slots, bool isTopUp)
     {
         bool recorded = _starterKitByPlayer.TryGetValue(playerName, out int receivedVersion);
@@ -939,15 +1131,18 @@ internal sealed class PlayerInventoryService
 
         int grantedVersion = ToolCatalog.CurrentStarterKitVersion;
         IReadOnlyList<StarterKitEntry> kit = ToolCatalog.StarterKit;
+        BagBoard? board = null;
         for (int kindIndex = 0; kindIndex < kit.Count; kindIndex++)
         {
             StarterKitEntry entry = kit[kindIndex];
-            if (entry.IntroducedVersion <= receivedVersion || BackpackHoldsKind(slots, entry.ItemKind))
+            if (entry.IntroducedVersion <= receivedVersion || HoldsKind(slots, entry.ItemKind))
             {
                 continue;
             }
 
-            int freeSlot = FindLowestFreeBackpackSlot(slots);
+            ItemFootprint footprint = BagGrid.FootprintOf(entry.ItemKind);
+            board ??= BuildBoard(slots);
+            int freeSlot = board.FirstFit(footprint);
             if (freeSlot < 0)
             {
                 grantedVersion = Math.Min(grantedVersion, entry.IntroducedVersion - 1);
@@ -955,6 +1150,7 @@ internal sealed class PlayerInventoryService
             }
 
             GrantItem(playerName, slots, entry.ItemKind, freeSlot);
+            board.TryPlace(freeSlot, footprint);
             if (isTopUp)
             {
                 NetworkDiagnosticsLog.Write(
@@ -966,8 +1162,9 @@ internal sealed class PlayerInventoryService
         return recorded && grantedVersion <= receivedVersion ? null : grantedVersion;
     }
 
-    // True when the backpack holds exactly a strict, in-order prefix of the version-1 kit in slots
-    // 0..k-1 and nothing else (see GrantStarterKit).
+    // True when the inventory holds exactly a strict prefix of the version-1 kit, one item of each of
+    // its first k kinds, in the bag, worn or held back, and nothing else (see GrantStarterKit). Where
+    // the items sit does not matter: a seed that was cut short may have had its first item equipped.
     private bool IsCutShortSeed(Dictionary<int, long> slots)
     {
         IReadOnlyList<StarterKitEntry> kit = ToolCatalog.StarterKit;
@@ -980,7 +1177,7 @@ internal sealed class PlayerInventoryService
         int occupied = 0;
         foreach (int slotIndex in slots.Keys)
         {
-            if (slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount)
+            if (InventoryConstants.IsKnownRow(slotIndex))
             {
                 occupied++;
             }
@@ -991,11 +1188,11 @@ internal sealed class PlayerInventoryService
             return false;
         }
 
+        // The rows are exactly `occupied` items, so finding each of the first `occupied` kit kinds
+        // (all different) among them means each is held once and nothing else is.
         for (int index = 0; index < occupied; index++)
         {
-            if (!slots.TryGetValue(index, out long itemInstanceId)
-                || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item)
-                || !string.Equals(item.ItemKind, kit[index].ItemKind, StringComparison.OrdinalIgnoreCase))
+            if (!HoldsKind(slots, kit[index].ItemKind))
             {
                 return false;
             }
@@ -1011,11 +1208,13 @@ internal sealed class PlayerInventoryService
         EnqueueWorldWrite(world => world.SaveStarterKitGrant(playerName, grantedVersion));
     }
 
-    private static bool HasBackpackContent(Dictionary<int, long> slots)
+    // True when the player has any row in the bag, worn or held back. A worn item counts: a player with
+    // everything worn is not new and is not seeded a second kit.
+    private static bool HasInventoryContent(Dictionary<int, long> slots)
     {
         foreach (int slotIndex in slots.Keys)
         {
-            if (slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount)
+            if (InventoryConstants.IsKnownRow(slotIndex))
             {
                 return true;
             }
@@ -1024,8 +1223,8 @@ internal sealed class PlayerInventoryService
         return false;
     }
 
-    // Equips the item of the lowest occupied backpack slot that may be held in the main hand, when the
-    // main hand is empty.
+    // Moves the item of the lowest occupied anchor that may be held in the main hand into the main
+    // hand, when the main hand is empty. The bag row is replaced by the worn row (no alias).
     private void EquipFirstOccupiedSlotIfNone(string playerName, Dictionary<int, long> slots)
     {
         if (slots.ContainsKey(InventoryConstants.EquippedSlotIndex))
@@ -1033,26 +1232,29 @@ internal sealed class PlayerInventoryService
             return;
         }
 
-        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        for (int anchor = 0; anchor < InventoryConstants.BackpackSlotCount; anchor++)
         {
-            if (slots.TryGetValue(slotIndex, out long itemInstanceId)
+            if (slots.TryGetValue(anchor, out long itemInstanceId)
                 && _itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance candidate)
                 && ContentCatalog.Shipped.TryGetItem(candidate.ItemKind, out ItemDefinition? candidateDefinition)
                 && (candidateDefinition.EquipSlotMask & EquipmentSlots.MaskOf(EquipmentSlot.MainHand)) != 0)
             {
-                slots[InventoryConstants.EquippedSlotIndex] = itemInstanceId;
-                PersistSlot(playerName, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+                SlotChanges changes = new();
+                ClearSlot(slots, changes, anchor);
+                SetSlot(slots, changes, InventoryConstants.EquippedSlotIndex, itemInstanceId);
+                QueueChanges(playerName, changes);
                 return;
             }
         }
     }
 
-    private bool BackpackHoldsKind(Dictionary<int, long> slots, string itemKind)
+    // True when the player holds an item of the kind in the bag, worn or held back.
+    private bool HoldsKind(Dictionary<int, long> slots, string itemKind)
     {
-        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        foreach (KeyValuePair<int, long> row in slots)
         {
-            if (slots.TryGetValue(slotIndex, out long itemInstanceId)
-                && _itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item)
+            if (InventoryConstants.IsKnownRow(row.Key)
+                && _itemInstances.TryGetValue(row.Value, out PersistedItemInstance item)
                 && string.Equals(item.ItemKind, itemKind, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -1062,20 +1264,145 @@ internal sealed class PlayerInventoryService
         return false;
     }
 
-    private static int FindLowestFreeBackpackSlot(Dictionary<int, long> slots)
+    // The footprint of the item an id names: its kind's, One for a row whose item is missing or whose
+    // kind the catalog does not know.
+    private ItemFootprint FootprintOfItem(long itemInstanceId)
+        => _itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item)
+            ? BagGrid.FootprintOf(item.ItemKind)
+            : ItemFootprint.One;
+
+    // The bag board of the rows in 0..63, placed in ascending anchor order, first come first kept. A
+    // row that does not place (out of bounds or over an earlier one) is added to unplaced, when given;
+    // otherwise it is left out. After RepairLayout there are none.
+    private BagBoard BuildBoard(Dictionary<int, long> slots, List<int>? unplaced = null)
     {
-        for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
+        BagBoard board = new();
+        for (int anchor = 0; anchor < InventoryConstants.BackpackSlotCount; anchor++)
         {
-            if (!slots.ContainsKey(slotIndex))
+            if (slots.TryGetValue(anchor, out long itemInstanceId)
+                && !board.TryPlace(anchor, FootprintOfItem(itemInstanceId)))
             {
-                return slotIndex;
+                unplaced?.Add(anchor);
+            }
+        }
+
+        return board;
+    }
+
+    // Sets the layout right once per loaded inventory (the first Ensure), deterministically so that
+    // lockstep holds. 1. Walk the anchors ascending and keep each item that is in bounds and overlaps
+    // nothing kept. 2. Re-home the rest, largest area first then lowest old anchor, at the first fit.
+    // 3. What still does not fit becomes a held-back row (200 up, the lowest free one; 300 up, parked
+    // and inert, when all sixteen are taken). The unplaced rows are lifted off first, so a re-homed
+    // item can never land on a row that has not been dealt with. Finally held-back rows (these and
+    // earlier ones) move onto any room there is. The writes are queued with the caller's Ensure.
+    private void RepairLayout(string playerName, Dictionary<int, long> slots)
+    {
+        List<int> unplaced = [];
+        BagBoard board = BuildBoard(slots, unplaced);
+        SlotChanges changes = new();
+        int rehomed = 0;
+        int heldBack = 0;
+        if (unplaced.Count > 0)
+        {
+            List<(int Anchor, long ItemId, ItemFootprint Footprint)> lifted = new(unplaced.Count);
+            foreach (int anchor in unplaced)
+            {
+                long liftedId = slots[anchor];
+                lifted.Add((anchor, liftedId, FootprintOfItem(liftedId)));
+                ClearSlot(slots, changes, anchor);
+            }
+
+            lifted.Sort(static (a, b) =>
+            {
+                int byArea = (b.Footprint.Cols * b.Footprint.Rows).CompareTo(a.Footprint.Cols * a.Footprint.Rows);
+                return byArea != 0 ? byArea : a.Anchor.CompareTo(b.Anchor);
+            });
+            foreach ((int _, long itemInstanceId, ItemFootprint footprint) in lifted)
+            {
+                int fit = board.FirstFit(footprint);
+                if (fit >= 0)
+                {
+                    board.TryPlace(fit, footprint);
+                    SetSlot(slots, changes, fit, itemInstanceId);
+                    rehomed++;
+                    continue;
+                }
+
+                int held = FirstFreeRow(slots, InventoryConstants.HeldBackFirstIndex, InventoryConstants.HeldBackCount);
+                if (held < 0)
+                {
+                    held = FirstFreeRow(slots, InventoryConstants.ParkedFirstIndex, slots.Count + 1);
+                }
+
+                SetSlot(slots, changes, held, itemInstanceId);
+                heldBack++;
+            }
+        }
+
+        DrainHeldBack(slots, changes);
+        if (rehomed > 0 || heldBack > 0)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.inventory.layout-repaired",
+                $"player={playerName} rehomed={rehomed} heldBack={heldBack}");
+        }
+
+        QueueChanges(playerName, changes);
+    }
+
+    // The lowest slot index of count consecutive indexes from first that has no row, or -1.
+    private static int FirstFreeRow(Dictionary<int, long> slots, int first, int count)
+    {
+        for (int index = first; index < first + count; index++)
+        {
+            if (!slots.ContainsKey(index))
+            {
+                return index;
             }
         }
 
         return -1;
     }
 
-    // Creates a new item of the kind in the backpack slot and queues its item and slot writes.
+    // Moves the held-back rows, in ascending order, to the first fit of the bag where there is room.
+    // Called after every accepted action that can free cells; does nothing when nothing is held back.
+    private void DrainHeldBack(Dictionary<int, long> slots, SlotChanges changes)
+    {
+        bool any = false;
+        for (int index = InventoryConstants.HeldBackFirstIndex; index <= InventoryConstants.HeldBackLastIndex && !any; index++)
+        {
+            any = slots.ContainsKey(index);
+        }
+
+        if (!any)
+        {
+            return;
+        }
+
+        BagBoard board = BuildBoard(slots);
+        for (int index = InventoryConstants.HeldBackFirstIndex; index <= InventoryConstants.HeldBackLastIndex; index++)
+        {
+            if (!slots.TryGetValue(index, out long itemInstanceId))
+            {
+                continue;
+            }
+
+            ItemFootprint footprint = FootprintOfItem(itemInstanceId);
+            int fit = board.FirstFit(footprint);
+            if (fit < 0)
+            {
+                continue;
+            }
+
+            board.TryPlace(fit, footprint);
+            ClearSlot(slots, changes, index);
+            SetSlot(slots, changes, fit, itemInstanceId);
+        }
+    }
+
+    // Creates a new item of the kind with its top-left cell at the bag anchor and queues its item and
+    // slot writes.
     private long GrantItem(string playerName, Dictionary<int, long> slots, string itemKind, int slotIndex, ItemRoll? roll = null)
     {
         ToolDefinition definition = ToolCatalog.Resolve(itemKind);
@@ -1153,45 +1480,92 @@ internal sealed class PlayerInventoryService
         return slots;
     }
 
-    private void PersistSlot(string playerName, int slotIndex, long itemInstanceId)
+    // The net row changes of one action, queued as ONE closure (QueueChanges) so the queue's savepoint
+    // makes them atomic. Removes are guarded by the item id the row held, so a row that diverged from
+    // the in-memory view (an earlier write failed) is left alone; sets are upserts. A slot that is
+    // removed and then set again costs no delete: the upsert replaces the row.
+    private sealed class SlotChanges
     {
-        PersistedInventorySlot slot = new(
-            playerName,
-            slotIndex,
-            itemInstanceId,
-            DateTime.UtcNow);
-        NoteWriteQueued(playerName);
-        EnqueueWorldWrite(world => world.SaveInventorySlot(slot));
+        private readonly List<(int Slot, long ItemInstanceId)> _removed = [];
+        private readonly List<(int Slot, long ItemInstanceId)> _set = [];
+
+        public bool IsEmpty => _removed.Count == 0 && _set.Count == 0;
+
+        public void Remove(int slot, long itemInstanceId)
+        {
+            _set.RemoveAll(entry => entry.Slot == slot);
+            _removed.Add((slot, itemInstanceId));
+        }
+
+        public void Set(int slot, long itemInstanceId)
+        {
+            _set.RemoveAll(entry => entry.Slot == slot);
+            _set.Add((slot, itemInstanceId));
+        }
+
+        // The writes in the order they must run: the guarded deletes first (a slot that is set again is
+        // not deleted), then the upserts. The primary key is per slot, so the order matters.
+        public Action<IWorldPersistenceRepository> ToWrite(string playerName, Action<IWorldPersistenceRepository>? before)
+        {
+            List<(int Slot, long ItemInstanceId)> deletes = [];
+            foreach ((int slot, long itemInstanceId) in _removed)
+            {
+                if (!_set.Exists(entry => entry.Slot == slot))
+                {
+                    deletes.Add((slot, itemInstanceId));
+                }
+            }
+
+            DateTime now = DateTime.UtcNow;
+            PersistedInventorySlot[] upserts = new PersistedInventorySlot[_set.Count];
+            for (int i = 0; i < upserts.Length; i++)
+            {
+                upserts[i] = new PersistedInventorySlot(playerName, _set[i].Slot, _set[i].ItemInstanceId, now);
+            }
+
+            return world =>
+            {
+                before?.Invoke(world);
+                foreach ((int slot, long itemInstanceId) in deletes)
+                {
+                    world.DeleteInventorySlot(playerName, slot, itemInstanceId);
+                }
+
+                foreach (PersistedInventorySlot upsert in upserts)
+                {
+                    world.SaveInventorySlot(upsert);
+                }
+            };
+        }
     }
 
-    // One queued closure for writes that belong together, so the queue's savepoint makes them atomic:
-    // up to two slot upserts, then the delete of a vacated slot row (-1 for none), which only removes
-    // the row while it still holds deleteExpectedItemId.
-    private void QueueSlotWrites(
-        string playerName,
-        PersistedInventorySlot? first,
-        PersistedInventorySlot? second,
-        int deleteSlotIndex,
-        long deleteExpectedItemId)
+    // Sets a row in memory and records the upsert.
+    private static void SetSlot(Dictionary<int, long> slots, SlotChanges changes, int slotIndex, long itemInstanceId)
     {
-        NoteWriteQueued(playerName);
-        EnqueueWorldWrite(world =>
+        slots[slotIndex] = itemInstanceId;
+        changes.Set(slotIndex, itemInstanceId);
+    }
+
+    // Removes a row in memory and records the guarded delete; nothing when there is no row.
+    private static void ClearSlot(Dictionary<int, long> slots, SlotChanges changes, int slotIndex)
+    {
+        if (slots.Remove(slotIndex, out long itemInstanceId))
         {
-            if (first is PersistedInventorySlot firstRow)
-            {
-                world.SaveInventorySlot(firstRow);
-            }
+            changes.Remove(slotIndex, itemInstanceId);
+        }
+    }
 
-            if (second is PersistedInventorySlot secondRow)
-            {
-                world.SaveInventorySlot(secondRow);
-            }
+    // Queues an action's changes as one closure, after an optional write that belongs to it (the
+    // destroy of an item). Nothing is queued when there is neither.
+    private void QueueChanges(string playerName, SlotChanges changes, Action<IWorldPersistenceRepository>? before = null)
+    {
+        if (changes.IsEmpty && before == null)
+        {
+            return;
+        }
 
-            if (deleteSlotIndex >= 0)
-            {
-                world.DeleteInventorySlot(playerName, deleteSlotIndex, deleteExpectedItemId);
-            }
-        });
+        NoteWriteQueued(playerName);
+        EnqueueWorldWrite(changes.ToWrite(playerName, before));
     }
 
     // Set while Ensure runs: its writes are collected and queued as one closure.

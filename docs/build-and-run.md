@@ -37,7 +37,7 @@ To run the dedicated server instead of the desktop client:
 dotnet run --project dream\dream.csproj -- --server
 ```
 
-It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 12 (`TransportEnvelope.CurrentProtocolVersion`) and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
+It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 13 (`TransportEnvelope.CurrentProtocolVersion`) and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
 
 The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, and font files are loaded from the runtime output layout rather than from machine-specific absolute paths.
 

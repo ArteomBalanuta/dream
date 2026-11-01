@@ -6,12 +6,14 @@ using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Integration;
 
 // Tester, wave T2f: HeldLightLoopbackTests equips the first light-casting starter item, which is
-// the survey lantern (slot 3), so the torch itself never crossed the wire there. Here client A
-// equips the torch (slot 4): B's presenter shows Torch; A swaps back to the hammer: B shows None.
+// the survey lantern, so the torch itself never crossed the wire there. Here client A equips the
+// torch: B's presenter shows Torch; A swaps back to the hammer (which the torch displaced into the bag,
+// since a worn item has no bag row): B shows None.
 public sealed class HeldLightTorchLoopbackTests(ITestOutputHelper output)
 {
     [Fact]
@@ -20,13 +22,14 @@ public sealed class HeldLightTorchLoopbackTests(ITestOutputHelper output)
         await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
         Wave12DeltaActorLoopbackTests.Peer holder = await rig.JoinAsync("t2-torch-a");
         Wave12DeltaActorLoopbackTests.Peer observer = await rig.JoinAsync("t2-torch-b");
-        PlayerInventorySnapshot inventory = rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value;
-        int torch = Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
-        int hammer = Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.builder-hammer").SlotIndex;
+        PlayerInventorySnapshot Inventory() => rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value;
+        int torch = Assert.Single(Inventory().Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
 
         await EquipAndWaitAsync(rig, holder, 1, torch, HeldLightKind.Torch);
         Assert.Equal(HeldLightKind.Torch, RemoteLightOf(observer, holder));
 
+        // The hammer is in the bag now, wherever the torch's equip put it.
+        int hammer = Assert.Single(Inventory().Slots, slot => slot.Item?.ItemKind == "tool.builder-hammer").SlotIndex;
         await EquipAndWaitAsync(rig, holder, 2, hammer, HeldLightKind.None);
         Assert.Equal(HeldLightKind.None, RemoteLightOf(observer, holder));
         rig.AssertNoChainBreaksOrWithheldActors();

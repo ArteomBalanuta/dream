@@ -197,7 +197,8 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
         Assert.Equal(5L, WorldBundles.Count(database, "placed_cube_instances", WorldId.Default));
-        Assert.Equal(12L, WorldBundles.Count(database, "player_inventory_slots", WorldId.Default));
+        // The fixture has 12 slot rows; migration 0010 drops the two bag rows of items that are worn.
+        Assert.Equal(10L, WorldBundles.Count(database, "player_inventory_slots", WorldId.Default));
         using ServerPersistenceBundle again = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
         Assert.Equal(WorldId.Default, again.WorldId);
     }

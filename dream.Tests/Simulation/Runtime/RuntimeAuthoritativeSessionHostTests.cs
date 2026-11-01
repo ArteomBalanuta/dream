@@ -868,12 +868,14 @@ public class RuntimeAuthoritativeSessionHostTests
         AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
             new PlayerSessionId("session-a"),
             5,
-            new InventoryEquipIntent(1)));
+            new InventoryEquipIntent(2)));
 
+        // The field blade (the second kit item, at anchor 2) is worn now and the hammer it displaced took
+        // its anchor: a worn item has no bag row.
         InventoryChangedResult payload = Assert.IsType<InventoryChangedResult>(result.Payload);
         Assert.Equal("Field Blade", payload.Inventory.EquippedSlot?.Item?.DisplayName);
-        InventorySlotSnapshot equippedBackpackSlot = Assert.Single(payload.Inventory.Slots, slot => slot.IsEquipped);
-        Assert.Equal(1, equippedBackpackSlot.SlotIndex);
+        Assert.DoesNotContain(payload.Inventory.Slots, slot => slot.IsEquipped);
+        Assert.Equal("Builder Hammer", Assert.Single(payload.Inventory.Slots, slot => slot.SlotIndex == 2).Item?.DisplayName);
     }
 
     [Fact]
@@ -887,12 +889,12 @@ public class RuntimeAuthoritativeSessionHostTests
         AuthoritativeActionResult firstAction = host.ProcessAction(new PlayerActionMessage(
             new PlayerSessionId("session-a"),
             5,
-            new InventoryEquipIntent(1)));
+            new InventoryEquipIntent(2)));
         JoinAcceptedMessage rejoined = host.JoinSession("session-a", "Player A");
         AuthoritativeActionResult resumedAction = host.ProcessAction(new PlayerActionMessage(
             new PlayerSessionId("session-a"),
             1,
-            new InventoryEquipIntent(0)));
+            new InventoryEquipIntent(2)));
 
         Assert.True(firstAction.Accepted);
         Assert.Equal("session-a", rejoined.SessionId);
@@ -923,7 +925,7 @@ public class RuntimeAuthoritativeSessionHostTests
         host.ProcessAction(new PlayerActionMessage(
             new PlayerSessionId("session-a"),
             2,
-            new InventoryEquipIntent(1)));
+            new InventoryEquipIntent(2)));
 
         Assert.Equal(12, runtime.Player.Combatant.BaseStats.Strength);
         Assert.Equal(2.5f, runtime.Player.Combatant.BaseStats.AttackSpeed, 3);

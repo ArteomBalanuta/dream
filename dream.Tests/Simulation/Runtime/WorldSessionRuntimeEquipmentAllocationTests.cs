@@ -8,6 +8,7 @@ using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Support;
 using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Simulation.Runtime;
@@ -40,8 +41,8 @@ public sealed class WorldSessionRuntimeEquipmentAllocationTests(ITestOutputHelpe
                 Assert.Equal(
                     InventoryEquipOutcome.Equipped,
                     inventory.TryGrantRolled(name, kinds[i], ItemRarity.Rare, new ItemRollSeed(3, 4, 5, 6, i)));
-                // Granted into the lowest free slots 5..8; each goes to its own default slot.
-                Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(name, 5 + i));
+                // Each goes to its own default slot, from wherever first fit put it in the bag.
+                Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(name, inventory.AnchorOf(name, kinds[i])));
             }
 
             Assert.NotEqual(0UL, inventory.ResolveModifierDigest(name));

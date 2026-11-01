@@ -32,17 +32,17 @@ public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
         Assert.Equal(NoLightSnapshotBytes, frames.Sum());
     }
 
-    // Both runs process one equip action before the first tick (the hammer re-equipped, or the
-    // torch), so the only difference is the held light. The torch has no stat modifier while the
-    // hammer has one, so the stat group can differ too; the test reports both and asserts the
-    // heldLight key appears only where expected.
+    // The torch run processes one equip action before the first tick; the baseline keeps the hammer in the
+    // hand (a worn item has no bag row, so there is no "re-equip" of it), so the only difference is the held
+    // light. The torch has no stat modifier while the hammer has one, so the stat group can differ too; the
+    // test reports both and asserts the heldLight key appears only where expected.
     [Fact]
     public void OneTorch_GrowthPerFrame()
     {
         using WorldSessionRuntime hammerRun = CreateRuntime();
         using WorldSessionRuntime torchRun = CreateRuntime();
         int torchSlot = SlotOf(torchRun, "tool.torch");
-        long[] hammer = Run(hammerRun, SlotOf(hammerRun, "tool.builder-hammer"), out List<string> hammerJson);
+        long[] hammer = Run(hammerRun, null, out List<string> hammerJson);
         long[] torch = Run(torchRun, torchSlot, out List<string> torchJson);
 
         long[] growth = torch.Zip(hammer, (t, h) => t - h).ToArray();

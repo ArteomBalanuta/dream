@@ -131,12 +131,13 @@ public sealed class WorldsMigrationTests
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0009\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0010\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
-            ["alice|0|11|Sword", "bob|3|12|Potion"],
+            // Migration 0010 moved old slot 3 (row 0, column 3 of the 4x4 backpack) to anchor 6 of the 8x8 board.
+            ["alice|0|11|Sword", "bob|6|12|Potion"],
             Column(migrated, """
                 SELECT s.player_name || '|' || s.slot_index || '|' || s.item_instance_id || '|' || i.item_kind
                 FROM player_inventory_slots AS s JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id

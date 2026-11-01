@@ -11,6 +11,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Runtime;
 
@@ -121,20 +122,17 @@ public sealed class LootGrantTests
         db.Schema.EnsureSchema();
         using WaveIRuntimeKit.RealRun run = new(db);
         JoinRenamed(run);
-        run.Runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1);
+        // Every drop is a 1x1 ring, and the rings fill every cell of the board.
+        run.Runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1, kinds: ["gear.iron-band"]);
         WaveIRuntimeKit.Target(run.Runtime, Killer.Value).SetWorldPosition(WaveIRuntimeKit.FarStart);
         run.Advance(3);
         WaveIRuntimeKit.EnterCombat(run.Runtime, Killer);
 
-        int seed = 0;
-        while (run.Runtime.InventoryService.TryGrantRolled(RenamedKey, "gear.leather-cap", ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, seed++)) == InventoryEquipOutcome.Equipped)
-        {
-            Assert.True(seed < 100, "the backpack never filled");
-        }
+        run.Runtime.InventoryService.FillBagLeaving(RenamedKey, freeCells: 0);
 
         Assert.True(run.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
         string[] full = Backpack(run.Runtime, Killer);
-        Assert.Equal(InventoryConstants.BackpackSlotCount, full.Length);
+        Assert.Equal(0, run.Runtime.InventoryService.BuildSnapshot(RenamedKey).FreeCells());
         int rowsBefore = ItemRows(db).Length;
         long itemsBefore = run.Runtime.NextItemInstanceId;
 
