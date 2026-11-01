@@ -278,8 +278,8 @@ public sealed class LootGrantTests
             runtime.AddLootNotice(Killer, new LootDrop($"ordinary-{i}", ItemRarity.Common), lost: false, inventoryChanged: true);
         }
 
-        // The log is rate limited by a process-wide key; let any earlier line of this key expire.
-        Thread.Sleep(300);
+        // The log is rate limited by a process-wide key; forget any earlier line of this key.
+        NetworkDiagnosticsLog.ForgetRateLimitKey("server.loot.notice-dropped");
         List<(string Category, string Message)> lines = [];
         using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
         {

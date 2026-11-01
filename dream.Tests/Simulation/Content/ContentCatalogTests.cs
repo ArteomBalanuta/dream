@@ -249,6 +249,36 @@ public sealed class ContentCatalogTests
         Assert.Contains("items.json", exception.Message);
     }
 
+    // A wolf stops at 90% of its attack range at most. A range at or below the player separation distance
+    // (0.95 m) over that fraction (1.0556 m) would stop it inside the separation, where it shoves the player
+    // and never settles in bite range; the catalog refuses it.
+    [Theory]
+    [InlineData("0.1")]
+    [InlineData("0.95")]
+    [InlineData("1.0")]
+    [InlineData("1.05")]
+    public void Load_RejectsAnAttackRangeTheWolfCouldNeverBiteFrom(string range)
+    {
+        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range);
+        Assert.NotEqual(ShippedEnemiesJson, enemies);
+        ContentValidationException exception = Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
+        Assert.Contains("enemies.json", exception.Message);
+        Assert.Contains("attackRange", exception.Message);
+        Assert.Contains("must exceed", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("1.06")]
+    [InlineData("1.2")]
+    [InlineData("3")]
+    public void Load_AcceptsAnAttackRangeAboveTheSeparationOverTheStandOffFraction(string range)
+    {
+        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range);
+        ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson);
+        Assert.All(catalog.Enemies, template => Assert.Equal(float.Parse(range, System.Globalization.CultureInfo.InvariantCulture), template.AttackRange));
+    }
+
     [Fact]
     public void Load_RejectsMoreThanEightModifiers()
     {

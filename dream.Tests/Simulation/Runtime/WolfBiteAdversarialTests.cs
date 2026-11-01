@@ -27,7 +27,16 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
     private static readonly PlayerSessionId B = new("adv4-b");
     private static readonly PlayerSessionId C = new("adv4-c");
 
+    // A seat whose join window has been ended: these tests are about the respawn window and the bite. Use
+    // JoinedSeat for the join window itself.
     private static IAuthoritativePlayerTarget Seat(WorldSessionRuntime runtime, PlayerSessionId id)
+    {
+        IAuthoritativePlayerTarget seat = JoinedSeat(runtime, id);
+        WaveIRuntimeKit.EndProtection(runtime, id);
+        return seat;
+    }
+
+    private static IAuthoritativePlayerTarget JoinedSeat(WorldSessionRuntime runtime, PlayerSessionId id)
     {
         runtime.AttachRemoteSession(id, id.Value);
         return WaveIRuntimeKit.Target(runtime, id.Value);
@@ -111,6 +120,8 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
 
         for (int i = 1; i <= Protection; i++)
         {
+            // A wolf with no target walks home, so the test holds it beside the spawn.
+            wolf.SetPosition(new Vector3(41.3f, 1f, 40f));
             WaveIRuntimeKit.Tick(runtime, ref tick);
             Assert.Equal(health, target.Combatant.Health.CurrentHealth);
             Assert.True(Finite(target.Position) && Finite(wolf.Position), $"i={i} non-finite position");
@@ -130,39 +141,49 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
     // ---- protection across a leave and a rejoin ----
 
     [Fact]
-    public void ProtectionDoesNotSurviveALeaveAndRejoin_AndALaterDeathGetsAFullFreshWindow()
+    public void ARejoin_IsProtectedByItsOwnWindow_NotTheOldOne_AndALaterDeathGetsAFullFreshWindow()
     {
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
         IAuthoritativePlayerTarget target = Seat(runtime, A);
         EnemyActor wolf = DayWolf(runtime);
         ulong tick = 0;
         WaveIRuntimeKit.Tick(runtime, ref tick, 5);
-        wolf.SetPosition(new Vector3(45f, 1f, 45f));
+        wolf.SetPosition(wolf.HomePosition);
         WaveIRuntimeKit.Kill(runtime, A.Value);
         TicksUntilAlive(runtime, target, ref tick);
 
         // Protected: a wolf beside the player ignores it.
-        wolf.SetPosition(target.Position + new Vector3(4f, -0.5f, 0f));
-        WaveIRuntimeKit.Tick(runtime, ref tick, 20);
+        WaveIRuntimeKit.PlaceBeside(wolf, target, new Vector3(4f, -0.5f, 0f));
+        WaveIRuntimeKit.Tick(runtime, ref tick, 150);
         Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
 
-        // Leave and rejoin inside the window: the rejoin is an ordinary spawn, with no protection.
+        // Leave and rejoin with only 42 ticks of the old window left: the rejoin has its own, full window.
         runtime.DetachRemoteSession(A);
         WaveIRuntimeKit.Tick(runtime, ref tick, 3);
-        IAuthoritativePlayerTarget again = Seat(runtime, A);
-        wolf.SetPosition(again.Position + new Vector3(4f, -0.5f, 0f));
-        WaveIRuntimeKit.Tick(runtime, ref tick, 2);
+        IAuthoritativePlayerTarget again = JoinedSeat(runtime, A);
+        int health = again.Combatant.Health.CurrentHealth;
+        WaveIRuntimeKit.PlaceBeside(wolf, again, new Vector3(1.2f, -0.5f, 0f));
+        ulong joinedAt = tick;
+        for (int i = 1; i <= Protection; i++)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+            Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+            Assert.Equal(health, again.Combatant.Health.CurrentHealth);
+        }
+
+        Assert.Equal(joinedAt + (ulong)Protection, tick);
+        WaveIRuntimeKit.Tick(runtime, ref tick);
         Assert.NotEqual(EnemyBehaviorState.Idle, wolf.BehaviorState);
 
-        // Run well past where the old window would have ended, then die again: a full new window.
+        // Run well past the window, then die again: a full new window after that respawn.
         wolf.SetPosition(new Vector3(45f, 1f, 45f));
         WaveIRuntimeKit.Tick(runtime, ref tick, Protection);
         Park(runtime);
         WaveIRuntimeKit.Kill(runtime, A.Value);
         TicksUntilAlive(runtime, again, ref tick);
         Park(runtime);
-        int health = again.Combatant.Health.CurrentHealth;
-        wolf.SetPosition(again.Position + new Vector3(1.2f, -0.5f, 0f));
+        health = again.Combatant.Health.CurrentHealth;
+        WaveIRuntimeKit.PlaceBeside(wolf, again, new Vector3(1.2f, -0.5f, 0f));
         for (int i = 1; i <= Protection; i++)
         {
             WaveIRuntimeKit.Tick(runtime, ref tick);
@@ -175,7 +196,7 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void LeavingWhileDeadAndRejoining_IsNotProtected_AndTheWaitStartsFresh()
+    public void LeavingWhileDeadAndRejoining_StartsAFreshWait()
     {
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
         IAuthoritativePlayerTarget target = Seat(runtime, A);
@@ -186,7 +207,7 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
         WaveIRuntimeKit.Tick(runtime, ref tick, 50);
         runtime.DetachRemoteSession(A);
         WaveIRuntimeKit.Tick(runtime, ref tick, 5);
-        IAuthoritativePlayerTarget again = Seat(runtime, A);
+        IAuthoritativePlayerTarget again = JoinedSeat(runtime, A);
         // The profile-less runtime brings the seat back alive; kill it so the rejoin is dead as the host's would be.
         if (again.IsAlive)
         {
@@ -224,12 +245,17 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
         Assert.Equal(Delay - Gap + 1, aWait);
 
         // A is at the spawn, B returns there 100 ticks later. A's window ends Gap - Protection ticks before B's, long enough for the first bite.
-        wolf.SetPosition(Spawn + new Vector3(1.5f, -0.5f, 0f));
         int aHealth = a.Combatant.Health.CurrentHealth;
         int bHealth = 0;
         ulong bRespawnedAt = 0;
         for (ulong t = aRespawnedAt + 1; t <= aRespawnedAt + (ulong)Gap + (ulong)Protection; t++)
         {
+            if (t <= aRespawnedAt + (ulong)Protection)
+            {
+                // A wolf with no target walks home; hold it beside the spawn for the window.
+                wolf.SetPosition(Spawn + new Vector3(1.5f, -0.5f, 0f));
+            }
+
             WaveIRuntimeKit.Tick(runtime, ref tick);
             Assert.Equal(t, tick);
             if (bRespawnedAt == 0 && b.IsAlive)
@@ -247,7 +273,7 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
             if (t <= aRespawnedAt + (ulong)Protection)
             {
                 Assert.Equal(aHealth, a.Combatant.Health.CurrentHealth);
-                Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+                Assert.NotEqual(EnemyBehaviorState.Attacking, wolf.BehaviorState);
             }
         }
 
@@ -302,7 +328,7 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
 
         Park(runtime);
         int health = target.Combatant.Health.CurrentHealth;
-        wolf.SetPosition(target.Position + new Vector3(1.2f, -0.5f, 0f));
+        WaveIRuntimeKit.PlaceBeside(wolf, target, new Vector3(1.2f, -0.5f, 0f));
         for (int i = 1; i <= Protection; i++)
         {
             WaveIRuntimeKit.Tick(runtime, ref tick);
@@ -428,6 +454,15 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
                 bystanderDeathCheck = 1;
             }
 
+            if (!wasAlive || (respawnedAt != 0 && tick <= respawnedAt + (ulong)Protection))
+            {
+                // A wolf with no target walks home. The test camps them at the spawn while they cannot target the victim.
+                foreach (EnemyActor wolf in wolves)
+                {
+                    wolf.SetPosition(Spawn + new Vector3(2f, -0.5f, 0f));
+                }
+            }
+
             WaveIRuntimeKit.Tick(runtime, ref tick);
             if (bystanderDeathCheck == 1 && bystander.IsAlive)
             {
@@ -490,6 +525,7 @@ public sealed class WolfBiteAdversarialTests(ITestOutputHelper output)
         }
 
         EnemyActor wolf = DayWolf(runtime);
+        ClearArea(runtime.Map, 25, 35, 1, 4, 25, 35);
         ulong tick = 0;
         WaveIRuntimeKit.Tick(runtime, ref tick, 2);
         Vector3 center = new(30f, 1.5f, 30f);

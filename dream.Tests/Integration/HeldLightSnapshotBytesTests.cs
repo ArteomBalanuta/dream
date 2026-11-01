@@ -17,17 +17,19 @@ namespace Dream.Tests.Integration;
 public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
 {
     // 58,107 B at protocol v9; v10 widens the envelope's "protocolVersion" by one digit in each of the 200 frames.
-    // Wolf bite change: 58,827 B. The wolf now chases to its bite range (about 1.3 m, was 2.0 m) and bites the
-    // player standing there, so its position and the player's health change in the snapshots.
-    private const long WaveT1SnapshotBytes = 58_827;
+    // Wolf bite change: 58,827 B (the wolf chased to its bite range and bit the player standing there).
+    // Last fix loop of wave I: 58,140 B (-687 B). The day wolf now spawns in the far corner (52.5, 52.5), outside
+    // its aggro range of the players, and the players are protected for their first 192 ticks, so over the 200
+    // ticks the wolf stands still and nobody is bitten: no wolf movement or health change in the snapshots.
+    private const long NoLightSnapshotBytes = 58_140;
 
     [Fact]
-    public void NoLight_200Ticks_IsStill58307Bytes()
+    public void NoLight_200Ticks_Is58140Bytes()
     {
         using WorldSessionRuntime runtime = CreateRuntime();
         long[] frames = Run(runtime, equipSlot: null);
         output.WriteLine($"no light: {frames.Sum()} B over {frames.Length} snapshots");
-        Assert.Equal(WaveT1SnapshotBytes, frames.Sum());
+        Assert.Equal(NoLightSnapshotBytes, frames.Sum());
     }
 
     // Both runs process one equip action before the first tick (the hammer re-equipped, or the
@@ -58,7 +60,7 @@ public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
         output.WriteLine($"frame #1 differs at {at}: torch ...{first.Substring(Math.Max(0, at - 60), Math.Min(100, first.Length - Math.Max(0, at - 60)))}...");
         output.WriteLine($"frame #1 hammer          ...{firstHammer.Substring(Math.Max(0, at - 60), Math.Min(100, firstHammer.Length - Math.Max(0, at - 60)))}...");
 
-        Assert.Equal(WaveT1SnapshotBytes, hammer.Sum());
+        Assert.Equal(NoLightSnapshotBytes, hammer.Sum());
         Assert.True(torch.Sum() > hammer.Sum());
         // Delta frames between keyframes carry nothing for an unchanged light.
         Assert.All(grownFrames, i => Assert.Equal(0, i % 64));

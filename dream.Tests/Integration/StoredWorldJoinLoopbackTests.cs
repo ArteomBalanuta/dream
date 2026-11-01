@@ -20,11 +20,14 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // three more times with a snapshot per tick; the pinned frames are the join's (the snapshot frames
     // are checked to arrive but not byte-compared, see CaptureGeneratedJoinAsync). Generated worlds send no terrain manifest and no
     // terrain frames, so every frame must stay byte-identical (plan rule 4, decision E7).
+    // Re-pinned in the last fix loop of wave I, and the only cause is the day wolf's spawn in the join's actor
+    // list: (5.5, 1, 2.5) became (52.5, 1, 52.5), 2 bytes longer in all (8,492 -> 8,494). Sha-256 was
+    // 40391109031e35d0..., now e98ef020127c415a....
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 8_492;
+    private const long C0TotalBytes = 8_494;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "40391109031e35d04b26c1232579691b99ac37bd1d68166b003232bed4b42a42";
+    private const string C0Sha256 = "e98ef020127c415ab79985482d11c5bf337f438024737d1df779b44bfff8a2ee";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]

@@ -13,14 +13,16 @@ using Dream.Tests.Integration;
 namespace Dream.Tests.Simulation.Runtime;
 
 // Wolf bite and spawn protection: a chasing wolf stops inside its bite range, so a standing player is
-// bitten; a respawned player is ignored by enemies for PlayerRespawnRules.SpawnProtectionTicks ticks,
-// and attacking ends that early.
+// bitten; a player who spawns (first spawn, join or respawn) is ignored by enemies for
+// PlayerRespawnRules.SpawnProtectionTicks ticks, and attacking ends that early. A wolf with no target
+// walks back to its home, so tests that need it to stand still put the player beside the home.
 public sealed class WolfBiteAndSpawnProtectionTests
 {
     private const int Protection = PlayerRespawnRules.SpawnProtectionTicks;
     private const int BigHealth = 100_000;
 
     private static readonly PlayerSessionId A = new("prot-a");
+    private static readonly PlayerSessionId B = new("prot-b");
     private static readonly Vector3 WolfOffset = new(4f, -0.5f, 0f);
 
     private static float Horizontal(Vector3 a, Vector3 b)
@@ -36,12 +38,14 @@ public sealed class WolfBiteAndSpawnProtectionTests
         runtime.AttachRemoteSession(A, A.Value);
         target = WaveIRuntimeKit.Target(runtime, A.Value);
         target.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
+        // These tests are about the bite and the respawn window; the join window has its own tests.
+        WaveIRuntimeKit.EndProtection(runtime, A);
         return runtime;
     }
 
     private static EnemyActor Wolf(WorldSessionRuntime runtime) => runtime.Enemies.ActiveActors.First(e => e.IsActive && e.EnemyKind == "Wolf");
 
-    private static void Place(EnemyActor enemy, IAuthoritativePlayerTarget target, Vector3 offset) => enemy.SetPosition(target.Position + offset);
+    private static void Place(EnemyActor enemy, IAuthoritativePlayerTarget target, Vector3 offset) => WaveIRuntimeKit.PlaceBeside(enemy, target, offset);
 
     // ---- the bite ----
 
@@ -87,6 +91,7 @@ public sealed class WolfBiteAndSpawnProtectionTests
         WorldClockSettings oneMinuteDay = WorldClockSettings.FromDayLengthMinutes(1);
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
         runtime.AttachRemoteSession(A, A.Value);
+        WaveIRuntimeKit.EndProtection(runtime, A);
         long nightfall = WaveT2NightSpawnTests.WorldTicksAt(oneMinuteDay, dayIndex: 0, hour: 20);
         runtime.ConfigureWorldClock(oneMinuteDay, nightfall - 4);
         IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, A.Value);
@@ -101,19 +106,23 @@ public sealed class WolfBiteAndSpawnProtectionTests
     public void TheStandOffLiesInsideTheAttackRange_ForAnyTemplate()
     {
         Assert.InRange(WolfDefinition.PreferredStandOffDistance, WolfDefinition.PlayerSeparationDistance + 0.1f, 1.35f - 0.1f);
-        foreach (float range in new[] { 0.1f, 1.35f, 3f })
+        // Ranges the content catalog accepts: above the separation distance over the stand-off fraction.
+        float minimum = WolfDefinition.PlayerSeparationDistance / EnemyActor.StandOffRangeFraction;
+        foreach (float range in new[] { minimum + 0.01f, 1.35f, 3f })
         {
             EnemyActor actor = new(new EnemyCombatant(() => Vector3.Zero), Vector3.Zero, 10f, range, 2f, preferredStandOffDistance: 2f);
             Assert.True(actor.PreferredStandOffDistance < actor.AttackRange);
+            Assert.True(actor.PreferredStandOffDistance >= WolfDefinition.PlayerSeparationDistance, $"range {range}");
         }
     }
 
     // ---- spawn protection ----
 
-    // Kills the player and ticks until the respawn. The wolf waits at its day spawn, out of range.
+    // Kills the player and ticks until the respawn. The wolf waits at its home, out of range.
     private static void DieAndRespawn(WorldSessionRuntime runtime, IAuthoritativePlayerTarget target, ref ulong tick)
     {
-        Wolf(runtime).SetPosition(new Vector3(5.5f, 1f, 2.5f));
+        EnemyActor wolf = Wolf(runtime);
+        wolf.SetPosition(wolf.HomePosition);
         WaveIRuntimeKit.Kill(runtime, A.Value);
         int guard = 0;
         while (!target.IsAlive)
@@ -159,14 +168,111 @@ public sealed class WolfBiteAndSpawnProtectionTests
     }
 
     [Fact]
-    public void TheFirstSpawn_HasNoProtection()
+    public void TheFirstSpawn_IsProtectedFor192Ticks_ThenBitten()
     {
-        using WorldSessionRuntime runtime = Create(out IAuthoritativePlayerTarget target);
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        runtime.AttachRemoteSession(A, A.Value);
+        IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, A.Value);
+        target.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
         EnemyActor wolf = Wolf(runtime);
-        Place(wolf, target, WolfOffset);
         ulong tick = 0;
+        Place(wolf, target, new Vector3(1.0f, -0.5f, 0f));
+        for (int i = 1; i <= Protection; i++)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+            Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+            Assert.Equal(BigHealth, target.Combatant.Health.CurrentHealth);
+        }
+
         WaveIRuntimeKit.Tick(runtime, ref tick);
         Assert.NotEqual(EnemyBehaviorState.Idle, wolf.BehaviorState);
+        for (int i = 0; i < 200 && target.Combatant.Health.CurrentHealth == BigHealth; i++)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+        }
+
+        Assert.True(target.Combatant.Health.CurrentHealth < BigHealth, "the wolf never bit after the first spawn's window");
+    }
+
+    [Fact]
+    public void ARepeatedJoinOfAnAttachedSeat_DoesNotStartANewWindow()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        runtime.AttachRemoteSession(A, A.Value);
+        ulong tick = 0;
+        WaveIRuntimeKit.Tick(runtime, ref tick, Protection + 10);
+        runtime.AttachRemoteSession(A, A.Value);
+        IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, A.Value);
+        target.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
+        EnemyActor wolf = Wolf(runtime);
+        Place(wolf, target, new Vector3(1.0f, -0.5f, 0f));
+        WaveIRuntimeKit.Tick(runtime, ref tick);
+        Assert.NotEqual(EnemyBehaviorState.Idle, wolf.BehaviorState);
+    }
+
+    [Fact]
+    public void AProtectedSecondarySeat_NextToTheWolf_IsSkipped_AndTheWolfBitesTheUnprotectedPlayerFartherAway()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        IAuthoritativePlayerTarget unprotected = Create(runtime, A);
+        // B joins second, so it is a secondary seat, and its join window protects it.
+        runtime.AttachRemoteSession(B, B.Value);
+        IAuthoritativePlayerTarget protectedSeat = WaveIRuntimeKit.Target(runtime, B.Value);
+        protectedSeat.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
+        EnemyActor wolf = Wolf(runtime);
+        wolf.SetPosition(wolf.HomePosition);
+        protectedSeat.SetWorldPosition(wolf.Position + new Vector3(-1.2f, 0.5f, 0f));
+        unprotected.SetWorldPosition(wolf.Position + new Vector3(0f, 0.5f, -3f));
+        ulong tick = 0;
+        int ticks = 0;
+        while (unprotected.Combatant.Health.CurrentHealth == BigHealth && ticks++ < 150)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+            Assert.Equal(BigHealth, protectedSeat.Combatant.Health.CurrentHealth);
+        }
+
+        Assert.True(unprotected.Combatant.Health.CurrentHealth < BigHealth, "the wolf never switched to the unprotected player");
+        Assert.True(tick < (ulong)Protection, "the bite came after B's window ended; the test proves nothing");
+        Assert.Equal(BigHealth, protectedSeat.Combatant.Health.CurrentHealth);
+    }
+
+    [Fact]
+    public void AWolfOverlappingAProtectedPlayer_DoesNotBiteIt_ShovesItClear_AndStaysFinite()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        runtime.AttachRemoteSession(A, A.Value);
+        IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, A.Value);
+        target.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
+        EnemyActor wolf = Wolf(runtime);
+        wolf.SetPosition(wolf.HomePosition);
+        target.SetWorldPosition(wolf.Position + new Vector3(0.2f, 0.5f, 0f));
+        ulong tick = 0;
+        for (int i = 1; i <= Protection; i++)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+            Assert.True(float.IsFinite(target.Position.X) && float.IsFinite(target.Position.Z), $"i={i} {target.Position}");
+            Assert.Equal(BigHealth, target.Combatant.Health.CurrentHealth);
+            Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+            Assert.Equal(wolf.HomePosition, wolf.Position);
+        }
+
+        Assert.True(Horizontal(wolf.Position, target.Position) >= WolfDefinition.PlayerSeparationDistance - 0.01f,
+            $"the protected player was left inside the wolf: {Horizontal(wolf.Position, target.Position)}");
+        for (int i = 0; i < 200 && target.Combatant.Health.CurrentHealth == BigHealth; i++)
+        {
+            WaveIRuntimeKit.Tick(runtime, ref tick);
+        }
+
+        Assert.True(target.Combatant.Health.CurrentHealth < BigHealth, "never bitten after the window");
+    }
+
+    private static IAuthoritativePlayerTarget Create(WorldSessionRuntime runtime, PlayerSessionId id)
+    {
+        runtime.AttachRemoteSession(id, id.Value);
+        IAuthoritativePlayerTarget seat = WaveIRuntimeKit.Target(runtime, id.Value);
+        seat.Combatant.Health.SetAuthoritativeState(BigHealth, BigHealth);
+        WaveIRuntimeKit.EndProtection(runtime, id);
+        return seat;
     }
 
     [Fact]

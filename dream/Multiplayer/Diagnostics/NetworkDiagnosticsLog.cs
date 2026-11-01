@@ -113,6 +113,12 @@ public static class NetworkDiagnosticsLog
         WriteEnabled(category, messageFactory(state));
     }
 
+    // Lets the next WriteEvery of this key through. For tests that assert a rate limited line.
+    internal static void ForgetRateLimitKey(string key)
+    {
+        RateLimiter.Forget(key);
+    }
+
     // Enables diagnostics on the calling thread only and sends its (category, message) pairs to
     // the sink instead of the console and the log file, until the returned scope is disposed.
     // Rate limiting still applies, through the process-wide limiter.

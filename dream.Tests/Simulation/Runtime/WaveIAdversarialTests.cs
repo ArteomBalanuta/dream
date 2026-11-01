@@ -164,12 +164,6 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
 
         run.Host.JoinSession("seat-second", "Second");
         IAuthoritativePlayerTarget second = WaveIRuntimeKit.Target(run.Runtime, "seat-second");
-        // Wolves bite a standing player now (wolf bite change); this test is about health, so the wolf waits far away.
-        foreach (Dream.Simulation.Enemies.EnemyActor enemy in run.Runtime.Enemies.ActiveActors)
-        {
-            enemy.SetPosition(new Vector3(45f, 1f, 45f));
-        }
-
         Assert.True(second.IsAlive, "a new character inherited the previous occupant's death");
         Assert.Equal(second.Combatant.Health.MaxHealth, second.Combatant.Health.CurrentHealth);
         run.Advance(Delay + 20);

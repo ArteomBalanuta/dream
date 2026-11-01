@@ -51,11 +51,11 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             runtime.MaxDepartedProfiles = 1;
             Driver alpha = new(rig, await rig.JoinAsync(Alpha));
             List<AuthoritativeActionResult> results = Collect(alpha.Peer);
-            // The default wolf aggroes on Alpha and closes in from wherever the join's tick count
-            // left it; within 0.9 of a combat ray and 4 m it takes the hit before a nearer cube
-            // (AuthoritativeCombatResolver checks enemies first), so the attack phases below hit it
-            // or not depending on timing. Park it out of aggro range for the whole run instead.
-            ParkWolfAwayFrom(runtime, alpha.Position());
+            // A wolf in aggro range would close in; within 0.9 of a combat ray and 4 m it takes the hit
+            // before a nearer cube (AuthoritativeCombatResolver checks enemies first), so the attack phases
+            // below would hit it or not depending on timing. The day wolf spawns far out of aggro range and
+            // stays at its home for the whole run.
+            AssertWolfFarFrom(runtime, alpha.Position());
             await alpha.StepAsync(PlayerInteractionMode.Building, Vector3.UnitZ, attack: false);
 
             Assert.Equal(1, database.Count($"SELECT COUNT(*) FROM player_profiles WHERE player_name = 'Name {Alpha}';"));
@@ -192,7 +192,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             Assert.False(IsInventoryLoaded(runtime, $"Name {Alpha}"), "Alpha's inventory survived the LRU eviction");
             Assert.True(runtime.DepartedProfileCount <= 1, $"{runtime.DepartedProfileCount} departed profiles cached with an LRU of 1");
             // The visitors spawned beside Alpha's spot; the wolf must still be idle and far away.
-            AssertWolfParked(runtime);
+            AssertWolfAtHome(runtime);
 
             // Rejoin: everything comes back from the database.
             alpha = new Driver(rig, await rig.JoinAsync(Alpha));
@@ -239,23 +239,22 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
         }
     }
 
-    // Far corner, beyond the wolf's aggro range from Alpha (and from where the visitors spawn).
-    private static void ParkWolfAwayFrom(WorldSessionRuntime runtime, Vector3 alphaPosition)
+    // The day wolf spawns in the far corner, beyond its aggro range from Alpha (and from where the visitors
+    // spawn), so nothing parks it: it must simply stay at its home, idle.
+    private static void AssertWolfFarFrom(WorldSessionRuntime runtime, Vector3 alphaPosition)
     {
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "Wolf");
-        Vector3 corner = new(runtime.Map.Width - 1.5f, wolf.Position.Y, runtime.Map.Depth - 1.5f);
-        wolf.SetPosition(corner);
-        Vector3 offset = corner - alphaPosition;
+        Vector3 offset = wolf.Position - alphaPosition;
         offset.Y = 0f;
-        Assert.True(offset.Length > wolf.AggroRange + 4f, $"the wolf parked at {corner} is {offset.Length} from Alpha at {alphaPosition}");
-        AssertWolfParked(runtime);
+        Assert.True(offset.Length > wolf.AggroRange + 4f, $"the wolf at {wolf.Position} is {offset.Length} from Alpha at {alphaPosition}");
+        AssertWolfAtHome(runtime);
     }
 
-    private static void AssertWolfParked(WorldSessionRuntime runtime)
+    private static void AssertWolfAtHome(WorldSessionRuntime runtime)
     {
         EnemyActor wolf = Assert.Single(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "Wolf");
-        Vector3 corner = new(runtime.Map.Width - 1.5f, wolf.Position.Y, runtime.Map.Depth - 1.5f);
-        Assert.True((wolf.Position - corner).Length < 1e-3f, $"the wolf left its parking spot: {wolf.Position}");
+        Assert.True((wolf.Position - wolf.HomePosition).Length < 1e-3f, $"the wolf left its home: {wolf.Position}");
+        Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
     }
 
     private static void AssertSamePlayer(PlayerState expected, PlayerState actual, bool comparePosition)

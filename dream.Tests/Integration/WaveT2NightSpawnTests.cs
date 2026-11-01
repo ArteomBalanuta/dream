@@ -31,16 +31,16 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
     private static readonly WorldClockSettings OneMinuteDay = WorldClockSettings.FromDayLengthMinutes(1);
 
     [Fact]
-    public void NightSpawn_IsTheOppositeCorner_ClampedAndApartFromTheDaySpawn()
+    public void NightSpawn_IsNearTheFarCorner_ClampedAndApartFromTheDaySpawn()
     {
-        Assert.Equal(new Vector3(5.5f, 1f, 2.5f), WolfSpawnPolicy.ResolveInitialSpawn(56, 56));
-        Assert.Equal(new Vector3(50.5f, 1f, 53.5f), WolfSpawnPolicy.ResolveNightSpawn(56, 56));
+        Assert.Equal(new Vector3(52.5f, 1f, 52.5f), WolfSpawnPolicy.ResolveInitialSpawn(56, 56));
+        Assert.Equal(new Vector3(53.5f, 1f, 53.5f), WolfSpawnPolicy.ResolveNightSpawn(56, 56));
 
-        // 11 x 5: the opposite corner is the day spawn itself, so the night spawn steps away.
-        Vector3 day = WolfSpawnPolicy.ResolveInitialSpawn(11, 5);
-        Vector3 night = WolfSpawnPolicy.ResolveNightSpawn(11, 5);
-        Assert.Equal(new Vector3(5.5f, 1f, 2.5f), day);
-        Assert.Equal(new Vector3(7.5f, 1f, 2.5f), night);
+        // 3 x 3: both inset corners clamp onto the same cell, so the night spawn steps away.
+        Vector3 day = WolfSpawnPolicy.ResolveInitialSpawn(3, 3);
+        Vector3 night = WolfSpawnPolicy.ResolveNightSpawn(3, 3);
+        Assert.Equal(new Vector3(0.5f, 1f, 0.5f), day);
+        Assert.Equal(new Vector3(1.5f, 1f, 0.5f), night);
 
         for (int width = 1; width <= 64; width++)
         {
