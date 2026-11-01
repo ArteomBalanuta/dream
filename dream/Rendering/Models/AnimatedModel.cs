@@ -154,6 +154,7 @@ public class AnimatedModel : IDisposable
                 MetallicFactor = source.MetallicFactor,
                 RoughnessFactor = source.RoughnessFactor,
                 EmissiveFactor = source.EmissiveFactor,
+                EmissiveUvScroll = source.EmissiveUvScroll,
                 BaseColorTexture = UploadTexture(source.BaseColorTexture),
                 NormalTexture = UploadTexture(source.NormalTexture),
                 MetallicRoughnessTexture = UploadTexture(source.MetallicRoughnessTexture),
@@ -589,7 +590,12 @@ public class AnimatedModel : IDisposable
         shader.SetBool("material.hasBaseColorTexture", material.HasBaseColorTexture);
         shader.SetBool("material.hasNormalTexture", material.HasNormalTexture);
         shader.SetBool("material.hasMetallicRoughnessTexture", material.HasMetallicRoughnessTexture);
-        shader.SetBool("material.hasEmissiveTexture", material.HasEmissiveTexture);
+        shader.SetHasEmissiveTexture(material.HasEmissiveTexture);
+        shader.SetEmissiveUvScroll(material.EmissiveUvScroll);
+        if (material.EmissiveUvScroll != Vector2.Zero)
+        {
+            shader.SetTime(RenderFrameClock.Seconds);
+        }
         shader.SetBool("material.hasOcclusionTexture", material.HasOcclusionTexture);
 
         // Bind textures
@@ -683,6 +689,7 @@ public class AnimatedModel : IDisposable
     {
         public Vector4 BaseColorFactor;
         public Vector3 EmissiveFactor;
+        public Vector2 EmissiveUvScroll;
         public float MetallicFactor;
         public float RoughnessFactor;
         public float AlphaCutoff;

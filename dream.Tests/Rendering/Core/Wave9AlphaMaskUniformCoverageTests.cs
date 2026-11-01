@@ -40,6 +40,9 @@ public class Wave9AlphaMaskUniformCoverageTests
                 MethodBody(shaderSource, "public void SetModelMatrix(Matrix4 model)").Contains("_normalMatrixLocation", StringComparison.Ordinal),
             ["material.alphaCutoff"] = switchPaths.Contains("SetAlphaCutoff(", StringComparison.Ordinal),
             ["material.emissiveFactor"] = switchPaths.Contains("SetEmissiveFactor(", StringComparison.Ordinal),
+            ["material.hasEmissiveTexture"] = switchPaths.Contains("SetHasEmissiveTexture(", StringComparison.Ordinal),
+            ["material.emissiveUvScroll"] = switchPaths.Contains("SetEmissiveUvScroll(", StringComparison.Ordinal),
+            ["uTime"] = switchPaths.Contains("SetTime(", StringComparison.Ordinal),
             ["jointMatrices"] = switchPaths.Contains("JointMatrixArrayUniformName", StringComparison.Ordinal),
         };
 

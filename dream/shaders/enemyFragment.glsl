@@ -20,7 +20,12 @@ struct Material {
     sampler2D baseColorTexture;
     float alphaCutoff;
     vec3 emissiveFactor; // linear RGB added after exposure, before fog (0 = not emissive)
+    bool hasEmissiveTexture;
+    sampler2D emissiveTexture;
+    vec2 emissiveUvScroll; // UV per second (0 = still)
 };
+
+uniform float uTime;
 
 uniform Material material;
 
@@ -61,5 +66,9 @@ void main()
     vec3 lit = (dreamAmbient(n) * uLightingParams.z + (dreamDirect(n) + dreamPointLights(n, fragPos)) * ActorDirectScale) * baseColor.rgb;
     lit = max(lit, baseColor.rgb * uLightingParams.y);
 
-    FragColor = vec4(dreamApplyFog(dreamExpose(lit) + material.emissiveFactor, fragPos), baseColor.a);
+    vec3 emissive = material.emissiveFactor;
+    if (material.hasEmissiveTexture) {
+        emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;
+    }
+    FragColor = vec4(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), baseColor.a);
 }

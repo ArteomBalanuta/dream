@@ -7,6 +7,7 @@ using Dream.Client.Networking;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
+using Dream.Rendering.Core;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Players;
 
@@ -18,6 +19,7 @@ public partial class PlayScene
     {
         float delta = (float)args.Time;
         _clientPresentationTimeSeconds += args.Time;
+        RenderFrameClock.Advance(_clientPresentationTimeSeconds);
         _serverTickClock.Advance(args.Time);
         DrainRemoteTransportMessages();
         _runtime.Player.NudgeWorldPosition(_predictionReconciler.TakeSmoothingStep(delta));
