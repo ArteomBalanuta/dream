@@ -65,7 +65,7 @@ public sealed partial class WorldSessionRuntime
         // The maximum at this moment: gear equipped while dead counts. Facing stays.
         int maxHealth = seat.Combatant.Health.MaxHealth;
         seat.Combatant.Health.SetAuthoritativeState(maxHealth, maxHealth);
-        seat.SetWorldPosition(ResolveRespawnPosition(Map, _worldSpawn));
+        seat.SetWorldPosition(ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch));
         player.RespawnAtTick = 0;
         // Enemy steps of ticks tick+1 .. tick+SpawnProtectionTicks skip this player.
         player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
@@ -82,6 +82,7 @@ public sealed partial class WorldSessionRuntime
             IAuthoritativePlayerTarget target = all[i];
             if (_sessions.TryGet(target.SessionId, out ConnectedPlayer? player)
                 && player != null
+                && player.ProtectedThroughTick != 0
                 && player.ProtectedThroughTick >= tick)
             {
                 continue;
@@ -93,11 +94,19 @@ public sealed partial class WorldSessionRuntime
 
     private readonly List<IAuthoritativePlayerTarget> _enemyTargets = [];
 
-    // The world spawn, lifted one cell at a time while a cell the body overlaps, or the one above it, holds a solid cube.
-    // The body is one cell wide and centered on X/Z, so at a whole-number X/Z it overlaps two cells on each axis.
-    // The lift is capped at the map's height; X and Z clamp to the map. Pure and deterministic, and run at
-    // respawn, so a rebuilt map re-clamps. A column solid to the top does not throw: the player lands at the cap.
-    internal static Vector3 ResolveRespawnPosition(Map map, Vector3 spawn)
+    // Reused by every respawn (the tick lock serializes them); cleared and refilled each time.
+    private readonly List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> _respawnRubbleScratch = [];
+
+    // The world spawn, lifted one cell at a time while the body box holds a solid cube or a rubble piece. The
+    // body is one cell wide and centered on X/Z, so at a whole-number X/Z it overlaps two cells on each axis, and
+    // it is tested over its own cell and the one above. Rubble (the pieces of a fractured cube, which leave no
+    // cube in their cell) is tested by the pieces' own boxes. The lift is capped at the map's height; X and Z
+    // clamp to the map. Pure and deterministic, and run at respawn, so a rebuilt map re-clamps. A column solid to
+    // the top does not throw: the player lands at the cap. Pass a scratch list to avoid one allocation per call.
+    internal static Vector3 ResolveRespawnPosition(
+        Map map,
+        Vector3 spawn,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>? scratch = null)
     {
         float x = Math.Clamp(spawn.X, 0.5f, map.Width - 0.5f);
         float z = Math.Clamp(spawn.Z, 0.5f, map.Depth - 0.5f);
@@ -110,7 +119,8 @@ public sealed partial class WorldSessionRuntime
         int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
         // A fractured cube leaves no Cube in its cell: its rubble pieces are separate bodies that can lie
         // anywhere (they move), so they are tested by their own boxes, not by cell.
-        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble = [];
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble = scratch ?? [];
+        rubble.Clear();
         map.CaptureFracturePiecesInto(rubble);
         while (y < map.Height - 0.5f)
         {

@@ -47,7 +47,8 @@ public sealed class ConnectedPlayer
     internal ulong RespawnAtTick;
 
     // The last server tick whose enemy step ignores this player (spawn protection after a respawn), or 0
-    // for none. Not persisted; cleared on detach and when the player attacks.
+    // for none. Set on a first spawn, every join and every respawn; not persisted; cleared on detach and when
+    // the player attacks.
     internal ulong ProtectedThroughTick;
 
     // The registry this player is registered in (null once it forgets the player); told when the

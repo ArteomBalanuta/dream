@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
@@ -511,6 +512,19 @@ public sealed class ContentCatalog
                 }
             }
 
+            // The wolf stops at 90% of its attack range at most. A range at or below the separation distance
+            // (0.95 m) over that fraction would stop it inside the separation, where it shoves the player and
+            // never settles within bite range; reject it instead of shipping an enemy that cannot bite.
+            float minimumAttackRange = WolfDefinition.PlayerSeparationDistance / EnemyActor.StandOffRangeFraction;
+            float attackRange = ReadFloat(EnemiesFileName, $"{path}.attackRange", enemy["attackRange"], 0.1f, 1000f);
+            if (attackRange <= minimumAttackRange)
+            {
+                throw Fail(
+                    EnemiesFileName,
+                    $"{path}.attackRange",
+                    $"{attackRange.ToString(CultureInfo.InvariantCulture)} must exceed {minimumAttackRange.ToString("0.###", CultureInfo.InvariantCulture)} (the player separation distance {WolfDefinition.PlayerSeparationDistance.ToString(CultureInfo.InvariantCulture)} divided by the stand-off fraction {EnemyActor.StandOffRangeFraction.ToString(CultureInfo.InvariantCulture)})");
+            }
+
             EnemyTemplate template = new(
                 ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
                 ReadName(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
@@ -520,7 +534,7 @@ public sealed class ContentCatalog
                 ReadFloat(EnemiesFileName, $"{path}.attackSpeed", enemy["attackSpeed"], PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),
                 interval,
                 ReadFloat(EnemiesFileName, $"{path}.aggroRange", enemy["aggroRange"], 0.1f, 1000f),
-                ReadFloat(EnemiesFileName, $"{path}.attackRange", enemy["attackRange"], 0.1f, 1000f),
+                attackRange,
                 ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f),
                 ReadVisualId(EnemiesFileName, $"{path}.visualKey", enemy["visualKey"]),
                 lootTable,

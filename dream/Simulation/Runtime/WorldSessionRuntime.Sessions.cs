@@ -26,10 +26,21 @@ public sealed partial class WorldSessionRuntime
         string? displayName = null,
         Dream.Simulation.Characters.CharacterKey? character = null)
     {
+        bool alreadyAttached = _sessions.TryGet(sessionId, out ConnectedPlayer? before) && before != null && before.IsSpawned;
         ConnectedPlayer attached = AttachRemoteSessionCore(sessionId, displayName);
         if (character is { } key)
         {
             attached.BindCharacter(key, displayName ?? key.Value);
+        }
+
+        // Every join, first or returning, is protected for the same window as a respawn and it ends on the
+        // player's first attack. Without it a new player who stands still where they joined was bitten within
+        // 9 ticks and killed in about 8.6 s, then looped through respawns (a wolf spawned near the world
+        // spawn). The window is per seat and counted in server ticks; a rejoin gets its own, not the old one.
+        // A repeated join of a seat that is already attached does not start a new window.
+        if (!alreadyAttached)
+        {
+            attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
         }
 
         // An attached player's cached profile is never evicted (MarkProfileDeparted).

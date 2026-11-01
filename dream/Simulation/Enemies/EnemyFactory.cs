@@ -47,7 +47,7 @@ internal static class EnemyFactory
             attackIntervalSeconds: derived.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight,
             baseStats: stats);
-        return Build(combatant, template, position, template.MoveSpeed, template.DisplayName, template.Key, template.Level);
+        return Build(combatant, template, position, template.MoveSpeed, template.DisplayName, template.Key, template.Level, position);
     }
 
     public static EnemyActor Restore(
@@ -55,7 +55,8 @@ internal static class EnemyFactory
         EnemyTemplate template,
         int actorId,
         SceneEventHub events,
-        CombatFormulaService formulas)
+        CombatFormulaService formulas,
+        Vector3? home = null)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(events);
@@ -87,7 +88,7 @@ internal static class EnemyFactory
             baseStats: stats);
         combatant.Health.SetAuthoritativeState(stored.CurrentHealth, stored.MaxHealth);
 
-        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level);
+        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level, home ?? position);
         actor.SetFacing(row.Facing);
         return actor;
     }
@@ -99,7 +100,8 @@ internal static class EnemyFactory
         float moveSpeed,
         string displayName,
         string enemyKind,
-        int level)
+        int level,
+        Vector3 home)
     {
         return new EnemyActor(
             combatant,
@@ -115,7 +117,8 @@ internal static class EnemyFactory
             level: level,
             visualKey: string.Equals(template.VisualKey, ContentCatalog.DefaultEnemyVisualKey, StringComparison.Ordinal)
                 ? null
-                : template.VisualKey);
+                : template.VisualKey,
+            homePosition: home);
     }
 
     private static StatBlock Clamped(int strength, int agility, int vitality, int energy, float movementSpeed, float attackSpeed)

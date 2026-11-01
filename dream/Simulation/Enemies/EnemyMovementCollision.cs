@@ -69,4 +69,35 @@ public static class EnemyMovementCollision
 
         return lastAllowed - from;
     }
+
+    // True when no cube lies on the horizontal line from the wolf (at its body-middle height) to the player,
+    // sampled every 0.25 m. Cubes lower than the player's feet cell are ignored: the player stands on them,
+    // so a wolf at the foot of a 1-cube step still reaches. Allocation-free; at most a handful of lookups.
+    public static bool HasClearBiteLine(Map map, Vector3 wolfPosition, float wolfAnchorHeight, Vector3 playerPosition, float playerHalfHeight)
+    {
+        const float sampleSpacing = 0.25f;
+        int layer = (int)MathF.Floor(wolfPosition.Y + wolfAnchorHeight);
+        int playerFeetLayer = (int)MathF.Floor(playerPosition.Y - playerHalfHeight + OccupancyEpsilon);
+        if (layer < playerFeetLayer)
+        {
+            return true;
+        }
+
+        float dx = playerPosition.X - wolfPosition.X;
+        float dz = playerPosition.Z - wolfPosition.Z;
+        float length = MathF.Sqrt((dx * dx) + (dz * dz));
+        int samples = (int)MathF.Ceiling(length / sampleSpacing);
+        for (int i = 1; i < samples; i++)
+        {
+            float t = i / (float)samples;
+            int cx = (int)MathF.Floor(wolfPosition.X + (dx * t));
+            int cz = (int)MathF.Floor(wolfPosition.Z + (dz * t));
+            if (map.TryGetCubeAtCell(cx, layer, cz) != null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

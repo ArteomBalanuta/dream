@@ -17,7 +17,7 @@ namespace Dream.Tests.Simulation.Runtime;
 // Wave I2: what the respawn and loot tests share.
 internal static class WaveIRuntimeKit
 {
-    // Far from the wolf's day spawn (5.5, 1, 2.5), so no enemy interferes with a timing test.
+    // Far from the wolves' spawns (the far corner of the 56 m map), so no enemy interferes with a timing test.
     public static readonly Vector3 FarStart = new(40f, 1.5f, 40f);
 
     public static WorldSessionRuntime CreateRuntime() => new(WorldDefaults.StartupFloorSize, FarStart, new SceneEventHub());
@@ -38,6 +38,21 @@ internal static class WaveIRuntimeKit
     {
         Assert.True(runtime.TryGetSessionPlayerTarget(new PlayerSessionId(session), out IAuthoritativePlayerTarget? target));
         return target!;
+    }
+
+    // Ends a seat's join protection, for tests about something other than the first 192 ticks.
+    public static void EndProtection(WorldSessionRuntime runtime, PlayerSessionId session)
+    {
+        Assert.True(runtime.Sessions.TryGet(session, out ConnectedPlayer? player));
+        player!.ProtectedThroughTick = 0;
+    }
+
+    // The wolf at its home with the player the given offset away from it (offset = wolf minus player). A wolf
+    // with no target walks home, so tests that need it to stand still put the player beside the home instead.
+    public static void PlaceBeside(EnemyActor wolf, IAuthoritativePlayerTarget target, Vector3 offset)
+    {
+        wolf.SetPosition(wolf.HomePosition);
+        target.SetWorldPosition(wolf.Position - offset);
     }
 
     public static void Kill(WorldSessionRuntime runtime, string session)

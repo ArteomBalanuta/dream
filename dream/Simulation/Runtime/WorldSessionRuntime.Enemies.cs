@@ -262,6 +262,15 @@ public sealed partial class WorldSessionRuntime
                     continue;
                 }
 
+                // A wolf shoves only a player whose body overlaps its own vertically: a player standing on a
+                // pillar or above a floor is not pushed off it by a wolf below.
+                float playerBottom = resolvedPosition.Y - EnemyActor.PlayerHalfHeight - actor.Position.Y;
+                float playerTop = resolvedPosition.Y + EnemyActor.PlayerHalfHeight - actor.Position.Y;
+                if (playerBottom >= actor.CollisionHeight || playerTop <= 0f)
+                {
+                    continue;
+                }
+
                 resolvedPosition = EnemyPlayerCollisionResolver.ResolvePlayerPosition(
                     resolvedPosition,
                     actor.Position,

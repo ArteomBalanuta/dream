@@ -540,7 +540,11 @@ internal sealed partial class RuntimePersistenceBridge
                 continue;
             }
 
-            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas));
+            // The home is not persisted: a restored wolf idles at its role's spawn on this map.
+            Vector3 home = template.SpawnRole == EnemySpawnRole.NightExtra
+                ? WolfSpawnPolicy.ResolveNightSpawn(map.Width, map.Depth)
+                : WolfSpawnPolicy.ResolveInitialSpawn(map.Width, map.Depth);
+            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
         }
     }

@@ -412,16 +412,6 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
         public void Advance(int tick, ScriptStep step)
         {
-            // The day wolf respawns after the clear. Since the wolf bite change it would walk to the players and
-            // push them off their aim, so it waits in a far corner (every run does the same).
-            foreach (EnemyActor enemy in Runtime.Enemies.ActiveActors)
-            {
-                if (!ReferenceEquals(enemy, _scriptedEnemy))
-                {
-                    enemy.SetPosition(new Vector3(50f, 1f, 50f));
-                }
-            }
-
             foreach (string session in step.Commands.Keys.Order(StringComparer.Ordinal))
             {
                 _host.HandleClientMessage($"connection-{session}", new PlayerCommandMessage(step.Commands[session]));

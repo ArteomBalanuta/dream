@@ -165,11 +165,13 @@ public sealed partial class WorldSessionRuntime : IDisposable
         Player = new Player(Map, Physics, playerBody, playerStartPosition, _events, _combatFormulaService);
         LocalPlayerSessionId = PlayerSessionId.LocalDefault;
         _sessions.SessionForgotten = OnSessionForgotten;
-        _sessions.Register(
+        ConnectedPlayer localSeat = _sessions.Register(
             LocalPlayerSessionId,
             Player.Combatant.Actor.Id,
             isLocal: true,
             displayName: "local-player");
+        // The first spawn is protected like a respawn (see AttachRemoteSession).
+        localSeat.ProtectedThroughTick = PlayerRespawnRules.SpawnProtectionTicks;
         _sessionInteractionModes[LocalPlayerSessionId] = PlayerInteractionMode.Building;
         _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
 

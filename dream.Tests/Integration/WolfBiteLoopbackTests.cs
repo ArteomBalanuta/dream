@@ -30,7 +30,7 @@ public sealed class WolfBiteLoopbackTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task AProtectedPlayerWhoLeavesAndRejoins_IsNotProtectedOnReturn_OverRealTcp()
+    public async Task AProtectedPlayerWhoLeavesAndRejoins_GetsItsOwnWindowOnReturn_OverRealTcp()
     {
         using MigrationTestDatabase db = new();
         DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(
@@ -54,7 +54,8 @@ public sealed class WolfBiteLoopbackTests(ITestOutputHelper output)
         Assert.Equal(max, target.Combatant.Health.CurrentHealth);
 
         // Inside the window, a wolf right beside the player does nothing, and the client sees full health.
-        wolf.SetPosition(target.Position + new Vector3(1.2f, -0.5f, 0f));
+        // (A wolf with no target walks home, so the player is put beside the wolf's home.)
+        WaveIRuntimeKit.PlaceBeside(wolf, target, new Vector3(1.2f, -0.5f, 0f));
         for (int i = 0; i < 60; i++)
         {
             await StepAsync(server, first);
@@ -69,9 +70,12 @@ public sealed class WolfBiteLoopbackTests(ITestOutputHelper output)
         await using HeadlessPlayScene second = await HeadlessPlayScene.JoinAsync(server, Session);
         IAuthoritativePlayerTarget again = WaveIRuntimeKit.Target(server.Runtime, Session);
         Assert.True(again.IsAlive);
-        wolf.SetPosition(again.Position + new Vector3(1.2f, -0.5f, 0f));
-        int stepsToWake = 0;
-        while (wolf.BehaviorState == EnemyBehaviorState.Idle && stepsToWake < 20)
+        // The rejoin is protected by its own full window (a join starts one), not the old respawn window that
+        // had 130 ticks left: the wolf beside the player stays Idle for most of 192 ticks, then wakes.
+        WaveIRuntimeKit.PlaceBeside(wolf, again, new Vector3(1.2f, -0.5f, 0f));
+        await StepAsync(server, second);
+        int stepsToWake = 1;
+        while (wolf.BehaviorState == EnemyBehaviorState.Idle && stepsToWake < 400)
         {
             await StepAsync(server, second);
             stepsToWake++;
@@ -79,7 +83,8 @@ public sealed class WolfBiteLoopbackTests(ITestOutputHelper output)
 
         output.WriteLine($"rejoined at {again.Position}; the wolf left Idle after {stepsToWake} steps ({wolf.BehaviorState})");
         Assert.NotEqual(EnemyBehaviorState.Idle, wolf.BehaviorState);
-        Assert.True(stepsToWake <= 3, $"the wolf needed {stepsToWake} steps to notice a rejoined player");
+        // The window began when the join was accepted, a few ticks before JoinAsync returned.
+        Assert.InRange(stepsToWake, 100, PlayerRespawnRules.SpawnProtectionTicks + 1);
         await second.LeaveAsync();
     }
 }
