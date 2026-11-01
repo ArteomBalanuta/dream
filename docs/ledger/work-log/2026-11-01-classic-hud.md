@@ -1,6 +1,7 @@
 # Classic HUD integration, 2026-11-01
 
 Plan: `docs/ledger/plans/2026-11-01-classic-hud-plan.md`. Branch: `integrate/classic-hud`, from 1d4ede8.
+Status: integrated on `integrate/classic-hud` through fix loop 1 (merge `2a28261`). Full suite run 2 of 2 passed; run 1 had one failure outside the HUD, not explained (see "Fix loop 1 integration"). Tester and reviewer have not re-run on this tip. Not pushed. Not merged into `master`.
 
 ## Merges
 
@@ -227,3 +228,34 @@ Not exercised in GL: the GL error paths (they need a driver that fails), a killi
 - Incoming numbers rise from 62% height into the same area as the death title and enemy labels; readable, not pretty.
 - The ImGui HUD's first-person behaviour for incoming numbers was inferred from code.
 - Draw-command gate, the unmeasured plan gates and the real-mouse feel items from the earlier sections stand.
+
+
+# Fix loop 1 integration, 2026-11-01
+
+Merge `2a28261`: `worktree-agent-a60d3d1ff2cc18264` (12d4093) into 0a50211, `--no-ff`, no conflicts.
+
+## `StatusBarPanelTests.Build_AllocatesNothingAfterWarmUp`
+
+The only recorded failure is `artifacts/suite1.log`, 7200 B at the old line 293, so it predates the move to `AllocationAssert` (1a074e1). No log of a failure after the move was found. The move still did not fix the cause: the same fault was reproduced on the moved test's code path.
+
+- **Cause.** `Span<char>.TryWrite` with interpolated ints goes through the generic `AppendFormatted<int>`, which boxes the value in the PGO instrumented tier. `Build` formats six ints, so 6 x 24 B = 144 B per call, and 144 B x the old 50 iterations = 7200 B.
+- **Traced per call, one test alone, Debug.** 0 B for 131,284 calls, then 144 B for 33,903 calls over about 113 ms, then 0 B. A single formatted int shows the same shape at 24 B. With tiering delayed so call counting never starts there is no window at all, so the first-call JIT is not the source (that is one 112 B call at the start).
+- **Why the helper did not stop it.** Tiering state is per process and shared with parallel tests, and `AllocationAssert` only measures for 300 ms. With default settings and the `Client` and `Rendering` tests running alongside, a probe entered the window at 5.6 s and the helper read 144 B from a whole 300 ms span. On its own the same probe read 0 B. It also read 144 B alone with `DOTNET_TC_CallCountingDelayMs=3e8`.
+- **Verdict.** A real allocation on the frame path, but transient: it stops at tier 1. It is both a production allocation and a measurement fault, so both are fixed.
+- **Production.** `StatusBarPanel` writes its numbers with `PanelText.TryWriteInt`, `TryWritePair` and `TryWritePercent` on `int.TryFormat`. After the change a trace read 0 B on every call: 3,501,264 calls with default tiering and 3,212,212 with the delay at `3e8`.
+- **Test.** `AllocationAssert.AtMost` keeps measuring past 300 ms, up to 10 s, until a round meets the budget. `MeasureBytesPerIteration` is unchanged. The status bar test now uses `AtMost(0, ...)`. New: `AllocationAssertTests` (an allocation lasting 1 s passes, a permanent one still fails), `PanelTextPair_MatchesTheInterpolatedText` and `PanelText_ReportsATooSmallBufferInsteadOfWritingPastIt`.
+- **Not changed.** `NoticePanel` (transfer text) and `HudText` still use interpolated writes, and other tests that assert 0 B through `MeasureBytesPerIteration` keep the 300 ms limit.
+
+## Verification
+
+- `dotnet build dream/dream.csproj`: 0 errors, 17 warnings.
+- Full suite, Debug, 2 runs, output in `artifacts/verify-bin2/` (see below).
+- Run 1: 5314 passed, 1 failed, 46 skipped of 5361, 3 m 34 s.
+- Run 2: 5315 passed, 0 failed, 46 skipped of 5361, 3 m 37 s.
+- The run 1 failure is `WaveCTesterLockstepTwoRestartsTests.TwoServers_RestartingTwice_KeepEqualChecksumsEveryTick_AndEqualDatabasesAfterEveryPhase`: `Assert.Null` in the `PersistentScriptedServer` constructor found a Dirt cube at (6.5, 1.72, 5.5) in the build cell, after phase 1 reported equal. It passed 6 of 6 alone. `dream/Simulation` and `dream/Server` are unchanged since 0a50211. The cause is not known.
+- The suite ran with `BaseOutputPath` `artifacts/verify-bin2/`, not `verify-bin/`: a test host left hung by a throwaway probe still held `verify-bin/Debug/net10.0/dream.dll`, and stopping it was denied. It sat idle at 0 CPU during both runs.
+
+## Open items
+
+- Explain the lockstep failure above.
+- The hung probe host is still running: PIDs 23444 (testhost), 29320 and 29024 (dotnet).

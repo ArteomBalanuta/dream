@@ -301,12 +301,35 @@ public class StatusBarPanelTests
             StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
         }
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
         });
 
-        Assert.Equal(0L, bytes);
         Assert.True(c.Count > 100);
+    }
+
+    [Theory]
+    [InlineData(0, '/', 0, "0/0")]
+    [InlineData(1234, '/', 99999, "1234/99999")]
+    [InlineData(-5, ' ', -2147483648, "-5 -2147483648")]
+    public void PanelTextPair_MatchesTheInterpolatedText(int first, char separator, int second, string expected)
+    {
+        Span<char> buf = stackalloc char[48];
+
+        Assert.True(PanelText.TryWritePair(buf, first, separator, second, out int n));
+        Assert.Equal(expected, buf[..n].ToString());
+    }
+
+    [Fact]
+    public void PanelText_ReportsATooSmallBufferInsteadOfWritingPastIt()
+    {
+        Assert.False(PanelText.TryWritePair(new char[3], 12, '/', 34, out int n));
+        Assert.Equal(0, n);
+        Assert.False(PanelText.TryWritePair(new char[2], 12, '/', 3, out _));
+        Assert.False(PanelText.TryWritePercent(new char[2], 12, out n));
+        Assert.Equal(0, n);
+        Assert.True(PanelText.TryWritePercent(new char[3], 12, out n));
+        Assert.Equal(3, n);
     }
 }

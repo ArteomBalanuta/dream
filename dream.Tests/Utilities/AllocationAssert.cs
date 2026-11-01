@@ -15,6 +15,14 @@ namespace Dream.Tests.Utilities;
 // several rounds spread over time and returns the MINIMUM bytes per iteration. The allocation
 // done by the code under test is the same in every round; runtime tiering noise only ever adds
 // to a round, so the cleanest round is the steady-state figure.
+//
+// Tiering state is per process, not per test, and the delay restarts whenever new tier 0 code
+// runs. Under a parallel suite another test can have put a shared generic into the instrumented
+// tier before this test starts, and it can stay there for longer than MinimumMeasurementSpan.
+// Boxes in that tier are charged to every round, so all rounds read the same wrong figure. AtMost
+// knows the budget, so it keeps measuring until a round meets it or MaximumSettleSpan runs out; a
+// real allocation still fails, only later. MeasureBytesPerIteration has no budget to stop on and
+// does not retry, so prefer AtMost for a zero-allocation gate.
 public static class AllocationAssert
 {
     // Above the runtime's tier-up call-count threshold (30) with margin for the PGO tier.
@@ -27,7 +35,13 @@ public static class AllocationAssert
     // a few milliseconds that all fall inside the delay.
     private static readonly TimeSpan MinimumMeasurementSpan = TimeSpan.FromMilliseconds(300);
 
-    public static long MeasureBytesPerIteration(Action action, int iterations = 20, int warmupIterations = 3)
+    // How long AtMost waits for an over-budget reading to settle under a loaded test run.
+    private static readonly TimeSpan MaximumSettleSpan = TimeSpan.FromSeconds(10);
+
+    public static long MeasureBytesPerIteration(Action action, int iterations = 20, int warmupIterations = 3) =>
+        Measure(action, iterations, warmupIterations, long.MinValue, MinimumMeasurementSpan);
+
+    private static long Measure(Action action, int iterations, int warmupIterations, long budget, TimeSpan settleSpan)
     {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentOutOfRangeException.ThrowIfLessThan(iterations, 1);
@@ -46,14 +60,16 @@ public static class AllocationAssert
             best = Math.Min(best, MeasureRound(action, iterations));
             rounds++;
         }
-        while (rounds < MinimumRounds || elapsed.Elapsed < MinimumMeasurementSpan);
+        while (rounds < MinimumRounds
+            || elapsed.Elapsed < MinimumMeasurementSpan
+            || (best > budget && elapsed.Elapsed < settleSpan));
 
         return best;
     }
 
     public static long AtMost(long budgetBytesPerIteration, Action action, int iterations = 20, int warmupIterations = 3)
     {
-        long bytesPerIteration = MeasureBytesPerIteration(action, iterations, warmupIterations);
+        long bytesPerIteration = Measure(action, iterations, warmupIterations, budgetBytesPerIteration, MaximumSettleSpan);
         Assert.True(
             bytesPerIteration <= budgetBytesPerIteration,
             $"Allocated {bytesPerIteration} B per iteration; budget is {budgetBytesPerIteration} B.");

@@ -86,7 +86,7 @@ public static class StatusBarPanel
         HudStatusSnapshot st = v.Status;
         UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
         Span<char> buf = stackalloc char[48];
-        if (buf.TryWrite(CultureInfo.InvariantCulture, $"{st.CurrentHealth}/{st.MaxHealth}", out int n))
+        if (PanelText.TryWritePair(buf, st.CurrentHealth, '/', st.MaxHealth, out int n))
         {
             PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
         }
@@ -97,7 +97,7 @@ public static class StatusBarPanel
         {
             int px = (int)MathF.Floor(Math.Clamp(p.X, -1e9f, 1e9f));
             int pz = (int)MathF.Floor(Math.Clamp(p.Z, -1e9f, 1e9f));
-            if (buf.TryWrite(CultureInfo.InvariantCulture, $"{px} {pz}", out n))
+            if (PanelText.TryWritePair(buf, px, ' ', pz, out n))
             {
                 PanelText.Centred(c, buf[..n], coords.X + coords.W * 0.5f, coords.Y + (coords.H - PanelText.Height(c, big)) * 0.5f, big, CoordsColor);
             }
@@ -198,12 +198,12 @@ public static class StatusBarPanel
         UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
         Span<char> buf = stackalloc char[32];
         float bodyH = PanelText.Height(c, UiTextStyle.Body);
-        if (buf.TryWrite(CultureInfo.InvariantCulture, $"{st.Level}", out int n))
+        if (PanelText.TryWriteInt(buf, st.Level, out int n))
         {
             PanelText.HaloCentred(c, buf[..n], cup.X + cup.W * 0.5f, cup.Y + (cup.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
         }
 
-        if (trough.H >= bodyH && buf.TryWrite(CultureInfo.InvariantCulture, $"{st.ExperiencePercent}%", out n))
+        if (trough.H >= bodyH && PanelText.TryWritePercent(buf, st.ExperiencePercent, out n))
         {
             PanelText.HaloCentred(c, buf[..n], trough.X + trough.W * 0.5f, trough.Y + (trough.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
         }
@@ -244,6 +244,42 @@ public static class StatusBarPanel
 internal static class PanelText
 {
     private static readonly UiColor Halo = new(0x0A, 0x01, 0x01, 200);
+
+    // Numbers go through int.TryFormat, not an interpolated TryWrite: the handler's generic
+    // AppendFormatted<int> boxes its value while it runs in the PGO instrumented tier, which is
+    // 24 B per number on every frame until tier 1 lands.
+    public static bool TryWriteInt(Span<char> buf, int value, out int written) =>
+        value.TryFormat(buf, out written, default, CultureInfo.InvariantCulture);
+
+    public static bool TryWritePair(Span<char> buf, int first, char separator, int second, out int written)
+    {
+        written = 0;
+        if (!TryWriteInt(buf, first, out int a) || a >= buf.Length)
+        {
+            return false;
+        }
+
+        buf[a] = separator;
+        if (!TryWriteInt(buf[(a + 1)..], second, out int b))
+        {
+            return false;
+        }
+
+        written = a + 1 + b;
+        return true;
+    }
+
+    public static bool TryWritePercent(Span<char> buf, int value, out int written)
+    {
+        if (!TryWriteInt(buf, value, out written) || written >= buf.Length)
+        {
+            written = 0;
+            return false;
+        }
+
+        buf[written++] = '%';
+        return true;
+    }
 
     // Line height of the two baked sizes, in px, times the canvas's text scale (doubled glyphs at 4K).
     public static float Height(IUiCanvas c, UiTextStyle style) => (style == UiTextStyle.Large ? 26f : 13f) * c.TextScale;
