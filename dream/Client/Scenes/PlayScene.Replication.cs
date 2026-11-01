@@ -50,6 +50,11 @@ public partial class PlayScene
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
+            // A join starts a new timeline; its own actor list counts, so a join while dead shows
+            // the overlay at once instead of at the first snapshot.
+            _deathTracker.Reset();
+            _lootFeedback.Clear();
+            ObserveLocalDeath(joinAcceptedMessage.EffectiveInitialActors, joinAcceptedMessage.CurrentServerTick);
             LogPresenterDiagnostics("join");
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
@@ -87,7 +92,12 @@ public partial class PlayScene
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
+            ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
+        }
+        else if (message is InventoryPushMessage pushMessage)
+        {
+            ApplyInventoryPush(pushMessage);
         }
         else if (message is ServerActionMessage actionMessage)
         {
@@ -122,6 +132,36 @@ public partial class PlayScene
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
             }
         }
+    }
+
+    // Feeds the respawn countdown from the local player's actor, if the list has it. A list without
+    // it (a delta that left the player out) changes nothing.
+    private void ObserveLocalDeath(IReadOnlyList<ActorSnapshot> actors, ulong serverTick)
+    {
+        string localSessionId = _remoteClient.SessionId;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            ActorSnapshot actor = actors[i];
+            if (actor.Kind == CreatureKind.Player &&
+                string.Equals(actor.SessionId, localSessionId, StringComparison.Ordinal))
+            {
+                _deathTracker.Observe(actor.IsAlive && actor.CurrentHealth > 0, serverTick);
+                return;
+            }
+        }
+    }
+
+    // A server push after loot: the fresh inventory (when there is one), then the notices. It carries
+    // no health or position and touches neither. Wire data is hostile: the notices are capped by the
+    // feed, and the inventory goes through the same reader as every other snapshot.
+    private void ApplyInventoryPush(InventoryPushMessage push)
+    {
+        if (push.Inventory is { } inventory)
+        {
+            ApplyInventorySnapshot(inventory);
+        }
+
+        _lootFeedback.AddNotices(push.Notices);
     }
 
     private void UpdateLoopbackRemotePlayerDebugState()

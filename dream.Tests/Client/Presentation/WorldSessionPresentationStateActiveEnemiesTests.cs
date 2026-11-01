@@ -96,6 +96,8 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // carried inside the same state allocation: +8 B (744 B -> 752 B), not a new allocation.
         // Wave H3 added four fields (base strength, base attack speed, base vitality, armor) to
         // HudStatusSnapshot: +16 B in the same state allocation (752 B -> 768 B).
+        // Wave I3 added IsDead and RespawnSeconds to HudStatusSnapshot (death overlay): +8 B in the
+        // same state allocation (768 B -> 776 B).
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -103,7 +105,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            768,
+            776,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 

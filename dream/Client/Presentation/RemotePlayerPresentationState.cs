@@ -11,4 +11,5 @@ public readonly record struct RemotePlayerPresentationState(
     int MaxHealth,
     bool IsAlive,
     bool IsMoving = false,
-    HeldLightKind HeldLight = HeldLightKind.None);
+    HeldLightKind HeldLight = HeldLightKind.None,
+    int Level = 1);

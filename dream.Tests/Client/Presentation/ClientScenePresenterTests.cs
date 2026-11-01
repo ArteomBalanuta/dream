@@ -215,6 +215,68 @@ public class ClientScenePresenterTests
         Assert.Equal(1f, remote.Pose.Position.X, 4);
     }
 
+    private static ServerSnapshotEnvelope RemoteSnapshot(
+        ulong serverTick, Vector3 position, bool alive, int level = 0)
+    {
+        return new ServerSnapshotEnvelope(
+            serverTick,
+            new Dictionary<string, ulong>(),
+            [
+                new ActorSnapshot(1, CreatureKind.Player, "local-player", Vector3.Zero, -Vector3.UnitZ, 100, 100, true),
+                new ActorSnapshot(2, CreatureKind.Player, "remote-1", position, -Vector3.UnitZ,
+                    alive ? 100 : 0, 100, alive, null, null, "Remote One",
+                    level == 0 ? null : new PlayerProgressionSnapshot(level, 0, 100))
+            ],
+            PlayerInteractionMode.Building,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>());
+    }
+
+    [Fact]
+    public void RemotePlayer_CarriesItsLevel_ClampedForDisplay()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "local-player");
+
+        presenter.ApplySnapshot(RemoteSnapshot(10, new Vector3(1f, 0f, 0f), alive: true, level: 7));
+        Assert.Equal(7, Assert.Single(presenter.BuildRemotePlayerStates(10)).Level);
+
+        presenter.ApplySnapshot(RemoteSnapshot(11, new Vector3(1f, 0f, 0f), alive: true, level: int.MaxValue));
+        Assert.Equal(ClientScenePresenter.MaxDisplayLevel, Assert.Single(presenter.BuildRemotePlayerStates(11)).Level);
+
+        presenter.ApplySnapshot(RemoteSnapshot(12, new Vector3(1f, 0f, 0f), alive: true, level: -4));
+        Assert.Equal(1, Assert.Single(presenter.BuildRemotePlayerStates(12)).Level);
+    }
+
+    [Fact]
+    public void RemotePlayer_RespawnClearsTheBuffer_SoTheAvatarDoesNotSlide()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "local-player");
+        presenter.ApplySnapshot(RemoteSnapshot(100, new Vector3(50f, 0f, 0f), alive: true));
+        presenter.ApplySnapshot(RemoteSnapshot(110, new Vector3(50f, 0f, 0f), alive: false));
+        presenter.ApplySnapshot(RemoteSnapshot(120, new Vector3(50f, 0f, 0f), alive: false));
+
+        // The respawn snapshot, at the world spawn.
+        presenter.ApplySnapshot(RemoteSnapshot(430, new Vector3(5f, 0f, 5f), alive: true));
+
+        RemotePlayerPresentationState remote = Assert.Single(presenter.BuildRemotePlayerStates(430));
+        Assert.True(remote.IsAlive);
+        Assert.Equal(5f, remote.Pose.Position.X, 3);
+
+        // Rendering a little before the respawn tick must not interpolate from the death spot.
+        RemotePlayerPresentationState earlier = Assert.Single(presenter.BuildRemotePlayerStates(425));
+        Assert.Equal(5f, earlier.Pose.Position.X, 3);
+    }
+
+    [Fact]
+    public void RemotePlayer_DeadStateIsReportedSoRenderersCanHideIt()
+    {
+        ClientScenePresenter presenter = new(localSessionId: "local-player");
+        presenter.ApplySnapshot(RemoteSnapshot(100, new Vector3(1f, 0f, 0f), alive: false));
+
+        Assert.False(Assert.Single(presenter.BuildRemotePlayerStates(100)).IsAlive);
+    }
+
     private static ServerSnapshotEnvelope CreateRemoteSnapshot(ulong serverTick, Vector3 remotePosition)
     {
         return new ServerSnapshotEnvelope(

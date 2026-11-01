@@ -74,7 +74,9 @@ public sealed class LocalServerRetryAndContentTests
     }
 
     [Fact]
-    public async Task ACoordinatorWithInvalidContent_ShowsTheMessage_StartsNoServer_AndRefusesToConnect()
+    // Wave I3 (I-D25) changed this on purpose: invalid content blocks only Use Local Server, and a
+    // remote connect goes ahead (NetworkSessionCoordinatorContentTests covers the same from scratch).
+    public async Task ACoordinatorWithInvalidContent_ShowsTheMessageOnUseLocalServer_StartsNoServer_AndStillConnects()
     {
         int starts = 0;
         await using OnDemandLocalServerHandle local = new(() =>
@@ -85,18 +87,16 @@ public sealed class LocalServerRetryAndContentTests
         NoopConnector connector = new();
         NetworkSessionCoordinator coordinator = new(local, connector, contentError: "The game content is invalid: x");
 
+        coordinator.EnsureLocalServerStarted();
+        Assert.False(coordinator.TryUseLocalServer("p", out _));
         Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
         Assert.Contains("content is invalid", coordinator.StatusMessage, StringComparison.Ordinal);
 
-        coordinator.EnsureLocalServerStarted();
-        Assert.False(coordinator.TryUseLocalServer("p", out _));
         coordinator.BeginConnect(new ClientConnectionOptions("play.example.com", "6000", "p"));
         await coordinator.WaitForPendingConnectionAsync();
 
         Assert.Equal(0, starts);
-        Assert.Equal(0, connector.Calls);
-        Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
-        Assert.Contains("content is invalid", coordinator.StatusMessage, StringComparison.Ordinal);
+        Assert.Equal(1, connector.Calls);
     }
 
     private sealed class NoopConnector : IRemoteSessionConnector

@@ -59,6 +59,11 @@ public class AnimatedModel : IDisposable
     // One persistent instance VBO per model, reused by every instanced batch of it.
     private readonly InstanceMatrixBuffer _instanceMatrixBuffer = new();
     private readonly AnimatedModelSkeleton _skeleton;
+    // Added to 1 and multiplied into the base colour by the enemy fragment shader (uActorTintOffset).
+    // Written to the MASK program on a switch; the caller sets the base program's own uniform. Zero
+    // is today's look. The caller resets it to zero after drawing a tinted actor.
+    public Vector3 ActorTintOffset { get; set; }
+
     // The view and projection of the current BeginRender, for a switch to an alpha-mask program.
     private Matrix4 _renderView = Matrix4.Identity;
     private Matrix4 _renderProjection = Matrix4.Identity;
@@ -499,6 +504,9 @@ public class AnimatedModel : IDisposable
         program.SetMatrix4("view", _renderView);
         program.SetMatrix4("projection", _renderProjection);
         program.SetBool("useInstancing", instanced);
+        // Wave I: the enemy shader's colour tint (zero for every other model), so the MASK variant
+        // never draws with a value an earlier frame or model left in it.
+        program.SetVector3("uActorTintOffset", ActorTintOffset);
         if (!instanced)
         {
             program.SetModelMatrix(modelMatrix);

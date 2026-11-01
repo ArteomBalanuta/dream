@@ -35,7 +35,9 @@ public sealed record WorldSessionPresentationState(
         int experienceToNextLevel,
         FramePerformanceSnapshot performance = default,
         PlayerCombatStats? baseStats = null,
-        int armor = 0)
+        int armor = 0,
+        bool isDead = false,
+        int respawnSeconds = 0)
     {
         return new WorldSessionPresentationState(
             camera,
@@ -59,7 +61,9 @@ public sealed record WorldSessionPresentationState(
                 baseStats?.Strength ?? playerStats.Strength,
                 baseStats?.AttackSpeed ?? playerStats.AttackSpeed,
                 baseStats?.Vitality ?? playerStats.Vitality,
-                armor),
+                armor,
+                isDead,
+                respawnSeconds),
             performance);
     }
 

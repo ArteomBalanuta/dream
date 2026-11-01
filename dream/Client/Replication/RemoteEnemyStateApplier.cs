@@ -1,6 +1,5 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
-using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.World;
 
@@ -49,13 +48,24 @@ public static class RemoteEnemyStateApplier
     private const int ClientAttackDamagePlaceholder = 10;
     private const float ClientAttackIntervalPlaceholderSeconds = 1f;
 
+    // The client never reads the content catalog. These ranges and this speed only feed an actor the
+    // client never simulates, and stay the wolf's shipped values so nothing about it changes.
+    private const float ClientAggroRangePlaceholder = 10f;
+    private const float ClientAttackRangePlaceholder = 1.35f;
+    private const float ClientMoveSpeedPlaceholder = 2.8f;
+    private const string ClientDisplayNameFallback = "Wolf";
+
+    // Wire levels are hostile; 0 (absent) is level 1.
+    public const int MaxDisplayLevel = 9999;
+
+    // A longer visual key is not any known key; it draws the default wolf and is not kept.
+    public const int MaxVisualKeyLength = 64;
+
     // Kept out of the loop so the position lambda's closure is allocated only when an enemy is
     // created, not on every iteration.
     private static EnemyActor CreateEnemy(ActorSnapshot actor, EnemyBehaviorState behaviorState)
     {
         Vector3 spawnPosition = actor.Position;
-        // The snapshot carries no enemy kind yet, so every enemy is drawn from the wolf template.
-        EnemyTemplate template = ContentCatalog.Shipped.Wolf;
         EnemyCombatant combatant = new(
             () => spawnPosition,
             actorId: actor.ActorId,
@@ -67,13 +77,15 @@ public static class RemoteEnemyStateApplier
         EnemyActor enemy = new(
             combatant,
             actor.Position,
-            aggroRange: template.AggroRange,
-            attackRange: template.AttackRange,
-            moveSpeed: template.MoveSpeed,
+            aggroRange: ClientAggroRangePlaceholder,
+            attackRange: ClientAttackRangePlaceholder,
+            moveSpeed: ClientMoveSpeedPlaceholder,
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
             collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? template.DisplayName : actor.DisplayName);
+            displayName: string.IsNullOrWhiteSpace(actor.DisplayName) ? ClientDisplayNameFallback : actor.DisplayName,
+            level: Math.Clamp(actor.EnemyLevel, 1, MaxDisplayLevel),
+            visualKey: actor.VisualKey is { Length: <= MaxVisualKeyLength } ? actor.VisualKey : null);
         enemy.SetAuthoritativeState(actor.Position, actor.Facing, behaviorState);
         return enemy;
     }

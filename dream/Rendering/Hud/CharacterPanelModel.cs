@@ -52,7 +52,7 @@ public readonly record struct CharacterMenuEntry(string Label, InventoryHudActio
 // range-checked, and nothing here throws on a bad snapshot.
 public static class CharacterPanelModel
 {
-    public const string ArmorNote = "no effect yet";
+    public const string ArmorNote = "reduces damage taken";
     public const int MaxTooltipLines = 8;
 
     public static string SlotLabel(EquipmentSlot slot) => slot switch

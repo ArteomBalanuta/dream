@@ -242,6 +242,12 @@ public partial class Render
             DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
         }
 
+        DrawLootFeed(settings);
+        if (status.IsDead)
+        {
+            DrawDeathOverlay(settings, status);
+        }
+
         return new HudInteractionRequest(
             fieldOfViewDegrees,
             mouseSensitivity,
@@ -312,6 +318,60 @@ public partial class Render
         {
             ImGui.PopStyleColor(2);
         }
+    }
+
+    // The loot lines of the last inventory push (set by the play scene; null shows nothing). Four
+    // lines at most, below the centre of the screen, in a window that takes no input.
+    public LootFeedbackSystem? LootFeed { get; set; }
+
+    private const ImGuiWindowFlags OverlayFlags =
+        ImGuiWindowFlags.NoDecoration |
+        ImGuiWindowFlags.NoInputs |
+        ImGuiWindowFlags.NoBackground |
+        ImGuiWindowFlags.NoMove |
+        ImGuiWindowFlags.NoSavedSettings |
+        ImGuiWindowFlags.NoFocusOnAppearing |
+        ImGuiWindowFlags.NoNav |
+        ImGuiWindowFlags.AlwaysAutoResize;
+
+    private void DrawLootFeed(GameSettings settings)
+    {
+        LootFeedbackSystem? feed = LootFeed;
+        if (feed is null || feed.Count == 0)
+        {
+            return;
+        }
+
+        ImGui.SetNextWindowPos(
+            new System.Numerics.Vector2(settings.WindowWidth * 0.5f, settings.WindowHeight * 0.68f),
+            ImGuiCond.Always,
+            new System.Numerics.Vector2(0.5f, 0f));
+        ImGui.Begin("LootFeed", OverlayFlags);
+        // Item names come from the server: unformatted text only, so a '%' is shown as typed.
+        for (int i = 0; i < feed.Count; i++)
+        {
+            ImGui.TextUnformatted(feed.GetLine(i));
+        }
+
+        ImGui.End();
+    }
+
+    // "You died" and the wait, centred over the world while the local player is dead.
+    private void DrawDeathOverlay(GameSettings settings, HudStatusSnapshot status)
+    {
+        ImGui.SetNextWindowPos(
+            new System.Numerics.Vector2(settings.WindowWidth * 0.5f, settings.WindowHeight * 0.4f),
+            ImGuiCond.Always,
+            new System.Numerics.Vector2(0.5f, 0.5f));
+        ImGui.Begin("DeathOverlay", OverlayFlags);
+        ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.9f, 0.2f, 0.2f, 1f));
+        ImGui.SetWindowFontScale(2.2f);
+        ImGui.TextUnformatted(HudStatusSnapshot.DeathTitle);
+        ImGui.SetWindowFontScale(1.2f);
+        ImGui.TextUnformatted(status.RespawnLabel);
+        ImGui.SetWindowFontScale(1f);
+        ImGui.PopStyleColor();
+        ImGui.End();
     }
 
     // The "receiving world" line at the top of the HUD panel while a world transfer has run past

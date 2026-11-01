@@ -19,9 +19,9 @@ public class ActorWorldLabelAllocationTests(ITestOutputHelper output)
         {
             for (int current = -3; current <= max + 3; current++)
             {
-                string first = cache.Get(current, max);
-                Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(current, max), first);
-                Assert.Same(first, cache.Get(current, max));
+                string first = cache.Get(1, current, max);
+                Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(1, current, max), first);
+                Assert.Same(first, cache.Get(1, current, max));
             }
         }
     }
@@ -31,14 +31,14 @@ public class ActorWorldLabelAllocationTests(ITestOutputHelper output)
     {
         ActorHealthLabelCache cache = new();
 
-        string full = cache.Get(100, 100);
-        string hurt = cache.Get(87, 100);
-        string raisedMax = cache.Get(87, 120);
+        string full = cache.Get(1, 100, 100);
+        string hurt = cache.Get(1, 87, 100);
+        string raisedMax = cache.Get(1, 87, 120);
 
-        Assert.Equal("100/100", full);
-        Assert.Equal("87/100", hurt);
-        Assert.Equal("87/120", raisedMax);
-        Assert.Same(hurt, cache.Get(87, 100));
+        Assert.Equal("Lv 1  100/100", full);
+        Assert.Equal("Lv 1  87/100", hurt);
+        Assert.Equal("Lv 1  87/120", raisedMax);
+        Assert.Same(hurt, cache.Get(1, 87, 100));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class ActorWorldLabelAllocationTests(ITestOutputHelper output)
         ActorHealthLabelCache cache = new();
         for (int current = 0; current < ActorHealthLabelCache.MaxEntries * 2; current++)
         {
-            Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(current, 50000), cache.Get(current, 50000));
+            Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(1, current, 50000), cache.Get(1, current, 50000));
         }
 
         Assert.True(cache.Count <= ActorHealthLabelCache.MaxEntries);
@@ -64,11 +64,11 @@ public class ActorWorldLabelAllocationTests(ITestOutputHelper output)
             ActorHealthLabelCache cache = new();
 
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
-            Assert.Equal("-1/10", cache.Get(-1, 10));
+            Assert.Equal("Lv 1  -1/10", cache.Get(1, -1, 10));
 
             CultureInfo.CurrentCulture = minusSign;
-            Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(-1, 10), cache.Get(-1, 10));
-            Assert.Equal("~1/10", cache.Get(-1, 10));
+            Assert.Equal(ActorWorldLabelBuilder.FormatHealthLabel(1, -1, 10), cache.Get(1, -1, 10));
+            Assert.Equal("Lv 1  ~1/10", cache.Get(1, -1, 10));
         }
         finally
         {
@@ -116,6 +116,54 @@ public class ActorWorldLabelAllocationTests(ITestOutputHelper output)
         });
 
         output.WriteLine($"World actor labels ({players.Length} players, {enemies.Length} enemies): before {before} B/frame, after {after} B/frame");
+    }
+
+    [Fact]
+    public void Labels_ShowLevelBesideHealth_ForWolfDireWolfAndRemotePlayer()
+    {
+        ActorHealthLabelCache cache = new();
+        Vector3 position = Vector3.Zero;
+        EnemyActor wolf = new(
+            new EnemyCombatant(() => position, actorId: 1, maxHealth: 100, attackDamage: 12, attackIntervalSeconds: 1.05f),
+            position, aggroRange: 10f, attackRange: 1.35f, moveSpeed: 2.8f);
+        EnemyActor dire = new(
+            new EnemyCombatant(() => position, actorId: 2, maxHealth: 200, attackDamage: 18, attackIntervalSeconds: 1f),
+            position, aggroRange: 12f, attackRange: 1.35f, moveSpeed: 3.2f, displayName: "Dire Wolf", level: 3,
+            visualKey: "enemy.dire-wolf");
+        RemotePlayerPresentationState player = new(
+            9, "s", "Zed", new InterpolatedActorPose(position, -Vector3.UnitZ), 80, 100, true, Level: 12);
+        List<WorldActorLabelState> labels = [];
+
+        ActorWorldLabelBuilder.AppendEnemyLabels([wolf, dire], labels, cache);
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels([player], labels, cache);
+
+        Assert.Equal("Lv 1  100/100", labels[0].HealthLabel);
+        Assert.Equal("Lv 3  200/200", labels[1].HealthLabel);
+        Assert.Equal("Lv 12  80/100", labels[2].HealthLabel);
+        Assert.Equal("Lv 3  80/100", ActorWorldLabelBuilder.FormatHealthLabel(3, 80, 100));
+    }
+
+    [Fact]
+    public void Labels_ClampAHostileLevel_AndKeyTheCacheByLevel()
+    {
+        ActorHealthLabelCache cache = new();
+
+        Assert.Equal("Lv 9999  1/2", cache.Get(int.MaxValue, 1, 2));
+        Assert.Equal("Lv 1  1/2", cache.Get(int.MinValue, 1, 2));
+        Assert.NotSame(cache.Get(2, 1, 2), cache.Get(3, 1, 2));
+        Assert.Same(cache.Get(2, 1, 2), cache.Get(2, 1, 2));
+    }
+
+    [Fact]
+    public void Labels_HideDeadRemotePlayers()
+    {
+        RemotePlayerPresentationState dead = new(
+            9, "s", "Zed", new InterpolatedActorPose(Vector3.Zero, -Vector3.UnitZ), 0, 100, false);
+        List<WorldActorLabelState> labels = [];
+
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels([dead], labels, new ActorHealthLabelCache());
+
+        Assert.Empty(labels);
     }
 
     private static RemotePlayerPresentationState[] CreateRemotePlayers()
