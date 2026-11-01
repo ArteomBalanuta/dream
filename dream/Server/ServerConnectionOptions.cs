@@ -31,6 +31,14 @@ public sealed record ServerConnectionOptions
 
     public int MaxCoalescedDamageEvents { get; init; } = 4096;
 
+    public const int DefaultMaxConnections = 64;
+
+    public const string MaxConnectionsEnvironmentVariable = "DREAM_MAX_CONNECTIONS";
+
+    // Service-wide: a connection accepted while this many are open is closed at once. Zero or less
+    // turns the cap off. Overridden by DREAM_MAX_CONNECTIONS.
+    public int MaxConnections { get; init; } = DefaultMaxConnections;
+
     // Clock for the liveness checks; tests pass a fake one.
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
@@ -60,7 +68,25 @@ public sealed record ServerConnectionOptions
     // MaxSnapshotIntervalOverrideTicks is clamped to it with a log line.
     public ServerConnectionOptions WithEnvironmentOverrides(Action<string>? log = null)
     {
-        return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log);
+        return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log)
+            .WithMaxConnectionsOverride(Environment.GetEnvironmentVariable(MaxConnectionsEnvironmentVariable), log);
+    }
+
+    public ServerConnectionOptions WithMaxConnectionsOverride(string? value, Action<string>? log = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return this;
+        }
+
+        if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int max) &&
+            max > 0)
+        {
+            return this with { MaxConnections = max };
+        }
+
+        log?.Invoke($"{MaxConnectionsEnvironmentVariable} is not a positive integer; keeping {MaxConnections}.");
+        return this;
     }
 
     public ServerConnectionOptions WithSnapshotIntervalOverride(string? value, Action<string>? log = null)
