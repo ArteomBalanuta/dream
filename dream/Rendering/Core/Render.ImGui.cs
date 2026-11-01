@@ -1,4 +1,5 @@
 using Dream.Assets;
+using Dream.Rendering.Ui;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using ImGuiNET;
@@ -178,7 +179,7 @@ public partial class Render
         ImGui.SetCurrentContext(_imGuiContext);
 
         var io = ImGui.GetIO();
-        io.Fonts.AddFontDefault();
+        UiFontSetup.AddFonts(io);
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
 
@@ -186,6 +187,7 @@ public partial class Render
         io.ConfigWindowsResizeFromEdges = false;
 
         CreateFontTexture();
+        InitializeUiGlyphs();
 
         CreateImGuiResources();
     }
