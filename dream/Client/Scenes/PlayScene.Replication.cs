@@ -3,7 +3,12 @@ using Dream.Client.Networking;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
+using Dream.Client.Input;
+using Dream.Multiplayer.Sessions;
+using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
@@ -12,8 +17,71 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // M1-B chat. Each scene binds a fresh state to the classic HUD, so a new scene starts empty.
+    private readonly ChatInput _chatInput = BindNewChat();
+
+    private static ChatInput BindNewChat()
+    {
+        ChatHudState state = new();
+        ClassicHud.Chat = state;
+        return new ChatInput(state);
+    }
+
+    // The window's text event (Game.OnTextInput); dropped unless the chat line is open.
+    public void QueueTextInput(uint unicode) => _chatInput.QueueTextInput(unicode);
+
+    // Called once a frame before the global keys. True when chat used the frame's keys.
+    private bool HandleChatInput(KeyboardState keyboardState)
+    {
+        bool connected = _remoteClient.IsConnected;
+        bool canOpen = connected && _settings.CurrentRuntimeState.AllowGameplayInput;
+        bool used = _chatInput.Update(keyboardState, canOpen, _remoteClient.QueueChat);
+        if (_chatInput.State.OnlineVisible)
+        {
+            FillOnlineList();
+        }
+
+        return used;
+    }
+
+    // Only for the frames Tab is held; reads the roster built from the snapshot actor cache.
+    private void FillOnlineList()
+    {
+        List<string> online = _chatInput.State.Online;
+        online.Clear();
+        IReadOnlyList<PlayerRosterEntry> roster = _scenePresenter.BuildPlayerRoster();
+        for (int i = 0; i < roster.Count && online.Count < ChatHudState.MaxOnlineNames; i++)
+        {
+            string name = ChatHudState.Sanitize(roster[i].DisplayName, ChatHudState.MaxNameChars);
+            online.Add(name.Length == 0 ? "?" : name);
+        }
+    }
+
+    // While chat has the keys the global toggles (Esc, V, C, F3) must not fire, and must not fire
+    // late from a key still held when the line closes.
+    private void HandleGlobalInputUnlessTyping(KeyboardState keyboardState)
+    {
+        if (HandleChatInput(keyboardState))
+        {
+            _wasSettingsTogglePressed = keyboardState.IsKeyDown(Keys.Escape);
+            _wasInventoryTogglePressed = keyboardState.IsKeyDown(Keys.V);
+            _wasCameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
+            _wasAdminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);
+            return;
+        }
+
+        HandleGlobalInput(keyboardState);
+    }
+
     public void ApplyReplicatedMessage(IServerToClientMessage message)
     {
+        if (message is ServerChatMessage chat)
+        {
+            // Not a routed kind: it only feeds the chat log, as plain clamped text.
+            _chatInput.State.AddServerMessage(chat.Channel, chat.From, chat.Text);
+            return;
+        }
+
         _clientProtocol.ApplyServerMessage(message);
         if (message is JoinAcceptedMessage joinAcceptedMessage)
         {
@@ -37,6 +105,8 @@ public partial class PlayScene
                 return;
             }
 
+            // A join starts a new session: no chat lines or half-typed text from the one before.
+            _chatInput.State.Clear();
             _predictionReconciler.Reset();
             _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
             if (joinAcceptedMessage.WorldClock is { } worldClockAnchor)
