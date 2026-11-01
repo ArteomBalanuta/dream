@@ -96,6 +96,78 @@ public class RemoteEnemyStateApplierTests
         Assert.Equal(80, actor.Combatant.Health.MaxHealth);
     }
 
+    [Fact]
+    public void ApplyActorSnapshots_CarriesLevelAndVisualKeyToTheEnemyActor()
+    {
+        EnemyRegistry registry = new();
+
+        RemoteEnemyStateApplier.ApplyActorSnapshots(
+            registry,
+            [
+                new ActorSnapshot(3000, CreatureKind.Enemy, null, Vector3.Zero, Vector3.UnitX, 200, 200, true,
+                    DisplayName: "Dire Wolf", EnemyLevel: 3, VisualKey: "enemy.dire-wolf"),
+                new ActorSnapshot(3001, CreatureKind.Enemy, null, Vector3.Zero, Vector3.UnitX, 100, 100, true,
+                    DisplayName: "Wolf")
+            ]);
+
+        EnemyActor dire = registry.ActiveActors.Single(actor => actor.Combatant.Actor.Id == 3000);
+        EnemyActor wolf = registry.ActiveActors.Single(actor => actor.Combatant.Actor.Id == 3001);
+        Assert.Equal(3, dire.Level);
+        Assert.Equal("enemy.dire-wolf", dire.VisualKey);
+        Assert.Equal(1, wolf.Level);
+        Assert.Null(wolf.VisualKey);
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue, RemoteEnemyStateApplier.MaxDisplayLevel)]
+    [InlineData(int.MinValue, 1)]
+    [InlineData(-5, 1)]
+    [InlineData(0, 1)]
+    public void ApplyActorSnapshots_ClampsAHostileLevel(int wireLevel, int expected)
+    {
+        EnemyRegistry registry = new();
+
+        RemoteEnemyStateApplier.ApplyActorSnapshots(
+            registry,
+            [new ActorSnapshot(3000, CreatureKind.Enemy, null, Vector3.Zero, Vector3.UnitX, 10, 10, true, EnemyLevel: wireLevel)]);
+
+        Assert.Equal(expected, Assert.Single(registry.ActiveActors).Level);
+    }
+
+    [Fact]
+    public void ApplyActorSnapshots_DropsAnOversizedVisualKey_AndDoesNotThrow()
+    {
+        EnemyRegistry registry = new();
+        string huge = new('k', 10_000);
+
+        RemoteEnemyStateApplier.ApplyActorSnapshots(
+            registry,
+            [new ActorSnapshot(3000, CreatureKind.Enemy, null, Vector3.Zero, Vector3.UnitX, 10, 10, true, VisualKey: huge)]);
+
+        Assert.Null(Assert.Single(registry.ActiveActors).VisualKey);
+    }
+
+    [Fact]
+    public void RemoteEnemyStateApplier_DoesNotReadTheContentCatalog()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "dream", "Client", "Replication", "RemoteEnemyStateApplier.cs"));
+
+        Assert.DoesNotContain("Dream.Simulation.Content", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContentCatalog", source, StringComparison.Ordinal);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        string? directory = AppContext.BaseDirectory;
+        while (directory != null && !File.Exists(Path.Combine(directory, "dream", "dream.csproj")))
+        {
+            directory = Path.GetDirectoryName(directory);
+        }
+
+        return directory ?? throw new InvalidOperationException("The repository root was not found.");
+    }
+
     private static EnemyActor CreateEnemy(int actorId, Vector3 position)
     {
         EnemyCombatant combatant = new(

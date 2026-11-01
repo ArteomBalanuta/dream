@@ -26,11 +26,11 @@ public class ActorWorldLabelBuilderTests
 
         WorldActorLabelState label = Assert.Single(labels);
         Assert.Equal("Remote One", label.DisplayName);
-        Assert.Equal("87/100", label.HealthLabel);
+        Assert.Equal("Lv 1  87/100", label.HealthLabel);
     }
 
     [Fact]
-    public void CreateRemotePlayerLabels_KeepsDeadPlayersLabeled()
+    public void CreateRemotePlayerLabels_HidesDeadPlayers_UntilTheyRespawn()
     {
         IReadOnlyList<WorldActorLabelState> labels = ActorWorldLabelBuilder.CreateRemotePlayerLabels(
             [
@@ -44,9 +44,8 @@ public class ActorWorldLabelBuilderTests
                     false)
             ]);
 
-        WorldActorLabelState label = Assert.Single(labels);
-        Assert.Equal("Remote Dead", label.DisplayName);
-        Assert.Equal("0/100", label.HealthLabel);
+        // Wave I (I-D27) reversed the old expectation on purpose: a dead remote player has no label.
+        Assert.Empty(labels);
     }
 
     [Fact]
@@ -59,7 +58,7 @@ public class ActorWorldLabelBuilderTests
 
         WorldActorLabelState label = Assert.Single(labels);
         Assert.Equal("Wolf", label.DisplayName);
-        Assert.Equal("87/100", label.HealthLabel);
+        Assert.Equal("Lv 1  87/100", label.HealthLabel);
     }
 
     private static EnemyActor CreateEnemy(string displayName, Vector3 position, int actorId, int maxHealth)

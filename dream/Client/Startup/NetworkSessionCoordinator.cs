@@ -14,8 +14,8 @@ public sealed class NetworkSessionCoordinator
     private readonly string? _contentError;
     private readonly IClientIdentityStore? _identity;
 
-    // contentError (ClientContentCheck) is why the game's content files cannot be used; with it the
-    // connection screen shows the message, no local server starts and Connect does nothing.
+    // contentError (ClientContentCheck) is why the game's content files cannot be used; with it no
+    // local server starts and Use Local Server shows the message. A remote connect is unaffected.
     public NetworkSessionCoordinator(
         ILocalServerHandle localServer,
         IRemoteSessionConnector connector,
@@ -85,6 +85,15 @@ public sealed class NetworkSessionCoordinator
 
         EnsureLocalServerStarted();
         RefreshIdleState();
+        if (_contentError != null)
+        {
+            // The only action the content error blocks: the in-process server reads the catalog.
+            State = ConnectionFlowState.Failed;
+            StatusMessage = _contentError;
+            options = null;
+            return false;
+        }
+
         if (!_localServer.IsReady)
         {
             options = null;
@@ -124,14 +133,8 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
-        if (_contentError != null)
-        {
-            State = ConnectionFlowState.Failed;
-            StatusMessage = _contentError;
-            _pendingConnectionTask = Task.CompletedTask;
-            return;
-        }
-
+        // A remote connect never reads the game's content files (the server sends everything the
+        // client draws), so a content error does not block it. Only the local server needs them.
         if (!options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out string? error))
         {
             State = ConnectionFlowState.Failed;
@@ -215,13 +218,6 @@ public sealed class NetworkSessionCoordinator
 
     private void RefreshIdleState()
     {
-        if (_contentError != null)
-        {
-            State = ConnectionFlowState.Failed;
-            StatusMessage = _contentError;
-            return;
-        }
-
         if (_localServer.ErrorMessage != null)
         {
             State = ConnectionFlowState.Failed;

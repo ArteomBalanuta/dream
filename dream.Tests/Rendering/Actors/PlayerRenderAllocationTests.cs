@@ -69,7 +69,8 @@ public class PlayerRenderAllocationTests
         Assert.Equal(0, bytes);
         Assert.Equal([1, 2, 3, 4, 5, 6], activeActorIds.Order());
         Assert.Equal([99], staleActorIds);
-        Assert.Equal(6, visible.Count);
+        // Wave I (I-D27): dead remote players are not visible; only the three alive ones are.
+        Assert.Equal(3, visible.Count);
         Assert.Equal(3, alive);
     }
 
@@ -106,7 +107,8 @@ public class PlayerRenderAllocationTests
         RemotePlayerRenderer.SelectVisiblePlayers(camera, players, reused);
 
         Assert.Equal(RemotePlayerRenderer.SelectVisiblePlayers(camera, players), reused);
-        Assert.Equal([1, 3], reused.Select(player => player.ActorId));
+        // Wave I (I-D27): the dead player (3) is hidden.
+        Assert.Equal([1], reused.Select(player => player.ActorId));
     }
 
     private static RemotePlayerPresentationState CreatePlayer(int actorId, Vector3 position, bool isAlive)

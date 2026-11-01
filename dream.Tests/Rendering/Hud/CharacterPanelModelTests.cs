@@ -86,11 +86,11 @@ public sealed class CharacterPanelModelTests
     }
 
     [Fact]
-    public void ArmorRow_SaysItHasNoEffectYet_AndOnlyArmorDoes()
+    public void ArmorRow_SaysItReducesDamageTaken_AndOnlyArmorDoes()
     {
         CharacterStatRow[] rows = CharacterPanelModel.BuildStatRows(Status(10, 2f, 10, 12, 10, 2f, 10));
 
-        Assert.Equal("no effect yet", rows[3].Note);
+        Assert.Equal("reduces damage taken", rows[3].Note);
         Assert.Equal(CharacterStat.Armor, rows[3].Stat);
         Assert.All(rows.Take(3), row => Assert.Null(row.Note));
     }

@@ -49,6 +49,9 @@ public partial class PlayScene : IDisposable
     private readonly GameplayInputResumeFilter _gameplayInputResumeFilter = new();
     private readonly PlayerCommandOneShotInputFilter _commandInputFilter = new();
     private readonly bool _renderPerformanceLoggingEnabled;
+    // Wave I: the local respawn countdown (display only) and the loot lines of inventory pushes.
+    private readonly ClientDeathTracker _deathTracker = new();
+    private readonly LootFeedbackSystem _lootFeedback = new();
 
     // The client's replicated world and predicted local player; authority lives on the server.
     // PlayScene remains the desktop composition root plus client presentation owner.

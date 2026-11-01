@@ -50,7 +50,10 @@ public partial class PlayScene
         WorldSessionPresentationState presentation = _runtime.CapturePresentationState(
             WorldVisibility.MaxRenderDistance,
             (float)_commandTicks.RemainingSeconds,
-            _settings.CameraViewMode);
+            _settings.CameraViewMode,
+            _deathTracker.IsDead,
+            _deathTracker.SecondsRemaining(_serverTickClock.EstimatedTick));
+        _render.LootFeed = _lootFeedback;
         long remoteStatesStart = Stopwatch.GetTimestamp();
         // A live list owned by the presenter; it is only read within this frame.
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(

@@ -18,8 +18,16 @@ public readonly record struct HudStatusSnapshot(
     int BaseStrength = 0,
     float BaseAttackSpeed = 0f,
     int BaseVitality = 0,
-    int Armor = 0)
+    int Armor = 0,
+    bool IsDead = false,
+    int RespawnSeconds = 0)
 {
+    public const string DeathTitle = "You died";
+    public const string RespawningNow = "Respawning";
+
+    private static readonly LastLabelCache<int> RespawnLabels =
+        new(static seconds => $"Respawning in {seconds} s");
+
     // The HUD reads these every frame, so each label is rebuilt only when its values change.
     private static readonly LastLabelCache<(int Current, int Max)> HealthLabels =
         new(static key => $"HP: {key.Current}/{key.Max}");
@@ -40,6 +48,9 @@ public readonly record struct HudStatusSnapshot(
         new(static key => $"{key.Experience}/{key.ToNextLevel}");
 
     public string HealthLabel => HealthLabels.Get((CurrentHealth, MaxHealth));
+
+    // "Respawning in N s", or "Respawning" once the wait is over and the respawn is still to arrive.
+    public string RespawnLabel => RespawnSeconds > 0 ? RespawnLabels.Get(RespawnSeconds) : RespawningNow;
 
     public string ModeLabel => ModeLabels.Get(InteractionMode);
 

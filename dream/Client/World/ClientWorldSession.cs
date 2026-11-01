@@ -138,7 +138,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     public WorldSessionPresentationState CapturePresentationState(
         float maxRenderDistance,
         float presentationLeadSeconds = 0f,
-        CameraViewMode cameraViewMode = CameraViewMode.FirstPerson)
+        CameraViewMode cameraViewMode = CameraViewMode.FirstPerson,
+        bool isDead = false,
+        int respawnSeconds = 0)
     {
         // The returned state's camera stays a new instance per capture: callers (and tests) may keep
         // a state across captures and compare cameras, so only the intermediate camera is reused.
@@ -180,7 +182,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
                 0,
                 Physics.MapCubeBodies.Count),
             Player.Combatant.BaseStats,
-            Player.Combatant.EffectiveArmor);
+            Player.Combatant.EffectiveArmor,
+            isDead,
+            respawnSeconds);
     }
 
     public void RebuildMapForWorld(WorldDescriptor world, IMapSource? source = null)

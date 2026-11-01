@@ -124,7 +124,9 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
         const int StaticCellsExportGrowthBytes = 8;
         // Wave H3: base strength, base attack speed, base vitality and armor in HudStatusSnapshot, +16 B.
         const int WaveH3HudSnapshotGrowthBytes = 16;
-        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
+        // Wave I3: IsDead and RespawnSeconds in HudStatusSnapshot (death overlay), +8 B.
+        const int WaveI3HudDeathGrowthBytes = 8;
+        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
             captureBytes <= budget,
             $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");

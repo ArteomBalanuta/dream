@@ -104,6 +104,12 @@ public sealed class RemotePlayerRenderer : IDisposable
         for (int i = 0; i < remotePlayers.Count; i++)
         {
             RemotePlayerPresentationState remotePlayer = remotePlayers[i];
+            if (!remotePlayer.IsAlive)
+            {
+                // Dead remote players are hidden until they respawn.
+                continue;
+            }
+
             if ((remotePlayer.Pose.Position - camera.Position).LengthSquared >
                 WorldVisibility.MaxRenderDistance * WorldVisibility.MaxRenderDistance)
             {

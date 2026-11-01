@@ -24,6 +24,11 @@ struct Material {
 
 uniform Material material;
 
+// Per-draw tint on the base colour (wave I): base * (1 + offset). EnemyRenderer sets it for each
+// enemy and resets it to zero after the enemies, because players share this program. An unset
+// uniform is zero, which leaves the colour unchanged.
+uniform vec3 uActorTintOffset;
+
 #include "lighting.glsl"
 #include "pointLights.glsl"
 
@@ -41,6 +46,8 @@ void main()
     if (material.hasBaseColorTexture) {
         baseColor *= texture(material.baseColorTexture, texCoord0);
     }
+
+    baseColor.rgb *= max(vec3(1.0) + uActorTintOffset, vec3(0.0));
 
 #ifdef WORLD_ALPHA_MASK
     // glTF MASK: fragments below the cutoff are not drawn.

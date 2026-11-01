@@ -232,7 +232,7 @@ public class PresentationFramePoolingIntegrationTests
             {
                 EnemyActor enemy = state.ActiveEnemies[i];
                 ServerEnemies.Entry entry = enemies.Get(enemy.Combatant.Actor.Id);
-                Assert.Equal($"{entry.Health}/{entry.MaxHealth}", labels[i].HealthLabel);
+                Assert.Equal($"Lv 1  {entry.Health}/{entry.MaxHealth}", labels[i].HealthLabel);
                 Assert.Equal(entry.Name, labels[i].DisplayName);
                 Assert.Equal(enemy.Position + new Vector3(0f, enemy.CollisionHeight + 0.25f, 0f), labels[i].WorldAnchor);
             }

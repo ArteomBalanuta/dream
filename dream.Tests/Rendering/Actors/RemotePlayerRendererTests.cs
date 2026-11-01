@@ -30,7 +30,8 @@ public class RemotePlayerRendererTests
     }
 
     [Fact]
-    public void SelectVisiblePlayers_KeepsDeadRemotePlayersVisibleWhileFilteringOnlyByDistance()
+    // Wave I (I-D27) reversed this on purpose: a dead remote player is hidden until it respawns.
+    public void SelectVisiblePlayers_HidesDeadRemotePlayers_AndFiltersByDistance()
     {
         Camera camera = new(new Vector3(0f, 2f, 0f));
         List<RemotePlayerPresentationState> players =
@@ -66,8 +67,7 @@ public class RemotePlayerRendererTests
         Assert.Collection(
             visible.OrderBy(player => player.SessionId),
             first => Assert.Equal("behind", first.SessionId),
-            second => Assert.Equal("dead", second.SessionId),
-            third => Assert.Equal("visible", third.SessionId));
+            second => Assert.Equal("visible", second.SessionId));
     }
 
     [Fact]

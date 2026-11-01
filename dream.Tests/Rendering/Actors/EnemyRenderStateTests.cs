@@ -40,6 +40,32 @@ public class EnemyRenderStateTests
         Assert.Equal(expectedScale, new Vector3(state.ModelMatrix.M31, state.ModelMatrix.M32, state.ModelMatrix.M33).Length, 3);
     }
 
+    [Fact]
+    public void DefaultWolfVisual_RendersExactlyAsBefore()
+    {
+        EnemyVisual visual = EnemyVisualCatalog.Resolve(null);
+        Vector3 position = new(4f, 1f, 5f);
+
+        EnemyRenderState before = EnemyRenderState.CreateWolf(position, Vector3.UnitX, EnemyBehaviorState.Chasing);
+        EnemyRenderState after = EnemyRenderState.CreateWolf(
+            position, Vector3.UnitX, EnemyBehaviorState.Chasing, WolfAssetDefinition.VisualScale * visual.ScaleMultiplier);
+
+        Assert.Equal(before, after);
+        Assert.Equal(Vector3.Zero, visual.TintOffset);
+    }
+
+    [Fact]
+    public void DireWolfVisual_IsLargerThanTheWolf()
+    {
+        EnemyVisual dire = EnemyVisualCatalog.Resolve("enemy.dire-wolf");
+        EnemyRenderState wolfState = EnemyRenderState.CreateWolf(Vector3.Zero, -Vector3.UnitZ, EnemyBehaviorState.Idle);
+        EnemyRenderState direState = EnemyRenderState.CreateWolf(
+            Vector3.Zero, -Vector3.UnitZ, EnemyBehaviorState.Idle, WolfAssetDefinition.VisualScale * dire.ScaleMultiplier);
+
+        Assert.Equal(wolfState.ModelPath, direState.ModelPath);
+        Assert.Equal(wolfState.ModelMatrix.M11 * 1.35f, direState.ModelMatrix.M11, 3);
+    }
+
     [Theory]
     [InlineData(0f, 0f, -1f)]
     [InlineData(1f, 0f, 0f)]
