@@ -58,6 +58,8 @@ public class Game : GameWindow
     {
         ClientSize = new Vector2i(1440, 1024),
         Title = GameWindowTitleBuilder.BaseTitle,
+        // A scripted HUD capture runs unattended, so it must not steal focus from the desktop.
+        StartFocused = Environment.GetEnvironmentVariable("DREAM_HUD_CAPTURE") is null,
 #if DEBUG
         // KHR_debug messages are only guaranteed in a debug context.
         Flags = ContextFlags.Debug,

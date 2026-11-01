@@ -98,6 +98,8 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // HudStatusSnapshot: +16 B in the same state allocation (752 B -> 768 B).
         // Wave I3 added IsDead and RespawnSeconds to HudStatusSnapshot (death overlay): +8 B in the
         // same state allocation (768 B -> 776 B).
+        // The FX wave added GpuEffectsMilliseconds (one double) to FramePerformanceSnapshot: +8 B in
+        // the same state allocation (776 B -> 784 B).
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -105,7 +107,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            776,
+            784,
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 

@@ -15,8 +15,9 @@ vec3 dreamDirect(vec3 n) {
          + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
 }
 vec3 dreamExpose(vec3 c) { return c * uLightingParams.x; }
-vec3 dreamApplyFog(vec3 c, vec3 fragPos) {
+float dreamFogTransmittance(vec3 fragPos) {
     float d = max(distance(fragPos, uCameraPosition.xyz) - uCameraPosition.w, 0.0);
     float k = uFogColor.w * d;
-    return mix(uFogColor.rgb, c, clamp(exp2(-k * k), 0.0, 1.0));
+    return clamp(exp2(-k * k), 0.0, 1.0);
 }
+vec3 dreamApplyFog(vec3 c, vec3 fragPos) { return mix(uFogColor.rgb, c, dreamFogTransmittance(fragPos)); }
