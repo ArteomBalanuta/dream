@@ -465,7 +465,7 @@ public class ClientAuthoritativeStateApplierTests
     }
 
     [Fact]
-    public void ClientAuthoritativeActionApplier_ApplyActionResult_PublishesDamageEventForAcceptedCombatResult()
+    public void ClientAuthoritativeActionApplier_ApplyActionResult_PublishesNoDamageEventForAcceptedCombatResult()
     {
         using ClientWorldSession runtime = CreateRuntime();
         SceneEventHub events = new();
@@ -486,9 +486,8 @@ public class ClientAuthoritativeStateApplierTests
 
         ClientAuthoritativeActionApplier.ApplyActionResult(runtime, events, result);
 
-        DamageAppliedEvent damage = Assert.Single(observed);
-        Assert.Equal(9, damage.Amount);
-        Assert.Equal(runtime.Player.Combatant.Actor.Id, damage.Actor.Id);
+        // The snapshot's damage event is the one source of floating numbers (one number per hit).
+        Assert.Empty(observed);
     }
 
     [Fact]

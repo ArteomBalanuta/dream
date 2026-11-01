@@ -7,10 +7,14 @@ public sealed class CombatFeedbackSystem : IDisposable
 {
     private readonly FloatingCombatTextSystem _floatingText;
     private readonly IDisposable _damageSubscription;
+    private readonly Func<int>? _localActorId;
 
-    public CombatFeedbackSystem(SceneEventHub events, FloatingCombatTextSystem floatingText)
+    // localActorId, when given, names the local player's actor: damage that lands on it is shown as
+    // Incoming, whatever kind the event carried.
+    public CombatFeedbackSystem(SceneEventHub events, FloatingCombatTextSystem floatingText, Func<int>? localActorId = null)
     {
         _floatingText = floatingText;
+        _localActorId = localActorId;
         _damageSubscription = events.Subscribe<DamageAppliedEvent>(OnDamageApplied);
     }
 
@@ -46,6 +50,9 @@ public sealed class CombatFeedbackSystem : IDisposable
             return;
         }
 
-        _floatingText.Spawn(evt.Actor.Id, evt.Actor.GetWorldAnchor(), evt.Amount, evt.Kind);
+        FloatingCombatTextKind kind = _localActorId is not null && evt.Actor.Id == _localActorId()
+            ? FloatingCombatTextKind.Incoming
+            : evt.Kind;
+        _floatingText.Spawn(evt.Actor.Id, evt.Actor.GetWorldAnchor(), evt.Amount, kind);
     }
 }
