@@ -95,15 +95,31 @@ public sealed partial class WorldSessionRuntime
         }
 
         pending.InventoryChanged |= inventoryChanged;
-        if (pending.Notices.Count >= InventoryPushMessage.MaxNotices)
-        {
-            return;
-        }
-
         string name = ContentCatalog.Shipped.TryGetItem(drop.ItemKind, out ItemDefinition? definition)
             ? definition.DisplayName
             : drop.ItemKind;
-        pending.Notices.Add(new LootNotice(name, drop.Rarity, lost));
+        LootNotice notice = new(name, drop.Rarity, lost);
+        if (pending.Notices.Count < InventoryPushMessage.MaxNotices)
+        {
+            pending.Notices.Add(notice);
+            return;
+        }
+
+        // Full: a lost notice (the player must learn the backpack overflowed) replaces the first ordinary
+        // one; anything else is dropped. Either way the drop is logged. Only reached past the cap.
+        if (lost)
+        {
+            for (int i = 0; i < pending.Notices.Count; i++)
+            {
+                if (!pending.Notices[i].Lost)
+                {
+                    pending.Notices[i] = notice;
+                    break;
+                }
+            }
+        }
+
+        NetworkDiagnosticsLog.Write("server.loot.notice-dropped", $"session={session.Value} item={drop.ItemKind} lost={lost}");
     }
 
     // Moves every session's pending loot into destination as one push each (the snapshot is built once

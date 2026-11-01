@@ -118,8 +118,12 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
             await server.TickAsync();
             Assert.True(await victim.FlushAsync());
             Assert.True(await griefer.FlushAsync());
-            victim.Pump();
-            griefer.Pump();
+            // FlushAsync only says the server wrote its bytes; the client's reader may not have queued them
+            // yet, and a bare Pump then records a push one step late. A push goes out before the tick's
+            // snapshot on the same connection, so once that snapshot is applied the step's push is too.
+            ulong tick = server.Runtime.CurrentServerTick;
+            await victim.PumpToSnapshotAsync(tick);
+            await griefer.PumpToSnapshotAsync(tick);
             if (pushStep == 0 && victim.Applied.OfType<InventoryPushMessage>().Any())
             {
                 pushStep = step;

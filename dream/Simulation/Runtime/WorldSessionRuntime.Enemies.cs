@@ -114,7 +114,9 @@ public sealed partial class WorldSessionRuntime
     //   else the owned enemy with the highest actor id, and queue its row delete like a kill does
     //   (checkpoints never delete rows). Not night with a lone owned NightExtra active: remove it,
     //   and the spawn step above brings a Primary next tick.
-    // The per-tick scan only counts; the templates are consulted on spawn and despawn ticks.
+    // The per-tick scan only counts; the templates are consulted on spawn and despawn ticks. An ordinary day
+    // tick with one owned wolf also runs HighestOwnedNightExtraId (a scan of the active enemies, no
+    // allocation).
     // A restore that already holds the night's two wolves therefore spawns no third. Allocates
     // nothing except on the spawn and despawn ticks.
     //

@@ -218,6 +218,27 @@ public sealed class LootGrantTests
     }
 
     [Fact]
+    public void TwoKillers_OneHeld_DrainsExactlyTheOtherPush_AndKeepsTheHeldOneForTheNextDrain()
+    {
+        using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick);
+        runtime.GrantLoot(Bystander, "Wolf", enemyActorId: 5001, tick);
+
+        List<SessionInventoryPush> pushes = [];
+        runtime.DrainInventoryPushesInto(pushes, [Bystander.Value]);
+        Assert.Equal(Killer, Assert.Single(pushes).SessionId);
+        Assert.True(runtime.HasPendingInventoryPushes);
+
+        pushes.Clear();
+        runtime.DrainInventoryPushesInto(pushes, []);
+        SessionInventoryPush held = Assert.Single(pushes);
+        Assert.Equal(Bystander, held.SessionId);
+        Assert.Single(held.Message.Notices);
+        Assert.NotNull(held.Message.Inventory);
+        Assert.False(runtime.HasPendingInventoryPushes);
+    }
+
+    [Fact]
     public void PendingLoot_IsBoundedAtTheNoticeCap_WhateverTheHostDoes_AndDetachClearsIt()
     {
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
