@@ -1,76 +1,63 @@
 """Window chrome for dream's classic MMO UI: dream/ui/window/window.png + window.json.
 
-All art is original and procedural. Layout and colours follow spec 01 (see 07 section A).
-Ornaments are built as a relief: a height map with a material id per pixel, shaded once
-at the end, so mirrored halves are lit consistently and contact shadows come for free.
-Chrome silhouettes use the same relief with a reflection matcap.
+All art is original and procedural, rendered through forge.py: an authored relief (height and a material id per
+pixel) is baked into maps, aged, lit in linear light with GGX, finished with a filmic curve and downsampled in
+linear light. Layout and sprite names follow spec 01 (see 07 section A).
+
+Art direction: dark, heavy, old. Cold blackened iron frame, a mottled and cracked stone slab, recessed iron wells,
+a few worn brass accents. Wear sits on edges and grime in recesses; nothing is scattered.
+
+Big sprites are authored in absolute u coordinates and rendered by region, so a band cut from a large canvas
+shades exactly like the whole and the bands can be rendered in parallel processes.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
+import os
 import sys
+import zlib
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import forge as fg  # noqa: E402
 import uiart as ua  # noqa: E402
-from uiart import PPU, Atlas, LIGHT_TL, Sprite, token  # noqa: E402
+from forge import Capsule, Ellipse, Poly, Rect  # noqa: E402
+from uiart import PPU, SS, Atlas, Sprite, token  # noqa: E402
 
 OUT_DIR = "window"
-# Frame ornaments are mirrored in height, not in pixels; this keeps one light for both halves.
-LIGHT_FRAME = (-0.3, -0.72, 0.62)
+SCALE = ua.SCALE
 CHAIN_PERIOD = 5.5
 TILE_H = 44
 TILE_ANCHOR_Y = 41  # window y of a tile boundary, for both windows, so crown and bottom join
+SLAB_W = 165
+SLAB_H = {"inventory": 387, "combine": 388}
 
 
 # helpers ------------------------------------------------------------------------------
 
 
-def _box(a: np.ndarray, r: int, axis: int) -> np.ndarray:
-    if r < 1:
-        return a
-    n = a.shape[axis]
-    pad = r + 1
-    widths = [(pad, pad) if i == axis else (0, 0) for i in range(2)]
-    c = np.cumsum(np.pad(a, widths, mode="edge"), axis=axis, dtype=np.float64)
-    hi = np.take(c, np.arange(pad + r, pad + r + n), axis=axis)
-    lo = np.take(c, np.arange(pad - r - 1, pad - r - 1 + n), axis=axis)
-    return ((hi - lo) / (2 * r + 1)).astype(np.float32)
-
-
-def gblur(a: np.ndarray, sigma_px: float) -> np.ndarray:
-    """Float gaussian approximation from three box passes; O(n) at any radius."""
-    r = int(round((math.sqrt(4 * sigma_px * sigma_px + 1) - 1) / 2))
-    out = a.astype(np.float32)
-    for _ in range(3):
-        out = _box(_box(out, r, 0), r, 1)
-    return out
-
-
 def smooth(a, lo, hi):
-    t = np.clip((a - lo) / (hi - lo), 0, 1)
-    return t * t * (3 - 2 * t)
+    return fg.smooth(lo, hi, a)
 
 
-def ramp(v: np.ndarray, stops: list[tuple[float, str]]) -> np.ndarray:
-    """Maps a scalar field through colour stops; returns HxWx3."""
-    pos = [p for p, _ in stops]
-    cols = np.array([token(c) for _, c in stops], dtype=np.float32)
-    return np.dstack([np.interp(v, pos, cols[:, i]) for i in range(3)]).astype(np.float32)
+def lerp(a, b, t):
+    return a + (b - a) * t
 
 
-def rgba(h, w, colour, alpha=1.0) -> np.ndarray:
-    c = token(colour) if isinstance(colour, str) else np.asarray(colour, dtype=np.float32)
-    out = np.zeros((h, w, 4), dtype=np.float32)
-    out[..., :3] = c
-    out[..., 3] = alpha
-    return out
+def bez(*p, n=28):
+    return ua.bezier(p[0], p[1], p[2], p[3], n)
 
 
-def ribbon(pts, widths) -> list[tuple[float, float]]:
+def mirror_pts(pts, axis_x):
+    return [(2 * axis_x - x, y) for x, y in pts]
+
+
+def ribbon(pts, widths):
     """Closed polygon around a centreline. widths: one per point, or a function of 0..1."""
     n = len(pts)
     left, right = [], []
@@ -86,37 +73,582 @@ def ribbon(pts, widths) -> list[tuple[float, float]]:
     return left + right[::-1]
 
 
-def bez(*p, n=28):
-    return ua.bezier(p[0], p[1], p[2], p[3], n)
+def rot(pts, deg, origin=(0, 0), at=(0, 0), flip=False):
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    out = []
+    for x, y in pts:
+        x, y = (-x if flip else x) - origin[0], y - origin[1]
+        out.append((x * c - y * s + at[0], x * s + y * c + at[1]))
+    return out
 
 
-def mirror_pts(pts, axis_x):
-    return [(2 * axis_x - x, y) for x, y in pts]
+# materials ----------------------------------------------------------------------------
+# Added to forge's table at import, so every process that imports this module (including the pool
+# workers) agrees on the ids. All numbers are linear light.
 
 
-# relief -------------------------------------------------------------------------------
-
-VOID, IRON, CHAIN, BONE, BONE_DIM, RIM, BRONZE, GUT_A, GUT_B, STEEL, CREAM, DARKBONE = range(12)
-
-MATS = {
-    # stops over lit value, ambient, diffuse, spec, shininess
-    VOID: ([(0, "#060606"), (2, "#060606")], 1.0, 0.0, 0.0, 8),
-    IRON: ([(0, "#040405"), (0.45, "#111113"), (0.85, "#232327"), (1.2, "#47474D"), (1.8, "#77777F")], 0.34, 0.66, 0.22, 26),
-    CHAIN: ([(0, "#060608"), (0.5, "#1A191C"), (0.92, "#34343A"), (1.25, "#55555C"), (1.8, "#9A9694")], 0.28, 0.80, 0.42, 26),
-    BONE: ([(0, "#0D0C09"), (0.4, "#3E3C33"), (0.72, "#8D8A67"), (1.0, "#C7BA9C"), (1.3, "#D8D2B5"), (1.7, "#F6F1DC")], 0.20, 0.82, 0.42, 36),
-    BONE_DIM: ([(0, "#0E0D0A"), (0.6, "#3B3932"), (1.0, "#57544A"), (1.6, "#8C897A")], 0.32, 0.72, 0.18, 22),
-    RIM: ([(0, "#3A382E"), (0.55, "#928C78"), (0.9, "#C7BA9C"), (1.15, "#E4E3BF"), (1.5, "#F6F1DC")], 0.42, 0.66, 0.30, 30),
-    BRONZE: ([(0, "#14120E"), (0.7, "#3E3630"), (1.1, "#514E44"), (1.7, "#7C7666")], 0.36, 0.70, 0.16, 20),
-    GUT_A: ([(0, "#0E0E0C"), (2, "#0E0E0C")], 1.0, 0.0, 0.0, 8),
-    GUT_B: ([(0, "#1A170F"), (2, "#1A170F")], 1.0, 0.0, 0.0, 8),
-    STEEL: ([(0, "#070708"), (0.45, "#2A2A2E"), (0.85, "#626368"), (1.25, "#A5A5A8"), (1.7, "#E8E8EA")], 0.26, 0.78, 0.70, 44),
-    CREAM: ([(0, "#141208"), (0.45, "#6A6042"), (0.8, "#8D8A67"), (1.15, "#CDC7A5"), (1.6, "#EFEAD0")], 0.30, 0.74, 0.40, 34),
-    DARKBONE: ([(0, "#060607"), (0.5, "#151515"), (1.0, "#3F4044"), (1.4, "#626368"), (1.9, "#A0A1A6")], 0.28, 0.76, 0.36, 30),
-}
+def _register(name: str, m: fg.Material) -> None:
+    if name not in fg.MATERIALS:
+        fg.MATERIALS[name] = m
+        fg.MATERIAL_NAMES.append(name)
+        fg.MAT_ID[name] = len(fg.MATERIAL_NAMES) - 1
 
 
-class Relief:
-    """Height (u), material id and texture multiplier on a canvas of w_u x h_u."""
+STEEL_BARE = fg.STEEL_BARE
+# the slab: cold slate, nearly matte; edges that wear show paler stone
+_register("slab", fg.Material((0.0225, 0.0222, 0.0218), (0.030, 0.030, 0.030), 0.78, 0.0, (0.060, 0.058, 0.055), (0.045, 0.045, 0.045), 0.62, 0.55, 0.9, 0.04))
+# a heavier, darker stone for recesses and fracture floors
+_register("slab.dark", fg.Material((0.0105, 0.0105, 0.0105), (0.025, 0.025, 0.025), 0.82, 0.0, (0.030, 0.029, 0.028), (0.040, 0.040, 0.040), 0.7, 0.4, 0.8, 0.04))
+# well floors and pewter relief: dark blued iron with a soft sheen
+_register("well", fg.Material((0.0036, 0.0036, 0.0038), (0.028, 0.028, 0.030), 0.62, 0.15, *STEEL_BARE, 0.9, 0.7, 0.2))
+_register("pewter", fg.Material((0.015, 0.015, 0.0165), (0.045, 0.045, 0.048), 0.52, 0.2, (0.024, 0.024, 0.026), (0.10, 0.10, 0.104), 0.42, 0.9, 0.4, 0.08))
+_register("pewter.dark", fg.Material((0.008, 0.008, 0.009), (0.040, 0.040, 0.043), 0.56, 0.2, (0.016, 0.016, 0.017), (0.09, 0.09, 0.095), 0.45, 0.8, 0.5, 0.25))
+# glyph metal: warm brass that has gone dull, with hot spots only where wear exposes it
+# dim brass inlay for the frame rails: a bone-gold that has gone brown, not a polished trim
+# the frame's iron wears to a dull grey, not to bright steel
+for _frame, _iron in (("frame.iron", "iron"), ("frame.warm", "iron.warm"), ("frame.cold", "iron.cold"), ("frame.black", "iron.black"), ("frame.rivet", "iron.rivet")):
+    _register(_frame, dataclasses.replace(fg.MATERIALS[_iron], rough=0.74, aniso=0.08, bare_f0=(0.115, 0.115, 0.118), bare_albedo=(0.012, 0.012, 0.013), bare_rough=0.55))
+# bag cells and button faces: dark gunmetal that holds a faint bevel
+_register("cell", fg.Material((0.0105, 0.0105, 0.0113), (0.016, 0.016, 0.017), 0.66, 0.0, (0.014, 0.014, 0.015), (0.07, 0.07, 0.073), 0.58, 0.6, 0.5, 0.03))
+# the scroll rod: dark steel, its highlight a soft broken streak
+_register("rod.steel", fg.Material((0.012, 0.012, 0.013), (0.085, 0.085, 0.09), 0.52, 0.45, (0.02, 0.02, 0.021), (0.14, 0.14, 0.145), 0.46, 0.5, 0.3, 0.30))
+_register("rail.dim", fg.Material((0.075, 0.048, 0.019), (0.085, 0.066, 0.036), 0.52, 0.15, (0.14, 0.09, 0.04), (0.20, 0.15, 0.08), 0.42, 0.7, 0.3, 0.6))
+_register("glyph.brass", fg.Material((0.034, 0.020, 0.0055), (0.26, 0.18, 0.062), 0.46, 0.2, (0.050, 0.031, 0.010), (0.46, 0.33, 0.14), 0.36, 0.8, 0.3, 0.10))
+_register("glyph.ember", fg.Material((0.050, 0.020, 0.0030), (0.24, 0.12, 0.034), 0.48, 0.2, (0.075, 0.030, 0.006), (0.42, 0.24, 0.07), 0.38, 0.8, 0.3, 0.10))
+
+
+# regions ------------------------------------------------------------------------------
+
+
+def region_relief(x0: float, y0: float, x1: float, y1: float, margin: float, base: str, alpha: float = 1.0, tile: str = "") -> fg.Relief:
+    """A Relief covering [x0,x1] x [y0,y1] u plus margin on every side, in absolute coordinates: xs and ys
+    hold absolute u, so authored shapes and noise use the same numbers however the sprite is cut."""
+    w, h = (x1 - x0) + 2 * margin, (y1 - y0) + 2 * margin
+    r = fg.Relief(w, h, base, alpha, tile)
+    r.ox, r.oy = x0 - margin, y0 - margin
+    r.xs = r.xs + F32(r.ox)
+    r.ys = r.ys + F32(r.oy)
+    return r
+
+
+F32 = np.float32
+
+
+def trim(sprite: np.ndarray, margin: float) -> np.ndarray:
+    m = int(round(margin * SCALE))
+    return sprite[m : sprite.shape[0] - m, m : sprite.shape[1] - m] if m else sprite
+
+
+def wv(r: fg.Relief, name: str, n: int, lo: float, hi: float, stretch=(1.0, 1.0), angle: float = 0.0) -> np.ndarray:
+    """Sum of plane waves at the relief's absolute coordinates, optionally on rotated axes (angle in degrees,
+    stretch < 1 elongates the pattern along that rotated axis)."""
+    X, Y = r.xs[None, :], r.ys[:, None]
+    if angle:
+        a = math.radians(angle)
+        c, s = math.cos(a), math.sin(a)
+        X, Y = X * c + Y * s, -X * s + Y * c
+    return fg.waves(X, Y, name, n, lo, hi, stretch, r.period)
+
+
+def render_chain(r: fg.Relief, seed: str, primary: np.ndarray | None = None, value_map=None, wear=0.3, grime=0.5, rust=0.2,
+                 dust=0.1, exposure=1.0, rig: fg.Rig = fg.GOTHIC_RIG, debug: dict | None = None) -> np.ndarray:
+    """forge's chain with the authored relief taken as final (no generic detail pass): bake, age, light, finish.
+    primary is the form without micro relief; wear follows it, so edges wear and dents do not."""
+    m = fg.bake(r.h, r.h if primary is None else primary, rig.lights[0].dir, r.wrap)
+    surf = r.surface(seed)
+    surf.rough = fg.blur(surf.rough, 1.2 * PPU, r.wrap)  # forge's 1 u roughness waves read as a woven grid on smooth metal
+    s = fg.age(surf, m, seed, wear, grime, rust, dust, streak=r._drip_mask(), origin=(r.ox, r.oy), period=r.period, wrap=r.wrap)
+    if debug is not None:
+        debug["maps"], debug["surface"] = m, s
+    return fg.finish(fg.light(s, m, rig), s.alpha, exposure, value_map)
+
+
+def micro(r: fg.Relief, name: str, amp: float = 1.0, facet: float = 0.045, dent: float = 0.03, dent2: float = 0.0) -> None:
+    """Beaten facets and shallow dents added to the relief inside its coverage, with no forging flow."""
+    X, Y = r.xs[None, :], r.ys[:, None]
+    d = facet * fg.facet_plane(X, Y, name + ".f", 6.5, 0.085, 9.0, r.period)
+    d = d + dent * fg.cell_dents(X, Y, name + ".d1", 3.8, 0.7, r.period)
+    if dent2:
+        d = d + dent2 * fg.cell_dents(X, Y, name + ".d2", 1.25, 0.7, r.period)
+    r.h += (amp * d * (r.a > 0.5)).astype(F32)
+
+
+def render_micro(r: fg.Relief, seed: str, amp: float = 1.0, **kw) -> np.ndarray:
+    prim = r.h.copy()
+    micro(r, seed, amp)
+    return render_chain(r, seed, prim, **kw)
+
+
+def rise(a: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    return fg.smooth(lo, hi, a)
+
+
+def crack_path(name: str, p0, p1, rough: float, depth: int = 6, shrink: float = 0.80):
+    """Midpoint displacement: a crack that wanders at every scale rather than zigzagging."""
+    g = ua.rng(name)
+    pts = [p0, p1]
+    amp = rough
+    for _ in range(depth):
+        out = [pts[0]]
+        for a, b in zip(pts, pts[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            k = float(g.normal()) * amp
+            out.append(((a[0] + b[0]) / 2 - dy * k, (a[1] + b[1]) / 2 + dx * k))
+            out.append(b)
+        pts = out
+        amp *= shrink
+    return pts
+
+
+def carve(r: fg.Relief, buf: np.ndarray, pts, width, depth, lip: float = 0.0) -> None:
+    """Cut a V groove along a polyline into buf (positive = deeper). width and depth are numbers or functions of
+    0..1 along the path; the deepest cut wins where segments overlap. lip raises a thin rim beside the cut."""
+    n = len(pts) - 1
+    for i, ((x0, y0), (x1, y1)) in enumerate(zip(pts[:-1], pts[1:])):
+        wa = width(i / n) if callable(width) else width
+        wb = width((i + 1) / n) if callable(width) else width
+        da = depth(i / n) if callable(depth) else depth
+        db = depth((i + 1) / n) if callable(depth) else depth
+        reach = max(wa, wb) * (2.6 if lip else 1.0) + 0.1
+        s = r._window((min(x0, x1) - reach, min(y0, y1) - reach, max(x0, x1) + reach, max(y0, y1) + reach), 0.0)
+        if s is None:
+            continue
+        X, Y = r.xs[s[1]][None, :], r.ys[s[0]][:, None]
+        ex, ey = x1 - x0, y1 - y0
+        wx, wy = X - x0, Y - y0
+        t = np.clip((wx * ex + wy * ey) / max(ex * ex + ey * ey, 1e-9), 0, 1)
+        d = np.hypot(wx - ex * t, wy - ey * t)
+        w, dp = lerp(wa, wb, t), lerp(da, db, t)
+        cut = dp * np.clip(1 - d / w, 0, 1) ** 1.35
+        if lip:
+            cut = cut - lip * dp * np.exp(-(((d - w * 1.5) / (w * 0.7)) ** 2))
+        buf[s] = np.maximum(buf[s], cut.astype(F32)) if not lip else np.where(np.abs(cut) > np.abs(buf[s]), cut, buf[s]).astype(F32)
+
+
+def plates(X, Y, name: str, cell_u: float, slope: float, step: float, jitter: float = 0.9, warp: float = 0.0) -> np.ndarray:
+    """Hard-edged facets: each jittered cell owns a tilted plane and a height step, so neighbours meet in
+    creases and small ledges. Position only, so it matches across regions. Returns heights in u."""
+    seed = ua.SEED ^ zlib.crc32(name.encode("utf-8"))
+    if warp:
+        X, Y = X + warp * fg.waves(X, Y, name + ".wx", 3, 6.0, 18.0), Y + warp * fg.waves(X, Y, name + ".wy", 3, 6.0, 18.0)
+    ci, cj = np.floor(X / cell_u).astype(np.int64), np.floor(Y / cell_u).astype(np.int64)
+    shape = np.broadcast_shapes(np.shape(X), np.shape(Y))
+    best = np.full(shape, 1e9, dtype=F32)
+    out = np.zeros(shape, dtype=F32)
+    for dj in (-1, 0, 1):
+        for di in (-1, 0, 1):
+            ni, nj = ci + di, cj + dj
+            px = (ni + 0.5 + (fg._hash01(ni, nj, seed, 1) - 0.5) * jitter) * cell_u
+            py = (nj + 0.5 + (fg._hash01(ni, nj, seed, 2) - 0.5) * jitter) * cell_u
+            d = ((X - px) ** 2 + (Y - py) ** 2).astype(F32)
+            sx = (fg._hash01(ni, nj, seed, 3) - 0.5) * 2 * slope
+            sy = (fg._hash01(ni, nj, seed, 4) - 0.5) * 2 * slope
+            z0 = (fg._hash01(ni, nj, seed, 5) - 0.5) * 2 * step
+            val = (z0 + sx * (X - px) + sy * (Y - py)).astype(F32)
+            nearer = d < best
+            best = np.where(nearer, d, best)
+            out = np.where(nearer, val, out)
+    return out
+
+
+# forged slab --------------------------------------------------------------------------
+
+SLAB_MARGIN = 8.0
+
+
+def slab_fractures(kind: str) -> list[dict]:
+    """Crack paths in slab coordinates, per window. Main fractures are deep and chipped; hairlines are not."""
+    out = []
+    if kind == "combine":
+        out.append(dict(name="slab.c.main", a=(52, 268), b=(160, 366), rough=0.15, w0=0.55, d0=0.9, lip=0.30))
+        out.append(dict(name="slab.c.second", a=(86, 238), b=(148, 330), rough=0.14, w0=0.30, d0=0.55, lip=0.20))
+    else:
+        out.append(dict(name="slab.i.main", a=(26, 338), b=(132, 386), rough=0.14, w0=0.46, d0=0.8, lip=0.28))
+    out.append(dict(name=f"slab.{kind}.h1", a=(18, 60), b=(6, 150), rough=0.17, w0=0.18, d0=0.38, lip=0.0))
+    out.append(dict(name=f"slab.{kind}.h2", a=(150, 140), b=(128, 232), rough=0.16, w0=0.17, d0=0.34, lip=0.0))
+    out.append(dict(name=f"slab.{kind}.h3", a=(70, 150), b=(104, 192), rough=0.2, w0=0.16, d0=0.30, lip=0.0))
+    return out
+
+
+def terrace(t: np.ndarray, steps: float, riser: tuple = (0.58, 0.92)) -> np.ndarray:
+    """A smooth field to stepped plateaus: flat treads and short risers, like beds of rock. 0..steps in height."""
+    x = t * steps
+    f = np.floor(x)
+    return (f + rise(x - f, riser[0], riser[1])).astype(F32)
+
+
+def fracture_zone(kind: str, X, Y) -> np.ndarray:
+    """0..1 weight around the two main fractures of a slab."""
+    zone = np.zeros(np.broadcast_shapes(np.shape(X), np.shape(Y)), dtype=F32)
+    for f in slab_fractures(kind)[:2 if kind == "combine" else 1]:
+        (ax, ay), (bx, by) = f["a"], f["b"]
+        dx, dy = bx - ax, by - ay
+        tt = np.clip(((X - ax) * dx + (Y - ay) * dy) / (dx * dx + dy * dy), -0.1, 1.1)
+        dist = np.hypot(X - ax - tt * dx, Y - ay - tt * dy)
+        zone = np.maximum(zone, np.exp(-((dist / 20.0) ** 2)))
+    return zone.astype(F32)
+
+
+def slab_tone(kind: str, X, Y, period=(None, None)):
+    """Log albedo multiplier and the composition value map as functions of absolute position. Soft patches with
+    fractal edges (domain-warped pink noise), a pool of torch light, soot in the corners and along the frame."""
+    nm = f"slab.{kind}"
+    H = SLAB_H[kind]
+    Xw = X + 9 * fg.waves(X, Y, nm + ".wx", 5, 30, 90, (1, 1), period)
+    Yw = Y + 9 * fg.waves(X, Y, nm + ".wy", 5, 30, 90, (1, 1), period)
+    big = fg.waves(Xw, Yw, nm + ".pink", 16, 28, 130, (1, 1), period)
+    small = fg.waves(X, Y, nm + ".pink2", 18, 3.0, 28, (1, 1), period)
+    mid = fg.waves(X, Y, nm + ".m2", 12, 3.5, 14, (1, 1), period)
+    hue = rise(fg.waves(X, Y, nm + ".hue", 8, 25, 80, (1, 1), period), 0.25, 0.95)
+    zone = fracture_zone(kind, X, Y)
+    lnum = -0.84 + 0.64 * big + 0.30 * small + 0.26 * mid + 0.30 * zone
+    # lit stone is held back and soot is let run deep: pale patches read as marble next to black wells
+    lnum = np.where(lnum > -0.75, -0.75 + 0.50 * (lnum + 0.75), -0.75 + 1.35 * (lnum + 0.75))
+    de = np.minimum(np.minimum(X, SLAB_W - X), np.minimum(Y, H - Y))
+    pool = np.exp(-(((X - 62) / 78) ** 2 + ((Y - 0.34 * H) / (0.34 * H)) ** 2))
+    vm = (0.30 + 0.70 * rise(de, 0.0, 14.0)) * (0.40 + 0.95 * pool) * (0.74 + 0.26 * rise(Y, 0.0, 40.0))
+    return lnum.astype(F32), hue.astype(F32), vm.astype(F32), zone
+
+
+def slab_author(kind: str, x0: float, y0: float, x1: float, y1: float, margin: float = SLAB_MARGIN):
+    """The slab relief for a region, and the composition value map. Everything is a function of absolute u."""
+    r = region_relief(x0, y0, x1, y1, margin, "slab", 1.0)
+    X, Y = r.xs[None, :], r.ys[:, None]
+    H = SLAB_H[kind]
+    nm = f"slab.{kind}"
+    lnum, hue, vm, zone = slab_tone(kind, X, Y, r.period)
+    # hewn rock: broad swells, and ridges whose crests catch the key light while their far sides sink into shade
+    h = 0.34 * wv(r, nm + ".und1", 14, 30, 95, (0.85, 1.0), 25)
+    h = h + 0.62 * wv(r, nm + ".und2", 16, 9, 34, (0.85, 1.0), -35)
+    crest = 1 - np.abs(wv(r, nm + ".crest", 12, 10, 44, (0.7, 1.0), 30) * 0.45)
+    h = h + 0.90 * np.clip(crest, 0, 1) ** 4 * (0.35 + 0.65 * rise(wv(r, nm + ".crestz", 6, 30, 90), -0.3, 0.8))
+    # a zone of chiselled plates along the main fracture, tapering to nothing
+    pl = plates(X, Y, nm + ".plates", 17.0, 0.05, 0.08, 0.92, 1.1)
+    h = h + fg.blur(pl, 0.45 * PPU) * (1.0 * zone ** 1.5)
+    prim = h.copy()
+    # pitting in weathered clusters, not an even sprinkle
+    cluster = rise(wv(r, nm + ".cl", 10, 10, 40), 0.35, 1.0)
+    h = h - 0.16 * fg.cell_dents(X, Y, nm + ".pit1", 5.5, 0.9, r.period) * cluster
+    # beaten facets and shallow dents; stone has no forging flow, so forge's own detail pass is not used
+    h = h + 0.10 * fg.facet_plane(X, Y, nm + ".facet", 8.0, 0.085, 7.0, r.period)
+    r.h[...] = h.astype(F32)
+    # cracks
+    buf = np.zeros_like(r.h)
+    for f in slab_fractures(kind):
+        pts = crack_path(f["name"], f["a"], f["b"], f["rough"])
+        g = ua.rng(f["name"] + ".w")
+        phase = float(g.random()) * math.tau
+        wf = lambda t, f=f, phase=phase: f["w0"] * (0.55 + 0.45 * math.sin(math.pi * t) ** 0.7) * (0.8 + 0.25 * math.sin(t * 23 + phase))
+        df = lambda t, f=f, phase=phase: f["d0"] * (0.5 + 0.5 * math.sin(math.pi * t) ** 0.6) * (0.85 + 0.2 * math.sin(t * 17 + phase))
+        carve(r, buf, pts, wf, df, f["lip"])
+        if f["lip"]:  # short branches off the main cracks
+            for k in range(4):
+                j = 12 + int(g.integers(0, max(len(pts) - 24, 1)))
+                a = pts[j]
+                ang = float(g.random()) * math.tau
+                ln = 4 + float(g.random()) * 9
+                sub = crack_path(f["name"] + f".b{k}", a, (a[0] + math.cos(ang) * ln, a[1] + math.sin(ang) * ln), 0.25, 4)
+                carve(r, buf, sub, lambda t, w=f["w0"]: w * 0.40 * (1 - t) + 0.05, lambda t, d=f["d0"]: d * 0.45 * (1 - t) + 0.05)
+    r.h -= buf
+    prim = prim - buf
+    # fine scratches: pale hairlines, mostly along the beds, drawn into the albedo
+    gs = ua.rng(nm + ".scrape")
+    sbuf = np.zeros_like(r.h)
+    for i in range(int(SLAB_W * H / 90)):
+        sx, sy = float(gs.random()) * SLAB_W, float(gs.random()) * H
+        ang = (33 + float(gs.normal()) * 12) * math.pi / 180 if gs.random() < 0.7 else float(gs.random()) * math.tau
+        ln = 2.5 + float(gs.random()) ** 2 * 12
+        amp = 0.35 + 0.65 * float(gs.random())
+        if not (x0 - margin - 14 < sx < x1 + margin + 14 and y0 - margin - 14 < sy < y1 + margin + 14):
+            continue
+        pts = [(sx + math.cos(ang) * ln * k / 3, sy + math.sin(ang) * ln * k / 3 + float(gs.normal()) * 0.10) for k in range(4)]
+        carve(r, sbuf, pts, lambda t: 0.075, lambda t, a=amp: a * math.sin(math.pi * t) ** 0.5)
+    cold, warm = np.array((0.975, 0.99, 1.035), F32), np.array((1.04, 1.0, 0.95), F32)
+    m = np.exp(lnum + 0.9 * sbuf)[..., None] * (cold * (1 - hue[..., None]) + warm * hue[..., None])
+    r.tint = m.astype(F32)
+    # run-off: dark streaks from the crown and from the larger cracks
+    g = ua.rng(nm + ".run")
+    for i in range(14):
+        x = float(g.random()) * SLAB_W
+        top = float(g.random()) * (H * 0.55)
+        r.drip(x, top, 18 + 55 * float(g.random()), 0.35 + 0.6 * float(g.random()), 0.20 + 0.35 * float(g.random()))
+    r.prim = prim.astype(F32)
+    return r, vm
+
+
+SLAB_RENDER = dict(wear=0.12, grime=0.30, rust=0.10, dust=0.10, exposure=1.55)
+
+
+def render_slab_region(kind: str, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
+    r, vm = slab_author(kind, x0, y0, x1, y1)
+    hi = render_chain(r, f"slab.{kind}", r.prim, vm, **SLAB_RENDER)
+    return trim(fg.downsample(hi), SLAB_MARGIN)
+
+
+# parallel rendering -------------------------------------------------------------------
+
+
+def _job(spec):
+    fn, args = spec
+    return globals()[fn](*args)
+
+
+def run_jobs(jobs: list[tuple]) -> list:
+    """Runs (function name, args) jobs in order, in worker processes when more than one core is free.
+    Every job is a pure function of its arguments, so the result does not depend on the worker count."""
+    workers = int(os.environ.get("DREAM_ART_WORKERS", "0")) or min(4, os.cpu_count() or 1)
+    if workers <= 1 or len(jobs) == 1:
+        return [_job(j) for j in jobs]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_job, jobs))
+
+
+def render_slab(kind: str, band: float = 24.0) -> np.ndarray:
+    H = SLAB_H[kind]
+    edges = [0.0]
+    while edges[-1] < H:
+        edges.append(min(edges[-1] + band, float(H)))
+    parts = run_jobs([("render_slab_region", (kind, 0.0, a, float(SLAB_W), b)) for a, b in zip(edges[:-1], edges[1:])])
+    return np.concatenate(parts, axis=0)
+
+
+# side columns -------------------------------------------------------------------------
+# 12 u wide, 44 u tall, tiling in y. Left to right (outer edge to slab): a rolled iron arris, a heavy channel with a
+# plain chain in it, a bead, a broken brass inlay rail, a dark gutter. Quiet and dark: the frame must not shout.
+
+SIDE_W = 12
+
+
+def rail_segment(r: fg.Relief, pts, w: float, z: float, seed: str, groove: float = 0.28, mat: str = "rail.dim") -> None:
+    """Brass inlay: a groove cut round it, then the bar with forged points at straight ends. Top at z."""
+    r.pocket(Capsule(pts, w / 2 + groove), depth=0.55, wall=0.28, mat="void", wobble=0.03, seed=seed + ".g")
+    shape = Capsule(pts, w / 2)
+    if len(pts) == 2:
+        (x0, y0), (x1, y1) = pts
+        ln = math.hypot(x1 - x0, y1 - y0)
+        ux, uy = (x1 - x0) / ln, (y1 - y0) / ln
+        nx, ny = -uy, ux
+        e = min(w * 1.0, ln / 3)
+        h = w / 2
+        shape = Poly([(x0, y0), (x0 + ux * e + nx * h, y0 + uy * e + ny * h), (x1 - ux * e + nx * h, y1 - uy * e + ny * h), (x1, y1),
+                      (x1 - ux * e - nx * h, y1 - uy * e - ny * h), (x0 + ux * e - nx * h, y0 + uy * e - ny * h)])
+    r.plate(shape, z=z - 0.30, bevel=0.30, profile="chamfer", rise=1.0, mat=mat, wobble=0.04, nick=0.01, seed=seed)
+
+
+def zat(r: fg.Relief, x: float, y: float) -> float:
+    """Current height at a point in the relief's own u coordinates (canvases that start at the origin)."""
+    return float(r.h[min(max(int(y * PPU), 0), r.H_px - 1), min(max(int(x * PPU), 0), r.W_px - 1)])
+
+
+def draw_side(r: fg.Relief, shift: float = 0.0, h_u: float = TILE_H, base: bool = True) -> None:
+    """Left column in a relief whose y axis is the tile axis moved by shift (window y = tile y + shift). Every shape
+    is drawn once per tile period that touches [0, h_u], so it wraps in the tiling sprite and joins in crown and bottom.
+    Few broad forms: an arris, a sunk channel with a chain in it, one bar and the broken brass rail."""
+    if base:
+        r.plate(Rect(0, -TILE_H, SIDE_W, h_u + 2 * TILE_H), z=0.0, bevel=0.4, rise=0.0, mat="frame.black", seed="side.base")
+    ks = range(-1, int(math.ceil((h_u - shift) / TILE_H)) + 1)
+    for k in ks:
+        dy = shift + k * TILE_H
+        r.plate(Rect(0, dy - 1, 2.2, TILE_H + 2, 0.8), z=1.0, bevel=1.5, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.05, seed="side.arris")
+        r.pocket(Rect(2.8, dy - 1, 5.2, TILE_H + 2), depth=0.7, wall=0.6, mat="frame.black", seed="side.channel")
+        r.plate(Rect(8.4, dy - 1, 1.5, TILE_H + 2), z=1.0, bevel=0.75, profile="rolled", rise=0.7, mat="frame.iron", wobble=0.04, seed="side.bar")
+        # chain: face-on links alternate with edge-on ones, 5.5 u apart
+        y = dy + 1.4
+        j = 0
+        while y < dy + TILE_H + CHAIN_PERIOD:
+            cx = 5.4
+            if j % 2 == 0:
+                r.plate(Ellipse(cx, y, 1.95, 2.65), z=0.4, bevel=1.1, profile="round", rise=1.0, mat="frame.cold", wobble=0.03, seed=f"side.link.{j}")
+                r.pocket(Ellipse(cx, y, 0.7, 1.35), depth=1.4, wall=0.5, mat="void", seed=f"side.hole.{j}")
+            else:
+                r.plate(Capsule([(cx, y - 1.5), (cx, y + 1.5)], 0.7), z=0.9, bevel=0.65, profile="round", rise=1.0, mat="frame.iron", seed=f"side.edge.{j}")
+            y += CHAIN_PERIOD * 0.5
+            j += 1
+    for k in ks:
+        dy = shift + k * TILE_H
+        rail_segment(r, [(10.9, dy + 2.0), (10.9, dy + 17.0)], 1.4, 1.1, "side.raila", groove=0.22)
+        rail_segment(r, [(10.9, dy + 19.0), (10.9, dy + 41.5)], 1.4, 1.1, "side.railb", groove=0.22)
+
+
+def side_sprite(right: bool) -> np.ndarray:
+    w_u = 13 if right else 12
+    base = fg.Relief(SIDE_W, TILE_H, "frame.black", 1.0, "y")
+    draw_side(base)
+    if not right:
+        return fg.downsample(base.render("side.left", wear=0.07, grime=0.5, rust=0.10, dust=0.04, detail=0.55, value_map=side_value_map(base)), wrap="y")
+    r = fg.Relief(w_u, TILE_H, "frame.black", 1.0, "y")
+    n = 11 * PPU
+    r.h[:, :n] = base.h[:, :n][:, ::-1]
+    r.mid[:, :n] = base.mid[:, :n][:, ::-1]
+    r.a[:, n:] = 0.0
+    r.h[:, n:] = 0.0
+    return fg.downsample(r.render("side.right", wear=0.07, grime=0.5, rust=0.10, dust=0.04, detail=0.55, value_map=side_value_map(r, True)), wrap="y")
+
+
+def side_value_map(r: fg.Relief, right: bool = False) -> np.ndarray:
+    """Dark towards the slab: the gutter swallows light, the outer arris keeps a little."""
+    x = r.xs[None, :] * np.ones((r.H_px, 1), F32)
+    d_in = x if right else SIDE_W - x
+    return (0.60 + 0.40 * smooth(d_in, 0.0, 3.5)).astype(F32)
+
+
+def build_side() -> list[Sprite]:
+    return [
+        Sprite("win.side.left", side_sprite(False), tile="y", meta={"tileAnchorY": TILE_ANCHOR_Y * SCALE}),
+        Sprite("win.side.right", side_sprite(True), tile="y", meta={"tileAnchorY": TILE_ANCHOR_Y * SCALE}),
+    ]
+
+
+
+# crowns and bottom --------------------------------------------------------------------
+
+
+def taper(t: float) -> float:
+    return math.sin(min(t * 1.25 + 0.12, 1.0) * math.pi / 2) * (1 - t) ** 0.55
+
+
+def thorn(r: fg.Relief, p, w: float, z: float, seed: str, bevel: float = 1.4, rise_: float = 0.8, mat: str = "frame.iron", tip: float = 0.28, n: int = 20) -> None:
+    """A forged hook: a curved bar that swells and tapers to a point, on top of whatever is below."""
+    path = bez(*p, n=n)
+    r.plate(Poly(ribbon(path, lambda t: tip + w * taper(t))), z=z, bevel=bevel, profile="rolled", rise=rise_, mat=mat, wobble=0.04, nick=0.008, seed=seed)
+
+
+CROWN_PAD = 3
+
+
+def mirror_half(r: fg.Relief, axis_u: float = 94.0, art_end_u: float = 188.0) -> None:
+    """Copies everything left of the axis onto the right in height and material, and clears the art past art_end_u."""
+    n = int(axis_u * PPU)
+    for arr in (r.h, r.mid):
+        arr[:, n : 2 * n] = arr[:, :n][:, ::-1]
+    r.a[:, n : 2 * n] = r.a[:, :n][:, ::-1]
+    r.a[:, int(art_end_u * PPU) :] = 0.0
+    r.h[:, int(art_end_u * PPU) :] = 0.0
+    r.drips = [d for d in r.drips if d[0] < axis_u] + [(2 * axis_u - d[0], d[1], d[2], d[3], d[4]) for d in r.drips if d[0] < axis_u]
+
+
+def crown_relief(kind: str) -> fg.Relief:
+    inv = kind == "inventory"
+    h_u = 41 if inv else 40
+    vt, lt = (8.5, 33.4) if inv else (6.2, 29.2)  # top and bottom of the title socket
+    r = fg.Relief(190, h_u + CROWN_PAD, "frame.black", 1.0)
+    draw_side(r, shift=TILE_ANCHOR_Y - TILE_H, h_u=h_u + CROWN_PAD, base=False)
+    # the lintel, then the socket cut into it
+    r.plate(Rect(11.0, 0.2, 90, h_u + CROWN_PAD, 1.5), z=1.0, bevel=2.6, profile="rolled", rise=0.55, mat="frame.warm", wobble=0.10, nick=0.012, seed=f"crown.{kind}.lintel")
+    r.pocket(Rect(14.6, vt, 84.4, lt - vt + 1.4, 3.0), depth=3.4, wall=1.1, mat="void", wobble=0.12, nick=0.02, seed=f"crown.{kind}.socket")
+    # lower plate: carries the socket's bottom lip and the arcs under the rod
+    r.plate(Poly([(12, lt + 0.4), (28, lt - 0.3), (58, lt + 1.2), (97, lt + 1.0), (97, h_u + CROWN_PAD + 2), (12, h_u + CROWN_PAD + 2)]),
+            z=1.5, bevel=2.2, profile="rolled", rise=0.6, mat="frame.cold", wobble=0.10, nick=0.015, seed=f"crown.{kind}.lower")
+    # top beam with a broken brass inlay
+    r.plate(Rect(12.5, 0.8, 83.5, 5.4, 1.6), z=2.0, bevel=1.5, profile="rolled", rise=0.55, mat="frame.iron", wobble=0.08, nick=0.015, seed=f"crown.{kind}.beam")
+    zb = zat(r, 60, 3.6)
+    for i, (x0, x1) in enumerate(((40.0, 56.0), (58.4, 76.0), (78.4, 94.0))):
+        rail_segment(r, [(x0, 3.5), (x1, 3.5)], 1.25, zb + 0.15, f"crown.{kind}.rail{i}")
+    # corner boss, with the brass disc and a stud
+    r.plate(Ellipse(6.4, 6.4, 5.6, 5.6), z=2.4, bevel=2.3, profile="round", rise=0.9, mat="frame.iron", wobble=0.05, seed=f"crown.{kind}.boss")
+    r.plate(Ellipse(6.4, 6.4, 3.3, 3.3), z=4.3, bevel=1.0, profile="round", rise=0.6, mat="rail.dim", wobble=0.03, seed=f"crown.{kind}.disc")
+    r.dome(6.4, 6.4, 1.15, z=zat(r, 6.4, 6.4), mat="frame.rivet", collar=False, seed=f"crown.{kind}.stud")
+    # thorns, overlapping mass over mass: the long hook over the socket corner, one down the column, a counter-thorn
+    thorn(r, ((8.5, 5.2), (19, 3.2), (28.5, 7.5), (31.6, 18.0)), 5.4, 3.4, f"crown.{kind}.t1", 1.7, 0.85)
+    thorn(r, ((4.8, 10.5), (3.8, 18.0), (7.0, 25.5), (14.0, lt - 1.6)), 4.6, 3.1, f"crown.{kind}.t2", 1.5, 0.8)
+    thorn(r, ((13.0, 3.0), (23.0, 2.2), (32.0, 3.8), (40.0, 8.8)), 3.2, 3.6, f"crown.{kind}.t3", 1.2, 0.7, "frame.warm")
+    thorn(r, ((12.0, 13.0), (16.5, 11.6), (21.0, 13.6), (23.0, 19.2)), 2.4, 3.9, f"crown.{kind}.t4", 1.0, 0.7)
+    thorn(r, ((11.5, lt - 10.0), (15.0, lt - 11.6), (19.5, lt - 9.6), (21.6, lt - 4.6)), 2.4, 3.8, f"crown.{kind}.t5", 1.0, 0.7)
+    # a brass line riding the long hook
+    rail_segment(r, [(12.5, 5.9), (21.0, 5.6), (27.0, 9.4)], 0.9, zat(r, 19, 4.6) + 0.1, f"crown.{kind}.hookrail", mat="rail.dim")
+    # shallow arcs under the rod, in brass
+    for i, (a0, a1, lift) in enumerate(((36.0, 62.0, 3.0), (60.0, 90.0, 2.6))):
+        base = lt + 4.2
+        pts = bez((a0, base), (a0 + (a1 - a0) * 0.3, base + lift), (a0 + (a1 - a0) * 0.7, base + lift), (a1, base - 0.5), n=18)
+        r.pocket(Capsule(pts, 0.95), depth=0.5, wall=0.3, mat="void", seed=f"crown.{kind}.arcg{i}")
+        r.plate(Capsule(pts, 0.55), z=zat(r, 50, base + 1.0) - 0.05, bevel=0.3, profile="chamfer", mat="rail.dim", wobble=0.03, seed=f"crown.{kind}.arc{i}")
+    # rivets along the lintel and the lower plate
+    for i, (x, y) in enumerate(((13.6, h_u - 3.4), (24.0, h_u - 2.4), (61.0, lt + 4.1), (93.0, lt + 4.2), (45.0, 7.2), (14.0, lt - 2.4))):
+        r.dome(x, y, 0.9, z=zat(r, x, y), mat="frame.rivet", seed=f"crown.{kind}.rv{i}", collar=True)
+    mirror_half(r)
+    # centre crest on the beam: a kite with a brass inlay, in the axis of the window
+    r.plate(Poly([(94, 0.6), (101.5, 5.8), (94, 12.0), (86.5, 5.8)]), z=2.6, bevel=1.7, profile="rolled", rise=0.7, mat="frame.warm", wobble=0.06, nick=0.015, seed=f"crown.{kind}.crest")
+    r.plate(Poly([(94, 3.0), (97.6, 5.8), (94, 9.0), (90.4, 5.8)]), z=4.0, bevel=0.6, profile="chamfer", mat="rail.dim", seed=f"crown.{kind}.crestinlay")
+    return r
+
+
+def crown_value_map(r: fg.Relief) -> np.ndarray:
+    x = np.broadcast_to(r.xs[None, :], (r.H_px, r.W_px))
+    y = np.broadcast_to(r.ys[:, None], (r.H_px, r.W_px))
+    socket = fg.blur((r.mid == fg.MAT_ID["void"]).astype(F32), 0.5 * PPU)
+    return ((0.60 + 0.40 * np.exp(-(((x - 94) / 62) ** 2))) * (0.86 + 0.14 * np.exp(-(((y - 20) / 18) ** 2))) * (1 - 0.6 * socket)).astype(F32)
+
+
+FRAME_RENDER = dict(wear=0.12, grime=0.55, rust=0.14, dust=0.05, detail=0.6)
+
+
+def render_crown(kind: str) -> np.ndarray:
+    r = crown_relief(kind)
+    img = fg.downsample(r.render(f"crown.{kind}", value_map=crown_value_map(r), **FRAME_RENDER))
+    return img[: (41 if kind == "inventory" else 40) * SCALE]
+
+
+def bottom_relief() -> fg.Relief:
+    r = fg.Relief(190, 16 + 2, "frame.black", 0.0)
+    r.plate(Rect(0, -TILE_H, SIDE_W, 16 + 2 * TILE_H), z=0.0, bevel=0.4, rise=0.0, mat="frame.black", seed="bottom.colbase")
+    draw_side(r, shift=-23.0, h_u=18, base=False)
+    # the closing beam, thick on the inside lip, and the arc that turns up into the column
+    r.plate(Rect(11.5, 11.4, 84.5, 9.5, 1.4), z=1.2, bevel=2.4, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.10, nick=0.015, seed="bottom.beam")
+    thorn(r, ((1.8, 4.2), (8.5, 4.4), (14.5, 8.6), (17.0, 15.4)), 3.6, 3.0, "bottom.arc", 1.4, 0.8, "frame.iron", n=22)
+    rail_segment(r, [(18.0, 13.6), (46.0, 13.6)], 1.2, zat(r, 30, 13.6) + 0.12, "bottom.rail0")
+    rail_segment(r, [(48.4, 13.6), (70.0, 13.6)], 1.2, zat(r, 60, 13.6) + 0.12, "bottom.rail1")
+    rail_segment(r, [(72.4, 13.6), (93.8, 13.6)], 1.2, zat(r, 80, 13.6) + 0.12, "bottom.rail2")
+    for i, x in enumerate((19.0, 24.6, 30.2)):  # three short thorns along the beam edge
+        thorn(r, ((x + 5.0, 12.6), (x + 3.2, 11.4), (x + 1.4, 11.6), (x - 0.4, 13.4)), 2.0 - 0.2 * i, 3.3, f"bottom.th{i}", 0.9, 0.7, n=14)
+    for i, (x, y) in enumerate(((13.4, 16.2), (36.0, 16.4), (60.0, 16.4), (84.0, 16.4))):
+        r.dome(x, y, 0.85, z=zat(r, x, y), mat="frame.rivet", seed=f"bottom.rv{i}", collar=True)
+    mirror_half(r)
+    return r
+
+
+def render_bottom() -> np.ndarray:
+    r = bottom_relief()
+    img = fg.downsample(r.render("bottom", value_map=crown_value_map(r), **FRAME_RENDER))
+    return img[: 16 * SCALE]
+
+
+def blend_columns(sprite: np.ndarray, left: np.ndarray, right: np.ndarray, first_window_y: int, rows: int, at_bottom: bool) -> np.ndarray:
+    """Pastes the side tiles' own pixels over the rows of a crown (its last rows) or a bottom (its first rows) in
+    both columns, fading in towards the join, so the columns continue the tile exactly."""
+    out = sprite.copy()
+    H = sprite.shape[0]
+    for i in range(rows):
+        y_row = i if at_bottom else H - 1 - i
+        wy = first_window_y + y_row // SCALE
+        t_row = ((wy + (TILE_H - TILE_ANCHOR_Y)) % TILE_H) * SCALE + (y_row % SCALE)
+        w = 1.0 - i / rows
+        w = w * w * (3 - 2 * w)
+        lw, rw, x0 = left.shape[1], right.shape[1], 177 * SCALE
+        out[y_row, :lw, :3] = np.round(out[y_row, :lw, :3] * (1 - w) + left[t_row, :, :3] * w).astype(np.uint8)
+        a = right[t_row, :, 3] > 0
+        seg = out[y_row, x0 : x0 + rw, :3].astype(np.float32)
+        seg[a] = seg[a] * (1 - w) + right[t_row, :, :3][a] * w
+        out[y_row, x0 : x0 + rw, :3] = np.round(seg).astype(np.uint8)
+    return out
+
+# @@PARTS@@
+
+# legacy-shape adapter ------------------------------------------------------------------
+# The silhouettes and glyphs were drawn with a small height-field painter (polygons inflated by a blur, ellipsoids,
+# grooves). The shapes are kept; this class paints the same way into plain arrays in the old height units, and
+# finish_relief() turns them into a forge Relief, scaled to low relief, so they are lit like everything else.
+
+STEEL, GOLD, AMBER, TAN, LEATHER = 1, 2, 3, 4, 5
+HEIGHT_K = 0.14  # old units to u: the old art was dressed for a matcap and stood up to 15 high
+
+
+def gauss(a: np.ndarray, sigma_px: float) -> np.ndarray:
+    return fg.blur(a, sigma_px)
+
+
+class Leg:
+    """Height (old units), material id, value multiplier and coverage on a canvas of w_u x h_u."""
 
     def __init__(self, w_u: float, h_u: float):
         self.w_u, self.h_u = w_u, h_u
@@ -138,10 +670,7 @@ class Relief:
         self.A[py0:py1, px0:px1][sel] = 1
 
     def poly(self, pts, mat, z=0.0, h=0.8, r=0.8, on_top=False, ridge=0.0, belly=0.0):
-        """Filled polygon inflated into a dome; r is edge roundness in u. z is its base height.
-
-        belly mixes in a much wider profile, so large plates keep curving instead of going flat
-        behind a piped edge; that curve is what a chrome reflection needs."""
+        """Filled polygon inflated into a dome; r is edge roundness in u, z its base height, belly a wide curve."""
         if mat == STEEL and not belly and h >= 1.5:
             belly = 0.7
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
@@ -154,15 +683,15 @@ class Relief:
         im = Image.new("L", (lw, lh), 0)
         ImageDraw.Draw(im).polygon([(x * PPU - px0 + pad, y * PPU - py0 + pad) for x, y in pts], fill=255)
         m = np.asarray(im, dtype=np.float32) / 255
-        b = gblur(m, r * PPU * 0.55)
+        b = gauss(m, r * PPU * 0.55)
         t = np.clip(2 * b - 1, 0, 1)
         dome = np.sqrt(1 - (1 - t) ** 2)
         if belly:
-            wide = gblur(m, r * PPU * 1.6)
+            wide = gauss(m, r * PPU * 1.6)
             wide = wide / max(float(wide.max()), 1e-3)
             dome = dome * (1 - belly + belly * np.sqrt(np.clip(1 - (1 - wide) ** 2, 0, 1)))
         if ridge:
-            core = gblur(m, r * PPU * 1.3)
+            core = gauss(m, r * PPU * 1.3)
             dome = dome + ridge * np.clip(2 * core - 1, 0, 1) ** 2
         height = (z + h * dome)[pad:-pad, pad:-pad]
         sel = m[pad:-pad, pad:-pad] > 0.5
@@ -196,8 +725,7 @@ class Relief:
         u = x * math.cos(a) + y * math.sin(a)
         v = -x * math.sin(a) + y * math.cos(a)
         rho = (u / rx) ** 2 + (v / ry) ** 2
-        sel = rho < 1
-        self._write(win, sel, z + h * np.sqrt(np.clip(1 - rho, 0, 1)), mat)
+        self._write(win, rho < 1, z + h * np.sqrt(np.clip(1 - rho, 0, 1)), mat)
 
     def ring(self, cx, cy, rx, ry, thick, angle, mat, z=0.0, h=1.0):
         """Elliptical torus; thick is the tube width in u."""
@@ -209,11 +737,9 @@ class Relief:
         v = -x * math.sin(a) + y * math.cos(a)
         rho = np.sqrt((u / rx) ** 2 + (v / ry) ** 2)
         d = (rho - 1) * (rx + ry) / 2 / (thick / 2)
-        sel = np.abs(d) < 1
-        self._write(win, sel, z + h * np.sqrt(np.clip(1 - d * d, 0, 1)), mat)
+        self._write(win, np.abs(d) < 1, z + h * np.sqrt(np.clip(1 - d * d, 0, 1)), mat)
 
     def groove(self, pts, width, depth):
-        """Cuts a soft line into the current height."""
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         win = self._window(min(xs) - width, min(ys) - width, max(xs) + width, max(ys) + width)
         px0, py0, px1, py1 = win
@@ -221,11 +747,10 @@ class Relief:
             return
         im = Image.new("L", (px1 - px0, py1 - py0), 0)
         ImageDraw.Draw(im).line([(x * PPU - px0, y * PPU - py0) for x, y in pts], fill=255, width=max(1, int(width * PPU)))
-        m = gblur(np.asarray(im, dtype=np.float32) / 255, width * PPU * 0.25)
+        m = gauss(np.asarray(im, dtype=np.float32) / 255, width * PPU * 0.25)
         self.H[py0:py1, px0:px1] -= m * depth
 
     def mirrored_about(self, axis_u: float) -> None:
-        """Copies everything left of axis_u onto the right, in height, not in pixels."""
         ax = int(round(axis_u * PPU))
         n = min(ax, self.w - ax)
         for arr in (self.H, self.M, self.T, self.A):
@@ -233,690 +758,76 @@ class Relief:
         self.A[:, ax + n :] = 0
 
 
-def shade(R: Relief, light=LIGHT_FRAME, ao=1.0, ao_radius=1.0, bump=None) -> np.ndarray:
-    """Relief to float RGBA at PPU."""
-    H = R.H if bump is None else R.H + bump
-    n = ua.normals(H)
-    l = np.array(light, dtype=np.float32)
-    l /= np.linalg.norm(l)
-    half = l + np.array([0, 0, 1], dtype=np.float32)
-    half /= np.linalg.norm(half)
-    ndl = np.clip(n @ l, 0, 1) / l[2]
-    ndh = np.clip(n @ half, 0, 1)
-    occ = 1 - np.clip((gblur(R.H, ao_radius * PPU) - R.H) * 1.5 * ao, 0, 0.92)
-    rgb = np.zeros((R.h, R.w, 3), dtype=np.float32)
-    for mat, (stops, amb, dif, spc, shin) in MATS.items():
-        sel = R.M == mat
-        if not sel.any():
-            continue
-        v = (amb + dif * ndl[sel]) * R.T[sel] * occ[sel]
-        col = ramp(v[None, :], stops)[0]
-        s = spc * np.clip(ndh[sel] ** shin - half[2] ** shin, 0, None) * occ[sel]
-        rgb[sel] = np.clip(col + s[:, None], 0, 1)
-    return np.dstack((rgb, R.A)).astype(np.float32)
-
-
-# stone --------------------------------------------------------------------------------
-
-
-def _scratches(h, w, r, count, length_px, width=1) -> np.ndarray:
-    im = Image.new("L", (w, h), 0)
-    d = ImageDraw.Draw(im)
-    for _ in range(count):
-        x, y = float(r.random() * w), float(r.random() * h)
-        ang = float(r.random() * math.tau)
-        pts = [(x, y)]
-        for _ in range(int(r.integers(3, 9))):
-            ang += float(r.random() - 0.5) * 0.5
-            step = float(r.random()) * length_px
-            x += math.cos(ang) * step
-            y += math.sin(ang) * step
-            pts.append((x, y))
-        d.line(pts, fill=int(r.integers(90, 255)), width=width)
-    return np.asarray(im, dtype=np.float32) / 255
-
-
-def _crack_line(p0, p1, r, rough, depth=5):
-    """Midpoint displacement, so a crack wanders at every scale instead of zigzagging."""
-    pts = [p0, p1]
-    amp = rough
-    for _ in range(depth):
-        out = [pts[0]]
-        for a, b in zip(pts, pts[1:]):
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            k = float(r.normal()) * amp
-            out.append(((a[0] + b[0]) / 2 - dy * k, (a[1] + b[1]) / 2 + dx * k))
-            out.append(b)
-        pts = out
-        amp *= 0.82
-    return pts
-
-
-def _draw_cracks(lines, h, w, r) -> np.ndarray:
-    """Antialiased crack mask with a width and strength that swell and fade along each line."""
-    k = 3
-    im = Image.new("L", (w * k, h * k), 0)
-    d = ImageDraw.Draw(im)
-    for pts in lines:
-        n = len(pts) - 1
-        for i, (a, b) in enumerate(zip(pts, pts[1:])):
-            t = i / n
-            env = math.sin(math.pi * t) ** 0.6
-            wid = max(1, int(round(1 + 3.2 * env * (0.6 + 0.4 * math.sin(t * 19)))))
-            d.line([(a[0] * ua.SCALE * k, a[1] * ua.SCALE * k), (b[0] * ua.SCALE * k, b[1] * ua.SCALE * k)], fill=int(90 + 165 * env), width=wid)
-        for _ in range(int(r.integers(1, 3))):
-            i = int(r.integers(n // 5, 4 * n // 5))
-            a = pts[i]
-            ang = float(r.random()) * math.tau
-            ln = 5 + float(r.random()) * 12
-            for sub in [_crack_line(a, (a[0] + math.cos(ang) * ln, a[1] + math.sin(ang) * ln), r, 0.3, 4)]:
-                d.line([(x * ua.SCALE * k, y * ua.SCALE * k) for x, y in sub], fill=110, width=1)
-    return np.asarray(im.resize((w, h), Image.BOX), dtype=np.float32) / 255
-
-
-def stone_luma(h: int, w: int, name: str, band=None) -> np.ndarray:
-    """Worn slate luma at atlas scale (SCALE px/u). band: (x0,y0,x1,y1) in u, a fracture zone."""
-    s = ua.SCALE / PPU  # fbm scales assume PPU; this converts them to atlas px
-    cloud = ua.fbm(h, w, name + ".cloud", 44 * s, 5)
-    blot = ua.fbm(h, w, name + ".blot", 11 * s, 5)
-    fine = ua.fbm(h, w, name + ".fine", 2.2 * s, 3)
-    wx = ((ua.fbm(h, w, name + ".wx", 30 * s, 2) - 0.5) * 60).astype(np.int32)
-    wy = ((ua.fbm(h, w, name + ".wy", 30 * s, 2) - 0.5) * 60).astype(np.int32)
-    yy, xx = np.mgrid[0:h, 0:w]
-    blot = gblur(blot[(yy + wy) % h, (xx + wx) % w], 1.0)
-    height = cloud * 0.6 + blot * 0.7 + fine * 0.25
-    r = ua.rng(name + ".marks")
-    weight = np.zeros((h, w), dtype=np.float32)
-    lines = []
-    if band:
-        x0, y0, x1, y1 = band
-        dx, dy = x1 - x0, y1 - y0
-        ln = math.hypot(dx, dy)
-        px, py = (xx / ua.SCALE - x0), (yy / ua.SCALE - y0)
-        along = np.clip((px * dx + py * dy) / (ln * ln), -0.15, 1.15)
-        dist = np.hypot(px - along * dx, py - along * dy)
-        weight = np.exp(-((dist / 24.0) ** 2)).astype(np.float32)
-        ridge = 1 - np.abs(2 * ua.fbm(h, w, name + ".ridge", 26 * s, 5) - 1)
-        ridge = gblur(ridge[(yy + wy) % h, (xx + wx) % w], 1.6)
-        height = height + weight * (ridge**3) * 1.2
-        lines.append(_crack_line((x0 + 8, y0 + 4), (x1 - 2, y1 - 6), r, 0.17))
-        lines.append(_crack_line((x0 + 30, y0 + 20), (x1 - 30, y1 + 22), r, 0.15))
-    # long diagonal hairlines across the sheet
-    for _ in range(3):
-        a = (float(r.random()) * w / ua.SCALE, float(r.random()) * h / ua.SCALE)
-        b = (a[0] - 30 - float(r.random()) * 40, a[1] + 40 + float(r.random()) * 50)
-        lines.append(_crack_line(a, b, r, 0.13))
-    crack = _draw_cracks(lines, h, w, r)
-    # lit from top right: the emboss is what makes the noise read as rock, not as fog
-    emboss = np.roll(height, (1, -1), axis=(0, 1)) - np.roll(height, (-1, 1), axis=(0, 1))
-    luma = 66.0 + (cloud - 0.5) * 20 + (blot - 0.5) * 20 + emboss * (84 + 200 * weight)
-    luma = luma - gblur(crack, 0.7) * 24 + np.roll(gblur(crack, 0.5), (1, -1), axis=(0, 1)) * 6
-    luma += ua.grain(h, w, name + ".g", 4.6)
-    flecks = (r.random((h, w), dtype=np.float32) > 0.985) * r.random((h, w), dtype=np.float32) * 24 * smooth(blot, 0.35, 0.65)
-    luma += gblur(flecks, 0.5) * 2.2
-    luma += gblur(_scratches(h, w, r, 420, 12), 0.5) * 8
-    return luma.astype(np.float32)
-
-
-def slab(w_u, h_u, name, band=None) -> np.ndarray:
-    """Opaque sheet: the corners outside the 6 u radius hold the dark halo, so no world shows."""
-    h, w = int(h_u * ua.SCALE), int(w_u * ua.SCALE)
-    luma = stone_luma(h, w, name, band)
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    x, y = (xx + 0.5) / ua.SCALE, (yy + 0.5) / ua.SCALE
-    rad = 6.0
-    qx = np.abs(x - w_u / 2) - (w_u / 2 - rad)
-    qy = np.abs(y - h_u / 2) - (h_u / 2 - rad)
-    d = rad - (np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0))
-    shadow = smooth(d, 0.0, 5.0)
-    edge = 42.0
-    luma = edge + (luma - edge) * shadow
-    # mean sits on stone.base; the shift keeps the cloud shape and the check honest
-    inside = d > 0
-    luma += 67.5 - float(luma[inside].mean())
-    rgb = np.dstack((luma - 0.4, luma - 1.2, luma + 2.6))
-    halo = np.array([8, 8, 9], dtype=np.float32)
-    k = smooth(d, -0.5, 0.5)[..., None]
-    rgb = rgb * k + halo * (1 - k)
-    a = np.full((h, w, 1), 255, dtype=np.float32)
-    return (np.dstack((np.clip(rgb, 0, 255), a)) + 0.5).astype(np.uint8)
-
-
-def build_slabs() -> list[Sprite]:
-    meta = {"radius": 6 * ua.SCALE}
-    return [
-        Sprite("win.slab.inventory", slab(165, 387, "slab.inventory"), meta=meta),
-        Sprite("win.slab.combine", slab(165, 388, "slab.combine", band=(58, 262, 160, 352)), meta=meta),
-    ]
-
-
-# cells --------------------------------------------------------------------------------
-
-
-def _mitre(w_u, h_u, top, right, bottom, left):
-    """Per-pixel edge id (0 face, 1 top, 2 right, 3 bottom, 4 left) and depth 0..1 into the bevel."""
-    h, w = int(h_u * PPU), int(w_u * PPU)
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    x, y = (xx + 0.5) / PPU, (yy + 0.5) / PPU
-    d = np.dstack((y / top, (w_u - x) / right, (h_u - y) / bottom, x / left))
-    which = d.argmin(axis=2)
-    depth = d.min(axis=2)
-    return np.where(depth < 1, which + 1, 0), depth, x, y
-
-
-def _lerp(a, b, t):
-    return token(a)[None, None, :] * (1 - t[..., None]) + token(b)[None, None, :] * t[..., None]
-
-
-def tile_face(name, face="#404143") -> np.ndarray:
-    size = int(20 * PPU)
-    n = (ua.fbm(size, size, name + ".f", 3.0, 3) - 0.5) * 0.022 + ua.grain(size, size, name + ".g", 0.006)
-    return np.clip(token(face)[None, None, :] + n[..., None], 0, 1)
-
-
-def cell_empty() -> np.ndarray:
-    edge, depth, _, _ = _mitre(20, 20, 1.5, 1.5, 2, 2)
-    rgb = tile_face("cell.empty").astype(np.float32)
-    for eid, a, b in ((1, "#A5A5A5", "#797979"), (2, "#8F8F91", "#A7A6A9"), (3, "#212121", "#2C2C2C"), (4, "#1D1D1F", "#262628")):
-        sel = edge == eid
-        rgb[sel] = _lerp(a, b, depth)[sel]
-    # a one texel lit crown where the top and right bevels meet the face
-    near = (edge == 0) & (depth < 1.12)
-    rgb[near] = rgb[near] * 0.93
-    return np.dstack((rgb, np.ones(depth.shape, dtype=np.float32))).astype(np.float32)
-
-
-def cell_flat(fill, line_v, line_h) -> np.ndarray:
-    """Half lines on each edge, so tiling makes a 1 u lattice that breaks at the crossings."""
-    size = int(20 * PPU)
-    out = rgba(size, size, fill)
-    half = int(0.5 * PPU)
-    gap = int(1.25 * PPU)  # horizontal segments stop short of the verticals
-    out[:, :half, :3] = token(line_v)
-    out[:, -half:, :3] = token(line_v)
-    out[:half, gap:-gap, :3] = token(line_h)
-    out[-half:, gap:-gap, :3] = token(line_h)
-    return out
-
-
-def build_cells() -> list[Sprite]:
-    out = [
-        Sprite("cell.empty", cell_empty()),
-        Sprite("cell.occupied", cell_flat("cell.occupied", "#47494B", "cell.lattice.h"), tile="xy"),
-        Sprite("cell.hover", cell_flat("cell.hover", "cell.hover.lattice.v", "cell.hover.lattice.h"), tile="xy"),
-        Sprite("cell.invalid", cell_flat("cell.invalid", "cell.invalid.lattice.v", "cell.invalid.lattice.h"), tile="xy"),
-    ]
-    size = int(20 * PPU)
-    out.append(Sprite("cell.overlay.hover", rgba(size, size, "#071451", 64 / 255), tile="xy"))
-    out.append(Sprite("cell.overlay.invalid", rgba(size, size, "#51070A", 64 / 255), tile="xy"))
-    return out
-
-
-# side columns -------------------------------------------------------------------------
-
-_PAD = 10  # u of overdraw above and below a tile, so shading wraps exactly
-
-
-def side_relief() -> Relief:
-    """12 u left column over a 44 u tile, with _PAD u of overdraw on both ends."""
-    H = TILE_H + 2 * _PAD
-    R = Relief(12, H)
-    R.rect(0, 0, 12, H, VOID)
-    R.rect(7.9, 0, 1.6, H, GUT_A)
-    R.rect(11, 0, 1, H, GUT_B)
-    wear = ua.fbm(TILE_H * PPU, 12 * PPU, "side.wear", 5.0, 4)
-    pit = ua.fbm(TILE_H * PPU, 12 * PPU, "side.pit", 0.8, 3)
-    R.T = np.take(0.88 + 0.24 * wear, np.arange(R.h) - _PAD * PPU, axis=0, mode="wrap").astype(np.float32)
-    pitting = np.take(pit, np.arange(R.h) - _PAD * PPU, axis=0, mode="wrap")
-    # rim, with a darker worn band now and then
-    R.rect(0, 0, 1.5, H, RIM, 0.1, 0.75, 0.75)
-    rimwear = smooth(ua.fbm(TILE_H * PPU, 8, "side.rimwear", 3.0, 3), 0.62, 0.8)
-    rim_t = np.take(rimwear[:, :1], np.arange(R.h) - _PAD * PPU, axis=0, mode="wrap")
-    R.T[:, : int(1.5 * PPU)] *= (1 - 0.38 * rim_t).astype(np.float32)
-    R.rect(7, 0, 1, H, BRONZE, 0.1, 0.4, 0.4)
-    # chain: open links with a narrow edge-on link locking each pair
-    y = _PAD - CHAIN_PERIOD
-    k = 0
-    cx = 4.75
-    while y < H + CHAIN_PERIOD:
-        R.ring(cx, y, 1.5, 2.05, 1.15, 16, CHAIN, 0.15, 0.85)
-        y += CHAIN_PERIOD
-        k += 1
-    y = _PAD - CHAIN_PERIOD * 0.5
-    y -= CHAIN_PERIOD
-    while y < H + CHAIN_PERIOD:
-        R.ellipsoid(cx, y, 0.78, 1.72, -18, CHAIN, 0.75, 0.6)
-        R.groove([(cx - 0.1, y - 1.2), (cx + 0.1, y + 1.2)], 0.14, 0.14)
-        y += CHAIN_PERIOD
-    # bone column: three beads, then the long dim bar
-    bx = 10.25
-    for base in range(-1, 3):
-        o = _PAD + base * TILE_H
-        for by in (3.0, 9.0, 15.0):
-            R.ellipsoid(bx - 0.25, o + by + 1.9, 0.5, 0.7, 0, BONE_DIM, 0.1, 0.25)
-            R.ellipsoid(bx, o + by, 0.92, 1.55, 0, BONE, 0.1, 0.72)
-            R.groove([(bx - 0.9, o + by - 0.5), (bx + 0.9, o + by + 0.3)], 0.12, 0.1)
-        R.ellipsoid(bx, o + 30.5, 0.95, 11.6, 0, BONE_DIM, 0.1, 0.8)
-        for gy in (22.0, 30.5, 39.0):
-            R.groove([(bx - 0.9, o + gy), (bx + 0.9, o + gy + 0.2)], 0.2, 0.22)
-    R.H[R.M != VOID] += ((pitting - 0.5) * 0.05)[R.M != VOID]
-    return R
-
-
-_side_cache: dict[str, np.ndarray] = {}
-
-
-def side_layers() -> dict[str, np.ndarray]:
-    if not _side_cache:
-        R = side_relief()
-        _side_cache.update(H=R.H, M=R.M, T=R.T, A=R.A)
-    return _side_cache
-
-
-def side_sprite(right: bool) -> np.ndarray:
-    side = side_layers()
-    w_u = 13 if right else 12
-    R = Relief(w_u, TILE_H + 2 * _PAD)
-    for key in "HMTA":
-        src = side[key]
-        if right:
-            art = src[:, : 11 * PPU][:, ::-1]
-            dst = getattr(R, key)
-            dst[:, : 11 * PPU] = art
-        else:
-            setattr(R, key, src.copy())
-    img = shade(R, ao=1.3, ao_radius=0.6)
-    return img[_PAD * PPU : (_PAD + TILE_H) * PPU]
-
-
-def build_side() -> list[Sprite]:
-    return [
-        Sprite("win.side.left", side_sprite(False), tile="y", meta={"tileAnchorY": TILE_ANCHOR_Y * ua.SCALE}),
-        Sprite("win.side.right", side_sprite(True), tile="y", meta={"tileAnchorY": TILE_ANCHOR_Y * ua.SCALE}),
-    ]
-
-
-# crowns and bottom --------------------------------------------------------------------
-
-
-def paste_columns(R: Relief, window_y0: float) -> None:
-    """Writes the left column so its tile phase matches the side sprites at this window y."""
-    side = side_layers()
-    tile = TILE_H * PPU
-    rows = (np.arange(R.h) + int(round((window_y0 - TILE_ANCHOR_Y) * PPU))) % tile + _PAD * PPU
-    cols = 12 * PPU
-    R.H[:, :cols] = side["H"][rows, :cols]
-    R.M[:, :cols] = side["M"][rows, :cols]
-    R.T[:, :cols] = side["T"][rows, :cols]
-    R.A[:, :cols] = 1
-
-
-def taper(t):
-    return math.sin(min(t * 1.25 + 0.12, 1.0) * math.pi / 2) * (1 - t) ** 0.55
-
-
-def leaf(t):
-    return math.sin(math.pi * t) ** 0.7
-
-
-def moulding(R: Relief, xs, base_y, swell, mat=CREAM, z=0.2):
-    """Cream wave along the top or bottom edge: a run of leaf-shaped swells on a thin stem."""
-    pts = bez((xs[0], base_y + 0.6), (xs[0] + 6, base_y + 1.4), (xs[0] + 10, base_y - 0.2), (xs[0] + 16, base_y + 0.3), n=30)
-    for a, b, lift, wid in swell:
-        mid = (a + b) / 2
-        p = bez((a, base_y + 0.9), (a + (mid - a) * 0.5, base_y - lift), (mid + (b - mid) * 0.4, base_y - lift * 0.7), (b, base_y + 0.9), n=30)
-        R.poly(ribbon(p, lambda t, w=wid: 0.5 + w * leaf(t)), mat, z, 0.8, 0.8, ridge=0.2)
-    R.poly(ribbon(pts, lambda t: 0.8 * leaf(t) + 0.3), mat, z, 0.5, 0.5)
-
-
-def claw(R, p, w, mat=BONE, z=0.4, h=1.2, ridge=0.25):
-    R.poly(ribbon(bez(*p, n=36), lambda t, w0=w: 0.12 + w0 * taper(t)), mat, z, h, min(w, 1.5) * 0.8, ridge=ridge)
-
-
-def knuckles(R, pts, size=1.0, mat=STEEL):
-    for i, (x, y, a) in enumerate(pts):
-        s = size * (0.9 + 0.25 * ((i * 7) % 3) / 2)
-        R.ellipsoid(x + 0.3, y + 0.5, 1.15 * s, 0.8 * s, a, DARKBONE, 0.05, 0.3)
-        R.ellipsoid(x, y, 1.1 * s, 0.72 * s, a, mat, 0.25, 0.75)
-
-
-def rope(R, pts, step_angle=38):
-    for i, (x, y) in enumerate(pts):
-        R.ellipsoid(x, y, 1.02, 0.56, step_angle, DARKBONE, 0.2, 0.55)
-
-
-def crown_field(R: Relief, low: float) -> None:
-    """Forged backplates under the ornaments: most of the crown's mass, kept dark."""
-    R.poly([(11.5, 0.5), (46, 0.5), (41, 6.6), (24, 10.4), (17, 21), (16.4, 33), (11.5, 36)], IRON, 0.05, 0.5, 1.2)
-    R.groove(bez((13, 3), (24, 4), (30, 3.6), (40, 1.6)), 0.3, 0.12)
-    R.groove(bez((14.8, 30), (15, 21), (20, 11), (33, 7.4)), 0.26, 0.14)
-    # lower plate that carries the teeth and arcs
-    R.poly([(12, low + 1.4), (24, low + 0.8), (33, low + 2.8), (60, low + 1.8), (88, low + 3.2), (97, low + 3.6), (97, 46), (12, 46)], IRON, 0.05, 0.42, 1.0)
-    for x, y in ((33, 2.4), (39.4, 2.2), (13, 13), (12.9, 24), (22, 39.4), (34, 39.6), (48, 39.5), (72, 39.5)):
-        R.ellipsoid(x + 0.2, y + 0.3, 0.72, 0.72, 0, IRON, 0.3, 0.2)
-        R.ellipsoid(x, y, 0.5, 0.5, 0, BRONZE, 0.45, 0.32)
-    # twisted cord under the top moulding
-    rope(R, [(15 + i * 1.62, 5.0 + 0.35 * math.sin(i * 0.33)) for i in range(16)] + [(41 + i * 1.62, 5.1 + 0.45 * math.sin(i * 0.3)) for i in range(35)])
-
-
-def title_finial(R: Relief, y: float) -> None:
-    claw(R, ((21.5, y + 1.8), (25, y - 0.8), (29, y - 0.9), (33.4, y + 0.3)), 2.5, BONE, 0.5, 0.9)
-    knuckles(R, [(21, y - 0.4, 40)], 0.85)
-
-
-def crown_corner(R: Relief) -> None:
-    # the main hook, rooted in a bone collar in the corner and sweeping in and down
-    claw(R, ((3.5, 3.4), (12, 3.5), (21, 6.5), (24.5, 17.5)), 5.0, BONE, 0.5, 1.5, 0.4)
-    # a counter-thorn along the top and one dropping down the column
-    claw(R, ((11, 1.8), (17, 1.6), (25, 1.8), (32, 6.2)), 2.7, BONE, 0.4, 1.0)
-    claw(R, ((4.2, 8), (4.5, 15), (7, 21), (13.8, 28)), 3.2, BONE, 0.45, 1.1)
-    # short spurs growing off the hook
-    claw(R, ((15.5, 6), (18.5, 4.5), (22, 4.5), (24.5, 5.2)), 1.5, BONE, 0.9, 0.8)
-    claw(R, ((8, 8.4), (9.5, 12.5), (12, 15), (16, 16.4)), 2.1, BONE, 0.8, 0.9)
-    R.groove(bez((5, 3.7), (12, 3.8), (19, 6.8), (22.5, 13)), 0.18, 0.28)
-    R.groove(bez((4.7, 9), (5, 15), (7.5, 20.5), (12, 26)), 0.15, 0.2)
-    knuckles(R, [(11.5, 8.7, 30), (15.3, 10.4, 62), (17.8, 13.8, 76), (19, 18.5, 95), (15.3, 19.8, 120), (10.3, 18.9, 62), (12.4, 22.3, 62), (21.5, 2.9, 12), (27, 8.2, 35), (31.5, 7.6, 18), (35.6, 6.9, 8), (15.8, 24.6, 100), (15.6, 29, 85)], 1.0)
-    for a, b in (((13, 4.8), (11.5, 7.2)), ((17.8, 6.8), (15.8, 9.4)), ((21.4, 10.4), (18.8, 11)), ((5.2, 13), (7, 13.6)), ((6.3, 18), (8.2, 17.2))):
-        claw(R, (a, (a[0] * 0.7 + b[0] * 0.3, a[1] * 0.7 + b[1] * 0.3), (a[0] * 0.3 + b[0] * 0.7, a[1] * 0.3 + b[1] * 0.7), b), 1.2, BONE, 1.0, 0.5)
-    # collar and the white stud
-    R.ellipsoid(4.2, 4.4, 3.1, 3.1, 0, DARKBONE, 0.3, 1.0)
-    R.ring(4.2, 4.4, 2.5, 2.5, 0.9, 0, BONE, 0.9, 0.5)
-    R.ellipsoid(5, 5, 1.0, 1.0, 0, RIM, 1.6, 0.9)
-
-
-def crown_lower(R: Relief, top: float, raised: float, rod_end: bool) -> None:
-    """Teeth stepping in from the column, then two shallow arcs towards the centre."""
-    y = top
-    for i in range(4):
-        x = 17 + i * 5.2
-        yy = y + i * 0.75
-        claw(R, ((x + 3.2, yy - 2.4), (x + 2.2, yy - 1), (x + 0.8, yy + 0.6), (x, yy + 2.4)), 2.1, DARKBONE if i else BONE, 0.3, 0.9)
-    for a, b, lift, wid, mat in ((36, 62, 3.6, 1.9, DARKBONE), (58, 87, 3.0, 1.7, DARKBONE)):
-        base = y + 3.8 - raised
-        p = bez((a, base), (a + (b - a) * 0.3, base + lift), (a + (b - a) * 0.7, base + lift), (b, base - 0.6), n=40)
-        R.poly(ribbon(p, lambda t, w=wid: 0.3 + w * leaf(t)), mat, 0.25, 0.9, 0.8, ridge=0.25)
-        q = bez((a + 4, base + 0.8), (a + (b - a) * 0.35, base + lift - 1.5), (a + (b - a) * 0.65, base + lift - 1.5), (b - 5, base), n=30)
-        R.poly(ribbon(q, lambda t: 0.2 + 0.7 * leaf(t)), BONE_DIM, 0.1, 0.4, 0.4)
-    # rod bracket and the twisted beads climbing the slab shoulder
-    if rod_end:
-        claw(R, ((12.4, 30.2), (14, 28.2), (15.5, 27.5), (18.2, 27.3)), 2.4, BONE, 0.45, 0.9)
-    for i in range(4):
-        by = top - 1.4 + i * 3.2
-        R.ellipsoid(13.6 + 0.35 * (i % 2), by, 1.0, 1.5, 24 - 48 * (i % 2), DARKBONE if i % 2 else BONE, 0.3, 0.8)
-        R.groove([(12.8, by - 0.4), (14.6, by + 0.5)], 0.14, 0.14)
-
-
-def wear_bump(R: Relief, name: str) -> np.ndarray:
-    n = ua.fbm(R.h, R.w, name, 0.9, 3) - 0.5
-    return n * 0.075 * (R.M != VOID)
-
-
-def worn(R: Relief, name: str) -> None:
-    """Grime on the ornaments: wide blotches, deepest on the bone, none on the shared columns."""
-    n = ua.fbm(R.h, R.w, name + ".t", 3.0, 4)
-    k = 0.62 + 0.62 * smooth(n, 0.2, 0.78)
-    orn = (R.M == BONE) | (R.M == CREAM)
-    t = np.where(orn, k, 0.9 + 0.2 * n)
-    t[:, : 12 * PPU] = np.where(orn[:, : 12 * PPU], t[:, : 12 * PPU], 1)
-    R.T *= t.astype(np.float32)
-
-
-def crown(name: str, h_u: int, with_rod: bool) -> np.ndarray:
-    pad = 4
-    R = Relief(190, h_u + pad)
-    R.rect(0, 0, 188, h_u + pad, VOID)
-    paste_columns(R, 0)
-    lower_top = 33.4 if with_rod else 29.0
-    crown_field(R, lower_top + (0 if with_rod else 0.5))
-    moulding(R, (13, 94), 2.1, [(36, 53, 1.1, 1.3), (50, 69, 1.4, 1.7), (66, 79, 1.6, 2.0), (78, 95, 1.5, 1.2)])
-    crown_corner(R)
-    title_finial(R, 15.4 if with_rod else 17.4)
-    crown_lower(R, lower_top, 0.0, with_rod)
-    worn(R, name)
-    R.mirrored_about(94)
-    img = shade(R, ao=1.4, ao_radius=0.8, bump=wear_bump(R, name + ".b"))
-    return img[: h_u * PPU]
-
-
-def bottom() -> np.ndarray:
-    R = Relief(190, 20)
-    R.rect(0, 12, 188, 8, VOID)
-    paste_columns(R, 416)
-    R.rect(12, 12, 82, 8, VOID)
-    R.poly([(12, 13), (40, 12.2), (97, 12), (97, 22), (12, 22)], IRON, 0.05, 0.36, 0.8)
-    # the polished arc that closes the corner
-    R.poly(ribbon(bez((1.8, 3.4), (8.5, 3.6), (14.5, 8.5), (16.2, 15.8), n=40), lambda t: 0.5 + 1.8 * leaf(t)), STEEL, 0.5, 1.0, 0.9, ridge=0.25)
-    # twisted beads up the slab edge
-    for i in range(3):
-        by = 7.6 - i * 3.3
-        R.ellipsoid(13.6 + 0.3 * (i % 2), by, 1.0, 1.45, 22 - 44 * (i % 2), BONE if i != 1 else DARKBONE, 0.3, 0.8)
-        R.groove([(12.8, by - 0.4), (14.6, by + 0.5)], 0.14, 0.14)
-    # three teardrops running along the edge
-    for i, x in enumerate((19, 25, 31)):
-        claw(R, ((x + 5.2 - i * 0.2, 13.1), (x + 3.4, 12.1), (x + 1.4, 12.6), (x - 0.4, 14.6)), 2.2 - 0.2 * i, BONE, 0.3, 0.9)
-    moulding(R, (36, 94), 13.0, [(38, 56, 1.0, 1.2), (53, 70, 1.3, 1.5), (67, 82, 1.4, 1.8), (80, 96, 1.2, 1.4)], CREAM)
-    R.ellipsoid(36.8, 14.2, 0.7, 0.7, 0, RIM, 0.6, 0.6)
-    worn(R, "bottom")
-    R.mirrored_about(94)
-    img = shade(R, ao=1.4, ao_radius=0.8, bump=wear_bump(R, "bottom.b"))
-    return img[: 16 * PPU]
-
-
-def build_crowns() -> list[Sprite]:
-    meta = {"tileAnchorY": TILE_ANCHOR_Y * ua.SCALE}
-    return [
-        Sprite("win.crown.inventory", crown("crown.inventory", 41, True), meta=meta),
-        Sprite("win.crown.combine", crown("crown.combine", 40, False), meta=meta),
-        Sprite("win.bottom", bottom(), meta=meta),
-    ]
-
-
-# scroll rod, tab, arrow, strips --------------------------------------------------------
-
-
-def rod() -> np.ndarray:
-    w_u, h_u = 158, 10
-    h, w = h_u * PPU, w_u * PPU
-    x = (np.arange(w, dtype=np.float32) + 0.5) / PPU
-    ex = np.minimum(x, w_u - x)  # distance from the nearer end, the rod is symmetric
-    radius = np.select(
-        [ex < 1.2, ex < 6.0, ex < 6.8, ex < 16.4, ex < 17.0],
-        [0.7 + ex * 0.25, 1.0 + (ex - 1.2) * 0.55, 3.2 + (ex - 6.0) * 2.1, 4.9 + 0.1 * np.sin((ex - 6.8) / 9.6 * np.pi), 4.0 + 0 * ex],
-        default=4.0,
-    ).astype(np.float32)
-    yy = (np.arange(h, dtype=np.float32) + 0.5) / PPU - 5
-    s = yy[:, None] / radius[None, :]
-    alpha = (np.abs(s) < 1).astype(np.float32)
-    # cylinder: dark top lip, the streak in the upper third, belly, underside, core shadow
-    stops = [(-1.0, "#26272A"), (-0.82, "#626368"), (-0.52, "#BFC0C6"), (-0.28, "#7E7F85"), (0.12, "#626368"), (0.62, "#353639"), (0.88, "#151515"), (1.0, "#0A0A0B")]
-    v = ramp(s, stops)
-    noise = ua.fbm(h, w, "rod.n", 1.0, 3)
-    streak = _box(_box(noise, 90, 1), 90, 1)
-    streak = (streak - streak.min()) / (streak.max() - streak.min())
-    fine = _box(ua.fbm(h, w, "rod.f", 0.4, 2), 40, 1)
-    fine = (fine - fine.min()) / (fine.max() - fine.min())
-    tex = 0.76 + 0.45 * streak + 0.22 * (fine - 0.5)
-    # the specular band breaks up along the length
-    brk = _box(ua.fbm(16, w, "rod.brk", 5.0, 4), 14, 1)[:1, :]
-    brk = smooth((brk - brk.min()) / (brk.max() - brk.min()), 0.3, 0.7)
-    band = np.exp(-(((s + 0.5) / 0.17) ** 2))
-    tex = tex * (1 - 0.24 * band * (1 - brk))
-    is_collar = (ex >= 6.0) & (ex < 17.0)
-    gain = np.where(is_collar, 1.34, 1.0)[None, :]
-    rgb = np.clip(v * (tex * gain)[..., None], 0, 1)
-    rgb += (band * (0.3 + 0.7 * brk) * 0.11 * (fine * 0.8 + 0.4))[..., None]
-    # hard dark seams between cone, collar and rod
-    for a in (6.0, 7.1, 15.2, 16.9):
-        d = np.abs(ex - a)[None, :]
-        rgb *= np.clip(d / 0.22, 0.09, 1)[..., None]
-    rgb[:, ex < 6.0] *= 0.74
-    return np.dstack((np.clip(rgb, 0, 1), alpha)).astype(np.float32)
-
-
-def tab(fill, alpha, lift) -> np.ndarray:
-    h, w = 6 * PPU, 33 * PPU
-    out = rgba(h, w, fill, alpha)
-    out[: int(0.5 * PPU), :, :3] = token(lift)
-    out[-int(0.5 * PPU) :, :, :3] = token("#050505")
-    return out
-
-
-def arrow(hover: bool) -> np.ndarray:
-    m = ua.poly_mask(13, 7, [(1.0, 0.7), (12.0, 0.7), (6.5, 5.9)])
-    h, w = m.shape
-    v = np.linspace(0, 1, h, dtype=np.float32)[:, None]
-    x = np.abs(np.linspace(-1, 1, w, dtype=np.float32))[None, :]
-    base = ramp(np.clip(v * 1.2, 0, 1) * np.ones((h, w), dtype=np.float32), [(0, "#D8D8DA" if hover else "#BDBDBD"), (1, "#8A8A8A" if hover else "#6A6A6A")])
-    facet = (1.06 - 0.34 * x * smooth(v, 0.0, 0.3))[..., None]
-    rgb = np.clip(base * facet, 0, 1)
-    img = np.dstack((rgb, m)).astype(np.float32)
-    return ua.drop_shadow(img, 0.25, 0.8, 0.3, "#000000", 0.85)
-
-
-def build_rod() -> list[Sprite]:
-    size = 8 * PPU
-    strip = rgba(size, size, "strip.fill")
-    strip[: int(0.25 * PPU), :, :3] = token("#1C1C1D")
-    return [
-        Sprite("win.scroll.rod", rod()),
-        Sprite("win.setoption.tab.normal", tab("#151515", 0.86, "#26262A")),
-        Sprite("win.setoption.tab.hover", tab("#232327", 0.92, "#3A3A40")),
-        Sprite("win.arrow.down.normal", arrow(False)),
-        Sprite("win.arrow.down.hover", arrow(True)),
-        Sprite("win.strip", strip, slice=(8, 8, 8, 8)),
-        Sprite("win.linebox", rgba(size, size, "#000000", 46 / 255), slice=(8, 8, 8, 8)),
-    ]
-
-
-# wells --------------------------------------------------------------------------------
-
-
-def _lip_shading(depth: np.ndarray) -> np.ndarray:
-    """Hard bright lip: a darker outer arris and a thin shadow where it meets the wall."""
-    return 0.86 + 0.14 * smooth(depth, 0.0, 0.25) - 0.22 * smooth(depth, 0.72, 1.0)
-
-
-def well(w_u: int, h_u: int) -> np.ndarray:
-    edge, depth, x, y = _mitre(w_u, h_u, 2.0, 1.75, 2.0, 1.5)
-    h, w = edge.shape
-    rgb = np.broadcast_to(token("well.fill"), (h, w, 3)).astype(np.float32).copy()
-    # interior: top and right walls fade softly into the pit
-    top_fade = smooth(y, 2.0, 5.5)
-    right_fade = smooth(w_u - x, 1.75, 4.0)
-    rgb *= (0.45 + 0.55 * top_fade * right_fade)[..., None]
-    rgb[:] = np.maximum(rgb, 0.0)
-    rgb += 0.012 * (ua.fbm(h, w, "well.n", 6.0, 3) - 0.5)[..., None]
-    sel = edge == 1
-    rgb[sel] = token("well.wall")
-    sel = edge == 2
-    rgb[sel] = _lerp("#151515", "#020202", depth)[sel]
-    # left lip: vertical gradient that heats up towards the corner
-    v = y / h_u
-    lip = ramp(v, [(0, "well.bevel.top"), (0.5, "#84888D"), (1, "#C7C9CA")]) * _lip_shading(depth)[..., None]
-    sel = edge == 4
-    rgb[sel] = lip[sel]
-    # bottom lip: hot at the left, a plateau, falling away to the right
-    u = x / w_u
-    low = ramp(u, [(0, "well.bevel.hi"), (0.16, "#CCCDCC"), (0.62, "well.bevel.mid"), (1, "well.bevel.lo")]) * _lip_shading(depth)[..., None]
-    sel = edge == 3
-    rgb[sel] = low[sel]
-    # the mitred corner is the peak of the whole lip
-    corner = np.exp(-(((x - 1.1) ** 2 + (h_u - 1.1 - y) ** 2) / 3.2))
-    rgb += ((edge == 3) | (edge == 4))[..., None] * corner[..., None] * 0.015
-    return np.dstack((np.clip(rgb, 0, 1), np.ones((h, w), dtype=np.float32))).astype(np.float32)
-
-
-def currency_field() -> np.ndarray:
-    edge, depth, x, y = _mitre(113, 18, 1.5, 1.5, 2.0, 1.5)
-    h, w = edge.shape
-    rgb = np.broadcast_to(token("currency.fill"), (h, w, 3)).astype(np.float32).copy()
-    rgb *= (0.8 + 0.2 * smooth(y, 1.5, 3.5))[..., None]
-    rgb[edge == 0] = np.where(y[edge == 0, None] > 3.5, token("currency.fill"), rgb[edge == 0])
-    rgb[edge == 1] = token("#000000")
-    rgb[edge == 2] = token("#060606")
-    left = np.broadcast_to(token("#B9B9B9"), (h, w, 3)) * _lip_shading(depth)[..., None]
-    rgb[edge == 4] = left[edge == 4]
-    u = x / 113
-    low = ramp(u, [(0, "#B4B4B4"), (0.1, "#9E9E9E"), (0.6, "currency.bevel"), (0.72, "#FAFAFA"), (0.9, "#F4F4F2"), (1, "#A8A8A8")]) * _lip_shading(depth)[..., None]
-    rgb[edge == 3] = low[edge == 3]
-    return np.dstack((np.clip(rgb, 0, 1), np.ones((h, w), dtype=np.float32))).astype(np.float32)
-
-
-def build_wells() -> list[Sprite]:
-    s3 = 3 * ua.SCALE
-    out = [Sprite("well.%s" % n, well(w, h), slice=(s3, s3, s3, s3)) for n, w, h in (("1x1", 20, 20), ("2x2", 40, 40), ("3x2", 60, 40), ("2x3", 40, 60))]
-    label = rgba(8 * PPU, 12 * PPU, "currency.label.plate")
-    label[: int(0.25 * PPU), :, :3] = token("#1E1B15")
-    label[-int(0.25 * PPU) :, :, :3] = token("#39342A")
-    s4 = 4 * ua.SCALE
-    out += [
-        Sprite("currency.field", currency_field(), slice=(s3, s3, s3, s3)),
-        Sprite("currency.plate", label),
-        Sprite("tip.panel", rgba(12 * PPU, 12 * PPU, "#000000", 204 / 255), slice=(s4, s4, s4, s4)),
-        Sprite("tip.band", rgba(8 * PPU, 12 * PPU, "tip.band"), slice=(s4, 0, s4, 0)),
-    ]
-    return out
-
-
-# silhouettes --------------------------------------------------------------------------
-
-
-def chrome(R: Relief, peak: float = 1.0, name: str = "sil", fade=0.4, sharp=1.0, lift=1.0) -> np.ndarray:
-    """Photographed pewter: an environment lookup rather than a Phong lobe, so curved plates
-    pick up a soft window, a dark horizon and a thin floor bounce."""
-    H = R.H + (ua.fbm(R.h, R.w, name + ".b", 1.6, 3) - 0.5) * 0.06 * (R.A > 0)
-    H = gblur(H, 0.26 * PPU)
-    n = ua.normals(H)
-    rx, ry, rz = 2 * n[..., 2] * n[..., 0], 2 * n[..., 2] * n[..., 1], 2 * n[..., 2] ** 2 - 1
-    k = np.array([-0.5, -0.62, 0.6], dtype=np.float32)
-    k /= np.linalg.norm(k)
-    s = rx * k[0] + ry * k[1] + rz * k[2]
-    sky = 0.16 + 0.32 * smooth(-ry, -0.5, 0.75)
-    window = 0.46 * smooth(s, 0.62, 0.93) + 0.62 * sharp * smooth(s, 0.9, 0.965)
-    horizon = 0.3 * np.exp(-(((rz + 0.05) / 0.3) ** 2))
-    bounce = 0.26 * smooth(rx + ry, 0.75, 1.15)
-    v = (sky + window - horizon + bounce) * R.T * lift
-    occ = 1 - np.clip((gblur(R.H, 1.1 * PPU) - R.H) * 0.55, 0, 0.85)
-    v = v * occ
-    yy, xx = np.mgrid[0:R.h, 0:R.w].astype(np.float32)
-    d = np.hypot((xx / R.w - 0.42) / 0.62, (yy / R.h - 0.36) / 0.72)
-    v = v * (1 - fade * smooth(d, 0.25, 1.05))
-    rgb = ramp(v, [(0, "#0B0B0C"), (0.14, "sil.lo"), (0.46, "sil.mid"), (0.78, "#C4C4C6"), (1.0, "sil.hi")])
-    alpha = np.clip(gblur(R.A, 0.14 * PPU) * 1.6 - 0.3, 0, 1)
-    rgb = rgb * peak
-    return np.dstack((np.clip(rgb, 0, 1), alpha)).astype(np.float32)
-
-
-def rot(pts, deg, origin=(0, 0), at=(0, 0), flip=False):
-    a = math.radians(deg)
-    c, s = math.cos(a), math.sin(a)
-    out = []
-    for x, y in pts:
-        x, y = (-x if flip else x) - origin[0], y - origin[1]
-        out.append((x * c - y * s + at[0], x * s + y * c + at[1]))
-    return out
-
-
-def darken(R: Relief, pts, width, amount=0.25):
+def darken(R: Leg, pts, width, amount=0.25):
     """Paints a soft dark line into T: seams, slits, engraved lines."""
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-    win = R._window(min(xs) - width, min(ys) - width, max(xs) + width, max(ys) + width)
-    px0, py0, px1, py1 = win
+    px0, py0, px1, py1 = R._window(min(xs) - width, min(ys) - width, max(xs) + width, max(ys) + width)
     if px0 >= px1 or py0 >= py1:
         return
     im = Image.new("L", (px1 - px0, py1 - py0), 0)
     ImageDraw.Draw(im).line([(x * PPU - px0, y * PPU - py0) for x, y in pts], fill=255, width=max(1, int(width * PPU)), joint="curve")
-    m = gblur(np.asarray(im, dtype=np.float32) / 255, width * PPU * 0.2)
+    m = gauss(np.asarray(im, dtype=np.float32) / 255, width * PPU * 0.2)
     R.T[py0:py1, px0:px1] *= 1 - m * (1 - amount)
 
 
-def seam(R, pts, width=0.5, depth=0.5, amount=0.2):
+def seam(R: Leg, pts, width=0.5, depth=0.5, amount=0.2):
     R.groove(pts, width, depth)
     darken(R, pts, width, amount)
 
 
+def rgba(h, w, colour, alpha=1.0) -> np.ndarray:
+    c = token(colour) if isinstance(colour, str) else np.asarray(colour, dtype=np.float32)
+    out = np.zeros((h, w, 4), dtype=np.float32)
+    out[..., :3] = c
+    out[..., 3] = alpha
+    return out
+
+
+def finish_relief(R: Leg, mats: dict, base: str = "pewter") -> fg.Relief:
+    """The painted arrays as a forge Relief: heights scaled to low relief, material from the id table."""
+    r = fg.Relief(R.w_u, R.h_u, base, 0.0)
+    r.h[...] = np.where(R.A > 0.5, R.H * HEIGHT_K, 0.0)
+    r.a[...] = (R.A > 0.5).astype(np.float32)
+    for k, name in mats.items():
+        r.mid[R.M == k] = fg.MAT_ID[name]
+    return r
+
+
+
+# silhouettes: low relief in the well floor ----------------------------------------------
+
+SIL_RENDER = dict(wear=0.16, grime=0.5, rust=0.05, dust=0.04, exposure=1.0)
+
+
+def sil_finish(R: Leg, peak: float = 1.0, name: str = "sil", fade: float = 0.4, sharp: float = 1.0, lift: float = 1.0) -> np.ndarray:
+    """Worn pewter relief, lit like the rest of the window. peak and lift scale its value, fade darkens it towards
+    the edges of the well, and a soft shadow falls to the lower right so the shape sits in the iron."""
+    r = finish_relief(R, {STEEL: "pewter"})
+    yy, xx = np.mgrid[0 : r.H_px, 0 : r.W_px].astype(np.float32)
+    d = np.hypot((xx / r.W_px - 0.42) / 0.62, (yy / r.H_px - 0.36) / 0.72)
+    vm = R.T * peak * lift * 0.78 * (1 - fade * smooth(d, 0.25, 1.05))
+    hi = render_chain(r, f"sil.{name}", None, vm.astype(F32), **SIL_RENDER)
+    return with_shadow(hi, 0.55, 0.9, 0.5, 0.60)
+
+
+def with_shadow(img: np.ndarray, dx_u: float, dy_u: float, blur_u: float, opacity: float) -> np.ndarray:
+    """Hi-res RGBA with a soft black shadow offset to the lower right, then downsampled to the atlas."""
+    a = img[..., 3]
+    dy, dx = int(dy_u * PPU), int(dx_u * PPU)
+    sh = np.zeros_like(a)
+    sh[dy:, dx:] = a[: a.shape[0] - dy, : a.shape[1] - dx]
+    sh = fg.blur(sh, blur_u * PPU) * opacity
+    alpha = a + sh * (1 - a)
+    rgb = np.where(alpha[..., None] > 1e-5, (img[..., :3] * a[..., None] + 0.0 * sh[..., None] * (1 - a[..., None])) / np.maximum(alpha[..., None], 1e-5), 0.0)
+    return fg.downsample(np.dstack((rgb, alpha)).astype(F32))
+
+
+
+# silhouette and glyph shapes (painted with Leg, finished through forge) -------------------
+
+
 def sil_helm() -> np.ndarray:
-    R = Relief(40, 40)
+    R = Leg(40, 40)
     # mail aventail hanging from the rim, then the shell, then a pivoting visor
     R.poly([(9, 28), (29, 29), (33, 36), (22, 37.5), (7, 36)], STEEL, 0, 2.2, 2.4)
     for y in (31.5, 34.0):
@@ -937,11 +848,11 @@ def sil_helm() -> np.ndarray:
         R.ellipsoid(x, y, 0.42, 0.5, 0, STEEL, R.H[int(y * PPU), int(x * PPU)] - 1.0, 0.2)
         darken(R, [(x - 0.3, y), (x + 0.3, y)], 0.7, 0.04)
     R.ellipsoid(14.2, 19.4, 1.6, 1.6, 0, STEEL, 10.0, 1.2)
-    return chrome(R, 0.96, "sil.helm")
+    return sil_finish(R, 0.96, "sil.helm")
 
 
 def sil_armor() -> np.ndarray:
-    R = Relief(40, 60)
+    R = Leg(40, 60)
 
     def both(pts, *a, **k):
         R.poly(pts, STEEL, *a, **k)
@@ -968,11 +879,11 @@ def sil_armor() -> np.ndarray:
     R.ellipsoid(20, 41.7, 1.5, 1.5, 0, STEEL, 11.2, 1.1)
     for x, y in ((6.4, 12.2), (33.6, 12.2), (14.6, 39.9), (25.4, 39.9)):
         R.ellipsoid(x, y, 0.55, 0.55, 0, STEEL, R.H[int(y * PPU), int(x * PPU)] - 0.1, 0.4)
-    return chrome(R, 1.0, "sil.armor", fade=0.32)
+    return sil_finish(R, 1.0, "sil.armor", fade=0.32)
 
 
 def sil_pants() -> np.ndarray:
-    R = Relief(40, 40)
+    R = Leg(40, 40)
     for side in (0,):
         # greave stub and knee cop
         R.poly([(9.8, 28), (18.6, 28), (18, 37.2), (11.2, 37.2)], STEEL, 0.6, 3, 3)
@@ -990,10 +901,10 @@ def sil_pants() -> np.ndarray:
     R.ellipsoid(20, 7, 2.1, 1.8, 0, STEEL, 9.8, 1)
     for x in (10.5, 15, 25, 29.5):
         R.ellipsoid(x, 7.1, 0.5, 0.5, 0, STEEL, 9.8, 0.3)
-    return chrome(R, 0.97, "sil.pants")
+    return sil_finish(R, 0.97, "sil.pants")
 
 
-def boot(R: Relief, ox, oy, z, s=1.0):
+def boot(R: Leg, ox, oy, z, s=1.0):
     def P(pts):
         return [(ox + x * s, oy + y * s) for x, y in pts]
 
@@ -1009,19 +920,19 @@ def boot(R: Relief, ox, oy, z, s=1.0):
 
 
 def sil_boots() -> np.ndarray:
-    R = Relief(40, 40)
+    R = Leg(40, 40)
     boot(R, 13.6, 2.2, 0.3, 0.9)
     R.T[:] = 0.66
-    boot2 = Relief(40, 40)
+    boot2 = Leg(40, 40)
     boot(boot2, 3.6, 7.2, 6.5, 0.97)
     sel = boot2.A > 0
     R.H[sel] = boot2.H[sel]
     R.A[sel] = 1
     R.T[sel] = boot2.T[sel]
-    return chrome(R, 0.96, "sil.boots")
+    return sil_finish(R, 0.96, "sil.boots")
 
 
-def gauntlet(R: Relief, at, deg, flip, z):
+def gauntlet(R: Leg, at, deg, flip, z):
     def P(pts):
         return rot(pts, deg, (0, 0), at, flip)
 
@@ -1045,14 +956,14 @@ def gauntlet(R: Relief, at, deg, flip, z):
 
 
 def sil_gloves() -> np.ndarray:
-    R = Relief(40, 40)
+    R = Leg(40, 40)
     gauntlet(R, (27.4, 16.6), 36, False, 0.4)
     gauntlet(R, (12.8, 16.6), -36, True, 7.5)
-    return chrome(R, 0.92, "sil.gloves")
+    return sil_finish(R, 0.92, "sil.gloves")
 
 
 def sil_weapon_left() -> np.ndarray:
-    R = Relief(40, 60)
+    R = Leg(40, 60)
     # a quiver slung behind: tube, collar, stitched strap and a sheaf of fletched arrows
     def Q(a, b):
         return (11 + 0.42 * a + 0.91 * b, 53 - 0.91 * a + 0.42 * b)
@@ -1067,7 +978,7 @@ def sil_weapon_left() -> np.ndarray:
         R.poly([Q(a, -5.8), Q(a + 2.2, -5.8), Q(a + 2.2, 5.8), Q(a, 5.8)], STEEL, 6.2, 1.2, 0.7)
     R.T[:] = 0.68
     # the bow crosses in front: strung, belly to the upper right
-    B = Relief(40, 60)
+    B = Leg(40, 60)
     up = bez((28, 27), (31, 16), (23, 7.5), (9.5, 5), n=40)
     low = bez((28, 27), (31.5, 36), (34, 45), (30.5, 55), n=40)
     B.poly(ribbon(up, lambda t: 3.3 - 2.2 * t), STEEL, 6, 2.2, 1.4, ridge=0.2)
@@ -1080,11 +991,11 @@ def sil_weapon_left() -> np.ndarray:
     B.poly(ribbon([(9.5, 5), (30.5, 55)], lambda t: 0.36), STEEL, 7, 0.3, 0.2)
     sel = B.A > 0
     R.H[sel], R.T[sel], R.A[sel] = B.H[sel], B.T[sel], 1
-    return chrome(R, 0.93, "sil.weapon.left")
+    return sil_finish(R, 0.93, "sil.weapon.left")
 
 
 def sil_weapon_right() -> np.ndarray:
-    R = Relief(40, 60)
+    R = Leg(40, 60)
     # kite shield, dim, standing behind
     shield = bez((6, 13), (12, 8), (22, 7), (31, 12)) + bez((31, 12), (33.5, 26), (27.5, 41), (16.5, 54)) + bez((16.5, 54), (9, 42), (4.5, 27), (6, 13))
     R.poly(shield, STEEL, 0.2, 2.0, 3.0)
@@ -1103,7 +1014,7 @@ def sil_weapon_right() -> np.ndarray:
     def S(along, across):
         return (a[0] + ux * along + px_ * across, a[1] + uy * along + py_ * across)
 
-    M = Relief(40, 60)
+    M = Leg(40, 60)
     M.poly(ribbon([S(-3.4, 0), S(ln, 0)], lambda t: 2.1 + 0.3 * t), STEEL, 6, 2.0, 1.2)
     for f, w in ((0.34, 3.0), (0.92, 3.2), (0.99, 3.6)):
         M.poly(ribbon([S(ln * f - 0.7, 0), S(ln * f + 0.7, 0)], lambda t: w), STEEL, 7.2, 1.2, 0.7)
@@ -1121,12 +1032,12 @@ def sil_weapon_right() -> np.ndarray:
     R.H[sel] = M.H[sel]
     R.T[sel] = M.T[sel]
     R.A[sel] = 1
-    return chrome(R, 0.95, "sil.weapon.right")
+    return sil_finish(R, 0.95, "sil.weapon.right")
 
 
 def sil_pet() -> np.ndarray:
     """A coiled familiar: a small drake asleep in its own tail, head lifted over the coil."""
-    R = Relief(40, 40)
+    R = Leg(40, 40)
     cx, cy = 20, 22.5
     turns = 2.1
     pts = []
@@ -1152,14 +1063,23 @@ def sil_pet() -> np.ndarray:
     R.poly(ribbon(bez((29.6, 9.4), (28.4, 6.8), (26.8, 5), (24.6, 3.8), n=14), lambda t: 1.7 * (1 - t) + 0.15), STEEL, 6.2, 1, 0.7)
     seam(R, [(29.4, 12.4), (33.2, 12.2), (35.2, 11.8)], 0.3, 0.4, 0.4)
     R.ellipsoid(29.6, 10.8, 0.6, 0.45, 12, STEEL, 7.8, 0.3)
-    img = chrome(R, 0.5, "sil.pet", fade=0.2, sharp=0.8, lift=1.5)
+    img = sil_finish(R, 0.5, "sil.pet", fade=0.2, sharp=0.8, lift=1.5)
     # the faint pool of light behind it
-    h, w = R.h, R.w
+    h, w = img.shape[0], img.shape[1]
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    pool = np.exp(-(((xx / PPU - 20) / 12) ** 2 + ((yy / PPU - 21) / 12) ** 2))
-    back = rgba(h, w, "#6C6C6E")
-    back[..., 3] = pool * 0.3
-    return ua.over(back, img)
+    pool = np.exp(-(((xx / SCALE - 20) / 12) ** 2 + ((yy / SCALE - 21) / 12) ** 2))
+    back = np.zeros((h, w, 4), np.uint8)
+    back[..., :3] = (0x4A, 0x4A, 0x4D)
+    back[..., 3] = (pool * 0.26 * 255).astype(np.uint8)
+    return over_u8(img, back)
+
+
+def over_u8(top: np.ndarray, bottom: np.ndarray) -> np.ndarray:
+    """Straight-alpha uint8 RGBA, top over bottom."""
+    ta, ba = top[..., 3:4].astype(np.float32) / 255, bottom[..., 3:4].astype(np.float32) / 255
+    oa = ta + ba * (1 - ta)
+    rgb = (top[..., :3] * ta + bottom[..., :3] * ba * (1 - ta)) / np.maximum(oa, 1e-6)
+    return np.dstack((np.clip(rgb + 0.5, 0, 255), np.clip(oa * 255 + 0.5, 0, 255))).astype(np.uint8)
 
 
 def feather(R, root, ang, ln, wid, curl, z):
@@ -1174,7 +1094,7 @@ def feather(R, root, ang, ln, wid, curl, z):
 
 def sil_wings() -> np.ndarray:
     """One spread pair: arms rising from two separate shoulders, primaries sweeping out and down."""
-    R = Relief(60, 40)
+    R = Leg(60, 40)
     arm = bez((24.8, 24), (24, 10), (18, 4.2), (9.6, 3.6), n=40)
     # flight feathers hang from the arm, outermost first so each inner one overlaps it
     for i in range(10):
@@ -1187,11 +1107,11 @@ def sil_wings() -> np.ndarray:
         feather(R, root, 124 - i * 6, 9.6, 4.0, 1.2, 4.8 + i * 0.3)
     R.poly(ribbon(arm, lambda t: 3.8 - 2.7 * t), STEEL, 7, 2.4, 1.3, belly=0.5)
     R.mirrored_about(30)
-    return chrome(R, 0.5, "sil.wings", fade=0.12, sharp=0.85, lift=1.75)
+    return sil_finish(R, 0.5, "sil.wings", fade=0.12, sharp=0.85, lift=1.75)
 
 
 def sil_pendant() -> np.ndarray:
-    R = Relief(20, 20)
+    R = Leg(20, 20)
     # a teardrop loop of links whose point meets the charm at the lower left
     n = 26
     pts = []
@@ -1205,125 +1125,40 @@ def sil_pendant() -> np.ndarray:
         ang = math.degrees(math.atan2(ny - y, nx - x))
         R.ellipsoid(x, y, 0.9, 0.56, ang, STEEL, 0.2 + (i % 2) * 0.25, 0.65)
     R.poly(bez((6.9, 11.4), (4.4, 11.8), (2.8, 14.2), (3.6, 16.4)) + bez((3.6, 16.4), (6.6, 17.2), (8.8, 15), (8.2, 12.2)), STEEL, 0.4, 2.6, 1.5, belly=0.8)
-    return chrome(R, 0.5, "sil.pendant", fade=0.0, sharp=0.8)
+    return sil_finish(R, 0.5, "sil.pendant", fade=0.0, sharp=0.8)
 
 
 def sil_ring() -> np.ndarray:
-    R = Relief(20, 20)
+    R = Leg(20, 20)
     yy, xx = np.mgrid[0:R.h, 0:R.w].astype(np.float32)
     x, y = (xx + 0.5) / PPU, (yy + 0.5) / PPU
     outer = ((x - 9.7) / 5.6) ** 2 + ((y - 10) / 6.7) ** 2 < 1
     # the hole sits off to the right: heavy band at the left, a thin one turning away, a C
     inner = ((x - 11.5) / 2.9) ** 2 + ((y - 9.9) / 4.1) ** 2 < 1
     m = (outer & ~inner).astype(np.float32)
-    b = gblur(m, 0.8 * PPU)
+    b = gauss(m, 0.8 * PPU)
     dome = np.sqrt(1 - (1 - np.clip(2 * b - 1, 0, 1)) ** 2)
-    wide = gblur(m, 1.5 * PPU)
+    wide = gauss(m, 1.5 * PPU)
     R.H = (0.1 + 3.0 * dome * (0.4 + 0.6 * wide / float(wide.max()))).astype(np.float32) * m
     R.A = m
     R.M[m > 0.5] = STEEL
     R.T *= 0.5 + 0.5 * smooth(-(x - 15.0) + np.abs(y - 10) * 0.7, -1.0, 1.4)
-    return chrome(R, 0.9, "sil.ring", fade=0.0)
-
-
-def build_silhouettes() -> list[Sprite]:
-    return [
-        Sprite("sil.pet", sil_pet()), Sprite("sil.helm", sil_helm()), Sprite("sil.gloves", sil_gloves()),
-        Sprite("sil.pants", sil_pants()), Sprite("sil.boots", sil_boots()), Sprite("sil.wings", sil_wings()),
-        Sprite("sil.weapon.left", sil_weapon_left()), Sprite("sil.armor", sil_armor()), Sprite("sil.weapon.right", sil_weapon_right()),
-        Sprite("sil.pendant", sil_pendant()), Sprite("sil.ring", sil_ring()),
-    ]
-
-
-# plates and glyphs --------------------------------------------------------------------
-
-
-def rivet_layer(img: np.ndarray, cx: float, cy: float) -> None:
-    """3 u rivet: dark ring, pale dome, a thin bright crescent low on the outer side."""
-    h, w = img.shape[:2]
-    r = 1.5
-    x0, y0 = int((cx - r - 0.4) * PPU), int((cy - r - 0.4) * PPU)
-    x1, y1 = int((cx + r + 0.4) * PPU), int((cy + r + 0.4) * PPU)
-    yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
-    x, y = (xx + 0.5) / PPU - cx, (yy + 0.5) / PPU - cy
-    d = np.hypot(x, y)
-    a = (d < r).astype(np.float32)
-    col = np.broadcast_to(token("btn.rivet.dark"), x.shape + (3,)).astype(np.float32).copy()
-    dome = smooth(1.0 - d, 0.0, 0.7)
-    col += (token("btn.rivet.dot") - token("btn.rivet.dark")) * dome[..., None]
-    outer = np.sign(w / 2 / PPU - cx) * -1, np.sign(h / 2 / PPU - cy) * -1
-    lit = (x * outer[0] * 0.5 + y * 0.87) / np.maximum(d, 0.01)
-    cres = smooth(lit, 0.45, 0.95) * smooth(d, 1.0, 1.25) * (1 - smooth(d, 1.3, 1.5))
-    col += cres[..., None] * 0.55
-    # small shadow ring cut into the plate
-    win = img[y0:y1, x0:x1]
-    ring = (1 - smooth(d, r, r + 0.4))[..., None] * 0.5
-    win[..., :3] *= 1 - ring
-    win[..., :3] = win[..., :3] * (1 - a[..., None]) + np.clip(col, 0, 1) * a[..., None]
-
-
-def plate(w_u, h_u, name, edges, face_gain=1.0, swap=False, desat=False, faces=("#39383C", "btn.face", "#555458"), rivet_in=4.0) -> np.ndarray:
-    top, right, bottom, left = edges
-    if swap:
-        top, bottom = bottom, top
-        right, left = left, right
-    thick = (1.5, 1.5, 2.0, 2.0) if not swap else (2.0, 2.0, 1.5, 1.5)
-    edge, depth, x, y = _mitre(w_u, h_u, *thick)
-    h, w = edge.shape
-    cloud = ua.fbm(h, w, name + ".c", 5.0, 4)
-    brushed = _box(_box(ua.fbm(h, w, name + ".s", 0.5, 2), 30, 1), 30, 1)
-    brushed = (brushed - brushed.min()) / (brushed.max() - brushed.min())
-    v = np.clip(0.5 + (cloud - 0.5) * 0.9 + (brushed - 0.5) * 0.55, 0, 1)
-    rgb = ramp(v, [(0, faces[0]), (0.5, faces[1]), (1, faces[2])]) * face_gain
-    rgb += ua.grain(h, w, name + ".g", 0.012)[..., None]
-    # soft pillow towards the bevels
-    rgb *= (0.88 + 0.12 * smooth(depth, 1.0, 1.9))[..., None]
-    for eid, (a, b) in ((1, top), (2, right), (3, bottom), (4, left)):
-        sel = edge == eid
-        rgb[sel] = _lerp(a, b, depth)[sel] * (1 + (face_gain - 1) * 0.5)
-    out = np.dstack((np.clip(rgb, 0, 1), np.ones((h, w), dtype=np.float32))).astype(np.float32)
-    for cx in (rivet_in, w_u - rivet_in):
-        for cy in (rivet_in, h_u - rivet_in):
-            rivet_layer(out, cx, cy)
-    if desat:
-        lum = out[..., :3].mean(axis=2, keepdims=True)
-        out[..., :3] = (out[..., :3] * 0.5 + lum * 0.5) * 0.72
-    return out
-
-
-GLYPH_MATS = {
-    "amber": ([(0, "#3E2A08"), (0.5, "#BB761B"), (0.92, "#F9AA0C"), (1.3, "#F4DC77"), (1.8, "#FFF4C4")], 0.30, 0.74, 0.5, 30),
-    "tan": ([(0, "#2B1C06"), (0.45, "#735C3F"), (0.85, "#BEB289"), (1.2, "#E5DAB0"), (1.7, "#FBF4DC")], 0.30, 0.74, 0.3, 26),
-    "leather": ([(0, "#1E1305"), (0.5, "#4D3A22"), (0.95, "#8B7350"), (1.4, "#C6AE80"), (1.8, "#E5DAB0")], 0.32, 0.72, 0.18, 18),
-    "gold": ([(0, "#403628"), (0.5, "#B4780F"), (0.95, "#F0C532"), (1.25, "#FFD546"), (1.8, "#FFF4B0")], 0.32, 0.72, 0.6, 34),
-}
-AMBER, TAN, LEATHER, GOLD = 20, 21, 22, 23
-MATS.update({AMBER: GLYPH_MATS["amber"], TAN: GLYPH_MATS["tan"], LEATHER: GLYPH_MATS["leather"], GOLD: GLYPH_MATS["gold"]})
-
-
-def glyph_finish(R: Relief, hover: bool, shadow=(0.55, 0.65), name="glyph") -> np.ndarray:
-    if hover:
-        R.T = R.T * 1.3
-    H = R.H + (ua.fbm(R.h, R.w, name + ".b", 0.8, 3) - 0.5) * 0.05 * (R.A > 0)
-    R2 = Relief(R.w_u, R.h_u)
-    R2.H, R2.M, R2.T, R2.A = H, R.M, R.T, R.A
-    img = shade(R2, LIGHT_TL, ao=1.2, ao_radius=0.5)
-    return ua.drop_shadow(img, shadow[0], shadow[1], 0.2, "#201505", 0.85)
+    return sil_finish(R, 0.9, "sil.ring", fade=0.0)
 
 
 def glyph_close(hover) -> np.ndarray:
-    R = Relief(18, 18)
+    R = Leg(18, 18)
     w = lambda t: 4.0 + 1.3 * abs(2 * t - 1) ** 1.5  # arms widen slightly to their ends
     first = [(3.2 + 11.6 * i / 16, 3.2 + 11.6 * i / 16) for i in range(17)]
     second = [(14.8 - 11.6 * i / 16, 3.2 + 11.6 * i / 16) for i in range(17)]
-    cross = Relief(18, 18)
+    cross = Leg(18, 18)
     for arm in (first, second):
         cross.poly(ribbon(arm, w), AMBER, 0, 1.0, 0.1)
     m = (cross.A > 0.5).astype(np.float32)
-    rounded = (gblur(m, 0.7 * PPU) > 0.5).astype(np.float32)  # eases every corner of the cross
-    b = gblur(rounded, 0.8 * PPU)
+    rounded = (gauss(m, 0.7 * PPU) > 0.5).astype(np.float32)  # eases every corner of the cross
+    b = gauss(rounded, 0.8 * PPU)
     dome = np.sqrt(1 - (1 - np.clip(2 * b - 1, 0, 1)) ** 2)
-    wide = gblur(rounded, 1.7 * PPU)
+    wide = gauss(rounded, 1.7 * PPU)
     R.H = (0.2 + 1.9 * dome * (0.45 + 0.55 * wide / float(wide.max()))).astype(np.float32) * rounded
     R.M[rounded > 0.5] = AMBER
     R.A = rounded
@@ -1331,7 +1166,7 @@ def glyph_close(hover) -> np.ndarray:
 
 
 def glyph_repair(hover) -> np.ndarray:
-    R = Relief(18, 18)
+    R = Leg(18, 18)
     # anvil: horn left, heel right, waist, wide foot
     R.poly([(3.2, 16), (14.8, 16), (13.6, 14.2), (11.8, 13.4), (11.4, 11.2), (6.8, 11.2), (6.4, 13.4), (4.4, 14.2)], LEATHER, 0.2, 1.2, 0.8)
     R.poly(bez((0.8, 8.2), (2.6, 9.6), (4.2, 9.6), (5.6, 9.6), n=10) + [(5.6, 11.6), (14, 11.6), (15.4, 10.4), (15.6, 8.2)], TAN, 0.6, 1.5, 0.9)
@@ -1342,7 +1177,7 @@ def glyph_repair(hover) -> np.ndarray:
 
 
 def glyph_store(hover) -> np.ndarray:
-    R = Relief(18, 18)
+    R = Leg(18, 18)
     # chest: lid, body, bands, clasp
     R.poly([(2, 10.4), (15.8, 10.4), (15.4, 16.2), (2.4, 16.2)], LEATHER, 0.2, 1.2, 0.8)
     R.poly(bez((1.6, 10.6), (2, 8), (3, 7.4), (4.4, 7.4), n=8) + [(13.4, 7.4)] + bez((13.4, 7.4), (15, 7.4), (16, 8), (16.2, 10.6), n=8), TAN, 0.3, 1.3, 0.9)
@@ -1358,7 +1193,7 @@ def glyph_store(hover) -> np.ndarray:
 
 
 def glyph_combine(hover) -> np.ndarray:
-    R = Relief(28, 24)
+    R = Leg(28, 24)
     cx, cy = 14, 12
     R.ellipsoid(cx, cy, 5, 5, 0, GOLD, 0.2, 1.6)
     R.ring(cx, cy, 3.9, 3.9, 0.5, 0, GOLD, 1.3, 0.2)
@@ -1381,34 +1216,294 @@ def glyph_combine(hover) -> np.ndarray:
     return glyph_finish(R, hover, shadow=(0.6, 0.7), name="glyph.combine")
 
 
-HOVER_GAIN = 1.3  # the spec's +10% does not read on a dark plate; bevels get half of this
 
 
-def build_plates() -> list[Sprite]:
-    e24 = (("#BDBFBE", "#96979A"), ("#7E8084", "btn.bevel.right"), ("btn.wall", "#0A0A0A"), ("#000001", "#0A0A0B"))
-    e44 = (("#BFBEC3", "#99989C"), ("#A2A1A6", "#8A898E"), ("#1D1F20", "#141516"), ("#212327", "#000000"))
-    f44 = ("#3F3B41", "#4C4A51", "#5A5660")
-    out = [
-        Sprite("btn.plate24.normal", plate(24, 24, "btn24", e24)),
-        Sprite("btn.plate24.hover", plate(24, 24, "btn24", e24, HOVER_GAIN)),
-        Sprite("btn.plate24.pressed", plate(24, 24, "btn24", e24, swap=True)),
-        Sprite("btn.plate24.disabled", plate(24, 24, "btn24", e24, desat=True)),
-        Sprite("btn.plate44x32.normal", plate(44, 32, "btn44", e44, faces=f44)),
-        Sprite("btn.plate44x32.hover", plate(44, 32, "btn44", e44, HOVER_GAIN, faces=f44)),
-        Sprite("btn.plate44x32.pressed", plate(44, 32, "btn44", e44, swap=True, faces=f44)),
+def build_silhouettes() -> list[Sprite]:
+    return [
+        Sprite("sil.pet", sil_pet()), Sprite("sil.helm", sil_helm()), Sprite("sil.gloves", sil_gloves()),
+        Sprite("sil.pants", sil_pants()), Sprite("sil.boots", sil_boots()), Sprite("sil.wings", sil_wings()),
+        Sprite("sil.weapon.left", sil_weapon_left()), Sprite("sil.armor", sil_armor()), Sprite("sil.weapon.right", sil_weapon_right()),
+        Sprite("sil.pendant", sil_pendant()), Sprite("sil.ring", sil_ring()),
     ]
+
+
+# glyphs: raised brass on the plate ------------------------------------------------------
+
+GLYPH_MATS = {GOLD: "glyph.brass", AMBER: "glyph.ember", TAN: "glyph.brass", LEATHER: "rail.dim"}
+
+
+def glyph_finish(R: Leg, hover: bool, shadow=(0.55, 0.65), name="glyph") -> np.ndarray:
+    r = finish_relief(R, GLYPH_MATS, "glyph.brass")
+    r.h[...] = r.h / HEIGHT_K * 0.34  # glyphs are shallower than the silhouettes
+    hi = render_chain(r, name, None, None, wear=0.10, grime=0.35, rust=0.0, dust=0.0, exposure=1.15 if hover else 0.55)
+    return ua_shadow(hi, shadow, 0.9)
+
+
+def ua_shadow(hi: np.ndarray, off, opacity: float) -> np.ndarray:
+    return with_shadow(hi, off[0], off[1], 0.3, opacity)
+
+
+def build_glyphs() -> list[Sprite]:
+    out = []
     for nm, fn in (("close", glyph_close), ("repair", glyph_repair), ("store", glyph_store), ("combine", glyph_combine)):
         out.append(Sprite(f"glyph.{nm}.normal", fn(False)))
         out.append(Sprite(f"glyph.{nm}.hover", fn(True)))
     return out
 
 
-# assembly -----------------------------------------------------------------------------
+# wells --------------------------------------------------------------------------------
+
+
+def well_relief(w_u: float, h_u: float, name: str, lip: float = 2.7) -> fg.Relief:
+    """A recessed iron well: a rolled lip round a deep pocket whose floor is dark blued iron."""
+    r = fg.Relief(w_u, h_u, "frame.black", 1.0)
+    r.plate(Rect(0, 0, w_u, h_u, 0.9), z=1.0, bevel=2.3, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.05, nick=0.01, seed=name + ".lip")
+    r.pocket(Rect(lip, lip, w_u - 2 * lip, h_u - 2 * lip, 0.5), depth=3.5, wall=1.0, mat="well", wobble=0.04, nick=0.008, seed=name + ".pocket")
+    if w_u >= 40 or h_u >= 40:
+        for i, (x, y) in enumerate(((1.35, 1.35), (w_u - 1.35, 1.35), (1.35, h_u - 1.35), (w_u - 1.35, h_u - 1.35))):
+            r.dome(x, y, 0.5, z=zat(r, x, y), mat="frame.rivet", collar=False, seed=f"{name}.rv{i}")
+    return r
+
+
+def well_value_map(r: fg.Relief) -> np.ndarray:
+    """The floor falls into shadow towards the top and left, where the lip hangs over it."""
+    x = np.broadcast_to(r.xs[None, :], (r.H_px, r.W_px))
+    y = np.broadcast_to(r.ys[:, None], (r.H_px, r.W_px))
+    floor = fg.blur((r.mid == fg.MAT_ID["well"]).astype(F32), 0.4 * PPU)
+    shade_ = 0.55 - 0.25 * np.exp(-((y - 2.7) / 5.0) ** 2) * (y < 9) - 0.12 * np.exp(-((x - 2.7) / 4.0) ** 2) * (x < 8)
+    return (1 + floor * (shade_ - 1)).astype(F32)
+
+
+WELL_RENDER = dict(wear=0.09, grime=0.5, rust=0.06, dust=0.04, detail=0.4)
+
+
+def render_well(w_u: int, h_u: int) -> np.ndarray:
+    r = well_relief(w_u, h_u, f"well.{w_u}x{h_u}")
+    return fg.downsample(r.render(f"well.{w_u}x{h_u}", value_map=well_value_map(r), **WELL_RENDER))
+
+
+def render_field(w_u: int, h_u: int, name: str, lip: float) -> np.ndarray:
+    r = well_relief(w_u, h_u, name, lip)
+    return fg.downsample(r.render(name, value_map=well_value_map(r), **WELL_RENDER))
+
+
+def render_plain(w_u: int, h_u: int) -> np.ndarray:
+    """The label plate beside the currency field: a small dark iron plate with a dim brass edge line."""
+    r = fg.Relief(w_u, h_u, "frame.black", 1.0)
+    r.plate(Rect(0, 0, w_u, h_u, 0.7), z=0.6, bevel=1.4, profile="rolled", rise=0.6, mat="frame.iron", wobble=0.03, seed="currency.plate")
+    r.dome(w_u - 1.3, 1.3, 0.45, z=zat(r, w_u - 1.3, 1.3), mat="frame.rivet", collar=False, seed="currency.plate.rv")
+    return fg.downsample(r.render("currency.plate", wear=0.10, grime=0.5, rust=0.05, dust=0.04, detail=0.5))
+
+
+def render_tip_panel() -> np.ndarray:
+    """Tooltip frame: nine-slice with 4 u corners. A thin forged rim, then black at 80%."""
+    r = fg.Relief(12, 12, "frame.black", 1.0)
+    r.plate(Rect(0, 0, 12, 12, 1.1), z=0.9, bevel=1.5, profile="rolled", rise=0.55, mat="frame.warm", wobble=0.04, nick=0.008, seed="tip.rim")
+    r.pocket(Rect(1.55, 1.55, 8.9, 8.9, 0.6), depth=1.6, wall=0.55, mat="void", wobble=0.02, seed="tip.floor")
+    img = r.render("tip.panel", wear=0.14, grime=0.4, rust=0.04, dust=0.02, detail=0.4)
+    inner = fg.blur((r.mid == fg.MAT_ID["void"]).astype(F32), 0.12 * PPU)
+    rgb = img[..., :3] * (1 - inner[..., None]) * 1.0
+    alpha = 1.0 - 0.20 * inner
+    out = fg.downsample(np.dstack((rgb, alpha)).astype(F32))
+    # the middle of the panel must stay pure black at exactly 204/255 so text keeps its contrast
+    n = 4 * SCALE
+    out[n:-n, n:-n, :3] = 0
+    out[n:-n, n:-n, 3] = 204
+    return out
+
+
+def render_tip_band() -> np.ndarray:
+    """Opaque band for tinting, 12 x 8 u, nine-sliced horizontally: a dark iron strip."""
+    r = fg.Relief(12, 8, "frame.black", 1.0, "x")
+    r.plate(Rect(-2, 0.6, 16, 6.8, 0.0), z=0.8, bevel=1.4, profile="rolled", rise=0.6, mat="frame.cold", seed="tip.band")
+    return fg.downsample(r.render("tip.band", wear=0.08, grime=0.4, rust=0.0, dust=0.02, detail=0.4), wrap="x")
+
+
+def build_wells() -> list[Sprite]:
+    s3 = 3 * SCALE
+    sizes = (("1x1", 20, 20), ("2x2", 40, 40), ("3x2", 60, 40), ("2x3", 40, 60))
+    jobs = [("render_well", (w, h)) for _, w, h in sizes] + [("render_field", (113, 18, "currency.field", 2.3)), ("render_plain", (12, 8))]
+    res = run_jobs(jobs)
+    out = [Sprite(f"well.{n}", res[i], slice=(s3, s3, s3, s3)) for i, (n, _, _) in enumerate(sizes)]
+    s4 = 4 * SCALE
+    out += [
+        Sprite("currency.field", res[4], slice=(s3, s3, s3, s3)),
+        Sprite("currency.plate", res[5]),
+        Sprite("tip.panel", render_tip_panel(), slice=(s4, s4, s4, s4)),
+        Sprite("tip.band", render_tip_band(), slice=(s4, 0, s4, 0)),
+    ]
+    return out
+
+
+# cells --------------------------------------------------------------------------------
+
+
+def cell_relief(name: str, face: str = "cell") -> fg.Relief:
+    r = fg.Relief(20, 20, "frame.black", 1.0)
+    r.plate(Rect(0.5, 0.5, 19.0, 19.0, 0.4), z=0.8, bevel=1.6, profile="chamfer", rise=0.85, mat=face, wobble=0.02, seed=name)
+    return r
+
+
+CELL_RENDER = dict(wear=0.06, grime=0.35, rust=0.0, dust=0.02)
+
+
+def render_cell_empty() -> np.ndarray:
+    r = cell_relief("cell.empty")
+    return fg.downsample(render_micro(r, "cell.empty", 0.55, **CELL_RENDER))
+
+
+def lattice_tile(name: str, tone: tuple, line: tuple) -> np.ndarray:
+    """A flat 20 u tile with a half line on each edge, so tiling makes a 1 u lattice. Dark iron, faintly beaten."""
+    r = fg.Relief(20, 20, "cell", 1.0, "xy")
+    for ox in (0.0, 20.0):
+        r.pocket(Rect(ox - 0.5, -1.0, 1.0, 22.0), depth=0.35, wall=0.35, mat="frame.black", seed=f"{name}.v{ox}")
+    for oy in (0.0, 20.0):
+        r.pocket(Rect(-1.0, oy - 0.5, 22.0, 1.0), depth=0.35, wall=0.35, mat="frame.black", seed=f"{name}.h{oy}")
+    r.tint = np.broadcast_to(np.array(tone, dtype=F32), (r.H_px, r.W_px, 3)).copy()
+    hi = render_micro(r, name, 0.55, wear=0.0, grime=0.3, rust=0.0, dust=0.0)
+    return fg.downsample(hi, wrap="xy")
+
+
+def flat_tile(rgb: str, alpha: float) -> np.ndarray:
+    return (rgba(int(20 * SCALE), int(20 * SCALE), rgb, alpha) * 255 + 0.5).astype(np.uint8)
+
+
+def build_cells() -> list[Sprite]:
+    res = run_jobs([("render_cell_empty", ()), ("render_cell_state", ("cell.occupied",)), ("render_cell_state", ("cell.hover",)), ("render_cell_state", ("cell.invalid",))])
+    out = [Sprite("cell.empty", res[0]), Sprite("cell.occupied", res[1], tile="xy"), Sprite("cell.hover", res[2], tile="xy"), Sprite("cell.invalid", res[3], tile="xy")]
+    out.append(Sprite("cell.overlay.hover", flat_tile("#071451", 64 / 255), tile="xy"))
+    out.append(Sprite("cell.overlay.invalid", flat_tile("#51070A", 64 / 255), tile="xy"))
+    return out
+
+
+CELL_STATES = {"cell.occupied": (0.62, 0.62, 0.66), "cell.hover": (0.55, 0.70, 1.15), "cell.invalid": (1.25, 0.55, 0.55)}
+
+
+def render_cell_state(name: str) -> np.ndarray:
+    return lattice_tile(name, CELL_STATES[name], (1, 1, 1))
+
+
+
+
+# button plates ------------------------------------------------------------------------
+
+
+def plate_relief(w_u: int, h_u: int, state: str, name: str) -> fg.Relief:
+    """Square iron plate: a rolled rim, a dished face, a rivet in each corner. pressed sinks it, so the rim reads inverted."""
+    r = fg.Relief(w_u, h_u, "frame.black", 1.0)
+    pressed = state == "pressed"
+    z = 0.4 if pressed else 1.2
+    r.plate(Rect(0.3, 0.3, w_u - 0.6, h_u - 0.6, 0.8), z=z, bevel=1.9, profile="rolled", rise=0.55, mat="frame.iron" if state != "disabled" else "frame.cold", wobble=0.03, nick=0.006, seed=name + ".rim")
+    face_z = zat(r, w_u / 2, h_u / 2)
+    r.pocket(Rect(2.1, 2.1, w_u - 4.2, h_u - 4.2, 0.7), depth=0.6 if not pressed else 0.0, wall=0.7, seed=name + ".face")
+    if pressed:  # the whole plate sits lower, with a shadow lip on its top and left
+        r.h[...] = np.where(r.a > 0.5, r.h - 0.35, r.h)
+    inset = 3.7 if w_u <= 24 else 4.0
+    for i, (x, y) in enumerate(((inset, inset), (w_u - inset, inset), (inset, h_u - inset), (w_u - inset, h_u - inset))):
+        r.dome(x, y, 0.95, z=zat(r, x, y), mat="frame.rivet", seed=f"{name}.rv{i}", collar=True)
+    return r
+
+
+PLATE_RENDER = dict(wear=0.12, grime=0.5, rust=0.08, dust=0.03, detail=0.5)
+
+
+def render_plate(w_u: int, h_u: int, state: str) -> np.ndarray:
+    name = f"btn{w_u}"
+    r = plate_relief(w_u, h_u, "normal" if state == "hover" else state, name)
+    exposure = {"normal": 1.0, "hover": 1.7, "pressed": 0.85, "disabled": 0.62}[state]
+    img = r.render(name, exposure=exposure, **PLATE_RENDER)
+    if state == "disabled":
+        lum = img[..., :3].mean(axis=2, keepdims=True)
+        img[..., :3] = img[..., :3] * 0.35 + lum * 0.65
+    return fg.downsample(img)
+
+
+def build_plates() -> list[Sprite]:
+    jobs = [("render_plate", (24, 24, s)) for s in ("normal", "hover", "pressed", "disabled")] + [("render_plate", (44, 32, s)) for s in ("normal", "hover", "pressed")]
+    res = run_jobs(jobs)
+    names = [f"btn.plate24.{s}" for s in ("normal", "hover", "pressed", "disabled")] + [f"btn.plate44x32.{s}" for s in ("normal", "hover", "pressed")]
+    return [Sprite(n, a) for n, a in zip(names, res)]
+
+
+# title strip, rod, tab, arrow ---------------------------------------------------------
+
+
+def render_strip() -> np.ndarray:
+    """Nine-slice title plate, 2 u corners: a dark recessed slot with a thin lip. The middle is flat so it stretches."""
+    r = fg.Relief(8, 8, "frame.black", 1.0)
+    r.plate(Rect(0, 0, 8, 8, 0.0), z=1.0, bevel=1.1, profile="rolled", rise=0.6, mat="frame.warm", seed="strip.lip")
+    r.pocket(Rect(1.05, 1.05, 5.9, 5.9, 0.0), depth=1.7, wall=0.45, mat="void", seed="strip.slot")
+    img = r.render("win.strip", wear=0.10, grime=0.4, rust=0.0, dust=0.02, detail=0.3)
+    inner = fg.blur((r.mid == fg.MAT_ID["void"]).astype(F32), 0.12 * PPU)
+    rgb = img[..., :3] * (1 - inner[..., None]) + np.array((0.012, 0.012, 0.013), F32) * inner[..., None]
+    out = fg.downsample(np.dstack((rgb, img[..., 3])).astype(F32))
+    out[2 * SCALE : -2 * SCALE, 2 * SCALE : -2 * SCALE, :3] = np.round(token("#0A0A0B") * 255).astype(np.uint8)
+    return out
+
+
+def render_rod() -> np.ndarray:
+    """The scroll rod: a dark steel bar with a long soft highlight, two forged collars and knobs at both ends."""
+    w_u, h_u = 158, 10
+    r = fg.Relief(w_u, h_u, "frame.black", 0.0)
+    r.plate(Rect(14.0, 2.35, w_u - 28.0, 5.3, 2.6), z=0.0, bevel=2.65, profile="round", rise=1.0, mat="rod.steel", wobble=0.02, seed="rod.bar")
+    for side, x0 in (("l", 6.2), ("r", w_u - 17.0)):
+        r.plate(Rect(x0, 0.7, 10.8, 8.6, 1.4), z=0.2, bevel=2.5, profile="rolled", rise=1.0, mat="frame.warm", wobble=0.03, nick=0.006, seed=f"rod.collar{side}")
+        r.plate(Rect(x0 + 3.7, 0.25, 3.4, 9.5, 0.8), z=0.8, bevel=1.4, profile="round", rise=0.9, mat="rail.dim", wobble=0.02, seed=f"rod.band{side}")
+    for side, cx in (("l", 3.6), ("r", w_u - 3.6)):
+        r.plate(Ellipse(cx, 5.0, 3.4, 2.6), z=0.0, bevel=2.2, profile="round", rise=0.9, mat="frame.iron", wobble=0.02, seed=f"rod.knob{side}")
+    img = r.render("win.scroll.rod", wear=0.07, grime=0.5, rust=0.05, dust=0.02, detail=0.30, exposure=0.8)
+    return fg.downsample(img)
+
+
+def render_tab(hover: bool) -> np.ndarray:
+    r = fg.Relief(33, 6, "frame.black", 1.0)
+    r.plate(Rect(0.0, 0.0, 33, 6, 0.0), z=0.6, bevel=1.0, profile="rolled", rise=0.7, mat="frame.cold", seed="tab")
+    img = r.render("win.setoption.tab", wear=0.08, grime=0.4, rust=0.0, dust=0.02, detail=0.3, exposure=2.0 if hover else 1.0)
+    img[..., 3] = 0.86 if not hover else 0.92
+    return fg.downsample(img)
+
+
+def render_arrow(hover: bool) -> np.ndarray:
+    r = fg.Relief(13, 7, "frame.black", 0.0)
+    r.plate(Poly([(1.0, 0.7), (12.0, 0.7), (6.5, 6.1)]), z=0.0, bevel=1.5, profile="rolled", rise=0.9, mat="steel", wobble=0.02, seed="arrow")
+    img = r.render("win.arrow.down", wear=0.12, grime=0.3, rust=0.0, dust=0.0, detail=0.3, exposure=1.7 if hover else 0.95)
+    return with_shadow(img, 0.25, 0.8, 0.3, 0.85)
+
+
+def build_rod() -> list[Sprite]:
+    res = run_jobs([("render_rod", ()), ("render_strip", ()), ("render_tab", (False,)), ("render_tab", (True,)), ("render_arrow", (False,)), ("render_arrow", (True,))])
+    size = int(8 * SCALE)
+    return [
+        Sprite("win.scroll.rod", res[0]),
+        Sprite("win.strip", res[1], slice=(8, 8, 8, 8)),
+        Sprite("win.setoption.tab.normal", res[2]), Sprite("win.setoption.tab.hover", res[3]),
+        Sprite("win.arrow.down.normal", res[4]), Sprite("win.arrow.down.hover", res[5]),
+        Sprite("win.linebox", (rgba(size, size, "#000000", 46 / 255) * 255 + 0.5).astype(np.uint8), slice=(8, 8, 8, 8)),
+    ]
+
+
+# slabs, crowns and the build ----------------------------------------------------------
+
+
+def build_slabs() -> list[Sprite]:
+    meta = {"radius": 6 * SCALE}
+    return [Sprite(f"win.slab.{k}", render_slab(k), meta=meta) for k in ("inventory", "combine")]
+
+
+def build_crowns(left: np.ndarray, right: np.ndarray) -> list[Sprite]:
+    meta = {"tileAnchorY": TILE_ANCHOR_Y * SCALE}
+    res = run_jobs([("render_crown", ("inventory",)), ("render_crown", ("combine",)), ("render_bottom", ())])
+    inv = blend_columns(res[0], left, right, 0, 6 * SCALE, False)
+    com = blend_columns(res[1], left, right, 0, 6 * SCALE, False)
+    bot = blend_columns(res[2], left, right, 416, 6 * SCALE, True)
+    return [Sprite("win.crown.inventory", inv, meta=meta), Sprite("win.crown.combine", com, meta=meta), Sprite("win.bottom", bot, meta=meta)]
 
 
 def all_sprites() -> list[Sprite]:
-    out: list[Sprite] = []
-    for fn in (build_slabs, build_cells, build_side, build_crowns, build_rod, build_wells, build_silhouettes, build_plates):
+    side = build_side()
+    out: list[Sprite] = list(side)
+    out += build_crowns(side[0].image, side[1].image)
+    for fn in (build_slabs, build_cells, build_rod, build_wells, build_silhouettes, build_glyphs, build_plates):
         out += fn()
     return out
 
@@ -1420,16 +1515,18 @@ def main(out_root: Path) -> None:
     atlas.save()
 
 
+# previews -----------------------------------------------------------------------------
+
 _WELLS = (
     ("pet", "2x2", 14, 46), ("helm", "2x2", 74, 46), ("wings", "3x2", 114, 46),
     ("weapon.left", "2x3", 14, 89), ("pendant", "1x1", 54, 89), ("armor", "2x3", 74, 89), ("weapon.right", "2x3", 134, 89),
     ("gloves", "2x2", 14, 152), ("ring", "1x1", 54, 152), ("pants", "2x2", 74, 152), ("ring", "1x1", 114, 152), ("boots", "2x2", 134, 152),
 )
-_BG = (24, 26, 22, 255)
+_BG = (14, 15, 13, 255)
 
 
 def _frame(get, kind: str) -> Image.Image:
-    S = ua.SCALE
+    S = SCALE
     w = Image.new("RGBA", (190 * S, 432 * S), (0, 0, 0, 0))
 
     def put(name, x, y, size=None):
@@ -1454,8 +1551,9 @@ def _frame(get, kind: str) -> Image.Image:
     return w
 
 
-def compose(get, kind: str) -> Image.Image:
-    S = ua.SCALE
+def compose(get, kind: str, items=None) -> Image.Image:
+    """The window as the game builds it. items maps (col, row, w, h) cell rects to icon names, if the items atlas is at hand."""
+    S = SCALE
     w = _frame(get, kind)
 
     def put(name, x, y, size=None):
@@ -1478,11 +1576,20 @@ def compose(get, kind: str) -> Image.Image:
             put(f"well.{well_name}", x, y)
             put(f"sil.{sil}", x, y)
         grid(15, 200, 8, 8)
-        occupied = {(2, 0), (3, 0), (2, 1), (3, 1), (2, 2), (3, 2), (0, 2), (1, 2), (0, 3), (1, 3), (6, 4), (7, 4), (6, 5), (7, 5), (6, 6), (7, 6), (6, 7), (7, 7)}
-        for c, r in occupied:
-            put("cell.occupied", 15 + 20 * c, 200 + 20 * r)
+        placed = [(c, r, cw, ch) for (c, r, cw, ch) in (items or {})] if items else [(2, 0, 2, 3), (0, 2, 2, 2), (6, 4, 2, 4)]
+        for c, r, cw, ch in placed:
+            for i in range(cw):
+                for j in range(ch):
+                    put("cell.occupied", 15 + 20 * (c + i), 200 + 20 * (r + j))
         for c, r in ((0, 2), (1, 2), (0, 3), (1, 3)):
             put("cell.hover", 15 + 20 * c, 200 + 20 * r)
+        for (c, r, cw, ch), name in (items or {}).items():
+            try:
+                ico = get(name)
+            except KeyError:
+                continue
+            # item sprites carry a 6 u margin round the footprint, pivot at its top-left corner
+            w.alpha_composite(ico, (int((15 + 20 * c) * S) - int(6 * S), int((200 + 20 * r) * S) - int(6 * S)))
         put("currency.plate", 19, 370)
         put("currency.field", 49, 368)
         for name, x in (("close", 19), ("repair", 47), ("store", 75)):
@@ -1509,13 +1616,30 @@ def write_previews(atlas_json: Path, out_dir: Path) -> None:
     def get(name):
         return Image.fromarray(ua.sprite_pixels(atlas_json, name), "RGBA")
 
-    S = ua.SCALE
-    inv, com = compose(get, "inventory"), compose(get, "combine")
+    S = SCALE
+    items = {(2, 0, 2, 3): "item.gear.iron-blade", (0, 2, 2, 2): "item.helm.gilded", (6, 4, 2, 4): "item.bow.verdant", (4, 0, 1, 1): "item.gear.iron-band",
+             (5, 0, 1, 1): "item.gem.amber", (4, 1, 1, 2): "item.gear.ward-lantern", (3, 4, 3, 2): "item.gear.travel-cloak", (0, 4, 2, 2): "item.gear.leather-vest"}
+    ij = Path(atlas_json).parent.parent / "items" / "items.json"
+    if ij.exists():
+        def get_item(name, _g=get):
+            try:
+                return _g(name)
+            except KeyError:
+                return Image.fromarray(ua.sprite_pixels(ij, name), "RGBA")
+        get = get_item
+    else:
+        items = None
+    inv, com = compose(get, "inventory", items), compose(get, "combine")
     board = Image.new("RGBA", (380 * S + 40, 432 * S + 40), _BG)
     board.alpha_composite(com, (20, 20))
     board.alpha_composite(inv, (20 + 190 * S, 20))
     board.convert("RGB").save(out_dir / "window_composite.png", compress_level=6)
     board.convert("RGB").resize((board.width // 2, board.height // 2), Image.LANCZOS).save(out_dir / "window_composite_half.png", compress_level=6)
+    # what a player sees: the inventory window at 1080p (2.25 px/u) and 720p (1.5 px/u)
+    for tag, ppu in (("1080", 2.25), ("720", 1.5)):
+        im = Image.new("RGBA", inv.size, _BG)
+        im.alpha_composite(inv)
+        im.convert("RGB").resize((round(190 * ppu), round(432 * ppu)), Image.LANCZOS).save(out_dir / f"window_inventory_{tag}.png", compress_level=6)
     ua.contact_sheet([atlas_json], out_dir / "window_sprites.png", cols=8)
 
 

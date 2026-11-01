@@ -13,6 +13,7 @@ UI = ROOT / "dream" / "ui"
 ATLASES = [UI / "window" / "window.json", UI / "hud" / "hud.json", UI / "hud" / "cursors.json",
            UI / "items" / "items.json", UI / "fx" / "dmg_digits.json", UI / "fx" / "dmg_digits_x4.json"]
 SCALE = 0.5625
+UI_BUDGET_BYTES = 10_000_000
 errs: list[str] = []
 
 
@@ -113,6 +114,8 @@ def main() -> int:
             errs.append(f"item key {k} has no sprite item.{k}")
     total = sum(p.stat().st_size for p in UI.rglob("*") if p.is_file())
     print(f"dream/ui total {total / 1e6:.2f} MB; {len(keys)} item keys checked")
+    if total > UI_BUDGET_BYTES:  # noisier art compresses worse; the plan caps dream/ui at 10 MB
+        errs.append(f"dream/ui is {total / 1e6:.2f} MB, over the {UI_BUDGET_BYTES / 1e6:.0f} MB budget")
     for e in errs:
         print("FAIL", e)
     print(f"loader: {len(errs)} problems")

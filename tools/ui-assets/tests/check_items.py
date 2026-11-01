@@ -21,7 +21,7 @@ REPO = TOOLS.parents[1]
 ITEMS = REPO / "dream" / "ui" / "items"
 PREVIEWS = TOOLS / "previews"
 BANNED = ("ImageFont", "urllib", "requests", "reference/", ".webp", "dream/fonts")
-THIRD_PARTY_OK = {"numpy", "PIL", "uiart"}
+THIRD_PARTY_OK = {"numpy", "PIL", "uiart", "forge"}
 STDLIB_OK = {"__future__", "json", "math", "pathlib", "sys"}
 
 EXPECTED = {
