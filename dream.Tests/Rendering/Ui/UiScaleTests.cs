@@ -23,10 +23,30 @@ public class UiScaleTests
     [InlineData(1.3f, 1.25f)]
     [InlineData(2.0f, 2.0f)]
     [InlineData(0.1f, 1.0f)]
-    [InlineData(9f, 4.0f)]
-    public void Configured_SnapsToQuarterAndClamps(float configured, float expected)
+    [InlineData(9f, 2.25f)]
+    public void Configured_SnapsToQuarterAndIsCappedAtTheAutoFit(float configured, float expected)
     {
         Assert.Equal(expected, UiScale.Resolve(1920, 1080, configured));
+    }
+
+    [Theory]
+    [InlineData(1440, 1024, 3f, 2f)]
+    [InlineData(1280, 720, 4f, 1.5f)]
+    [InlineData(3840, 2160, 9f, 4f)]
+    [InlineData(640, 480, 2f, 1f)]
+    [InlineData(0, 0, 3f, 3f)]
+    public void Configured_AboveTheFit_ResolvesToTheFit_AndWithoutAViewportOnlySnaps(int w, int h, float configured, float expected)
+    {
+        Assert.Equal(expected, UiScale.Resolve(w, h, configured));
+    }
+
+    [Fact]
+    public void ConfiguredAboveTheFit_KeepsTheWindowsAboveTheBar()
+    {
+        UiLayout l = UiLayout.Create(1440, 1024, 3f);
+
+        Assert.Equal(2f, l.Scale);
+        Assert.True(l.Inventory.Bottom <= l.Bar.Y + 0.01f);
     }
 
     [Theory]

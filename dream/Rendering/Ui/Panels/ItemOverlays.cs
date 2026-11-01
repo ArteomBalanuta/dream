@@ -347,7 +347,7 @@ public static class ItemOverlays
             return;
         }
 
-        float pitch = LinePitch(scale);
+        float pitch = LinePitch(c, scale);
         float widest = 0f;
         for (int n = 0; n < content.Lines.Count; n++)
         {
@@ -391,7 +391,7 @@ public static class ItemOverlays
         }
     }
 
-    internal static float LinePitch(float uiScale) => MathF.Max(9f * uiScale, InventoryWindow.BodyTextPx + 3f);
+    internal static float LinePitch(IUiCanvas c, float uiScale) => MathF.Max(9f * uiScale, InventoryWindow.BodyHeight(c) + 3f);
 
     private static TooltipContent BuildContent(IUiCanvas c, InventoryUiState st, in InventoryItemSnapshot item, float maxWidth)
     {
@@ -537,7 +537,7 @@ public static class ItemOverlays
         List<CharacterMenuEntry> entries = st.MenuEntries;
         float scale = l.Scale;
         float padX = 6f * scale;
-        float rowH = MathF.Max(12f * scale, InventoryWindow.BodyTextPx + 6f);
+        float rowH = MathF.Max(12f * scale, InventoryWindow.BodyHeight(c) + 6f);
         float widest = 0f;
         for (int n = 0; n < entries.Count; n++)
         {
@@ -582,7 +582,7 @@ public static class ItemOverlays
 
             CharacterMenuEntry entry = entries[n];
             UiColor color = entry.RequiresConfirm ? ItemTierStyle.Danger : ItemTierStyle.Body;
-            c.Text(entry.Label, new Vector2(row.X + padX, row.Y + MathF.Floor((rowH - InventoryWindow.BodyTextPx) * 0.5f)), UiTextStyle.Body, color);
+            c.Text(entry.Label, new Vector2(row.X + padX, row.Y + MathF.Floor((rowH - InventoryWindow.BodyHeight(c)) * 0.5f)), UiTextStyle.Body, color);
             if (i.Button(id, row) && picked < 0 && !fresh)
             {
                 picked = n;
@@ -616,7 +616,7 @@ public static class ItemOverlays
     {
         float scale = l.Scale;
         float pad = 8f * scale;
-        float pitch = LinePitch(scale);
+        float pitch = LinePitch(c, scale);
 
         Span<char> mem = stackalloc char[96];
         UiTextBuilder b = new(mem);

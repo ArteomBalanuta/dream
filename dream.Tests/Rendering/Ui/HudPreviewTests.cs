@@ -348,6 +348,43 @@ public class HudPreviewTests
         Assert.Equal((w, h), (c.Width, c.Height));
     }
 
+    // 3840x2160 is scale 4 (text doubled to 26 and 52 px); 2560x1440 is scale 3 (Large status text,
+    // text not doubled). Written to artifacts/hud-preview/ every run so the sizes can be looked at.
+    [Theory]
+    [InlineData(3840, 2160)]
+    [InlineData(2560, 1440)]
+    public void RealPanels_HighScale_PlayAndInventory(int w, int h)
+    {
+        using InventoryScene scene = PopulatedScene();
+        scene.View.Labels = [new HudWorldLabel(new Vector2(w * 0.5f, h * 0.25f), "Grey wolf Lv 4", "42/60")];
+        scene.View.InventoryOpen = false;
+        UiSoftwareCompositor play = Render("hi-play", w, h, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [NoPointer]), force: true);
+        scene.View.InventoryOpen = true;
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        Vector2 p = InventoryScene.Centre(InventoryWindow.SlotRect(layout, layout.Inventory, 6));
+        UiPointer pointer = new(p, false, false, true);
+        UiSoftwareCompositor inv = Render("hi-inventory", w, h, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [pointer, pointer, pointer]), force: true);
+
+        Assert.Equal((w, h), (play.Width, play.Height));
+        Assert.Equal((w, h), (inv.Width, inv.Height));
+    }
+
+    [Theory]
+    [InlineData(1920, 1080, 1f)]
+    [InlineData(2560, 1440, 1f)]
+    [InlineData(3840, 2160, 2f)]
+    public void PanelTextHeight_FollowsTheLayoutTextScale(int w, int h, float textScale)
+    {
+        UiBatch batch = new(BlockGlyphs.Create());
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        batch.BeginFrame(in layout);
+
+        Assert.Equal(textScale, layout.TextScale);
+        Assert.Equal(13f * textScale, PanelText.Height(batch, UiTextStyle.Body));
+        Assert.Equal(26f * textScale, PanelText.Height(batch, UiTextStyle.Large));
+        Assert.Equal(13f * textScale, InventoryWindow.BodyHeight(batch));
+    }
+
     [Fact]
     public void RealPanels_Dead()
     {

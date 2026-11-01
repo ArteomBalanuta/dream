@@ -13,7 +13,7 @@ public static class WorldLabelsPanel
     {
         IReadOnlyList<HudWorldLabel> labels = v.Labels;
         float maxWidth = MaxWidthUnits * l.Scale;
-        float lineH = PanelText.Height(UiTextStyle.Body);
+        float lineH = PanelText.Height(c, UiTextStyle.Body);
         for (int k = 0; k < labels.Count; k++)
         {
             HudWorldLabel label = labels[k];

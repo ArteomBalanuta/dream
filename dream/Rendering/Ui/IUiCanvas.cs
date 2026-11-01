@@ -25,6 +25,10 @@ public interface IUiCanvas
 
     float MeasureText(ReadOnlySpan<char> text, UiTextStyle style);
 
+    // Multiplier on the baked glyph sizes (13 and 26 px). Panels size text boxes with it; a canvas
+    // that never scales text leaves it at 1.
+    float TextScale => 1f;
+
     void PushClip(UiRect r);
 
     void PopClip();

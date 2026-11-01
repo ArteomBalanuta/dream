@@ -62,7 +62,7 @@ public static class CharacterWindow
     {
         UiRect box = l.FromUnits(win, RowX, y, RowW, RowH);
         float padX = 2f * l.Scale;
-        float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyTextPx) * 0.5f);
+        float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyHeight(c)) * 0.5f);
 
         // "10 +2 = 12", or just "12" when there is no bonus. Built in a stack buffer.
         Span<char> mem = stackalloc char[64];

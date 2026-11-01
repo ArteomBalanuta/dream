@@ -18,6 +18,9 @@ public static class InventoryWindow
     public const float ArtPixelsPerUnit = 4f;
     public const float BodyTextPx = 13f;
 
+    // The body line height on this canvas (doubled when the glyphs are).
+    internal static float BodyHeight(IUiCanvas c) => BodyTextPx * c.TextScale;
+
     // Widget ids. The router keys on the int only, so a block far from small ids avoids clashes.
     internal const int IdBase = 0x00B0_0000;
     internal const int IdBagSlot = IdBase + 0x100;
@@ -438,7 +441,7 @@ public static class InventoryWindow
             b.Append(item.StackCount);
             ReadOnlySpan<char> text = b.Text;
             float width = c.MeasureText(text, UiTextStyle.Body);
-            DrawText(c, text, new Vector2(r.Right - width - (2f * l.Scale), r.Bottom - BodyTextPx - l.Scale), ItemTierStyle.Body);
+            DrawText(c, text, new Vector2(r.Right - width - (2f * l.Scale), r.Bottom - BodyHeight(c) - l.Scale), ItemTierStyle.Body);
         }
     }
 
@@ -570,7 +573,7 @@ public static class InventoryWindow
         text = text[..PanelText.FitLength(c, text, UiTextStyle.Body, r.W)];
         float width = c.MeasureText(text, UiTextStyle.Body);
         float x = r.X + MathF.Max(0f, (r.W - width) * 0.5f);
-        float y = r.Y + MathF.Floor((r.H - BodyTextPx) * 0.5f);
+        float y = r.Y + MathF.Floor((r.H - BodyHeight(c)) * 0.5f);
         DrawText(c, text, new Vector2(x, y), color);
     }
 }
