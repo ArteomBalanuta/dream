@@ -1,4 +1,6 @@
 using Dream.Client.Presentation;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
 using Dream.Simulation.Players;
@@ -19,7 +21,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         _render = render;
     }
 
-    public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime)
+    public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime, bool silhouette = false)
     {
         if (_disposed)
         {
@@ -44,6 +46,23 @@ public sealed class LocalPlayerRenderer : IDisposable
         instance.Update(deltaTime);
 
         Shader shader = _render.GetShader(renderState.ShaderName);
+        if (silhouette)
+        {
+            // Silhouette first: the parts of the player the world hides, bright and flat enough to
+            // read. Depth is not written, so the normal pass below still sorts itself.
+            GL.DepthFunc(DepthFunction.Greater);
+            GL.DepthMask(false);
+            shader.Use();
+            shader.SetVector3("uActorTintOffset", new Vector3(0.5f, 2f, 6f));
+            model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: true);
+            model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
+            model.EndRender();
+            shader.Use();
+            shader.SetVector3("uActorTintOffset", Vector3.Zero);
+            GL.DepthMask(true);
+            GL.DepthFunc(DepthFunction.Less);
+        }
+
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
         model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
         model.EndRender();

@@ -34,6 +34,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     // Reused first-person camera for CapturePresentationState. It never leaves this type:
     // ThirdPersonCameraRig.Resolve copies it into the camera the presentation state carries.
     private readonly Camera _firstPersonCameraScratch = new(Vector3.Zero);
+    private readonly IsometricFocus _isometricFocus = new();
     private bool _disposed;
 
     public ClientWorldSession(
@@ -51,6 +52,9 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         Physics.RegisterPlayerBody(playerBody, PhysicsBodyOwnership.IntegratorOwned);
         Player = new Player(Map, Physics, playerBody, playerStartPosition, events, _combatFormulaService);
     }
+
+    // The point the isometric camera looked at in the last capture; fog is measured from it.
+    public Vector3 LastCameraFocus { get; private set; }
 
     public Map Map { get; private set; }
 
@@ -140,15 +144,26 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         float presentationLeadSeconds = 0f,
         CameraViewMode cameraViewMode = CameraViewMode.FirstPerson,
         bool isDead = false,
-        int respawnSeconds = 0)
+        int respawnSeconds = 0,
+        float frameSeconds = 0f)
     {
         // The returned state's camera stays a new instance per capture: callers (and tests) may keep
         // a state across captures and compare cameras, so only the intermediate camera is reused.
         Player.CopyPresentationCameraTo(_firstPersonCameraScratch, presentationLeadSeconds);
-        Camera presentationCamera = ThirdPersonCameraRig.Resolve(
-            _firstPersonCameraScratch,
-            Player.GetWorldPosition(),
-            cameraViewMode);
+        Camera presentationCamera;
+        if (cameraViewMode == CameraViewMode.Isometric)
+        {
+            LastCameraFocus = _isometricFocus.Advance(_firstPersonCameraScratch.Position, frameSeconds);
+            presentationCamera = new Camera(LastCameraFocus);
+            IsometricView.ResolveInto(LastCameraFocus, presentationCamera);
+        }
+        else
+        {
+            presentationCamera = ThirdPersonCameraRig.Resolve(
+                _firstPersonCameraScratch,
+                Player.GetWorldPosition(),
+                cameraViewMode);
+        }
 
         long renderExportStart = Stopwatch.GetTimestamp();
         GeometryRenderExport visibleWorld = Map.CapturePresentationGeometryRenderExport(

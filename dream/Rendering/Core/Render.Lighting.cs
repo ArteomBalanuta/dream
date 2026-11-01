@@ -26,7 +26,7 @@ public partial class Render
     public void UploadFrameLighting(Camera camera)
     {
         ArgumentNullException.ThrowIfNull(camera);
-        Vector3 cameraPosition = camera.Position;
+        Vector3 cameraPosition = FogOrigin ?? camera.Position;
         Matrix4 view = camera.GetViewMatrix();
         _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
         SelectPointLights(cameraPosition, in view);

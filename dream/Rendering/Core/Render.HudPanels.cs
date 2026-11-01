@@ -120,26 +120,6 @@ public partial class Render
                 }
             }
 
-            float fieldOfView = settings.FieldOfViewDegrees;
-            if (ImGui.SliderFloat("Field Of View", ref fieldOfView, 50f, 100f))
-            {
-                fieldOfViewDegrees = fieldOfView;
-            }
-
-            float sensitivity = settings.MouseSensitivity;
-            if (ImGui.SliderFloat("Mouse Sensitivity", ref sensitivity, 0.5f, 8f))
-            {
-                mouseSensitivity = sensitivity;
-            }
-
-            bool thirdPersonEnabled = settings.CameraViewMode == CameraViewMode.ThirdPerson;
-            if (ImGui.Checkbox("Third Person View", ref thirdPersonEnabled))
-            {
-                cameraViewMode = thirdPersonEnabled
-                    ? CameraViewMode.ThirdPerson
-                    : CameraViewMode.FirstPerson;
-            }
-
             if (devControls)
             {
                 float currentNoclipSpeed = settings.NoclipSpeed;
