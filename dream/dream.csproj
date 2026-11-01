@@ -30,7 +30,7 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*">
+    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*;ui\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

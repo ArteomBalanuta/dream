@@ -21,7 +21,8 @@ public readonly record struct HudInteractionRequest(
     FloatingCombatTextTuning? FloatingCombatText,
     int? EquipInventorySlotIndex,
     BuildMaterialChoice? BuildMaterial = null,
-    InventoryHudAction? InventoryAction = null)
+    InventoryHudAction? InventoryAction = null,
+    bool CloseInventory = false)
 {
     public static HudInteractionRequest None => new(
         null,
