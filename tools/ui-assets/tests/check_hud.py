@@ -215,6 +215,34 @@ def check_misc(errs, S, doc):
             errs.append(f"{name} probe {got}, want {tok} {tuple(int(v) for v in want)}")
 
 
+def check_states(errs, S, C):
+    """Every interactive state must differ visibly from normal, not just exist."""
+    groups = ["hud.slab", "qwe.slot.q", "qwe.slot.w", "qwe.slot.e", "iconbtn.frame", "chat.btn", "chat.scroll.up", "chat.scroll.down"]
+    for g in groups:
+        n = S(f"{g}.normal")[..., :3].astype(float)
+        for st, need in (("hover", 5.0), ("pressed", 5.0)):
+            d = np.abs(S(f"{g}.{st}")[..., :3].astype(float) - n).mean()
+            if d < need:
+                errs.append(f"{g}.{st} differs by only {d:.1f}")
+    n = S("skill.tile.normal")[..., :3].astype(float)
+    for st in ("hover", "disabled"):
+        d = np.abs(S(f"skill.tile.{st}")[..., :3].astype(float) - n).mean()
+        if d < 5.0:
+            errs.append(f"skill.tile.{st} differs by only {d:.1f}")
+    a, b = C("cursor.pointer"), C("cursor.pressed")
+    changed = (np.abs(a.astype(int) - b.astype(int)).max(axis=2) > 24).mean()
+    if changed < 0.05:
+        errs.append(f"cursor.pressed differs on only {changed:.1%} of pixels")
+
+
+def check_gem_shape(errs, S):
+    """Rim must not form a flat bright bar along the top of the stone."""
+    for kind in ("hp", "mp"):
+        spec = S(f"gem.{kind}.spec")
+        if spec[:32, :, 3].max() > 64:
+            errs.append(f"gem.{kind}.spec bright along the top")
+
+
 def check_cursors(errs, C, cur):
     for name in CURSORS:
         px, py = cur["sprites"][name]["pivot"]
@@ -242,6 +270,8 @@ def main():
         check_dragon(errs, S, doc)
         check_misc(errs, S, doc)
         check_cursors(errs, C, cur)
+        check_states(errs, S, C)
+        check_gem_shape(errs, S)
     if "--fast" not in sys.argv:
         import gen_hud
 
