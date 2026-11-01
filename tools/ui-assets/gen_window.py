@@ -302,12 +302,12 @@ def slab_tone(kind: str, X, Y, period=(None, None)):
     mid = fg.waves(X, Y, nm + ".m2", 12, 3.5, 14, (1, 1), period)
     hue = rise(fg.waves(X, Y, nm + ".hue", 8, 25, 80, (1, 1), period), 0.25, 0.95)
     zone = fracture_zone(kind, X, Y)
-    lnum = -0.84 + 0.64 * big + 0.30 * small + 0.26 * mid + 0.30 * zone
+    lnum = -0.84 + 1.05 * big + 0.30 * small + 0.26 * mid + 0.30 * zone
     # lit stone is held back and soot is let run deep: pale patches read as marble next to black wells
-    lnum = np.where(lnum > -0.75, -0.75 + 0.50 * (lnum + 0.75), -0.75 + 1.35 * (lnum + 0.75))
+    lnum = np.where(lnum > -0.75, -0.75 + 0.40 * (lnum + 0.75), -0.75 + 2.20 * (lnum + 0.75))
     de = np.minimum(np.minimum(X, SLAB_W - X), np.minimum(Y, H - Y))
     pool = np.exp(-(((X - 62) / 78) ** 2 + ((Y - 0.34 * H) / (0.34 * H)) ** 2))
-    vm = (0.30 + 0.70 * rise(de, 0.0, 14.0)) * (0.40 + 0.95 * pool) * (0.74 + 0.26 * rise(Y, 0.0, 40.0))
+    vm = (0.10 + 0.90 * rise(de, 0.0, 24.0)) * (0.62 + 0.55 * pool) * (0.74 + 0.26 * rise(Y, 0.0, 40.0))
     return lnum.astype(F32), hue.astype(F32), vm.astype(F32), zone
 
 
@@ -377,7 +377,7 @@ def slab_author(kind: str, x0: float, y0: float, x1: float, y1: float, margin: f
     return r, vm
 
 
-SLAB_RENDER = dict(wear=0.12, grime=0.30, rust=0.10, dust=0.10, exposure=1.55)
+SLAB_RENDER = dict(wear=0.12, grime=0.30, rust=0.10, dust=0.10, exposure=1.70)
 
 
 def render_slab_region(kind: str, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
@@ -418,6 +418,8 @@ def render_slab(kind: str, band: float = 24.0) -> np.ndarray:
 # plain chain in it, a bead, a broken brass inlay rail, a dark gutter. Quiet and dark: the frame must not shout.
 
 SIDE_W = 12
+RIGHT_ART_END = 10.4  # u, in the right tile: the art stops here so the filter spill never reaches the last 2 u
+SIDE_VM = 0.74        # the frame stays darker than its own lights would make it
 
 
 def rail_segment(r: fg.Relief, pts, w: float, z: float, seed: str, groove: float = 0.28, mat: str = "rail.dim") -> None:
@@ -476,21 +478,22 @@ def side_sprite(right: bool) -> np.ndarray:
     base = fg.Relief(SIDE_W, TILE_H, "frame.black", 1.0, "y")
     draw_side(base)
     if not right:
-        return fg.downsample(base.render("side.left", wear=0.07, grime=0.5, rust=0.10, dust=0.04, detail=0.55, value_map=side_value_map(base)), wrap="y")
+        return fg.downsample(base.render("side.left", wear=0.04, grime=0.5, rust=0.10, dust=0.04, detail=0.40, value_map=side_value_map(base)), sharpen=0.0, wrap="y")
     r = fg.Relief(w_u, TILE_H, "frame.black", 1.0, "y")
     n = 11 * PPU
     r.h[:, :n] = base.h[:, :n][:, ::-1]
     r.mid[:, :n] = base.mid[:, :n][:, ::-1]
-    r.a[:, n:] = 0.0
-    r.h[:, n:] = 0.0
-    return fg.downsample(r.render("side.right", wear=0.07, grime=0.5, rust=0.10, dust=0.04, detail=0.55, value_map=side_value_map(r, True)), wrap="y")
+    e = int(RIGHT_ART_END * PPU)
+    r.a[:, e:] = 0.0
+    r.h[:, e:] = 0.0
+    return fg.downsample(r.render("side.right", wear=0.04, grime=0.5, rust=0.10, dust=0.04, detail=0.40, value_map=side_value_map(r, True)), sharpen=0.0, wrap="y")
 
 
 def side_value_map(r: fg.Relief, right: bool = False) -> np.ndarray:
     """Dark towards the slab: the gutter swallows light, the outer arris keeps a little."""
     x = r.xs[None, :] * np.ones((r.H_px, 1), F32)
     d_in = x if right else SIDE_W - x
-    return (0.60 + 0.40 * smooth(d_in, 0.0, 3.5)).astype(F32)
+    return ((0.60 + 0.40 * smooth(d_in, 0.0, 3.5)) * SIDE_VM).astype(F32)
 
 
 def build_side() -> list[Sprite]:
@@ -517,7 +520,7 @@ def thorn(r: fg.Relief, p, w: float, z: float, seed: str, bevel: float = 1.4, ri
 CROWN_PAD = 3
 
 
-def mirror_half(r: fg.Relief, axis_u: float = 94.0, art_end_u: float = 188.0) -> None:
+def mirror_half(r: fg.Relief, axis_u: float = 94.0, art_end_u: float = 177.0 + RIGHT_ART_END) -> None:
     """Copies everything left of the axis onto the right in height and material, and clears the art past art_end_u."""
     n = int(axis_u * PPU)
     for arr in (r.h, r.mid):
@@ -577,7 +580,10 @@ def crown_value_map(r: fg.Relief) -> np.ndarray:
     x = np.broadcast_to(r.xs[None, :], (r.H_px, r.W_px))
     y = np.broadcast_to(r.ys[:, None], (r.H_px, r.W_px))
     socket = fg.blur((r.mid == fg.MAT_ID["void"]).astype(F32), 0.5 * PPU)
-    return ((0.60 + 0.40 * np.exp(-(((x - 94) / 62) ** 2))) * (0.86 + 0.14 * np.exp(-(((y - 20) / 18) ** 2))) * (1 - 0.6 * socket)).astype(F32)
+    body = (0.60 + 0.40 * np.exp(-(((x - 94) / 62) ** 2))) * (0.86 + 0.14 * np.exp(-(((y - 20) / 18) ** 2))) * (1 - 0.6 * socket)
+    d_in = np.where(x < SIDE_W, SIDE_W - x, x - 177.0)  # distance from the slab edge, in the two columns
+    column = (0.60 + 0.40 * smooth(d_in, 0.0, 3.5)) * SIDE_VM
+    return np.where((x < SIDE_W) | (x > 177.0), column, body).astype(F32)
 
 
 FRAME_RENDER = dict(wear=0.12, grime=0.55, rust=0.14, dust=0.05, detail=0.6)
@@ -879,7 +885,7 @@ def sil_armor() -> np.ndarray:
     R.ellipsoid(20, 41.7, 1.5, 1.5, 0, STEEL, 11.2, 1.1)
     for x, y in ((6.4, 12.2), (33.6, 12.2), (14.6, 39.9), (25.4, 39.9)):
         R.ellipsoid(x, y, 0.55, 0.55, 0, STEEL, R.H[int(y * PPU), int(x * PPU)] - 0.1, 0.4)
-    return sil_finish(R, 1.0, "sil.armor", fade=0.32)
+    return sil_finish(R, 1.22, "sil.armor", fade=0.32)
 
 
 def sil_pants() -> np.ndarray:
@@ -1270,7 +1276,7 @@ def well_value_map(r: fg.Relief) -> np.ndarray:
     x = np.broadcast_to(r.xs[None, :], (r.H_px, r.W_px))
     y = np.broadcast_to(r.ys[:, None], (r.H_px, r.W_px))
     floor = fg.blur((r.mid == fg.MAT_ID["well"]).astype(F32), 0.4 * PPU)
-    shade_ = 0.55 - 0.25 * np.exp(-((y - 2.7) / 5.0) ** 2) * (y < 9) - 0.12 * np.exp(-((x - 2.7) / 4.0) ** 2) * (x < 8)
+    shade_ = 0.40 - 0.18 * np.exp(-((y - 2.7) / 5.0) ** 2) * (y < 9) - 0.08 * np.exp(-((x - 2.7) / 4.0) ** 2) * (x < 8)
     return (1 + floor * (shade_ - 1)).astype(F32)
 
 
@@ -1410,7 +1416,7 @@ PLATE_RENDER = dict(wear=0.12, grime=0.5, rust=0.08, dust=0.03, detail=0.5)
 def render_plate(w_u: int, h_u: int, state: str) -> np.ndarray:
     name = f"btn{w_u}"
     r = plate_relief(w_u, h_u, "normal" if state == "hover" else state, name)
-    exposure = {"normal": 1.0, "hover": 1.7, "pressed": 0.85, "disabled": 0.62}[state]
+    exposure = {"normal": 1.0, "hover": 1.7, "pressed": 0.70, "disabled": 0.62}[state]
     img = r.render(name, exposure=exposure, **PLATE_RENDER)
     if state == "disabled":
         lum = img[..., :3].mean(axis=2, keepdims=True)

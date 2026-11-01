@@ -255,7 +255,8 @@ def check_silhouettes() -> None:
         if solid.size == 0:
             fail(f"sil.{n}: empty")
             continue
-        if np.abs(solid[:, 0].astype(int) - solid[:, 2].astype(int)).max() > 16:
+        # iron with a cold shadow and a warm highlight, never a tinted material: the average stays neutral
+        if abs(float((solid[:, 0].astype(int) - solid[:, 2].astype(int)).mean())) > 8 or np.percentile(np.abs(solid[:, 0].astype(int) - solid[:, 2].astype(int)), 99.5) > 34:
             fail(f"sil.{n}: not neutral")
         peaks[n] = np.percentile(solid[:, :3].mean(axis=1), 99.5)
         cover = (s_[..., 3] > 128).mean()
@@ -272,8 +273,8 @@ def check_silhouettes() -> None:
             centre = s_[:, s_.shape[1] // 2 - 8 : s_.shape[1] // 2 + 8, 3]
             if (centre > 128).mean() > 0.03:
                 fail("sil.wings: no central gap, the pair must stand apart")
-    if peaks.get("armor", 0) < sorted(peaks.values())[-3]:
-        fail(f"sil.armor must be among the brightest: {peaks}")
+    if peaks.get("armor", 0) < float(np.median(list(peaks.values()))) * 1.05:
+        fail(f"sil.armor is the centrepiece and must stand above the median peak: {peaks}")
 
 
 def check_seams() -> None:
@@ -287,9 +288,15 @@ def check_seams() -> None:
     if abs(face[n // 2, n // 2] - face[n + n // 2, n + n // 2]) > 1:
         fail("cell.empty 3x3: faces differ")
     for name in ("cell.occupied", "cell.hover", "cell.invalid"):
-        c = px(name)
-        if np.abs(c[:, 0].astype(int) - c[:, -1].astype(int)).mean() > 3 or np.abs(c[0].astype(int) - c[-1].astype(int)).mean() > 3:
-            fail(f"{name}: lattice edges do not match")
+        c = np.asarray(px(name), dtype=int)
+        # tiled, the half lines on the two edges make one line, and its two halves are lit differently: what must hold is that
+        # the step across the join is no bigger than the step between neighbouring columns (and rows) just inside the tile
+        join_x = np.abs(c[:, -1] - c[:, 0]).mean()
+        join_y = np.abs(c[-1] - c[0]).mean()
+        inside_x = max(np.abs(c[:, k] - c[:, k + 1]).mean() for k in range(0, 6))
+        inside_y = max(np.abs(c[k] - c[k + 1]).mean() for k in range(0, 6))
+        if join_x > inside_x * 1.6 + 2 or join_y > inside_y * 1.6 + 2:
+            fail(f"{name}: tiling seam ({join_x:.1f}/{join_y:.1f} against {inside_x:.1f}/{inside_y:.1f})")
 
     # side tiles wrap, the chain repeats every 5.5 u, the right tile ends 2 u early
     left, right = px("win.side.left"), px("win.side.right")

@@ -1301,7 +1301,7 @@ def write_ramps(out: Path) -> None:
 
 ICON_EXPOSURE = 0.50   # the icons sit on dark cells in a dark window: they must not be the brightest thing on screen
 ICON_ALBEDO = 0.72    # and a little darker still, so aged gold and paint stop shouting
-ICON_DESAT = 0.45      # linear-light saturation kept; pure toy colours read cheap next to forged iron
+ICON_DESAT = 0.75      # linear-light saturation kept; pure toy colours read cheap next to forged iron
 
 
 def forge_render(s: Scene) -> tuple:
@@ -1346,7 +1346,19 @@ def render_icon(name: str) -> tuple:
     fn(s)
     s.center(getattr(fn, "top", None))
     img, mask = forge_render(s)
-    return fg.downsample(img), mask_down(mask, s.a)
+    return defringe(fg.downsample(img)), mask_down(mask, s.a)
+
+
+def defringe(rgba: np.ndarray, floor: int = 48) -> np.ndarray:
+    """Faint edge pixels take the average colour of the solid pixels around them: un-premultiplying a sliver of
+    coverage is noisy, and the noise would travel into every tier variant and the atlas bleed."""
+    out = rgba.copy()
+    w = (rgba[..., 3] >= floor).astype(np.float32)
+    num = np.stack([fg.blur(rgba[..., c].astype(np.float32) * w, 1.4) for c in range(3)], axis=2)
+    den = fg.blur(w, 1.4)[..., None]
+    faint = (rgba[..., 3] > 0) & (rgba[..., 3] < floor) & (den[..., 0] > 0.02)
+    out[..., :3][faint] = np.clip(num / np.maximum(den, 0.02) + 0.5, 0, 255).astype(np.uint8)[faint]
+    return out
 
 
 def main(out_root: Path) -> None:
