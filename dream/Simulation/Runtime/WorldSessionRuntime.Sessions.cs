@@ -157,12 +157,13 @@ public sealed partial class WorldSessionRuntime
         // the world state (its vitals are skipped). Profile first, a checkpoint between the two
         // would overwrite the leave's HP with its stale vitals. Checkpoints skip detached players.
         _persistence.PersistPlayerWorldState(sessionId);
-        PersistPlayerProfile(sessionId, TryResolveAuthoritativePlayerTarget(
-            sessionId,
-            out _,
-            out IAuthoritativePlayerTarget? target)
-                ? target!.Combatant
-                : Player.Combatant);
+        // An unresolved target is skipped: the primary Combatant must never stand in for it.
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? target)
+            && target != null)
+        {
+            PersistPlayerProfile(sessionId, target.Combatant);
+        }
+
         _persistence.ForgetUnrestoredSession(sessionId);
         // The build material is per connection: a rejoin starts from Auto, as its HUD does.
         _buildMaterialSelections.Remove(sessionId);
@@ -185,6 +186,7 @@ public sealed partial class WorldSessionRuntime
             _primaryTicksSinceCommand = 0;
             // Without an occupant the primary body would stay as an invisible collider.
             Physics.SetPlayerBodyParked(true);
+            Player.ResetSeatState();
         }
         else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
         {
@@ -322,7 +324,7 @@ public sealed partial class WorldSessionRuntime
     private Vector3 ResolveSecondaryRemoteSpawnPosition(int remoteIndex)
     {
         float laneOffset = 2f + remoteIndex;
-        Vector3 basePosition = Player.GetWorldPosition();
+        Vector3 basePosition = _worldSpawn;
         return new Vector3(
             Math.Clamp(basePosition.X + laneOffset, 0.5f, Map.Width - 0.5f),
             1.5f,

@@ -116,6 +116,36 @@ public class PlayerMotor
         body.Activate(true);
     }
 
+    // A session vacating the seat must not leave its noclip or freeze on the body for the next
+    // occupant. Mirrors the disable branches of the two toggle handlers.
+    public void ResetSeatState(RigidBody body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        bool wasNoclip = IsNoclipEnabled;
+        if (_massModified)
+        {
+            body.SetMassProps(_originalMass, _originalInertia);
+            _massModified = false;
+        }
+
+        IsFrozen = false;
+        IsNoclipEnabled = false;
+        _wasFreezePressed = false;
+        _wasNoclipTogglePressed = false;
+        _wasJumpPressed = false;
+        body.LinearVelocity = BulletSharp.Math.Vector3.Zero;
+        body.AngularVelocity = BulletSharp.Math.Vector3.Zero;
+        body.ClearForces();
+        body.CollisionFlags &= ~CollisionFlags.NoContactResponse;
+        if (wasNoclip)
+        {
+            RestoreMinimumFloorClearance(body);
+        }
+
+        body.Gravity = StandardGravity;
+        body.Activate(true);
+    }
+
     private void HandleFreezeToggle(RigidBody body, bool freezePressed)
     {
         bool nextFrozen = ResolveFrozenState(IsFrozen, freezePressed, _wasFreezePressed);

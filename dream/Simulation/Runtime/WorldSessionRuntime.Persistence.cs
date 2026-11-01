@@ -98,7 +98,11 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         });
         playerTarget.Combatant.ApplyProgression(profile.Stats.Level, profile.Stats.Experience);
 
-        Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
+        // A primary seat with no row starts at the world spawn, not where the last occupant stood.
+        Vector3 fallbackPosition = worldState == null && sessionId == ResolvePrimaryControlledSessionId()
+            ? ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch)
+            : playerTarget.Position;
+        Vector3 persistedPosition = worldState?.Position ?? fallbackPosition;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())

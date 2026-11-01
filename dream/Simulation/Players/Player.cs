@@ -227,6 +227,8 @@ public class Player : IReplicatedPlayerTarget, IDisposable
 
     public bool IsNoclipEnabled => _motor.IsNoclipEnabled;
 
+    public void ResetSeatState() => _motor.ResetSeatState(PhysicsBody);
+
     public void NudgeWorldPosition(Vector3 delta)
     {
         if (delta == Vector3.Zero)
