@@ -162,12 +162,12 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         {
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
-            // Protocols v9 (wave G) and v10 (wave H) change only the version digit of these frames; compare as v8.
+            // Protocols v9 (wave G), v10 (wave H) and v11 (wave I) change only the version digit of these frames; compare as v8.
             // Wave H also adds the item fields of the equipment model (modifiers, heldLight, equipSlots, after
             // an item's detailLines) to the inventory in join-accepted; they are stripped here so every other
             // byte still matches the capture. Their size is pinned by StarterKitInventoryBytesTests.
             string text = ItemEquipmentFields().Replace(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":10", "\"protocolVersion\":8"),
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":11", "\"protocolVersion\":8"),
                 "$1");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);

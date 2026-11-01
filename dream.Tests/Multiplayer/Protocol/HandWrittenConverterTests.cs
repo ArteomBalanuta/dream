@@ -361,7 +361,9 @@ public class HandWrittenConverterTests(ITestOutputHelper output)
     // Measured 5,008 B after WIRE-11 (before: 7,016 B): the exactly sized ActorSnapshot[], the
     // session-id and display-name strings, and the message objects. Same budget as
     // ServerSnapshotConverterTests.
-    private const long SnapshotDecodeBudgetBytes = 5_504;
+    // Wave I added EnemyLevel and VisualKey to ActorSnapshot (16 B per actor with padding); the 24-actor
+    // decode measured 5,640 B afterwards, so the budget went from 5,504 B to 5,760 B.
+    private const long SnapshotDecodeBudgetBytes = 5_760;
 
     // ---- Helpers -------------------------------------------------------------------------
 

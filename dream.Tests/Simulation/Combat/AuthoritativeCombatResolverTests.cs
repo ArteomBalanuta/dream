@@ -366,7 +366,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             new CombatFormulaDefinition("player.critical_chance", "0.15", "test", true, DateTime.UtcNow),
             new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
             new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
-            new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
+            new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow),
+            ..Dream.Tests.Support.WaveIFormulas.Definitions()
         ]);
     }
 

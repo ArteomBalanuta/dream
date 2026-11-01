@@ -12,6 +12,8 @@ public sealed class ContentCatalogTests
 {
     private static string ShippedItemsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
 
+    private static string ShippedLootJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
+
     private static string ShippedEnemiesJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.EnemiesFileName));
 
     [Fact]
@@ -178,15 +180,15 @@ public sealed class ContentCatalogTests
     [Fact]
     public void ContentDigest_IsStable_IgnoresFormatting_AndChangesWithValues()
     {
-        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson);
-        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson);
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
+        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson, ShippedLootJson);
         Assert.Equal(first.ContentDigest, second.ContentDigest);
         Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);
 
-        ContentCatalog changedEnemy = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson.Replace("\"attackDamage\": 12", "\"attackDamage\": 13"));
+        ContentCatalog changedEnemy = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson.Replace("\"attackDamage\": 12", "\"attackDamage\": 13"), ShippedLootJson);
         Assert.NotEqual(first.ContentDigest, changedEnemy.ContentDigest);
 
-        ContentCatalog changedItem = ContentCatalog.Load(ShippedItemsJson.Replace("\"value\": 8", "\"value\": 9"), ShippedEnemiesJson);
+        ContentCatalog changedItem = ContentCatalog.Load(ShippedItemsJson.Replace("\"value\": 8", "\"value\": 9"), ShippedEnemiesJson, ShippedLootJson);
         Assert.NotEqual(first.ContentDigest, changedItem.ContentDigest);
     }
 
@@ -313,5 +315,111 @@ public sealed class ContentCatalogTests
 
         Assert.Throws<ContentValidationException>(
             () => ContentCatalog.LoadFromDirectory(Path.Combine(Path.GetTempPath(), "dream-no-such-content-" + Guid.NewGuid().ToString("N"))));
+    }
+
+    // ---- loot.json (wave I) ----
+
+    [Fact]
+    public void ShippedLoot_LoadsTheWolfAndDireWolfTables()
+    {
+        ContentCatalog catalog = ContentCatalog.Shipped;
+
+        Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "loot.json")));
+        Assert.Equal(2, catalog.LootTables.Count);
+        Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
+        Assert.Equal(1, wolf.Drops);
+        Assert.Equal(75, wolf.NothingWeight);
+        Assert.Equal(4, wolf.Items.Count);
+        Assert.Equal((85, 13, 2), (wolf.CommonWeight, wolf.UncommonWeight, wolf.RareWeight));
+        Assert.True(catalog.TryGetLootTable("dire-wolf", out LootTable dire));
+        Assert.Equal(2, dire.Drops);
+        Assert.False(catalog.TryGetLootTable("missing", out _));
+        Assert.False(catalog.TryGetLootTable(null!, out _));
+    }
+
+    [Fact]
+    public void TheTwoArgumentLoad_HasNoLootTables()
+    {
+        ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson);
+
+        Assert.Empty(catalog.LootTables);
+        Assert.False(catalog.TryGetLootTable("wolf", out _));
+    }
+
+    [Fact]
+    public void ContentDigest_ChangesWithALootWeight_AndIgnoresLootFormatting()
+    {
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
+        ContentCatalog reformatted = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\r\n", "\n").Replace("  ", "\t"));
+        ContentCatalog changed = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\"nothingWeight\": 75", "\"nothingWeight\": 76"));
+
+        Assert.Equal(first.ContentDigest, reformatted.ContentDigest);
+        Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);
+        Assert.NotEqual(first.ContentDigest, changed.ContentDigest);
+        Assert.NotEqual(first.ContentDigest, ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson).ContentDigest);
+    }
+
+    [Theory]
+    [InlineData("\"drops\": 1", "\"drops\": 0", "outside the range")]
+    [InlineData("\"drops\": 1", "\"drops\": 5", "outside the range")]
+    [InlineData("\"nothingWeight\": 75", "\"nothingWeight\": -1", "outside the range")]
+    [InlineData("\"nothingWeight\": 75", "\"nothingWeight\": 1000001", "outside the range")]
+    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 10", "\"item\": \"gear.missing\", \"weight\": 10", "references missing item")]
+    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 10", "\"item\": \"tool.torch\", \"weight\": 10", "has no roll table")]
+    [InlineData("\"item\": \"gear.leather-vest\", \"weight\": 5", "\"item\": \"gear.leather-cap\", \"weight\": 5", "duplicate loot item")]
+    [InlineData("\"key\": \"dire-wolf\"", "\"key\": \"wolf\"", "duplicate loot table key")]
+    [InlineData("\"key\": \"dire-wolf\"", "\"key\": \"WOLF\"", "duplicate loot table key")]
+    [InlineData("\"common\": 85, \"uncommon\": 13, \"rare\": 2", "\"common\": 0, \"uncommon\": 0, \"rare\": 0", "needs at least one positive weight")]
+    [InlineData("\"common\": 85", "\"common\": 85, \"epic\": 1", "unknown property")]
+    [InlineData("\"version\": 1", "\"version\": 2", "outside the range")]
+    [InlineData("\"weight\": 10 }", "\"weight\": 10, \"extra\": 1 }", "unknown property")]
+    public void Load_RejectsInvalidLoot_WithAClearMessage(string find, string replace, string expectedFragment)
+    {
+        string loot = ShippedLootJson;
+        Assert.Contains(find, loot);
+
+        ContentValidationException exception = Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, loot.Replace(find, replace)));
+
+        Assert.Contains(expectedFragment, exception.Message);
+        Assert.Contains("loot.json", exception.Message);
+    }
+
+    [Fact]
+    public void Load_RejectsATableWithNoPositiveItemWeight_TooManyEntries_AndBrokenJson()
+    {
+        const string noItems = "{\"version\":1,\"tables\":[{\"key\":\"t\",\"drops\":1,\"nothingWeight\":5,\"items\":[],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}]}";
+        string allZero = noItems.Replace("\"items\":[]", "\"items\":[{\"item\":\"gear.iron-blade\",\"weight\":0}]");
+        string overflow = "{\"version\":1,\"tables\":[{\"key\":\"t\",\"drops\":1,\"nothingWeight\":1000000,\"items\":["
+            + string.Join(",", Enumerable.Range(0, 3000).Select(i => "{\"item\":\"gear.iron-blade\",\"weight\":1000000}"))
+            + "],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}]}";
+
+        Assert.Contains("at least one item with a positive weight", Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, noItems)).Message);
+        Assert.Contains("at least one item with a positive weight", Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, allZero)).Message);
+        Assert.Contains("more than", Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, overflow)).Message);
+        Assert.Contains("not valid JSON", Assert.Throws<ContentValidationException>(
+            () => ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, "{ nope")).Message);
+    }
+
+    [Fact]
+    public void LoadFromDirectory_NeedsLootJson()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "dream-content-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, ContentCatalog.ItemsFileName), ShippedItemsJson);
+            File.WriteAllText(Path.Combine(directory, ContentCatalog.EnemiesFileName), ShippedEnemiesJson);
+
+            ContentValidationException exception = Assert.Throws<ContentValidationException>(() => ContentCatalog.LoadFromDirectory(directory));
+            Assert.Contains("loot.json", exception.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 }

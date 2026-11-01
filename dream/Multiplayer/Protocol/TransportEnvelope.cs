@@ -27,8 +27,11 @@ public readonly record struct TransportEnvelope(
     // light slots, rarity and equipment slots of an inventory snapshot's items (InventoryItemSnapshot,
     // PlayerInventorySnapshot.Equipment); a v9 client would show no gear and could not use the new
     // slots, so both sides refuse it. Actor snapshots are unchanged apart from this envelope's version
-    // digit. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 10;
+    // digit. Version 11 (persistence wave I) adds the server.inventory-push message (loot notices and
+    // a fresh inventory snapshot) and the optional EnemyPresentation actor group (enemy level and
+    // visual key); a v10 client would fail on the group mask, so both sides refuse it. A wolf-only
+    // world's actor bytes are unchanged apart from the version digit. Decode rejects any other version.
+    public const int CurrentProtocolVersion = 11;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

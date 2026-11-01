@@ -23,6 +23,10 @@ namespace Dream.Simulation.World;
 // ModifierDigest (wave H) is a digest of the rolled modifiers of the player's equipped items, for
 // SimulationStateChecksum only. It never travels (clients decode 0), is zero when nothing rolled is
 // equipped, and zero is not mixed into the hash.
+//
+// EnemyLevel and VisualKey (wave I, protocol v11) describe an enemy for display. 0 means level 1 and
+// a null key means the default visual (the wolf), so a wolf-only world keeps its v10 bytes. Both are
+// left off the wire when default. They are authoritative-only: no client field can set them.
 public readonly record struct ActorSnapshot(
     int ActorId,
     CreatureKind Kind,
@@ -39,4 +43,6 @@ public readonly record struct ActorSnapshot(
     EnemyBehaviorState? EnemyBehaviorState = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int StarvedTicks = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] HeldLightKind HeldLight = HeldLightKind.None,
-    [property: JsonIgnore] ulong ModifierDigest = 0);
+    [property: JsonIgnore] ulong ModifierDigest = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int EnemyLevel = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? VisualKey = null);

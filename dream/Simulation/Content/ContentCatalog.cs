@@ -20,6 +20,14 @@ public sealed class ContentCatalog
 
     public const string ItemsFileName = "items.json";
     public const string EnemiesFileName = "enemies.json";
+    public const string LootFileName = "loot.json";
+
+    // The visual an enemy without an explicit key draws (the wolf). The wire leaves it out.
+    public const string DefaultEnemyVisualKey = "enemy.wolf";
+
+    public const int MaxLootDrops = 4;
+    public const int MaxLootWeight = 1_000_000;
+    public const int MaxLootEntries = 64;
 
     // Modifier and roll values stay inside ItemRollCodec.TryGetValueRange, the limits a stored roll must meet too.
 
@@ -27,6 +35,7 @@ public sealed class ContentCatalog
 
     private readonly Dictionary<string, ItemDefinition> _items;
     private readonly Dictionary<string, EnemyTemplate> _enemies;
+    private readonly Dictionary<string, LootTable> _lootTables;
 
     private ContentCatalog(
         Dictionary<string, ItemDefinition> items,
@@ -36,6 +45,8 @@ public sealed class ContentCatalog
         int unrecordedStarterKitVersion,
         Dictionary<string, EnemyTemplate> enemies,
         IReadOnlyList<EnemyTemplate> enemyList,
+        Dictionary<string, LootTable> lootTables,
+        IReadOnlyList<LootTable> lootList,
         string digest)
     {
         _items = items;
@@ -45,6 +56,8 @@ public sealed class ContentCatalog
         UnrecordedStarterKitVersion = unrecordedStarterKitVersion;
         _enemies = enemies;
         Enemies = enemyList;
+        _lootTables = lootTables;
+        LootTables = lootList;
         ContentDigest = digest;
     }
 
@@ -56,6 +69,8 @@ public sealed class ContentCatalog
     public IReadOnlyList<ItemDefinition> Items { get; }
 
     public IReadOnlyList<EnemyTemplate> Enemies { get; }
+
+    public IReadOnlyList<LootTable> LootTables { get; }
 
     // The starter kit in seeding order, with the kit version that introduced each kind.
     public IReadOnlyList<StarterKitEntry> StarterKit { get; }
@@ -91,6 +106,18 @@ public sealed class ContentCatalog
         return false;
     }
 
+    public bool TryGetLootTable(string key, out LootTable table)
+    {
+        if (key != null && _lootTables.TryGetValue(key, out LootTable? found))
+        {
+            table = found;
+            return true;
+        }
+
+        table = null!;
+        return false;
+    }
+
     // The wolf template, which Load guarantees exists.
     public EnemyTemplate Wolf => _enemies[WolfKey];
 
@@ -102,17 +129,26 @@ public sealed class ContentCatalog
         string enemiesPath = Path.Combine(directory, EnemiesFileName);
         string itemsJson = ReadFile(itemsPath);
         string enemiesJson = ReadFile(enemiesPath);
-        return Load(itemsJson, enemiesJson);
+        string lootJson = ReadFile(Path.Combine(directory, LootFileName));
+        return Load(itemsJson, enemiesJson, lootJson);
     }
 
-    public static ContentCatalog Load(string itemsJson, string enemiesJson)
+    // A catalog with no loot tables (fixtures that predate loot.json).
+    public static ContentCatalog Load(string itemsJson, string enemiesJson) =>
+        Load(itemsJson, enemiesJson, EmptyLootJson);
+
+    private const string EmptyLootJson = "{\"version\":1,\"tables\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson)
     {
         ArgumentNullException.ThrowIfNull(itemsJson);
         ArgumentNullException.ThrowIfNull(enemiesJson);
+        ArgumentNullException.ThrowIfNull(lootJson);
 
         ParsedItems items = ParseItems(itemsJson);
         ParsedEnemies enemies = ParseEnemies(enemiesJson);
-        string digest = ComputeDigest(items, enemies);
+        ParsedLoot loot = ParseLoot(lootJson, items);
+        string digest = ComputeDigest(items, enemies, loot);
         return new ContentCatalog(
             items.ByKey,
             items.List,
@@ -121,6 +157,8 @@ public sealed class ContentCatalog
             items.UnrecordedStarterKitVersion,
             enemies.ByKey,
             enemies.List,
+            loot.ByKey,
+            loot.List,
             digest);
     }
 
@@ -486,9 +524,113 @@ public sealed class ContentCatalog
         return new ParsedEnemies(byKey, list);
     }
 
+    // ---- loot ----
+
+    private sealed record ParsedLoot(Dictionary<string, LootTable> ByKey, List<LootTable> List);
+
+    private static ParsedLoot ParseLoot(string json, ParsedItems items)
+    {
+        using JsonDocument document = ParseDocument(LootFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(LootFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(LootFileName, "$", root, ["version", "tables"]);
+        _ = ReadInt(LootFileName, "$.version", properties["version"], 1, 1);
+
+        Dictionary<string, LootTable> byKey = new(StringComparer.OrdinalIgnoreCase);
+        List<LootTable> list = [];
+        JsonElement tablesElement = properties["tables"];
+        ExpectArray(LootFileName, "$.tables", tablesElement);
+        int index = 0;
+        foreach (JsonElement tableElement in tablesElement.EnumerateArray())
+        {
+            string path = $"$.tables[{index}]";
+            LootTable table = ParseLootTable(path, tableElement, items);
+            if (!byKey.TryAdd(table.Key, table))
+            {
+                throw Fail(LootFileName, $"{path}.key", $"duplicate loot table key '{table.Key}'");
+            }
+
+            list.Add(table);
+            index++;
+        }
+
+        return new ParsedLoot(byKey, list);
+    }
+
+    private static LootTable ParseLootTable(string path, JsonElement element, ParsedItems items)
+    {
+        ExpectObject(LootFileName, path, element);
+        Dictionary<string, JsonElement> properties = ReadProperties(
+            LootFileName, path, element, ["key", "drops", "nothingWeight", "items", "rarity"]);
+        string key = ReadKey(LootFileName, $"{path}.key", properties["key"]);
+        int drops = ReadInt(LootFileName, $"{path}.drops", properties["drops"], 1, MaxLootDrops);
+        int nothingWeight = ReadInt(LootFileName, $"{path}.nothingWeight", properties["nothingWeight"], 0, MaxLootWeight);
+
+        JsonElement itemsElement = properties["items"];
+        ExpectArray(LootFileName, $"{path}.items", itemsElement);
+        if (itemsElement.GetArrayLength() > MaxLootEntries)
+        {
+            throw Fail(LootFileName, $"{path}.items", $"has more than {MaxLootEntries} entries");
+        }
+
+        List<LootEntry> entries = [];
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        long itemTotal = 0;
+        int entryIndex = 0;
+        foreach (JsonElement entryElement in itemsElement.EnumerateArray())
+        {
+            string entryPath = $"{path}.items[{entryIndex}]";
+            ExpectObject(LootFileName, entryPath, entryElement);
+            Dictionary<string, JsonElement> entry = ReadProperties(LootFileName, entryPath, entryElement, ["item", "weight"]);
+            string itemKey = ReadString(LootFileName, $"{entryPath}.item", entry["item"]);
+            if (!items.ByKey.TryGetValue(itemKey, out ItemDefinition? definition))
+            {
+                throw Fail(LootFileName, $"{entryPath}.item", $"references missing item '{Truncate(itemKey)}'");
+            }
+
+            if (definition.Rolls == null)
+            {
+                throw Fail(LootFileName, $"{entryPath}.item", $"item '{definition.Key}' has no roll table");
+            }
+
+            if (!seen.Add(definition.Key))
+            {
+                throw Fail(LootFileName, $"{entryPath}.item", $"duplicate loot item '{definition.Key}'");
+            }
+
+            int weight = ReadInt(LootFileName, $"{entryPath}.weight", entry["weight"], 0, MaxLootWeight);
+            itemTotal += weight;
+            entries.Add(new LootEntry(definition.Key, weight));
+            entryIndex++;
+        }
+
+        if (itemTotal <= 0)
+        {
+            throw Fail(LootFileName, $"{path}.items", "needs at least one item with a positive weight");
+        }
+
+        if (nothingWeight + itemTotal > int.MaxValue)
+        {
+            throw Fail(LootFileName, $"{path}.items", "weights add up past the integer range");
+        }
+
+        JsonElement rarityElement = properties["rarity"];
+        ExpectObject(LootFileName, $"{path}.rarity", rarityElement);
+        Dictionary<string, JsonElement> rarity = ReadProperties(LootFileName, $"{path}.rarity", rarityElement, ["common", "uncommon", "rare"]);
+        int common = ReadInt(LootFileName, $"{path}.rarity.common", rarity["common"], 0, MaxLootWeight);
+        int uncommon = ReadInt(LootFileName, $"{path}.rarity.uncommon", rarity["uncommon"], 0, MaxLootWeight);
+        int rare = ReadInt(LootFileName, $"{path}.rarity.rare", rarity["rare"], 0, MaxLootWeight);
+        if ((long)common + uncommon + rare <= 0)
+        {
+            throw Fail(LootFileName, $"{path}.rarity", "needs at least one positive weight");
+        }
+
+        return new LootTable(key, drops, nothingWeight, entries, common, uncommon, rare);
+    }
+
     // ---- digest ----
 
-    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies)
+    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
@@ -547,6 +689,20 @@ public sealed class ContentCatalog
                 .Append(enemy.AttackDamage.ToString(c)).Append('|').Append(enemy.AttackIntervalSeconds.ToString("R", c)).Append('|')
                 .Append(enemy.AggroRange.ToString("R", c)).Append('|').Append(enemy.AttackRange.ToString("R", c)).Append('|')
                 .Append(enemy.MoveSpeed.ToString("R", c)).Append('\n');
+        }
+
+        text.Append("loot.v1\n");
+        foreach (LootTable table in loot.List.OrderBy(t => t.Key, StringComparer.Ordinal))
+        {
+            text.Append("table|");
+            AppendField(text, table.Key).Append('|').Append(table.Drops.ToString(c)).Append('|')
+                .Append(table.NothingWeight.ToString(c)).Append('|').Append(table.CommonWeight.ToString(c)).Append('|')
+                .Append(table.UncommonWeight.ToString(c)).Append('|').Append(table.RareWeight.ToString(c)).Append('\n');
+            foreach (LootEntry entry in table.Items)
+            {
+                text.Append("loot|");
+                AppendField(text, entry.ItemKind).Append('|').Append(entry.Weight.ToString(c)).Append('\n');
+            }
         }
 
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()));

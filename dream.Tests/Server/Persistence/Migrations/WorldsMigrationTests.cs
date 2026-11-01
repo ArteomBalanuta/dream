@@ -131,9 +131,9 @@ public sealed class WorldsMigrationTests
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0008\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0009\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
             ["alice|0|11|Sword", "bob|3|12|Potion"],

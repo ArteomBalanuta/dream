@@ -114,7 +114,7 @@ public sealed class WorldRoundTripCharacterizationTests
         Assert.Equal(2, after["enemy_instances"]);
         Assert.Equal(2, after["item_instances"]);
         Assert.Equal(2, after["player_inventory_slots"]);
-        Assert.Equal(8, after["combat_formulas"]);
+        Assert.Equal(12, after["combat_formulas"]);
         // The seed and the clock live on the worlds row since migration 0003.
         Assert.Equal(0, after["world_metadata"]);
         Assert.Equal(1, after["worlds"]);
@@ -437,7 +437,7 @@ public sealed class WorldRoundTripCharacterizationTests
         CombatFormulaDefinition disabled = Assert.NotNull(formulas.TryGet("player.critical_chance"));
         Assert.False(disabled.Enabled);
         Assert.DoesNotContain(formulas.LoadAllEnabled(), formula => formula.FormulaKey == "player.critical_chance");
-        Assert.Equal(7, formulas.LoadAllEnabled().Count);
+        Assert.Equal(11, formulas.LoadAllEnabled().Count);
     }
 
     // Repositories stamp updated_utc (and a default created_utc) with DateTime.UtcNow at write time.
