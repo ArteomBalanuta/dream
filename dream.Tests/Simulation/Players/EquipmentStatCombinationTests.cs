@@ -180,6 +180,6 @@ public sealed class EquipmentStatCombinationTests
         PlayerCombatant combatant = new(() => Vector3.Zero);
         int before = combatant.Stats.Strength;
         combatant.ApplyEquipment(loadout);
-        Assert.Equal(before + 12, combatant.Stats.Strength);
+        Assert.Equal(before + (3 * EquipmentSlots.Count), combatant.Stats.Strength);
     }
 }

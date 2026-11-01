@@ -130,7 +130,7 @@ public sealed class EquipmentSlotTests
 
             Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, Maul, 101));
             Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, capSlot, 103));
-            foreach (int badTarget in new[] { -1, 99, 104, int.MaxValue, int.MinValue })
+            foreach (int badTarget in new[] { -1, 99, 112, int.MaxValue, int.MinValue })
             {
                 Assert.Equal(InventoryEquipOutcome.TargetOutOfRange, inventory.TryEquip(Player, Maul, badTarget));
             }
@@ -173,7 +173,7 @@ public sealed class EquipmentSlotTests
     [InlineData(-1)]
     [InlineData(0)]
     [InlineData(99)]
-    [InlineData(104)]
+    [InlineData(112)]
     [InlineData(int.MaxValue)]
     public void Unequip_OfANonEquipmentIndex_IsRejectedAsOutOfRange(int slotIndex)
     {

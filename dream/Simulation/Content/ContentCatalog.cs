@@ -272,7 +272,7 @@ public sealed class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
-            optional: ["rolls"]);
+            optional: ["rolls", "footprint"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
@@ -306,6 +306,9 @@ public sealed class ContentCatalog
         ItemRollTable? rolls = properties.TryGetValue("rolls", out JsonElement rollsElement)
             ? ParseRolls($"{path}.rolls", rollsElement)
             : null;
+        ItemFootprint footprint = properties.TryGetValue("footprint", out JsonElement footprintElement)
+            ? ParseFootprint($"{path}.footprint", footprintElement)
+            : ItemFootprint.One;
 
         return new ItemDefinition(
             key,
@@ -317,7 +320,22 @@ public sealed class ContentCatalog
             modifiers,
             equipSlotMask,
             equipSlots,
-            rolls);
+            rolls,
+            footprint);
+    }
+
+    // [columns, rows], each a whole number 1..BagGrid.MaxFootprint. The item is placed by its top-left cell.
+    private static ItemFootprint ParseFootprint(string path, JsonElement element)
+    {
+        ExpectArray(ItemsFileName, path, element);
+        if (element.GetArrayLength() != 2)
+        {
+            throw Fail(ItemsFileName, path, "must be [columns, rows]");
+        }
+
+        int cols = ReadInt(ItemsFileName, $"{path}[0]", element[0], 1, BagGrid.MaxFootprint);
+        int rows = ReadInt(ItemsFileName, $"{path}[1]", element[1], 1, BagGrid.MaxFootprint);
+        return new ItemFootprint((byte)cols, (byte)rows);
     }
 
     // Only the live stats may be modified, Flat only, each at most once, at most StatSheet.MaxModifiersPerSource.
@@ -405,6 +423,14 @@ public sealed class ContentCatalog
                 "OffHand" => EquipmentSlot.OffHand,
                 "Head" => EquipmentSlot.Head,
                 "Body" => EquipmentSlot.Body,
+                "Hands" => EquipmentSlot.Hands,
+                "Feet" => EquipmentSlot.Feet,
+                "Legs" => EquipmentSlot.Legs,
+                "Neck" => EquipmentSlot.Neck,
+                "RingLeft" => EquipmentSlot.RingLeft,
+                "RingRight" => EquipmentSlot.RingRight,
+                "Back" => EquipmentSlot.Back,
+                "Companion" => EquipmentSlot.Companion,
                 _ => throw Fail(ItemsFileName, slotPath, $"unknown equipment slot '{Truncate(name)}'"),
             };
             if ((mask & EquipmentSlots.MaskOf(slot)) != 0)
@@ -686,7 +712,7 @@ public sealed class ContentCatalog
         StringBuilder text = new();
         // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
         // cannot shift into the next field and make two different catalogs hash alike.
-        text.Append("items.v3;kit=").Append(items.StarterKitVersion.ToString(c))
+        text.Append("items.v4;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
@@ -721,6 +747,7 @@ public sealed class ContentCatalog
             }
 
             text.Append('\n');
+            text.Append("foot|").Append(item.Footprint.Cols.ToString(c)).Append('x').Append(item.Footprint.Rows.ToString(c)).Append('\n');
             if (item.Rolls != null)
             {
                 AppendRolls(text, "common", item.Rolls.Common);

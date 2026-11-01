@@ -409,7 +409,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Theory]
     [InlineData(16)]
     [InlineData(99)]
-    [InlineData(104)]
+    [InlineData(112)]
     public void ASlotIndexOutsideTheKnownRanges_IsCountedOnItsOwn(int slotIndex)
     {
         using MigrationTestDatabase db = Migrated();

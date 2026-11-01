@@ -75,6 +75,29 @@ public static class UiSpriteNames
     public const string GlyphCloseNormal = "glyph.close.normal";
     public const string GlyphCloseHover = "glyph.close.hover";
 
+    // Classic HUD iteration 2. Constants only: none is in Required yet, so a build with the old art
+    // still passes UiSpriteTable.Validate. The art workstreams ship them; the gem runtime (WS3) adds
+    // the ones it cannot draw without to Required once they exist.
+    public const string GemMpFull = "gem.mp.full";
+    public const string GemHpMask = "gem.hp.mask";
+    public const string GemHpSpec = "gem.hp.spec";
+    public const string GemMpMask = "gem.mp.mask";
+    public const string GemMpSpec = "gem.mp.spec";
+    public const string GemSettingLeft = "gem.setting.left";
+    public const string GemSettingRight = "gem.setting.right";
+    public const string GemHpSpill = "gem.hp.spill";
+    public const string GemMpSpill = "gem.mp.spill";
+    public const string HudNumSlash = "hudnum.slash";
+    public const string Well1x1 = "well.1x1";
+    public const string Well3x2 = "well.3x2";
+    public const string SilGloves = "sil.gloves";
+    public const string SilBoots = "sil.boots";
+    public const string SilPants = "sil.pants";
+    public const string SilPendant = "sil.pendant";
+    public const string SilRing = "sil.ring";
+    public const string SilWings = "sil.wings";
+    public const string SilPet = "sil.pet";
+
     // Cursors
     public const string CursorPointer = "cursor.pointer";
     public const string CursorPressed = "cursor.pressed";
@@ -86,6 +109,11 @@ public static class UiSpriteNames
 
     // Damage digit sprite "dmg.<d>" for d in 0..9.
     public static string Digit(int d) => DigitNames[d];
+
+    private static readonly string[] HudNumNames = ["hudnum.0", "hudnum.1", "hudnum.2", "hudnum.3", "hudnum.4", "hudnum.5", "hudnum.6", "hudnum.7", "hudnum.8", "hudnum.9"];
+
+    // Bar numeral sprite "hudnum.<d>" for d in 0..9 (not in Required yet).
+    public static string HudNum(int d) => HudNumNames[d];
 
     // Item icon sprite for an ItemKind such as "tool.torch": "item.tool.torch".
     public static string Item(string itemKind) => "item." + itemKind;

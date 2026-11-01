@@ -207,7 +207,7 @@ public class HudViewBuilderTests
         builder.Refresh(Status(), null);
 
         Assert.Null(builder.View.Inventory);
-        Assert.Equal(4, builder.View.Equipment.Length);
+        Assert.Equal(EquipmentSlots.Count, builder.View.Equipment.Length);
         Assert.All(builder.View.Backpack, slot => Assert.False(slot.HasIcon));
     }
 

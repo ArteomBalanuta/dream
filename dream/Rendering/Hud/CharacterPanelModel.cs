@@ -61,6 +61,14 @@ public static class CharacterPanelModel
         EquipmentSlot.OffHand => "Off Hand",
         EquipmentSlot.Head => "Head",
         EquipmentSlot.Body => "Body",
+        EquipmentSlot.Hands => "Hands",
+        EquipmentSlot.Feet => "Feet",
+        EquipmentSlot.Legs => "Legs",
+        EquipmentSlot.Neck => "Neck",
+        EquipmentSlot.RingLeft => "Left Ring",
+        EquipmentSlot.RingRight => "Right Ring",
+        EquipmentSlot.Back => "Back",
+        EquipmentSlot.Companion => "Companion",
         _ => "Slot"
     };
 

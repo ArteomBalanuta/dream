@@ -446,12 +446,12 @@ public sealed class InventoryWindowTests : IDisposable
         _scene.Items[1] = InventoryScene.Item(1, "gem.amber");
         _scene.Refresh();
 
-        foreach (int target in new[] { -5, 16, 99, 104, int.MaxValue, int.MinValue })
+        foreach (int target in new[] { -5, 16, 99, 112, int.MaxValue, int.MinValue })
         {
             Assert.Equal(InventoryWindow.DropVerdict.None, InventoryWindow.TryResolveDrop(_scene.View, 1, target, out _));
         }
 
-        foreach (int source in new[] { -1, 16, 99, 104, int.MaxValue })
+        foreach (int source in new[] { -1, 16, 99, 112, int.MaxValue })
         {
             Assert.Equal(InventoryWindow.DropVerdict.None, InventoryWindow.TryResolveDrop(_scene.View, source, 3, out _));
         }

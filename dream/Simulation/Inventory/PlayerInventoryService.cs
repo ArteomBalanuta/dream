@@ -20,6 +20,9 @@ public enum InventoryEquipOutcome
     ItemEquipped = 7,
     ItemMismatch = 8,
     Throttled = 9,
+    // The item does not fit there: out of the bag's bounds, over two or more items, nowhere for a
+    // swapped item to go (BagGrid.PlanMove Blocked), or an unequip target cell that is not free.
+    NoRoom = 10,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id

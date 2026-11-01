@@ -378,7 +378,8 @@ public sealed class EquipmentSqliteActionTests
         }
 
         EquipAll();
-        foreach (EquipmentSlot slot in Enum.GetValues<EquipmentSlot>())
+        // The four slots this test fills with gear; the other eight hold nothing here.
+        foreach (EquipmentSlot slot in Enum.GetValues<EquipmentSlot>().Take(gear.Length))
         {
             Assert.Equal(InventoryEquipOutcome.Equipped, Send(CharacterPanelModel.EquipmentMenu(slot).Single().Action));
         }

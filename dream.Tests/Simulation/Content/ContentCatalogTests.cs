@@ -227,7 +227,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"MovementSpeed\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": 101", "outside the range")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": -1", "outside the range")]
-    [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": [\"Feet\"]", "unknown equipment slot")]
+    [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": [\"Wrist\"]", "unknown equipment slot")]
     [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": [\"OffHand\", \"OffHand\"]", "duplicate equipment slot")]
     [InlineData("\"equipSlots\": [\"OffHand\"]", "\"equipSlots\": []", "at least one equipment slot")]
     [InlineData("\"equipSlots\": [\"OffHand\"],", "", "missing required property")]

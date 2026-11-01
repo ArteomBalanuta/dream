@@ -21,7 +21,7 @@ public readonly record struct HudWorldLabel(Vector2 Screen, string Name, string 
 public sealed class HudView
 {
     public const int BackpackSlots = 16;
-    public const int WornSlots = 4;
+    public const int WornSlots = 12;
 
     private static readonly IReadOnlyList<FloatingCombatTextRenderState> NoCombatText = Array.Empty<FloatingCombatTextRenderState>();
     private static readonly IReadOnlyList<HudWorldLabel> NoLabels = Array.Empty<HudWorldLabel>();
@@ -37,7 +37,8 @@ public sealed class HudView
     // 16 backpack slots. An empty slot has Item.ItemInstanceId == 0 and HasIcon false.
     public HudItemView[] Backpack { get; set; } = new HudItemView[BackpackSlots];
 
-    // 4 worn slots in equipment order (MainHand, OffHand, Head, Body).
+    // 12 worn slots in EquipmentSlot order (MainHand, OffHand, Head, Body, Hands, Feet, Legs, Neck,
+    // RingLeft, RingRight, Back, Companion).
     public HudItemView[] Worn { get; set; } = new HudItemView[WornSlots];
 
     public Vector3 PlayerPosition { get; set; }
@@ -54,4 +55,17 @@ public sealed class HudView
     public IReadOnlyList<HudWorldLabel> Labels { get; set; } = NoLabels;
 
     public bool InventoryOpen { get; set; }
+
+    // Gem animation, set once a frame by ClassicHudSurface.Draw (from a frame time capped at 0.1 s) and
+    // only read by the panels, so the status bar allocates nothing to animate. HealthLevel and ManaLevel
+    // are the eased fill of each gem, 0..1 (what is drawn, not the raw value). AnimationSeconds is the
+    // running time the gem phase and glint sweep derive from. GemPulse is the low-health pulse, 0..1,
+    // non-zero only under 25% health.
+    public float HealthLevel { get; set; }
+
+    public float ManaLevel { get; set; }
+
+    public float AnimationSeconds { get; set; }
+
+    public float GemPulse { get; set; }
 }

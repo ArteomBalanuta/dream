@@ -106,14 +106,17 @@ public sealed class CharacterPanelModelTests
     }
 
     [Fact]
-    public void SlotRows_AreTheFourSlotsInOrder_WithTheirItems()
+    public void SlotRows_AreTheTwelveSlotsInOrder_WithTheirItems()
     {
         CharacterSlotRow[] rows = CharacterPanelModel.BuildSlotRows(FullInventory());
 
-        Assert.Equal([EquipmentSlot.MainHand, EquipmentSlot.OffHand, EquipmentSlot.Head, EquipmentSlot.Body], rows.Select(r => r.Slot));
-        Assert.Equal([100, 101, 102, 103], rows.Select(r => r.SlotIndex));
-        Assert.Equal(["Blade", "Lantern", "Cap", "Vest"], rows.Select(r => r.ItemLabel));
-        Assert.Equal(["Main Hand", "Off Hand", "Head", "Body"], rows.Select(r => r.SlotLabel));
+        Assert.Equal(Enum.GetValues<EquipmentSlot>(), rows.Select(r => r.Slot));
+        Assert.Equal(Enumerable.Range(100, 12), rows.Select(r => r.SlotIndex));
+        Assert.Equal(["Blade", "Lantern", "Cap", "Vest"], rows.Take(4).Select(r => r.ItemLabel));
+        Assert.All(rows.Skip(4), row => Assert.Null(row.Item));
+        Assert.Equal(
+            ["Main Hand", "Off Hand", "Head", "Body", "Hands", "Feet", "Legs", "Neck", "Left Ring", "Right Ring", "Back", "Companion"],
+            rows.Select(r => r.SlotLabel));
     }
 
     [Fact]
@@ -124,7 +127,7 @@ public sealed class CharacterPanelModelTests
             [
                 new InventorySlotSnapshot(100, Item(1, "Sneaky main")),
                 new InventorySlotSnapshot(99, Item(2, "Below")),
-                new InventorySlotSnapshot(104, Item(3, "Above")),
+                new InventorySlotSnapshot(112, Item(3, "Above")),
                 new InventorySlotSnapshot(int.MinValue, Item(4, "Min")),
                 new InventorySlotSnapshot(102, null)
             ]);
@@ -133,7 +136,7 @@ public sealed class CharacterPanelModelTests
 
         Assert.All(rows, row => Assert.Null(row.Item));
         Assert.All(rows, row => Assert.Equal("Empty", row.ItemLabel));
-        Assert.Equal(4, CharacterPanelModel.BuildSlotRows(null).Length);
+        Assert.Equal(EquipmentSlots.Count, CharacterPanelModel.BuildSlotRows(null).Length);
     }
 
     [Theory]
@@ -188,8 +191,11 @@ public sealed class CharacterPanelModelTests
         Assert.Equal([EquipmentSlot.MainHand, EquipmentSlot.OffHand], CharacterPanelModel.AllowedSlots(3));
         Assert.Equal([EquipmentSlot.Body], CharacterPanelModel.AllowedSlots(8));
         Assert.Empty(CharacterPanelModel.AllowedSlots(0));
-        Assert.Empty(CharacterPanelModel.AllowedSlots(-16));
-        Assert.Equal(4, CharacterPanelModel.AllowedSlots(-1).Count);
+        Assert.Empty(CharacterPanelModel.AllowedSlots(-4096));
+        Assert.Equal(
+            [EquipmentSlot.Hands, EquipmentSlot.Feet, EquipmentSlot.Legs, EquipmentSlot.Neck, EquipmentSlot.RingLeft, EquipmentSlot.RingRight, EquipmentSlot.Back, EquipmentSlot.Companion],
+            CharacterPanelModel.AllowedSlots(-16 & 0xFFF));
+        Assert.Equal(EquipmentSlots.Count, CharacterPanelModel.AllowedSlots(-1).Count);
     }
 
     [Fact]
