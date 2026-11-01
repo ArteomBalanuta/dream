@@ -26,7 +26,7 @@ public class JoinAcceptedWorldDescriptorCodecTests
         string json = Encode(join, 1);
 
         Assert.Equal(
-            "{\"protocolVersion\":13,\"messageKind\":\"server.join-accepted\",\"sequence\":1,\"payload\":" +
+            "{\"protocolVersion\":14,\"messageKind\":\"server.join-accepted\",\"sequence\":1,\"payload\":" +
             "{\"sessionId\":\"session-a\",\"actorId\":101,\"currentServerTick\":1234,\"world\":" + DescriptorJson + "}}",
             json);
     }
@@ -68,17 +68,17 @@ public class JoinAcceptedWorldDescriptorCodecTests
     public void AV6Peer_IsRefused_ByDecodeAndEncode()
     {
         JoinAcceptedMessage join = new("session-a", 101, 1234, InitialWorld: null);
-        string v6 = Encode(join, 1).Replace("\"protocolVersion\":13", "\"protocolVersion\":6", StringComparison.Ordinal);
+        string v6 = Encode(join, 1).Replace("\"protocolVersion\":14", "\"protocolVersion\":6", StringComparison.Ordinal);
 
         InvalidOperationException decodeError = Assert.Throws<InvalidOperationException>(() => Codec.Decode(Encoding.UTF8.GetBytes(v6)));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 13.", decodeError.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 14.", decodeError.Message);
         Assert.Throws<InvalidOperationException>(() => Codec.Encode(new TransportEnvelope(6, join.MessageKind, 1), join));
 
         Assert.Equal(
-            "Server uses protocol v6; this client uses v13.",
+            "Server uses protocol v6; this client uses v14.",
             ProtocolVersionMismatchException.FromServer(6, decodeError).Message);
         Assert.Equal(
-            "Client uses protocol v6; this server uses v13.",
+            "Client uses protocol v6; this server uses v14.",
             ProtocolVersionMismatchException.FromClient(6, decodeError).Message);
     }
 
@@ -98,8 +98,8 @@ public class JoinAcceptedWorldDescriptorCodecTests
 
         string json = Encode(snapshot, 9);
 
-        Assert.StartsWith("{\"protocolVersion\":13,", json, StringComparison.Ordinal);
-        Assert.Equal(SnapshotGoldenV6.Replace("\"protocolVersion\":6", "\"protocolVersion\":13", StringComparison.Ordinal), json);
+        Assert.StartsWith("{\"protocolVersion\":14,", json, StringComparison.Ordinal);
+        Assert.Equal(SnapshotGoldenV6.Replace("\"protocolVersion\":6", "\"protocolVersion\":14", StringComparison.Ordinal), json);
     }
 
     // What the v6 codec wrote for this snapshot: the payload code is untouched by v7.

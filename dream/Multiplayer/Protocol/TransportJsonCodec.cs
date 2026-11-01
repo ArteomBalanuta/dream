@@ -284,7 +284,7 @@ public sealed class TransportJsonCodec : IProtocolCodec
     {
         return messageKind is "server.hello" or "server.join-accepted" or "server.join-rejected"
             or "server.snapshot" or "server.action" or WorldChunkMessage.Kind or TerrainChunkMessage.Kind
-            or InventoryPushMessage.Kind;
+            or InventoryPushMessage.Kind or ServerChatMessage.Kind or ServerCharacterList.Kind;
     }
 
     private DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload, bool fromClient)
@@ -397,6 +397,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
             WorldChunkMessage.Kind => DeserializeMessage<WorldChunkMessage>(ref payloadReader, hasPayload),
             TerrainChunkMessage.Kind => DeserializeMessage<TerrainChunkMessage>(ref payloadReader, hasPayload),
             InventoryPushMessage.Kind => DeserializeMessage<InventoryPushMessage>(ref payloadReader, hasPayload),
+            ClientChatMessage.Kind => DeserializeMessage<ClientChatMessage>(ref payloadReader, hasPayload),
+            ServerChatMessage.Kind => DeserializeMessage<ServerChatMessage>(ref payloadReader, hasPayload),
+            ClientCharacterListRequest.Kind => DeserializeMessage<ClientCharacterListRequest>(ref payloadReader, hasPayload),
+            ServerCharacterList.Kind => DeserializeMessage<ServerCharacterList>(ref payloadReader, hasPayload),
             _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
@@ -409,7 +413,8 @@ public sealed class TransportJsonCodec : IProtocolCodec
     [
         "server.snapshot", "player.command", "server.action", "player.action", "client.hello",
         "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected",
-        WorldChunkMessage.Kind, TerrainChunkMessage.Kind, InventoryPushMessage.Kind
+        WorldChunkMessage.Kind, TerrainChunkMessage.Kind, InventoryPushMessage.Kind,
+        ClientChatMessage.Kind, ServerChatMessage.Kind, ClientCharacterListRequest.Kind, ServerCharacterList.Kind
     ];
 
     private static readonly byte[][] KnownMessageKindsUtf8 = Array.ConvertAll(KnownMessageKinds, System.Text.Encoding.UTF8.GetBytes);
