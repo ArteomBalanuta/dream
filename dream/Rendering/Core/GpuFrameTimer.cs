@@ -8,7 +8,8 @@ public enum GpuTimerSection
 {
     World = 0,
     Actors = 1,
-    Hud = 2
+    Hud = 2,
+    Effects = 3
 }
 
 // The GL query calls GpuFrameTimer makes, behind a seam so the ring logic runs without a context.
@@ -40,13 +41,14 @@ public readonly record struct GpuFrameTimings(
     double WorldMilliseconds,
     double ActorsMilliseconds,
     double HudMilliseconds,
-    long PrimitivesGenerated)
+    long PrimitivesGenerated,
+    double EffectsMilliseconds = 0d)
 {
     public bool HasValue => FrameNumber > 0;
 }
 
 // GPU timing without pipeline stalls. Each frame uses one slot of a small ring: a GL_TIME_ELAPSED
-// query per section (world, actors, HUD), issued sequentially, plus one GL_PRIMITIVES_GENERATED
+// query per section (world, actors, effects, HUD), issued sequentially, plus one GL_PRIMITIVES_GENERATED
 // query around the whole frame. A slot is read back no sooner than MinReadLatencyFrames frames
 // later, and only once every query in it reports QUERY_RESULT_AVAILABLE. If a slot is still
 // pending when the ring comes back around to it, its result is dropped (MissedFrames) and the
@@ -56,7 +58,7 @@ public sealed class GpuFrameTimer : IDisposable
 {
     public const int DefaultRingSize = 4;
     public const int MinReadLatencyFrames = 2;
-    private const int SectionCount = 3;
+    private const int SectionCount = 4;
     private const double NanosecondsPerMillisecond = 1_000_000d;
 
     private readonly IGpuQueryApi _api;
@@ -247,7 +249,8 @@ public sealed class GpuFrameTimer : IDisposable
             ReadMilliseconds(slot, GpuTimerSection.World),
             ReadMilliseconds(slot, GpuTimerSection.Actors),
             ReadMilliseconds(slot, GpuTimerSection.Hud),
-            slot.PrimitivesIssued ? _api.GetResult(slot.PrimitivesQuery) : 0L);
+            slot.PrimitivesIssued ? _api.GetResult(slot.PrimitivesQuery) : 0L,
+            ReadMilliseconds(slot, GpuTimerSection.Effects));
         slot.Pending = false;
         ResolvedFrames++;
         return true;

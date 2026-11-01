@@ -47,7 +47,9 @@ public readonly record struct FramePerformanceSnapshot(
     // RenderCounters for the previous complete frame.
     int DrawCalls = 0,
     int ProgramBinds = 0,
-    int UniformUploads = 0)
+    int UniformUploads = 0,
+    // Appended last so positional callers keep compiling.
+    double GpuEffectsMilliseconds = 0d)
 {
     public static FramePerformanceSnapshot Empty => default;
 
@@ -91,6 +93,7 @@ public readonly record struct FramePerformanceSnapshot(
         GpuWorldMilliseconds > 0d ||
         GpuActorsMilliseconds > 0d ||
         GpuHudMilliseconds > 0d ||
+        GpuEffectsMilliseconds > 0d ||
         GpuPrimitives > 0 ||
         DrawCalls > 0 ||
         ProgramBinds > 0 ||
@@ -125,7 +128,7 @@ public readonly record struct FramePerformanceSnapshot(
             11 => $"Collision Bodies: {CollisionBodyCount}",
             12 => $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms",
             13 => $"Pre-draw: {PreDrawMilliseconds:0.00} ms, clear {PreDrawClearMilliseconds:0.00} ms, capture {PreDrawCaptureMilliseconds:0.00} ms, remote states {PreDrawRemoteStatesMilliseconds:0.00} ms",
-            14 => $"GPU: world {GpuWorldMilliseconds:0.00} ms, actors {GpuActorsMilliseconds:0.00} ms, hud {GpuHudMilliseconds:0.00} ms, prims {GpuPrimitives}, draws {DrawCalls}, programs {ProgramBinds}, uniforms {UniformUploads}",
+            14 => $"GPU: world {GpuWorldMilliseconds:0.00} ms, actors {GpuActorsMilliseconds:0.00} ms, fx {GpuEffectsMilliseconds:0.00} ms, hud {GpuHudMilliseconds:0.00} ms, prims {GpuPrimitives}, draws {DrawCalls}, programs {ProgramBinds}, uniforms {UniformUploads}",
             _ => throw new ArgumentOutOfRangeException(nameof(index))
         };
     }
@@ -151,7 +154,7 @@ public readonly record struct FramePerformanceSnapshot(
             11 => HudText.TryWrite(destination, $"Collision Bodies: {CollisionBodyCount}", out bytesWritten),
             12 => HudText.TryWrite(destination, $"Server: tick {ServerTickMilliseconds:0.00} ms, snapshot {ServerSnapshotMilliseconds:0.00} ms, broadcast {ServerBroadcastMilliseconds:0.00} ms", out bytesWritten),
             13 => HudText.TryWrite(destination, $"Pre-draw: {PreDrawMilliseconds:0.00} ms, clear {PreDrawClearMilliseconds:0.00} ms, capture {PreDrawCaptureMilliseconds:0.00} ms, remote states {PreDrawRemoteStatesMilliseconds:0.00} ms", out bytesWritten),
-            14 => HudText.TryWrite(destination, $"GPU: world {GpuWorldMilliseconds:0.00} ms, actors {GpuActorsMilliseconds:0.00} ms, hud {GpuHudMilliseconds:0.00} ms, prims {GpuPrimitives}, draws {DrawCalls}, programs {ProgramBinds}, uniforms {UniformUploads}", out bytesWritten),
+            14 => HudText.TryWrite(destination, $"GPU: world {GpuWorldMilliseconds:0.00} ms, actors {GpuActorsMilliseconds:0.00} ms, fx {GpuEffectsMilliseconds:0.00} ms, hud {GpuHudMilliseconds:0.00} ms, prims {GpuPrimitives}, draws {DrawCalls}, programs {ProgramBinds}, uniforms {UniformUploads}", out bytesWritten),
             _ => throw new ArgumentOutOfRangeException(nameof(index))
         };
     }

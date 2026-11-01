@@ -65,8 +65,9 @@ public partial class PlayScene
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
-        // Actors runs from the enemies through the debug and viewmodel draws, up to the HUD.
-        // BeginSection ends the open section first, so the timer queries never nest.
+        // Actors runs from the enemies through the sky, then the Effects section takes over. A
+        // section cannot reopen within a frame, so the debug and viewmodel draws that follow are
+        // untimed. BeginSection ends the open section first, so the timer queries never nest.
         gpuTimer.BeginSection(GpuTimerSection.Actors);
         long enemyDrawStart = Stopwatch.GetTimestamp();
         _render.Enemies.DrawAtRenderTick(
@@ -109,6 +110,8 @@ public partial class PlayScene
         SkyRenderer skyRenderer = _sky ?? throw new ObjectDisposedException(nameof(PlayScene));
         skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
 
+        DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);
+
         DedicatedServerPerformanceSnapshot serverPerformance =
             _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
         FramePerformanceSnapshot performance = presentation.Performance.WithRenderStats(
@@ -144,6 +147,7 @@ public partial class PlayScene
             PreDrawRemoteStatesMilliseconds = _lastRemotePlayerStatesMilliseconds,
             GpuWorldMilliseconds = gpuTimer.Latest.WorldMilliseconds,
             GpuActorsMilliseconds = gpuTimer.Latest.ActorsMilliseconds,
+            GpuEffectsMilliseconds = gpuTimer.Latest.EffectsMilliseconds,
             GpuHudMilliseconds = gpuTimer.Latest.HudMilliseconds,
             GpuPrimitives = gpuTimer.Latest.PrimitivesGenerated,
             DrawCalls = _lastFrameCounters.DrawCalls,

@@ -126,7 +126,9 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
         const int WaveH3HudSnapshotGrowthBytes = 16;
         // Wave I3: IsDead and RespawnSeconds in HudStatusSnapshot (death overlay), +8 B.
         const int WaveI3HudDeathGrowthBytes = 8;
-        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
+        // FX wave: GpuEffectsMilliseconds (one double) in the FramePerformanceSnapshot, +8 B.
+        const int FxWaveEffectsTimingGrowthBytes = 8;
+        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes + FxWaveEffectsTimingGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
             captureBytes <= budget,
             $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");
