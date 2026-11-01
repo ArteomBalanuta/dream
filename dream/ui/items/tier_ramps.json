@@ -1,0 +1,67 @@
+{
+ "alpha": "straight",
+ "extrude": 0,
+ "image": "tier_ramps.png",
+ "kind": "ramp",
+ "meta": {},
+ "origin": "top-left",
+ "scale": 4,
+ "size": [
+  256,
+  48
+ ],
+ "sprites": {
+  "ramp.chrome": {
+   "h": 16,
+   "meta": {
+    "row": 2
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "x",
+   "w": 256,
+   "x": 0,
+   "y": 32
+  },
+  "ramp.enhanced": {
+   "h": 16,
+   "meta": {
+    "row": 1
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "x",
+   "w": 256,
+   "x": 0,
+   "y": 16
+  },
+  "ramp.rare": {
+   "h": 16,
+   "meta": {
+    "rim": [
+     "#F1C385",
+     "#E4C2BC",
+     "#B19FC9"
+    ],
+    "row": 0
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "x",
+   "w": 256,
+   "x": 0,
+   "y": 0
+  }
+ },
+ "version": 1,
+ "yDown": true
+}
