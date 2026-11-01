@@ -79,13 +79,12 @@ public class WorldLabelsPanelTests
             WorldLabelsPanel.Build(c, v, l);
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 50; i++)
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
         {
             WorldLabelsPanel.Build(c, v, l);
-        }
+        });
 
-        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0L, bytes);
         Assert.True(c.Count > 10);
     }
 }

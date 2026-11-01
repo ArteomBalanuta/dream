@@ -176,13 +176,12 @@ public sealed class CharacterWindowTests : IDisposable
         CountingCanvas canvas = new();
         CharacterWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int n = 0; n < 5; n++)
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
         {
             CharacterWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
-        }
+        });
 
-        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0L, bytes);
     }
 
     private sealed class CountingCanvas : IUiCanvas

@@ -283,14 +283,12 @@ public class StatusBarPanelTests
             StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 50; i++)
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
         {
             StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
-        }
+        });
 
-        long after = GC.GetAllocatedBytesForCurrentThread();
-        Assert.Equal(0L, after - before);
+        Assert.Equal(0L, bytes);
         Assert.True(c.Count > 100);
     }
 }

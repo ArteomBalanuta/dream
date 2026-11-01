@@ -235,13 +235,12 @@ public class CombatTextPanelTests
         NullCanvas canvas = new();
         CombatTextPanel.Build(canvas, view, Layout1080, table);
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 50; i++)
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
         {
             CombatTextPanel.Build(canvas, view, Layout1080, table);
-        }
+        });
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0L, bytes);
         Assert.True(canvas.Glyphs > 0);
     }
 

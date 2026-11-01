@@ -433,14 +433,13 @@ public sealed class ItemOverlaysTests : IDisposable
             ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int n = 0; n < 10; n++)
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
         {
             InventoryWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
             ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
-        }
+        });
 
-        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0L, bytes);
     }
 
     // ---- tier style -------------------------------------------------------------------------
