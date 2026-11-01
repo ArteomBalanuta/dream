@@ -191,3 +191,68 @@ Done after fix loop 2, at the user's request (S5). It changes gameplay, so some 
 - **Respawn into rubble: a bug, fixed.** A fractured cube leaves no `Cube` in its cell, so `ResolveRespawnPosition` saw a free cell and put the player at the spawn inside the rubble pieces (tests failed with `respawned at (5, 1.5, 5)` before the fix). Whether the physics would then have pushed the player out was not measured. `ResolveRespawnPosition` now also lifts while a piece's box overlaps the body box (one cell wide, two cells high from the body cell); pieces are read with `Map.CaptureFracturePiecesInto`, so a piece that moved out of its origin cell still counts. Tests: `PlayerRespawnTests.ResolveRespawnPosition_LiftsPastRubbleThePiecesOfAFracturedCube_WhichLeftNoCubeInItsCell` (3 cases) and `ResolveRespawnPosition_IgnoresRubbleFarFromTheSpawn`.
 - **Stale queued result after a rejoin: real, fixed.** With a snapshot interval of 40 ticks, an inventory result queued before a leave reached the rejoined connection of the same session id after `JoinAccepted` (join at message 1, stale result at 3). In that run the client's inventory still equalled the server's, because nothing can change a left character's inventory in between, so no wrong inventory was shown; but the old action sequence went through `ObserveActionResult` and the applier of the new session. `ReleaseConnection` now purges the session's queued results (`PurgePendingActionResults`), and `DrainPendingActionResultsInto` takes the tick lock so a purge never reorders a drain. Test: `WaveIAdversarialLoopbackTests.AnInventoryResultQueuedBeforeALeave_NeverReachesTheRejoinedSession_AndItsInventoryIsRight` (failed before the purge).
 - **Not touched.** Tick goldens, checksum goldens and byte pins (no simulation path changed; respawn position changes only when rubble is at the spawn). The wolf stand-off (S5) was a separate change: see "Wolf bite and spawn protection" above.
+
+## Tester round 4: tip `69e68ff` (wolf bite, spawn protection, notice placement, rubble lift, purge on leave)
+
+Tester, 2026-11-01. No production code changed (the comparison builds carry compile-only edits in scratch worktrees, see below). Tests added and committed: `WolfBiteAdversarialTests` (13 methods, 14 cases) and `WolfBiteLoopbackTests` (1).
+
+### Release measurements (`DREAM_LOAD_TEST=1`)
+
+Base `5e66291` against tip `69e68ff`, **same test set**: the tip's `dream.Tests` copied into a detached worktree at `5e66291`, with two compile-only edits in that scratch copy (`PlayerRespawnRules.SpawnProtectionTicks = 192` added, `AddLootNotice` made `internal`), so both test assemblies hold the same tests. One fresh `dotnet test <dll>` process per sample (Players32, Smoke8, Light8, both kill-burst tests), 4 rounds, order alternated every round, nothing else running.
+
+| Measurement | Gate | Base `5e66291` (4 runs) | Tip `69e68ff` (4 runs) | Result |
+| --- | --- | --- | --- | --- |
+| Tick allocation (`RespawnAllocationTests`, `WorldSessionRuntimeEquipmentAllocationTests`, `WorldSessionRuntimeTickAllocationTests`, `AHitWithArmor40_AllocatesNothing`, `WolfBiteAndSpawnProtectionTests` incl. the protected-tick allocation case; tick goldens, checksum goldens, wolf interval bits) | 0 B | n/a | 66 of 66 passed, 3 rounds | pass |
+| Kill burst p99, with a sure drop | 1.25 x C0 fight-only p99 (about 0.21 - 0.24 ms) | 0.23, 0.26, 0.25, 0.21 ms | 0.26, 0.37, 0.21, 0.21 ms | test passed all 8 runs; tip median 0.235 vs 0.24; one tip run at 0.37 ms |
+| Kill burst, worst single tick | none | 4.74, 4.75, 4.73, 4.77 ms | 4.99, 4.87, 4.91, 4.89 ms | tip about +0.15 ms (+3%), stable |
+| Fight-only p99 | n/a | 0.21, 0.20, 0.21, 0.18 ms | 0.19, 0.20, 0.18, 0.18 ms | equal |
+| Kill burst queue drain / failed writes | 100 ms / 0 | 0.2 - 0.4 ms / 0 | 0.3 ms / 0 | pass |
+| Smoke8 tick-loop p99 | test guard | 1.60, 1.19, 1.03, 1.52 ms (median 1.36) | 1.94, 1.08, 1.68, 1.60 ms (median 1.64) | pass, within noise |
+| Light8 tick-loop p99 | test guard | 0.37, 0.37, 0.39, 0.60 ms (median 0.38) | 0.70, 0.55, 0.60, 0.57 ms (median 0.59) | pass; tip about 0.2 ms higher here |
+| Players32 tick-loop p99 | test guard | 10.21, 11.25, 10.72, 11.82 ms (median 11.0) | 8.00, 11.25, 9.72, 10.72 ms (median 10.2) | pass, 0 dropped ticks |
+
+Smoke8, Light8, Players32 and both kill-burst tests passed in all 8 runs.
+
+- **Does taking `_authoritySync` in the drain hurt? No.** Tip against the same tip with that lock removed (scratch worktree, dll swapped into a copy of the tip test folder), Smoke8 and Light8, 5 alternating rounds. Light8 p99: tip 0.35, 0.63, 0.41, 0.50, 0.39 ms (median 0.41); no lock 0.26, 0.57, 0.55, 0.52, 0.55 ms (median 0.55). Smoke8 p99: tip 0.98, 1.76, 1.45, 1.08, 1.19; no lock 0.89, 4.68, 1.76, 1.94, 1.38. The lock is not what moved Light8.
+- **Do chasing, biting wolves move tick cost? Slightly at most.** The Light8 gap to the base (0.2 ms at p99, p50 equal at about 0.24 ms) is inside the spread between two sessions of the same tip (0.41 median in the lock runs, 0.59 here), so it is not established. Nothing was profiled.
+- Worst tick in the kill burst: +0.15 ms, consistent across 4 and 4 runs; cause not looked into.
+
+### Soak
+
+`ServerLoadTests.Soak`, Release, 1,500 s instead of 1,800 s (`DREAM_LOAD_DURATION_SECONDS=1500`), the tip test assembly, 8 bots joining and leaving every few seconds, 4 enemies (the Wolf bites now). Passed, 25 m 1 s. 307 of 307 joins, 0 connect failures, 0 rejected, 0 server connection errors. 64.0 ticks/s, 0 dropped ticks. Tick-loop p50 / p95 / p99 / max 1.315 / 2.604 / 5.683 / 41.144 ms (the 41 ms max and a worst one-second p99 of 51 ms fall in the time I ran the real-process checks next to it). Checkpoints 300 written, 0 failed; persistence writes 12,002, 0 failed, max queue 8. Managed heap after full GC 57.7 MB after warm-up, 55.1 MB at the end (guard +5%). Peak working set 299.8 MB. GC gen0 / gen1 / gen2 125 / 71 / 48. **Not confirmed:** whether the bots were bitten at all; the report holds no health or death counts, so "with biting wolves" only means the tip's wolves were in the world.
+
+### Real processes (loopback only)
+
+`dream.exe --server` listens on **all interfaces** (`ServerBootstrap.RunServerModeAsync`: `new TcpServerTransport(IPAddress.Any, DefaultPort)`, banner "listening on 0.0.0.0:5057"). Earlier waves ran it that way. This round did not: `lbhost` (scratch, `scratchpad/wave-h-e2e/lbhost`) is the same host, service, codec, framer and options with `IPAddress.Loopback`, started as `dotnet app/lbhost.dll` from the same `app` folder (rebuilt in Release with `dotnet build dream/dream.csproj -c Release -o app`, so `dream.exe` is at the same path). It is not the `dream.exe --server` entry point. The clients are the console driver over the real `RemoteClientSession` with `DREAM_IDENTITY_FILE`, and the hostile client on raw sockets.
+
+`flow_i.py` on the 4 `legacy-e` copies: **33 of 33 on each, 132 of 132**. The 28 earlier checks plus 5 new ones:
+
+- A player that joins dead and respawns loses no health in the first 185 ticks after the respawn and is then bitten: first bite 194 ticks after the respawn snapshot on every database, 3,016 to 3,047 ms later. Snapshots come every 2 ticks, so 193 is the true first possible bite.
+- A player that stands still at (7, 5) is bitten 36 to 38 ticks after the idle starts.
+- The loot, full-backpack, watcher and hostile-dead checks were unchanged and pass with wolves that bite.
+
+### Idle new player on a fresh world
+
+Fresh database, new identity, 100 health, joins at the spawn (5, 5) and stands still; the day Wolf spawns 2.5 m away. `lbhost` Release, loopback, 100 s each, day (08:00 start) and night (`DREAM_TIME_OF_DAY=22:00`; the Dire Wolf is listed at level 3 but did not bite in the 100 s).
+
+- **Day and night are the same:** first bite about 9 ticks after the join (hp 88), then 12 damage every 68 ticks (1.06 s). **Dead at server tick 573, about 8.6 s after the join snapshot (tick 22).**
+- **It is a repeating loop.** Respawn after 320 ticks (5.0 s), 3 s protected, first bite 194 ticks after the respawn, dead again 8.5 s later. Deaths at ticks 573, 1631, 2687, 3744, 4802, 5858: **4 deaths in the first minute, 6 in 100 s, one every 1,057 ticks (16.5 s)**: 5 s dead, 3 s protected, 8.5 s dying. An idle player never gets out of it. Balance not changed.
+
+### Adversarial tests (all pass)
+
+- `RubbleAtTheSpawn_AWolfBesideIt_...`: respawn lifted clear of rubble, 192 protected ticks with a wolf 1.3 m away, bitten afterwards.
+- `ProtectionDoesNotSurviveALeaveAndRejoin_...` and `AProtectedPlayerWhoLeavesAndRejoins_IsNotProtectedOnReturn_OverRealTcp`: the rejoined player is a normal target within 1 step; a later death gets a full new window. `LeavingWhileDeadAndRejoining_...`: fresh 321-tick wait.
+- `TwoSeats_HaveTheirOwnWindows_...`: A and B respawn 200 ticks apart, one wolf: A is bitten after its own window while B stays untouched through its own.
+- `AnotherKillWhileDeadAndWaiting_...`, `KilledInsideTheWindow_...`: a repeated kill neither shortens nor extends the wait; a kill inside the window gives a full wait and a new window.
+- `AWolfAtOrInsideTheSeparationDistance_BesideACube_...` (gaps 0.95, 0.8, 0.5, 0): the wolf ends 0.95 m from the player, never inside the wall, no NaN, the player is not pushed into the wall, and it bites. `APlayerOnAStep_...`: a player on a 2-cube step at (22.5, 3.5, 20.5) is **not reached**: the wolf stays Chasing at its foot (x 20.69), no bite, no NaN. That is the pre-existing "wolves cannot climb" rule, now a safe spot.
+- `ACampedPlayerAtNight_...` (Wolf and Dire Wolf camped at the spawn, 4,000 ticks of a 5-minute day): 4 cycles, deaths at 219, 924, 2018, 2765, each respawn exactly 320 ticks after the death, health full at each respawn and unchanged for the 192 ticks, no death inside a window; a bystander killed at 1,212 is back at 1,533 (321 ticks) with full health.
+- `FivePlayersAroundOneWolf_...`: 15 bite ticks in 1,000 ticks against a limit of 16 (interval 1.05 s), one player took them all, positions finite.
+- `TwoServersInLockstep_AgreeThroughTwoSeatsDyingRespawningAndRejoining`: checksums equal over 1,800 ticks.
+
+### Full suite
+
+One run, Debug, quiet machine, 3 m 5 s: **4,756 passed, 0 failed, 46 skipped, 4,802 total.**
+
+### Not verified
+
+`dream.exe --server` itself (it binds all interfaces), a real `PlayScene.Update`, the picture on screen, a kill while a resync (not a join) transfer is in flight, bots being bitten in the soak, the 30-minute soak length (25 minutes run), the stored-world soaks.
