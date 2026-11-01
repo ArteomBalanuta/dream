@@ -234,6 +234,33 @@ public class FxPassContractTests
     }
 
     [Fact]
+    public void PlayScene_Runs_Without_Effects_When_The_Renderer_Cannot_Be_Created()
+    {
+        string source = ReadSource("dream/Client/Scenes/PlayScene.cs");
+        string constructor = Method(source, "public PlayScene(");
+        string pass = Method(source, "private void DrawEffectsPass(");
+        string disposeEffects = Method(source, "private void DisposeEffects()");
+
+        int tryAt = IndexOf(constructor, "try");
+        int rendererAt = IndexOf(constructor, "_fxRenderer = new FxRenderer();");
+        int catchAt = IndexOf(constructor, "catch (Exception exception)");
+        int nullRendererAt = IndexOf(constructor, "_fxRenderer = null;");
+        int nullSimulationAt = IndexOf(constructor, "_fxSimulation = null;");
+        int reportAt = IndexOf(constructor, "RenderFaultLog.Shared.Report(\"effects\", exception);");
+        int bridgeAt = IndexOf(constructor, "_fxBridge = new FxEventBridge(_events, _fxSimulation);");
+        Assert.True(tryAt < rendererAt && rendererAt < catchAt && catchAt < nullRendererAt && nullRendererAt < nullSimulationAt);
+        Assert.True(nullSimulationAt < reportAt && reportAt < bridgeAt);
+        Assert.Contains("if (_fxSimulation != null)", constructor);
+
+        int guardAt = IndexOf(pass, "if (_fxRenderer is not { } renderer || _fxSimulation is not { } simulation)");
+        int returnAt = IndexOf(pass, "return;");
+        Assert.True(guardAt < returnAt && returnAt < IndexOf(pass, "simulation.Advance("));
+        Assert.DoesNotContain("ObjectDisposedException", pass);
+        Assert.Contains("_fxBridge?.Dispose();", disposeEffects);
+        Assert.Contains("_fxRenderer?.Dispose();", disposeEffects);
+    }
+
+    [Fact]
     public void Bridge_Unsubscribes_Both_Handlers_And_Ignores_Zero_Damage()
     {
         string source = ReadSource("dream/Rendering/Effects/FxEventBridge.cs");

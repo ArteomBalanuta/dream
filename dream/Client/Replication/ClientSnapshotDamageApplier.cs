@@ -51,8 +51,10 @@ public static class ClientSnapshotDamageApplier
                 events.Publish(new DamageAppliedEvent(actor, damageEvent.Amount, ResolveHitKind(damageEvent.HitKind)));
             }
 
-            // Client combatants have no hub, so ActorDiedEvent never fires on its own; the wire's
-            // ActorDied flag is the client's only death signal. The server writes two deltas per
+            // Nothing on the client raises ActorDiedEvent itself: remote combatants have no hub, and
+            // the local player's PlayerCombatant could publish but nothing on the client calls its
+            // ApplyDamage, so there is no double publish. The wire's ActorDied flag is the client's
+            // only death signal. The server writes two deltas per
             // death (Amount 0, and the killing hit), so publish once per actor per snapshot.
             if (damageEvent.ActorDied && !DiedEarlierInSnapshot(damageEvents, i, damageEvent.ActorId))
             {

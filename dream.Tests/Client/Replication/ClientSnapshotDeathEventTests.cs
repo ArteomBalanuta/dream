@@ -10,7 +10,8 @@ using Dream.Simulation.World;
 
 namespace Dream.Tests.Client.Replication;
 
-// Client combatants have no event hub, so ActorDiedEvent never fires on a client by itself. The
+// Nothing on a client raises ActorDiedEvent by itself: remote combatants have no event hub, and the
+// local player's PlayerCombatant could publish but nothing on the client calls its ApplyDamage. The
 // snapshot's ActorDied flag is the only death signal, and the applier turns it into the event.
 public class ClientSnapshotDeathEventTests
 {

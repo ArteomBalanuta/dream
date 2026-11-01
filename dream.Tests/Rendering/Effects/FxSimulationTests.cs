@@ -311,6 +311,30 @@ public class FxSimulationTests
     }
 
     [Fact]
+    public void Halos_Fade_Out_Over_The_Last_Stretch_Before_The_Cull()
+    {
+        FxFrameInputs inputs = Inputs(dt: 0f);
+        Vector3 centre = FxSimulation.ViewCentre(in inputs);
+        uint Red(float distance)
+        {
+            FxSimulation simulation = new(1u);
+            simulation.Advance(inputs, [new PointLight(centre + Vector3.UnitX * distance, LampLightIndex.LampRadius, LampLightIndex.LampColor)]);
+            Assert.Equal(1, simulation.ActiveHalos);
+            Write(simulation, out FxInstance[] instances);
+            return instances.First(i => IsHalo(i)).Color & 0xFFu;
+        }
+
+        float fadeStart = FxSimulation.HaloMaxViewDistance - FxSimulation.HaloFadeDistance;
+        uint full = Red(fadeStart - 1f);
+        uint middle = Red(fadeStart + FxSimulation.HaloFadeDistance * 0.5f);
+        uint edge = Red(FxSimulation.HaloMaxViewDistance - 0.05f);
+
+        Assert.Equal(full, Red(10f));
+        Assert.True(middle < full && middle > edge, $"{full} {middle} {edge}");
+        Assert.True(edge <= 1u, $"{edge}");
+    }
+
+    [Fact]
     public void Halo_Count_Is_Capped_At_The_Budget_And_The_Scan_Favours_The_First_Lights()
     {
         FxSimulation simulation = new(1u);

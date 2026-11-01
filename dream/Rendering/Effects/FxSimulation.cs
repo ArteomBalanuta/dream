@@ -29,6 +29,8 @@ public sealed class FxSimulation
     // Halos closer to the camera than this are skipped (the torch in the player's own hand).
     public const float HaloMinCameraDistance = 1.5f;
     public const float HaloMaxViewDistance = 30f;
+    // Halos fade out over this last stretch before the cull, so they do not pop.
+    public const float HaloFadeDistance = 5f;
     public const float HaloNightStrength = 1f;
     public const float HaloDayStrength = 0.35f;
     public const float DepthBiasLamp = 0.9f;
@@ -266,7 +268,8 @@ public sealed class FxSimulation
             }
 
             bool lamp = lightClass == FxLightClass.Lamp;
-            float gain = (lamp ? 0.42f : 0.5f) * strength;
+            float distance = MathF.Sqrt((light.Position - _viewCentre).LengthSquared);
+            float gain = (lamp ? 0.42f : 0.5f) * strength * Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
             _halos[_haloCount++] = new FxInstance
             {
                 Position = light.Position,

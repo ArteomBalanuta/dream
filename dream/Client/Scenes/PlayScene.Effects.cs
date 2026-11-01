@@ -10,19 +10,23 @@ public partial class PlayScene
 {
     // The effects pass (particles and light halos). The renderer is created in the constructor
     // with the other GL resources and disposed with the scene; the simulation and the bridge that
-    // feeds it combat events are plain CPU state.
+    // feeds it combat events are plain CPU state. All three stay null when the renderer could not
+    // be created (missing atlas, failed shader), and the scene then runs without effects.
     private FxRenderer? _fxRenderer;
     private FxSimulation? _fxSimulation;
     private FxEventBridge? _fxBridge;
     private readonly FxInstance[] _fxInstances = new FxInstance[FxLimits.MaxInstances];
 
-    // Runs right after the sky, inside the Actors GPU section's tail: the opaque world is done, so
-    // the depth buffer is final, and the HUD has not started. Advances the effects by the frame
-    // time, writes the instances and draws them in its own timed section.
+    // Runs right after the sky, in its own GPU section after the Actors section: the opaque world is
+    // done, so the depth buffer is final, and the HUD has not started. Advances the effects by the
+    // frame time, writes the instances and draws them in its own timed section. Does nothing when
+    // the scene has no effects.
     private void DrawEffectsPass(in SkyState sky, in WorldSessionPresentationState presentation, GpuFrameTimer gpuTimer, float deltaSeconds)
     {
-        FxRenderer renderer = _fxRenderer ?? throw new ObjectDisposedException(nameof(PlayScene));
-        FxSimulation simulation = _fxSimulation ?? throw new ObjectDisposedException(nameof(PlayScene));
+        if (_fxRenderer is not { } renderer || _fxSimulation is not { } simulation)
+        {
+            return;
+        }
 
         Matrix4 view = presentation.Camera.GetViewMatrix();
         FxFrameInputs inputs = new(
