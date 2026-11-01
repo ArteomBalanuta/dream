@@ -428,7 +428,7 @@ public static class ServerBootstrap
         {
             record.Descriptor.Validate();
             return OpenWorldBundle(
-                schema, record, created, simulationSeedOverride, log, lease, integrityOptions ?? IntegrityOptionsFor(content));
+                schema, record, created, simulationSeedOverride, log, lease, integrityOptions ?? IntegrityOptionsFor(content), content);
         }
         catch
         {
@@ -446,6 +446,51 @@ public static class ServerBootstrap
             $"server.content.digest digest={content.ContentDigest} " +
             $"items={content.Items.Count} enemies={content.Enemies.Count}");
         return content;
+    }
+
+    // Evaluates the formulas content depends on, so a bad formula (a division by zero, a non-finite
+    // result) stops the start with ContentInvalidExitCode instead of throwing on a spawn or hit tick:
+    // the enemy.* formulas for every template, and player.damage_taken_factor for every Armor 1..1000
+    // (the effective range).
+    internal static void ProbeFormulas(CombatFormulaService formulas, ContentCatalog content)
+    {
+        ArgumentNullException.ThrowIfNull(formulas);
+        ArgumentNullException.ThrowIfNull(content);
+        foreach (EnemyTemplate template in content.Enemies)
+        {
+            try
+            {
+                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, intervalOverride: 1f);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.EnemyAttackDamage}' or '{CombatFormulaKeys.EnemyMaxHealth}' failed for enemy '{template.Key}': {ex.Message}", ex);
+            }
+
+            try
+            {
+                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, template.AttackIntervalSeconds);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.EnemyAttackIntervalSeconds}' failed for enemy '{template.Key}': {ex.Message}", ex);
+            }
+        }
+
+        for (int armor = 1; armor <= 1000; armor++)
+        {
+            try
+            {
+                formulas.EvaluateDamageTakenFactor(armor);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.PlayerDamageTakenFactor}' failed at armor {armor}: {ex.Message}", ex);
+            }
+        }
     }
 
     // The integrity check's options for a build that knows content's kinds.
@@ -471,7 +516,8 @@ public static class ServerBootstrap
         string? simulationSeedOverride,
         Action<string>? log,
         WorldHostLease? lease,
-        WorldIntegrityOptions integrityOptions)
+        WorldIntegrityOptions integrityOptions,
+        ContentCatalog content)
     {
         WorldDescriptor descriptor = record.Descriptor;
         WorldId worldId = descriptor.Id;
@@ -538,12 +584,14 @@ public static class ServerBootstrap
 
         ulong simulationSeed = ResolveSimulationSeed(storedSeed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
+        CombatFormulaService formulaService = CombatFormulaService.Create(formulas);
+        ProbeFormulas(formulaService, content);
         return new ServerPersistenceBundle(
             schema,
             new SqlitePlayerProfileRepository(schema),
             new SqliteWorldPersistenceRepository(schema, worldId),
             formulas,
-            CombatFormulaService.Create(formulas),
+            formulaService,
             simulationSeed,
             record.WorldTimeTicks,
             worldId,

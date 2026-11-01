@@ -23,9 +23,16 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public StatSheet StatSheet => _statSheet;
 
-    // The Armor the equipment adds up to (base 0, effective range 0..1000). In wave H it is only
-    // read and shown: no damage calculation uses it yet.
+    // The Armor the equipment adds up to (base 0, effective range 0..1000). Damage taken is
+    // mitigated by it (MitigateDamage); Armor 0 takes every hit unchanged.
     public int EffectiveArmor => (int)_statSheet.Effective[StatId.Armor];
+
+    // Share of incoming damage taken, from player.damage_taken_factor. Cached: it is evaluated only
+    // when the effective Armor differs from the armor it was last evaluated for (never per hit, and not
+    // on the client's per-snapshot ApplyBaseStats). 1.0 at Armor 0.
+    public double DamageTakenFactor { get; private set; } = 1.0;
+
+    private int _factorArmor;
 
     public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
@@ -61,13 +68,25 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public DamageReceipt ApplyDamage(int amount)
     {
-        DamageReceipt receipt = Health.ApplyDamage(amount);
+        DamageReceipt receipt = Health.ApplyDamage(MitigateDamage(amount));
         if (receipt.WasFatal)
         {
             _eventHub?.Publish(new ActorDiedEvent(Actor));
         }
 
         return receipt;
+    }
+
+    // Pure and allocation free. Armor 0 (or an amount of 0 or less) returns the amount unchanged; otherwise
+    // the amount scaled by the cached factor, rounded away from zero, and at least 1.
+    public int MitigateDamage(int amount)
+    {
+        if (amount <= 0 || _factorArmor <= 0)
+        {
+            return amount;
+        }
+
+        return Math.Max(1, (int)Math.Round(amount * DamageTakenFactor, MidpointRounding.AwayFromZero));
     }
 
     public void AdvanceCombat(float deltaTime)
@@ -127,6 +146,13 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Stats.AttackSpeed = effective[StatId.AttackSpeed];
         Stats.Vitality = (int)effective[StatId.Vitality];
         DerivedStats = Stats.Derive(_combatFormulaService, Level);
+        int armor = EffectiveArmor;
+        if (armor != _factorArmor)
+        {
+            _factorArmor = armor;
+            DamageTakenFactor = _combatFormulaService.EvaluateDamageTakenFactor(armor);
+        }
+
         if (Health != null)
         {
             Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);

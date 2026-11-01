@@ -9,10 +9,12 @@ using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Server.Persistence;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
+using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Utilities;
@@ -290,6 +292,156 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
         Assert.Equal(WorldDayPhase.Night, noGameplay.WorldClock.Phase);
         Assert.Single(noGameplay.Enemies.ActiveActors);
     }
+
+    // Wave I1 (I-D22): the night slot is the NightExtra template, the Dire Wolf.
+    [Fact]
+    public void ByNight_TheSecondEnemyIsADireWolf_AtTheNightSpawn_WithItsStats()
+    {
+        using WorldSessionRuntime night = CreateRuntime();
+        night.ConfigureWorldClock(WorldClockSettings.Default, WorldTicksAt(WorldClockSettings.Default, dayIndex: 0, hour: 23));
+        Tick(night, 1);
+
+        Assert.Equal(["Wolf", "DireWolf"], Kinds(night));
+        EnemyActor dire = night.Enemies.ActiveActors[1];
+        Assert.Equal(WolfSpawnPolicy.ResolveNightSpawn(night.Map.Width, night.Map.Depth), dire.Position);
+        Assert.Equal(200, dire.Combatant.Health.MaxHealth);
+        Assert.Equal(200, dire.Combatant.Health.CurrentHealth);
+        Assert.Equal(18, dire.Combatant.AttackDamage);
+        Assert.Equal(1f, dire.Combatant.AttackIntervalSeconds);
+        Assert.Equal(3, dire.Level);
+        Assert.Equal(12f, dire.AggroRange);
+        Assert.Equal("enemy.dire-wolf", dire.VisualKey);
+        Assert.Equal(42, CombatFormulaService.Default.EvaluateEnemyExperienceReward(dire.Level, 1));
+
+        EnemyActor wolf = night.Enemies.ActiveActors[0];
+        Assert.Equal(1, wolf.Level);
+        Assert.Null(wolf.VisualKey);
+        Assert.Equal(100, wolf.Combatant.Health.MaxHealth);
+        Assert.Equal(12, wolf.Combatant.AttackDamage);
+    }
+
+    [Fact]
+    public void ByDay_OnlyTheWolfExists_AndNoDireWolfIsSpawnedWithTheGoldenRunsClock()
+    {
+        using WorldSessionRuntime day = CreateRuntime();
+        for (ulong tick = 1; tick <= 200; tick++)
+        {
+            Tick(day, tick);
+            Assert.Equal(["Wolf"], Kinds(day));
+        }
+    }
+
+    [Fact]
+    public void AtNight_KillingTheWolfSpawnsAWolf_AndKillingTheDireSpawnsADire()
+    {
+        using WorldSessionRuntime night = CreateRuntime();
+        night.ConfigureWorldClock(WorldClockSettings.Default, WorldTicksAt(WorldClockSettings.Default, dayIndex: 0, hour: 23));
+        Tick(night, 1);
+        Assert.Equal(["Wolf", "DireWolf"], Kinds(night));
+
+        night.Enemies.ActiveActors[0].Combatant.Health.ApplyDamage(10_000);
+        Tick(night, 2);
+        Assert.Equal(["DireWolf", "Wolf"], Kinds(night));
+        Assert.Equal(WolfSpawnPolicy.ResolveNightSpawn(night.Map.Width, night.Map.Depth), night.Enemies.ActiveActors[1].Position);
+
+        night.Enemies.ActiveActors[0].Combatant.Health.ApplyDamage(10_000);
+        Tick(night, 3);
+        Assert.Equal(["Wolf", "DireWolf"], Kinds(night));
+    }
+
+    [Fact]
+    public void Dawn_RemovesTheDireWolf_EvenWithAHigherIdWolf()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.ConfigureWorldClock(OneMinuteDay, WorldTicksAt(OneMinuteDay, dayIndex: 0, hour: 23));
+        Tick(runtime, 1);
+        int dire = runtime.Enemies.ActiveActors[1].Combatant.Actor.Id;
+        runtime.Enemies.ActiveActors[0].Combatant.Health.ApplyDamage(10_000);
+        Tick(runtime, 2);
+        Assert.Equal(["DireWolf", "Wolf"], Kinds(runtime));
+        int wolf = runtime.Enemies.ActiveActors[1].Combatant.Actor.Id;
+        Assert.True(wolf > dire);
+
+        ulong tick = 3;
+        while (tick < 3000)
+        {
+            Tick(runtime, tick++);
+            if (runtime.WorldClock.Phase != WorldDayPhase.Night)
+            {
+                break;
+            }
+
+            Assert.Equal(["DireWolf", "Wolf"], Kinds(runtime));
+        }
+
+        Assert.Equal(WorldDayPhase.Dawn, runtime.WorldClock.Phase);
+        Assert.Equal(["Wolf"], Kinds(runtime));
+        Assert.Equal(wolf, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
+    }
+
+    [Fact]
+    public void TwoRuns_AcrossNightfallAndDawn_SpawnTheSameKindsAtTheSameTicks()
+    {
+        long nightfall = WorldTicksAt(OneMinuteDay, dayIndex: 0, hour: 20);
+        long dawn = WorldTicksAt(OneMinuteDay, dayIndex: 1, hour: 4);
+        long start = nightfall - 50;
+        int ticks = (int)(dawn - start + 50);
+        using WorldSessionRuntime first = CreateRuntime();
+        using WorldSessionRuntime second = CreateRuntime();
+        first.ConfigureWorldClock(OneMinuteDay, start);
+        second.ConfigureWorldClock(OneMinuteDay, start);
+
+        bool sawDire = false;
+        for (ulong tick = 1; tick <= (ulong)ticks; tick++)
+        {
+            Tick(first, tick);
+            Tick(second, tick);
+            Assert.Equal(Kinds(first), Kinds(second));
+            Assert.Equal(SimulationStateChecksum.Compute(first), SimulationStateChecksum.Compute(second));
+            sawDire |= Kinds(first).Contains("DireWolf");
+        }
+
+        Assert.True(sawDire);
+        Assert.Equal(["Wolf"], Kinds(first));
+    }
+
+    // A catalog with no NightExtra template behaves as before the Dire Wolf: wolves only, at the same ticks.
+    [Fact]
+    public void ACatalogWithoutANightExtra_SpawnsOnlyWolves_WithTheSamePopulationAsBefore()
+    {
+        ContentCatalog wolfOnly = ContentCatalog.Load(
+            File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName)),
+            """
+            {"version":2,"enemies":[{"key":"Wolf","displayName":"Wolf","level":1,"strength":10,"vitality":10,
+             "attackSpeed":0.952381,"aggroRange":10,"attackRange":1.35,"moveSpeed":2.8,
+             "visualKey":"enemy.wolf","spawnRole":"Primary"}]}
+            """,
+            File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName)));
+        Assert.DoesNotContain(wolfOnly.Enemies, template => template.SpawnRole == EnemySpawnRole.NightExtra);
+
+        long nightfall = WorldTicksAt(OneMinuteDay, dayIndex: 0, hour: 20);
+        long dawn = WorldTicksAt(OneMinuteDay, dayIndex: 1, hour: 4);
+        long start = nightfall - 50;
+        int ticks = (int)(dawn - start + 50);
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.EnemyContent = wolfOnly;
+        runtime.ConfigureWorldClock(OneMinuteDay, start);
+
+        List<(ulong Tick, int Wolves)> changes = [];
+        int wolves = runtime.Enemies.ActiveActors.Count;
+        for (ulong tick = 1; tick <= (ulong)ticks; tick++)
+        {
+            Tick(runtime, tick);
+            Assert.All(Kinds(runtime), kind => Assert.Equal("Wolf", kind));
+            Assert.Equal(runtime.WorldClock.Phase == WorldDayPhase.Night ? 2 : 1, runtime.Enemies.ActiveActors.Count);
+            Track(runtime, tick, ref wolves, changes);
+        }
+
+        Assert.Equal([((ulong)(nightfall - start), 2), ((ulong)(dawn - start), 1)], changes);
+    }
+
+    private static string[] Kinds(WorldSessionRuntime runtime) =>
+        runtime.Enemies.ActiveActors.Where(actor => actor.IsActive).Select(actor => actor.EnemyKind).ToArray();
 
     // The persisted world ticks at which the clock shows hour:00 on day dayIndex.
     internal static long WorldTicksAt(WorldClockSettings settings, long dayIndex, int hour)

@@ -167,7 +167,7 @@ public sealed class ContentCatalogTests
         Assert.Equal(1.35f, wolf.AttackRange);
         Assert.Equal(2.8f, wolf.MoveSpeed);
         Assert.Same(wolf, ContentCatalog.Shipped.Wolf);
-        Assert.Single(ContentCatalog.Shipped.Enemies);
+        Assert.Equal(["Wolf", "DireWolf"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
     }
 
     [Fact]
@@ -356,7 +356,7 @@ public sealed class ContentCatalogTests
     [Fact]
     public void TheTwoArgumentLoad_HasNoLootTables()
     {
-        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"wolf\"", string.Empty);
+        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-)?wolf\"", string.Empty);
         Assert.DoesNotContain("lootTable", noLootReference);
 
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, noLootReference);
