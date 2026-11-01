@@ -67,6 +67,7 @@ public partial class PlayScene : IDisposable
     private bool _wasCameraViewTogglePressed;
     private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
+    private readonly CursorChangeLookHoldoff _lookHoldoff = new();
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
     private double _lastPresentedFrameMilliseconds;
@@ -77,6 +78,8 @@ public partial class PlayScene : IDisposable
     private GpuFrameTimer? _gpuTimer;
     private RenderCounterSnapshot _lastFrameCounters;
     private PlayerInventorySnapshot? _inventory;
+    // How many inventory snapshots have been applied; the capture script waits on it.
+    private int _inventoryApplyCount;
     private bool _disposed;
 
     // Inputs and output of the prediction tick for the current frame. The tick stream calls a

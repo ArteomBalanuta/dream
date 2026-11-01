@@ -96,6 +96,11 @@ public partial class PlayScene
 
         if (request.InventoryAction is InventoryHudAction inventoryAction)
         {
+            if (_hudCapture is not null)
+            {
+                Console.WriteLine($"[hud-capture] intent sent: {inventoryAction.Kind} slot={inventoryAction.SlotIndex} target={inventoryAction.Target} item={inventoryAction.ItemInstanceId}");
+            }
+
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),

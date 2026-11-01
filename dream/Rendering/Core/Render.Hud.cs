@@ -97,9 +97,21 @@ public partial class Render
     private readonly List<FloatingCombatTextRenderState> _classicCombatText = new();
     private readonly List<HudWorldLabel> _classicLabels = new();
 
-    // True while the classic HUD drew with the sprite cursor last frame (inventory open, Settings
-    // closed). The scene hides the OS cursor then.
-    public bool ClassicHudCursorActive => _classicCursorActive;
+    // True while the classic HUD draws (or is about to draw) the sprite cursor: inventory open,
+    // Settings closed. The scene hides the OS cursor then. Read by Update before the frame is drawn,
+    // so it is predicted from the surface state instead of waiting for the last draw; otherwise the
+    // OS cursor and the sprite cursor would both show for the first frame after V.
+    public bool ClassicHudCursorActive => _classicCursorActive || ClassicHudWillDraw();
+
+    // Test-only pointer override (DREAM_HUD_CAPTURE_SCRIPT). Null in normal play, which keeps the
+    // real mouse the only source.
+    internal UiScriptedPointer? ScriptedPointer { get; set; }
+
+    // The classic surface and its view, for the capture script's logs and rect lookups.
+    internal ClassicHudSurface? ClassicSurfaceForCapture => _classicSurface;
+
+    private bool ClassicHudWillDraw() =>
+        _hudSelector is { Current: HudSurface.Classic } && _classicSurface is { State: ClassicHudBackendState.Ready };
 
     public HudSurface CurrentHudSurface(GameSettings settings) => HudSelector(settings).Current;
 
@@ -204,16 +216,31 @@ public partial class Render
         ProjectClassicCombatText(camera, combatFeedback, settings.FloatingCombatText);
         ProjectClassicLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
 
-        // One coordinate source for the pointer: the same window position ImGui gets.
-        bool interactive = windowFocused
-            && settings.InventoryVisible
-            && !settings.SettingsVisible
-            && !ImGui.GetIO().WantCaptureMouse;
-        UiPointer pointer = new(
-            new Vector2(mouseState.Position.X, mouseState.Position.Y),
-            mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left),
-            mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right),
-            interactive);
+        // One coordinate source for the pointer: the same window position ImGui gets, in the same
+        // pixels the layout uses (the window's client size and the framebuffer are one size here).
+        UiPointer pointer;
+        if (ScriptedPointer is { Active: true } scripted)
+        {
+            // Capture script only: synthetic states through the same router. Focus does not apply.
+            pointer = new UiPointer(
+                scripted.Position,
+                scripted.LeftDown,
+                scripted.RightDown,
+                settings.InventoryVisible && !settings.SettingsVisible);
+        }
+        else
+        {
+            bool interactive = windowFocused
+                && settings.InventoryVisible
+                && !settings.SettingsVisible
+                && !ImGui.GetIO().WantCaptureMouse;
+            pointer = new UiPointer(
+                new Vector2(mouseState.Position.X, mouseState.Position.Y),
+                mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left),
+                mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right),
+                interactive);
+        }
+
         Vector2i size = GetSafeViewportSize(_currentSize);
         ClassicHudFrame frame = new()
         {
@@ -528,7 +555,7 @@ public partial class Render
         // The classic inventory draws its own sprite cursor, so the ImGui one stays off there, except
         // over an ImGui window (the Build panel), where the sprite cursor is not drawn and the OS one
         // is hidden.
-        bool classicCursor = _classicCursorActive && settings.InventoryVisible && !settings.SettingsVisible && !io.WantCaptureMouse;
+        bool classicCursor = ClassicHudCursorActive && settings.InventoryVisible && !settings.SettingsVisible && !io.WantCaptureMouse;
         io.MouseDrawCursor = overlayVisible && !classicCursor;
         io.MousePos = overlayVisible
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)

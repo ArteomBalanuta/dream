@@ -220,3 +220,16 @@ public sealed class UiInputRouter : IUiInput
         _dragReleased = false;
     }
 }
+
+// Synthetic pointer for the capture script (DREAM_HUD_CAPTURE_SCRIPT). The renderer reads it only
+// when one is set, which only the capture script does; real input is untouched otherwise.
+internal sealed class UiScriptedPointer
+{
+    public bool Active { get; set; }
+
+    public Vector2 Position { get; set; }
+
+    public bool LeftDown { get; set; }
+
+    public bool RightDown { get; set; }
+}

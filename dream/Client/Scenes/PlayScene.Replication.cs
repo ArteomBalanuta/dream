@@ -318,6 +318,7 @@ public partial class PlayScene
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
+        _inventoryApplyCount++;
         EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
 
         _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);

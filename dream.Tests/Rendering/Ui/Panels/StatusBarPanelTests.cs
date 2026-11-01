@@ -112,6 +112,21 @@ public class StatusBarPanelTests
         Assert.Contains(building.Texts, t => t.Text == "Building");
     }
 
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    [InlineData(1440, 1024)]
+    public void ModeLabel_StandsAboveTheBar_NotOnTheExpTrough(int w, int h)
+    {
+        UiLayout l = UiLayout.Create(w, h, 0f);
+        StatusBarRecordingCanvas c = Run(StatusBarTestData.View(mode: PlayerInteractionMode.Building), l);
+
+        StatusBarCall label = c.Texts.First(t => t.Text == "Building");
+        float lineHeight = 13f;
+        Assert.True(label.TextPos.Y + lineHeight <= l.CentreGroup.Y, $"label bottom {label.TextPos.Y + lineHeight} is inside the bar (top {l.CentreGroup.Y})");
+        Assert.True(label.TextPos.Y >= 0f);
+    }
+
     [Fact]
     public void Coordinates_ShowTheFlooredXAndZOnThePlate()
     {
@@ -259,9 +274,12 @@ public class StatusBarPanelTests
 
         int left = c.Calls.FindIndex(x => x.Name == "hud.dragon.left");
         int right = c.Calls.FindIndex(x => x.Name == "hud.dragon.right");
-        int lastText = c.Calls.FindLastIndex(x => x.Kind == StatusBarCallKind.Text);
+        int firstText = c.Calls.FindIndex(x => x.Kind == StatusBarCallKind.Text);
+        int lastArt = c.Calls.FindLastIndex(x => x.Kind != StatusBarCallKind.Text && x.Name != "hud.dragon.left" && x.Name != "hud.dragon.right");
         Assert.True(left >= 0 && right > left);
-        Assert.True(lastText < left);
+        // Above all the bar's art; the text follows in one run (no text overlaps a dragon).
+        Assert.True(lastArt < left);
+        Assert.True(firstText > right);
         Assert.Equal(l.Bar.Y, c.Calls[left].Rect.Bottom, 2);
         Assert.Equal(0f, c.Calls[left].Rect.X);
         Assert.Equal(l.ViewportWidth, c.Calls[right].Rect.Right, 2);
