@@ -23,4 +23,9 @@ public interface IUiInput
     int ActiveDragPayload { get; }
 
     bool ModalActive { get; set; }
+
+    // Pointer position in pixels, or NaN when the input cannot tell. Additive default so existing
+    // implementations keep compiling; the router should override it (drag ghost and drop-target
+    // highlight read it, and fall back to Hovered when it is NaN).
+    Vector2 PointerPosition => new(float.NaN, float.NaN);
 }

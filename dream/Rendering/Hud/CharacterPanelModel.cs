@@ -80,7 +80,7 @@ public static class CharacterPanelModel
             IntRow(CharacterStat.Strength, "Strength", status.BaseStrength, status.Strength, null),
             AttackSpeedRow(status.BaseAttackSpeed, status.AttackSpeed),
             IntRow(CharacterStat.Vitality, "Vitality", status.BaseVitality, status.Vitality, null),
-            // Armor has no base value and, in wave H, no effect on combat.
+            // Armor has no base value; it mitigates the damage the player takes (PlayerCombatant.MitigateDamage).
             IntRow(CharacterStat.Armor, "Armor", 0, status.Armor, ArmorNote)
         ];
     }
@@ -140,6 +140,10 @@ public static class CharacterPanelModel
 
         return slots;
     }
+
+    // True when the EquipmentSlots mask lets an item occupy the slot. Allocation free.
+    public static bool CanEquipTo(int equipSlotMask, EquipmentSlot slot) =>
+        (equipSlotMask & EquipmentSlots.MaskOf(slot)) != 0;
 
     // Lines for a tooltip, from a rolled item's own modifiers (an unrolled item's lines are its
     // DetailLines). Unknown stats, percent modifiers and non-finite values are skipped.
