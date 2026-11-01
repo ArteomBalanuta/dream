@@ -18,7 +18,8 @@ public sealed class InventoryUiState
     // Forget everything. Tests call this at start and end.
     public static void Reset() => _current = null;
 
-    // The slot the pointer rests on this frame, as a widget index (0..15 bag, 100..103 well).
+    // The item the pointer rests on this frame, as a widget index (0..63 the bag anchor of the item under
+    // any cell it covers, 100..111 well).
     public bool HoverActive { get; private set; }
 
     public int HoverSource { get; private set; }
@@ -532,9 +533,17 @@ public static class ItemOverlays
             return;
         }
 
+        if (!InventoryWindow.TryDragFootprint(v, st.DragSource, out ItemFootprint footprint))
+        {
+            return;
+        }
+
+        // The ghost covers the item's whole footprint and is centred on the pointer; the drop lands where
+        // the same rule puts it (InventoryWindow.TryDropAnchor).
         HudItemView hv = source[index];
-        float size = InventoryWindow.SlotUnits * l.Scale;
-        UiRect box = new(p.X - (size * 0.5f), p.Y - (size * 0.5f), size, size);
+        float width = footprint.Cols * InventoryWindow.CellUnits * l.Scale;
+        float height = footprint.Rows * InventoryWindow.CellUnits * l.Scale;
+        UiRect box = new(p.X - (width * 0.5f), p.Y - (height * 0.5f), width, height);
         c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), GhostTint);
     }
 

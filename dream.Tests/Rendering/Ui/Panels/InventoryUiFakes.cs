@@ -162,7 +162,10 @@ public sealed class RecordingActions : IHudActions
     public void CloseInventory() => Closes++;
 }
 
-// A view plus everything a frame needs. Bag slot n holds Items[n]; wells hold Worn.
+// A view plus everything a frame needs. Bag item n is anchored on cell n (0..63) and covers the footprint
+// its icon art declares (so a 2x3 blade covers six cells); wells hold Worn. The footprints come from the
+// sprite table's item art, not from the shipped items.json, so these scenes do not depend on which kinds
+// the content gives a footprint. HeldBack adds that many held-back rows (200..) to the snapshot.
 public sealed class InventoryScene : IDisposable
 {
     public const int Width = 1280;
@@ -178,6 +181,7 @@ public sealed class InventoryScene : IDisposable
         Actions = new RecordingActions();
         Layout = UiLayout.Create(Width, Height, 0f);
         View = new HudView { InventoryOpen = true };
+        View.FootprintOf = FootprintOf;
         Items = new InventoryItemSnapshot?[HudView.BackpackSlots];
         Worn = new InventoryItemSnapshot?[HudView.WornSlots];
         Equipped = new bool[HudView.BackpackSlots];
@@ -196,28 +200,62 @@ public sealed class InventoryScene : IDisposable
 
     public HudView View { get; }
 
+    // Indexed by anchor cell.
     public InventoryItemSnapshot?[] Items { get; }
 
     public InventoryItemSnapshot?[] Worn { get; }
 
     public bool[] Equipped { get; }
 
+    // How many held-back rows the next Refresh puts in the snapshot.
+    public int HeldBack { get; set; }
+
+    // Footprints that win over the art's, by item kind.
+    public Dictionary<string, ItemFootprint> Footprints { get; } = new();
+
     public static InventoryItemSnapshot Item(long id, string kind, int equipMask = 0, ItemRarity rarity = ItemRarity.Common, int stack = 1) =>
         new(id, kind, "Item " + id, "visual", stack, "A plain item.", ["Detail one"], null, HeldLightKind.None, equipMask, rarity, false);
 
+    // The footprint of a kind: an override, else the art's, else 1x1.
+    public ItemFootprint FootprintOf(string? kind)
+    {
+        if (kind is not null && Footprints.TryGetValue(kind, out ItemFootprint overridden))
+        {
+            return overridden;
+        }
+
+        return kind is not null && Table.TryGet("item." + kind, out UiSprite icon)
+            ? new ItemFootprint((byte)icon.FootprintCols, (byte)icon.FootprintRows)
+            : ItemFootprint.One;
+    }
+
+    // The rect of bag cell n; for a 1x1 item anchored there, the whole item.
     public UiRect Slot(int n) => InventoryWindow.SlotRect(Layout, Layout.Inventory, n);
+
+    // The rect of the item anchored at anchor: its whole footprint.
+    public UiRect ItemRect(int anchor) =>
+        InventoryWindow.ItemRect(Layout, Layout.Inventory, anchor, FootprintOf(Items[anchor]?.ItemKind));
 
     public UiRect Well(int w) => InventoryWindow.WellRect(Layout, Layout.Inventory, w);
 
     public static Vector2 Centre(UiRect r) => new(r.X + (r.W * 0.5f), r.Y + (r.H * 0.5f));
 
-    // Rebuilds the view arrays and a NEW snapshot from Items, Worn and Equipped.
+    // Rebuilds the view and a NEW snapshot from Items, Worn, Equipped and HeldBack. The snapshot is
+    // sparse (a row only where an item is anchored). The view places items in anchor order, first wins.
     public void Refresh()
     {
         List<InventorySlotSnapshot> slots = new();
         for (int n = 0; n < HudView.BackpackSlots; n++)
         {
-            slots.Add(new InventorySlotSnapshot(n, Items[n], Equipped[n]));
+            if (Items[n] is not null)
+            {
+                slots.Add(new InventorySlotSnapshot(n, Items[n], Equipped[n]));
+            }
+        }
+
+        for (int n = 0; n < HeldBack; n++)
+        {
+            slots.Add(new InventorySlotSnapshot(CharacterPanelModel.HeldBackFirstSlot + n, Item(9000 + n, "gem.amber")));
         }
 
         List<InventorySlotSnapshot> equipment = new();
@@ -235,13 +273,17 @@ public sealed class InventoryScene : IDisposable
             }
         }
 
-        View.Inventory = new PlayerInventorySnapshot("Tester", 4, 4, slots, main, equipment);
-        View.Backpack = new HudItemView[HudView.BackpackSlots];
-        for (int n = 0; n < View.Backpack.Length; n++)
+        View.Inventory = new PlayerInventorySnapshot("Tester", BagGrid.Columns, BagGrid.Rows, slots, main, equipment);
+        View.ClearBag();
+        for (int n = 0; n < HudView.BackpackSlots; n++)
         {
-            View.Backpack[n] = MakeView(Items[n], Equipped[n]);
+            if (Items[n] is not null)
+            {
+                View.TryPlaceBagItem(n, MakeView(Items[n], Equipped[n]));
+            }
         }
 
+        View.HeldBackCount = HeldBack;
         View.Worn = new HudItemView[HudView.WornSlots];
         for (int w = 0; w < View.Worn.Length; w++)
         {

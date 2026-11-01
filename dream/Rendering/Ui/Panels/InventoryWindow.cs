@@ -4,24 +4,31 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui.Panels;
 
-// The inventory window (spec 01, rects from section 3.8 and the art generator's composition):
-// stone frame, four equipment wells, and a 4x4 bag where each slot is a 2x2 block of 20 u cells.
-// Left click does nothing. A right click opens the item menu (drawn by ItemOverlays) and a drag
-// emits exactly one InventoryHudAction when it is dropped on a valid target. Hidden because they
-// are not built: currency, repair, store, set-option tab, arrow, other wells.
+// The inventory window (spec 01, rects from sections 3.8 and 3.9 and the art generator's composition):
+// stone frame, twelve equipment wells above an 8x8 bag of 20 u cells. A bag item covers a block of
+// cells (its footprint) from its top-left anchor cell and is hovered, dragged and menu'd from any of
+// them. Left click does nothing. A right click opens the item menu (drawn by ItemOverlays) and a drag
+// emits exactly one InventoryHudAction when it is dropped on a valid target. Hidden because they are
+// not built: currency, repair, store, set-option tab, arrow, other wells.
 public static class InventoryWindow
 {
-    public const int BagColumns = 4;
-    public const int BagRows = 4;
-    public const float SlotUnits = 40f;
+    public const int BagColumns = BagGrid.Columns;
+    public const int BagRows = BagGrid.Rows;
     public const float CellUnits = 20f;
+    public const float BagLeftUnits = 15f;
+    public const float BagTopUnits = 200f;
     public const float ArtPixelsPerUnit = 4f;
     public const float BodyTextPx = 13f;
+
+    // The free band under the bag where the held-back line goes.
+    public const float HeldBackLeftUnits = 15f;
+    public const float HeldBackTopUnits = 364f;
 
     // The body line height on this canvas (doubled when the glyphs are).
     internal static float BodyHeight(IUiCanvas c) => BodyTextPx * c.TextScale;
 
     // Widget ids. The router keys on the int only, so a block far from small ids avoids clashes.
+    // A bag item is IdBagSlot + its anchor (0..63); a well is IdWell + its slot (0..11).
     internal const int IdBase = 0x00B0_0000;
     internal const int IdBagSlot = IdBase + 0x100;
     internal const int IdWell = IdBase + 0x200;
@@ -42,18 +49,24 @@ public static class InventoryWindow
         float W,
         float H);
 
-    // Four real wells in equipment order; the index is the HudView.Worn index. The rest of the
-    // paper doll (pet, wings, gloves, rings, ...) has no slot in the game yet and stays out.
+    // The twelve wells in equipment order; the index is the HudView.Worn index (spec 01 section 3.8).
     private static readonly WellDef[] Wells =
     [
         new(EquipmentSlot.MainHand, UiSpriteNames.Well2x3, UiSpriteNames.SilWeaponLeft, 14f, 89f, 40f, 60f),
         new(EquipmentSlot.OffHand, UiSpriteNames.Well2x3, UiSpriteNames.SilWeaponRight, 134f, 89f, 40f, 60f),
         new(EquipmentSlot.Head, UiSpriteNames.Well2x2, UiSpriteNames.SilHelm, 74f, 46f, 40f, 40f),
-        new(EquipmentSlot.Body, UiSpriteNames.Well2x3, UiSpriteNames.SilArmor, 74f, 89f, 40f, 60f)
+        new(EquipmentSlot.Body, UiSpriteNames.Well2x3, UiSpriteNames.SilArmor, 74f, 89f, 40f, 60f),
+        new(EquipmentSlot.Hands, UiSpriteNames.Well2x2, UiSpriteNames.SilGloves, 14f, 152f, 40f, 40f),
+        new(EquipmentSlot.Feet, UiSpriteNames.Well2x2, UiSpriteNames.SilBoots, 134f, 152f, 40f, 40f),
+        new(EquipmentSlot.Legs, UiSpriteNames.Well2x2, UiSpriteNames.SilPants, 74f, 152f, 40f, 40f),
+        new(EquipmentSlot.Neck, UiSpriteNames.Well1x1, UiSpriteNames.SilPendant, 54f, 89f, 20f, 20f),
+        new(EquipmentSlot.RingLeft, UiSpriteNames.Well1x1, UiSpriteNames.SilRing, 54f, 152f, 20f, 20f),
+        new(EquipmentSlot.RingRight, UiSpriteNames.Well1x1, UiSpriteNames.SilRing, 114f, 152f, 20f, 20f),
+        new(EquipmentSlot.Back, UiSpriteNames.Well3x2, UiSpriteNames.SilWings, 114f, 46f, 60f, 40f),
+        new(EquipmentSlot.Companion, UiSpriteNames.Well2x2, UiSpriteNames.SilPet, 14f, 46f, 40f, 40f)
     ];
 
     private static readonly UiColor White = UiColor.White;
-    private static readonly UiColor EquippedAliasTint = new(255, 255, 255, 140);   // 55%
     private static readonly UiColor DraggedTint = new(255, 255, 255, 90);
 
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
@@ -91,15 +104,16 @@ public static class InventoryWindow
             return;
         }
 
+        // Where a drag in progress would land and which cells it would cover, decided once a frame.
+        DragPreview drag = PreviewDrag(i, v, l, win, st, dragging);
+
         for (int w = 0; w < Wells.Length; w++)
         {
-            DrawWell(c, i, v, l, s, st, win, w, live, dragging);
+            DrawWell(c, i, v, l, s, st, win, w, live, dragging, drag);
         }
 
-        for (int slot = 0; slot < HudView.BackpackSlots; slot++)
-        {
-            DrawBagCells(c, i, v, l, s, st, win, slot, live, dragging);
-        }
+        int hoveredAnchor = ReadBagInput(i, v, l, win, st, live, dragging);
+        DrawBagCells(c, v, l, s, win, hoveredAnchor, drag);
 
         DrawCloseButton(c, i, l, s, a, win, IdCloseInventory, live);
 
@@ -110,9 +124,9 @@ public static class InventoryWindow
                 DrawWellIcon(c, v, l, st, win, w, tier);
             }
 
-            for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+            for (int anchor = 0; anchor < HudView.BackpackSlots; anchor++)
             {
-                DrawBagIcon(c, v, l, st, win, slot, tier);
+                DrawBagIcon(c, v, l, st, win, anchor, tier);
             }
         }
 
@@ -122,16 +136,18 @@ public static class InventoryWindow
             DrawWellLabel(c, v, l, win, w);
         }
 
-        for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+        for (int anchor = 0; anchor < HudView.BackpackSlots; anchor++)
         {
-            DrawBagText(c, v, l, win, slot);
+            DrawBagText(c, v, l, win, anchor);
         }
+
+        DrawHeldBackLine(c, v, l, win);
 
         if (i.TryEndDrag(out int payload, out Vector2 dropPosition))
         {
             if (st.DragActive && !st.DragCancelled && payload == st.DragSource)
             {
-                int target = HitTest(l, win, dropPosition);
+                int target = ResolveTarget(l, win, v, payload, dropPosition);
                 if (TryResolveDrop(v, payload, target, out InventoryHudAction action) == DropVerdict.Valid)
                 {
                     a.Inventory(action);
@@ -148,8 +164,22 @@ public static class InventoryWindow
 
     // ---- geometry ---------------------------------------------------------------------------
 
+    // The rect of bag cell n (0..63, row * 8 + col): also the rect of a 1x1 item anchored there.
     internal static UiRect SlotRect(in UiLayout l, UiRect win, int slot) =>
-        l.FromUnits(win, 15f + (slot % BagColumns * SlotUnits), 200f + (slot / BagColumns * SlotUnits), SlotUnits, SlotUnits);
+        l.FromUnits(win, BagLeftUnits + (slot % BagColumns * CellUnits), BagTopUnits + (slot / BagColumns * CellUnits), CellUnits, CellUnits);
+
+    // The rect of an item anchored at anchor: its whole footprint.
+    internal static UiRect ItemRect(in UiLayout l, UiRect win, int anchor, ItemFootprint footprint) =>
+        l.FromUnits(
+            win,
+            BagLeftUnits + (anchor % BagColumns * CellUnits),
+            BagTopUnits + (anchor / BagColumns * CellUnits),
+            footprint.Cols * CellUnits,
+            footprint.Rows * CellUnits);
+
+    // The whole 8x8 board.
+    internal static UiRect BagRect(in UiLayout l, UiRect win) =>
+        l.FromUnits(win, BagLeftUnits, BagTopUnits, BagColumns * CellUnits, BagRows * CellUnits);
 
     internal static UiRect WellRect(in UiLayout l, UiRect win, int well)
     {
@@ -157,26 +187,83 @@ public static class InventoryWindow
         return l.FromUnits(win, d.X, d.Y, d.W, d.H);
     }
 
-    // The widget index under p: 0..15 a bag slot, 100..103 a well, -1 nothing.
-    internal static int HitTest(in UiLayout l, UiRect win, Vector2 p)
+    // The bag cell under p (0..63), or -1 off the board (or for a non-finite p).
+    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p)
     {
-        for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+        UiRect board = BagRect(l, win);
+        if (!board.Contains(p))
         {
-            if (SlotRect(l, win, slot).Contains(p))
-            {
-                return slot;
-            }
+            return -1;
         }
 
+        float cell = CellUnits * l.Scale;
+        int col = Math.Clamp((int)MathF.Floor((p.X - board.X) / cell), 0, BagColumns - 1);
+        int row = Math.Clamp((int)MathF.Floor((p.Y - board.Y) / cell), 0, BagRows - 1);
+        return (row * BagColumns) + col;
+    }
+
+    // The well under p (0..11, the HudView.Worn index), or -1.
+    internal static int WellAt(in UiLayout l, UiRect win, Vector2 p)
+    {
         for (int w = 0; w < Wells.Length; w++)
         {
             if (WellRect(l, win, w).Contains(p))
             {
-                return EquipmentSlots.FirstSlotIndex + w;
+                return w;
             }
         }
 
         return -1;
+    }
+
+    // The widget index under p: 0..63 a bag cell, 100..111 a well, -1 nothing. A cell is not an
+    // anchor: the item that covers it is HudView.BagCells[cell].
+    internal static int HitTest(in UiLayout l, UiRect win, Vector2 p)
+    {
+        int cell = CellAt(l, win, p);
+        if (cell >= 0)
+        {
+            return cell;
+        }
+
+        int well = WellAt(l, win, p);
+        return well >= 0 ? EquipmentSlots.FirstSlotIndex + well : -1;
+    }
+
+    // Where a dropped footprint lands (decision D12). The ghost is centred on the pointer, so its
+    // top-left cell is the cell nearest the ghost's top-left corner, clamped so the whole footprint
+    // stays on the board. False when the pointer is off the board (or the footprint is malformed).
+    internal static bool TryDropAnchor(in UiLayout l, UiRect win, Vector2 p, ItemFootprint footprint, out int anchor)
+    {
+        anchor = -1;
+        UiRect board = BagRect(l, win);
+        if (!board.Contains(p) || !BagGrid.TryMask(0, footprint, out _))
+        {
+            return false;
+        }
+
+        float cell = CellUnits * l.Scale;
+        int col = (int)MathF.Floor(((p.X - board.X) / cell) - (footprint.Cols * 0.5f) + 0.5f);
+        int row = (int)MathF.Floor(((p.Y - board.Y) / cell) - (footprint.Rows * 0.5f) + 0.5f);
+        col = Math.Clamp(col, 0, BagColumns - footprint.Cols);
+        row = Math.Clamp(row, 0, BagRows - footprint.Rows);
+        anchor = (row * BagColumns) + col;
+        return true;
+    }
+
+    // The target widget index for a drop of the dragged source at p: a well (100..111) when p is over
+    // one, otherwise the anchor the dragged footprint lands on, otherwise -1.
+    internal static int ResolveTarget(in UiLayout l, UiRect win, HudView v, int source, Vector2 p)
+    {
+        int well = WellAt(l, win, p);
+        if (well >= 0)
+        {
+            return EquipmentSlots.FirstSlotIndex + well;
+        }
+
+        return TryDragFootprint(v, source, out ItemFootprint footprint) && TryDropAnchor(l, win, p, footprint, out int anchor)
+            ? anchor
+            : -1;
     }
 
     // Scale that fits an icon with the given footprint into a box of boxW x boxH units: the
@@ -198,18 +285,59 @@ public static class InventoryWindow
         return new UiRect(box.X + ((box.W - w) * 0.5f), box.Y + ((box.H - h) * 0.5f), w, h);
     }
 
+    // ---- bag items --------------------------------------------------------------------------
+
+    // True when an item is anchored at anchor and the board really gives it that spot (a hand-built
+    // view could hold an item the cell map does not know).
+    internal static bool IsPlaced(HudView v, int anchor) =>
+        (uint)anchor < BagGrid.CellCount
+        && anchor < v.BagCells.Length
+        && anchor < v.BagFootprints.Length
+        && v.BagCells[anchor] == anchor
+        && TryItem(v.Backpack, anchor, out _);
+
+    // The footprint of the dragged item: a bag item's from the board, a worn item's from its kind.
+    internal static bool TryDragFootprint(HudView v, int source, out ItemFootprint footprint)
+    {
+        footprint = ItemFootprint.One;
+        if (EquipmentSlots.TryFromSlotIndex(source, out EquipmentSlot slot))
+        {
+            if (!TryItem(v.Worn, (int)slot, out InventoryItemSnapshot worn))
+            {
+                return false;
+            }
+
+            footprint = v.FootprintOf(worn.ItemKind);
+            return true;
+        }
+
+        if (!IsPlaced(v, source))
+        {
+            return false;
+        }
+
+        footprint = v.BagFootprints[source];
+        return true;
+    }
+
     // ---- drop rules -------------------------------------------------------------------------
 
     internal enum DropVerdict : byte
     {
-        // Not a target: same slot, empty space, or nothing is dragged. No highlight.
+        // Not a target: same spot, empty space, or nothing is dragged. No highlight.
         None,
         Valid,
         Invalid
     }
 
-    // source and target are widget indices: 0..15 bag, 100..103 well, -1 nothing. Valid fills
+    // source and target are widget indices: 0..63 a bag anchor, 100..111 a well, -1 nothing. Valid fills
     // action; None and Invalid emit nothing.
+    //
+    // A bag to bag drop is BagGrid.PlanMove, the rule the server uses, so a free spot and a swap with
+    // exactly one other item are Valid and everything else is Invalid. A bag item dropped on an
+    // occupied well swaps, and shows Invalid when the displaced item has nowhere to go. A worn item
+    // dropped on a bag anchor is unequipped there, which needs its whole footprint free; dropped on
+    // another well it moves there (a swap when that well is taken) if its slot mask allows it.
     internal static DropVerdict TryResolveDrop(HudView v, int source, int target, out InventoryHudAction action)
     {
         action = default;
@@ -219,35 +347,57 @@ public static class InventoryWindow
         }
 
         bool targetIsWell = EquipmentSlots.TryFromSlotIndex(target, out EquipmentSlot targetSlot);
-        if (!targetIsWell && (target < 0 || target >= HudView.BackpackSlots))
+        if (!targetIsWell && target >= BagGrid.CellCount)
         {
             return DropVerdict.None;
         }
 
         if (EquipmentSlots.TryFromSlotIndex(source, out EquipmentSlot sourceSlot))
         {
-            // From a well: only a bag slot takes it, and it is unequipped.
-            if (!TryItem(v.Worn, (int)sourceSlot, out _))
+            if (!TryItem(v.Worn, (int)sourceSlot, out InventoryItemSnapshot worn))
             {
                 return DropVerdict.None;
             }
 
             if (targetIsWell)
             {
+                if (!CharacterPanelModel.CanEquipTo(worn.EquipSlots, targetSlot))
+                {
+                    return DropVerdict.Invalid;
+                }
+
+                action = new InventoryHudAction(InventoryHudActionKind.EquipTo, source, target);
+                return DropVerdict.Valid;
+            }
+
+            if (!BagGrid.TryMask(target, v.FootprintOf(worn.ItemKind), out ulong landing) || (v.BagOccupancy() & landing) != 0)
+            {
                 return DropVerdict.Invalid;
             }
 
-            action = new InventoryHudAction(InventoryHudActionKind.Unequip, source);
+            action = new InventoryHudAction(InventoryHudActionKind.Unequip, source, target);
             return DropVerdict.Valid;
         }
 
-        if (source < 0 || source >= HudView.BackpackSlots || !TryItem(v.Backpack, source, out InventoryItemSnapshot item))
+        if (!IsPlaced(v, source))
         {
             return DropVerdict.None;
         }
 
+        InventoryItemSnapshot item = v.Backpack[source].Item;
         if (!targetIsWell)
         {
+            BagMovePlan plan = BagGrid.PlanMove(v.BagCells, v.BagFootprints, source, target);
+            if (plan.Verdict == BagMoveVerdict.Same)
+            {
+                return DropVerdict.None;
+            }
+
+            if (plan.Verdict == BagMoveVerdict.Blocked)
+            {
+                return DropVerdict.Invalid;
+            }
+
             action = new InventoryHudAction(InventoryHudActionKind.Move, source, target);
             return DropVerdict.Valid;
         }
@@ -257,13 +407,36 @@ public static class InventoryWindow
             return DropVerdict.Invalid;
         }
 
-        if (TryItem(v.Worn, (int)targetSlot, out InventoryItemSnapshot worn) && worn.ItemInstanceId == item.ItemInstanceId)
+        if (TryItem(v.Worn, (int)targetSlot, out InventoryItemSnapshot occupant))
         {
-            return DropVerdict.None;
+            if (occupant.ItemInstanceId == item.ItemInstanceId)
+            {
+                return DropVerdict.None;
+            }
+
+            if (!CanTakeDisplaced(v, source, occupant))
+            {
+                return DropVerdict.Invalid;
+            }
         }
 
         action = new InventoryHudAction(InventoryHudActionKind.EquipTo, source, target);
         return DropVerdict.Valid;
+    }
+
+    // Equipping over a worn item sends that item back to the bag: to the equipped item's old anchor if
+    // it fits there, otherwise the first fit, with the equipped item's cells already free.
+    private static bool CanTakeDisplaced(HudView v, int sourceAnchor, in InventoryItemSnapshot displaced)
+    {
+        ItemFootprint footprint = v.FootprintOf(displaced.ItemKind);
+        BagGrid.TryMask(sourceAnchor, v.BagFootprints[sourceAnchor], out ulong sourceCells);
+        ulong occupied = v.BagOccupancy() & ~sourceCells;
+        if (BagGrid.TryMask(sourceAnchor, footprint, out ulong atSource) && (occupied & atSource) == 0)
+        {
+            return true;
+        }
+
+        return BagGrid.FirstFit(occupied, footprint) >= 0;
     }
 
     internal static bool TryItem(HudItemView[]? items, int index, out InventoryItemSnapshot item)
@@ -278,11 +451,40 @@ public static class InventoryWindow
         return false;
     }
 
+    // What dropping the dragged item where the pointer is would do, for the highlight. Cells is the
+    // bag cells it would cover (bit = cell) when the target is a bag anchor.
+    private readonly record struct DragPreview(int Target, DropVerdict Verdict, ulong Cells);
+
+    private static DragPreview PreviewDrag(
+        IUiInput i, HudView v, in UiLayout l, UiRect win, InventoryUiState st, bool dragging)
+    {
+        DragPreview none = new(-1, DropVerdict.None, 0);
+        if (!dragging || !st.DragActive || st.DragCancelled)
+        {
+            return none;
+        }
+
+        int target = ResolveTarget(l, win, v, st.DragSource, i.Pointer.Position);
+        DropVerdict verdict = TryResolveDrop(v, st.DragSource, target, out _);
+        if (verdict == DropVerdict.None)
+        {
+            return none;
+        }
+
+        ulong cells = 0;
+        if ((uint)target < BagGrid.CellCount && TryDragFootprint(v, st.DragSource, out ItemFootprint footprint))
+        {
+            BagGrid.TryMask(target, footprint, out cells);
+        }
+
+        return new DragPreview(target, verdict, cells);
+    }
+
     // ---- drawing ----------------------------------------------------------------------------
 
     private static void DrawWell(
         IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, InventoryUiState st,
-        UiRect win, int w, bool live, bool dragging)
+        UiRect win, int w, bool live, bool dragging, DragPreview drag)
     {
         WellDef d = Wells[w];
         UiRect r = l.FromUnits(win, d.X, d.Y, d.W, d.H);
@@ -316,7 +518,14 @@ public static class InventoryWindow
             }
         }
 
-        DrawDropHighlight(c, i, v, s, st, index, r, dragging);
+        if (drag.Target == index && drag.Verdict != DropVerdict.None)
+        {
+            string name = drag.Verdict == DropVerdict.Valid ? UiSpriteNames.CellOverlayHover : UiSpriteNames.CellOverlayInvalid;
+            if (s.TryGet(name, out UiSprite overlay))
+            {
+                c.Tile(overlay, r, White);
+            }
+        }
     }
 
     private static void DrawWellIcon(IUiCanvas c, HudView v, in UiLayout l, InventoryUiState st, UiRect win, int w, ItemTier tier)
@@ -346,89 +555,118 @@ public static class InventoryWindow
         }
     }
 
-    private static void DrawBagCells(
-        IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, InventoryUiState st,
-        UiRect win, int slot, bool live, bool dragging)
+    // One widget per placed item, over the item's whole footprint, so hover, drag and right click work
+    // from any cell it covers. Returns the anchor of the hovered item (the router names at most one), or
+    // -1. Nothing is registered while a menu is open or an item is being dragged.
+    private static int ReadBagInput(
+        IUiInput i, HudView v, in UiLayout l, UiRect win, InventoryUiState st, bool live, bool dragging)
     {
-        UiRect r = SlotRect(l, win, slot);
-        bool has = TryItem(v.Backpack, slot, out InventoryItemSnapshot _);
-        bool hovered = false;
-        if (has && live && !dragging)
+        if (!live || dragging)
         {
-            hovered = i.Hovered(IdBagSlot + slot, r);
-            if (hovered)
-            {
-                st.SetHover(slot, r);
-            }
-
-            if (i.BeginDrag(IdBagSlot + slot, r, slot))
-            {
-                st.StartDrag(slot, v);
-            }
-
-            if (i.RightClicked(IdBagSlot + slot, r))
-            {
-                st.OpenMenu(v, slot, r, i.Pointer.Position);
-            }
+            return -1;
         }
 
-        if (!has)
+        int hovered = -1;
+        for (int anchor = 0; anchor < HudView.BackpackSlots; anchor++)
         {
-            if (s.TryGet(UiSpriteNames.CellEmpty, out UiSprite empty))
+            if (!IsPlaced(v, anchor))
             {
-                float half = r.W * 0.5f;
-                float halfH = r.H * 0.5f;
-                c.Sprite(empty, new UiRect(r.X, r.Y, half, halfH), White);
-                c.Sprite(empty, new UiRect(r.X + half, r.Y, half, halfH), White);
-                c.Sprite(empty, new UiRect(r.X, r.Y + halfH, half, halfH), White);
-                c.Sprite(empty, new UiRect(r.X + half, r.Y + halfH, half, halfH), White);
+                continue;
+            }
+
+            UiRect r = ItemRect(l, win, anchor, v.BagFootprints[anchor]);
+            if (i.Hovered(IdBagSlot + anchor, r))
+            {
+                hovered = anchor;
+                st.SetHover(anchor, r);
+            }
+
+            if (i.BeginDrag(IdBagSlot + anchor, r, anchor))
+            {
+                st.StartDrag(anchor, v);
+            }
+
+            if (i.RightClicked(IdBagSlot + anchor, r))
+            {
+                st.OpenMenu(v, anchor, r, i.Pointer.Position);
             }
         }
-        else if (s.TryGet(hovered ? UiSpriteNames.CellHover : UiSpriteNames.CellOccupied, out UiSprite backing))
-        {
-            c.Tile(backing, r, White);
-        }
 
-        if (has && v.Backpack[slot].Equipped && s.TryGet(UiSpriteNames.CellOverlayHover, out UiSprite alias))
-        {
-            c.Tile(alias, r, White);
-        }
-
-        DrawDropHighlight(c, i, v, s, st, slot, r, dragging);
+        return hovered;
     }
 
-    private static void DrawBagIcon(IUiCanvas c, HudView v, in UiLayout l, InventoryUiState st, UiRect win, int slot, ItemTier tier)
+    // The 64 cells: an empty tile, or the occupied backing of the item covering it (the hover backing on
+    // every cell of the hovered item). While an item is dragged, the cells it would cover get the valid
+    // or invalid overlay.
+    private static void DrawBagCells(
+        IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s, UiRect win, int hoveredAnchor, DragPreview drag)
     {
-        if (!TryItem(v.Backpack, slot, out _))
+        string overlayName = drag.Verdict == DropVerdict.Valid ? UiSpriteNames.CellOverlayHover : UiSpriteNames.CellOverlayInvalid;
+        bool haveEmpty = s.TryGet(UiSpriteNames.CellEmpty, out UiSprite empty);
+        bool haveOccupied = s.TryGet(UiSpriteNames.CellOccupied, out UiSprite occupied);
+        bool haveHover = s.TryGet(UiSpriteNames.CellHover, out UiSprite hover);
+        UiSprite overlay = default;
+        bool haveOverlay = drag.Cells != 0 && s.TryGet(overlayName, out overlay);
+
+        for (int cell = 0; cell < BagGrid.CellCount; cell++)
+        {
+            UiRect r = SlotRect(l, win, cell);
+            int owner = v.BagAnchorAt(cell);
+            if (owner < 0 || !IsPlaced(v, owner))
+            {
+                if (haveEmpty)
+                {
+                    c.Sprite(empty, r, White);
+                }
+            }
+            else if (owner == hoveredAnchor)
+            {
+                if (haveHover)
+                {
+                    c.Tile(hover, r, White);
+                }
+            }
+            else if (haveOccupied)
+            {
+                c.Tile(occupied, r, White);
+            }
+
+            if (haveOverlay && (drag.Cells & (1UL << cell)) != 0)
+            {
+                c.Tile(overlay, r, White);
+            }
+        }
+    }
+
+    private static void DrawBagIcon(IUiCanvas c, HudView v, in UiLayout l, InventoryUiState st, UiRect win, int anchor, ItemTier tier)
+    {
+        if (!IsPlaced(v, anchor))
         {
             return;
         }
 
-        HudItemView hv = v.Backpack[slot];
+        HudItemView hv = v.Backpack[anchor];
         if (!hv.HasIcon || hv.Tier != tier)
         {
             return;
         }
 
-        UiColor tint = hv.Equipped ? EquippedAliasTint : White;
-        if (st.IsDraggingSource(slot))
-        {
-            tint = DraggedTint;
-        }
-
-        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, SlotRect(l, win, slot), l.Scale), tint);
+        UiColor tint = st.IsDraggingSource(anchor) ? DraggedTint : White;
+        UiRect box = ItemRect(l, win, anchor, v.BagFootprints[anchor]);
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, box, l.Scale), tint);
     }
 
     // Name stub for an item without a sprite, and the stack count, both over the icon.
-    private static void DrawBagText(IUiCanvas c, HudView v, in UiLayout l, UiRect win, int slot)
+    private static void DrawBagText(IUiCanvas c, HudView v, in UiLayout l, UiRect win, int anchor)
     {
-        if (!TryItem(v.Backpack, slot, out InventoryItemSnapshot item))
+        if (!IsPlaced(v, anchor))
         {
             return;
         }
 
-        UiRect r = SlotRect(l, win, slot);
-        if (!v.Backpack[slot].HasIcon)
+        InventoryItemSnapshot item = v.Backpack[anchor].Item;
+        UiRect r = ItemRect(l, win, anchor, v.BagFootprints[anchor]);
+        if (!v.Backpack[anchor].HasIcon)
         {
             DrawFallbackLabel(c, r, item.DisplayName);
         }
@@ -445,33 +683,21 @@ public static class InventoryWindow
         }
     }
 
-    // While a bag or well item is dragged, the slot under the pointer shows whether the drop works.
-    private static void DrawDropHighlight(
-        IUiCanvas c, IUiInput i, HudView v, UiSpriteTable s, InventoryUiState st, int index, UiRect r, bool dragging)
+    // "N items held back: make room" in the free band under the bag; nothing at 0. The server holds back
+    // items it has no room for and places them as space appears.
+    private static void DrawHeldBackLine(IUiCanvas c, HudView v, in UiLayout l, UiRect win)
     {
-        if (!dragging || !st.DragActive || st.DragCancelled || !OverRect(i, IdBase + 0x600 + index, r))
+        if (v.HeldBackCount <= 0)
         {
             return;
         }
 
-        DropVerdict verdict = TryResolveDrop(v, st.DragSource, index, out _);
-        if (verdict == DropVerdict.None)
-        {
-            return;
-        }
-
-        string name = verdict == DropVerdict.Valid ? UiSpriteNames.CellOverlayHover : UiSpriteNames.CellOverlayInvalid;
-        if (s.TryGet(name, out UiSprite overlay))
-        {
-            c.Tile(overlay, r, White);
-        }
-    }
-
-    // The pointer is over r. Uses the real position when the input offers it, otherwise Hovered.
-    internal static bool OverRect(IUiInput i, int id, UiRect r)
-    {
-        Vector2 p = i.Pointer.Position;
-        return float.IsFinite(p.X) && float.IsFinite(p.Y) ? r.Contains(p) : i.Hovered(id, r);
+        Span<char> mem = stackalloc char[48];
+        UiTextBuilder b = new(mem);
+        b.Append(v.HeldBackCount);
+        b.Append(" items held back: make room");
+        UiRect band = l.FromUnits(win, HeldBackLeftUnits, HeldBackTopUnits, BagColumns * CellUnits, 8f);
+        DrawText(c, b.Text, new Vector2(band.X, band.Y), ItemTierStyle.Danger);
     }
 
     // An item with no sprite shows the start of its name, so it is never invisible.

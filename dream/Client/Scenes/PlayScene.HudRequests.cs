@@ -142,7 +142,10 @@ public partial class PlayScene
     // validates every one of them and creates nothing from them.
     internal static IPlayerActionPayload ToInventoryIntent(in InventoryHudAction action) => action.Kind switch
     {
-        InventoryHudActionKind.Unequip => new InventoryUnequipIntent(action.SlotIndex),
+        // Target is the bag anchor the item should land on; FirstFitCell (-1) lets the server pick.
+        InventoryHudActionKind.Unequip => new InventoryUnequipIntent(
+            action.SlotIndex,
+            action.Target == CharacterPanelModel.FirstFitCell ? null : action.Target),
         InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
         InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
         _ => new InventoryEquipIntent(action.SlotIndex, action.Target)
