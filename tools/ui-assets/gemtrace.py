@@ -109,7 +109,7 @@ def _basis(c, rot_deg=0.0):
 # and a turn in degrees so a strip can run along the stone's upper-left rim
 PANELS = (
     ((-0.46, 0.64, 0.62), 0.34, 0.045, 0.05, (1.00, 0.92, 0.84), 3.2, 0.5, 40),   # the strip light, upper left
-    ((0.48, 0.58, 0.66), 0.30, 0.03, 0.04, (1.00, 0.95, 0.90), 3.2, 0.4, 25),     # a second strip, found by the table
+    ((0.48, 0.58, 0.66), 0.30, 0.03, 0.04, (1.00, 0.95, 0.90), 1.9, 0.4, 25),     # a second strip, found by the table
     ((-0.52, 0.58, 0.62), 0.15, 0.10, 0.10, (1.00, 0.90, 0.80), 1.1, 0.85, 0),    # the window, upper left
     ((0.10, 0.93, 0.36), 0.55, 0.10, 0.20, (0.92, 0.96, 1.00), 0.55, 0.0, 0),     # overhead strip
     ((0.80, -0.12, 0.58), 0.10, 0.34, 0.22, (1.00, 0.62, 0.30), 1.2, 0.3, 0),     # candle, low right
@@ -328,15 +328,15 @@ def _run(cfg: dict, workers: int | None = None) -> dict:
 # residue left in the empty glass. exposure scales the traced light before the filmic curve.
 STONES = {
     "hp": dict(
-        sigma_full=(0.50, 4.6, 5.6), sigma_empty=(2.6, 3.4, 3.6), emit=(0.11, 0.003, 0.001), residue=(0.04, 0.0, 0.0),
-        surf=0.4, sky=0.30, panel=1.0, rim=1.0, lamp=1.6, glint=1.0, exposure=1.0, exposure_empty=1.0,
-        glint_cap=0.35, edge=0.085, form=0.8, form_empty=0.5, bloom=0.7, hot=(1.0, 0.90, 0.82), hot_amount=0.85, facet_lo=0.14, facet_gain=1.75,
+        sigma_full=(0.50, 4.6, 5.6), sigma_empty=(2.6, 3.4, 3.6), emit=(0.15, 0.004, 0.001), residue=(0.04, 0.0, 0.0),
+        surf=0.4, sky=0.30, panel=1.0, rim=1.0, lamp=1.6, glint=1.0, exposure=1.35, exposure_empty=1.0,
+        glint_cap=0.35, facet_trim={4: 0.62}, edge=0.12, form=0.8, form_empty=0.5, bloom=0.7, hot=(1.0, 0.90, 0.82), hot_amount=0.85, facet_lo=0.14, facet_gain=1.75,
         flares=((0.27, 0.27, 0.14, 1.6), (0.70, 0.66, 0.09, 0.9), (0.36, 0.78, 0.07, 0.7)), flare_tint=(1.0, 0.82, 0.74),
     ),
     "mp": dict(
         sigma_full=(6.4, 2.1, 0.30), sigma_empty=(4.2, 3.2, 1.6), emit=(0.002, 0.034, 0.20), residue=(0.0, 0.004, 0.05),
         surf=0.4, sky=0.30, panel=1.0, rim=1.0, lamp=1.6, glint=1.0, exposure=1.7, exposure_empty=1.0,
-        glint_cap=0.35, edge=0.085, form=0.8, form_empty=0.5, bloom=0.7, hot=(0.86, 0.95, 1.0), hot_amount=0.85, hot_start=0.20, facet_lo=0.18, facet_gain=1.7,
+        glint_cap=0.35, facet_trim={4: 0.62}, edge=0.12, form=0.8, form_empty=0.5, bloom=0.7, hot=(0.86, 0.95, 1.0), hot_amount=0.85, hot_start=0.20, facet_lo=0.18, facet_gain=1.7,
         flares=((0.27, 0.27, 0.14, 1.6), (0.70, 0.66, 0.09, 0.9), (0.36, 0.78, 0.07, 0.7)), flare_tint=(0.80, 0.90, 1.0),
     ),
 }
@@ -421,6 +421,8 @@ def _facet_shade(t: dict, kind: str, st: dict) -> np.ndarray:
     lam = np.clip(N.astype(np.float64) @ key, 0, 1)
     jit = 1 + 0.50 * (np.random.default_rng(20261101 ^ 0x2B6D).random(len(N)) - 0.5)
     f = (st["facet_lo"] + st["facet_gain"] * lam ** 1.15) * jit
+    for k_, v_ in st.get("facet_trim", {}).items():   # the facet that squares up to the key would otherwise burn flat
+        f[k_] *= v_
     return f.astype(F32)[t["fid"]]
 
 

@@ -78,13 +78,19 @@ px = u x 4. `{n,h,p,d}` = state suffixes.
 
 | Sprite | u | Notes | Spec |
 |---|---|---|---|
-| `hud.dragon.left/right` | 107x46 | pivot bottom outer corner | 03 s2 |
-| `hud.talon.left/right` | 59x46 | gold rings; draws over gem | 03 s7 |
+| `hud.dragon.left/right` | 118x58 | pivot bottom outer corner; bottom 6 u over the plate | 03 s2, iteration 2 |
+| `hud.talon.left/right` | 71x52 | three talons bite into the gem; draws over it | 03 s7, iteration 2 |
+| `gem.setting.left/right` | 62x56 | forged collar under the stone | iteration 2 |
+| `gem.hp.spill` `gem.mp.spill` | 128x64 | additive light, centred on the gem | iteration 2 |
+| `hudnum.0` to `hudnum.9` `hudnum.slash` | 8x12 | bold ivory bar numerals | iteration 2 |
 | `hud.base.left/right` | 199x48 | iron, rail | 03 s1 |
 | `hud.base.centre` | 242x48 | chain band | 03 s1, s10 |
 | `hud.gapfill` | 64x48 | tile x | 03 Responsive |
 | `gem.hp.full/empty/mask/spec` | 50x50 | see below | 03 s5 |
-| `gem.mp.full/empty/mask/spec` | 50x50 | mirrored, cyan rim | 03 s6 |
+| `gem.mp.full/empty/mask/spec` | 50x50 | mirrored cut, sapphire | 03 s6 |
+| `gem.setting.left/right` | 62x56 | forged collar under the stone | iteration 2 |
+| `gem.hp.spill` `gem.mp.spill` | 128x64 | additive light, centred on the gem | iteration 2 |
+| `hudnum.0/1/2/3/4/5/6/7/8/9/slash` | 8x12 | bold ivory bar numerals | iteration 2 |
 | `gauge.left.fill` `gauge.right.fill` | 15x35 | 3-face prism | 03 s4, s6 |
 | `gauge.empty` | 15x35 | near black | 03 s4 |
 | `gauge.cap.left/right` | 33x46 | hole over the fill | 03 s4 |
@@ -116,7 +122,7 @@ px = u x 4. `{n,h,p,d}` = state suffixes.
 | `chat.bracket` | 3x3 | | 03 s8 |
 | `chat.postbar` | 8x8 | 3-slice, `#9D7A2B` | 03 s8 |
 
-Gem layers share a pivot. `full` and `empty` (dimmed 30%, desaturated) are colour. `mask` is greyscale in RGB: value = fill threshold, 1 at bottom to 0 at top, inside the silhouette. `spec` is the rim arc drawn above the cut. Facets are newly authored polygons, flat-shaded, never radial. Use 03 s5 for the idea (cut gem, specular table rim, palette) but not its coordinates: no shape may be rescaled from screenshot pixels.
+Gem layers share a pivot. Iteration 2 supersedes the old greyscale mask: see "Gem layers" in the Iteration 2 section. The cut is original and ray traced (`gemtrace.py`), never radial and never rescaled from screenshot pixels.
 
 `dream/ui/hud/cursors.png`: `cursor.pointer .pressed .grab .attack .forbid`, 32x32 u. Own steel gauntlet design, tip upper-left, ~30 u long. Pivot = fingertip hotspot. Spec 01 s4.
 
@@ -181,7 +187,7 @@ Pinned by the C0b art core. Everything here is written by the generators through
 
 ### Gem layers
 
-`gem.<k>.full` is the stone filled to the top, tonemapped. `gem.<k>.empty` is the same geometry as dark glass with residue. `gem.<k>.mask`: R is the refraction-warped fill threshold (same orientation as the old grey mask, low at the top of the stone and high at the bottom, but bent by the stone so it is no longer constant along a row), G the meniscus weight, B the facet id used as phase, A the silhouette. `gem.<k>.spec` carries hot facet glints only. All four share one alpha. The old rule that `mask` is grey and constant along each row no longer holds; WS4 rewrites those checks in `check_hud.py`. This section supersedes the paragraph on gem layers in table B.
+`gem.<k>.full` is the stone filled to the top, tonemapped. `gem.<k>.empty` is the same geometry as dark glass with residue. `gem.<k>.mask` (raw RGBA8, straight alpha, byte/255 is the value, not sRGB; WS3 runtime contract): R is the fill threshold measured from the bottom, 0 at the lowest point of the stone and 1 at the highest, bent by refraction (a pixel is filled when `smoothstep(R - .012, R + .012, level)` is 1, so low values fill first; R spans about 0.02 to 0.98 and rises broadly upward, with no stray islands at 25, 50 and 75 percent), G the meniscus weight 0..1, B the per-facet surface phase (one cycle), A the silhouette (the shader does not read it; coverage is mixed from empty.a and full.a, so all four layers share one silhouette). R, G and B are dilated past the rim, never 0 there. This is the reverse of the old grey mask, so the new masks and both `gem.setting.*` sprites ship in one commit: the batch reads masks as the old gradient until both settings exist. `gem.<k>.spec` carries hot facet glints only. All four share one alpha. The old rule that `mask` is grey and constant along each row no longer holds; WS4 rewrites those checks in `check_hud.py`. This section supersedes the paragraph on gem layers in table B.
 
 ### Items
 

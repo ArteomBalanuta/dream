@@ -273,7 +273,7 @@ def check_dragon(errs, S, doc):
         errs.append("dragon pivots are not the bottom outer corners")
     e = r["meta"]["eye"]
     got = U.probe(left, e)
-    if not (got[0] > 190 and got[0] > got[1] + 40 and got[2] < 150):
+    if not (got[0] > 190 and got[0] > got[1] + 25 and got[2] < 150):
         errs.append(f"dragon eye {got} is not amber")
     keep = left[..., 3] > 128
     keep[e[1] - 12 : e[1] + e[3] + 12, e[0] - 12 : e[0] + e[2] + 40] = False

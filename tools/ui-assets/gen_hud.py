@@ -468,17 +468,37 @@ def qwe_letter(ch):
 # dragon -------------------------------------------------------------------------------
 
 DRAGON_U = (118, 58)
-EYE_RECT_U = (66.4, 21.2, 2.4, 1.2)    # flat amber left of the pupil, in sprite u
-FANG_RECT_U = (96, 30, 10, 16)
+
+# The head is drawn level, then lifted about the nape and the jaw dropped about its hinge: alert and open.
+HEAD_PIVOT, HEAD_ROT = (54.0, 30.0), -7.0
+JAW_PIVOT, JAW_ROT = (60.0, 42.0), 10.0
 
 
+def _turn(pts, pivot, deg):
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    return [(pivot[0] + (x - pivot[0]) * c - (y - pivot[1]) * s, pivot[1] + (x - pivot[0]) * s + (y - pivot[1]) * c) for x, y in pts]
 
 
-def _horn(r, pts, rad, z, seed, tip="ivory", tip_from=0.60):
+def H(pts):
+    return _turn(pts, HEAD_PIVOT, HEAD_ROT)
+
+
+def J(pts):
+    return H(_turn(pts, JAW_PIVOT, JAW_ROT))
+
+
+_EYE = H([(66.4, 21.2)])[0]
+EYE_RECT_U = (_EYE[0], _EYE[1], 2.4, 1.2)    # flat amber left of the pupil, in sprite u
+_FANG = J([(101.0, 47.6), (110.4, 30.0)])
+FANG_RECT_U = (min(p[0] for p in _FANG) - 2, min(p[1] for p in _FANG), 12, abs(_FANG[0][1] - _FANG[1][1]))
+
+
+def _horn(r, pts, rad, z, seed, tip="ivory", tip_from=0.60, mat="iron.warm"):
     path = U.bezier(*pts, 64)
     n = len(path)
     rr = [rad * (1 - k / (n - 1)) ** 0.72 * (1 + 0.07 * math.sin(k * 0.62) * (1 - k / (n - 1))) + 0.05 for k in range(n)]
-    r.sweep(path, rr, z, mat="iron.warm", step_px=2.0)
+    r.sweep(path, rr, z, mat=mat, step_px=2.0)
     t0 = int(n * tip_from)
     r.sweep(path[t0:], rr[t0:], z + 0.03, mat=tip, step_px=2.0)
 
@@ -488,9 +508,10 @@ def _spike(r, bx, by, lean, height, wid, z, seed, mat="iron"):
     r.plate(forge.Poly(pts), z=z, bevel=1.6, profile="rolled", rise=0.55, mat=mat, wobble=0.10, nick=0.02, seed=seed)
 
 
-def _tooth(r, x, y, length, wid, z, seed, up=False):
+def _tooth(r, x, y, length, wid, z, seed, tf, up=False):
     s = -1 if up else 1
-    r.plate(forge.Poly([(x - wid, y), (x + wid, y), (x + wid * 0.2, y + s * length)]), z=z, bevel=0.55, profile="rolled", rise=0.9, mat="ivory", wobble=0.04, nick=0.01, seed=seed)
+    pts = tf([(x - wid, y), (x + wid, y), (x + wid * 0.2, y + s * length)])
+    r.plate(forge.Poly(pts), z=z, bevel=0.55, profile="rolled", rise=0.9, mat="ivory", wobble=0.04, nick=0.01, seed=seed)
 
 
 def dragon_relief():
@@ -499,8 +520,8 @@ def dragon_relief():
     P = forge.Poly
     kw = dict(profile="rolled", wobble=0.14, nick=0.02, wob_scale=7.0)
     # two horns first, swept back off the skull, so everything else overlaps their roots
-    _horn(r, [(56, 16), (42, 3.5), (22, 0.5), (4, 11)], 4.2, 1.2, "dragon.horn1")
-    _horn(r, [(52, 21), (38, 15), (20, 15.5), (5, 26)], 3.0, 0.6, "dragon.horn2")
+    _horn(r, [(56, 14), (43, 1.5), (23, -1.0), (5, 9)], 4.2, 1.2, "dragon.horn1")
+    _horn(r, [(52, 21), (38, 14), (20, 14.5), (5, 25)], 3.0, 0.6, "dragon.horn2")
     # the neck: one heavy mass, then five great plates down it, tail to head
     r.plate(P([(-5, 26), (10, 25), (26, 22), (42, 17), (57, 18), (63, 31), (59, 45), (46, 54), (30, 61), (-5, 61)]), z=0.4, bevel=3.2, rise=0.5, mat="iron.black", seed="dragon.neck", **kw)
     for i, (cx, cy, ang, L, Hh) in enumerate(((7, 42, -8, 19, 13), (18, 38, -14, 19, 13.5), (29, 34, -22, 19.5, 14), (39, 30, -34, 18, 14), (46, 29, -46, 15, 13))):
@@ -512,26 +533,35 @@ def dragon_relief():
     # dorsal crest: five swept-back spikes along the top of the neck
     for i, (bx, by, lean, ht, wd) in enumerate(((8, 26.5, -7, 11, 4.0), (18, 24.4, -8, 12, 4.4), (28, 22.2, -8, 12.5, 4.6), (38, 19.4, -8, 12, 4.6), (47, 17.4, -7, 10, 4.2))):
         _spike(r, bx, by, lean, ht, wd, 2.6 + i * 0.3, f"dragon.spike{i}", mat=("iron.warm", "iron", "iron.cold", "iron.warm", "iron")[i])
-    # lower jaw, then the hinge plate
-    r.plate(P([(58, 40), (78, 41), (100, 43), (110, 46.5), (104, 50), (86, 51.5), (66, 50.5), (57, 47)]), z=3.0, bevel=2.4, rise=0.72, mat="steel.armour", seed="dragon.jaw", **kw)
-    # the dark of the mouth
-    r.plate(P([(62, 35.5), (86, 37.5), (106, 40.5), (108, 43), (86, 42.5), (64, 41.5)]), z=1.0, bevel=0.3, rise=0.1, mat="void", seed="dragon.mouth", profile="rolled", wobble=0.05)
+    # cheek spikes raked back from the hinge, over the neck plates
+    for i, (p0, p1, p2, p3, rad) in enumerate((((58, 33), (52, 30), (46, 31), (40, 26), 1.9), ((58, 38), (51, 38), (45, 41), (38, 41), 1.7), ((57, 43), (52, 45), (46, 49), (41, 52), 1.5))):
+        path = U.bezier(*H([p0, p1, p2, p3]), 36)
+        r.sweep(path, [rad * (1 - k / 36) ** 0.7 + 0.04 for k in range(37)], 5.8 - i * 0.2, mat="iron", step_px=2.0)
+    # lower jaw, with a heavy chin spike, then the hinge plate
+    r.plate(P(J([(58, 40), (78, 41.5), (100, 43.5), (111, 47), (105, 51.5), (86, 53), (66, 52), (57, 48)])), z=3.0, bevel=2.4, rise=0.72, mat="steel.armour", seed="dragon.jaw", **kw)
+    r.plate(P(J([(90, 50), (97, 59), (104, 49.5)])), z=3.4, bevel=1.6, rise=0.6, mat="iron", seed="dragon.chin", **kw)
+    # the dark of the open mouth, between the upper lip and the dropped jaw
+    mouth = H([(62, 35.8), (86, 37.6), (108, 38.4)]) + list(reversed(J([(64, 41.6), (86, 42.4), (108, 43.4)])))
+    r.plate(P(mouth), z=1.0, bevel=0.3, rise=0.1, mat="void", seed="dragon.mouth", profile="rolled", wobble=0.05)
     # skull, brow and snout: plates stepping up and forward
-    r.plate(P([(46, 17), (60, 11.5), (80, 14), (94, 22), (92, 27), (72, 33), (54, 36), (47, 29)]), z=3.8, bevel=3.0, rise=0.72, mat="steel.armour", seed="dragon.skull", **kw)
-    r.plate(P([(76, 22), (98, 24.5), (114, 31.5), (114.6, 36.5), (102, 38.2), (84, 37.2), (74, 33)]), z=4.6, bevel=2.8, rise=0.72, mat="iron", seed="dragon.snout", **kw)
-    r.plate(P([(56, 11.5), (72, 11), (86, 19), (83, 23), (70, 19), (57, 19.5)]), z=6.2, bevel=2.2, rise=0.6, mat="steel.armour", seed="dragon.brow", **kw)
-    # cheek and hinge
-    r.plate(P([(50, 28), (66, 27.5), (74, 33), (70, 41), (56, 46), (48, 40)]), z=5.0, bevel=2.6, rise=0.72, mat="iron.warm", seed="dragon.cheek", **kw)
+    r.plate(P(H([(46, 17), (58, 12), (72, 11.5), (86, 16), (95, 22.5), (93, 28), (78, 32), (60, 36), (47, 30)])), z=3.8, bevel=3.0, rise=0.72, mat="steel.armour", seed="dragon.skull", **kw)
+    r.plate(P(H([(80, 21), (100, 24), (114, 31), (117, 34.5), (110, 38.2), (92, 38.4), (80, 35)])), z=4.6, bevel=2.8, rise=0.72, mat="iron", seed="dragon.snout", **kw)
+    r.plate(P(H([(55, 12.5), (66, 9.8), (80, 12.5), (91, 19.5), (87, 24), (76, 20.5), (64, 18.8), (56, 19.8)])), z=6.2, bevel=2.2, rise=0.6, mat="steel.armour", seed="dragon.brow", **kw)
+    # cheek plate
+    r.plate(P(H([(50, 28), (66, 27.5), (74, 33), (70, 41), (56, 46), (48, 40)])), z=5.0, bevel=2.6, rise=0.72, mat="iron.warm", seed="dragon.cheek", **kw)
+    # brow horns, swept back over the eye
+    _horn(r, H([(72, 11.5), (66, 5), (58, 1.5), (49, 3.5)]), 2.4, 6.6, "dragon.brow.horn", tip_from=0.5, mat="iron")
     # eye socket, then nostril
-    r.pocket(P([(64.5, 20.6), (73.5, 22.8), (76.5, 26.6), (69.5, 25.8), (64, 23.5)]), depth=2.0, wall=0.7, mat="void", wobble=0.04, seed="dragon.eye")
-    r.pocket(forge.Ellipse(109.5, 32.8, 2.0, 1.1), depth=1.2, wall=0.5, mat="void", seed="dragon.nostril")
+    r.pocket(P(H([(64.5, 20.6), (73.5, 22.8), (76.5, 26.6), (69.5, 25.8), (64, 23.5)])), depth=2.0, wall=0.7, mat="void", wobble=0.04, seed="dragon.eye")
+    nose = H([(112.0, 32.6)])[0]
+    r.pocket(forge.Ellipse(nose[0], nose[1], 2.0, 1.1), depth=1.2, wall=0.5, mat="void", seed="dragon.nostril")
     # teeth: a row hanging from the snout, a shorter row rising from the jaw, and the long fang outside the lip
     rg = U.rng("dragon.teeth")
-    for i, x in enumerate(np.arange(79, 110, 6.2)):
-        _tooth(r, float(x), 37.0 + (x - 78) * 0.045, 5.2 + 2.4 * float(rg.random()), 1.6, 5.0, f"dragon.tu{i}")
-    for i, x in enumerate(np.arange(84, 104, 8.0)):
-        _tooth(r, float(x), 42.6 + (x - 82) * 0.05, 3.6 + 1.6 * float(rg.random()), 1.5, 3.6, f"dragon.tl{i}", up=True)
-    fang = U.bezier((101.0, 47.6), (103.0, 42.0), (105.4, 35.5), (110.4, 30.0), 40)
+    for i, x in enumerate(np.arange(79, 110, 6.4)):
+        _tooth(r, float(x), 37.2 + (x - 78) * 0.03, 5.4 + 2.4 * float(rg.random()), 1.6, 5.0, f"dragon.tu{i}", H)
+    for i, x in enumerate(np.arange(80, 104, 8.0)):
+        _tooth(r, float(x), 43.0 + (x - 82) * 0.03, 3.8 + 1.6 * float(rg.random()), 1.5, 3.6, f"dragon.tl{i}", J, up=True)
+    fang = U.bezier(*J([(101.0, 47.6), (103.0, 42.0), (105.4, 35.5), (110.4, 30.0)]), 40)
     r.sweep(fang, [2.0 * (1 - k / 40) ** 0.65 + 0.04 for k in range(41)], 5.6, mat="ivory", step_px=2.0)
     # bulk: the whole head and neck swell a little, so the light has something round to find
     r.h = r.h + forge.blur(r.a, 4.0 * PPU) * 7.0
@@ -545,20 +575,21 @@ def dragon():
     yy, xx = np.mgrid[0 : r.H_px, 0 : r.W_px].astype(np.float32)
     xu, yu = (xx + 0.5) / PPU, (yy + 0.5) / PPU
     # eye: a slanted amber almond with a black slit, burning
-    top = np.array(U.bezier((64.4, 21.4), (68.0, 20.6), (71.6, 21.6), (74.6, 24.6), 24))
-    bot = np.array(U.bezier((74.6, 24.6), (70.0, 25.0), (66.5, 24.2), (64.4, 21.4), 24))
+    top = np.array(U.bezier(*H([(64.4, 21.4), (68.0, 20.6), (71.6, 21.6), (74.6, 24.6)]), 24))
+    bot = np.array(U.bezier(*H([(74.6, 24.6), (70.0, 25.0), (66.5, 24.2), (64.4, 21.4)]), 24))
     almond = U.poly_mask(w, h, [tuple(p) for p in np.vstack((top, bot))])
-    slit = U.ellipse_mask(w, h, 71.2, 23.2, 0.42, 1.6, 12)
-    fall = np.clip((xu - 66.4) / 7.0, 0, 1)
-    amber = np.array((1.0, 0.46, 0.08), np.float32) * (1.2 - 0.6 * fall[..., None])
-    emit = amber * (almond * (1 - slit))[..., None] * 1.25
+    sc = H([(71.2, 23.2)])[0]
+    slit = U.ellipse_mask(w, h, sc[0], sc[1], 0.42, 1.6, 5)
+    fall = np.clip((xu - ex) / 7.0, 0, 1)
+    amber = np.array((1.0, 0.30, 0.04), np.float32) * (1.2 - 0.6 * fall[..., None])
+    emit = amber * (almond * (1 - slit))[..., None] * 0.9
     vm = ((0.38 + 0.62 * smooth(56, 34, yu)) * (0.55 + 0.45 * smooth(0, 26, xu))).astype(np.float32)
-    img = _lit(r, "hud.dragon", emit=emit.astype(np.float32), wear=0.14, grime=0.5, rust=0.1, dust=0.05, detail=0.10, exposure=1.8, value_map=vm)
+    img = _lit(r, "hud.dragon", emit=emit.astype(np.float32), wear=0.14, grime=0.5, rust=0.1, dust=0.05, detail=0.10, exposure=1.9, value_map=vm)
     # the socket stays black round the eye
     a = r.a
     img[..., 3] = a
-    img[..., :3] = forge.blur(img[..., :3], 2.2)
-    return forge.downsample(img, sharpen=0.06)
+    img[..., :3] = forge.blur(img[..., :3], 3.5)
+    return forge.downsample(img, sharpen=0.0)
 
 
 # talons -------------------------------------------------------------------------------
