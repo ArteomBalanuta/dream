@@ -75,6 +75,7 @@ public sealed class HudCapturePointerPlanTests : IDisposable
     [InlineData("size:1100:700", (int)HudCaptureVerb.Size, 1100, 700)]
     [InlineData("esc", (int)HudCaptureVerb.Escape, 0, 0)]
     [InlineData("v", (int)HudCaptureVerb.Key, 0, 0)]
+    [InlineData("fight:600", (int)HudCaptureVerb.Fight, 600, 0)]
     public void Grammar_ParsesEachStep(string token, int verb, int a, int b)
     {
         Assert.True(HudCaptureStepSpec.TryParse(token, out HudCaptureStepSpec spec));
@@ -95,6 +96,10 @@ public sealed class HudCapturePointerPlanTests : IDisposable
     [InlineData("play:1")]
     [InlineData("size:100:100")]
     [InlineData("size:1100")]
+    [InlineData("fight")]
+    [InlineData("fight:0")]
+    [InlineData("fight:99999")]
+    [InlineData("fight:x")]
     public void Grammar_DropsMalformedSteps(string token)
     {
         Assert.False(HudCaptureStepSpec.TryParse(token, out _));

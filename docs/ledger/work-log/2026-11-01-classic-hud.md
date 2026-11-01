@@ -124,3 +124,64 @@ Draw commands in the GL build (`[hud-capture]` lines): play 2 (was 5), inventory
 - Real mouse feel: the 4 px drag threshold, the cursor leaving the window while dragging (Hidden mode lets it), and the mouse-look jump after V or Esc on the user's driver (the hold-off is three frames; it was reasoned from GLFW behaviour, not measured).
 - A configured `ui_scale` above the auto fit for the window (3 at 1440x1024) pushes the lower windows under the bar. The pointer is still right; the layout was left alone.
 - Death with the inventory open was not seen in GL; the headless panels and the server rule cover it.
+
+# Verification pass, 2026-11-01
+
+Tip under test: 2226a07 (mouse merge on fb3d532). Machine otherwise idle. Release build, integrated loopback route (`DREAM_AUTO_CONNECT=1`, no `DREAM_SERVER_HOST`), throwaway database and `DREAM_IDENTITY_FILE` in a copied build folder per variant, `DREAM_RENDER_PERF_LOG=1`, `DREAM_MAX_FPS=0`, window 1920x1080 client (`size:1920:1080` as the script's first step; the baseline build had its two `Vector2i(1440, 1024)` literals in `Game.cs` changed to 1920x1080 in a throwaway detached worktree, which is not committed). Baseline: master 1aee5f0. Four rounds, each round one run of every variant in the same order (base, classic play, ImGui play, classic inventory, ImGui inventory), about 25 s each. The scene is the starter world after the player joins, with no enemy near.
+
+## Measured gates
+
+FPS is the window title's own FPS counter, sampled once a second after the first steady samples, then the mean of each run; "range" is the min and max of the four run means. HUD CPU and GPU HUD are the `HUD:` and `GPU: hud` fields of the perf line (two decimals, so 0.01 ms steps). The frame is so cheap (0.2 ms) that 3% is 0.006 ms: read the FPS ratio as "no regression visible at this resolution", not as a precise cost.
+
+| Gate | Budget | Measured | Result |
+|---|---|---|---|
+| FPS, play, classic vs master | at least 95% | 4857 vs 5006 (run means 4830 to 4873 vs 4884 to 5140) = 97.0% | pass |
+| FPS, play, ImGui on the tip vs master | no regression elsewhere | 5059 vs 5006 | pass |
+| FPS, inventory open, classic vs ImGui on the tip | at least 95% | 4581 vs 4544 = 100.8% | pass |
+| HUD CPU, median (max) | at most baseline + 0.5 ms, under 1.5 | master 0.02 (0.12); classic play 0.03 (0.16); classic inventory 0.04 (0.10); ImGui inventory 0.04 (0.13) | pass |
+| GPU HUD, median (max) | under 1.0 ms | 0.00 (0.00) play, 0.01 (0.01) inventory | pass |
+| Total draws in the frame | not a gate | play 19 on all three, inventory 24 classic vs 21 ImGui | note |
+| HUD draw commands | at most 12 in play, 16 with windows and tooltip | play 2 to 4, inventory 8 to 10, with tooltip 12, inventory with all three tiers 11 to 13, destroy confirm 16 (mouse pass) | pass, confirm at the limit |
+| Atlas, first HUD frame to Ready | decode off-thread under 800 ms | 878, 814, 768, 752 ms | 3 of 4 under; see note |
+| Atlas, longest HUD `Update` | one atlas per frame, longest frame under 50 ms | 0.4 to 0.7 ms for six of seven pages; the first upload 22.6 ms in one run and 3.1 to 3.9 ms in the other three; longest frame while uploading 29.8 ms | pass |
+| Managed allocation per frame | 0 B | 0 B for `ClassicHudSurface.Draw` with the real batch, builder and router in play, inventory, and inventory with a tooltip (`ClassicHudAdversarialTests.WholeSurfaceFrame_*`, `AllocationAssert`) | pass, not measured in the game process |
+| Build output | +7.65 MB, limit 8.5 MB | +7,834,197 B (7.83 MB) over master, of which `dream.dll` and `.pdb` are 0.19 MB | pass |
+| GPU memory | about 50 MB, 65 MB with mips | not measured (no GL memory query was available) | not verified |
+
+Atlas note: the time from the first HUD frame to Ready includes one scene stall of 700 to 740 ms that the HUD does not cause (the first `Update` ran at 2 ms, the next at 704 to 760 ms, with a frame delta capped at 100 ms). The pages were already decoded when that second update ran (it uploaded one), so the decode finished inside the stall, but the decode time alone was not separated. 7 updates, 7 pages, one per frame, as designed.
+
+Over 1.19 MB of the build growth is `items_enhanced.png` and `items_mask.png`, which `UiAtlasStore.FilePages` does not load.
+
+## Goldens and byte pins
+
+`git diff master -- dream/Simulation dream/Server dream/Multiplayer` is four files: `DamageEventDelta.cs` (a trailing `HitKind`, `ToString` unchanged), `WorldSessionRuntime.Replication.cs` (passes `evt.Kind`), `ServerSnapshotJsonConverters.cs` (reads and writes `hit`, only when not Regular) and `TransportEnvelope.cs` (11 to 12). Nothing in `dream/Server`. The golden tests are unchanged against master; `WorldSessionRuntimeTickEquivalenceTests.ScriptedRun_ProducesTheSameSnapshotsResultsAndTargetOrderAsBeforeMem3` (`GoldenCheckpoints`), `AuthoritativeCombatResolverTests.RuntimePath_SeededRolls_MatchPreExtractionGoldenAndTheResolver` (`PreExtractionGolden`) and `MapSourceGoldenTests` pass. In the protocol pin tests only the version digit moved (read line by line).
+
+## Scenes seen in the GL build (1920x1080, `DREAM_TIME_OF_DAY=midnight`, `DREAM_MAX_FPS=60`)
+
+This needed a new script step, `fight:<frames>` (see `docs/configuration.md`): the nearest live enemy is aimed at with look deltas, approached, and attacked in combat mode through the normal command frame.
+
+- Regular damage: orange numbers rising above the wolf, fill and dark rim as specified.
+- Critical: a blue 87 above the Dire Wolf.
+- Incoming: red numbers appear in third person (an 18 over the player). In first person the player went from 100 to 0 over a dozen captures and no red number was drawn. The cause was not instrumented: the player's combat anchor is at the camera, and `TryProjectWorldToScreen` drops a point at or behind the near plane. Whether the ImGui HUD showed them in first person was not established.
+- Death: dimmed screen, red "You died" and "Respawning in N s" at 38% height, empty gem, `0/100`. With the inventory open: no dim, the text centred in the strip left of the windows (the cursor can sit on it), windows live. Respawn with the inventory open: 100/100 and the windows unchanged.
+- Rare and uncommon icons and tooltips: pink uncommon and mint rare names with the tier label, correct rolled stat lines (`+8 Strength`, `+1.85 Attack Speed`, `+7 Strength`, `+1.4 Attack Speed`), item icons per tier.
+- Loot notice: a real drop, pink "Looted: Ward Lantern (Uncommon)" over the red cooldown rejection line.
+- Dire Wolf label at night: present ("Dire Wolf", "Lv 3  200/200"). When a Wolf and a Dire Wolf stand together their labels overlap into unreadable text, since each is centred on its own anchor with no avoidance.
+- Drag while the server rejects: ghost icon, dimmed source slot, the drop well tinted invalid, the red "too many inventory actions" line in the left strip, view unchanged afterwards.
+- Window 1100x700: the layout adapts; the "Attack Speed" label touches its value ("Attack Speed2 +0.25 = 2.25").
+
+## Adversarial
+
+- Atlas faults, each in a copy of the build at 1920x1080: truncated `hud.png` ("CRC Error. PNG IDAT chunk is corrupt!"), `hud.json` as `{ not json`, `cursors.png` replaced by `hud.png` ("Cursors: JSON size does not match the 1692x1452 image."), `exp.tick` removed from `hud.json` ("Required UI sprite 'exp.tick' is missing."). Each printed exactly one `[render-fault] [hud-classic]` line, drew the ImGui surface for the whole run, and closed normally.
+- F3 by real `WM_KEYDOWN` messages posted to our own window: with `DREAM_ADMIN_HUD=1`, Classic, ImGui, Classic, ImGui after three presses; with 0, ten captures all Classic.
+- Minimise (1.5 s and 4 s) and restore, then two resizes, with the inventory open and a tooltip up: no fault; the minimised frames draw 4 quads, the restored frame is the full 805 again, and the layout re-fits at 1100x700 and 1500x900. The scripted pointer ignores focus, so the focus-loss rules were exercised in tests only (`WindowLostMidDrag_*`, `WindowLostWithAMenuOpen_*`).
+- Not reachable from GL: world transfer with the inventory open, an item removed under the pointer, a hostile item name, an unknown kind and the 8192 quad limit. The first two need a server event, the next two need content the server controls, and no frame reached 900 quads. They are in `ClassicHudAdversarialTests` (23 tests).
+- Protocol: `OldClient_IsRejectedWithALoggedReason_*` now also runs a v11 client against the v12 server ("Client uses protocol v11; this server uses v12."), and the client side `ProtocolVersionMismatchClientTests` pass.
+
+## Tests added
+
+`dream.Tests/Rendering/Ui/ClassicHudAdversarialTests.cs` (23): hostile names (`%s {0}`, 20,000 characters, 4,000 percents, control and bidi characters, a lone surrogate, empty) through hover, menu and destroy confirm with the real `UiBatch`; loot names; unknown kind; item removed mid-hover and mid-drag; resize during a drag (and to 1x1, 160x90, 7680x4320); rejection while dragging; window lost mid-drag and with a menu open; world transfer with a menu or a drag; the 8192 quad limit with a full batch, 16 long item names, 20 long loot notices and a 5,000 character rejection; whole-surface allocation. `HudCapturePointerPlanTests` gains `fight` grammar cases; `ProtocolV2VersionRejectionLoopbackIntegrationTests` gains the v11 case.
+
+Production code changed, capture script only: `HudCapturePointerPlan.cs` (the `Fight` verb), `PlayScene.Capture.cs` (`ApplyCaptureFight`), and one call in `PlayScene.Update.cs`, which returns the frame untouched unless a fight step is running.
+
+Full suite: run 1 of 2, 5257 passed, 0 failed, 46 skipped of 5303, 2 m 39 s.

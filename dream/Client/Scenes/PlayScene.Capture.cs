@@ -4,7 +4,9 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
 
 namespace Dream.Client.Scenes;
 
@@ -28,6 +30,8 @@ namespace Dream.Client.Scenes;
 //   esc, v                    the Esc and V keys' own handlers
 //   size:<w>:<h>              resize the window (the same path as the Settings resolution)
 //   wait:<frames>, snap, log  idle, capture, print the inventory
+//   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
+//                             mode (the real command path), then capture; for damage numbers and death
 // <slot> is 0..15 for the bag, 100..103 or main|off|head|body for the equipment wells.
 internal sealed class HudCaptureScript
 {
@@ -135,6 +139,9 @@ public partial class PlayScene
     private ScriptedPointerFrame _captureLast;
     private Action<Vector2i>? _captureApplyClientSize;
     private UiScriptedPointer? _captureScriptedPointer;
+    private bool _captureFightActive;
+    private bool _captureFightModeSent;
+    private int _captureFightLogTick;
 
     private bool CaptureRunning =>
         _hudCapture is not null && !_hudCaptureDone && _hudCaptureFrames + 1 >= HudCaptureScript.WarmupFrames
@@ -251,6 +258,11 @@ public partial class PlayScene
                 break;
             }
 
+            case HudCaptureVerb.Fight:
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.A;
+                _captureFightActive = true;
+                break;
             case HudCaptureVerb.Wait:
                 _capturePhase = CapturePhase.Idle;
                 _captureIdleFrames = spec.A;
@@ -381,6 +393,62 @@ public partial class PlayScene
         _hudCaptureStep++;
         _hudCaptureSettle = 0;
         _capturePhase = CapturePhase.Begin;
+        _captureFightActive = false;
+    }
+
+    // The fight step's input: through the same command frame a hand produces. Turns toward the
+    // nearest live enemy with look deltas (the server integrates those, not the client camera),
+    // walks in until close, holds primary use and asks for combat mode once.
+    private PlayerCommandFrame ApplyCaptureFight(PlayerCommandFrame frame)
+    {
+        if (!_captureFightActive)
+        {
+            return frame;
+        }
+
+        Vector3 from = _runtime.Player.Camera.Position;
+        EnemyActor? nearest = null;
+        float best = float.MaxValue;
+        foreach (EnemyActor enemy in _runtime.Enemies.ActiveActors)
+        {
+            float d = (enemy.Position - from).LengthSquared;
+            if (enemy.IsActive && d < best)
+            {
+                best = d;
+                nearest = enemy;
+            }
+        }
+
+        PlayerInteractionMode? mode = _captureFightModeSent ? null : PlayerInteractionMode.Combat;
+        _captureFightModeSent = true;
+        if (nearest is null)
+        {
+            return frame with { RequestedMode = new PlayerModeSwitchIntent(mode) };
+        }
+
+        Vector3 toEnemy = (nearest.Position + new Vector3(0f, 0.4f, 0f)) - from;
+        float distance = toEnemy.Length;
+        Vector3 front = _runtime.Player.Camera.Front;
+        float yaw = MathF.Atan2(front.Z, front.X);
+        float pitch = MathF.Asin(Math.Clamp(front.Y, -1f, 1f));
+        float wantYaw = MathF.Atan2(toEnemy.Z, toEnemy.X);
+        float wantPitch = MathF.Asin(Math.Clamp(toEnemy.Y / MathF.Max(distance, 0.001f), -1f, 1f));
+        float dYaw = MathHelper.NormalizeRadians(wantYaw - yaw);
+        float dPitch = wantPitch - pitch;
+        // Camera.ApplyLookDelta: yaw += dx * s / 60, pitch -= dy * s / 60.
+        float perPixel = _settings.MouseSensitivity / 60f;
+        if (++_captureFightLogTick % 120 == 1)
+        {
+            Console.WriteLine($"[hud-capture] fight: {nearest.DisplayName} at {distance:0.0} m, off aim yaw {dYaw:0.000} pitch {dPitch:0.000} rad, own hp {_runtime.Player.Combatant.Health.CurrentHealth}, enemy hp {nearest.Combatant.Health.CurrentHealth}");
+        }
+
+        return frame with
+        {
+            RequestedMode = new PlayerModeSwitchIntent(mode),
+            MoveIntent = new PlayerMoveIntent(distance > 1.8f ? 1f : 0f, 0f),
+            LookIntent = new PlayerLookIntent(dYaw / perPixel, -dPitch / perPixel),
+            PrimaryUsePressed = true
+        };
     }
 
     // The bag, the worn items, the character window's stat rows and the key HUD state: what the client

@@ -38,6 +38,11 @@ public partial class PlayScene
             keyboardState,
             mouseState,
             allowGameplayInput);
+        if (allowGameplayInput)
+        {
+            rawCommandFrame = ApplyCaptureFight(rawCommandFrame);
+        }
+
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
         rawCommandFrame = _lookHoldoff.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);

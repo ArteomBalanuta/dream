@@ -28,7 +28,8 @@ internal enum HudCaptureVerb : byte
     Wait,
     Size,
     Snap,
-    Log
+    Log,
+    Fight
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
@@ -98,6 +99,9 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 return true;
             case "wait" when parts.Length == 2 && int.TryParse(parts[1], out int frames) && frames is > 0 and <= 2000:
                 spec = new(HudCaptureVerb.Wait, frames, 0);
+                return true;
+            case "fight" when parts.Length == 2 && int.TryParse(parts[1], out int fightFrames) && fightFrames is > 0 and <= 20000:
+                spec = new(HudCaptureVerb.Fight, fightFrames, 0);
                 return true;
             case "size" when parts.Length == 3 && int.TryParse(parts[1], out int width) && int.TryParse(parts[2], out int height)
                 && width is >= 640 and <= 4096 && height is >= 480 and <= 2304:
