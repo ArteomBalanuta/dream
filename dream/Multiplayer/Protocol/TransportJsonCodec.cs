@@ -51,6 +51,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
         SerializerOptions.Converters.Add(new WorldSnapshotJsonConverter());
         SerializerOptions.Converters.Add(new WorldChunkMessageJsonConverter());
         SerializerOptions.Converters.Add(new TerrainChunkMessageJsonConverter());
+
+        // Protocol v13: the compact inventory snapshot (bag and worn lists, item text rehydrated from
+        // the shipped catalog on read), carried by the join, the inventory results and the push.
+        SerializerOptions.Converters.Add(new PlayerInventorySnapshotJsonConverter());
     }
 
     // MessageKind is a per-type constant that the envelope already carries; the [JsonIgnore] on

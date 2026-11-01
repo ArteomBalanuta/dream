@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
+using Dream.Tests.Support;
 using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
@@ -181,7 +182,7 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
             PlayerInventorySnapshot inventory = JoinInventory(client);
             foreach (int slot in slots)
             {
-                InventoryItemSnapshot item = inventory.Slots[slot].Item!.Value;
+                InventoryItemSnapshot item = inventory.ItemAt(slot)!.Value;
                 Assert.True(item.IsRolled);
                 Assert.Equal(ItemRarity.Rare, item.Rarity);
                 Assert.NotEmpty(item.Modifiers!);
@@ -191,7 +192,9 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
             worn = Worn(inventory);
             Assert.Equal(4, worn.Length);
             Assert.All(worn, row => Assert.Contains("Rare", row, StringComparison.Ordinal));
-            Assert.All(slots, slot => Assert.True(inventory.Slots[slot].IsEquipped));
+            // The four items left the bag: none of the worn ids is still on the board.
+            long[] wornIds = new[] { inventory.EquippedSlot!.Value }.Concat(inventory.Equipment!).Select(row => row.Item!.Value.ItemInstanceId).ToArray();
+            Assert.All(inventory.Slots, row => Assert.DoesNotContain(row.Item!.Value.ItemInstanceId, wornIds));
             AssertClientStatsEqualTheServers(server, inventory);
 
             // Every modifier of all four slots is in the effective numbers: Armor comes from gear alone.

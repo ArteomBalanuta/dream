@@ -21,7 +21,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(9, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(18, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -375,10 +375,15 @@ public sealed class ContentCatalogTests
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
-        Assert.Equal(4, wolf.Items.Count);
+        Assert.Equal(11, wolf.Items.Count);
         Assert.Equal((85, 13, 2), (wolf.CommonWeight, wolf.UncommonWeight, wolf.RareWeight));
         Assert.True(catalog.TryGetLootTable("dire-wolf", out LootTable dire));
         Assert.Equal(2, dire.Drops);
+        Assert.Equal(13, dire.Items.Count);
+        // Classic HUD iteration 2 (D8): nine kinds joined the tables with the same "nothing" weight and the
+        // same total as before (100), so whether a roll drops anything is unchanged.
+        Assert.Equal((75, 25), (wolf.NothingWeight, wolf.Items.Sum(item => item.Weight)));
+        Assert.Equal((50, 50), (dire.NothingWeight, dire.Items.Sum(item => item.Weight)));
         Assert.False(catalog.TryGetLootTable("missing", out _));
         Assert.False(catalog.TryGetLootTable(null!, out _));
     }
@@ -413,15 +418,15 @@ public sealed class ContentCatalogTests
     [InlineData("\"drops\": 1", "\"drops\": 5", "outside the range")]
     [InlineData("\"nothingWeight\": 75", "\"nothingWeight\": -1", "outside the range")]
     [InlineData("\"nothingWeight\": 75", "\"nothingWeight\": 1000001", "outside the range")]
-    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 10", "\"item\": \"gear.missing\", \"weight\": 10", "references missing item")]
-    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 10", "\"item\": \"tool.torch\", \"weight\": 10", "has no roll table")]
-    [InlineData("\"item\": \"gear.leather-vest\", \"weight\": 5", "\"item\": \"gear.leather-cap\", \"weight\": 5", "duplicate loot item")]
+    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 4", "\"item\": \"gear.missing\", \"weight\": 4", "references missing item")]
+    [InlineData("\"item\": \"gear.leather-cap\", \"weight\": 4", "\"item\": \"tool.torch\", \"weight\": 4", "has no roll table")]
+    [InlineData("\"item\": \"gear.leather-vest\", \"weight\": 3", "\"item\": \"gear.leather-cap\", \"weight\": 3", "duplicate loot item")]
     [InlineData("\"key\": \"dire-wolf\"", "\"key\": \"wolf\"", "duplicate loot table key")]
     [InlineData("\"key\": \"dire-wolf\"", "\"key\": \"WOLF\"", "duplicate loot table key")]
     [InlineData("\"common\": 85, \"uncommon\": 13, \"rare\": 2", "\"common\": 0, \"uncommon\": 0, \"rare\": 0", "needs at least one positive weight")]
     [InlineData("\"common\": 85", "\"common\": 85, \"epic\": 1", "unknown property")]
     [InlineData("\"version\": 1", "\"version\": 2", "outside the range")]
-    [InlineData("\"weight\": 10 }", "\"weight\": 10, \"extra\": 1 }", "unknown property")]
+    [InlineData("\"weight\": 4 }", "\"weight\": 4, \"extra\": 1 }", "unknown property")]
     public void Load_RejectsInvalidLoot_WithAClearMessage(string find, string replace, string expectedFragment)
     {
         string loot = ShippedLootJson;

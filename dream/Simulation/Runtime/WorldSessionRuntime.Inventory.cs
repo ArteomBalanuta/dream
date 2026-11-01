@@ -6,8 +6,8 @@ using Dream.Simulation.Inventory;
 namespace Dream.Simulation.Runtime;
 
 // Inventory: the session-facing side of the players' inventories. The state and logic (slots, item
-// instances, item ids, equip, starter seeding, per-player load and eviction, failed-write
-// retention, snapshots and equipped-tool modifiers) live in PlayerInventoryService; this partial
+// instances, item ids, bag placement, equip, starter seeding, per-player load and eviction,
+// failed-write retention, snapshots and equipped-tool modifiers) live in PlayerInventoryService; this partial
 // maps sessions to player names, refreshes combat stats after a change and keeps the forwarders
 // the join code (WorldSessionRuntime.Persistence.cs) calls. Eviction comes from
 // RuntimePersistenceBridge through IRuntimePersistenceHost.EvictPlayerInventory.
@@ -62,7 +62,7 @@ public sealed partial class WorldSessionRuntime
     {
         InventoryEquipOutcome outcome = RunInventoryAction(
             player,
-            static (service, key, i) => service.TryUnequip(key, i.SlotIndex),
+            static (service, key, i) => service.TryUnequip(key, i.SlotIndex, i.TargetCell),
             intent);
         return CompleteInventoryAction(message, player, outcome, "unequip");
     }
@@ -128,6 +128,7 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.ItemEquipped => "the item is equipped",
             InventoryEquipOutcome.ItemMismatch => "the slot no longer holds that item",
             InventoryEquipOutcome.Throttled => "too many inventory actions, try again shortly",
+            InventoryEquipOutcome.NoRoom => "the item does not fit there",
             _ => "the request was not valid",
         };
         if (reason != null)

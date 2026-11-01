@@ -5,12 +5,15 @@ using Dream.Server.Persistence;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Tests.Server.Persistence;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Inventory;
 
 // ARCH-3 step B: PlayerInventoryService on its own, without a WorldSessionRuntime: starter
 // seeding, loading, equip, item-id allocation and eviction (including the failed-write retention).
-// Wave T2b: the torch, held lights and the starter top-up.
+// Wave T2b: the torch, held lights and the starter top-up. Classic HUD iteration 2: the bag is an
+// 8x8 footprint board (an item's slot index is its anchor) and a worn item has no bag row, so the
+// starter kit is hammer worn, blade at 2, maul at 4, lantern at 6 and torch at 7 (first fit).
 public sealed class PlayerInventoryServiceTests
 {
     private static int StarterCount => ToolCatalog.StarterItemKinds.Count;
@@ -32,18 +35,25 @@ public sealed class PlayerInventoryServiceTests
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Alice");
         Assert.Equal("Alice", snapshot.PlayerName);
+        // The kit in order, at the first fit of each: the hammer first (then moved into the main
+        // hand), the blade, the maul, the lantern and the torch beside them.
         for (int i = 0; i < StarterCount; i++)
         {
-            InventoryItemSnapshot item = snapshot.Slots[i].Item!.Value;
-            Assert.Equal(ToolCatalog.StarterItemKinds[i], item.ItemKind);
+            string kind = ToolCatalog.StarterItemKinds[i];
+            InventoryItemSnapshot item = i == 0 ? snapshot.EquippedSlot!.Value.Item!.Value : snapshot.ItemAt(snapshot.AnchorOf(kind))!.Value;
+            Assert.Equal(kind, item.ItemKind);
             Assert.Equal(i + 1, item.ItemInstanceId);
         }
 
         Assert.Equal(1, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.True(snapshot.Slots[0].IsEquipped);
+        Assert.Equal(new[] { 2, 4, 6, 7 }, snapshot.BagItems().Select(slot => slot.SlotIndex).ToArray());
+        Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
+        Assert.True(snapshot.BoardIsConsistent());
         Assert.Equal(StarterCount, world.ItemSaves);
-        // A slot row per starter item plus the equipped slot.
+        // A slot row per starter item plus the main hand's; the hammer's bag row is deleted again.
         Assert.Equal(StarterCount + 1, world.SlotSaves);
+        Assert.False(world.Rows.ContainsKey(("Alice", 0)));
+        Assert.Equal(1, world.Rows[("Alice", InventoryConstants.EquippedSlotIndex)].ItemInstanceId);
         Assert.Equal(1, inventory.LoadedInventoryCount);
         Assert.Equal(StarterCount, inventory.LoadedItemInstanceCount);
         Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[0]).Modifiers, MainHandModifiers(inventory, "Alice"));
@@ -87,9 +97,10 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(71, inventory.NextItemInstanceId);
 
         Assert.True(inventory.Ensure("Fresh"));
+        PlayerInventorySnapshot fresh = inventory.BuildSnapshot("Fresh");
         Assert.Equal(
             Enumerable.Range(71, StarterCount).Select(id => (long)id),
-            inventory.BuildSnapshot("Fresh").Slots.Take(StarterCount).Select(slot => slot.Item!.Value.ItemInstanceId));
+            fresh.Slots.Select(slot => slot.Item!.Value.ItemInstanceId).Append(fresh.EquippedSlot!.Value.Item!.Value.ItemInstanceId).Order());
     }
 
     [Fact]
@@ -126,7 +137,7 @@ public sealed class PlayerInventoryServiceTests
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
         PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
 
-        // Backpack items but no equipped row: Ensure equips the first occupied slot.
+        // Bag items but no equipped row: Ensure moves the item of the lowest anchor into the main hand.
         inventory.ApplyLoaded("Bob", new PersistedPlayerInventory(
             [
                 new PersistedInventorySlot("Bob", 3, 11, DateTime.UtcNow),
@@ -145,17 +156,18 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(2, inventory.LoadedItemInstanceCount);
 
         Assert.True(inventory.Ensure("Bob"));
-        // The equipped slot first, then the starter top-up: Bob has items but no recorded kit
-        // version, so he is taken to hold kit v1 and only the torch (v2) is granted, into the lowest
-        // free slot (0).
+        // The main hand first, then the starter top-up: Bob has items but no recorded kit version, so
+        // he is taken to hold kit v1 and only the torch (v2) is granted, at the first fit (anchor 0,
+        // a 1x2 in the free corner).
         Assert.Equal(1, world.ItemSaves);
         Assert.Equal(1 + 1, world.SlotSaves);
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Bob");
         Assert.Equal(11, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.True(snapshot.Slots[3].IsEquipped);
-        // Slot 0 holds the topped-up torch, not the ignored second load's item 99.
-        Assert.Equal("tool.torch", snapshot.Slots[0].Item!.Value.ItemKind);
-        Assert.NotEqual(99, snapshot.Slots[0].Item!.Value.ItemInstanceId);
+        Assert.Null(snapshot.ItemAt(3));
+        Assert.Equal(12, snapshot.IdAt(5));
+        // The torch is the topped-up one, not the ignored second load's item 99.
+        Assert.Equal("tool.torch", snapshot.ItemAt(0)!.Value.ItemKind);
+        Assert.NotEqual(99, snapshot.ItemAt(0)!.Value.ItemInstanceId);
         Assert.Equal(0, world.Loads);
     }
 
@@ -189,13 +201,15 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryEquip("Carol", InventoryConstants.BackpackSlotCount - 1));
         int slotSaves = world.SlotSaves;
 
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Carol", 1));
-        Assert.Equal(slotSaves + 1, world.SlotSaves);
+        // The blade at anchor 2 goes to the main hand and the hammer it displaces takes its place.
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Carol", 2));
+        Assert.Equal(slotSaves + 2, world.SlotSaves);
         Assert.Equal(2, world.Rows[("Carol", InventoryConstants.EquippedSlotIndex)].ItemInstanceId);
+        Assert.Equal(1, world.Rows[("Carol", 2)].ItemInstanceId);
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Carol");
         Assert.Equal(2, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.True(snapshot.Slots[1].IsEquipped);
-        Assert.False(snapshot.Slots[0].IsEquipped);
+        Assert.Equal(1, snapshot.IdAt(2));
+        Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
         Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[1]).Modifiers, MainHandModifiers(inventory, "Carol"));
         Assert.Empty(MainHandModifiers(inventory, "Nobody"));
     }
@@ -250,7 +264,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
         world.FailSlotWrites = true;
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Frank", 2));
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Frank", inventory.AnchorOf("Frank", "tool.stone-maul")));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         world.FailSlotWrites = false;
         Assert.Equal(1, writes.FailedWrites);
@@ -278,7 +292,7 @@ public sealed class PlayerInventoryServiceTests
         {
             writes.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
             world.FailSlotWrites = true;
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Grace", 3));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Grace", inventory.AnchorOf("Grace", "tool.survey-lantern")));
             inventory.Evict("Grace");
             Assert.Equal(0, inventory.LoadedInventoryCount);
             Assert.Equal(1, inventory.UnconfirmedEvictionCount);
@@ -311,7 +325,7 @@ public sealed class PlayerInventoryServiceTests
         try
         {
             writes.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Heidi", 1));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Heidi", inventory.AnchorOf("Heidi", "tool.field-blade")));
             inventory.Evict("Heidi");
             Assert.Equal(1, inventory.UnconfirmedEvictionCount);
         }
@@ -368,7 +382,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Ivan"));
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Ivan");
         Assert.Equal("tool.builder-hammer", snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
-        Assert.Equal("tool.torch", snapshot.Slots[StarterCount - 1].Item!.Value.ItemKind);
+        Assert.Equal(7, snapshot.AnchorOf("tool.torch"));
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Ivan"));
     }
 
@@ -378,14 +392,13 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Nobody"));
         Assert.True(inventory.Ensure("Judy"));
-        int torchSlot = IndexOfStarter("tool.torch");
-        int lanternSlot = IndexOfStarter("tool.survey-lantern");
 
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", torchSlot));
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", inventory.AnchorOf("Judy", "tool.torch")));
         Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Judy"));
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", lanternSlot));
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", inventory.AnchorOf("Judy", "tool.survey-lantern")));
         Assert.Equal(HeldLightKind.Lantern, inventory.ResolveEquippedHeldLight("Judy"));
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", 0));
+        // The hammer the first equip displaced is back in the bag; wielding it puts the light out.
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", inventory.AnchorOf("Judy", "tool.builder-hammer")));
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Judy"));
     }
 
@@ -399,13 +412,16 @@ public sealed class PlayerInventoryServiceTests
 
         Assert.True(inventory.Ensure("Ken"));
 
+        // The maul is worn, so its block (anchor 4) is free and the torch, a 1x2, is the first fit there.
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Ken");
-        InventoryItemSnapshot torch = snapshot.Slots[4].Item!.Value;
+        int torchAnchor = snapshot.AnchorOf("tool.torch");
+        InventoryItemSnapshot torch = snapshot.ItemAt(torchAnchor)!.Value;
+        Assert.Equal(4, torchAnchor);
         Assert.Equal("tool.torch", torch.ItemKind);
         Assert.Equal(5, torch.ItemInstanceId);
         Assert.Equal(1, world.ItemSaves);
         Assert.Equal(1, world.SlotSaves);
-        Assert.Equal(5, world.Rows[("Ken", 4)].ItemInstanceId);
+        Assert.Equal(5, world.Rows[("Ken", torchAnchor)].ItemInstanceId);
         // The equipped slot is untouched.
         Assert.Equal(3, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
         Assert.False(world.Rows.ContainsKey(("Ken", InventoryConstants.EquippedSlotIndex)));
@@ -424,16 +440,16 @@ public sealed class PlayerInventoryServiceTests
         FakeWorld world = new();
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
         PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
+        // All 64 cells taken, by 1x1 rings (which cannot be wielded, so nothing is equipped either).
         List<PersistedInventorySlot> slots = [];
         List<PersistedItemInstance> items = [];
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
             long id = slotIndex + 1;
             slots.Add(new PersistedInventorySlot("Liz", slotIndex, id, DateTime.UtcNow));
-            items.Add(Item(id, "Liz"));
+            items.Add(Item(id, "Liz", "gear.iron-band"));
         }
 
-        slots.Add(new PersistedInventorySlot("Liz", InventoryConstants.EquippedSlotIndex, 1, DateTime.UtcNow));
         inventory.ApplyLoaded("Liz", new PersistedPlayerInventory(slots, items));
 
         Assert.True(inventory.Ensure("Liz"));
@@ -441,29 +457,29 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(0, world.ItemSaves);
         Assert.Equal(0, world.SlotSaves);
         Assert.Equal(InventoryConstants.BackpackSlotCount, inventory.LoadedItemInstanceCount);
-        Assert.Equal(1, inventory.BuildSnapshot("Liz").EquippedSlot!.Value.Item!.Value.ItemInstanceId);
+        Assert.Null(inventory.BuildSnapshot("Liz").EquippedSlot!.Value.Item);
     }
 
     [Fact]
     public void Ensure_TopUpStopsWhenTheBackpackFills()
     {
         PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
-        // Hammers everywhere but one slot. With no grant recorded the inventory is taken to hold kit
-        // v1, so the blade, maul and lantern are not granted again; only the torch (v2) is, and it
-        // fits.
+        // Rings everywhere but a column of two cells. With no grant recorded the inventory is taken to
+        // hold kit v1, so the blade, maul and lantern are not granted again; only the torch (v2) is,
+        // and its 1x2 footprint fits the two free cells.
         List<PersistedInventorySlot> slots = [];
         List<PersistedItemInstance> items = [];
-        int freeSlot = 7;
+        int[] free = [7, 15];
         for (int slotIndex = 0; slotIndex < InventoryConstants.BackpackSlotCount; slotIndex++)
         {
-            if (slotIndex == freeSlot)
+            if (free.Contains(slotIndex))
             {
                 continue;
             }
 
             long id = slotIndex + 1;
             slots.Add(new PersistedInventorySlot("Max", slotIndex, id, DateTime.UtcNow));
-            items.Add(Item(id, "Max"));
+            items.Add(Item(id, "Max", "gear.iron-band"));
         }
 
         inventory.ApplyLoaded("Max", new PersistedPlayerInventory(slots, items));
@@ -471,10 +487,9 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Max"));
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Max");
-        Assert.Equal("tool.torch", snapshot.Slots[freeSlot].Item!.Value.ItemKind);
-        Assert.Equal(InventoryConstants.BackpackSlotCount, inventory.LoadedItemInstanceCount);
-        // Nothing was equipped, so Ensure equipped the first occupied slot before topping up.
-        Assert.Equal(1, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
+        Assert.Equal("tool.torch", snapshot.ItemAt(7)!.Value.ItemKind);
+        Assert.Equal(InventoryConstants.BackpackSlotCount - free.Length + 1, inventory.LoadedItemInstanceCount);
+        Assert.True(snapshot.BoardIsConsistent());
     }
 
     [Fact]
@@ -507,7 +522,8 @@ public sealed class PlayerInventoryServiceTests
             // The persistence bridge seeds the shared allocator at startup.
             ids.Restore(NextIdAboveStored(world));
             Assert.True(inventory.Ensure("Nia"));
-            Assert.Equal("tool.torch", inventory.BuildSnapshot("Nia").Slots[4].Item!.Value.ItemKind);
+            // The hammer is worn, so the torch takes the first fit: its block at anchor 0.
+            Assert.Equal("tool.torch", inventory.BuildSnapshot("Nia").ItemAt(0)!.Value.ItemKind);
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         }
 
@@ -522,7 +538,7 @@ public sealed class PlayerInventoryServiceTests
             Assert.True(inventory.Ensure("Nia"));
 
             PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Nia");
-            InventoryItemSnapshot torch = snapshot.Slots[4].Item!.Value;
+            InventoryItemSnapshot torch = snapshot.ItemAt(0)!.Value;
             Assert.Equal("tool.torch", torch.ItemKind);
             Assert.Equal("Torch", torch.DisplayName);
             Assert.Equal("held.tool.torch", torch.VisualId);
@@ -531,7 +547,7 @@ public sealed class PlayerInventoryServiceTests
             // No second torch after the restart.
             Assert.Equal(6, inventory.NextItemInstanceId);
             Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Nia"));
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Nia", 4));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Nia", 0));
             Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Nia"));
         }
     }
@@ -597,12 +613,12 @@ public sealed class PlayerInventoryServiceTests
             PlayerInventoryService first = new(world, writes, new ObjectIdAllocator());
             first.ApplyLoaded("Quin", LegacyInventory("Quin", firstItemId: 1, equippedSlot: 0));
             Assert.True(first.Ensure("Quin"));
-            Assert.Equal("tool.torch", first.BuildSnapshot("Quin").Slots[4].Item!.Value.ItemKind);
+            Assert.Equal("tool.torch", first.BuildSnapshot("Quin").ItemAt(0)!.Value.ItemKind);
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         }
 
         // The torch leaves the backpack (as a future drop or trade would), then the player rejoins.
-        Assert.True(world.Rows.Remove(("Quin", 4)));
+        Assert.True(world.Rows.Remove(("Quin", 0)));
         using PersistenceWriteQueue rejoinWrites = PersistenceWriteQueue.Inline();
         PlayerInventoryService rejoined = new(world, rejoinWrites, new ObjectIdAllocator());
         rejoined.ApplyLoaded("Quin", world.LoadPlayerInventory("Quin"));
@@ -660,7 +676,7 @@ public sealed class PlayerInventoryServiceTests
         {
             long id = slotIndex + 1;
             slots.Add(new PersistedInventorySlot("Tia", slotIndex, id, DateTime.UtcNow));
-            items.Add(Item(id, "Tia"));
+            items.Add(Item(id, "Tia", "gear.iron-band"));
         }
 
         inventory.ApplyLoaded("Tia", new PersistedPlayerInventory(slots, items));
@@ -671,13 +687,17 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Tia"));
         Assert.Equal(1, world.GrantSaves);
 
-        // A slot frees up (simulated in memory), and the torch now arrives once.
+        // One cell frees up (simulated in memory): a 1x2 torch still does not fit. A second cell below
+        // it frees up, and the torch now arrives once.
         Assert.True(inventory.LoadedSlotsByPlayer["Tia"].Remove(InventoryConstants.BackpackSlotCount - 1));
+        Assert.True(inventory.Ensure("Tia"));
+        Assert.Equal(0, world.ItemSaves);
+        Assert.True(inventory.LoadedSlotsByPlayer["Tia"].Remove(InventoryConstants.BackpackSlotCount - 1 - BagGrid.Columns));
         Assert.True(inventory.Ensure("Tia"));
         Assert.True(inventory.Ensure("Tia"));
 
         Assert.Equal(1, world.ItemSaves);
-        Assert.Equal("tool.torch", inventory.BuildSnapshot("Tia").Slots[InventoryConstants.BackpackSlotCount - 1].Item!.Value.ItemKind);
+        Assert.Equal("tool.torch", inventory.BuildSnapshot("Tia").ItemAt(InventoryConstants.BackpackSlotCount - 1 - BagGrid.Columns)!.Value.ItemKind);
         Assert.Equal(2, world.Grants["Tia"]);
         Assert.Equal(2, world.GrantSaves);
     }
@@ -698,7 +718,7 @@ public sealed class PlayerInventoryServiceTests
         {
             writes.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
             world.FailSlotWrites = true;
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Uma", 1));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Uma", inventory.AnchorOf("Uma", "tool.field-blade")));
             inventory.Evict("Uma");
             Assert.Equal(1, inventory.UnconfirmedEvictionCount);
         }
@@ -713,7 +733,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(0, inventory.UnconfirmedEvictionCount);
 
         // The torch leaves the restored backpack; Ensure does not grant it again.
-        Assert.True(inventory.LoadedSlotsByPlayer["Uma"].Remove(4));
+        Assert.True(inventory.LoadedSlotsByPlayer["Uma"].Remove(inventory.AnchorOf("Uma", "tool.torch")));
         Assert.True(inventory.Ensure("Uma"));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
@@ -756,12 +776,13 @@ public sealed class PlayerInventoryServiceTests
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         Assert.Equal(2L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
         Assert.Equal(1L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
-        // The torch leaves the backpack: its slot and item rows are deleted.
+        // The torch (first fit: the free block of the worn hammer, anchor 0) leaves the backpack: its
+        // slot and item rows are deleted.
         using (Microsoft.Data.Sqlite.SqliteConnection connection = database.Schema.CreateOpenConnection())
         using (Microsoft.Data.Sqlite.SqliteCommand delete = connection.CreateCommand())
         {
             delete.CommandText = """
-                DELETE FROM player_inventory_slots WHERE player_name = 'Vic' AND slot_index = 4;
+                DELETE FROM player_inventory_slots WHERE player_name = 'Vic' AND slot_index = 0;
                 DELETE FROM item_instances WHERE item_kind = 'tool.torch';
                 """;
             Assert.Equal(2, delete.ExecuteNonQuery());
@@ -787,21 +808,9 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(2L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
     }
 
-    private static int IndexOfStarter(string itemKind)
-    {
-        for (int i = 0; i < StarterCount; i++)
-        {
-            if (ToolCatalog.StarterItemKinds[i] == itemKind)
-            {
-                return i;
-            }
-        }
-
-        throw new KeyNotFoundException(itemKind);
-    }
-
-    // The starter inventory as seeded before wave T2: the first four starter kinds in slots 0-3
-    // and the item of equippedSlot equipped.
+    // The starter inventory as seeded before wave T2 and migrated to the footprint bag (migration
+    // 0010): the first four starter kinds, old slot i at anchor 2 * i (row 0 of the 2x2 blocks), and the
+    // item of equippedSlot worn, which has no bag row.
     private static PersistedPlayerInventory LegacyInventory(string owner, long firstItemId, int equippedSlot)
     {
         string[] legacyKinds = ["tool.builder-hammer", "tool.field-blade", "tool.stone-maul", "tool.survey-lantern"];
@@ -810,7 +819,10 @@ public sealed class PlayerInventoryServiceTests
         for (int i = 0; i < legacyKinds.Length; i++)
         {
             items.Add(Item(firstItemId + i, owner, legacyKinds[i]));
-            slots.Add(new PersistedInventorySlot(owner, i, firstItemId + i, DateTime.UtcNow));
+            if (i != equippedSlot)
+            {
+                slots.Add(new PersistedInventorySlot(owner, i * 2, firstItemId + i, DateTime.UtcNow));
+            }
         }
 
         slots.Add(new PersistedInventorySlot(owner, InventoryConstants.EquippedSlotIndex, firstItemId + equippedSlot, DateTime.UtcNow));
@@ -863,17 +875,17 @@ public sealed class PlayerInventoryServiceTests
             set => Volatile.Write(ref _failSlotWrites, value);
         }
 
+        // A seeded starter inventory as the service lays it out: the hammer worn, the blade, maul,
+        // lantern and torch at their first fits (anchors 2, 4, 6 and 7).
         public void Seed(string playerName, long firstItemId)
         {
+            int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7];
             for (int i = 0; i < StarterCount; i++)
             {
                 // One item of each starter kind, so the starter top-up finds nothing missing.
                 _items[firstItemId + i] = Item(firstItemId + i, playerName, ToolCatalog.StarterItemKinds[i]);
-                Rows[(playerName, i)] = new PersistedInventorySlot(playerName, i, firstItemId + i, DateTime.UtcNow);
+                Rows[(playerName, anchors[i])] = new PersistedInventorySlot(playerName, anchors[i], firstItemId + i, DateTime.UtcNow);
             }
-
-            Rows[(playerName, InventoryConstants.EquippedSlotIndex)] =
-                new PersistedInventorySlot(playerName, InventoryConstants.EquippedSlotIndex, firstItemId, DateTime.UtcNow);
         }
 
         public PersistedPlayerInventory LoadPlayerInventory(string playerName)
@@ -949,9 +961,23 @@ public sealed class PlayerInventoryServiceTests
 
         public void DeleteInventorySlots(string playerName) { }
 
-        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) { }
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
+        {
+            if (Rows.TryGetValue((playerName, slotIndex), out PersistedInventorySlot row) && row.ItemInstanceId == expectedItemInstanceId)
+            {
+                Rows.Remove((playerName, slotIndex));
+            }
+        }
 
-        public void DestroyInventoryItem(string playerName, long itemInstanceId) { }
+        public void DestroyInventoryItem(string playerName, long itemInstanceId)
+        {
+            foreach ((string Player, int Slot) key in Rows.Where(entry => entry.Key.Player == playerName && entry.Value.ItemInstanceId == itemInstanceId).Select(entry => entry.Key).ToArray())
+            {
+                Rows.Remove(key);
+            }
+
+            _items.Remove(itemInstanceId);
+        }
 
         public void SaveStarterKitGrant(string playerName, int kitVersion)
         {

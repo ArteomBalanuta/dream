@@ -33,9 +33,15 @@ public readonly record struct TransportEnvelope(
     // world's actor bytes are unchanged apart from the version digit. Version 12 (classic HUD) adds the
     // optional trailing "hit" field of a damage event (DamageEventDelta.HitKind, written only for a
     // critical or incoming hit); a v11 client would show every number as a regular hit, so both sides
-    // refuse it. Snapshots without a critical hit are unchanged apart from the version digit. Decode
-    // rejects any other version.
-    public const int CurrentProtocolVersion = 12;
+    // refuse it. Snapshots without a critical hit are unchanged apart from the version digit. Version
+    // 13 (classic HUD iteration 2) writes the inventory snapshot compactly
+    // (PlayerInventorySnapshotJsonConverter: "bag" and "worn" entry arrays, item text rehydrated from
+    // the shipped content catalog) for an 8x8 footprint bag and twelve worn slots, adds the optional
+    // "targetCell" of the unequip intent, and widens the equip, move and destroy intents' slot indexes
+    // (bag anchors 0..63, worn slots 100..111); a v12 client would misread the inventory, so both sides
+    // refuse it. Actor and world snapshots are unchanged apart from the version digit. Decode rejects
+    // any other version.
+    public const int CurrentProtocolVersion = 13;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

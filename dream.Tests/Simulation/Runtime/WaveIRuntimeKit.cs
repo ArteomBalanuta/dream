@@ -102,16 +102,17 @@ internal static class WaveIRuntimeKit
     }
 
     // The shipped content with every loot table replaced by one that always drops (drops of them,
-    // equal item weights, all four gear kinds, the given rarity weights).
-    public static ContentCatalog AlwaysDropCatalog(int drops, int common = 1, int uncommon = 1, int rare = 1)
+    // equal item weights, the four original gear kinds unless kinds says otherwise, the given rarity
+    // weights). A one-kind table of 1x1 items makes "room for N more" a count of cells.
+    public static ContentCatalog AlwaysDropCatalog(int drops, int common = 1, int uncommon = 1, int rare = 1, string[]? kinds = null)
     {
         string dir = ContentCatalog.ShippedDirectory;
         string items = File.ReadAllText(Path.Combine(dir, ContentCatalog.ItemsFileName));
         string enemies = File.ReadAllText(Path.Combine(dir, ContentCatalog.EnemiesFileName));
+        string[] gear = kinds ?? ["gear.leather-cap", "gear.leather-vest", "gear.iron-blade", "gear.ward-lantern"];
+        string entries = string.Join(",", gear.Select(kind => "{\"item\":\"" + kind + "\",\"weight\":1}"));
         string table(string key) =>
-            "{\"key\":\"" + key + "\",\"drops\":" + drops + ",\"nothingWeight\":0,\"items\":[" +
-            "{\"item\":\"gear.leather-cap\",\"weight\":1},{\"item\":\"gear.leather-vest\",\"weight\":1}," +
-            "{\"item\":\"gear.iron-blade\",\"weight\":1},{\"item\":\"gear.ward-lantern\",\"weight\":1}]," +
+            "{\"key\":\"" + key + "\",\"drops\":" + drops + ",\"nothingWeight\":0,\"items\":[" + entries + "]," +
             "\"rarity\":{\"common\":" + common + ",\"uncommon\":" + uncommon + ",\"rare\":" + rare + "}}";
         string loot = "{\"version\":1,\"tables\":[" + table("wolf") + "," + table("dire-wolf") + "]}";
         return ContentCatalog.Load(items, enemies, loot);

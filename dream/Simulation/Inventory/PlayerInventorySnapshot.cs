@@ -1,5 +1,10 @@
 namespace Dream.Simulation.Inventory;
 
+// A player's inventory as the owner sees it. Slots is sparse: one entry per item on the bag board (its
+// SlotIndex is the anchor, 0..63) followed by the held-back items (200..215), in ascending slot order;
+// an empty cell has no entry. Worn items are not in Slots: EquippedSlot is the main hand (always
+// present, Item null when empty) and Equipment lists the other worn slots (101..111) that hold an item.
+// The wire form is compact and written by PlayerInventorySnapshotJsonConverter.
 public readonly record struct PlayerInventorySnapshot(
     string PlayerName,
     int Columns,
@@ -9,15 +14,10 @@ public readonly record struct PlayerInventorySnapshot(
     IReadOnlyList<InventorySlotSnapshot>? Equipment = null)
 {
     public static PlayerInventorySnapshot Empty(string playerName)
-    {
-        InventorySlotSnapshot[] slots = Enumerable.Range(0, InventoryConstants.BackpackSlotCount)
-            .Select(index => new InventorySlotSnapshot(index, Item: null))
-            .ToArray();
-        return new PlayerInventorySnapshot(
+        => new(
             playerName,
             InventoryConstants.GridColumns,
             InventoryConstants.GridRows,
-            slots,
+            [],
             EquippedSlot: new InventorySlotSnapshot(InventoryConstants.EquippedSlotIndex, Item: null));
-    }
 }

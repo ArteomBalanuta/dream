@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0009\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0010\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
@@ -55,8 +55,12 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
             Assert.Equal(GeometryMaterialId.Stone, server.Runtime.Map.TryGetCubeAtCell(20, 1, 20)?.MaterialId);
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             PlayerInventorySnapshot inventory = server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(Session))!.Value;
-            Assert.Equal(5, inventory.Slots.Count(slot => slot.Item is not null));
-            Assert.Equal(4, Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex);
+            // The hammer is worn (migration 0010 dropped its bag row); the blade, maul and lantern sit at the
+            // anchors the migration gave them (old slots 1, 2, 3 -> 2, 4, 6) and the torch granted by the
+            // top-up took the first fit, the hammer's block at anchor 0.
+            Assert.Equal(4, inventory.Slots.Count(slot => slot.Item is not null));
+            Assert.Equal(0, Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex);
+            Assert.Equal([0, 2, 4, 6], inventory.Slots.Select(slot => slot.SlotIndex).Order());
             Assert.Equal("tool.builder-hammer", inventory.EquippedSlot?.Item?.ItemKind);
             Assert.Equal(new Vector3(30.5f, 1.5f, 30.5f), Assert.Single(server.Runtime.CaptureActorSnapshots(), actor => actor.SessionId == Session).Position);
 

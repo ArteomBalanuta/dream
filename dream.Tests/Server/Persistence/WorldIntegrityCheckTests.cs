@@ -117,8 +117,8 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(
             Profile +
-            // An equipped slot (100) with no matching backpack slot.
-            Item(10, "tool.mystery") + Slot(100, 10) +
+            // A worn item (100) that also still has a bag row.
+            Item(10, "tool.mystery") + Slot(3, 10) + Slot(100, 10) +
             // A cube outside the 56x8x56 world, and one rubble piece outside.
             "INSERT INTO placed_cube_instances (world_id, object_id, cell_x, cell_y, cell_z, material_id, current_health, max_health) VALUES (1, 20, 99, 1, 3, 'stone', 5, 5);" +
             "INSERT INTO cube_fracture_pieces (world_id, object_id, origin_object_id, piece_index, parent_cell_x, parent_cell_y, parent_cell_z, center_x, center_y, center_z, side_length, material_id) " +
@@ -136,7 +136,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.False(report.IsFatal);
         // The cube and its rubble piece.
         Assert.Equal(2, report.ObjectsOutOfBounds);
-        Assert.Equal(1, report.EquippedWithoutBackpackItem);
+        Assert.Equal(1, report.EquippedWithBagRow);
         Assert.Equal(0, report.SlotsMissingItem);
         Assert.Equal(1, report.UnknownItemKinds);
         Assert.Equal(1, report.UnknownEnemyKinds);
@@ -159,14 +159,28 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.Contains(log, l => l.Contains("outside the world's bounds", StringComparison.Ordinal));
     }
 
+    // Classic HUD iteration 2: a worn item has only its worn row, so a bag row beside it is the finding.
     [Fact]
-    public void ABackpackItemThatIsEquipped_IsNotAFinding()
+    public void AWornItemThatStillHasABagRow_IsASoftFinding_NotASharedReference()
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(100, 10));
         WorldIntegrityReport report = Check(db);
+        Assert.True(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Equal(1, report.EquippedWithBagRow);
+        Assert.Equal(0, report.SharedItemReferences);
+        Assert.Contains(report.ToLogLines(WorldDescriptor.Default), l => l.Contains("still have a bag row", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AWornItemWithNoBagRow_IsNotAFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(100, 10));
+        WorldIntegrityReport report = Check(db);
         Assert.False(report.HasSoftFindings);
-        Assert.Equal(0, report.EquippedWithoutBackpackItem);
+        Assert.Equal(0, report.EquippedWithBagRow);
     }
 
     private const string SecondProfile = "INSERT INTO player_profiles (player_name, display_name) VALUES ('p2', 'P2');";
@@ -187,26 +201,27 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void OneItemHeldByTwoPlayers_IsASoftFinding_EvenWithTheEquippedAlias()
+    public void OneItemHeldByTwoPlayers_IsASoftFinding_AndAnAliasIsNotCountedTwice()
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(
             Profile + SecondProfile + Item(10, "tool.a") +
             SlotOf("p1", 0, 10) + SlotOf("p1", 100, 10) + SlotOf("p2", 4, 10));
         WorldIntegrityReport report = Check(db);
+        // p1's bag row beside its worn row is EquippedWithBagRow; the one reference by p2 is the shared one.
         Assert.Equal(1, report.SharedItemReferences);
+        Assert.Equal(1, report.EquippedWithBagRow);
         Assert.False(report.IsFatal);
     }
 
     [Fact]
-    public void TheNormalEquippedAlias_IsNotASharedReference()
+    public void WornItemsOfTwoPlayers_AreNotSharedReferences()
     {
         using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + SecondProfile + Item(10, "tool.a") + Item(11, "tool.b") +
-            SlotOf("p1", 3, 10) + SlotOf("p1", 100, 10) + SlotOf("p2", 0, 11) + SlotOf("p2", 100, 11));
+        db.ExecuteScript(Profile + SecondProfile + Item(10, "tool.a") + Item(11, "tool.b") + Item(12, "tool.c") + Item(13, "tool.d") +
+            SlotOf("p1", 3, 10) + SlotOf("p1", 100, 11) + SlotOf("p2", 0, 12) + SlotOf("p2", 100, 13));
         WorldIntegrityReport report = Check(db);
         Assert.Equal(0, report.SharedItemReferences);
-        Assert.False(report.HasSoftFindings);
     }
 
     [Fact]
@@ -359,34 +374,29 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.True(report.ForeignKeyViolations >= 1);
     }
 
-    // Wave H2: equipment slots 100..103.
+    // Equipment slots 100..111 (twelve since classic HUD iteration 2).
     [Theory]
+    [InlineData(100)]
     [InlineData(101)]
-    [InlineData(102)]
     [InlineData(103)]
-    public void AnEquipmentAliasOfABackpackItem_IsNotAFinding(int equipmentSlot)
+    [InlineData(108)]
+    [InlineData(111)]
+    public void AWornItemWithNoBagRow_IsNotAFinding_InAnyOfTheTwelveSlots(int equipmentSlot)
     {
         using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(equipmentSlot, 10));
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(equipmentSlot, 10));
         WorldIntegrityReport report = Check(db);
         Assert.False(report.HasSoftFindings);
-        Assert.Equal(0, report.EquippedWithoutBackpackItem);
+        Assert.Equal(0, report.EquippedWithBagRow);
         Assert.Equal(0, report.SharedItemReferences);
-    }
-
-    [Fact]
-    public void AnOffHandRowWithNoBackpackRow_IsAnEquippedWithoutBackpackFinding()
-    {
-        using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(101, 10));
-        Assert.Equal(1, Check(db).EquippedWithoutBackpackItem);
+        Assert.Equal(0, report.UnknownSlotIndexes);
     }
 
     [Fact]
     public void OneItemInTwoEquipmentSlots_IsCountedOnItsOwn()
     {
         using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(100, 10) + Slot(101, 10));
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(100, 10) + Slot(101, 10));
         WorldIntegrityReport report = Check(db);
         Assert.Equal(1, report.ItemsInTwoEquipmentSlots);
         Assert.Equal(0, report.SharedItemReferences);
@@ -407,9 +417,13 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData(16)]
+    [InlineData(64)]
     [InlineData(99)]
     [InlineData(112)]
+    [InlineData(199)]
+    [InlineData(216)]
+    [InlineData(300)]
+    [InlineData(20016)]
     public void ASlotIndexOutsideTheKnownRanges_IsCountedOnItsOwn(int slotIndex)
     {
         using MigrationTestDatabase db = Migrated();
@@ -421,11 +435,73 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         Assert.True(report.HasSoftFindings);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(63)]
+    [InlineData(100)]
+    [InlineData(111)]
+    [InlineData(200)]
+    [InlineData(215)]
+    public void ASlotIndexInAKnownRange_IsNotUnknown(int slotIndex)
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(slotIndex, 10));
+        Assert.Equal(0, Check(db).UnknownSlotIndexes);
+    }
+
+    // Information only, like the unowned characters: the server repairs the layout when it loads the
+    // inventory, so a freshly migrated database must not read as having soft findings.
+    [Fact]
+    public void BagRowsThatOverlap_AreCountedInTheHeadLine_ButAreNoSoftFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            Profile + Item(10, "gear.iron-blade") + Item(11, "gear.iron-blade") + Item(12, "gear.leather-cap") +
+            Item(13, "tool.torch") + Item(14, "gear.iron-blade") +
+            // A 2x3 blade at anchor 0 covers cells 0,1,8,9,16,17: the cap at 9 and the blade at 16 are under it.
+            Slot(0, 10) + Slot(16, 11) + Slot(9, 12) +
+            // A torch (1x2) at the last column fits; a blade (2 wide) at anchor 7 runs off the right edge.
+            Slot(23, 13) + Slot(7, 14));
+        WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
+
+        // Anchor 0 is kept; 9 (under it) and 16 (under it) overlap; 7 (a 2x3 at column 7) is off the board.
+        Assert.Equal(3, report.OverlappingBagItems);
+        Assert.False(report.HasSoftFindings);
+        Assert.False(report.IsFatal);
+        Assert.Contains("3 bag item(s) to re-home on load", report.ToLogLines(WorldDescriptor.Default).First(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABagOfItemsThatFit_HasNoOverlap_AndTwoPlayersAreCountedApart()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            Profile + SecondProfile + Item(10, "gear.iron-blade") + Item(11, "gear.iron-blade") + Item(12, "gear.iron-blade") +
+            SlotOf("p1", 0, 10) + SlotOf("p1", 2, 11) +
+            // The same anchor for another player is not an overlap.
+            SlotOf("p2", 0, 12));
+        WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
+        Assert.Equal(0, report.OverlappingBagItems);
+    }
+
+    [Fact]
+    public void HeldBackRows_AreCountedInTheHeadLine_ButAreNoSoftFinding()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(Profile + Item(10, "gear.iron-blade") + Item(11, "gear.iron-blade") + Slot(200, 10) + Slot(215, 11));
+        WorldIntegrityReport report = Check(db);
+        Assert.Equal(2, report.HeldBackItems);
+        Assert.Equal(0, report.UnknownSlotIndexes);
+        Assert.False(report.HasSoftFindings);
+        Assert.Contains("2 held-back item(s)", report.ToLogLines(WorldDescriptor.Default).First(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AKindInASlotItDoesNotAllow_IsAMismatch_AndTheDefaultAcceptsAll()
     {
         using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + Item(10, "gear.leather-cap") + Slot(3, 10) + Slot(100, 10) + Item(11, "tool.torch") + Slot(4, 11) + Slot(101, 11));
+        db.ExecuteScript(Profile + Item(10, "gear.leather-cap") + Slot(100, 10) + Item(11, "tool.torch") + Slot(101, 11));
 
         Assert.Equal(0, Check(db).EquipmentSlotMismatches);
 
@@ -442,7 +518,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     public void AnUnknownKindInTheMainHand_IsNotAlsoASlotMismatch()
     {
         using MigrationTestDatabase db = Migrated();
-        db.ExecuteScript(Profile + Item(10, "tool.retired") + Slot(0, 10) + Slot(100, 10));
+        db.ExecuteScript(Profile + Item(10, "tool.retired") + Slot(100, 10));
         WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));
         Assert.Equal(0, report.EquipmentSlotMismatches);
         Assert.Equal(1, report.UnknownItemKinds);
@@ -470,7 +546,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(
-            Profile + Item(10, "gear.iron-blade") + Slot(0, 10) + Slot(100, 10) + Item(11, "gear.ward-lantern") + Slot(1, 11) + Slot(101, 11) +
+            Profile + Item(10, "gear.iron-blade") + Slot(100, 10) + Item(11, "gear.ward-lantern") + Slot(101, 11) +
             "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Strength\",\"Flat\",6]]}' WHERE item_instance_id = 10;");
 
         WorldIntegrityReport report = Check(db, ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped));

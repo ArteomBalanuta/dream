@@ -6,10 +6,17 @@
       "drops": 1,
       "nothingWeight": 75,
       "items": [
-        { "item": "gear.leather-cap", "weight": 10 },
-        { "item": "gear.leather-vest", "weight": 5 },
-        { "item": "gear.iron-blade", "weight": 5 },
-        { "item": "gear.ward-lantern", "weight": 5 }
+        { "item": "gear.leather-cap", "weight": 4 },
+        { "item": "gear.leather-vest", "weight": 3 },
+        { "item": "gear.iron-blade", "weight": 3 },
+        { "item": "gear.ward-lantern", "weight": 2 },
+        { "item": "gear.iron-gauntlets", "weight": 3 },
+        { "item": "gear.iron-boots", "weight": 3 },
+        { "item": "gear.plated-leggings", "weight": 2 },
+        { "item": "gear.ward-pendant", "weight": 1 },
+        { "item": "gear.iron-band", "weight": 2 },
+        { "item": "gear.travel-cloak", "weight": 1 },
+        { "item": "gear.ember-wisp", "weight": 1 }
       ],
       "rarity": { "common": 85, "uncommon": 13, "rare": 2 }
     },
@@ -18,10 +25,19 @@
       "drops": 2,
       "nothingWeight": 50,
       "items": [
-        { "item": "gear.leather-cap", "weight": 15 },
-        { "item": "gear.leather-vest", "weight": 15 },
-        { "item": "gear.iron-blade", "weight": 10 },
-        { "item": "gear.ward-lantern", "weight": 10 }
+        { "item": "gear.leather-cap", "weight": 6 },
+        { "item": "gear.leather-vest", "weight": 6 },
+        { "item": "gear.iron-blade", "weight": 5 },
+        { "item": "gear.ward-lantern", "weight": 4 },
+        { "item": "gear.iron-gauntlets", "weight": 6 },
+        { "item": "gear.iron-boots", "weight": 6 },
+        { "item": "gear.plated-leggings", "weight": 5 },
+        { "item": "gear.ward-pendant", "weight": 3 },
+        { "item": "gear.iron-band", "weight": 4 },
+        { "item": "gear.travel-cloak", "weight": 2 },
+        { "item": "gear.gossamer-wings", "weight": 1 },
+        { "item": "gear.ember-wisp", "weight": 1 },
+        { "item": "gear.hunting-spear", "weight": 1 }
       ],
       "rarity": { "common": 60, "uncommon": 32, "rare": 8 }
     }

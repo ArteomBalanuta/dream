@@ -240,7 +240,7 @@ public sealed class CharacterPanelModelTests
 
     [Theory]
     [InlineData(-1)]
-    [InlineData(16)]
+    [InlineData(64)]
     [InlineData(100)]
     [InlineData(int.MaxValue)]
     public void BackpackMenu_AndMoveTargets_AreEmptyForASlotOutsideTheBackpack(int slot)
@@ -285,8 +285,9 @@ public sealed class CharacterPanelModelTests
 
         List<InventoryHudAction> targets = CharacterPanelModel.MoveTargets(inventory, 0);
 
-        Assert.True(targets.Count <= 15);
-        Assert.All(targets, t => Assert.InRange(t.Target, 0, 15));
+        // The grid is clamped to the bag's cells (8x8 since classic HUD iteration 2), never past them.
+        Assert.True(targets.Count <= InventoryConstants.BackpackSlotCount - 1);
+        Assert.All(targets, t => Assert.InRange(t.Target, 0, InventoryConstants.BackpackSlotCount - 1));
     }
 
     [Fact]

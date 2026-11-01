@@ -42,7 +42,7 @@ public sealed class ItemRollsMigrationMeasurementTests(ITestOutputHelper output)
 
         output.WriteLine($"migrations 0008 and 0009 on {before:N0} items: {watch.Elapsed.TotalMilliseconds:F1} ms (v{result.FromVersion} to v{result.ToVersion})");
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(9, result.ToVersion);
+        Assert.Equal(10, result.ToVersion);
         Assert.True(before >= Items, $"seeded {before}");
         Assert.Equal(before, Count(database));
         Assert.True(watch.Elapsed.TotalMilliseconds <= 1000, $"migration took {watch.Elapsed.TotalMilliseconds:F1} ms (gate 1000 ms)");

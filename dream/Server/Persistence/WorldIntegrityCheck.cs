@@ -27,8 +27,12 @@ public sealed record WorldIntegrityOptions
 
     public Func<string, bool> IsKnownEnemyKind { get; init; } = static _ => true;
 
-    // Whether an item kind may sit in the given equipment slot index (100..103). The default accepts all.
+    // Whether an item kind may sit in the given equipment slot index (100..111). The default accepts all.
     public Func<string, int, bool> CanOccupy { get; init; } = static (_, _) => true;
+
+    // The bag footprint of an item kind, for the overlap count. The default is the shipped catalog's
+    // (BagGrid.FootprintOf: 1x1 for a kind it does not know).
+    public Func<string, ItemFootprint> FootprintOf { get; init; } = static kind => BagGrid.FootprintOf(kind);
 
     public bool QuickCheck { get; init; } = true;
 }
@@ -38,7 +42,7 @@ public sealed record WorldIntegrityReport(
     string? CorruptionMessage,
     int ObjectsOutOfBounds,
     int SlotsMissingItem,
-    int EquippedWithoutBackpackItem,
+    int EquippedWithBagRow,
     int SharedItemReferences,
     int UnknownItemKinds,
     int UnknownEnemyKinds,
@@ -50,15 +54,19 @@ public sealed record WorldIntegrityReport(
     int ItemsInTwoEquipmentSlots = 0,
     int UnknownSlotIndexes = 0,
     int EquipmentSlotMismatches = 0,
-    int DamagedItemRolls = 0)
+    int DamagedItemRolls = 0,
+    int OverlappingBagItems = 0,
+    int HeldBackItems = 0)
 {
-    // UnownedCharacters is information only (every legacy character is unowned until a token claims it):
-    // it is in the head line and never in HasSoftFindings.
+    // UnownedCharacters, OverlappingBagItems and HeldBackItems are information only (every legacy
+    // character is unowned until a token claims it; a migrated or hand-edited inventory has bag rows that
+    // overlap or run off the board until the server repairs the layout when it loads the inventory, and
+    // held-back rows wait for room): they are in the head line and never in HasSoftFindings.
     // Foreign-key violations or corruption: the start must stop.
     public bool IsFatal => ForeignKeyViolations > 0 || CorruptionMessage != null;
 
     public bool HasSoftFindings =>
-        ObjectsOutOfBounds > 0 || SlotsMissingItem > 0 || EquippedWithoutBackpackItem > 0
+        ObjectsOutOfBounds > 0 || SlotsMissingItem > 0 || EquippedWithBagRow > 0
         || SharedItemReferences > 0 || UnknownItemKinds > 0 || UnknownEnemyKinds > 0
         || AccountsOverLimit > 0 || DuplicateDisplayNames > 0
         || ItemsInTwoEquipmentSlots > 0 || UnknownSlotIndexes > 0 || EquipmentSlotMismatches > 0 || DamagedItemRolls > 0;
@@ -76,6 +84,16 @@ public sealed record WorldIntegrityReport(
         if (UnownedCharacters > 0)
         {
             head += $", {UnownedCharacters} unowned character(s)";
+        }
+
+        if (OverlappingBagItems > 0)
+        {
+            head += $", {OverlappingBagItems} bag item(s) to re-home on load";
+        }
+
+        if (HeldBackItems > 0)
+        {
+            head += $", {HeldBackItems} held-back item(s)";
         }
 
         if (!IsFatal && !HasSoftFindings)
@@ -105,9 +123,9 @@ public sealed record WorldIntegrityReport(
             yield return $"  {SlotsMissingItem} inventory slot(s) point at a missing item.";
         }
 
-        if (EquippedWithoutBackpackItem > 0)
+        if (EquippedWithBagRow > 0)
         {
-            yield return $"  {EquippedWithoutBackpackItem} equipped slot(s) match no backpack item.";
+            yield return $"  {EquippedWithBagRow} worn item(s) still have a bag row (kept; a worn item has no bag row).";
         }
 
         if (SharedItemReferences > 0)
@@ -122,7 +140,7 @@ public sealed record WorldIntegrityReport(
 
         if (UnknownSlotIndexes > 0)
         {
-            yield return $"  {UnknownSlotIndexes} inventory slot row(s) outside the backpack and equipment ranges (kept).";
+            yield return $"  {UnknownSlotIndexes} inventory slot row(s) outside the bag, equipment and held-back ranges (kept).";
         }
 
         if (EquipmentSlotMismatches > 0)
@@ -175,6 +193,8 @@ public static class WorldIntegrityCheck
         int missingItem = 0;
         int equipped = 0;
         int shared = 0;
+        int overlapping = 0;
+        int heldBack = 0;
         int unknownItems = 0;
         int unknownEnemies = 0;
         int overLimit = 0;
@@ -196,7 +216,7 @@ public static class WorldIntegrityCheck
             long worldId = descriptor.Id.Value;
             outOfBounds = Count(connection, OutOfBoundsSql, worldId, descriptor);
             missingItem = Count(connection, SlotsMissingItemSql, worldId, descriptor: null);
-            equipped = Count(connection, EquippedWithoutBackpackSql, worldId, descriptor: null);
+            equipped = Count(connection, EquippedWithBagRowSql, worldId, descriptor: null);
             shared = Count(connection, SharedItemReferencesSql, worldId, descriptor: null);
             unknownItems = CountUnknown(connection, "item_instances", "item_kind", worldId, options.IsKnownItemKind, unknownNames);
             unknownEnemies = CountUnknown(connection, "enemy_instances", "enemy_kind", worldId, options.IsKnownEnemyKind, unknownNames);
@@ -207,6 +227,8 @@ public static class WorldIntegrityCheck
             badIndexes = Count(connection, UnknownSlotIndexesSql, worldId, descriptor: null);
             mismatches = CountSlotMismatches(connection, worldId, options.CanOccupy);
             damaged = CountDamagedRolls(connection, worldId);
+            overlapping = CountOverlappingBagItems(connection, worldId, options.FootprintOf);
+            heldBack = Count(connection, HeldBackItemsSql, worldId, descriptor: null);
         }
         catch (SqliteException ex) when (IsCorruption(ex))
         {
@@ -230,7 +252,9 @@ public static class WorldIntegrityCheck
             twoSlots,
             badIndexes,
             mismatches,
-            damaged);
+            damaged,
+            overlapping,
+            heldBack);
     }
 
     // SQLITE_CORRUPT (11) and SQLITE_NOTADB (26).
@@ -349,6 +373,36 @@ public static class WorldIntegrityCheck
         return damaged;
     }
 
+    // Bag rows (0..63) that run off the 8x8 board or overlap an item of a lower anchor of the same
+    // player: what the server's load-time repair re-homes. Rows of a missing item count as 1x1.
+    private static int CountOverlappingBagItems(SqliteConnection connection, long worldId, Func<string, ItemFootprint> footprintOf)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = BagRowsSql;
+        command.Parameters.AddWithValue("$world", worldId);
+        using SqliteDataReader reader = command.ExecuteReader();
+        int overlapping = 0;
+        string? player = null;
+        BagBoard board = new();
+        while (reader.Read())
+        {
+            string rowPlayer = reader.GetString(0);
+            if (!string.Equals(rowPlayer, player, StringComparison.Ordinal))
+            {
+                player = rowPlayer;
+                board.Clear();
+            }
+
+            ItemFootprint footprint = reader.IsDBNull(2) ? ItemFootprint.One : footprintOf(reader.GetString(2));
+            if (!board.TryPlace(reader.GetInt32(1), footprint))
+            {
+                overlapping++;
+            }
+        }
+
+        return overlapping;
+    }
+
     // Accounts holding more characters than the limit (two processes can breach it; see the wave G plan).
     private static readonly string AccountsOverLimitSql = $"""
         SELECT COUNT(*) FROM (SELECT account_id FROM player_profiles WHERE account_id IS NOT NULL
@@ -388,36 +442,38 @@ public static class WorldIntegrityCheck
     private const int FirstEquip = EquipmentSlots.FirstSlotIndex;
     private const int LastEquip = EquipmentSlots.LastSlotIndex;
 
-    private static readonly string EquippedWithoutBackpackSql = $"""
+    // A worn item (an equipment row) whose player still has the same item in a bag row. A worn item
+    // has only its worn row since classic HUD iteration 2; a bag row left beside it comes from a hand
+    // edit or a copy that was not migrated.
+    private static readonly string EquippedWithBagRowSql = $"""
         SELECT COUNT(*) FROM player_inventory_slots AS e
         WHERE e.world_id = $world AND e.slot_index BETWEEN {FirstEquip} AND {LastEquip}
-          AND NOT EXISTS (
+          AND EXISTS (
             SELECT 1 FROM player_inventory_slots AS b
             WHERE b.world_id = e.world_id AND b.player_name = e.player_name
               AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
               AND b.item_instance_id = e.item_instance_id);
         """;
 
-    // Extra references beyond the first to the same item, over backpack slots and players. The equipped
-    // slots (100..103) legitimately alias a backpack slot of the same player, so that pair is not counted; an
-    // equipped slot with no such alias is counted as a reference of its own. An item in several equipment
-    // slots of one player is one reference at most (the extra rows are ItemsInTwoEquipmentSlots), so it is
-    // not counted twice.
+    // Extra references beyond the first to the same item, over bag and held-back rows, worn rows and
+    // players. Not counted here, because they have a finding of their own: an extra worn row of one
+    // player (ItemsInTwoEquipmentSlots) and a bag row of the player who also wears the item
+    // (EquippedWithBagRow).
     private static readonly string SharedItemReferencesSql = $"""
         SELECT COALESCE(SUM(n - 1), 0) FROM (
           SELECT COUNT(*) AS n FROM player_inventory_slots AS s
           WHERE s.world_id = $world
-            AND NOT (s.slot_index BETWEEN {FirstEquip} AND {LastEquip} AND EXISTS (
-              SELECT 1 FROM player_inventory_slots AS b
-              WHERE b.world_id = s.world_id AND b.player_name = s.player_name
-                AND b.slot_index >= 0 AND b.slot_index < {InventoryConstants.BackpackSlotCount}
-                AND b.item_instance_id = s.item_instance_id))
             AND NOT (s.slot_index BETWEEN {FirstEquip} AND {LastEquip} AND EXISTS (
               SELECT 1 FROM player_inventory_slots AS e2
               WHERE e2.world_id = s.world_id AND e2.player_name = s.player_name
                 AND e2.item_instance_id = s.item_instance_id
                 AND e2.slot_index BETWEEN {FirstEquip} AND {LastEquip}
                 AND e2.slot_index < s.slot_index))
+            AND NOT (s.slot_index >= 0 AND s.slot_index < {InventoryConstants.BackpackSlotCount} AND EXISTS (
+              SELECT 1 FROM player_inventory_slots AS e3
+              WHERE e3.world_id = s.world_id AND e3.player_name = s.player_name
+                AND e3.item_instance_id = s.item_instance_id
+                AND e3.slot_index BETWEEN {FirstEquip} AND {LastEquip}))
           GROUP BY s.item_instance_id
           HAVING COUNT(*) > 1);
         """;
@@ -435,7 +491,22 @@ public static class WorldIntegrityCheck
         SELECT COUNT(*) FROM player_inventory_slots
         WHERE world_id = $world
           AND NOT (slot_index >= 0 AND slot_index < {InventoryConstants.BackpackSlotCount})
-          AND NOT (slot_index BETWEEN {FirstEquip} AND {LastEquip});
+          AND NOT (slot_index BETWEEN {FirstEquip} AND {LastEquip})
+          AND NOT (slot_index BETWEEN {InventoryConstants.HeldBackFirstIndex} AND {InventoryConstants.HeldBackLastIndex});
+        """;
+
+    private static readonly string HeldBackItemsSql = $"""
+        SELECT COUNT(*) FROM player_inventory_slots
+        WHERE world_id = $world AND slot_index BETWEEN {InventoryConstants.HeldBackFirstIndex} AND {InventoryConstants.HeldBackLastIndex};
+        """;
+
+    // The bag rows, player by player in anchor order, with the kind of their item (NULL for a missing one).
+    private static readonly string BagRowsSql = $"""
+        SELECT s.player_name, s.slot_index, i.item_kind
+        FROM player_inventory_slots AS s
+        LEFT JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
+        WHERE s.world_id = $world AND s.slot_index >= 0 AND s.slot_index < {InventoryConstants.BackpackSlotCount}
+        ORDER BY s.player_name, s.slot_index;
         """;
 
     private static readonly string EquippedKindsSql = $"""

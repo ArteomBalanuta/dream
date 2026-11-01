@@ -55,7 +55,7 @@ public sealed class ItemCliTests
         new SqliteInventoryRepository(new SqliteWorldStore(db.Schema)).LoadPlayerInventory("bob~2");
 
     [Fact]
-    public void Grant_RollsIntoTheLowestFreeSlot_AndTheIdIsBelowTheRaisedCounter()
+    public void Grant_TakesTheFirstFitOfTheFootprint_AndTheIdIsBelowTheRaisedCounter()
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript(
@@ -70,7 +70,9 @@ public sealed class ItemCliTests
         string[] fields = output.TrimEnd().Split('\t');
         Assert.Equal(4, fields.Length);
         long id = long.Parse(fields[0], System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal("1", fields[1]);
+        // The torch rows at anchors 0 and 2 (1x2 each) leave cell 1 free, but a 2x3 blade does not fit
+        // at 1 (it would cover cell 2); the first anchor with room is 3.
+        Assert.Equal("3", fields[1]);
         Assert.Equal("rare", fields[2]);
         Assert.Contains("Strength=", fields[3], StringComparison.Ordinal);
         Assert.True(id > 50);
@@ -83,7 +85,7 @@ public sealed class ItemCliTests
         Assert.Equal("bob~2", item.OwnerPlayerName);
         Assert.NotNull(item.Roll);
         Assert.Equal(ItemRarity.Rare, item.Roll.Rarity);
-        Assert.Equal(id, loaded.Slots.Single(s => s.SlotIndex == 1).ItemInstanceId);
+        Assert.Equal(id, loaded.Slots.Single(s => s.SlotIndex == 3).ItemInstanceId);
         // The starter grant row is untouched: no top-up side effect.
         Assert.Equal(2, loaded.StarterKitVersion);
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM player_starter_grants;"));
@@ -103,7 +105,7 @@ public sealed class ItemCliTests
         string[] y = second.TrimEnd().Split('\t');
         Assert.Equal("common", x[2]);
         Assert.NotEqual(x[0], y[0]);
-        Assert.Equal(["0", "1"], new[] { x[1], y[1] });
+        Assert.Equal(["0", "2"], new[] { x[1], y[1] });
     }
 
     [Fact]

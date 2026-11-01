@@ -412,7 +412,7 @@ public class AuthoritativeActionFlowTests
         runtime.ProcessAuthoritativeAction(new PlayerActionMessage(
             PlayerSessionId.LocalDefault,
             3,
-            new InventoryEquipIntent(1)));
+            new InventoryEquipIntent(2))); // the blade: the second kit item takes the first fit, anchor 2
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
 
         Vector3 cubeCenter = new Vector3(6.5f, 1.5f, 5.5f);

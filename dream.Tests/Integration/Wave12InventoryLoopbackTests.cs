@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
+using Dream.Tests.Support;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
@@ -239,7 +240,7 @@ public sealed class Wave12InventoryLoopbackTests(ITestOutputHelper output)
 
     private static long[] ItemIds(PlayerInventorySnapshot inventory)
     {
-        return inventory.Slots.Where(slot => slot.Item.HasValue).Select(slot => slot.Item!.Value.ItemInstanceId).Distinct().Order().ToArray();
+        return inventory.AllItems().Select(item => item.ItemInstanceId).Distinct().Order().ToArray();
     }
 
     private sealed class NullOutput : ITestOutputHelper

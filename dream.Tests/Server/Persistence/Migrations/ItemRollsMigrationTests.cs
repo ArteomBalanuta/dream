@@ -27,7 +27,7 @@ public sealed class ItemRollsMigrationTests
 
     [Theory]
     [MemberData(nameof(FromVersions))]
-    public void EveryEarlierVersion_MigratesToNine_Clean(int fromVersion)
+    public void EveryEarlierVersion_MigratesToTheLatest_Clean(int fromVersion)
     {
         using MigrationTestDatabase database = new();
         if (fromVersion == 0)
@@ -42,8 +42,8 @@ public sealed class ItemRollsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(fromVersion, result.FromVersion);
-        Assert.Equal(9, result.ToVersion);
-        Assert.Equal(9, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(10, result.ToVersion);
+        Assert.Equal(10, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Empty(Rows(c, "PRAGMA foreign_key_check;"));
@@ -62,7 +62,7 @@ public sealed class ItemRollsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(9, result.ToVersion);
+        Assert.Equal(10, result.ToVersion);
         Assert.Equal(before, DumpItems(database, includeRolls: false));
         Assert.Equal(otherTablesBefore, DumpOtherTables(database));
         using SqliteConnection c = database.Open();
@@ -92,9 +92,9 @@ public sealed class ItemRollsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(9, result.ToVersion);
-        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0009", StringComparison.Ordinal));
-        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0009\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal(10, result.ToVersion);
+        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0010", StringComparison.Ordinal));
+        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0010\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection old = MigrationTestDatabase.OpenFile(backup);
         Assert.Equal(0L, Scalar(old, "SELECT COUNT(*) FROM pragma_table_info('item_instances') WHERE name = 'rolled_modifiers';"));
         Assert.Equal(3L, Scalar(old, "SELECT COUNT(*) FROM item_instances;"));
@@ -205,7 +205,7 @@ public sealed class ItemRollsMigrationTests
     }
 
     [Fact]
-    public void AV9File_OnAV7Build_IsTooNew_AndTheServerExitCodeIsThree()
+    public void ALatestFile_OnAV7Build_IsTooNew_AndTheServerExitCodeIsThree()
     {
         using MigrationTestDatabase database = Latest();
         SqliteSchemaMigrator v7Build = UpTo(7);
@@ -213,7 +213,7 @@ public sealed class ItemRollsMigrationTests
         using SqliteConnection c = database.Open();
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() => v7Build.Migrate(database.DatabasePath, c));
 
-        Assert.Equal(9, error.StoredVersion);
+        Assert.Equal(10, error.StoredVersion);
         Assert.Equal(7, error.LatestVersion);
         Assert.Equal(3, ServerBootstrap.SchemaTooNewExitCode);
     }
@@ -263,7 +263,8 @@ public sealed class ItemRollsMigrationTests
     private static string DumpOtherTables(MigrationTestDatabase database)
     {
         using SqliteConnection c = database.Open();
-        string[] tables = ["worlds", "player_profiles", "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances", "player_inventory_slots", "player_starter_grants"];
+        // player_inventory_slots is left out: migration 0010 remaps its slot_index (see BagGridMigrationTests).
+        string[] tables = ["worlds", "player_profiles", "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances", "player_starter_grants"];
         return string.Join("\n", tables.Select(t => t + ":" + string.Join(";", Rows(c, $"SELECT * FROM {t} ORDER BY 1, 2, 3;"))));
     }
 

@@ -2,6 +2,7 @@ using System.Text;
 using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
+using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Stats;
 using static Dream.Tests.Server.ServerConnectionTestFixtures;
@@ -25,9 +26,7 @@ public sealed class InventoryPushCodecTests
                 Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 6f), new StatModifier(StatId.AttackSpeed, StatOp.Flat, 1.75f)],
                 EquipSlots: 1, Rarity: ItemRarity.Rare, IsRolled: true);
             PlayerInventorySnapshot empty = PlayerInventorySnapshot.Empty("bob");
-            InventorySlotSnapshot[] slots = [.. empty.Slots];
-            slots[0] = new InventorySlotSnapshot(0, rolled);
-            inventory = empty with { Slots = slots };
+            inventory = empty with { Slots = [new InventorySlotSnapshot(0, rolled)] };
         }
 
         return new InventoryPushMessage(
@@ -56,6 +55,8 @@ public sealed class InventoryPushCodecTests
         Assert.True(item.IsRolled);
         Assert.Equal(original.Inventory!.Value.Slots[0].Item!.Value.Modifiers, item.Modifiers);
         Assert.Equal(original.Inventory.Value.Slots.Count, push.Inventory.Value.Slots.Count);
+        // The item text is the catalog's, not the sender's.
+        Assert.Equal(ContentCatalog.Shipped.Items.Single(i => i.Key == "gear.iron-blade").Description, item.Description);
     }
 
     [Fact]

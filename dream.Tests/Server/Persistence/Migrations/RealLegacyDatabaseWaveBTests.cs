@@ -71,6 +71,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
         MigrationTestDatabase.ReleasePooledConnections();
         string before = DumpAll(database);
+        List<SlotRow> slotsBefore = BagGridMigrationAsserts.ReadSlots(database);
         string oldSeed = (string)database.Scalar("SELECT value FROM world_metadata WHERE key = 'simulation_seed';")!;
         long oldTime = Convert.ToInt64(database.Scalar("SELECT value FROM world_metadata WHERE key = 'world_time_ticks';"), CultureInfo.InvariantCulture);
         Assert.True(oldTime > 0, "the real database should carry a non-zero world time");
@@ -129,8 +130,11 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 Assert.Equal(0L, database.Scalar($"SELECT COUNT(*) FROM {table} WHERE world_id <> 1;"));
             }
 
-            // Cube cells are INTEGER now; the rest of every row is what it was.
+            // Cube cells are INTEGER now; the rest of every row is what it was. The inventory slots are
+            // compared apart (migration 0010 remaps them): every item and every worn row survives and no
+            // worn item keeps a bag row.
             Assert.Equal(before, DumpAll(database));
+            BagGridMigrationAsserts.AssertMigrated(slotsBefore, BagGridMigrationAsserts.ReadSlots(database));
 
             // The clock resumes in the same phase at the same tick, and the wolf is still there.
             using DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
@@ -230,7 +234,9 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
     {
         StringBuilder text = new();
         using SqliteConnection connection = database.Open();
-        foreach (string table in WorldTables.Concat(["player_profiles", "combat_formulas"]))
+        // player_inventory_slots is not dumped: migration 0010 changes the meaning of slot_index (see
+        // BagGridMigrationAsserts).
+        foreach (string table in WorldTables.Concat(["player_profiles", "combat_formulas"]).Where(name => name != "player_inventory_slots"))
         {
             List<string> columns = [];
             using (SqliteCommand pragma = connection.CreateCommand())

@@ -258,6 +258,32 @@ Schema version 9 (plan `docs/ledger/plans/2026-11-01-wave-i-plan.md`). The migra
 - **Startup probe.** `ServerBootstrap.ProbeFormulas` evaluates the `enemy.*` formulas for every template and `player.damage_taken_factor` for Armor 1..1000 before the world opens; a failure (a division by zero, a non-finite result) names the formula and exits with code 8.
 - A retired or unknown `enemy_kind` is logged and skipped on restore, its row is kept, and the integrity check counts it (`UnknownEnemyKinds`). The population step then spawns a Primary enemy if none is active.
 
+## The footprint bag (migration 0010, classic HUD iteration 2)
+
+Schema version 10 (plan `docs/ledger/plans/2026-11-01-classic-hud-iteration-2-plan.md`). The migration is data only: no table is rebuilt, no column is added and no `item_instances` row changes, so the foreign keys, the indexes and the five object-id triggers stay. `player_inventory_slots.slot_index` changes meaning:
+
+| `slot_index` | Meaning |
+|---|---|
+| `0..63` | The anchor of an item on the 8x8 bag board: the item's top-left cell, `row * 8 + col`. An item covers its footprint (`ItemDefinition.Footprint`, 1x1 to 4x4, in `items.json`) from there. |
+| `100..111` | A worn slot (`EquipmentSlot`, `100 + slot`). A worn item has only this row; the wave H alias, one row in the backpack and one in the equipment slot, is gone. |
+| `200..215` | Held back: an item that did not fit the board when the inventory was loaded, waiting for room. Loot never enters these rows. |
+| `300` up | Parked: overflow of the held-back rows (only reachable with hand-edited data), kept and inert. |
+| any other | An unknown row, kept and inert. |
+
+The script runs four statements, in this order:
+
+1. Rows in `16..99` (hand-edited; no build wrote them) move to `+20000`, so they cannot collide with the anchors below.
+2. A bag row (`0..15`) whose player wears the same item (a row `100..111`) is deleted. The worn row stays.
+3. Rows `0..15` move to `+10000` (the primary key is per `slot_index` and the old and new ranges overlap).
+4. Those rows move to their 2x2 block of the new board: old slot `i` becomes anchor `(i / 4) * 16 + (i % 4) * 2`.
+
+A row already at `10000..10015` or `20016..20099` before the migration (never written by any build) fails the migration, which rolls back and keeps the backup it took. Every item id survives, and so does every worn row.
+
+The migration only has to give every row a legal, distinct index; whether the items fit the board is decided by the server when it loads the inventory (`PlayerInventoryService.RepairLayout`, once per load). Items up to 2x2 sit where the remap put them. A larger item (a 2x3 blade) can overlap the block below it: the rows are walked in anchor order, each item that is in bounds and overlaps nothing kept stays, the others are re-homed (largest area first, then lowest anchor; first fit), and what still does not fit becomes a held-back row. Held-back rows move onto the board, in row order, after every accepted move, destroy, equip or unequip. Sixteen 2x3 items (96 cells) therefore load as eight placed and eight held back, none lost, and drain as room appears.
+
+- The integrity check inverts `EquippedWithoutBackpackItem` into `EquippedWithBagRow` (a worn item whose player still has the same item in a bag row, a soft finding), drops the alias exception from `SharedItemReferences`, allows `0..63`, `100..111` and `200..215` in `UnknownSlotIndexes`, and adds two counts that are information only (in the head line, never in `HasSoftFindings`): `OverlappingBagItems` (bag rows the load-time repair will move; `WorldIntegrityOptions.FootprintOf`) and `HeldBackItems`.
+- `dream --items grant` takes the first fit of the item's footprint on the board, not the lowest free slot; the printed slot is the anchor. A bag with no room for the footprint is exit 2.
+
 ## Accounts and characters (migration 0007, wave G)
 
 Schema version 7 (plan `docs/ledger/plans/2026-10-31-wave-g-plan.md`). `accounts` holds `account_id` (AUTOINCREMENT), `token_hash` (BLOB, `CHECK (length(token_hash) = 32)`, unique), `created_utc` and `last_seen_utc`. The hash is the SHA-256 of the player's 32-byte token; the token itself is never stored, so a database backup holds no usable secret. `player_profiles` gains `account_id INTEGER NULL REFERENCES accounts(account_id) ON DELETE SET NULL` (partial index `ix_player_profiles_account_id`). A character with `account_id IS NULL` is unowned (a legacy character, or one released with `--characters release`); the first token to join it claims it, up to 5 characters per account. `player_name` stays the immutable key. `display_name` is what people type and see, and is unique ignoring ASCII case (`ux_player_profiles_display_name`, `COLLATE NOCASE`). Migration 0007 renames duplicate display names to `<name>~<n>`; the `.bak` taken before it holds the originals.
@@ -451,8 +477,7 @@ Key fields:
 
 Used for:
 
-- 4x4 backpack slot assignment (`0..15`)
-- equipment slots `100..103` (main hand, off hand, head, body)
+- bag anchors on the 8x8 board (`0..63`), worn slots (`100..111`) and held-back items (`200..215`); see The footprint bag (migration 0010)
 - reconnect restore of tool selection
 
 ### `player_starter_grants` (migration 0002)
