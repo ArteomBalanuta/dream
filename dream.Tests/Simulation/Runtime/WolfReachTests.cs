@@ -241,6 +241,66 @@ public sealed class WolfReachTests
         Assert.NotEqual(EnemyBehaviorState.Attacking, wolf.BehaviorState);
     }
 
+    // ---- the leash ----
+
+    [Fact]
+    public void AWolfWithNoTarget_WalksBackToItsHome_StopsThereAndIdles_TheSameWayEveryTime()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Map map = runtime.Map;
+        ClearArea(map, 8, 30, 1, 3, 8, 30);
+        Vector3 home = new(10.5f, 1f, 10.5f);
+        Vector3[] arrivals = new Vector3[2];
+        int[] ticks = new int[2];
+        for (int run = 0; run < 2; run++)
+        {
+            EnemyActor wolf = new(new EnemyCombatant(() => home), home, aggroRange: 10f, attackRange: 1.35f, moveSpeed: 2.8f,
+                preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance, collisionRadius: WolfDefinition.CollisionRadius,
+                collisionHeight: WolfDefinition.CollisionHeight);
+            wolf.SetPosition(new Vector3(25.5f, 1f, 20.5f));
+            int n = 0;
+            do
+            {
+                wolf.Update(0.015625f, null, map);
+                n++;
+                Assert.True(n < 1000, "the wolf never got home");
+            }
+            while (wolf.BehaviorState == EnemyBehaviorState.Chasing);
+
+            Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+            Assert.True(Vector3.Distance(wolf.Position, home) < 0.06f, $"stopped at {wolf.Position}");
+            Vector3 stopped = wolf.Position;
+            for (int i = 0; i < 100; i++)
+            {
+                wolf.Update(0.015625f, null, map);
+            }
+
+            Assert.Equal(stopped, wolf.Position);
+            Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+            arrivals[run] = stopped;
+            ticks[run] = n;
+        }
+
+        Assert.Equal(arrivals[0], arrivals[1]);
+        Assert.Equal(ticks[0], ticks[1]);
+        // 18.4 m at 2.8 m/s and 64 ticks/s is about 420 ticks.
+        Assert.InRange(ticks[0], 400, 440);
+    }
+
+    [Fact]
+    public void AWolfWhosePlayerHasLeftItsAggroRange_GoesHome()
+    {
+        Vector3 home = new(10.5f, 1f, 10.5f);
+        EnemyActor wolf = new(new EnemyCombatant(() => home), home, aggroRange: 10f, attackRange: 1.35f, moveSpeed: 2.8f,
+            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance, collisionRadius: WolfDefinition.CollisionRadius,
+            collisionHeight: WolfDefinition.CollisionHeight);
+        wolf.SetPosition(new Vector3(20.5f, 1f, 10.5f));
+        Vector3 farPlayer = new(40.5f, 1.5f, 10.5f);
+        wolf.Update(0.015625f, farPlayer, (Map?)null);
+        Assert.Equal(EnemyBehaviorState.Chasing, wolf.BehaviorState);
+        Assert.True(wolf.Position.X < 20.5f, "the wolf did not head home");
+    }
+
     [Fact]
     public void ABitingTick_AllocatesNothing()
     {

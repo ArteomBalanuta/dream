@@ -55,10 +55,15 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // unchanged. The previous values were 0xC73284FF379D57EA, 0x7E52DBC5EC2E6514, 0x48E4F56A857E8DC0,
     // 0xE74ADEE40AD629DA, 0x17AF03F609BF31E8, 0x6A21C08ACFFABED0, 0x5E2E975D48F4D58A,
     // 0xF80703360DEEA88F, 0x1DBCE7E3D7E4C392.
+    // Checkpoints 6-10 were re-pinned in the last fix loop of wave I: the respawned wolf spawns in the far corner
+    // ((12.5, 1, 12.5) on this 16 m map) instead of beside the spawn, so it no longer comes back to fight the
+    // players. Checkpoints 1-5 are unchanged (the test now places the first wolf at (5.5, 1, 2.5) and ends the
+    // join windows, which reproduces the old run exactly up to the wolf's death). The previous values were
+    // 0x8118838F28D2A8DB, 0x896E506A472FAAF5, 0x7FB267DD0A1ED1E7, 0xA399D97471F2108A, 0x626AC8A4F7C77C1E.
     private static readonly ulong[] GoldenCheckpoints =
     [
         0x154E692D35B2DD4EUL, 0x308F1C0DD0CD35B4UL, 0xB2C035E98C54CB57UL, 0x58DC81E03DE29867UL, 0x73E33D5492ADD38CUL,
-        0x8118838F28D2A8DBUL, 0x896E506A472FAAF5UL, 0x7FB267DD0A1ED1E7UL, 0xA399D97471F2108AUL, 0x626AC8A4F7C77C1EUL
+        0x47B5F355035AF99EUL, 0x1A65C2CE9810486AUL, 0xB2A5C4A1D0C2DEE1UL, 0xA0CDA305A4CCCCD4UL, 0x55BC8DA8232AA9FBUL
     ];
 
     [Fact]
@@ -117,6 +122,15 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
         host.JoinSession(SessionC, "Player C");
         host.JoinSession(SessionA, "Player A");
         Assert.Equal(PrimarySession, host.Runtime.PrimaryRemoteSessionId?.Value);
+        // The script was written for a day wolf beside the spawn and for players who can be bitten at once. The
+        // wolf now spawns in the far corner and a join is protected for 192 ticks, so the test places the wolf
+        // where it used to spawn and ends the join windows.
+        host.Runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
+        foreach (string session in new[] { PrimarySession, SessionC, SessionA })
+        {
+            WaveIRuntimeKit.EndProtection(host.Runtime, new PlayerSessionId(session));
+        }
+
         return host;
     }
 

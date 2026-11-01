@@ -166,7 +166,7 @@ Tester, Release, `DREAM_LOAD_TEST=1`, `IncrementalCheckpointMeasurementTests.Wor
 
 ## Review of fix loop 2, not fixed
 
-No Must fix. The two fix loops are used up, so these stay open until the user decides.
+No Must fix. The two fix loops were used up, so the reviewer's items were left for the user to decide. They were then fixed in fix loop 3 (the `lost` notice, the nits) and, at the user's request, the wolf stand-off (S5, below).
 
 - Fixed in fix loop 3: the `lost` notice placement, the missing replacement test and the nits below (log line, rate limit, push-wait comment, XP test).
 - **Wolf stand-off (S5).** Left for the user here, then fixed at the user's request: see "Wolf bite and spawn protection" below.
@@ -256,3 +256,43 @@ One run, Debug, quiet machine, 3 m 5 s: **4,756 passed, 0 failed, 46 skipped, 4,
 ### Not verified
 
 `dream.exe --server` itself (it binds all interfaces), a real `PlayScene.Update`, the picture on screen, a kill while a resync (not a join) transfer is in flight, bots being bitten in the soak, the 30-minute soak length (25 minutes run), the stored-world soaks.
+
+## Fix loop 4
+
+The last fix loop of wave I, on `ee50e67` (tip of `integrate/engine-iteration`). Items 1 to 6 and the nits of the brief.
+
+### 1. Bite reach (Must fix)
+
+- **The bug.** `EnemyActor` zeroed `toPlayer.Y` for the bite range and wolves never change Y, so a wolf at the foot of a pillar, under a floor or under a sealed room bit the player above it, through the cubes. The separation step also shoved a player standing above a wolf sideways (`ResolvePlayerEnemySeparation` was horizontal only).
+- **The rule.** A bite needs (a) the player within the horizontal range, (b) within vertical reach: the gap between the wolf's vertical extent (0 to 0.6 m) and the player's box (1 m centred on its position) is at most `EnemyActor.BiteVerticalReach` (0.5 m), and (c) no cube on the horizontal line between them at the wolf's body height, sampled every 0.25 m (`EnemyMovementCollision.HasClearBiteLine`; cubes below the player's feet cell do not count, so a wolf at the foot of a 1-cube step still reaches). A wolf out of reach keeps closing in horizontally to its stop point and then stands in `Idle`, not `Attacking` and not `Chasing` in place. Separation skips a player whose body does not overlap the wolf's vertically. No allocation (`ABitingTick_AllocatesNothing`).
+- **Design call.** A player on a 1-cube step can be bitten (gap 0.4 m); a player on a 2-cube step (gap 1.4 m), on a pillar or above a floor cannot.
+- **Known limit, left alone as asked.** Wolves cannot climb, so a 2-cube step is a safe spot. Unit cubes are 1 m wide, so the cube line check can only matter for positions the physics does not produce (the actor-level test uses one); the vertical rule does the work in play.
+- **Tests (`WolfReachTests`).** Tower, under-floor, sealed upper room (overhanging a pillar), the 1-cube step that is still bitten, the 2-cube step that is not, a control on the floor that is bitten, the vertical reach at its boundary (5 cases), a cube on the line, the leash (2) and allocation. **They fail without the fix**: with the vertical test and the line check disabled, 7 of the 13 cases that existed then failed (two-cube step, under-floor, tower, sealed room, both out-of-reach boundary cases, cube on the line); the fix was restored.
+
+### Idle spawn loop (2)
+
+- **a. Join protection.** `AttachRemoteSession` (every join, first or returning, but not a repeated join of an already attached seat) and the local seat's construction set `ProtectedThroughTick` to tick + 192, like a respawn; attacking ends it, a detach clears it. A rejoin now has its own full window, so `ProtectionDoesNotSurviveALeaveAndRejoin_...` became `ARejoin_IsProtectedByItsOwnWindow_NotTheOldOne_AndALaterDeathGetsAFullFreshWindow`, `TheFirstSpawn_HasNoProtection` became `TheFirstSpawn_IsProtectedFor192Ticks_ThenBitten`, and `AProtectedPlayerWhoLeavesAndRejoins_IsNotProtectedOnReturn_OverRealTcp` became `..._GetsItsOwnWindowOnReturn_OverRealTcp`.
+- **b. Spawn outside aggro range.** The day wolf spawns at (width - 3.5, 1, depth - 3.5) clamped into the map (was (5.5, 1, 2.5)); the night's second wolf at (width - 2.5, 1, depth - 2.5), stepping away if it lands on the day spawn. On the 56 m map: (52.5, 52.5) and (53.5, 53.5), 67 m from the world spawn (5, 5); on 30 m, 30 m; on 100 m, 129 m. Maps below about 16 m are too small to stay outside the aggro range (10 m wolf, 12 m Dire): 16 m puts the day wolf 10.6 m and the Dire 12.0 m away. As before, terrain edits at a spawn are not looked at.
+- **c. Leash.** `EnemyActor.HomePosition` (the spawn point; a restored wolf gets its role's spawn from `WolfSpawnPolicy`, since nothing is persisted). A wolf with no target, or none in aggro range, walks home at its speed, stops within 0.05 m and idles (`Chasing` while it walks, so the client shows the run clip). Deterministic, no allocation, in no checksum.
+- **Measured** (`IdleNewPlayerTests`, 6,400 ticks = 100 s, a new player joined at (5, 1.5, 5) standing still; day, and night from 22:00 of the second day): maps 30, 56 and 100, day and night: **0 attacking ticks, 0 chasing ticks, health 100/100 throughout, in all six runs.** Closest wolf 30.4 m (map 30), 67.2 m (56), 129.4 m (100); one wolf by day, two at night. Before: first bite at tick 9, death at tick 573 (8.6 s), in a loop of 4 deaths a minute. Not measured: a real process over TCP (the earlier tester's `lbhost`); this is the runtime with its clock, join and tick path, not the socket.
+- **What still happens.** A player who walks toward the far corner is attacked as before. The first 3 s after every join and respawn are safe, and the protection ends on the first attack.
+
+### Re-pins (old value, new value, cause)
+
+| What | Old | New | Cause |
+| --- | --- | --- | --- |
+| `StoredWorldJoinLoopbackTests` C0 capture, total bytes | 8,492 | 8,494 | the join's actor list holds the day wolf at (52.5, 1, 52.5) instead of (5.5, 1, 2.5): 2 bytes longer |
+| same, SHA-256 | `40391109031e35d0...` | `e98ef020127c415a...` | the same |
+| `HeldLightSnapshotBytesTests` (200 ticks, two sessions) and `WaveBTesterWorldsLoopbackTests` | 58,827 B | 58,140 B (-687) | the wolf stays at its far spawn and nobody is bitten (join protection and out-of-range spawn), where it chased and bit before |
+| `WorldSessionRuntimeTickEquivalenceTests.GoldenCheckpoints` 6-10 | `0x8118838F28D2A8DB`, `0x896E506A472FAAF5`, `0x7FB267DD0A1ED1E7`, `0xA399D97471F2108A`, `0x626AC8A4F7C77C1E` | `0x47B5F355035AF99E`, `0x1A65C2CE9810486A`, `0xB2A5C4A1D0C2DEE1`, `0xA0CDA305A4CCCCD4`, `0x55BC8DA8232AA9FB` | the respawned wolf spawns at the far spawn ((12.5, 12.5) on the 16 m map) instead of beside the players. Checkpoints 1-5 are unchanged: the test now places the first wolf at (5.5, 1, 2.5) and ends the join windows, which reproduces the old run up to the wolf's death |
+| `WolfSpawnPolicyTests`, `WaveT2NightSpawnTests` | (5.5, 1, 2.5); (50.5, 1, 53.5) on 56 m | (21.5, 1, 21.5) on 25 m; (52.5, 1, 52.5) and (53.5, 1, 53.5) on 56 m | the new spawn positions |
+
+`SimulationStateChecksumTests` did not move. `NoLight_200Ticks_IsStill58307Bytes` is now `NoLight_200Ticks_Is58140Bytes` and `WaveT1SnapshotBytes` is `NoLightSnapshotBytes`.
+
+### 3 to 6 and the nits
+
+- **3. Attack range.** The catalog rejects an `attackRange` at or below `PlayerSeparationDistance / StandOffRangeFraction` = 1.0556 m (stricter than the 0.95 m of the brief: the stand-off is at most 90% of the range, so a range of 1.0 m puts it at 0.90 m, inside the separation, and the player is shoved). Tests: `Load_RejectsAnAttackRangeTheWolfCouldNeverBiteFrom` (0.1, 0.95, 1.0, 1.05) and `Load_AcceptsAnAttackRangeAboveTheSeparationOverTheStandOffFraction`. `TheStandOffLiesInsideTheAttackRange_ForAnyTemplate` now uses ranges the catalog accepts and asserts the stand-off stays at or above the separation.
+- **4. Tests.** `AProtectedSecondarySeat_NextToTheWolf_IsSkipped_AndTheWolfBitesTheUnprotectedPlayerFartherAway`, `AWolfOverlappingAProtectedPlayer_DoesNotBiteIt_ShovesItClear_AndStaysFinite`, `ARepeatedJoinOfAnAttachedSeat_DoesNotStartANewWindow`.
+- **5. Lockstep across a restart.** `WolfRestartLockstepTests.AWolfChasingAndBiting_StaysInLockstepAcrossARestartOfBothServers_OnEditedTerrain`: two servers on their own databases, a pocket of generated terrain cleared on both, a real wolf placed 6 m from the player; equal checksums every tick of 140 ticks (first bite at tick 108); both restarted on the same databases; the wolf restored where the final checkpoint left it with the day spawn as home, the cleared pocket still cleared, the player rejoined with a new 192-tick window; equal checksums for 452 ticks and the first bite at tick 270 on both. Cubes added straight to the map are not persisted, so only the terrain removal is the edit.
+- **6. Parks.** With the far spawn and the leash, the parks in `SoakServer` (`StoredWorldTestSupport`), `PersistentScriptedServer`, `IncrementalCheckpointTests` (`ParkWolves`), `CheckpointLeaveRaceLoopbackTests` and `WaveIAdversarialTests` are gone and those tests pass without them (the (50, 1, 50) park was outside the 30 m map). `Wave13ExtractedSeamsLoopbackTests` no longer parks the wolf; it asserts the wolf stays idle at its home. Parks remain only where a test needs a wolf to stand still near a player: it places the player beside the wolf's home (`WaveIRuntimeKit.PlaceBeside`).
+- **Nits.** `ProtectedThroughTick != 0` is checked in `FillEnemyTargets`. `GameplayInputResumeFilter` suppresses a use held through the pause until it has been released once (`Filter_KeepsSuppressingAnAttackHeldThroughTheBlockedPeriod_UntilItIsReleased`); a real attack still ends protection. `docs/architecture.md` (stop point, rubble, spawns, reach, leash), the `WolfDefinition` margin comment and the `ResolveRespawnPosition` comment are corrected. `ResolveRespawnPosition` takes a scratch list (a runtime field) instead of allocating one per respawn. `LootGrantTests` no longer sleeps: `NetworkDiagnosticsLog.ForgetRateLimitKey` clears the key. The tests that assumed the wolf beside the spawn (`WolfBite*`, the interpolation replication tests, the host, combat-queue and action-flow tests, the tick-equivalence script) now place the wolf or the player explicitly.

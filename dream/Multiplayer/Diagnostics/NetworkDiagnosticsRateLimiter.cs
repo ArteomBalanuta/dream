@@ -74,6 +74,12 @@ public sealed class NetworkDiagnosticsRateLimiter
         }
     }
 
+    // Forgets one key, so its next log goes through (a test seam for tests that capture a rate limited line).
+    internal void Forget(string key)
+    {
+        _lastLoggedTicks.TryRemove(key, out _);
+    }
+
     // Forgets every key whose last log is at least the longest interval old.
     internal void SweepExpired(long nowTicks)
     {

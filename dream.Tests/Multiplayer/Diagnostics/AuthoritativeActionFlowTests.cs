@@ -527,10 +527,18 @@ public class AuthoritativeActionFlowTests
 
     private static WorldSessionRuntime CreateRuntime()
     {
-        return new WorldSessionRuntime(
+        WorldSessionRuntime runtime = new(
             floorSize: 10,
             playerStartPosition: new Vector3(5f, 1.5f, 5f),
             new SceneEventHub());
+        // The day wolf spawns in the far corner, near the cube these tests attack; put it where it used to
+        // spawn, out of their way.
+        foreach (Dream.Simulation.Enemies.EnemyActor wolf in runtime.Enemies.ActiveActors)
+        {
+            wolf.SetPosition(new Vector3(5.5f, 1f, 2.5f));
+        }
+
+        return runtime;
     }
 
     private static PlayerSimulationTuning CreatePlayerTuning()

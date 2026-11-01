@@ -21,6 +21,8 @@ public class WorldSessionRuntimeCombatEventQueueTests
         runtime.AttachRemoteSession(sessionA, "Player A");
         runtime.AttachRemoteSession(sessionB, "Player B");
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        // The day wolf spawns in the far corner; the test puts it where it used to spawn, in front of both players.
+        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
 
         ServerSnapshotEnvelope before = runtime.ExportServerSnapshotEnvelope();
         ActorSnapshot wolfBefore = Assert.Single(before.Actors, actor => actor.Kind == CreatureKind.Enemy);
