@@ -153,6 +153,14 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
                     MigrationTestDatabase.Execute(holder, "BEGIN IMMEDIATE;");
                     locked.Set();
                     Thread.Sleep(lockHoldMilliseconds);
+                    // On a loaded machine the first write can start so late that its busy_timeout outlasts
+                    // the fixed hold, and then nothing retried. Hold on until one write has been refused.
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+                    while (one.Runtime.PersistenceWrites!.LockRetries + two.Runtime.PersistenceWrites!.LockRetries == 0 && DateTime.UtcNow < deadline)
+                    {
+                        Thread.Sleep(50);
+                    }
+
                     MigrationTestDatabase.Execute(holder, "COMMIT;");
                 });
                 Assert.True(locked.Wait(TimeSpan.FromSeconds(10)));

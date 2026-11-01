@@ -103,7 +103,12 @@ public sealed class WorstCaseInventoryWireSizeTests(ITestOutputHelper output)
         await using (WireLoopbackServer server = await StartAsync(db))
         {
             WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
-            joinBytes = client.Frames.First(f => f.Decoded.Message is JoinAcceptedMessage).Payload.Length;
+            WireFrame join = client.Frames.First(f => f.Decoded.Message is JoinAcceptedMessage);
+            joinBytes = join.Payload.Length;
+            PlayerInventorySnapshot joined = ((JoinAcceptedMessage)join.Decoded.Message).Inventory!.Value;
+            Assert.Equal(16, joined.Slots.Count(slot => slot.Item is { IsRolled: true }));
+            Assert.Equal(3, joined.Equipment!.Count(row => row.Item != null));
+            Assert.NotNull(joined.EquippedSlot!.Value.Item);
             await server.DisconnectAsync(client);
         }
 
