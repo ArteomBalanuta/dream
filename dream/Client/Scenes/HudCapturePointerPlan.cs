@@ -33,7 +33,29 @@ internal enum HudCaptureVerb : byte
     WalkTo,
     ScreenClick,
     BuildAt,
-    CellProbe
+    CellProbe,
+    EnemyClick,
+    GroundClick,
+    HoldMove,
+    Keys,
+    Status,
+    WaitIdle
+}
+
+// Keys a capture script can hold, by name (keys:w+space:30).
+[Flags]
+internal enum HudCaptureKeys : int
+{
+    None = 0,
+    W = 1,
+    A = 2,
+    S = 4,
+    D = 8,
+    Space = 16,
+    Ctrl = 32,
+    Noclip = 64,
+    Building = 128,
+    Combat = 256
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
@@ -70,6 +92,37 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
         };
 
         return (slot >= 0 && slot < BagGrid.CellCount) || (slot >= EquipmentSlots.FirstSlotIndex && slot <= EquipmentSlots.LastSlotIndex);
+    }
+
+    // w+a, space, noclip (the 0 key), building (1), combat (2), ctrl: unknown names fail the whole token.
+    public static bool TryParseKeys(string text, out HudCaptureKeys keys)
+    {
+        keys = HudCaptureKeys.None;
+        foreach (string name in text.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            HudCaptureKeys one = name switch
+            {
+                "w" => HudCaptureKeys.W,
+                "a" => HudCaptureKeys.A,
+                "s" => HudCaptureKeys.S,
+                "d" => HudCaptureKeys.D,
+                "space" => HudCaptureKeys.Space,
+                "ctrl" => HudCaptureKeys.Ctrl,
+                "noclip" => HudCaptureKeys.Noclip,
+                "building" => HudCaptureKeys.Building,
+                "combat" => HudCaptureKeys.Combat,
+                _ => HudCaptureKeys.None
+            };
+            if (one == HudCaptureKeys.None)
+            {
+                keys = HudCaptureKeys.None;
+                return false;
+            }
+
+            keys |= one;
+        }
+
+        return keys != HudCaptureKeys.None;
     }
 
     // The step grammar of DREAM_HUD_CAPTURE_SCRIPT, one comma-separated token. False for anything
@@ -129,6 +182,29 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 return true;
             case "cell" when parts.Length == 3 && int.TryParse(parts[1], out int cellX) && int.TryParse(parts[2], out int cellZ):
                 spec = new(HudCaptureVerb.CellProbe, cellX, cellZ);
+                return true;
+            case "enemyclick" when parts.Length == 2 && parts[1] is "left" or "right":
+                spec = new(HudCaptureVerb.EnemyClick, parts[1] == "left" ? 0 : 1, 0);
+                return true;
+            case "groundclick" when parts.Length == 3 && int.TryParse(parts[1], out int groundX) && int.TryParse(parts[2], out int groundZ):
+                spec = new(HudCaptureVerb.GroundClick, groundX, groundZ);
+                return true;
+            case "holdmove" when parts.Length == 6 && int.TryParse(parts[1], out int hx1) && int.TryParse(parts[2], out int hz1)
+                && int.TryParse(parts[3], out int hx2) && int.TryParse(parts[4], out int hz2) && int.TryParse(parts[5], out int holdFrames)
+                && hx1 is >= 0 and < 65536 && hz1 is >= 0 and < 65536 && hx2 is >= 0 and < 65536 && hz2 is >= 0 and < 65536
+                && holdFrames is > 0 and <= 2000:
+                // Two cells packed as x | z << 16, the frame count in C.
+                spec = new(HudCaptureVerb.HoldMove, hx1 | (hz1 << 16), hx2 | (hz2 << 16), holdFrames);
+                return true;
+            case "keys" when parts.Length == 3 && TryParseKeys(parts[1], out HudCaptureKeys held) && int.TryParse(parts[2], out int keyFrames)
+                && keyFrames is > 0 and <= 2000:
+                spec = new(HudCaptureVerb.Keys, (int)held, keyFrames);
+                return true;
+            case "status" when parts.Length == 1:
+                spec = new(HudCaptureVerb.Status, 0, 0);
+                return true;
+            case "waitidle" when parts.Length == 2 && int.TryParse(parts[1], out int idleFrames) && idleFrames is > 0 and <= 20000:
+                spec = new(HudCaptureVerb.WaitIdle, idleFrames, 0);
                 return true;
             case "size" when parts.Length == 3 && int.TryParse(parts[1], out int width) && int.TryParse(parts[2], out int height)
                 && width is >= 640 and <= 4096 && height is >= 480 and <= 2304:
@@ -239,6 +315,18 @@ internal static class HudCapturePointerPlan
         Rest(frames, at, HoverLeadFrames);
         Rest(frames, at, 1, left: true);
         Rest(frames, at, 1);
+    }
+
+    // Left button down on from, then carried to to over the frames and released: a held drag over the ground.
+    public static void HoldAndMove(List<ScriptedPointerFrame> frames, Vector2 from, Vector2 to, int count)
+    {
+        Rest(frames, from, HoverLeadFrames);
+        for (int n = 0; n < count; n++)
+        {
+            frames.Add(new ScriptedPointerFrame(Vector2.Lerp(from, to, (n + 1) / (float)count), true, false));
+        }
+
+        Rest(frames, to, 1);
     }
 
     public static void RightClick(List<ScriptedPointerFrame> frames, Vector2 at)

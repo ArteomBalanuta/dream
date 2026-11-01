@@ -64,14 +64,22 @@ public static class PlayerController
         PlayerSessionId sessionId,
         ulong sequence,
         KeyboardState keyboardState,
+        bool allowGameplayInput) =>
+        CaptureCommandFrame(sessionId, sequence, keyboardState.IsKeyDown, allowGameplayInput);
+
+    // The same mapping over any key source, so a capture script can hold keys through the real code.
+    public static PlayerCommandFrame CaptureCommandFrame(
+        PlayerSessionId sessionId,
+        ulong sequence,
+        Func<Keys, bool> isKeyDown,
         bool allowGameplayInput)
     {
         float verticalAxis = 0f;
-        if (keyboardState.IsKeyDown(Keys.Space))
+        if (isKeyDown(Keys.Space))
         {
             verticalAxis += 1f;
         }
-        if (keyboardState.IsKeyDown(Keys.LeftControl))
+        if (isKeyDown(Keys.LeftControl))
         {
             verticalAxis -= 1f;
         }
@@ -83,13 +91,13 @@ public static class PlayerController
             forwardAxis: 0f,
             strafeAxis: 0f,
             verticalAxis,
-            jumpPressed: keyboardState.IsKeyDown(Keys.Space),
-            freezePressed: keyboardState.IsKeyDown(Keys.F),
-            toggleNoclipPressed: keyboardState.IsKeyDown(Keys.D0),
+            jumpPressed: isKeyDown(Keys.Space),
+            freezePressed: isKeyDown(Keys.F),
+            toggleNoclipPressed: isKeyDown(Keys.D0),
             yawDelta: 0f,
             pitchDelta: 0f,
             primaryUsePressed: false,
-            selectBuildingModePressed: keyboardState.IsKeyDown(Keys.D1),
-            selectCombatModePressed: keyboardState.IsKeyDown(Keys.D2));
+            selectBuildingModePressed: isKeyDown(Keys.D1),
+            selectCombatModePressed: isKeyDown(Keys.D2));
     }
 }

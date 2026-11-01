@@ -133,22 +133,29 @@ public static class WorldCursorPicker
         return Pick(world, origin, direction, (o, d) =>
         {
             EnemyActor? hit = enemies.TryResolveHit(o, d, EnemyMaxDistance, EnemyHitRadius);
-            return hit is null ? null : new EnemyClickTarget(hit);
+            return hit is null ? null : new EnemyClickTarget(hit, enemies);
         });
     }
 }
 
-// An enemy actor as a click target; the anchor is read live, so a moving enemy is followed.
+// An enemy actor as a click target; the anchor is read live, so a moving enemy is followed. The client
+// never marks a killed enemy dead (a snapshot just stops listing it and the registry drops it), so the
+// target counts as alive only while the registry still holds this very actor.
 public sealed class EnemyClickTarget : IClickTarget
 {
     private readonly EnemyActor _actor;
+    private readonly EnemyRegistry? _registry;
 
-    public EnemyClickTarget(EnemyActor actor)
+    public EnemyClickTarget(EnemyActor actor, EnemyRegistry? registry = null)
     {
         _actor = actor ?? throw new ArgumentNullException(nameof(actor));
+        _registry = registry;
     }
 
-    public bool IsAlive => _actor.IsActive;
+    public bool IsAlive =>
+        _actor.IsActive
+        && (_registry is null
+            || (_registry.TryGetEnemyByActorId(_actor.Combatant.Actor.Id, out EnemyActor? current) && ReferenceEquals(current, _actor)));
 
     public Vector3 Anchor => _actor.Combatant.GetCombatAnchorWorldPosition();
 }

@@ -154,6 +154,9 @@ public partial class PlayScene
     private float _captureFightLastDistance;
     private int _captureFightStuckTicks;
     private bool _captureFightNoclipSent;
+    private HudCaptureKeys _captureKeys;
+    private bool _captureWaitIdle;
+    private int _captureTraceFrames;
     private HudCaptureStepSpec _captureWalk;
     private Vector3 _captureWalkStart;
     private int _captureWalkFrames;
@@ -207,6 +210,11 @@ public partial class PlayScene
 
         if (_capturePhase == CapturePhase.Pointer && _capturePointerIndex < _capturePointerFrames.Count)
         {
+            if (_captureTraceFrames > 0 && _capturePointerIndex % _captureTraceFrames == 0)
+            {
+                LogCaptureStatus("hold frame " + _capturePointerIndex);
+            }
+
             SetCapturePointer(_capturePointerFrames[_capturePointerIndex++]);
             return;
         }
@@ -318,6 +326,87 @@ public partial class PlayScene
                 break;
             }
 
+            case HudCaptureVerb.EnemyClick:
+            {
+                EnemyActor? target = NearestLiveEnemy(_runtime.Player.Camera.Position);
+                Camera? camera = _render.LastWorldCamera;
+                Vector2 enemyAt = default;
+                if (target is not null && camera is not null
+                    && TryProjectToScreen(camera.GetViewMatrix() * _render.ProjectionMatrix, target.Combatant.GetCombatAnchorWorldPosition(), _render.ViewportSize, out enemyAt, out bool enemyFront)
+                    && enemyFront)
+                {
+                    if (spec.A == 0)
+                    {
+                        HudCapturePointerPlan.Click(_capturePointerFrames, enemyAt);
+                    }
+                    else
+                    {
+                        HudCapturePointerPlan.RightClick(_capturePointerFrames, enemyAt);
+                    }
+
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] enemyclick {(spec.A == 0 ? "left" : "right")}: {(target?.DisplayName ?? "no enemy")} pixel {enemyAt.X:0},{enemyAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
+                LogCaptureStatus("enemyclick");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.GroundClick:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                if (TryCaptureWalkClickPoint(in layout, player, new Vector3(spec.A + 0.5f, player.Y, spec.B + 0.5f), out Vector2 groundAt))
+                {
+                    HudCapturePointerPlan.Click(_capturePointerFrames, groundAt);
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] groundclick {spec.A},{spec.B}: pixel {groundAt.X:0},{groundAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.HoldMove:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                Vector3 from = new(spec.A & 0xFFFF, player.Y, spec.A >> 16);
+                Vector3 to = new(spec.B & 0xFFFF, player.Y, spec.B >> 16);
+                Vector2 holdFrom = default;
+                Vector2 holdTo = default;
+                if (TryCaptureWalkClickPoint(in layout, player, from + new Vector3(0.5f, 0f, 0.5f), out holdFrom)
+                    && TryCaptureWalkClickPoint(in layout, player, to + new Vector3(0.5f, 0f, 0.5f), out holdTo))
+                {
+                    HudCapturePointerPlan.HoldAndMove(_capturePointerFrames, holdFrom, holdTo, spec.C);
+                    _capturePhase = CapturePhase.Pointer;
+                    _captureTraceFrames = 20;
+                }
+
+                Console.WriteLine($"[hud-capture] holdmove {from.X:0},{from.Z:0} -> {to.X:0},{to.Z:0}: pixels {holdFrom.X:0},{holdFrom.Y:0} -> {holdTo.X:0},{holdTo.Y:0}, frames={_capturePointerFrames.Count}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.Keys:
+                _captureKeys = (HudCaptureKeys)spec.A;
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.B;
+                _captureWritesPng = false;
+                Console.WriteLine($"[hud-capture] keys {_captureKeys} for {spec.B} frames");
+                LogCaptureStatus("keys begin");
+                break;
+            case HudCaptureVerb.Status:
+                LogCaptureStatus("status");
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.WaitIdle:
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.A;
+                _captureWaitIdle = true;
+                _captureWritesPng = false;
+                break;
             case HudCaptureVerb.CellProbe:
                 LogCaptureCell(spec.A, spec.B);
                 _capturePhase = CapturePhase.Idle;
@@ -418,6 +507,16 @@ public partial class PlayScene
             case CapturePhase.Walk:
                 return;
             case CapturePhase.Idle:
+                if (_captureWaitIdle && _clickMove.Goal == ClickGoalKind.None)
+                {
+                    break;
+                }
+
+                if (_captureWaitIdle && _captureIdleFrames % 60 == 0)
+                {
+                    LogCaptureStatus("waiting");
+                }
+
                 if (--_captureIdleFrames > 0)
                 {
                     return;
@@ -453,10 +552,73 @@ public partial class PlayScene
             LogHudCaptureInventory("after " + step);
         }
 
+        if (_captureKeys != HudCaptureKeys.None || _captureWaitIdle)
+        {
+            LogCaptureStatus(_captureWaitIdle ? "waitidle end" : "keys end");
+        }
+
         _hudCaptureStep++;
         _hudCaptureSettle = 0;
         _capturePhase = CapturePhase.Begin;
         _captureFightActive = false;
+        _captureKeys = HudCaptureKeys.None;
+        _captureWaitIdle = false;
+        _captureTraceFrames = 0;
+    }
+
+    private bool CaptureKeyHeld(Keys key) => _captureKeys != HudCaptureKeys.None && key switch
+    {
+        Keys.W => _captureKeys.HasFlag(HudCaptureKeys.W),
+        Keys.A => _captureKeys.HasFlag(HudCaptureKeys.A),
+        Keys.S => _captureKeys.HasFlag(HudCaptureKeys.S),
+        Keys.D => _captureKeys.HasFlag(HudCaptureKeys.D),
+        Keys.Space => _captureKeys.HasFlag(HudCaptureKeys.Space),
+        Keys.LeftControl => _captureKeys.HasFlag(HudCaptureKeys.Ctrl),
+        Keys.D0 => _captureKeys.HasFlag(HudCaptureKeys.Noclip),
+        Keys.D1 => _captureKeys.HasFlag(HudCaptureKeys.Building),
+        Keys.D2 => _captureKeys.HasFlag(HudCaptureKeys.Combat),
+        _ => false
+    };
+
+    private EnemyActor? NearestLiveEnemy(Vector3 from)
+    {
+        EnemyActor? nearest = null;
+        float best = float.MaxValue;
+        foreach (EnemyActor enemy in _runtime.Enemies.ActiveActors)
+        {
+            float d = (enemy.Position - from).LengthSquared;
+            if (enemy.IsActive && d < best)
+            {
+                best = d;
+                nearest = enemy;
+            }
+        }
+
+        return nearest;
+    }
+
+    // One line of what a click proof needs: where the player is, what the controller holds, the mode,
+    // and the nearest live enemy.
+    private void LogCaptureStatus(string tag)
+    {
+        Vector3 at = _runtime.Player.GetWorldPosition();
+        EnemyActor? enemy = NearestLiveEnemy(_runtime.Player.Camera.Position);
+        string near = enemy is null
+            ? "none"
+            : $"{enemy.DisplayName} at {enemy.Position.X:0.0},{enemy.Position.Z:0.0} {(enemy.Position - _runtime.Player.Camera.Position).Length:0.0} m hp {enemy.Combatant.Health.CurrentHealth}";
+        StringBuilder all = new();
+        foreach (EnemyActor each in _runtime.Enemies.ActiveActors)
+        {
+            all.Append(" #").Append(each.Combatant.Actor.Id).Append('@').Append(each.Position.X.ToString("0.0")).Append(',').Append(each.Position.Z.ToString("0.0"))
+                .Append(" hp").Append(each.Combatant.Health.CurrentHealth).Append(each.IsActive ? string.Empty : "(dead)");
+        }
+
+        Console.WriteLine($"[hud-capture] enemies:{all}");
+        Console.WriteLine(
+            $"[hud-capture] status {tag}: pos {at.X:0.0},{at.Y:0.0},{at.Z:0.0} goal {_clickMove.Goal} cell {_clickMove.GoalCell.X},{_clickMove.GoalCell.Level},{_clickMove.GoalCell.Z} " +
+            $"goalCellSolid {_runtime.Map.TryGetGeometryCellAtCell(_clickMove.GoalCell.X, _clickMove.GoalCell.Level, _clickMove.GoalCell.Z) is not null} walking {_clickMove.IsWalking} pathCells {_clickMove.LastPathCells} mode {_runtime.InteractionMode} noclip {_runtime.Player.IsNoclipEnabled} " +
+            $"alive {_runtime.Player.Combatant.Health.IsAlive} hp {_runtime.Player.Combatant.Health.CurrentHealth} nearest {near} " +
+            $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
     }
 
     private const float CaptureWalkReachMetres = 1.5f;

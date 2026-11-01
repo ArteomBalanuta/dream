@@ -138,6 +138,9 @@ public sealed class ClickMoveController
 
     public ClickGoalKind Goal => _goal;
 
+    // The enemy of an attack goal, for the capture log.
+    public IClickTarget? Target => _target;
+
     public NavCell GoalCell => _goalCell;
 
     public int LastPathCells => _pathing.LastPathCells;
@@ -193,6 +196,8 @@ public sealed class ClickMoveController
 
         if (_host.NoclipActive)
         {
+            // Noclip flies by hand: a goal still under way would keep steering the flight.
+            Cancel();
             return;
         }
 

@@ -37,7 +37,7 @@ public partial class PlayScene
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
             _runtime.LocalPlayerSessionId,
             0,
-            keyboardState,
+            key => keyboardState.IsKeyDown(key) || CaptureKeyHeld(key),
             allowGameplayInput);
         if (allowGameplayInput)
         {

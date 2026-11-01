@@ -472,4 +472,63 @@ public sealed class HudCapturePointerPlanTests : IDisposable
             }
         }
     }
+
+    [Fact]
+    public void ClickProofVerbs_Parse()
+    {
+        Assert.True(HudCaptureStepSpec.TryParse("enemyclick:left", out HudCaptureStepSpec left));
+        Assert.Equal(HudCaptureVerb.EnemyClick, left.Verb);
+        Assert.Equal(0, left.A);
+        Assert.True(HudCaptureStepSpec.TryParse("enemyclick:right", out HudCaptureStepSpec right));
+        Assert.Equal(1, right.A);
+
+        Assert.True(HudCaptureStepSpec.TryParse("groundclick:12:9", out HudCaptureStepSpec ground));
+        Assert.Equal((HudCaptureVerb.GroundClick, 12, 9), (ground.Verb, ground.A, ground.B));
+
+        Assert.True(HudCaptureStepSpec.TryParse("holdmove:8:8:11:5:150", out HudCaptureStepSpec hold));
+        Assert.Equal(HudCaptureVerb.HoldMove, hold.Verb);
+        Assert.Equal(8 | (8 << 16), hold.A);
+        Assert.Equal(11 | (5 << 16), hold.B);
+        Assert.Equal(150, hold.C);
+
+        Assert.True(HudCaptureStepSpec.TryParse("keys:w+space:30", out HudCaptureStepSpec keys));
+        Assert.Equal(HudCaptureVerb.Keys, keys.Verb);
+        Assert.Equal((int)(HudCaptureKeys.W | HudCaptureKeys.Space), keys.A);
+        Assert.Equal(30, keys.B);
+
+        Assert.True(HudCaptureStepSpec.TryParse("status", out HudCaptureStepSpec status));
+        Assert.Equal(HudCaptureVerb.Status, status.Verb);
+        Assert.True(HudCaptureStepSpec.TryParse("waitidle:600", out HudCaptureStepSpec idle));
+        Assert.Equal((HudCaptureVerb.WaitIdle, 600), (idle.Verb, idle.A));
+    }
+
+    [Theory]
+    [InlineData("enemyclick")]
+    [InlineData("enemyclick:middle")]
+    [InlineData("groundclick:1")]
+    [InlineData("holdmove:1:2:3:4")]
+    [InlineData("holdmove:1:2:3:4:0")]
+    [InlineData("holdmove:-1:2:3:4:10")]
+    [InlineData("keys:q:10")]
+    [InlineData("keys:w:0")]
+    [InlineData("keys::10")]
+    [InlineData("waitidle:0")]
+    [InlineData("status:1")]
+    public void ClickProofVerbs_RejectMalformedTokens(string token)
+    {
+        Assert.False(HudCaptureStepSpec.TryParse(token, out _));
+    }
+
+    [Fact]
+    public void HoldAndMove_PressesThroughTheMoveAndReleasesAtTheEnd()
+    {
+        List<ScriptedPointerFrame> frames = new();
+
+        HudCapturePointerPlan.HoldAndMove(frames, new Vector2(100f, 100f), new Vector2(200f, 100f), 10);
+
+        Assert.Equal(HudCapturePointerPlan.HoverLeadFrames, frames.TakeWhile(f => !f.LeftDown).Count());
+        Assert.All(frames.Skip(HudCapturePointerPlan.HoverLeadFrames).Take(10), f => Assert.True(f.LeftDown));
+        Assert.Equal(new Vector2(200f, 100f), frames[HudCapturePointerPlan.HoverLeadFrames + 9].Position);
+        Assert.False(frames[^1].LeftDown);
+    }
 }

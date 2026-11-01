@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Input;
 using Dream.Client.Navigation;
+using Dream.Simulation.Enemies;
 
 namespace Dream.Tests.Client.Input;
 
@@ -81,5 +82,57 @@ public class WorldCursorPickerTests
         public bool IsAlive => true;
 
         public Vector3 Anchor => new(5.5f, 1.5f, 5.5f);
+    }
+
+    private static EnemyActor Wolf(int actorId, Vector3 position)
+    {
+        EnemyCombatant combatant = new(() => position, actorId: actorId, maxHealth: 80);
+        return new EnemyActor(combatant, position, aggroRange: 5f, attackRange: 1.25f, moveSpeed: 3f);
+    }
+
+    [Fact]
+    public void EnemyClickTarget_IsAliveWhileTheRegistryHoldsTheActor_AndNotOnceASnapshotDroppedIt()
+    {
+        // Regression: the client never sets a killed enemy's health to 0 (the snapshot stops listing it
+        // and the registry drops it), so the actor object kept IsActive and an attack goal never ended.
+        EnemyRegistry registry = new();
+        EnemyActor wolf = Wolf(2000, new Vector3(10.5f, 1.5f, 10.5f));
+        registry.Add(wolf);
+        EnemyClickTarget target = new(wolf, registry);
+        Assert.True(target.IsAlive);
+
+        registry.RemoveAllExcept(new HashSet<int>());
+
+        Assert.True(wolf.IsActive);
+        Assert.False(target.IsAlive);
+    }
+
+    [Fact]
+    public void EnemyClickTarget_ARespawnWithTheSameIdIsNotTheClickedEnemy()
+    {
+        EnemyRegistry registry = new();
+        EnemyActor first = Wolf(2000, new Vector3(10.5f, 1.5f, 10.5f));
+        registry.Add(first);
+        EnemyClickTarget target = new(first, registry);
+        registry.Clear();
+        registry.Add(Wolf(2000, new Vector3(10.5f, 1.5f, 10.5f)));
+
+        Assert.False(target.IsAlive);
+    }
+
+    [Fact]
+    public void EnemyClickTarget_AHealthZeroActorIsNotAlive_AndTheAnchorFollowsTheActor()
+    {
+        EnemyRegistry registry = new();
+        EnemyActor wolf = Wolf(2001, new Vector3(4.5f, 1.5f, 4.5f));
+        registry.Add(wolf);
+        EnemyClickTarget target = new(wolf, registry);
+        Vector3 before = target.Anchor;
+
+        wolf.SetPosition(new Vector3(8.5f, 1.5f, 4.5f));
+        Assert.Equal(before.X + 4f, target.Anchor.X, 3);
+
+        wolf.Combatant.Health.SetAuthoritativeState(0, 80);
+        Assert.False(target.IsAlive);
     }
 }
