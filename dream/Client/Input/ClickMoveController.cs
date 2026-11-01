@@ -209,7 +209,7 @@ public sealed class ClickMoveController
         {
             OnLeftPress(pointer.Position);
         }
-        else if (pointer.LeftDown && _leftArmed && _goal == ClickGoalKind.Walk && _ticksSinceHeldPick >= HeldRepathTicks)
+        else if (pointer.LeftDown && _leftArmed && _goal is ClickGoalKind.Walk or ClickGoalKind.None && _ticksSinceHeldPick >= HeldRepathTicks)
         {
             RepathToCursor(pointer.Position);
         }
@@ -295,10 +295,17 @@ public sealed class ClickMoveController
             return WithForward(command, 0f);
         }
 
-        if (_ticksSincePlan >= EnemyRepathTicks && (target.Anchor - _plannedAnchor).Length > EnemyRepathMetres)
+        // Out of range with no path left (a stop in range, or Arrived at the nearest cell) replans on
+        // the throttle whatever the anchor moved; no way to the enemy ends the goal.
+        if (_ticksSincePlan >= EnemyRepathTicks && (!_pathing.HasPath || (target.Anchor - _plannedAnchor).Length > EnemyRepathMetres))
         {
-            Plan(world, NavCell.FromBody(target.Anchor), viaStartCentre: false);
+            bool planned = Plan(world, NavCell.FromBody(target.Anchor), viaStartCentre: false);
             _plannedAnchor = target.Anchor;
+            if (!planned || !_pathing.HasPath)
+            {
+                Cancel();
+                return command;
+            }
         }
 
         if (requestedMode.HasValue)
@@ -462,8 +469,19 @@ public sealed class ClickMoveController
     private void RepathToCursor(Vector2 position)
     {
         _ticksSinceHeldPick = 0;
-        if (!_host.TryPick(position, out ClickPick pick) || pick.Kind != ClickPickKind.Ground || pick.Cell == _goalCell || _host.World is not { } world)
+        if (!_host.TryPick(position, out ClickPick pick) || pick.Kind != ClickPickKind.Ground || (_goal == ClickGoalKind.Walk && pick.Cell == _goalCell) || _host.World is not { } world)
         {
+            return;
+        }
+
+        if (_goal == ClickGoalKind.None)
+        {
+            BeginGoal(ClickGoalKind.Walk, pick.Cell);
+            if (!Plan(world, pick.Cell, viaStartCentre: false))
+            {
+                Cancel();
+            }
+
             return;
         }
 

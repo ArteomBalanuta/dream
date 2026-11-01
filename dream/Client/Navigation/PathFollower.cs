@@ -25,6 +25,7 @@ public sealed class PathFollower
     public const int HopTicks = 40;
     public const float HopClearanceMetres = 0.03f;
     public const float HopNeedMetres = 0.1f;
+    public const int MaxHopsWithoutGain = 3;
     public const int DropTicks = 12;
     public const int BackOffTicks = 6;
     private const float PinnedStepLimit = LineGain * 0.094f;
@@ -51,6 +52,8 @@ public sealed class PathFollower
     private Vector3 _lastBody;
     private bool _hasLastBody;
     private int _hopTicks;
+    private int _hopsWithoutGain;
+    private float _hopBaseFeet;
     private int _dropTicks;
     private int _backOffTicks;
 
@@ -69,6 +72,7 @@ public sealed class PathFollower
         _windowTicks = 0;
         _jumpTried = false;
         _hopTicks = 0;
+        _hopsWithoutGain = 0;
         _dropTicks = 0;
         _backOffTicks = 0;
         if (!viaStartCentre)
@@ -87,6 +91,7 @@ public sealed class PathFollower
         _jumpTried = false;
         _failedReplans = 0;
         _hopTicks = 0;
+        _hopsWithoutGain = 0;
         _dropTicks = 0;
         _backOffTicks = 0;
         GaveUp = false;
@@ -100,6 +105,7 @@ public sealed class PathFollower
             _index++;
             _windowTicks = 0;
             _jumpTried = false;
+            _hopsWithoutGain = 0;
         }
 
         if (!HasPath)
@@ -141,7 +147,18 @@ public sealed class PathFollower
         // Also taken in the air: a body pushing on a face hangs there on friction.
         if (_hopTicks == 0 && feet < target.Level - HopNeedMetres && _pinnedTicks >= PinnedTicksBeforeNudge)
         {
-            _hopTicks = HopTicks;
+            // Hops that gain no height are counted; past the limit the stuck window takes over.
+            if (_hopsWithoutGain == 0 || feet > _hopBaseFeet + HopClearanceMetres)
+            {
+                _hopBaseFeet = feet;
+                _hopsWithoutGain = 0;
+            }
+
+            if (_hopsWithoutGain < MaxHopsWithoutGain)
+            {
+                _hopsWithoutGain++;
+                _hopTicks = HopTicks;
+            }
         }
 
         if (_hopTicks > 0)
@@ -149,7 +166,6 @@ public sealed class PathFollower
             // One tick with the button up first, because the motor edge-detects the jump.
             bool hop = _hopTicks == HopTicks - 1;
             _hopTicks--;
-            _windowTicks = 0;
             return new NavStep(Vector3.Zero, hop, false, false);
         }
 

@@ -68,21 +68,19 @@ public static class WorldCursorPicker
         return true;
     }
 
-    // Enemy first (resolveEnemy gets the ray), then the first blocked cell along the ray: the answer
-    // is the last empty cell before it.
+    // March the ray to its first blocked cell, then let an enemy win only if it stands in front of
+    // that cell; otherwise the answer is the last empty cell before it.
     public static ClickPick Pick(
         INavWorld world,
         Vector3 origin,
         Vector3 direction,
         Func<Vector3, Vector3, IClickTarget?>? resolveEnemy)
     {
-        if (resolveEnemy?.Invoke(origin, direction) is { } enemy)
-        {
-            return new ClickPick(ClickPickKind.Enemy, default, enemy.Anchor, enemy);
-        }
-
         bool haveEmpty = false;
         NavCell lastEmpty = default;
+        ClickPick result = default;
+        float wallDistance = float.PositiveInfinity;
+        bool done = false;
         int steps = (int)(MarchMaxMetres / MarchStepMetres);
         for (int i = 0; i <= steps; i++)
         {
@@ -97,16 +95,23 @@ public static class WorldCursorPicker
 
             if (world.IsBlocked(x, y, z))
             {
-                return haveEmpty
-                    ? new ClickPick(ClickPickKind.Ground, lastEmpty, p, null)
-                    : default;
+                wallDistance = i * MarchStepMetres;
+                result = haveEmpty ? new ClickPick(ClickPickKind.Ground, lastEmpty, p, null) : default;
+                done = true;
+                break;
             }
 
             haveEmpty = true;
             lastEmpty = new NavCell(x, y, z);
         }
 
-        return EdgePick(world, origin, direction);
+        if (resolveEnemy?.Invoke(origin, direction) is { } enemy
+            && Vector3.Dot(enemy.Anchor - origin, direction) <= wallDistance)
+        {
+            return new ClickPick(ClickPickKind.Enemy, default, enemy.Anchor, enemy);
+        }
+
+        return done ? result : EdgePick(world, origin, direction);
     }
 
     // Past the edge of the map nothing stops the ray, so aim for the ground cell nearest to where

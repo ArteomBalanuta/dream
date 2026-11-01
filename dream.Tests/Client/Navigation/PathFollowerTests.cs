@@ -75,6 +75,26 @@ public class PathFollowerTests
     }
 
     [Fact]
+    public void HoppingInPlaceBelowATwoLevelTarget_StillEndsInAReplanOrGiveUp()
+    {
+        GridPathfinderTests.FakeWorld world = new();
+        world.Set(4, 1, 2);
+        world.Set(4, 2, 2);
+        PathFollower follower = new();
+        follower.SetPath([new NavCell(3, 1, 2), new NavCell(4, 3, 2)], viaStartCentre: false);
+        Vector3 body = new(3.6f, 1.5f, 2.5f);
+
+        bool ended = false;
+        for (int tick = 0; tick < PathFollower.HopTicks * 3 + PathFollower.StuckWindowTicks * 6 && !ended; tick++)
+        {
+            NavStep step = follower.Step(body, world);
+            ended = step.NeedsReplan || step.Arrived;
+        }
+
+        Assert.True(ended);
+    }
+
+    [Fact]
     public void Stuck_JumpsFirst_ThenReplans_AndGivesUpAfterThree()
     {
         GridPathfinderTests.FakeWorld world = new();
