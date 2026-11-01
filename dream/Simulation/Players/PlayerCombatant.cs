@@ -3,6 +3,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.Rules;
+using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Players;
 
@@ -14,11 +15,24 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     private readonly float _anchorHeightOffset;
     private readonly SceneEventHub? _eventHub;
     private float _attackCooldownRemaining;
-    private ToolStatModifier _equippedToolModifier;
+    private readonly StatSheet _statSheet = new();
 
     public PlayerCombatStats BaseStats { get; }
 
     public PlayerCombatStats Stats { get; }
+
+    public StatSheet StatSheet => _statSheet;
+
+    // The Armor the equipment adds up to (base 0, effective range 0..1000). Damage taken is
+    // mitigated by it (MitigateDamage); Armor 0 takes every hit unchanged.
+    public int EffectiveArmor => (int)_statSheet.Effective[StatId.Armor];
+
+    // Share of incoming damage taken, from player.damage_taken_factor. Cached: it is evaluated only
+    // when the effective Armor differs from the armor it was last evaluated for (never per hit, and not
+    // on the client's per-snapshot ApplyBaseStats). 1.0 at Armor 0.
+    public double DamageTakenFactor { get; private set; } = 1.0;
+
+    private int _factorArmor;
 
     public PlayerCombatDerivedStats DerivedStats { get; private set; }
 
@@ -54,13 +68,25 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public DamageReceipt ApplyDamage(int amount)
     {
-        DamageReceipt receipt = Health.ApplyDamage(amount);
+        DamageReceipt receipt = Health.ApplyDamage(MitigateDamage(amount));
         if (receipt.WasFatal)
         {
             _eventHub?.Publish(new ActorDiedEvent(Actor));
         }
 
         return receipt;
+    }
+
+    // Pure and allocation free. Armor 0 (or an amount of 0 or less) returns the amount unchanged; otherwise
+    // the amount scaled by the cached factor, rounded away from zero, and at least 1.
+    public int MitigateDamage(int amount)
+    {
+        if (amount <= 0 || _factorArmor <= 0)
+        {
+            return amount;
+        }
+
+        return Math.Max(1, (int)Math.Round(amount * DamageTakenFactor, MidpointRounding.AwayFromZero));
     }
 
     public void AdvanceCombat(float deltaTime)
@@ -89,19 +115,44 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         RecalculateEffectiveStats();
     }
 
-    public void ApplyEquippedToolModifier(ToolStatModifier modifier)
+    // Sets all four equipment sources (source slot = EquipmentSlot value: 0 main hand, 1 off hand,
+    // 2 head, 3 body, resolved in ascending order), then derives once, so max health is rescaled a
+    // single time. The loadout's modifiers are already screened by EquipmentLoadout.Set.
+    public void ApplyEquipment(EquipmentLoadout equipment)
     {
-        _equippedToolModifier = modifier;
-        RecalculateEffectiveStats();
+        ArgumentNullException.ThrowIfNull(equipment);
+        for (int slot = 0; slot < EquipmentSlots.Count; slot++)
+        {
+            _statSheet.SetSource(slot, equipment.Get((EquipmentSlot)slot));
+        }
+
+        DeriveFromSheet();
     }
 
     private void RecalculateEffectiveStats()
     {
-        PlayerCombatStats effectiveStats = PlayerCombatStats.Combine(BaseStats, _equippedToolModifier);
-        Stats.Strength = effectiveStats.Strength;
-        Stats.AttackSpeed = effectiveStats.AttackSpeed;
-        Stats.Vitality = effectiveStats.Vitality;
+        StatBlock baseBlock = default;
+        baseBlock[StatId.Strength] = BaseStats.Strength;
+        baseBlock[StatId.AttackSpeed] = BaseStats.AttackSpeed;
+        baseBlock[StatId.Vitality] = BaseStats.Vitality;
+        _statSheet.SetBase(baseBlock);
+        DeriveFromSheet();
+    }
+
+    private void DeriveFromSheet()
+    {
+        ref readonly StatBlock effective = ref _statSheet.Effective;
+        Stats.Strength = (int)effective[StatId.Strength];
+        Stats.AttackSpeed = effective[StatId.AttackSpeed];
+        Stats.Vitality = (int)effective[StatId.Vitality];
         DerivedStats = Stats.Derive(_combatFormulaService, Level);
+        int armor = EffectiveArmor;
+        if (armor != _factorArmor)
+        {
+            _factorArmor = armor;
+            DamageTakenFactor = _combatFormulaService.EvaluateDamageTakenFactor(armor);
+        }
+
         if (Health != null)
         {
             Health.SetMaxHealthPreservingRatio(DerivedStats.MaxHealth);

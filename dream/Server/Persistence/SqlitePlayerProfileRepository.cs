@@ -109,7 +109,9 @@ public sealed partial class SqlitePlayerProfileRepository
 
     public void Save(PersistedPlayerProfile profile)
     {
-        DateTime now = DateTime.UtcNow;
+        // The stamp the caller gave is stored as it is: the runtime stamps a profile when it queues the
+        // save, so a restore can tell a row written by another world after that from a stale one.
+        DateTime now = profile.UpdatedUtc == default ? DateTime.UtcNow : profile.UpdatedUtc;
         Execute(SaveSql, (profile, now), static (command, state) => BindProfile(command, state.profile, state.now));
     }
 

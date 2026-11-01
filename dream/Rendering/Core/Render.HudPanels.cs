@@ -38,6 +38,7 @@ public partial class Render
         FloatingCombatTextTuning? floatingCombatText = null;
         int? equipInventorySlotIndex = null;
         BuildMaterialChoice? buildMaterial = null;
+        InventoryHudAction? inventoryAction = null;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
 
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
@@ -134,19 +135,20 @@ public partial class Render
                 noclipSpeed = currentNoclipSpeed;
             }
 
-            int currentStrength = status.Strength;
+            // The sliders edit the base stats; the effective ones (gear included) are only shown.
+            int currentStrength = status.BaseStrength;
             if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
             {
                 strength = currentStrength;
             }
 
-            float currentAttackSpeed = status.AttackSpeed;
+            float currentAttackSpeed = status.BaseAttackSpeed;
             if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
             {
                 attackSpeed = currentAttackSpeed;
             }
 
-            int currentVitality = status.Vitality;
+            int currentVitality = status.BaseVitality;
             if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
             {
                 vitality = currentVitality;
@@ -232,12 +234,18 @@ public partial class Render
 
         if (settings.InventoryVisible)
         {
-            DrawInventoryOverlay(inventory, ref equipInventorySlotIndex);
+            DrawInventoryOverlay(inventory, status, ref equipInventorySlotIndex, ref inventoryAction);
         }
 
         if (status.InteractionMode == PlayerInteractionMode.Building)
         {
             DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
+        }
+
+        DrawLootFeed(settings);
+        if (status.IsDead)
+        {
+            DrawDeathOverlay(settings, status);
         }
 
         return new HudInteractionRequest(
@@ -255,7 +263,8 @@ public partial class Render
             vitality,
             floatingCombatText,
             equipInventorySlotIndex,
-            buildMaterial);
+            buildMaterial,
+            inventoryAction);
     }
 
     // The "Build" window, shown in Building mode: Auto (the supporting cell's material) or one of
@@ -311,6 +320,60 @@ public partial class Render
         }
     }
 
+    // The loot lines of the last inventory push (set by the play scene; null shows nothing). Four
+    // lines at most, below the centre of the screen, in a window that takes no input.
+    public LootFeedbackSystem? LootFeed { get; set; }
+
+    private const ImGuiWindowFlags OverlayFlags =
+        ImGuiWindowFlags.NoDecoration |
+        ImGuiWindowFlags.NoInputs |
+        ImGuiWindowFlags.NoBackground |
+        ImGuiWindowFlags.NoMove |
+        ImGuiWindowFlags.NoSavedSettings |
+        ImGuiWindowFlags.NoFocusOnAppearing |
+        ImGuiWindowFlags.NoNav |
+        ImGuiWindowFlags.AlwaysAutoResize;
+
+    private void DrawLootFeed(GameSettings settings)
+    {
+        LootFeedbackSystem? feed = LootFeed;
+        if (feed is null || feed.Count == 0)
+        {
+            return;
+        }
+
+        ImGui.SetNextWindowPos(
+            new System.Numerics.Vector2(settings.WindowWidth * 0.5f, settings.WindowHeight * 0.68f),
+            ImGuiCond.Always,
+            new System.Numerics.Vector2(0.5f, 0f));
+        ImGui.Begin("LootFeed", OverlayFlags);
+        // Item names come from the server: unformatted text only, so a '%' is shown as typed.
+        for (int i = 0; i < feed.Count; i++)
+        {
+            ImGui.TextUnformatted(feed.GetLine(i));
+        }
+
+        ImGui.End();
+    }
+
+    // "You died" and the wait, centred over the world while the local player is dead.
+    private void DrawDeathOverlay(GameSettings settings, HudStatusSnapshot status)
+    {
+        ImGui.SetNextWindowPos(
+            new System.Numerics.Vector2(settings.WindowWidth * 0.5f, settings.WindowHeight * 0.4f),
+            ImGuiCond.Always,
+            new System.Numerics.Vector2(0.5f, 0.5f));
+        ImGui.Begin("DeathOverlay", OverlayFlags);
+        ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.9f, 0.2f, 0.2f, 1f));
+        ImGui.SetWindowFontScale(2.2f);
+        ImGui.TextUnformatted(HudStatusSnapshot.DeathTitle);
+        ImGui.SetWindowFontScale(1.2f);
+        ImGui.TextUnformatted(status.RespawnLabel);
+        ImGui.SetWindowFontScale(1f);
+        ImGui.PopStyleColor();
+        ImGui.End();
+    }
+
     // The "receiving world" line at the top of the HUD panel while a world transfer has run past
     // WorldTransferHudState.ShowThreshold. It is plain text in the non-interactive HUD window, so
     // it blocks nothing; it formats into the caller's stack buffer, so it allocates nothing.
@@ -335,9 +398,20 @@ public partial class Render
         ImGui.PopStyleColor();
     }
 
+    private static readonly System.Numerics.Vector4 UncommonColor = new(0.35f, 0.90f, 0.40f, 1f);
+    private static readonly System.Numerics.Vector4 RareColor = new(0.40f, 0.62f, 1.00f, 1f);
+    private const string DestroyPopupId = "Destroy item?";
+
+    // A destroy waits here for the confirm popup; the item's name is for the question only.
+    private static InventoryHudAction _pendingDestroy;
+    private static string _pendingDestroyName = string.Empty;
+    private static bool _openDestroyPopup;
+
     private static void DrawInventoryOverlay(
         PlayerInventorySnapshot? inventory,
-        ref int? equipInventorySlotIndex)
+        HudStatusSnapshot status,
+        ref int? equipInventorySlotIndex,
+        ref InventoryHudAction? inventoryAction)
     {
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(20f, 420f), ImGuiCond.FirstUseEver);
         ImGui.Begin("Inventory", ImGuiWindowFlags.AlwaysAutoResize);
@@ -350,8 +424,7 @@ public partial class Render
         }
 
         ImGui.TextUnformatted($"Inventory: {snapshot.PlayerName}");
-        ImGui.SeparatorText("Equipped Tool");
-        DrawInventorySlotButton(snapshot.EquippedSlot, isEquippedPanel: true, ref equipInventorySlotIndex);
+        DrawCharacterSection(snapshot, status, ref inventoryAction);
 
         ImGui.SeparatorText("Backpack");
         for (int row = 0; row < snapshot.Rows; row++)
@@ -360,7 +433,7 @@ public partial class Render
             {
                 int slotIndex = (row * snapshot.Columns) + column;
                 InventorySlotSnapshot slot = FindInventorySlot(snapshot.Slots, slotIndex);
-                DrawInventorySlotButton(slot, isEquippedPanel: false, ref equipInventorySlotIndex);
+                DrawInventorySlotButton(snapshot, slot, slotIndex, ref equipInventorySlotIndex, ref inventoryAction);
                 if (column < snapshot.Columns - 1)
                 {
                     ImGui.SameLine();
@@ -368,7 +441,86 @@ public partial class Render
             }
         }
 
+        if (_openDestroyPopup)
+        {
+            _openDestroyPopup = false;
+            ImGui.OpenPopup(DestroyPopupId);
+        }
+
+        if (ImGui.BeginPopupModal(DestroyPopupId, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted($"Destroy {_pendingDestroyName}?");
+            ImGui.TextUnformatted("This cannot be undone.");
+            if (ImGui.Button("Destroy"))
+            {
+                inventoryAction = _pendingDestroy;
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel"))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+        }
+
         ImGui.End();
+    }
+
+    // Stats (base + bonus = effective) and the four equipment slots. Every string is the server's
+    // or built here and goes through TextUnformatted, so a "%" stays literal.
+    private static void DrawCharacterSection(
+        PlayerInventorySnapshot snapshot,
+        HudStatusSnapshot status,
+        ref InventoryHudAction? inventoryAction)
+    {
+        ImGui.SeparatorText("Character");
+        foreach (CharacterStatRow row in CharacterPanelModel.BuildStatRows(status))
+        {
+            string bonus = row.BonusText.Length == 0 ? string.Empty : $" {row.BonusText}";
+            string note = row.Note is null ? string.Empty : $"  ({row.Note})";
+            ImGui.TextUnformatted($"{row.Label}: {row.BaseText}{bonus} = {row.EffectiveText}{note}");
+        }
+
+        ImGui.SeparatorText("Equipment");
+        CharacterSlotRow[] slots = CharacterPanelModel.BuildSlotRows(snapshot);
+        for (int i = 0; i < slots.Length; i++)
+        {
+            CharacterSlotRow row = slots[i];
+            PushRarityColor(row.Color);
+            ImGui.Button($"{row.SlotLabel}: {row.ItemLabel}##equipment-{row.SlotIndex}", new System.Numerics.Vector2(220f, 32f));
+            ImGui.PopStyleColor();
+            if (row.Item is InventoryItemSnapshot item)
+            {
+                DrawItemTooltip(item);
+                if (ImGui.BeginPopupContextItem($"equipment-menu-{row.SlotIndex}"))
+                {
+                    foreach (CharacterMenuEntry entry in CharacterPanelModel.EquipmentMenu(row.Slot))
+                    {
+                        if (ImGui.MenuItem(entry.Label))
+                        {
+                            inventoryAction = entry.Action;
+                        }
+                    }
+
+                    ImGui.EndPopup();
+                }
+            }
+        }
+    }
+
+    private static void PushRarityColor(RarityColorKey key)
+    {
+        // Common keeps the default text colour: the pushed value is the style's own.
+        System.Numerics.Vector4 color = key switch
+        {
+            RarityColorKey.Uncommon => UncommonColor,
+            RarityColorKey.Rare => RareColor,
+            _ => ImGui.GetStyle().Colors[(int)ImGuiCol.Text]
+        };
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
     }
 
     private static InventorySlotSnapshot FindInventorySlot(IReadOnlyList<InventorySlotSnapshot> slots, int slotIndex)
@@ -385,18 +537,15 @@ public partial class Render
     }
 
     private static void DrawInventorySlotButton(
-        InventorySlotSnapshot? slotValue,
-        bool isEquippedPanel,
-        ref int? equipInventorySlotIndex)
+        PlayerInventorySnapshot snapshot,
+        InventorySlotSnapshot slot,
+        int gridSlotIndex,
+        ref int? equipInventorySlotIndex,
+        ref InventoryHudAction? inventoryAction)
     {
-        InventorySlotSnapshot slot = slotValue ?? new InventorySlotSnapshot(-1, Item: null);
         bool occupied = slot.Item is InventoryItemSnapshot;
         InventoryItemSnapshot item = slot.Item.GetValueOrDefault();
-        string label = occupied
-            ? item.DisplayName
-            : isEquippedPanel
-                ? "Nothing Equipped"
-                : $"Empty##slot-{slot.SlotIndex}";
+        string label = occupied ? item.DisplayName : $"Empty##slot-{gridSlotIndex}";
 
         if (slot.IsEquipped)
         {
@@ -404,9 +553,8 @@ public partial class Render
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.26f, 0.52f, 0.28f, 1f));
         }
 
-        if (ImGui.Button($"{label}##inventory-{slot.SlotIndex}", isEquippedPanel
-            ? new System.Numerics.Vector2(220f, 48f)
-            : new System.Numerics.Vector2(120f, 60f)))
+        PushRarityColor(occupied ? CharacterPanelModel.ColorKey(item.Rarity) : RarityColorKey.Common);
+        if (ImGui.Button($"{label}##inventory-{gridSlotIndex}", new System.Numerics.Vector2(120f, 60f)))
         {
             if (occupied && slot.SlotIndex >= 0 && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
             {
@@ -414,32 +562,102 @@ public partial class Render
             }
         }
 
-        if (ImGui.IsItemHovered() && occupied)
+        ImGui.PopStyleColor();
+
+        if (occupied)
         {
-            ImGui.BeginTooltip();
-            ImGui.TextUnformatted(item.DisplayName);
-            ImGui.Separator();
-            // TextWrapped is a printf format; wrapping unformatted text keeps a "%" literal.
-            ImGui.PushTextWrapPos(0f);
-            ImGui.TextUnformatted(item.Description);
-            ImGui.PopTextWrapPos();
-            foreach (string detailLine in item.DetailLines)
-            {
-                ImGui.TextUnformatted(detailLine);
-            }
-
-            if (item.StackCount > 1)
-            {
-                ImGui.TextUnformatted($"Count: {item.StackCount}");
-            }
-
-            ImGui.EndTooltip();
+            DrawItemTooltip(item);
+            DrawBackpackContextMenu(snapshot, slot.SlotIndex, item, gridSlotIndex, ref inventoryAction);
         }
 
         if (slot.IsEquipped)
         {
             ImGui.PopStyleColor(2);
         }
+    }
+
+    private static void DrawBackpackContextMenu(
+        PlayerInventorySnapshot snapshot,
+        int slotIndex,
+        InventoryItemSnapshot item,
+        int gridSlotIndex,
+        ref InventoryHudAction? inventoryAction)
+    {
+        if (!ImGui.BeginPopupContextItem($"inventory-menu-{gridSlotIndex}"))
+        {
+            return;
+        }
+
+        foreach (CharacterMenuEntry entry in CharacterPanelModel.BackpackMenu(snapshot, slotIndex, item))
+        {
+            if (!ImGui.MenuItem(entry.Label))
+            {
+                continue;
+            }
+
+            if (entry.RequiresConfirm)
+            {
+                _pendingDestroy = entry.Action;
+                _pendingDestroyName = item.DisplayName ?? string.Empty;
+                _openDestroyPopup = true;
+            }
+            else
+            {
+                inventoryAction = entry.Action;
+            }
+        }
+
+        if (ImGui.BeginMenu("Move To"))
+        {
+            foreach (InventoryHudAction target in CharacterPanelModel.MoveTargets(snapshot, slotIndex))
+            {
+                if (ImGui.MenuItem($"Slot {target.Target + 1}"))
+                {
+                    inventoryAction = target;
+                }
+            }
+
+            ImGui.EndMenu();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    private static void DrawItemTooltip(InventoryItemSnapshot item)
+    {
+        if (!ImGui.IsItemHovered())
+        {
+            return;
+        }
+
+        ImGui.BeginTooltip();
+        PushRarityColor(CharacterPanelModel.ColorKey(item.Rarity));
+        ImGui.TextUnformatted(item.DisplayName ?? string.Empty);
+        ImGui.PopStyleColor();
+        ImGui.Separator();
+        // TextWrapped is a printf format; wrapping unformatted text keeps a "%" literal.
+        ImGui.PushTextWrapPos(0f);
+        ImGui.TextUnformatted(item.Description ?? string.Empty);
+        ImGui.PopTextWrapPos();
+        if (item.DetailLines is not null)
+        {
+            foreach (string detailLine in item.DetailLines)
+            {
+                ImGui.TextUnformatted(detailLine ?? string.Empty);
+            }
+        }
+
+        foreach (string line in CharacterPanelModel.TooltipLines(item))
+        {
+            ImGui.TextUnformatted(line);
+        }
+
+        if (item.StackCount > 1)
+        {
+            ImGui.TextUnformatted($"Count: {item.StackCount}");
+        }
+
+        ImGui.EndTooltip();
     }
 
     // Client-local and debug only: it changes what this client renders and nothing else. Collapsed

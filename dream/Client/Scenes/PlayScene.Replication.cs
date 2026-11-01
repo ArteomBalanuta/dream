@@ -50,6 +50,11 @@ public partial class PlayScene
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
+            // A join starts a new timeline; its own actor list counts, so a join while dead shows
+            // the overlay at once instead of at the first snapshot.
+            _deathTracker.Reset();
+            _lootFeedback.Clear();
+            ObserveLocalDeath(joinAcceptedMessage.EffectiveInitialActors, joinAcceptedMessage.CurrentServerTick);
             LogPresenterDiagnostics("join");
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
@@ -87,7 +92,12 @@ public partial class PlayScene
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
+            ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
+        }
+        else if (message is InventoryPushMessage pushMessage)
+        {
+            ApplyInventoryPush(pushMessage);
         }
         else if (message is ServerActionMessage actionMessage)
         {
@@ -122,6 +132,36 @@ public partial class PlayScene
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
             }
         }
+    }
+
+    // Feeds the respawn countdown from the local player's actor, if the list has it. A list without
+    // it (a delta that left the player out) changes nothing.
+    private void ObserveLocalDeath(IReadOnlyList<ActorSnapshot> actors, ulong serverTick)
+    {
+        string localSessionId = _remoteClient.SessionId;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            ActorSnapshot actor = actors[i];
+            if (actor.Kind == CreatureKind.Player &&
+                string.Equals(actor.SessionId, localSessionId, StringComparison.Ordinal))
+            {
+                _deathTracker.Observe(actor.IsAlive && actor.CurrentHealth > 0, serverTick);
+                return;
+            }
+        }
+    }
+
+    // A server push after loot: the fresh inventory (when there is one), then the notices. It carries
+    // no health or position and touches neither. Wire data is hostile: the notices are capped by the
+    // feed, and the inventory goes through the same reader as every other snapshot.
+    private void ApplyInventoryPush(InventoryPushMessage push)
+    {
+        if (push.Inventory is { } inventory)
+        {
+            ApplyInventorySnapshot(inventory);
+        }
+
+        _lootFeedback.AddNotices(push.Notices);
     }
 
     private void UpdateLoopbackRemotePlayerDebugState()
@@ -212,27 +252,78 @@ public partial class PlayScene
         _remoteClient.QueueWorldResyncRequest(clientChecksum);
     }
 
+    private readonly EquipmentLoadout _equipmentLoadout = new();
+
+    // What the local player's inventory snapshot says to show: the visual of each hand and the one
+    // held light. Built from the snapshot alone; the client reads no item catalog.
+    internal readonly record struct EquipmentPresentation(
+        string MainHandVisualId,
+        string? OffHandVisualId,
+        HeldLightKind HeldLight);
+
+    // Fills the loadout (modifiers per slot) from the snapshot and returns the visuals and light.
+    // The snapshot is the server's word and may be hostile: EquipmentLoadout skips non-finite values,
+    // Percent modifiers and unknown stats and stops at 8 modifiers per slot, an unknown light is None, and a missing
+    // or odd entry is an empty slot. It never throws.
+    internal static EquipmentPresentation ReadEquipment(PlayerInventorySnapshot? inventory, EquipmentLoadout loadout)
+    {
+        loadout.Clear();
+        if (inventory is not PlayerInventorySnapshot snapshot)
+        {
+            // Before the first snapshot the default loadout shows.
+            return new EquipmentPresentation(ViewModelAssets.DefaultLoadout.HeldItemId, null, HeldLightKind.None);
+        }
+
+        HeldLightKind mainLight = HeldLightKind.None;
+        HeldLightKind offLight = HeldLightKind.None;
+        string mainVisual = ViewModelAssets.EmptyHeldItemId;
+        string? offVisual = null;
+
+        if (snapshot.EquippedSlot?.Item is InventoryItemSnapshot mainItem)
+        {
+            mainVisual = mainItem.VisualId ?? string.Empty;
+            loadout.Set(EquipmentSlot.MainHand, mainItem.Modifiers!, flatOnly: true);
+            mainLight = KnownLight(mainItem.HeldLight);
+        }
+
+        IReadOnlyList<InventorySlotSnapshot>? equipment = snapshot.Equipment;
+        if (equipment is not null)
+        {
+            for (int i = 0; i < equipment.Count; i++)
+            {
+                InventorySlotSnapshot entry = equipment[i];
+                // 100 is the main hand's own field; anything outside 101..103 is not a slot.
+                if (entry.Item is not InventoryItemSnapshot item
+                    || !EquipmentSlots.TryFromSlotIndex(entry.SlotIndex, out EquipmentSlot slot)
+                    || slot == EquipmentSlot.MainHand)
+                {
+                    continue;
+                }
+
+                loadout.Set(slot, item.Modifiers!, flatOnly: true);
+                if (slot == EquipmentSlot.OffHand)
+                {
+                    offVisual = item.VisualId ?? string.Empty;
+                    offLight = KnownLight(item.HeldLight);
+                }
+            }
+        }
+
+        return new EquipmentPresentation(mainVisual, offVisual, EquipmentSlots.ResolveHeldLight(mainLight, offLight));
+    }
+
+    private static HeldLightKind KnownLight(HeldLightKind light) =>
+        Enum.IsDefined(light) ? light : HeldLightKind.None;
+
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
-        string heldItemId;
-        ToolStatModifier modifier = default;
-        HeldLightKind heldLight = HeldLightKind.None;
-        if (inventory?.EquippedSlot?.Item is InventoryItemSnapshot equippedItem)
-        {
-            heldItemId = equippedItem.VisualId;
-            ToolDefinition definition = ToolCatalog.Resolve(equippedItem.ItemKind);
-            modifier = definition.StatModifier;
-            heldLight = definition.HeldLight;
-        }
-        else
-        {
-            heldItemId = ViewModelAssets.DefaultLoadout.HeldItemId;
-        }
+        EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
 
-        _runtime.Player.Combatant.ApplyEquippedToolModifier(modifier);
-        _viewModelController.SetHeldItem(heldItemId);
+        _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);
+        _viewModelController.SetHeldItem(presentation.MainHandVisualId);
+        _viewModelController.SetOffHandItem(presentation.OffHandVisualId);
         // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
-        _localHeldLight = heldLight;
+        _localHeldLight = presentation.HeldLight;
     }
 }

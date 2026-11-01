@@ -8,7 +8,7 @@ public sealed record ClientConnectionOptions(
     string PortText,
     string PlayerName)
 {
-    public bool TryCreateRemoteOptions(out RemoteClientOptions? options, out string? error)
+    public bool TryCreateRemoteOptions(out RemoteClientOptions? options, out string? error, string? accountToken = null)
     {
         if (string.IsNullOrWhiteSpace(Host))
         {
@@ -37,7 +37,8 @@ public sealed record ClientConnectionOptions(
             port,
             $"client-{Guid.NewGuid():N}",
             trimmedPlayerName,
-            trimmedPlayerName);
+            trimmedPlayerName,
+            accountToken);
         error = null;
         return true;
     }

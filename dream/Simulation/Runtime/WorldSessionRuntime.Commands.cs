@@ -61,6 +61,12 @@ public sealed partial class WorldSessionRuntime
     {
         _hasDeferredPrimarySeatUse = false;
         _triggeredSecondaryUseFrames.Clear();
+        if (!Player.Combatant.Health.IsAlive)
+        {
+            // Wave I: a dead seat does not move, jump or use; gravity, facing and the requested mode stay.
+            commandFrame = CreateStarvedCommandFrame(commandFrame);
+        }
+
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
         ApplyInteractionModeSelection(commandFrame.SessionId, interaction);
@@ -119,12 +125,15 @@ public sealed partial class WorldSessionRuntime
         {
             // Filled once, before the enemies act, so a player killed this tick is still separated.
             FillAuthoritativePlayerTargets(_tickPlayerTargets, spawnedAndAliveOnly: true);
-            _enemies.UpdateAll(delta, _tickPlayerTargets, _events, Map);
+            FillEnemyTargets(_tickPlayerTargets, _enemyTargets);
+            _enemies.UpdateAll(delta, _enemyTargets, _events, Map);
+            _enemyTargets.Clear();
             _enemies.PruneInactive();
             EnsureWolfExists();
             ResolvePlayerEnemySeparation(_tickPlayerTargets);
             // Do not keep a detached (disposed) secondary referenced until the next tick.
             _tickPlayerTargets.Clear();
+            AdvanceRespawns();
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
@@ -199,6 +208,20 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Action sequence is stale or has already been accepted.");
         }
 
+        // Wave I: a dead player neither builds nor fights (inventory, stats, material and mode stay
+        // allowed). After the sequence step, so the rejected action is spent like any other; nothing
+        // else changes and no write is queued.
+        if (!context.Combatant.Health.IsAlive && message.Payload is BuildUseIntent or CombatUseIntent)
+        {
+            return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
+        }
+
+        // Attacking ends spawn protection, so it cannot be used to fight safely.
+        if (message.Payload is CombatUseIntent && context.InteractionMode == PlayerInteractionMode.Combat)
+        {
+            context.Player.ProtectedThroughTick = 0;
+        }
+
         return message.Payload switch
         {
             BuildUseIntent buildIntent when context.SupportsBuildActions
@@ -219,6 +242,12 @@ public sealed partial class WorldSessionRuntime
                     context.Combatant),
             InventoryEquipIntent equipIntent
                 => ProcessInventoryEquipAction(message, context.Player, equipIntent),
+            InventoryUnequipIntent unequipIntent
+                => ProcessInventoryUnequipAction(message, context.Player, unequipIntent),
+            InventoryMoveIntent moveIntent
+                => ProcessInventoryMoveAction(message, context.Player, moveIntent),
+            InventoryDestroyIntent destroyIntent
+                => ProcessInventoryDestroyAction(message, context.Player, destroyIntent),
             BuildMaterialSelectIntent materialIntent
                 => ProcessBuildMaterialSelectAction(message, context.Player, materialIntent),
             PlayerStatsUpdateIntent statsIntent

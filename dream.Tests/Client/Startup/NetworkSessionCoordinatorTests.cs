@@ -1,4 +1,5 @@
 using Xunit;
+using Dream.Client.Identity;
 using Dream.Client.Networking;
 using Dream.Client.Startup;
 using Dream.Multiplayer.Protocol;
@@ -112,6 +113,170 @@ public class NetworkSessionCoordinatorTests
         Assert.Equal(ConnectionFlowState.Connected, coordinator.State);
         Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
         await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TryUseLocalServer_WhileAConnectIsInFlight_IsRefused_AndDoesNotStartASecondConnect()
+    {
+        FakeLocalServerHandle localServer = new(isReady: true, boundPort: 6123);
+        SlowConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(localServer, connector);
+        ClientConnectionOptions slowHost = new("slow.example.net", "5057", "player-a");
+
+        coordinator.BeginConnect(slowHost);
+        Assert.True(coordinator.IsBusy);
+
+        bool used = coordinator.TryUseLocalServer("player-a", out ClientConnectionOptions? options);
+
+        Assert.False(used);
+        Assert.Null(options);
+        Assert.Equal(ConnectionFlowState.Connecting, coordinator.State);
+        coordinator.BeginConnect(slowHost);
+        Assert.Equal(1, connector.Calls);
+
+        connector.Release();
+        await coordinator.WaitForPendingConnectionAsync();
+        Assert.Equal(ConnectionFlowState.Connected, coordinator.State);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BeginConnect_PassesTheStoredTokenOfTheServerKey_ToTheConnector()
+    {
+        RecordingIdentityStore store = new();
+        CapturingConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(
+            new FakeLocalServerHandle(isReady: true, boundPort: 6123), connector, identity: store);
+
+        coordinator.BeginConnect(new ClientConnectionOptions("Play.Example.com", "5057", "player-a"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(["play.example.com:5057"], store.Keys);
+        Assert.Equal(RecordingIdentityStore.TokenFor("play.example.com:5057"), connector.Options!.AccountToken);
+        Assert.DoesNotContain(connector.Options.AccountToken!, connector.Options.ToString());
+        Assert.DoesNotContain(connector.Options.AccountToken!, coordinator.StatusMessage);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BeginConnect_ToTheIntegratedServer_UsesTheLocalKey_AcrossChangingPorts()
+    {
+        RecordingIdentityStore store = new();
+        foreach (int port in new[] { 6123, 7456 })
+        {
+            CapturingConnector connector = new();
+            NetworkSessionCoordinator coordinator = new(
+                new FakeLocalServerHandle(isReady: true, boundPort: port), connector, identity: store);
+
+            coordinator.BeginConnect(new ClientConnectionOptions("127.0.0.1", port.ToString(), "player-a"));
+            await coordinator.WaitForPendingConnectionAsync();
+            Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+            await session!.DisposeAsync();
+        }
+
+        Assert.Equal(["local", "local"], store.Keys);
+    }
+
+    [Theory]
+    [InlineData("localhost", "50123")]
+    [InlineData("127.0.0.1", "5057")]
+    [InlineData("127.0.0.2", "6000")]
+    [InlineData("::1", "5057")]
+    [InlineData("[::1]", "5057")]
+    public async Task BeginConnect_ToAnyLoopbackAddressAndPort_UsesTheLocalKey(string host, string port)
+    {
+        RecordingIdentityStore store = new();
+        NetworkSessionCoordinator coordinator = new(
+            new FakeLocalServerHandle(isReady: false, boundPort: 0), new CapturingConnector(), identity: store);
+
+        coordinator.BeginConnect(new ClientConnectionOptions(host, port, "player-a"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(["local"], store.Keys);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BeginConnect_WithoutAStore_LeavesTheTokenNull()
+    {
+        CapturingConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(new FakeLocalServerHandle(isReady: true, boundPort: 6123), connector);
+
+        coordinator.BeginConnect(new ClientConnectionOptions("play.example.com", "5057", "player-a"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Null(connector.Options!.AccountToken);
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BeginConnect_WhenTheStoreCannotBeWritten_FailsWithAReadableMessage()
+    {
+        CapturingConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(
+            new FakeLocalServerHandle(isReady: true, boundPort: 6123), connector, identity: new RecordingIdentityStore { Fail = true });
+
+        coordinator.BeginConnect(new ClientConnectionOptions("play.example.com", "5057", "player-a"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
+        Assert.Contains("identity", coordinator.StatusMessage);
+        Assert.Null(connector.Options);
+    }
+
+    private sealed class RecordingIdentityStore : IClientIdentityStore
+    {
+        public List<string> Keys { get; } = [];
+
+        public bool Fail { get; init; }
+
+        public static string TokenFor(string key) => "T" + new string((char)('0' + key.Length % 10), 42);
+
+        public string GetOrCreateToken(string serverKey)
+        {
+            if (Fail)
+            {
+                throw new IOException("The player identity file could not be saved.");
+            }
+
+            Keys.Add(serverKey);
+            return TokenFor(serverKey);
+        }
+    }
+
+    private sealed class CapturingConnector : IRemoteSessionConnector
+    {
+        public RemoteClientOptions? Options { get; private set; }
+
+        public ValueTask<RemoteClientSession> ConnectAsync(
+            RemoteClientOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            Options = options;
+            return new FakeRemoteSessionConnector().ConnectAsync(options, cancellationToken);
+        }
+    }
+
+    private sealed class SlowConnector : IRemoteSessionConnector
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Calls { get; private set; }
+
+        public void Release() => _gate.SetResult();
+
+        public async ValueTask<RemoteClientSession> ConnectAsync(
+            RemoteClientOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            await _gate.Task.ConfigureAwait(false);
+            return await new FakeRemoteSessionConnector().ConnectAsync(options, cancellationToken);
+        }
     }
 
     private sealed class FakeLocalServerHandle : ILocalServerHandle

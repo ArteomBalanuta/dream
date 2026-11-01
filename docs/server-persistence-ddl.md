@@ -101,7 +101,7 @@ CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
 
 One repository instance serves one world: the world id is given at construction (`new SqliteWorldPersistenceRepository(schema, worldId)`, `SqlitePersistenceCheckpointWriter(schema, worldId)`, `SqliteWorldMetadataRepository(schema, worldId)`; the constructors without a world id mean world 1) and bound as `$worldId` in every statement. One server process runs one world. The upsert checkpoint binds `$worldId` once per prepared command and its `ON CONFLICT` targets are the composite keys. The cube, rubble and enemy checkpoint UPDATEs (which run once per row) carry the world id and the write time as SQL literals instead of parameters (`SqliteRepositorySql.WithCheckpointLiterals`): Microsoft.Data.Sqlite looks each parameter up by name and binds it on every execution. The `updated_utc` guard on profile vitals gained `AND player_world_state.world_id = $worldId`.
 
-The catalog (`SqliteWorldCatalog`, `Dream.Server.Worlds.IWorldCatalog`) lists, creates, copies, deletes and resolves worlds. Copy and delete run in one transaction each, with explicit column lists. A copy gets every world-scoped row with the same local ids, and the source's seed and world time. A delete removes the per-world tables' rows explicitly, children first, then the world row. There is no lock between processes, so stop the server before `--worlds copy` or `--worlds delete`.
+The catalog (`SqliteWorldCatalog`, `Dream.Server.Worlds.IWorldCatalog`) lists, creates, copies, deletes and resolves worlds. Copy and delete run in one transaction each, with explicit column lists. A copy gets every world-scoped row with the same local ids, and the source's seed and world time. A delete removes the per-world tables' rows explicitly, children first, then the world row. The offline `--worlds copy`, `delete`, `export` and `reset-terrain` commands take the world's host lease (`{db}.world-{id}.lock`, see `docs/configuration.md`) and exit 7 when a server holds it, so stop the server first. A migration that is pending also needs every world's lease. The `--worlds` commands hold `{db}.maintenance.lock` from the migration until the command ends (lease acquisition and the whole of `create` included), and a start holds it through its migration, world resolve and lease acquisition, so migrations, `--db restore` and world creation never interleave across processes.
 
 ### Migration 0004: busy-table `updated_utc` indexes dropped
 
@@ -230,7 +230,43 @@ Persistence wave E (plan `docs/ledger/plans/2026-10-29-wave-e-plan.md`) hosts wo
 
 **Reset-terrain** (`--worlds reset-terrain <id|name> --yes`, `IWorldCatalog.ResetTerrain`) is one transaction. For every override cell that holds no `placed_cube_instances` row of that world: delete the override and every `cube_fracture_pieces` row whose parent cell is that cell (any origin, so the restore heal cannot remove the cell again), then every `cube_fracture_pieces` row of the world whose `origin_object_id` is neither a `terrain_cell_overrides.object_id` nor a `placed_cube_instances.object_id` and whose parent cell holds no placed cube (rubble of a lost override, which the load-time heal would otherwise use to remove the restored cell again; the debris of a broken player cube in an air cell has the same shape and goes too, which is harmless). Both deletions count in `RubbleRowsDeleted`. Cells under a saved placed cube keep their override and rubble and are counted in `CellsKeptForPlacedCubes`. `worlds.next_object_id` is never lowered. The base is the world's own: the generator output for a generated world, the stored chunks for a stored world. A player or enemy saved inside a restored cell is not moved, but is reported: `TerrainResetResult.PlayersInside`, `EnemiesInside` and `PlayerNames` (a position is inside a cell when its floor is that cell), printed as `inside=` and `inside_players=`.
 
-**Offline only.** Export and reset are for a world that no server is running. There is no lease that detects a running server: a running server's later checkpoint, or its restore heal, can write the rows again. A hosting lease belongs to Phase 5.
+**Offline only.** Export and reset are for a world that no server is running. A running server's later checkpoint, or its restore heal, could write the rows again, so since wave F3 both commands (like `copy` and `delete`) take the world's host lease and refuse a held world with exit code 7. The lease is a file, `{db}.world-{id}.lock`, locked by the operating system; it adds no table or column (the schema stays at version 6).
+
+## Phase 5: lease, integrity check, backup (wave F3)
+
+No schema change. `WorldHostLease` (`Server/Hosting`) holds one exclusive `FileStream` per world; a crash frees it. `WorldIntegrityCheck` (`Server/Persistence`) runs `quick_check`, `foreign_key_check`, bounds, slot and kind checks when a world loads; foreign-key violations or corruption stop the start with exit code 6, the rest is logged with counts. `--db backup <path>` uses `SqliteConnection.BackupDatabase` (safe while running); `--db restore <path> --yes` swaps the file offline after validating the source (version not newer, `integrity_check`) and keeps the old file as `{db}.pre-restore.{timestamp}.bak`. Details and exit codes are in `docs/configuration.md`.
+
+## Rolled item stats (migration 0008, wave H)
+
+Schema version 8 (plan `docs/ledger/plans/2026-11-01-wave-h-plan.md`). `item_instances` gains `rolled_modifiers TEXT NULL`, `CHECK (rolled_modifiers IS NULL OR (length(rolled_modifiers) <= 1024 AND json_valid(rolled_modifiers)))`. NULL is an unrolled item, whose stats come from its definition (every starter-kit item and every row from before the migration). Otherwise the value is versioned JSON written by `ItemRollCodec`, for example `{"v":1,"r":"Rare","m":[["Strength","Flat",6],["AttackSpeed","Flat",1.75]]}`: stat names are text so `StatId` can be reordered, and floats are written round-trip. No table is rebuilt, so the five object-id triggers stay.
+
+- The column is last among the item columns in `SqliteItemRepository.LoadSql` and in `SqliteInventoryRepository.LoadPlayerInventorySql` (the grant branch of its `UNION ALL` gains one NULL, and the kit version is now column 17). `ReadItem` parses it with `ItemRollCodec.Parse`, which never throws: a bad value reads as `ItemRoll.Damaged`, which is inert (no stats), loads, and is counted by the integrity check.
+- The roll never changes after the item is created. `UpsertSql` inserts the column but its `ON CONFLICT DO UPDATE` branch does not name it, so no later save can alter a stored roll (pinned by `ItemRollPersistenceTests`).
+- `--worlds copy` and a full `export` carry the column (`SqliteWorldCatalog.CopyTables` drives both); `--terrain-only` has no items.
+- Slot indices `101..103` (off hand, head, body) need no schema change: `CHECK (slot_index >= 0)` already allows them. Slot 100 is the main hand, as before. An equipment row aliases the backpack row of the same item; the backpack row is what keeps the item when it is unequipped.
+- `IInventoryRepository.DeleteInventorySlot(player, slot)` deletes one slot row (unequip). `DestroyInventoryItem(player, itemId)` deletes this player's rows for the item and then the item row if no slot of any player still references it (a legacy shared item keeps its row for the other holder).
+- The integrity check treats a `100..103` row as a legitimate alias of a same-player backpack row, and adds four soft counts: `ItemsInTwoEquipmentSlots` (extra equipment rows of one item of one player), `UnknownSlotIndexes` (outside `0..15` and `100..103`), `EquipmentSlotMismatches` (a kind in a slot its definition does not allow; decided by `WorldIntegrityOptions.CanOccupy`, wired in `ServerBootstrap.IntegrityOptionsFor`, and an unknown kind is not also counted here) and `DamagedItemRolls` (reads only rows with a stored roll).
+- `dream --items grant <world> <character> <item kind> [--rarity common|uncommon|rare]` and `dream --items list <world> <character>` (`Server/Items/ItemCli.cs`) are tab-separated. `grant` is offline: it takes the world's lease (exit 7 when held), needs a `player_starter_grants` row for the character in that world (else exit 2, so the next join does not take the inventory for a pre-kit one), writes the item row (owner = the character key, state `Inventory`, stack 1) and the lowest free backpack slot in one transaction, and prints item id, slot, rarity and modifiers. The roll is seeded with `(worlds.seed, worlds.world_time_ticks, StableHash.Of(key), 0, item id)`; the item id as drop index is fine because the command is not lockstep. `list` takes no lease and prints slot, item id, kind, rarity and modifiers (`-` for an unrolled item, `damaged` for a damaged roll). Exit codes: 0 ok, 1 usage, 2 not found, no grant row, kind not rollable or backpack full, 3 schema too new, 7 held or database busy, 8 invalid content.
+
+## Enemy formulas and armor (migration 0009, wave I)
+
+Schema version 9 (plan `docs/ledger/plans/2026-11-01-wave-i-plan.md`). The migration only inserts four `combat_formulas` rows, with `ON CONFLICT(formula_key) DO NOTHING` so a hand-edited row is kept: `enemy.attack_damage` (`strength + 2`), `enemy.max_health` (`50 + vitality * 5`), `enemy.attack_interval_seconds` (`1.0 / attack_speed`) and `player.damage_taken_factor` (`100 / (100 + armor)`, variable `armor` only). A fresh database has 12 formulas. No table is rebuilt and no `enemy_instances` row changes, so the five object-id triggers stay and `foreign_key_check` is untouched.
+
+- **Enemy stats are instance stats (I-D4).** A new spawn copies Strength, Vitality, Attack Speed and Level from its `enemies.json` template into its `enemy_instances` row. A restore reads those from the row and derives attack damage and the attack interval through the `enemy.*` formulas; maximum and current health are the row's. Aggro, attack range, body, visual and loot come from the template. A balance edit therefore reaches new spawns only; an existing enemy keeps what it was born with until it dies.
+- **No enemy row migration (I-D6).** Every stored row is a Wolf, and its Strength 10, Vitality 10 and Attack Speed already equal the Wolf template's real values. Agility 10 and Energy 0 stay as written. The Dire Wolf (`DireWolf`, level 3, Strength 16, Vitality 30, Attack Speed 1.0) is just another `enemy_kind` value; `--worlds copy` and export carry its row like any other.
+- **Armor.** `PlayerCombatant` evaluates `player.damage_taken_factor` only when its effective Armor changes (never per hit). Armor 0 or less takes the hit unchanged and evaluates nothing; otherwise damage is `max(1, round_away_from_zero(amount * factor))` with the factor clamped to 0..1 in code.
+- **Startup probe.** `ServerBootstrap.ProbeFormulas` evaluates the `enemy.*` formulas for every template and `player.damage_taken_factor` for Armor 1..1000 before the world opens; a failure (a division by zero, a non-finite result) names the formula and exits with code 8.
+- A retired or unknown `enemy_kind` is logged and skipped on restore, its row is kept, and the integrity check counts it (`UnknownEnemyKinds`). The population step then spawns a Primary enemy if none is active.
+
+## Accounts and characters (migration 0007, wave G)
+
+Schema version 7 (plan `docs/ledger/plans/2026-10-31-wave-g-plan.md`). `accounts` holds `account_id` (AUTOINCREMENT), `token_hash` (BLOB, `CHECK (length(token_hash) = 32)`, unique), `created_utc` and `last_seen_utc`. The hash is the SHA-256 of the player's 32-byte token; the token itself is never stored, so a database backup holds no usable secret. `player_profiles` gains `account_id INTEGER NULL REFERENCES accounts(account_id) ON DELETE SET NULL` (partial index `ix_player_profiles_account_id`). A character with `account_id IS NULL` is unowned (a legacy character, or one released with `--characters release`); the first token to join it claims it, up to 5 characters per account. `player_name` stays the immutable key. `display_name` is what people type and see, and is unique ignoring ASCII case (`ux_player_profiles_display_name`, `COLLATE NOCASE`). Migration 0007 renames duplicate display names to `<name>~<n>`; the `.bak` taken before it holds the originals.
+
+`SqliteAccountRepository` (`Server/Persistence/Repositories`) implements `IAccountRepository`. `Lookup` finds the row whose `display_name` matches ignoring ASCII case (returning its key, not the typed text), else whether a row has that exact `player_name`, and counts the characters the account owns. `RecordJoin` upserts the account (moving `last_seen_utc`, keeping `created_utc`) and, when claiming, sets `account_id` only where it is NULL, returning false when no row changed. `SqlitePlayerProfileRepository.Save` never names `account_id`, so ordinary saves cannot change ownership. `--worlds copy` and `export` copy per-world tables only, so `accounts` and `player_profiles` are never copied. `--db restore` brings back whatever accounts the restored file holds.
+
+`--characters list | release <name> | rename <old> <new>` (`Server/Characters/CharacterCli.cs`) is tab-separated: `list` prints display name, key, level, `account_id` (or `-`) and the account's `last_seen_utc`, never a hash. `release` and `list` take no lease and run beside a server; `rename` changes `display_name` only, needs every world's lease (exit 7 when held) and refuses a name that is taken or equals another character's key (exit 2) or fails the name rule (exit 1). Other exit codes: 0 ok, 3 schema too new. Control characters print as `?`.
+
+The integrity check adds `AccountsOverLimit` (accounts with more than 5 characters) and `DuplicateDisplayNames` (both soft, logged) and `UnownedCharacters` (information in the head line, not a finding). A bad `account_id` is already fatal through `foreign_key_check`.
 
 ## Design Notes
 
@@ -370,7 +406,7 @@ Key fields:
 - `display_name`
 - `position_*`, `facing_*`
 - `current_hp`, `max_hp`
-- creature stats and tempo columns
+- creature stats and tempo columns: Strength, Vitality, Attack Speed and `level` are instance stats copied from the template at spawn and read back at restore (wave I); Agility 10 and Energy 0 stay as written
 - `level`
 - timestamps
 
@@ -394,6 +430,7 @@ Key fields:
 - `world_position_*`: nullable world-drop coordinates
 - `state`: current ownership/state marker
 - `stack_count`
+- `rolled_modifiers`: nullable, versioned JSON written once (migration 0008); NULL for an unrolled item
 - timestamps
 
 Used for:
@@ -414,8 +451,8 @@ Key fields:
 
 Used for:
 
-- 4x4 backpack slot assignment
-- dedicated equipped-slot assignment
+- 4x4 backpack slot assignment (`0..15`)
+- equipment slots `100..103` (main hand, off hand, head, body)
 - reconnect restore of tool selection
 
 ### `player_starter_grants` (migration 0002)
@@ -466,7 +503,7 @@ Used for:
 - authoritative player stat derivation
 - rebalance of HP, damage, crit, and attack cadence without recompiling
 - rebalance of XP thresholds and enemy XP rewards without recompiling
-- server startup validation of required combat-rule rows
+- server startup validation of required combat-rule rows (since wave I: 12 keys, including `enemy.attack_damage`, `enemy.max_health`, `enemy.attack_interval_seconds` and `player.damage_taken_factor`, and a startup probe of the enemy and armor formulas)
 
 Important note:
 
@@ -531,7 +568,7 @@ The details and measurements are in `docs/performance-and-optimizations.md`, Che
 The gameplay inventory slice uses:
 
 - backpack slots `0..15`
-- one equipped slot stored separately
+- equipment slots `100..103`, each an alias of the item's backpack row when it has one
 - item definitions resolved in code by `item_kind`
 - per-item held-viewmodel selection resolved by `visual_id`
 

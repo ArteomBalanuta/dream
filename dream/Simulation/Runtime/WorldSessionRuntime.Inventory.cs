@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Persistence;
@@ -17,6 +16,9 @@ public sealed partial class WorldSessionRuntime
     // Constructed in the constructor, before RestorePersistedWorldState seeds its item id counter.
     private readonly PlayerInventoryService _inventory;
 
+    // Reused by RefreshAuthoritativePlayerCombatStats (main thread, never re-entered).
+    private readonly EquipmentLoadout _equipmentScratch = new();
+
 
     public PlayerInventorySnapshot? TryCaptureInventorySnapshot(PlayerSessionId sessionId)
     {
@@ -25,32 +27,112 @@ public sealed partial class WorldSessionRuntime
             return null;
         }
 
-        if (!_inventory.Ensure(player.DisplayName))
+        if (!_inventory.Ensure(player.CharacterKey.Value))
         {
             return null;
         }
 
         RefreshAuthoritativePlayerCombatStats(sessionId);
-        return _inventory.BuildSnapshot(player.DisplayName);
+        return _inventory.BuildSnapshot(player.CharacterKey.Value);
     }
+
+    // The session whose inventory action is being processed; its budget is the one spent (H-D18).
+    // Set only by RunInventoryAction, around the service call and on the main thread, and every client
+    // inventory action goes through it. The service calls the gate inside that call, once it has decided
+    // the action would write, so the gate cannot run for any other session. Unset means no client
+    // action is running (a test driving the service directly), which has no budget to spend.
+    private ConnectedPlayer? _inventoryActionPlayer;
 
     private AuthoritativeActionResult ProcessInventoryEquipAction(
         PlayerActionMessage message,
         ConnectedPlayer player,
         InventoryEquipIntent intent)
     {
-        switch (_inventory.TryEquip(player.DisplayName, intent.SlotIndex))
+        InventoryEquipOutcome outcome = RunInventoryAction(
+            player,
+            static (service, key, i) => service.TryEquip(key, i.SlotIndex, i.TargetSlotIndex),
+            intent);
+        return CompleteInventoryAction(message, player, outcome, "equip");
+    }
+
+    private AuthoritativeActionResult ProcessInventoryUnequipAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryUnequipIntent intent)
+    {
+        InventoryEquipOutcome outcome = RunInventoryAction(
+            player,
+            static (service, key, i) => service.TryUnequip(key, i.SlotIndex),
+            intent);
+        return CompleteInventoryAction(message, player, outcome, "unequip");
+    }
+
+    private AuthoritativeActionResult ProcessInventoryMoveAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryMoveIntent intent)
+    {
+        InventoryEquipOutcome outcome = RunInventoryAction(
+            player,
+            static (service, key, i) => service.TryMove(key, i.From, i.To),
+            intent);
+        return CompleteInventoryAction(message, player, outcome, "move");
+    }
+
+    private AuthoritativeActionResult ProcessInventoryDestroyAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryDestroyIntent intent)
+    {
+        InventoryEquipOutcome outcome = RunInventoryAction(
+            player,
+            static (service, key, i) => service.TryDestroy(key, i.SlotIndex, i.ItemInstanceId),
+            intent);
+        return CompleteInventoryAction(message, player, outcome, "destroy");
+    }
+
+    private InventoryEquipOutcome RunInventoryAction<TIntent>(
+        ConnectedPlayer player,
+        Func<PlayerInventoryService, string, TIntent, InventoryEquipOutcome> action,
+        TIntent intent)
+    {
+        _inventoryActionPlayer = player;
+        try
         {
-            case InventoryEquipOutcome.SlotOutOfRange:
-                return CreateRejectedActionResult(message, "Inventory equip rejected because the slot index is out of range.");
-            case InventoryEquipOutcome.StillLoading:
-                return CreateRejectedActionResult(message, "Inventory equip rejected because the inventory is still loading.");
-            case InventoryEquipOutcome.SlotEmpty:
-                return CreateRejectedActionResult(message, "Inventory equip rejected because the slot is empty.");
-            case InventoryEquipOutcome.Equipped:
-                break;
-            default:
-                throw new UnreachableException();
+            return action(_inventory, player.CharacterKey.Value, intent);
+        }
+        finally
+        {
+            _inventoryActionPlayer = null;
+        }
+    }
+
+    private bool SpendInventoryActionBudget()
+        => _inventoryActionPlayer == null || _inventoryActionPlayer.InventoryBudget.TrySpend(CurrentServerTick);
+
+    private AuthoritativeActionResult CompleteInventoryAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryEquipOutcome outcome,
+        string verb)
+    {
+        string? reason = outcome switch
+        {
+            InventoryEquipOutcome.Equipped => null,
+            InventoryEquipOutcome.SlotOutOfRange => "the slot index is out of range",
+            InventoryEquipOutcome.StillLoading => "the inventory is still loading",
+            InventoryEquipOutcome.SlotEmpty => "the slot is empty",
+            InventoryEquipOutcome.TargetOutOfRange => "the target slot is not an equipment slot",
+            InventoryEquipOutcome.NotEquippable => "the item cannot be used that way",
+            InventoryEquipOutcome.BackpackFull => "the backpack is full",
+            InventoryEquipOutcome.ItemEquipped => "the item is equipped",
+            InventoryEquipOutcome.ItemMismatch => "the slot no longer holds that item",
+            InventoryEquipOutcome.Throttled => "too many inventory actions, try again shortly",
+            _ => "the request was not valid",
+        };
+        if (reason != null)
+        {
+            return CreateRejectedActionResult(message, $"Inventory {verb} rejected because {reason}.");
         }
 
         RefreshAuthoritativePlayerCombatStats(message.SessionId);
@@ -60,7 +142,7 @@ public sealed partial class WorldSessionRuntime
             message.ActionSequence,
             CurrentServerTick,
             Accepted: true,
-            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.DisplayName)));
+            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.CharacterKey.Value)));
     }
 
     // See PlayerInventoryService.ApplyLoaded.
@@ -78,6 +160,9 @@ public sealed partial class WorldSessionRuntime
 
     internal int LoadedItemInstanceCount => _inventory.LoadedItemInstanceCount;
 
+    // The inventory service itself, for tests that grant rolled items.
+    internal PlayerInventoryService InventoryService => _inventory;
+
     internal long NextItemInstanceId => _inventory.NextItemInstanceId;
 
     // False when the inventory could not be loaded yet; see PlayerInventoryService.Ensure.
@@ -92,6 +177,7 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        target.Combatant.ApplyEquippedToolModifier(_inventory.ResolveEquippedToolModifier(player.DisplayName));
+        _inventory.CopyEquipment(player.CharacterKey.Value, _equipmentScratch);
+        target.Combatant.ApplyEquipment(_equipmentScratch);
     }
 }

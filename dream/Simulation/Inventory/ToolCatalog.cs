@@ -1,82 +1,81 @@
+using Dream.Simulation.Content;
+
 namespace Dream.Simulation.Inventory;
 
+// A thin facade over ContentCatalog.Shipped (config/content/items.json). Tick and snapshot paths
+// use TryResolve: an item_kind the catalog no longer knows (a retired key) is an inert "Unknown
+// item", never an exception. Resolve throws and is for callers that just took the kind from the
+// catalog itself (the starter kit).
 public static class ToolCatalog
 {
-    private static readonly IReadOnlyDictionary<string, ToolDefinition> Definitions =
-        new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["tool.builder-hammer"] = new(
-                "tool.builder-hammer",
-                "Builder Hammer",
-                "Reliable close-range construction tool for quick world edits.",
-                "held.tool.builder",
-                ["Role: Building", "Impact: +2 Strength", "Tempo: +0.25 Attack Speed"],
-                new ToolStatModifier(StrengthBonus: 2, AttackSpeedBonus: 0.25f)),
-            ["tool.field-blade"] = new(
-                "tool.field-blade",
-                "Field Blade",
-                "Short combat blade with quick recovery and clean follow-up swings.",
-                "held.tool.blade",
-                ["Role: Combat", "Impact: +4 Strength", "Tempo: +1.50 Attack Speed"],
-                new ToolStatModifier(StrengthBonus: 4, AttackSpeedBonus: 1.50f)),
-            ["tool.stone-maul"] = new(
-                "tool.stone-maul",
-                "Stone Maul",
-                "Heavy breaker meant for deliberate hits and strong stagger pressure.",
-                "held.tool.maul",
-                ["Role: Breaker", "Impact: +8 Strength", "Tempo: -0.75 Attack Speed"],
-                new ToolStatModifier(StrengthBonus: 8, AttackSpeedBonus: -0.75f)),
-            ["tool.survey-lantern"] = new(
-                "tool.survey-lantern",
-                "Survey Lantern",
-                "Utility tool for traversal loadouts and world inspection passes.",
-                "held.tool.lantern",
-                ["Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed"],
-                new ToolStatModifier(StrengthBonus: 1, AttackSpeedBonus: 0.10f),
-                HeldLightKind.Lantern),
-            // Wave T2: the first item that lights the night. No stat bonus.
-            ["tool.torch"] = new(
-                "tool.torch",
-                "Torch",
-                "A burning torch that lights the ground around you after dark.",
-                "held.tool.torch",
-                ["Role: Light", "Light: warm, radius 8"],
-                default,
-                HeldLightKind.Torch)
-        };
+    // The description of an item whose kind is not in the catalog. Its row is left untouched.
+    public const string UnknownItemDescription = "Unknown item";
+
+    // Built on first use, not in a static initialiser: a content file that fails to load must not
+    // surface as a TypeInitializationException that poisons every later use of this type. The load
+    // failure (ContentValidationException) is raised from the first call instead.
+    private static readonly Lazy<IReadOnlyDictionary<string, ToolDefinition>> DefinitionsLazy =
+        new(BuildDefinitions, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static IReadOnlyDictionary<string, ToolDefinition> Definitions => DefinitionsLazy.Value;
 
     // The starter kit, in seeding order, with the kit version that introduced each kind. A player's
     // inventory records the kit version it has received (player_starter_grants); PlayerInventoryService
     // grants only the kinds introduced after it, so an item a player gets rid of is never granted
-    // again. Append new kinds with the next version and raise CurrentStarterKitVersion; never change
-    // an existing entry's version.
-    public static IReadOnlyList<StarterKitEntry> StarterKit { get; } =
-    [
-        new("tool.builder-hammer", 1),
-        new("tool.field-blade", 1),
-        new("tool.stone-maul", 1),
-        new("tool.survey-lantern", 1),
-        // Wave T2. Last, so the first starter item (the hammer) stays the one equipped.
-        new("tool.torch", 2)
-    ];
+    // again. Append new kinds with the next version and raise starterKitVersion in items.json; never
+    // change an existing entry's version.
+    public static IReadOnlyList<StarterKitEntry> StarterKit => ContentCatalog.Shipped.StarterKit;
 
     // The newest kit version: the highest IntroducedVersion in StarterKit.
-    public const int CurrentStarterKitVersion = 2;
+    public static int CurrentStarterKitVersion => ContentCatalog.Shipped.StarterKitVersion;
 
     // The kit an inventory with items but no grant record is taken to hold: every inventory seeded
     // before kit versions were recorded got at least the pre-T2 kit (v1).
-    public const int UnrecordedStarterKitVersion = 1;
+    public static int UnrecordedStarterKitVersion => ContentCatalog.Shipped.UnrecordedStarterKitVersion;
 
-    public static IReadOnlyList<string> StarterItemKinds { get; } = [.. StarterKit.Select(entry => entry.ItemKind)];
+    public static IReadOnlyList<string> StarterItemKinds => StarterItemKindsLazy.Value;
+
+    private static readonly Lazy<IReadOnlyList<string>> StarterItemKindsLazy =
+        new(static () => [.. ContentCatalog.Shipped.StarterKit.Select(entry => entry.ItemKind)], LazyThreadSafetyMode.ExecutionAndPublication);
+
+    // False for an unknown kind. Allocates nothing.
+    public static bool TryResolve(string itemKind, out ToolDefinition definition)
+    {
+        if (itemKind != null && Definitions.TryGetValue(itemKind, out definition))
+        {
+            return true;
+        }
+
+        definition = default;
+        return false;
+    }
 
     public static ToolDefinition Resolve(string itemKind)
     {
-        if (!Definitions.TryGetValue(itemKind, out ToolDefinition definition))
+        if (!TryResolve(itemKind, out ToolDefinition definition))
         {
             throw new KeyNotFoundException($"Unknown tool definition '{itemKind}'.");
         }
 
         return definition;
+    }
+
+    private static IReadOnlyDictionary<string, ToolDefinition> BuildDefinitions()
+    {
+        Dictionary<string, ToolDefinition> definitions = new(StringComparer.OrdinalIgnoreCase);
+        foreach (ItemDefinition item in ContentCatalog.Shipped.Items)
+        {
+            definitions[item.Key] = new ToolDefinition(
+                item.Key,
+                item.DisplayName,
+                item.Description,
+                item.VisualId,
+                item.DetailLines,
+                item.Modifiers,
+                item.HeldLight);
+        }
+
+        return definitions;
     }
 }
 

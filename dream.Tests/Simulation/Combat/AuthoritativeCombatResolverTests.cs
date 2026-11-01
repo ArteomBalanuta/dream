@@ -168,7 +168,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Equal(2, combatant.Level);
         Assert.Equal(377, combatant.Experience);
         Assert.Equal(
-            ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}"],
+            // Wave I: the loot is granted after the delete, so a crash between them loses a drop, never duplicates it.
+            ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}", $"GrantLoot session-a Wolf {EnemyActorId} 5"],
             fixture.Host.Calls);
         Assert.Empty(fixture.Enemies.ActiveActors);
     }
@@ -366,7 +367,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             new CombatFormulaDefinition("player.critical_chance", "0.15", "test", true, DateTime.UtcNow),
             new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
             new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
-            new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
+            new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow),
+            ..Dream.Tests.Support.WaveIFormulas.Definitions()
         ]);
     }
 
@@ -432,6 +434,9 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             => Calls.Add($"PersistPlayerProgression {sessionId.Value} {combatant.Level}/{combatant.Experience}");
 
         public void DeletePersistedEnemy(int enemyId) => Calls.Add($"DeletePersistedEnemy {enemyId}");
+
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+            => Calls.Add($"GrantLoot {killer.Value} {enemyKind} {enemyActorId} {tick}");
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
         {

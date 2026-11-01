@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -15,23 +16,45 @@ namespace Dream.Simulation.Runtime;
 // The runtime implements IRuntimePersistenceHost for the bridge's callbacks.
 public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 {
-    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName) =>
-        _persistence.BeginPersistedPlayerPrefetch(playerName);
+    // True when the runtime was built with an account repository (joins are checked against accounts).
+    public bool HasAccounts => _persistence.HasAccounts;
 
-    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName) =>
-        _persistence.GetPersistedPlayerLoadState(playerName);
+    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName, AccountKey? account = null) =>
+        _persistence.BeginPersistedPlayerPrefetch(playerName, account);
 
-    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing) =>
-        _persistence.IsPersistedPlayerReady(playerName, startIfMissing);
+    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName, AccountKey? account = null) =>
+        _persistence.GetPersistedPlayerLoadState(playerName, account);
 
-    public void DiscardPersistedPlayerPrefetch(string playerName) =>
-        _persistence.DiscardPersistedPlayerPrefetch(playerName);
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing, AccountKey? account = null) =>
+        _persistence.IsPersistedPlayerReady(playerName, startIfMissing, account);
 
-    public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName)
+    public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null) =>
+        _persistence.DiscardPersistedPlayerPrefetch(playerName, account);
+
+    // What the join's prefetch read (or, with none, a synchronous read after the queued writes) about the
+    // character the typed name reaches; see RuntimePersistenceBridge.ResolveCharacterLookup.
+    public CharacterLookup ResolveCharacterLookup(string typedName, AccountKey? account) =>
+        _persistence.ResolveCharacterLookup(typedName, account);
+
+    // Queues the account row and ownership write of a checked join that was applied (G-D2).
+    public void CommitCharacterAccess(string typedName, in CharacterAccessDecision access) =>
+        _persistence.CommitCharacterAccess(typedName, access);
+
+    public void RestorePersistedPlayerState(PlayerSessionId sessionId, string playerName) =>
+        RestorePersistedPlayerState(sessionId, playerName, playerName, account: null);
+
+    // playerName is the character key; prefetchName and account find the join's prefetch.
+    public void RestorePersistedPlayerState(
+        PlayerSessionId sessionId,
+        string playerName,
+        string prefetchName,
+        AccountKey? account)
     {
         if (!_persistence.TryLoadPlayerForRestore(
             sessionId,
             playerName,
+            prefetchName,
+            account,
             out PersistedPlayerProfile profile,
             out PersistedPlayerWorldState? worldState,
             out PersistedPlayerInventory? inventory))
@@ -43,6 +66,7 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         ApplyLoadedInventory(profile.PlayerName, inventory);
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
+        ReapplyPersistedHealth(sessionId, worldState);
     }
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
@@ -76,21 +100,47 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
-        // The world-state row is the newest written HP: checkpoints write it with the profile's
-        // vitals, and a leave writes both (DetachRemoteSession), so the two agree after a leave.
-        // The profile's HP is only the fallback for a player without a world-state row.
-        int currentHealth = worldState?.CurrentHealth ?? profile.Stats.CurrentHealth;
-        int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
-
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())
         {
             Player.SetFacing(persistedFacing);
-            Player.SetHealth(currentHealth, maxHealth);
         }
         else if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
         {
             remote.SetFacing(persistedFacing);
+        }
+
+        ApplyPersistedHealth(sessionId, playerTarget, worldState);
+    }
+
+    // The join set health against the base max, before equipment; the equipment refresh then rescaled
+    // it by ratio, so a vest would heal or hurt on every rejoin (H-D17). Sets it again against the
+    // final max.
+    private void ReapplyPersistedHealth(PlayerSessionId sessionId, PersistedPlayerWorldState? worldState)
+    {
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? playerTarget)
+            && playerTarget != null)
+        {
+            ApplyPersistedHealth(sessionId, playerTarget, worldState);
+        }
+    }
+
+    private void ApplyPersistedHealth(
+        PlayerSessionId sessionId,
+        IAuthoritativePlayerTarget playerTarget,
+        PersistedPlayerWorldState? worldState)
+    {
+        // Health belongs to a world (U2): the world-state row holds it. The profile is global, so its
+        // HP is whatever the character had in the last world it left; a character with no row here
+        // has not been to this world and arrives at full health.
+        int maxHealth = playerTarget.Combatant.DerivedStats.MaxHealth;
+        int currentHealth = worldState?.CurrentHealth ?? maxHealth;
+        if (sessionId == ResolvePrimaryControlledSessionId())
+        {
+            Player.SetHealth(currentHealth, maxHealth);
+        }
+        else if (_secondaryRemotePlayers.TryGetValue(sessionId, out RemoteSessionPlayerState? remote))
+        {
             remote.SetHealth(currentHealth, maxHealth);
         }
     }

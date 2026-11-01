@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Simulation.Inventory;
 
 namespace Dream.Simulation.Persistence;
 
@@ -12,4 +13,5 @@ public readonly record struct PersistedItemInstance(
     string State,
     int StackCount,
     DateTime CreatedUtc,
-    DateTime UpdatedUtc);
+    DateTime UpdatedUtc,
+    ItemRoll? Roll = null);

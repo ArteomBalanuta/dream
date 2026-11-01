@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -58,7 +59,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         "Session already in use: another connection is still active for it.";
 
     public const string JoinThrottledRejectionReason =
-        "Too many joins for a player that is still connected.";
+        "Too many join attempts for this name.";
+
+    public const string NewAccountRejectionReason =
+        "Too many new players have joined from this address. Existing characters can still join.";
 
     private readonly IProtocolRouter _router;
     private readonly IAuthoritativeSessionHost? _authority;
@@ -85,6 +89,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly List<PlayerSessionId> _joinedSessionIds = [];
     private readonly List<PlayerCommandFrame> _tickCommands = [];
     private readonly List<QueuedPlayerAction> _tickActions = [];
+    private readonly List<SessionInventoryPush> _inventoryPushScratch = [];
+    private readonly HashSet<string> _heldPushSessions = new(StringComparer.Ordinal);
     private int _connectionsChanged = 1;
     // Set under _authoritySync by Dispose. Every entry point that touches the runtime checks it
     // under the same lock, so a late ReleaseConnection (a connection loop's finally on a pool
@@ -171,6 +177,32 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // contested session id or player name, touched only under _authoritySync.
     private readonly JoinThrottleTable _joinThrottle = new();
 
+    // Per-source limit on new accounts (NewAccountLimiter), touched only under _authoritySync.
+    internal NewAccountLimiter NewAccountLimits { get; set; } = NewAccountLimiter.FromEnvironment();
+
+    public string? CheckNewAccountLimit(string connectionId)
+    {
+        lock (_authoritySync)
+        {
+            int seconds = NewAccountLimits.SecondsUntilAllowed(
+                JoinThrottleTable.ResolveSource(connectionId),
+                TimeProvider.GetTimestamp(),
+                TimeProvider.TimestampFrequency);
+            return seconds == 0 ? null : $"{NewAccountRejectionReason} Try again in {seconds} s.";
+        }
+    }
+
+    public void RecordNewAccount(string connectionId)
+    {
+        lock (_authoritySync)
+        {
+            NewAccountLimits.Record(
+                JoinThrottleTable.ResolveSource(connectionId),
+                TimeProvider.GetTimestamp(),
+                TimeProvider.TimestampFrequency);
+        }
+    }
+
     // Joins the join throttle refused (dropped, or answered with JoinThrottledRejectionReason).
     private long _throttledJoinAttempts;
 
@@ -189,11 +221,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     // Whether a join for this session id and display name from this connection's source would be
     // throttled now.
-    internal bool IsJoinThrottled(string connectionId, string sessionId, string? displayName)
+    internal bool IsJoinThrottled(string connectionId, string sessionId, string? displayName, AccountKey? account = null)
     {
         lock (_authoritySync)
         {
-            return FindJoinThrottle(connectionId, sessionId, displayName, TimeProvider.GetTimestamp(), out _);
+            return FindJoinThrottle(connectionId, sessionId, displayName, account, TimeProvider.GetTimestamp(), out _);
         }
     }
 
@@ -278,8 +310,44 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             context.MarkInbound(TimeProvider.GetTimestamp());
 
-            if (message is ClientJoinRequestMessage joinRequest)
+            if (message is ClientJoinRequestMessage rawJoinRequest)
             {
+                // On a host with accounts the token is checked and replaced by its hash before anything
+                // throttles, queues, routes or stores the message, so no later code (PendingJoin,
+                // LastJoinRequest, logs) can see it. A bad or missing token starts no prefetch.
+                ClientJoinRequestMessage joinRequest = rawJoinRequest;
+                if (Runtime is { HasAccounts: true })
+                {
+                    // The server's own seat is not joinable from the network: the local branch of the join
+                    // skips character binding, restore and the access commit.
+                    if (string.Equals(rawJoinRequest.RequestedSessionId, PlayerSessionId.LocalDefault.Value, StringComparison.Ordinal))
+                    {
+                        return RejectJoinBeforeQueue(context, SessionInUseRejectionReason);
+                    }
+
+                    if (!AccountKey.TryFromToken(rawJoinRequest.AccountToken, out AccountKey account))
+                    {
+                        return RejectJoinBeforeQueue(
+                            context,
+                            rawJoinRequest.AccountToken == null
+                                ? JoinRejectionReasons.TokenRequired
+                                : JoinRejectionReasons.TokenInvalid);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(rawJoinRequest.DisplayName))
+                    {
+                        return RejectJoinBeforeQueue(context, JoinRejectionReasons.NameInvalid);
+                    }
+
+                    joinRequest = rawJoinRequest with { AccountToken = null, ResolvedAccount = account };
+                }
+                else if (rawJoinRequest.AccountToken != null || rawJoinRequest.ResolvedAccount != null)
+                {
+                    // No accounts here: the token has no use, and is not kept.
+                    joinRequest = rawJoinRequest with { AccountToken = null, ResolvedAccount = null };
+                }
+
+                message = joinRequest;
                 if (TryThrottleJoin(context, joinRequest, out IServerToClientMessage? throttleReply))
                 {
                     return throttleReply == null ? Array.Empty<IServerToClientMessage>() : [throttleReply];
@@ -302,6 +370,17 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             return context.OutboundMessages.ToArray();
         }
+    }
+
+    // A join refused before it is throttled, queued or prefetched (missing or malformed token, blank
+    // name on a host with accounts). The connection stays open and unclaimed. Under the tick lock.
+    private IReadOnlyList<IServerToClientMessage> RejectJoinBeforeQueue(ServerRoutingContext context, string reason)
+    {
+        context.JoinRejectionSent = true;
+        NetworkDiagnosticsLog.Write(
+            "server.join.rejected",
+            $"connection={context.ConnectionId} reason={(reason == JoinRejectionReasons.NameInvalid ? "name-invalid" : reason == JoinRejectionReasons.TokenRequired ? "token-required" : "token-invalid")}");
+        return [new JoinRejectedMessage(reason)];
     }
 
     // Queues an action for a session from the server side (a scripted bot, an admin tool or a
@@ -386,9 +465,28 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ArgumentNullException.ThrowIfNull(destination);
 
         destination.Clear();
-        while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
+        // Under the tick lock, like the purge in ReleaseConnection, so a purge never reorders what a drain takes.
+        lock (_authoritySync)
         {
-            destination.Add(actionResult);
+            while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
+            {
+                destination.Add(actionResult);
+            }
+        }
+    }
+
+    // Drops the queued results of a departed session, keeping the rest in order. A result carries the
+    // inventory of its own tick and is delivered by session id, so one left queued across a leave and a
+    // rejoin of the same id would reach the new connection after its JoinAccepted. Caller holds _authoritySync.
+    private void PurgePendingActionResults(string sessionId)
+    {
+        int count = _pendingActionResults.Count;
+        for (int i = 0; i < count && _pendingActionResults.TryDequeue(out AuthoritativeActionResult result); i++)
+        {
+            if (!string.Equals(result.SessionId, sessionId, StringComparison.Ordinal))
+            {
+                _pendingActionResults.Enqueue(result);
+            }
         }
     }
 
@@ -461,14 +559,30 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // session id or name, so a rejected join throttles later joins for it from the same source
     // address (JoinThrottleTable).
     public bool TryClaimSession(string connectionId, string sessionId, string? displayName, out string? rejectionReason)
+        => TryClaimSession(connectionId, sessionId, displayName, holder: null, out rejectionReason);
+
+    // holder: the character and account the join was authorised for (JoinRequestHandler), or null on a
+    // host without accounts. With a holder, who may take whose seat is decided by account, never by
+    // silence (see TryClaimSessionForHolderLocked); without one, the name and silence rules above apply.
+    public bool TryClaimSession(
+        string connectionId,
+        string sessionId,
+        string? displayName,
+        JoinHolderIdentity? holder,
+        out string? rejectionReason)
     {
         lock (_authoritySync)
         {
-            return TryClaimSessionLocked(connectionId, sessionId, displayName, out rejectionReason);
+            return TryClaimSessionLocked(connectionId, sessionId, displayName, holder, out rejectionReason);
         }
     }
 
-    private bool TryClaimSessionLocked(string connectionId, string sessionId, string? displayName, out string? rejectionReason)
+    private bool TryClaimSessionLocked(
+        string connectionId,
+        string sessionId,
+        string? displayName,
+        JoinHolderIdentity? holder,
+        out string? rejectionReason)
     {
         if (_connectionClaims.TryGetValue(connectionId, out string? existingSession))
         {
@@ -482,7 +596,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return false;
         }
 
-        if (_sessionClaims.TryGetValue(sessionId, out string? currentOwner)
+        if (holder is { } identity && !TryResolveHolderConflictsLocked(connectionId, sessionId, displayName, identity, out rejectionReason))
+        {
+            return false;
+        }
+
+        if (holder == null
+            && _sessionClaims.TryGetValue(sessionId, out string? currentOwner)
             && !string.Equals(currentOwner, connectionId, StringComparison.Ordinal)
             && !TryTakeOverStaleConnection(currentOwner, connectionId, sessionId, "session-id", TakeoverSilence))
         {
@@ -494,7 +614,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             return false;
         }
 
-        if (displayName != null)
+        if (holder == null && displayName != null)
         {
             TakeOverStaleHoldersOfPlayerName(connectionId, sessionId, displayName);
         }
@@ -524,6 +644,74 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         return false;
     }
 
+    // Seats of a join that has an identity (a host with accounts). Ownership was already decided
+    // (JoinRequestHandler runs AuthorizeJoin before this), so here the account decides who may take what:
+    //  - a session id or character held by the SAME account is taken over at once, live or silent: the
+    //    owner's own new connection replaces its old one (a crash rejoin no longer waits for the window);
+    //  - a session id held by another account is never taken over, stale or not (the 10 s idle release
+    //    frees it) and gets SessionInUseRejectionReason;
+    //  - a character held by another account (it was unowned when the holder joined, then released)
+    //    gets CharacterInUse.
+    // Under the tick lock.
+    private bool TryResolveHolderConflictsLocked(
+        string connectionId,
+        string sessionId,
+        string? displayName,
+        JoinHolderIdentity holder,
+        out string? rejectionReason)
+    {
+        rejectionReason = null;
+        if (_sessionClaims.TryGetValue(sessionId, out string? sessionOwner)
+            && !string.Equals(sessionOwner, connectionId, StringComparison.Ordinal))
+        {
+            // A claim without a context is a leftover (see TryTakeOverStaleConnection).
+            bool sameAccount = !_connections.TryGetValue(sessionOwner, out ServerRoutingContext? ownerContext)
+                || (ownerContext.JoinedIdentity is { } ownerIdentity && ownerIdentity.Account.Equals(holder.Account));
+            if (!sameAccount
+                || !TryTakeOverStaleConnection(sessionOwner, connectionId, sessionId, "same-account", TakeoverSilence, force: true))
+            {
+                MarkSessionConflictWithLiveHolder(connectionId, sessionId);
+                NetworkDiagnosticsLog.Write(
+                    "server.session.in-use",
+                    $"connection={connectionId} session={sessionId} owner={sessionOwner}");
+                rejectionReason = SessionInUseRejectionReason;
+                return false;
+            }
+        }
+
+        List<string>? sameAccountHolders = null;
+        foreach (KeyValuePair<string, string> claim in _connectionClaims)
+        {
+            if (string.Equals(claim.Key, connectionId, StringComparison.Ordinal)
+                || !_connections.TryGetValue(claim.Key, out ServerRoutingContext? other)
+                || other.JoinedIdentity is not { } otherIdentity
+                || !otherIdentity.Character.Equals(holder.Character))
+            {
+                continue;
+            }
+
+            if (!otherIdentity.Account.Equals(holder.Account))
+            {
+                MarkPlayerNameConflictWithLiveHolder(connectionId, displayName ?? holder.Character.Value);
+                rejectionReason = JoinRejectionReasons.CharacterInUse;
+                return false;
+            }
+
+            (sameAccountHolders ??= []).Add(claim.Key);
+        }
+
+        // Released outside the enumeration, which the release edits.
+        if (sameAccountHolders != null)
+        {
+            foreach (string staleConnection in sameAccountHolders)
+            {
+                TryTakeOverStaleConnection(staleConnection, connectionId, sessionId, "same-account-character", TakeoverSilence, force: true);
+            }
+        }
+
+        return true;
+    }
+
     private void MarkSessionConflictWithLiveHolder(string connectionId, string sessionId)
     {
         if (_connections.TryGetValue(connectionId, out ServerRoutingContext? context))
@@ -550,7 +738,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     {
         reply = null;
         long now = TimeProvider.GetTimestamp();
-        if (!FindJoinThrottle(context.ConnectionId, join.RequestedSessionId, join.DisplayName, now, out JoinThrottleTable.Key key))
+        if (!FindJoinThrottle(context.ConnectionId, join.RequestedSessionId, join.DisplayName, join.ResolvedAccount, now, out JoinThrottleTable.Key key))
         {
             return false;
         }
@@ -577,17 +765,17 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     // Whether the join's session id, or its resolved player name, is throttled for the
     // connection's source; key is the throttled one. Under the tick lock.
-    private bool FindJoinThrottle(string connectionId, string sessionId, string? displayName, long now, out JoinThrottleTable.Key key)
+    private bool FindJoinThrottle(string connectionId, string sessionId, string? displayName, AccountKey? account, long now, out JoinThrottleTable.Key key)
     {
         string source = JoinThrottleTable.ResolveSource(connectionId);
         long frequency = TimeProvider.TimestampFrequency;
-        key = JoinThrottleTable.SessionKey(source, sessionId);
+        key = JoinThrottleTable.SessionKey(source, sessionId, account?.HashHex);
         if (_joinThrottle.IsThrottled(key, now, frequency))
         {
             return true;
         }
 
-        key = JoinThrottleTable.PlayerNameKey(source, WorldSessionRuntime.ResolveJoinPlayerName(sessionId, displayName));
+        key = JoinThrottleTable.PlayerNameKey(source, WorldSessionRuntime.ResolveJoinPlayerName(sessionId, displayName), account?.HashHex);
         return _joinThrottle.IsThrottled(key, now, frequency);
     }
 
@@ -604,10 +792,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         if (_connectionClaims.ContainsKey(context.ConnectionId))
         {
             context.JoinRejectionSent = false;
-            _joinThrottle.Reset(JoinThrottleTable.SessionKey(source, join.RequestedSessionId));
+            _joinThrottle.Reset(JoinThrottleTable.SessionKey(source, join.RequestedSessionId, join.ResolvedAccount?.HashHex));
             _joinThrottle.Reset(JoinThrottleTable.PlayerNameKey(
                 source,
-                WorldSessionRuntime.ResolveJoinPlayerName(join.RequestedSessionId, join.DisplayName)));
+                WorldSessionRuntime.ResolveJoinPlayerName(join.RequestedSessionId, join.DisplayName),
+                join.ResolvedAccount?.HashHex));
             return;
         }
 
@@ -628,12 +817,12 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         context.JoinRejectionSent = true;
         if (conflictSession != null)
         {
-            ThrottleContestedJoin(context, join, JoinThrottleTable.SessionKey(source, conflictSession));
+            ThrottleContestedJoin(context, join, JoinThrottleTable.SessionKey(source, conflictSession, join.ResolvedAccount?.HashHex));
         }
 
         if (conflictName != null)
         {
-            ThrottleContestedJoin(context, join, JoinThrottleTable.PlayerNameKey(source, conflictName));
+            ThrottleContestedJoin(context, join, JoinThrottleTable.PlayerNameKey(source, conflictName, join.ResolvedAccount?.HashHex));
         }
     }
 
@@ -649,18 +838,19 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     // Whether a join of another connection, still pending or in the batch being applied, waits on
     // the same player's prefetch. Under the tick lock.
-    private bool IsPlayerPrefetchSharedByAnotherJoin(string playerName, string releasedConnectionId)
+    private bool IsPlayerPrefetchSharedByAnotherJoin(string playerName, AccountKey? account, string releasedConnectionId)
     {
-        return ContainsJoinOfPlayer(_pendingJoins, playerName, releasedConnectionId)
-            || ContainsJoinOfPlayer(_applyingJoins, playerName, releasedConnectionId);
+        return ContainsJoinOfPlayer(_pendingJoins, playerName, account, releasedConnectionId)
+            || ContainsJoinOfPlayer(_applyingJoins, playerName, account, releasedConnectionId);
     }
 
-    private static bool ContainsJoinOfPlayer(List<PendingJoin> joins, string playerName, string excludedConnectionId)
+    private static bool ContainsJoinOfPlayer(List<PendingJoin> joins, string playerName, AccountKey? account, string excludedConnectionId)
     {
         for (int i = 0; i < joins.Count; i++)
         {
             if (!string.Equals(joins[i].ConnectionId, excludedConnectionId, StringComparison.Ordinal)
-                && string.Equals(joins[i].PlayerName, playerName, StringComparison.OrdinalIgnoreCase))
+                && joins[i].Request.ResolvedAccount.Equals(account)
+                && CharacterNames.Comparer.Equals(joins[i].PlayerName, playerName))
             {
                 return true;
             }
@@ -686,10 +876,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     || string.Equals(claim.Value, sessionId, StringComparison.Ordinal)
                     || !_connections.TryGetValue(claim.Key, out ServerRoutingContext? holder)
                     || holder.LastJoinRequest is not { } holderJoin
-                    || !string.Equals(
+                    || !CharacterNames.Comparer.Equals(
                         WorldSessionRuntime.ResolveJoinPlayerName(holderJoin.RequestedSessionId, holderJoin.DisplayName),
-                        playerName,
-                        StringComparison.OrdinalIgnoreCase))
+                        playerName))
                 {
                     continue;
                 }
@@ -738,7 +927,13 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // RestorePersistedPlayerState prefers over the join's older prefetch, and keeps any prefetch
     // a pending join still needs (see ReleaseConnection). False when the holder is still live.
     // Under the tick lock.
-    private bool TryTakeOverStaleConnection(string staleConnectionId, string takingConnectionId, string sessionId, string match, TimeSpan window)
+    private bool TryTakeOverStaleConnection(
+        string staleConnectionId,
+        string takingConnectionId,
+        string sessionId,
+        string match,
+        TimeSpan window,
+        bool force = false)
     {
         if (_disposed)
         {
@@ -746,8 +941,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         // A claim always has a context (both go in ReleaseConnection); one without is a leftover,
-        // and taking it over is safe.
+        // and taking it over is safe. force: the same account's own connection, taken over live or silent.
         if (_connections.TryGetValue(staleConnectionId, out ServerRoutingContext? staleContext)
+            && !force
             && !IsConnectionStale(staleContext, window))
         {
             return false;
@@ -829,10 +1025,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                         // a takeover releases the old connection while the new one's join, whose
                         // load is already Ready, is being routed.
                         string playerName = _pendingJoins[i].PlayerName;
+                        AccountKey? joinAccount = _pendingJoins[i].Request.ResolvedAccount;
                         _pendingJoins.RemoveAt(i);
-                        if (!IsPlayerPrefetchSharedByAnotherJoin(playerName, connectionId))
+                        if (!IsPlayerPrefetchSharedByAnotherJoin(playerName, joinAccount, connectionId))
                         {
-                            Runtime?.DiscardPersistedPlayerPrefetch(playerName);
+                            Runtime?.DiscardPersistedPlayerPrefetch(playerName, joinAccount);
                         }
                     }
                 }
@@ -849,6 +1046,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     // The departed session's queued actions would otherwise wait forever.
                     _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
                     _commandInbox.Remove(new PlayerSessionId(sessionId));
+                    PurgePendingActionResults(sessionId);
                     if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
                     {
                         runtimeAuthority.ReleaseSession(sessionId);
@@ -952,6 +1150,58 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         ServePendingWorldResyncs();
+        ServePendingInventoryPushes(runtime);
+    }
+
+    // Wave I: loot gained or lost this tick, one push per killer. It travels the pending-connection-reply
+    // route (delivered before the tick's snapshot), not the action results, because kills happen inside
+    // the tick golden. A session with no claim (it left) drops its push. Steady-state ticks only read a
+    // count.
+    //
+    // An inventory action's result waits for the next snapshot and carries the inventory of its own
+    // tick, while a push goes out at once. The client keeps whichever it applies last, so a push that
+    // overtook such a result would be overwritten by the older inventory and the looted item would
+    // vanish from the client until its next inventory change. So a session's push waits while an
+    // inventory result of that same session is queued (the order only matters on one connection); every
+    // other session's push goes out on this tick. The held push stays pending in the runtime and is
+    // sent on the first push tick after the snapshot has delivered the result, so a session is held
+    // until the first post-snapshot tick with no new result of that session (the result queue is
+    // emptied by each snapshot, but a session's own result on the first tick after one re-holds it);
+    // the snapshot is built when the push is sent, so it stays the newest. (An earlier version held
+    // every session's push while any session had a result queued, which let one player delay
+    // everybody's loot.)
+    private void ServePendingInventoryPushes(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingInventoryPushes)
+        {
+            return;
+        }
+
+        CollectSessionsWithUndeliveredInventoryResult(_heldPushSessions);
+        runtime.DrainInventoryPushesInto(_inventoryPushScratch, _heldPushSessions);
+        _heldPushSessions.Clear();
+        for (int i = 0; i < _inventoryPushScratch.Count; i++)
+        {
+            SessionInventoryPush push = _inventoryPushScratch[i];
+            if (_sessionClaims.TryGetValue(push.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, push.Message));
+            }
+        }
+
+        _inventoryPushScratch.Clear();
+    }
+
+    // Runs only on a tick with a push pending, so its enumerator does not touch steady-state ticks.
+    private void CollectSessionsWithUndeliveredInventoryResult(HashSet<string> destination)
+    {
+        foreach (AuthoritativeActionResult result in _pendingActionResults)
+        {
+            if (result.Payload is InventoryChangedResult)
+            {
+                destination.Add(result.SessionId);
+            }
+        }
     }
 
     // WorldResyncRequestHandler only marks a connection; the full-world export runs here, on the
@@ -998,7 +1248,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         string playerName = WorldSessionRuntime.ResolveJoinPlayerName(request.RequestedSessionId, request.DisplayName);
-        Runtime?.BeginPersistedPlayerPrefetch(playerName);
+        Runtime?.BeginPersistedPlayerPrefetch(playerName, request.ResolvedAccount);
         _pendingJoins.Add(new PendingJoin(connectionId, request, playerName, DeferredTicks: 0, PrefetchRetried: false));
     }
 
@@ -1033,18 +1283,18 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             PendingJoin join = joins[i];
             if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
             {
-                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName);
+                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
                 continue;
             }
 
-            PersistedPlayerLoadState loadState = runtime?.GetPersistedPlayerLoadState(join.PlayerName)
+            PersistedPlayerLoadState loadState = runtime?.GetPersistedPlayerLoadState(join.PlayerName, join.Request.ResolvedAccount)
                 ?? PersistedPlayerLoadState.Ready;
             switch (loadState)
             {
                 case PersistedPlayerLoadState.Ready:
                     break;
                 case PersistedPlayerLoadState.Failed when !join.PrefetchRetried:
-                    runtime!.BeginPersistedPlayerPrefetch(join.PlayerName);
+                    runtime!.BeginPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
                     _pendingJoins.Add(join with { DeferredTicks = join.DeferredTicks + 1, PrefetchRetried = true });
                     continue;
                 case PersistedPlayerLoadState.Failed:
@@ -1059,7 +1309,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
                     if (loadState == PersistedPlayerLoadState.Missing)
                     {
-                        runtime!.BeginPersistedPlayerPrefetch(join.PlayerName);
+                        runtime!.BeginPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
                     }
 
                     _pendingJoins.Add(join with { DeferredTicks = join.DeferredTicks + 1 });
@@ -1078,7 +1328,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             context.ClearOutboundMessages();
             // An accepted join consumed its load; a rejected one (or one that restored nothing)
             // drops it, so a later join of this player reads fresh rows.
-            runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName);
+            runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
         }
 
         joins.Clear();
@@ -1086,7 +1336,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     private void RejectJoinForRetry(PendingJoin join, string reason)
     {
-        Runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName);
+        Runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
         _pendingConnectionReplies.Enqueue(new PendingConnectionReply(
             join.ConnectionId,
             new JoinRejectedMessage(JoinRetryRejectionReason)));

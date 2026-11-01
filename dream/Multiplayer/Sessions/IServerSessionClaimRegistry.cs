@@ -12,5 +12,26 @@ public interface IServerSessionClaimRegistry
     // session id (see DedicatedServerHost.TryClaimSession).
     bool TryClaimSession(string connectionId, string sessionId, string? displayName, out string? rejectionReason);
 
+    // holder is the character and account the join was authorised for, or null when the join was not
+    // checked (no accounts). The default ignores it and forwards to the overload above.
+    bool TryClaimSession(
+        string connectionId,
+        string sessionId,
+        string? displayName,
+        Dream.Simulation.Characters.JoinHolderIdentity? holder,
+        out string? rejectionReason)
+    {
+        return TryClaimSession(connectionId, sessionId, displayName, out rejectionReason);
+    }
+
+    // Per-source limit on creating new accounts (a join whose token owns no character yet). Null when the
+    // join may create one, else the rejection text. The default allows everything.
+    string? CheckNewAccountLimit(string connectionId) => null;
+
+    // Counts a new account that the connection's source just created.
+    void RecordNewAccount(string connectionId)
+    {
+    }
+
     void ReleaseConnection(string connectionId);
 }

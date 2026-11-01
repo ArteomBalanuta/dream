@@ -35,10 +35,16 @@ public static class ActorWorldLabelBuilder
         for (int index = 0; index < remotePlayers.Count; index++)
         {
             RemotePlayerPresentationState remotePlayer = remotePlayers[index];
+            if (!remotePlayer.IsAlive)
+            {
+                // A dead remote player is hidden, model and label, until it respawns.
+                continue;
+            }
+
             destination.Add(new WorldActorLabelState(
                 remotePlayer.Pose.Position + PlayerLabelOffset,
                 remotePlayer.DisplayName,
-                GetHealthLabel(healthLabels, remotePlayer.CurrentHealth, remotePlayer.MaxHealth)));
+                GetHealthLabel(healthLabels, remotePlayer.Level, remotePlayer.CurrentHealth, remotePlayer.MaxHealth)));
         }
     }
 
@@ -64,20 +70,25 @@ public static class ActorWorldLabelBuilder
             destination.Add(new WorldActorLabelState(
                 position + new Vector3(0f, enemy.CollisionHeight + 0.25f, 0f),
                 enemy.DisplayName,
-                GetHealthLabel(healthLabels, enemy.Combatant.Health.CurrentHealth, enemy.Combatant.Health.MaxHealth)));
+                GetHealthLabel(
+                    healthLabels,
+                    enemy.Level,
+                    enemy.Combatant.Health.CurrentHealth,
+                    enemy.Combatant.Health.MaxHealth)));
         }
     }
 
-    public static string FormatHealthLabel(int currentHealth, int maxHealth)
+    // "Lv 3  80/100". The level is clamped for display; wire values are hostile.
+    public static string FormatHealthLabel(int level, int currentHealth, int maxHealth)
     {
-        return $"{currentHealth}/{maxHealth}";
+        return $"Lv {Math.Clamp(level, 1, ClientScenePresenter.MaxDisplayLevel)}  {currentHealth}/{maxHealth}";
     }
 
-    private static string GetHealthLabel(ActorHealthLabelCache? healthLabels, int currentHealth, int maxHealth)
+    private static string GetHealthLabel(ActorHealthLabelCache? healthLabels, int level, int currentHealth, int maxHealth)
     {
         return healthLabels is null
-            ? FormatHealthLabel(currentHealth, maxHealth)
-            : healthLabels.Get(currentHealth, maxHealth);
+            ? FormatHealthLabel(level, currentHealth, maxHealth)
+            : healthLabels.Get(level, currentHealth, maxHealth);
     }
 }
 
@@ -87,13 +98,14 @@ public sealed class ActorHealthLabelCache
 {
     public const int MaxEntries = 4096;
 
-    private readonly Dictionary<(int Current, int Max), string> _labels = new();
+    private readonly Dictionary<(int Level, int Current, int Max), string> _labels = new();
     private CultureInfo? _culture;
 
     public int Count => _labels.Count;
 
-    public string Get(int currentHealth, int maxHealth)
+    public string Get(int level, int currentHealth, int maxHealth)
     {
+        level = Math.Clamp(level, 1, ClientScenePresenter.MaxDisplayLevel);
         CultureInfo culture = CultureInfo.CurrentCulture;
         if (!ReferenceEquals(_culture, culture))
         {
@@ -101,7 +113,7 @@ public sealed class ActorHealthLabelCache
             _culture = culture;
         }
 
-        if (_labels.TryGetValue((currentHealth, maxHealth), out string? label))
+        if (_labels.TryGetValue((level, currentHealth, maxHealth), out string? label))
         {
             return label;
         }
@@ -111,8 +123,8 @@ public sealed class ActorHealthLabelCache
             _labels.Clear();
         }
 
-        label = ActorWorldLabelBuilder.FormatHealthLabel(currentHealth, maxHealth);
-        _labels.Add((currentHealth, maxHealth), label);
+        label = ActorWorldLabelBuilder.FormatHealthLabel(level, currentHealth, maxHealth);
+        _labels.Add((level, currentHealth, maxHealth), label);
         return label;
     }
 }

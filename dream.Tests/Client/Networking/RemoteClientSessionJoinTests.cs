@@ -57,6 +57,49 @@ public class RemoteClientSessionJoinTests
     }
 
     [Fact]
+    public async Task JoinAndItsRetry_BothCarryTheAccountToken_AndNoTokenReachesToStringOrTheTxLine()
+    {
+        ManualTimerTimeProvider clock = new();
+        ScriptedServerConnection server = new(attempt => attempt < 2
+            ? new JoinRejectedMessage(DedicatedServerHost.JoinRetryRejectionReason)
+            : Accepted());
+        await using RemoteClientSession session = CreateSession(server, clock, TestToken);
+        session.StartBackgroundReceive();
+        await session.SendJoinRequestAsync();
+        await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(1)), "the first backoff");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await WaitUntilAsync(() => session.IsJoined, "the join");
+
+        Assert.Equal(new string?[] { TestToken, TestToken }, server.JoinTokens.ToArray());
+        Assert.DoesNotContain(TestToken, session.Options.ToString());
+        Assert.DoesNotContain(TestToken, new ClientJoinRequestMessage(SessionId, "player-a", TestToken).ToString());
+        Assert.DoesNotContain(TestToken, session.Options.EndpointLabel);
+    }
+
+    [Fact]
+    public void ClientTxJoinLogLine_HoldsNoToken()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepoRoot(), "dream", "Client", "Networking", "RemoteClientSession.cs"));
+        string describe = source.Substring(source.IndexOf("ClientJoinRequestMessage join =>", StringComparison.Ordinal), 100);
+        Assert.Contains("name={join.DisplayName}", describe);
+        Assert.DoesNotContain("AccountToken", describe);
+        // The token is only ever read to build the join request, never formatted into a log line.
+        Assert.DoesNotContain("{Options.AccountToken", source);
+        Assert.DoesNotContain("{join.AccountToken", source);
+    }
+
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "dream", "dream.csproj")))
+        {
+            dir = dir.Parent;
+        }
+
+        return dir?.FullName ?? throw new InvalidOperationException("repo root not found");
+    }
+
+    [Fact]
     public async Task NonRetryRejection_EndsTheSessionWithTheReason_WithoutResending()
     {
         ManualTimerTimeProvider clock = new();
@@ -247,13 +290,15 @@ public class RemoteClientSessionJoinTests
 
     private static JoinAcceptedMessage Accepted() => new(SessionId, 1, 0, null);
 
-    private static RemoteClientSession CreateSession(ScriptedServerConnection server, TimeProvider clock)
+    private const string TestToken = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_AbCdE";
+
+    private static RemoteClientSession CreateSession(ScriptedServerConnection server, TimeProvider clock, string? accountToken = null)
     {
         return new RemoteClientSession(
             server,
             new TransportJsonCodec(),
             new LengthPrefixedMessageFramer(),
-            new RemoteClientOptions("127.0.0.1", 5057, SessionId, "player-a", "player-a"),
+            new RemoteClientOptions("127.0.0.1", 5057, SessionId, "player-a", "player-a", accountToken),
             clock);
     }
 
@@ -293,6 +338,8 @@ public class RemoteClientSessionJoinTests
         public string ConnectionId => "join-test";
 
         public int JoinRequestCount => Volatile.Read(ref _joinRequests);
+
+        public System.Collections.Concurrent.ConcurrentQueue<string?> JoinTokens { get; } = new();
 
         public int StalledSendCount => Volatile.Read(ref _stalledSends);
 
@@ -346,8 +393,9 @@ public class RemoteClientSessionJoinTests
                 }
             }
 
-            if (decoded is ClientJoinRequestMessage)
+            if (decoded is ClientJoinRequestMessage joinMessage)
             {
+                JoinTokens.Enqueue(joinMessage.AccountToken);
                 int attempt = Interlocked.Increment(ref _joinRequests);
                 if (joinReply(attempt) is IServerToClientMessage reply)
                 {

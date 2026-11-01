@@ -218,6 +218,10 @@ public sealed class PersistenceOffTickTests
 
         public void DeleteInventorySlots(string playerName) => Write(() => Inner.DeleteInventorySlots(playerName));
 
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) => Write(() => Inner.DeleteInventorySlot(playerName, slotIndex, expectedItemInstanceId));
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId) => Write(() => Inner.DestroyInventoryItem(playerName, itemInstanceId));
+
         public void SaveStarterKitGrant(string playerName, int kitVersion) => Write(() => Inner.SaveStarterKitGrant(playerName, kitVersion));
 
         private T Read<T>(Func<T> read)

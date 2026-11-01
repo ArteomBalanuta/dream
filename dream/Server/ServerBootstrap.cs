@@ -3,10 +3,15 @@ using System.Net;
 using Dream.Assets;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
+using Dream.Server.Hosting;
 using Dream.Server.Persistence;
 using Dream.Server.Persistence.Migrations;
+using Dream.Server.Persistence.Repositories;
+using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -139,6 +144,7 @@ public static class ServerBootstrap
             Descriptor = persistence.Descriptor,
             StoredTerrain = persistence.StoredTerrain,
             TerrainPayload = persistence.TerrainPayload,
+            Accounts = persistence.Accounts,
         };
     }
 
@@ -163,6 +169,16 @@ public static class ServerBootstrap
     // (over 64 characters), or a stored world this build cannot host (size, height, generator).
     public const int WorldCannotBeOpenedExitCode = 5;
 
+    // The dedicated server's exit code when the database fails its start-up integrity check: a
+    // foreign-key violation, or a damaged file. Only these stop a start; soft findings are logged.
+    public const int DatabaseIntegrityExitCode = 6;
+
+    // The dedicated server's exit code when another process already hosts the selected world.
+    public const int WorldHeldExitCode = 7;
+
+    // The dedicated server's exit code when a content file (config/content) is missing or invalid.
+    public const int ContentInvalidExitCode = 8;
+
     // The host, or null after logging why the server cannot start: a database at a schema version
     // newer than this build (SchemaTooNewException) is a clear operator error, not a crash.
     internal static DedicatedServerHost? TryCreateServerModeHost(
@@ -175,6 +191,12 @@ public static class ServerBootstrap
         {
             exitCode = 0;
             return createHost();
+        }
+        catch (ContentValidationException ex)
+        {
+            log($"Server not started: the game content is invalid: {ex.Message}");
+            exitCode = ContentInvalidExitCode;
+            return null;
         }
         catch (SchemaTooNewException ex)
         {
@@ -191,6 +213,45 @@ public static class ServerBootstrap
                 $"Server not started: world '{ex.Selector}' does not exist. " +
                 "Select an existing world id or name (--world, or DREAM_WORLD).");
             exitCode = WorldNotFoundExitCode;
+            return null;
+        }
+        catch (WorldHeldException ex)
+        {
+            log(
+                $"Server not started: world {ex.WorldId} is already hosted by another process " +
+                $"(lock file {ex.LockPath}). Stop that server. Selecting another world (--world, or DREAM_WORLD) only helps when no database migration is pending: a pending migration needs every world idle.");
+            exitCode = WorldHeldExitCode;
+            return null;
+        }
+        catch (LockFileUnavailableException ex)
+        {
+            log(
+                $"Server not started: cannot create the lock file {ex.LockPath}: {ex.InnerException?.Message ?? ex.Message}. " +
+                "Check that the database directory exists and is writable.");
+            exitCode = WorldCannotBeOpenedExitCode;
+            return null;
+        }
+        catch (DatabaseBusyException ex)
+        {
+            log(
+                $"Server not started: the database is being restored or migrated by another process " +
+                $"(lock file {ex.LockPath}). Try again when it has finished.");
+            exitCode = WorldHeldExitCode;
+            return null;
+        }
+        catch (DatabaseIntegrityException ex)
+        {
+            log($"Server not started: {ex.Message}. Restore a backup (--db restore <path> --yes) or repair the database.");
+            exitCode = DatabaseIntegrityExitCode;
+            return null;
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is 11 or 26)
+        {
+            // SQLITE_CORRUPT or SQLITE_NOTADB from anywhere in the start (the migrator, say), before
+            // the integrity check had a chance to run.
+            log($"Server not started: the database file is damaged (SQLite error {ex.SqliteErrorCode}: {ex.Message}). " +
+                "Restore a backup (--db restore <path> --yes).");
+            exitCode = DatabaseIntegrityExitCode;
             return null;
         }
         catch (ArgumentException ex)
@@ -302,7 +363,8 @@ public static class ServerBootstrap
     // the world (name and id) and never the seed. catalog is a test seam; it defaults to the
     // database's SqliteWorldCatalog. worldEnvironmentValue is the DREAM_WORLD value the caller read
     // (the entry points above read it); it defaults to none, so a direct call never depends on the
-    // process environment.
+    // process environment. integrityOptions overrides the load-time check's options for this start;
+    // it defaults to the shipped content's known kinds.
     public static ServerPersistenceBundle CreatePersistenceBundle(
         string databasePath,
         string schemaScriptPath,
@@ -310,22 +372,172 @@ public static class ServerBootstrap
         Action<string>? log = null,
         ServerStartOptions? start = null,
         IWorldCatalog? catalog = null,
-        string? worldEnvironmentValue = null)
+        string? worldEnvironmentValue = null,
+        WorldIntegrityOptions? integrityOptions = null)
     {
+        // Every dedicated and integrated start comes through here, so a bad content file stops the
+        // start before the database is touched, and JSON is never first parsed on a tick.
+        ContentCatalog content = ReadStartupContent(static () => ContentCatalog.Shipped, log);
+
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
-        schema.EnsureSchema(log);
 
         WorldSelector selector = ResolveWorldSelector(
             start?.WorldSelector,
             worldEnvironmentValue);
         int newWorldSize = start?.NewWorldSize ?? WorldDefaults.StartupFloorSize;
+        IWorldCatalog worlds = catalog ?? new SqliteWorldCatalog(schema);
 
-        WorldRecord record = (catalog ?? new SqliteWorldCatalog(schema)).Resolve(selector, newWorldSize, out bool created);
+        // The database's maintenance lock covers the migration, the world resolve and the lease
+        // acquisition, so a --db restore cannot swap the file between them and two starts never
+        // migrate at once. A migration that is pending also needs every world's lease (a server
+        // holding a world is never migrated under). A database that is not a file takes neither.
+        WorldRecord record;
+        bool created;
+        WorldHostLease? lease;
+        using (DatabaseMaintenanceLock.EnsureSchemaGuarded(schema, databasePath, log, start?.MaintenanceWait))
+        {
+            record = worlds.Resolve(selector, newWorldSize, out created);
 
+            WorldDescriptor resolved = record.Descriptor;
+            resolved.Validate();
+
+            // One server per world on a database file. A database that is not a file takes no lease.
+            // The lease belongs to the bundle from here on; a failure before the bundle exists
+            // releases it.
+            lease = WorldHostLease.AppliesTo(databasePath)
+                ? WorldHostLease.Acquire(databasePath, resolved.Id)
+                : null;
+            if (lease != null)
+            {
+                // The record read before the lease can be stale (another process held the world, then
+                // saved its world time and seed): read what the previous holder left.
+                try
+                {
+                    // A null here is a world deleted between the resolve and the lease.
+                    record = worlds.TryGet(resolved.Id) ?? throw new WorldNotFoundException(resolved.Id.ToString());
+                }
+                catch
+                {
+                    lease.Dispose();
+                    throw;
+                }
+            }
+        }
+
+        try
+        {
+            record.Descriptor.Validate();
+            return OpenWorldBundle(
+                schema, record, created, simulationSeedOverride, log, lease, integrityOptions ?? IntegrityOptionsFor(content), content);
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
+
+    // Reads the content a start runs with and logs its digest, which tells apart servers whose
+    // content differs. A ContentValidationException from read stops the start (ContentInvalidExitCode).
+    internal static ContentCatalog ReadStartupContent(Func<ContentCatalog> read, Action<string>? log)
+    {
+        ContentCatalog content = read();
+        log?.Invoke(
+            $"server.content.digest digest={content.ContentDigest} " +
+            $"items={content.Items.Count} enemies={content.Enemies.Count}");
+        return content;
+    }
+
+    // Evaluates the formulas content depends on, so a bad formula (a division by zero, a non-finite
+    // result) stops the start with ContentInvalidExitCode instead of throwing on a spawn or hit tick:
+    // the enemy.* formulas for every template, and player.damage_taken_factor for every Armor 1..1000
+    // (the effective range).
+    internal static void ProbeFormulas(CombatFormulaService formulas, ContentCatalog content)
+    {
+        ArgumentNullException.ThrowIfNull(formulas);
+        ArgumentNullException.ThrowIfNull(content);
+        foreach (EnemyTemplate template in content.Enemies)
+        {
+            try
+            {
+                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, intervalOverride: 1f);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.EnemyAttackDamage}' or '{CombatFormulaKeys.EnemyMaxHealth}' failed for enemy '{template.Key}': {ex.Message}", ex);
+            }
+
+            try
+            {
+                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, intervalOverride: null);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.EnemyAttackIntervalSeconds}' failed for enemy '{template.Key}': {ex.Message}", ex);
+            }
+        }
+
+        for (int armor = 1; armor <= 1000; armor++)
+        {
+            try
+            {
+                formulas.EvaluateDamageTakenFactor(armor);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new ContentValidationException(
+                    $"formula '{CombatFormulaKeys.PlayerDamageTakenFactor}' failed at armor {armor}: {ex.Message}", ex);
+            }
+        }
+    }
+
+    // The integrity check's options for a build that knows content's kinds.
+    public static WorldIntegrityOptions IntegrityOptionsFor(ContentCatalog content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return new WorldIntegrityOptions
+        {
+            IsKnownItemKind = kind => content.TryGetItem(kind, out _),
+            IsKnownEnemyKind = kind => content.TryGetEnemy(kind, out _),
+            // An unknown kind is counted as such already, so it is not also a slot mismatch.
+            CanOccupy = (kind, slotIndex) =>
+                !content.TryGetItem(kind, out ItemDefinition? item)
+                || (EquipmentSlots.TryFromSlotIndex(slotIndex, out EquipmentSlot slot)
+                    && (item.EquipSlotMask & EquipmentSlots.MaskOf(slot)) != 0)
+        };
+    }
+
+    private static ServerPersistenceBundle OpenWorldBundle(
+        SqliteSchemaBootstrapper schema,
+        WorldRecord record,
+        bool created,
+        string? simulationSeedOverride,
+        Action<string>? log,
+        WorldHostLease? lease,
+        WorldIntegrityOptions integrityOptions,
+        ContentCatalog content)
+    {
         WorldDescriptor descriptor = record.Descriptor;
-        descriptor.Validate();
-
         WorldId worldId = descriptor.Id;
+
+        WorldIntegrityReport integrity;
+        using (SqliteConnection connection = schema.CreateOpenConnection())
+        {
+            integrity = WorldIntegrityCheck.Run(connection, descriptor, integrityOptions);
+        }
+
+        foreach (string line in integrity.ToLogLines(descriptor))
+        {
+            log?.Invoke(line);
+        }
+
+        if (integrity.IsFatal)
+        {
+            throw new DatabaseIntegrityException(integrity.FatalMessage);
+        }
+
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null;
         TerrainTransferPayload? terrainPayload = null;
         if (descriptor.MapSource == WorldMapSource.Stored)
@@ -372,18 +584,22 @@ public static class ServerBootstrap
 
         ulong simulationSeed = ResolveSimulationSeed(storedSeed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
+        CombatFormulaService formulaService = CombatFormulaService.Create(formulas);
+        ProbeFormulas(formulaService, content);
         return new ServerPersistenceBundle(
             schema,
             new SqlitePlayerProfileRepository(schema),
             new SqliteWorldPersistenceRepository(schema, worldId),
             formulas,
-            CombatFormulaService.Create(formulas),
+            formulaService,
             simulationSeed,
             record.WorldTimeTicks,
             worldId,
             descriptor,
             storedTerrain: storedTerrain,
-            terrainPayload: terrainPayload);
+            terrainPayload: terrainPayload,
+            hostLease: lease,
+            accounts: new SqliteAccountRepository(schema));
     }
 
     // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the

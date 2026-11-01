@@ -20,7 +20,8 @@ public sealed class ClientProtocolSession
                 new JoinAcceptedMessageHandler(),
                 new JoinRejectedMessageHandler(),
                 new ServerSnapshotMessageHandler(),
-                new ServerActionMessageHandler()
+                new ServerActionMessageHandler(),
+                new InventoryPushMessageHandler()
             ]));
     }
 

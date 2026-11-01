@@ -10,6 +10,10 @@ public static class CombatFormulaKeys
     public const string PlayerAttackIntervalSeconds = "player.attack_interval_seconds";
     public const string PlayerExperienceToNextLevel = "player.experience_to_next_level";
     public const string EnemyExperienceReward = "enemy.experience_reward";
+    public const string EnemyAttackDamage = "enemy.attack_damage";
+    public const string EnemyMaxHealth = "enemy.max_health";
+    public const string EnemyAttackIntervalSeconds = "enemy.attack_interval_seconds";
+    public const string PlayerDamageTakenFactor = "player.damage_taken_factor";
 
     public static readonly string[] RequiredPlayerKeys =
     [
@@ -20,6 +24,10 @@ public static class CombatFormulaKeys
         PlayerCriticalChance,
         PlayerAttackIntervalSeconds,
         PlayerExperienceToNextLevel,
-        EnemyExperienceReward
+        EnemyExperienceReward,
+        EnemyAttackDamage,
+        EnemyMaxHealth,
+        EnemyAttackIntervalSeconds,
+        PlayerDamageTakenFactor
     ];
 }

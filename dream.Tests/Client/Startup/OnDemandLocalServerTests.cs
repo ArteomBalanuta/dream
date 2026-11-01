@@ -84,6 +84,30 @@ public class OnDemandLocalServerTests
         Assert.Contains("not started", coordinator.LocalServerStatus);
     }
 
+    [Fact]
+    public async Task ResetFailure_DuringAPendingStart_DoesNothing_AndTheStartStillRunsOnce()
+    {
+        CountingStart start = new();
+        TaskCompletionSource previousStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        OnDemandLocalServerHandle handle = new(start.Start, () => previousStop.Task);
+
+        handle.EnsureStarted();
+        Assert.True(handle.IsWaitingForPreviousServer);
+
+        handle.ResetFailure();
+        handle.EnsureStarted();
+
+        Assert.True(handle.IsStarted);
+        Assert.True(handle.IsWaitingForPreviousServer);
+        Assert.Equal(0, start.Count);
+
+        previousStop.SetResult();
+        await handle.WaitForStartAsync();
+
+        Assert.Equal(1, start.Count);
+        Assert.True(handle.IsReady);
+    }
+
     private sealed class CountingStart
     {
         public int Count { get; private set; }

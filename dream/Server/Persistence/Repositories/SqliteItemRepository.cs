@@ -1,4 +1,5 @@
 using Dream.Server.Persistence.Store;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
@@ -29,7 +30,8 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
             state,
             stack_count,
             created_utc,
-            updated_utc
+            updated_utc,
+            rolled_modifiers
         FROM item_instances
         WHERE world_id = $worldId
         ORDER BY item_instance_id;
@@ -49,7 +51,8 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
             state,
             stack_count,
             created_utc,
-            updated_utc
+            updated_utc,
+            rolled_modifiers
         )
         VALUES (
             $worldId,
@@ -64,8 +67,10 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
             $state,
             $stackCount,
             $createdUtc,
-            $updatedUtc
+            $updatedUtc,
+            $rolledModifiers
         )
+        -- rolled_modifiers is deliberately not named here: a roll never changes after the item is created.
         ON CONFLICT(world_id, item_instance_id) DO UPDATE SET
             item_kind = excluded.item_kind,
             display_name = excluded.display_name,
@@ -98,6 +103,7 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
             command.BindInt64("$stackCount", i.StackCount);
             command.BindUtc("$createdUtc", i.CreatedUtc == default ? DateTime.UtcNow : i.CreatedUtc);
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
+            command.BindNullableText("$rolledModifiers", i.Roll is null ? null : ItemRollCodec.Serialize(i.Roll));
         });
 
     public void DeleteItemInstance(long itemInstanceId) =>
@@ -119,6 +125,7 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
             reader.GetString(o + 8),
             reader.GetInt32(o + 9),
             reader.GetUtc(o + 10),
-            reader.GetUtc(o + 11));
+            reader.GetUtc(o + 11),
+            ItemRollCodec.Parse(reader.GetNullableString(o + 12)));
     }
 }

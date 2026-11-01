@@ -20,7 +20,8 @@ public readonly record struct HudInteractionRequest(
     int? Vitality,
     FloatingCombatTextTuning? FloatingCombatText,
     int? EquipInventorySlotIndex,
-    BuildMaterialChoice? BuildMaterial = null)
+    BuildMaterialChoice? BuildMaterial = null,
+    InventoryHudAction? InventoryAction = null)
 {
     public static HudInteractionRequest None => new(
         null,
@@ -38,6 +39,26 @@ public readonly record struct HudInteractionRequest(
         null,
         null);
 }
+
+public enum InventoryHudActionKind : byte
+{
+    // Equip the backpack item in SlotIndex into the equipment slot index Target (100..103).
+    EquipTo,
+    // Empty the equipment slot SlotIndex (100..103). The server refuses any other index.
+    Unequip,
+    // Move or swap the backpack slot SlotIndex with the backpack slot Target.
+    Move,
+    // Destroy the item ItemInstanceId in the slot SlotIndex. The HUD asks for a confirm first.
+    Destroy
+}
+
+// One inventory action picked in the character panel. Only slot numbers and the id of an item the
+// panel is showing; the server checks every one of them.
+public readonly record struct InventoryHudAction(
+    InventoryHudActionKind Kind,
+    int SlotIndex,
+    int Target = 0,
+    long ItemInstanceId = 0);
 
 // A building menu pick. MaterialId null is Auto, so the request wraps it to tell "Auto picked"
 // from "nothing picked".

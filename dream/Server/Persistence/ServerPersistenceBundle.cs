@@ -17,8 +17,12 @@ public sealed class ServerPersistenceBundle : IDisposable
         WorldDescriptor? descriptor = null,
         ITerrainChunkRepository? terrainChunks = null,
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
-        Dream.Multiplayer.Protocol.TerrainTransferPayload? terrainPayload = null)
+        Dream.Multiplayer.Protocol.TerrainTransferPayload? terrainPayload = null,
+        IDisposable? hostLease = null,
+        IAccountRepository? accounts = null)
     {
+        Accounts = accounts;
+        HostLease = hostLease;
         TerrainPayload = terrainPayload;
         StoredTerrain = storedTerrain;
         ArgumentOutOfRangeException.ThrowIfNegative(worldTimeTicks);
@@ -36,7 +40,14 @@ public sealed class ServerPersistenceBundle : IDisposable
 
     public SqliteSchemaBootstrapper Schema { get; }
 
+    // The world's host lease (WorldHostLease); null for a database that is not a file. Released
+    // last, after the repositories, when the bundle is disposed.
+    public IDisposable? HostLease { get; }
+
     public IPlayerProfileRepository PlayerProfiles { get; }
+
+    // Accounts and character ownership; null when the bundle was built without them.
+    public IAccountRepository? Accounts { get; }
 
     public IWorldPersistenceRepository World { get; }
 
@@ -91,5 +102,7 @@ public sealed class ServerPersistenceBundle : IDisposable
         {
             formulasDisposable.Dispose();
         }
+
+        HostLease?.Dispose();
     }
 }

@@ -46,7 +46,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(StarterCount + 1, world.SlotSaves);
         Assert.Equal(1, inventory.LoadedInventoryCount);
         Assert.Equal(StarterCount, inventory.LoadedItemInstanceCount);
-        Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[0]).StatModifier, inventory.ResolveEquippedToolModifier("Alice"));
+        Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[0]).Modifiers, MainHandModifiers(inventory, "Alice"));
 
         // A second Ensure neither re-seeds nor writes.
         Assert.True(inventory.Ensure("alice"));
@@ -133,8 +133,11 @@ public sealed class PlayerInventoryServiceTests
                 new PersistedInventorySlot("Bob", 5, 12, DateTime.UtcNow)
             ],
             [Item(11, "Bob"), Item(12, "Bob")]));
-        Assert.True(inventory.IsLoaded("bob"));
-        Assert.True(inventory.LoadedSlotsByPlayer.ContainsKey("BOB"));
+        // Wave G (G-D7): keys compare ordinally, so another casing is another character.
+        Assert.True(inventory.IsLoaded("Bob"));
+        Assert.False(inventory.IsLoaded("bob"));
+        Assert.True(inventory.LoadedSlotsByPlayer.ContainsKey("Bob"));
+        Assert.False(inventory.LoadedSlotsByPlayer.ContainsKey("BOB"));
 
         inventory.ApplyLoaded("Bob", new PersistedPlayerInventory(
             [new PersistedInventorySlot("Bob", 0, 99, DateTime.UtcNow)],
@@ -193,8 +196,8 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(2, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
         Assert.True(snapshot.Slots[1].IsEquipped);
         Assert.False(snapshot.Slots[0].IsEquipped);
-        Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[1]).StatModifier, inventory.ResolveEquippedToolModifier("Carol"));
-        Assert.Equal(default, inventory.ResolveEquippedToolModifier("Nobody"));
+        Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[1]).Modifiers, MainHandModifiers(inventory, "Carol"));
+        Assert.Empty(MainHandModifiers(inventory, "Nobody"));
     }
 
     [Fact]
@@ -224,7 +227,7 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
         Assert.True(inventory.Ensure("Eve"));
 
-        inventory.Evict("eve");
+        inventory.Evict("Eve");
 
         Assert.Equal(0, inventory.LoadedInventoryCount);
         Assert.Equal(0, inventory.LoadedItemInstanceCount);
@@ -328,6 +331,14 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(2, inventory.BuildSnapshot("Heidi").EquippedSlot!.Value.Item!.Value.ItemInstanceId);
     }
 
+    // The main hand's modifiers as CopyEquipment hands them out.
+    private static Dream.Simulation.Stats.StatModifier[] MainHandModifiers(PlayerInventoryService inventory, string player)
+    {
+        EquipmentLoadout loadout = new();
+        inventory.CopyEquipment(player, loadout);
+        return loadout.Get(EquipmentSlot.MainHand).ToArray();
+    }
+
     [Fact]
     public void Catalog_HasTheTorch_AndTheLanternCastsLight()
     {
@@ -335,7 +346,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal("tool.torch", torch.ItemKind);
         Assert.Equal("Torch", torch.DisplayName);
         Assert.Equal("held.tool.torch", torch.VisualId);
-        Assert.Equal(default, torch.StatModifier);
+        Assert.Empty(torch.Modifiers);
         Assert.Equal(HeldLightKind.Torch, torch.HeldLight);
         // Case-insensitive like every other kind (item_kind is stored as text).
         Assert.Equal(HeldLightKind.Torch, ToolCatalog.Resolve("TOOL.TORCH").HeldLight);
@@ -371,7 +382,7 @@ public sealed class PlayerInventoryServiceTests
         int lanternSlot = IndexOfStarter("tool.survey-lantern");
 
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", torchSlot));
-        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("judy"));
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Judy"));
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", lanternSlot));
         Assert.Equal(HeldLightKind.Lantern, inventory.ResolveEquippedHeldLight("Judy"));
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", 0));
@@ -937,6 +948,10 @@ public sealed class PlayerInventoryServiceTests
         public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => Rows.Values.ToArray();
 
         public void DeleteInventorySlots(string playerName) { }
+
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) { }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId) { }
 
         public void SaveStarterKitGrant(string playerName, int kitVersion)
         {

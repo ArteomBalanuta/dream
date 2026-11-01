@@ -181,7 +181,7 @@ public sealed class StoredTerrainFixLoopServerTests
 
     private static ServerPersistenceBundle WithSpyProfiles(ServerPersistenceBundle b, SpyProfiles spy) =>
         new(b.Schema, spy.Wrap(b.PlayerProfiles), b.World, b.CombatFormulas, b.FormulaService, b.SimulationSeed,
-            b.WorldTimeTicks, b.WorldId, b.Descriptor, b.TerrainChunks, b.StoredTerrain, b.TerrainPayload);
+            b.WorldTimeTicks, b.WorldId, b.Descriptor, b.TerrainChunks, b.StoredTerrain, b.TerrainPayload, b.HostLease);
 
     private sealed class SpyProfiles : IDisposable
     {

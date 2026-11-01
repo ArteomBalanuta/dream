@@ -23,6 +23,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
     // instead of sliding across the gap. Wolves move under 3 m/s, so a real step never comes close.
     public const float EnemyTeleportDistance = 4f;
 
+    // Wire levels are hostile; a level shown beside health is clamped to 1..9999.
+    public const int MaxDisplayLevel = 9999;
+
     private string? _localSessionId;
     private string _applyLogKey = null!;
     private readonly Dictionary<int, RemotePlayerEntry> _remotePlayers = [];
@@ -97,7 +100,17 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             entry.DisplayName = displayName;
             entry.CurrentHealth = actor.CurrentHealth;
             entry.MaxHealth = actor.MaxHealth;
+            if (actor.IsAlive && !entry.IsAlive)
+            {
+                // Dead to alive is a respawn: the avatar reappears at the spawn instead of sliding
+                // there from where it died.
+                entry.Buffer.Clear();
+            }
+
             entry.IsAlive = actor.IsAlive;
+            entry.Level = actor.Progression is { } progression
+                ? Math.Clamp(progression.Level, 1, MaxDisplayLevel)
+                : entry.Level;
             entry.HeldLight = actor.HeldLight;
             entry.IsMoving = entry.LastSnapshotPosition.HasValue &&
                 (actor.Position - entry.LastSnapshotPosition.Value).LengthSquared > 0.0001f;
@@ -255,7 +268,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.MaxHealth,
                 entry.IsAlive,
                 entry.IsMoving,
-                entry.HeldLight));
+                entry.HeldLight,
+                entry.Level));
         }
 
         return _remotePlayerStates;
@@ -466,6 +480,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         public int MaxHealth { get; set; }
 
         public bool IsAlive { get; set; }
+
+        // From the actor's progression group, clamped for display; kept when a delta omits it.
+        public int Level { get; set; } = 1;
 
         public bool IsMoving { get; set; }
 

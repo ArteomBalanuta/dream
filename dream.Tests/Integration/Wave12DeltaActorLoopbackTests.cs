@@ -8,6 +8,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
+using Dream.Tests.Support;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -364,9 +365,21 @@ public sealed class Wave12DeltaActorLoopbackTests(ITestOutputHelper output)
 
         public IEnumerable<ActorSnapshot[]> AllExpected() => _expected.Values;
 
-        public async Task<Peer> JoinAsync(string sessionId, bool slowLink = false, bool gated = false)
+        // A join is deferred, tick after tick, until its player's persisted state has loaded, and
+        // WaitUntilJoinedAsync steps without pausing (about 26 ticks per millisecond). A test that counts
+        // ticks passes awaitPrefetchBeforeTicking, so a slow load on a busy machine plays no ticks.
+        public async Task<Peer> JoinAsync(string sessionId, bool slowLink = false, bool gated = false, bool awaitPrefetchBeforeTicking = false)
         {
             Peer peer = await ConnectWithoutJoiningAsync(sessionId, slowLink, gated);
+            if (awaitPrefetchBeforeTicking)
+            {
+                string playerName = WorldSessionRuntime.ResolveJoinPlayerName(sessionId, $"Name {sessionId}");
+                Dream.Simulation.Characters.AccountKey? account = Runtime.HasAccounts ? TestAccountTokens.KeyFor(playerName) : null;
+                await WaitUntilAsync(
+                    () => Runtime.GetPersistedPlayerLoadState(playerName, account) == Dream.Simulation.Persistence.PersistedPlayerLoadState.Ready,
+                    $"{sessionId}'s persisted state to load");
+            }
+
             await WaitUntilJoinedAsync(peer);
             return peer;
         }
@@ -376,7 +389,7 @@ public sealed class Wave12DeltaActorLoopbackTests(ITestOutputHelper output)
             Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
             GatedConnector? connector = slowLink || gated ? new GatedConnector(slowLink) : null;
             RemoteClientSession session = await RemoteClientSession.ConnectAsync(
-                new RemoteClientOptions("127.0.0.1", Service.Port, sessionId, $"Name {sessionId}", "w12-test"),
+                new RemoteClientOptions("127.0.0.1", Service.Port, sessionId, $"Name {sessionId}", "w12-test", AccountToken: TestAccountTokens.For($"Name {sessionId}")),
                 connector).AsTask().WaitAsync(Deadline);
             ServerConnection connection = await accept.WaitAsync(Deadline);
             Peer peer = new(sessionId, session, connection, connector?.Connection) { ServerLink = _transport.LastAccepted };

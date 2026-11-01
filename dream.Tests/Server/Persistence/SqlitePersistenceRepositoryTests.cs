@@ -33,7 +33,7 @@ public sealed class SqlitePersistenceRepositoryTests
                 Level: 5,
                 Experience: 222),
             createdUtc,
-            createdUtc);
+            default); // a default stamp is the save time; a given one is kept (SqliteStoreTests)
 
         repository.Save(profile);
         PersistedPlayerProfile? loaded = repository.TryGet(" player-one ");
@@ -286,7 +286,7 @@ public sealed class SqlitePersistenceRepositoryTests
             .OrderBy(definition => definition.FormulaKey, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(8, formulas.Length);
+        Assert.Equal(12, formulas.Length);
         Assert.Contains(formulas, definition =>
             definition.FormulaKey == "player.min_damage" &&
             definition.ExpressionText == "5 + strength * 2" &&

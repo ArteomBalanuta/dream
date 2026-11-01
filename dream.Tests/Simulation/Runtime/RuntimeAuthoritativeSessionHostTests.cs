@@ -946,7 +946,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -956,7 +956,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "2.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,
@@ -979,7 +979,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -989,7 +989,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,
@@ -1001,6 +1001,8 @@ public class RuntimeAuthoritativeSessionHostTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("session-a", "Player A");
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        // The day wolf spawns in the far corner; the test puts it in front of the player.
+        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
         runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
         runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
 
@@ -1026,7 +1028,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -1036,7 +1038,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "level * 10", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "35", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,
@@ -1048,6 +1050,8 @@ public class RuntimeAuthoritativeSessionHostTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("session-a", "Player A");
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
+        // The day wolf spawns in the far corner; the test puts it in front of the player.
+        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
         runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
         runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
 
@@ -1351,6 +1355,14 @@ public class RuntimeAuthoritativeSessionHostTests
         }
 
         public void DeleteInventorySlots(string playerName)
+        {
+        }
+
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
+        {
+        }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId)
         {
         }
 

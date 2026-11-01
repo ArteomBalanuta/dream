@@ -36,7 +36,9 @@ public sealed class HealthState : IDamageable
         int clampedMaxHealth = Math.Max(1, maxHealth);
         float ratio = MaxHealth <= 0 ? 1f : CurrentHealth / (float)MaxHealth;
         MaxHealth = clampedMaxHealth;
-        CurrentHealth = Math.Clamp((int)MathF.Round(clampedMaxHealth * ratio), 0, clampedMaxHealth);
+        int scaled = Math.Clamp((int)MathF.Round(clampedMaxHealth * ratio), 0, clampedMaxHealth);
+        // A living actor never rounds down to 0 (that would be a death with no event); the dead stay dead.
+        CurrentHealth = CurrentHealth > 0 ? Math.Max(1, scaled) : scaled;
     }
 
     public void SetAuthoritativeState(int currentHealth, int maxHealth)

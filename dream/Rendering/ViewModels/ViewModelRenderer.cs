@@ -19,6 +19,7 @@ public class ViewModelRenderer
     // held item never advance or restart each other's clip, even when they use the same model.
     private readonly ViewModelSlotAnimation _handsAnimation = new();
     private readonly ViewModelSlotAnimation _heldItemAnimation = new();
+    private readonly ViewModelSlotAnimation _offHandAnimation = new();
 
     public ViewModelRenderer(Render render)
     {
@@ -30,6 +31,12 @@ public class ViewModelRenderer
         if (frameState is null)
         {
             return default;
+        }
+
+        if (frameState.Value.OffHandItem is { } offHand)
+        {
+            // Always Idle, so its "finished" is not reported: only the main hand plays Use.
+            UpdateSlot(offHand, _offHandAnimation, deltaTime);
         }
 
         return new ViewModelUpdateResult(
@@ -56,6 +63,10 @@ public class ViewModelRenderer
         {
             DrawSlot(frameState.Value.Hands, _handsAnimation);
             DrawSlot(frameState.Value.HeldItem, _heldItemAnimation);
+            if (frameState.Value.OffHandItem is { } offHand)
+            {
+                DrawSlot(offHand, _offHandAnimation);
+            }
         }
         finally
         {
@@ -71,6 +82,12 @@ public class ViewModelRenderer
     // The slot's clip advances here only, once per frame; Draw only starts clips and draws.
     private static bool UpdateSlot(ViewModelSlotState slotState, ViewModelSlotAnimation animation, float deltaTime)
     {
+        if (IsEmptySlot(slotState))
+        {
+            // Nothing to play, so a Use request finishes at once instead of sticking.
+            return true;
+        }
+
         return TryResolveModel(slotState, out AnimatedModel? model) && AdvanceSlot(model, slotState, animation, deltaTime);
     }
 
@@ -84,8 +101,16 @@ public class ViewModelRenderer
         return instance.Update(deltaTime);
     }
 
+    internal static bool IsEmptySlot(ViewModelSlotState slotState) =>
+        string.IsNullOrEmpty(slotState.Definition.ModelPath);
+
     private void DrawSlot(ViewModelSlotState slotState, ViewModelSlotAnimation animation)
     {
+        if (IsEmptySlot(slotState))
+        {
+            return;
+        }
+
         if (!TryResolveModel(slotState, out AnimatedModel? model))
         {
             return;

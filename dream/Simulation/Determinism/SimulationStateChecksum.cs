@@ -124,10 +124,23 @@ public static class SimulationStateChecksum
                 BitConverter.SingleToUInt32Bits(stats.AttackSpeed),
                 Seed.FromInt(stats.Vitality))
             : Seed.Combine(mode, 0UL);
-        return actor.EnemyBehaviorState is { } behavior
+        ulong hash = actor.EnemyBehaviorState is { } behavior
             ? Seed.Combine(combat, 1UL, (ulong)behavior)
             : Seed.Combine(combat, 0UL);
+        // Enemy level and visual only when non-default, so a wolf-only world hashes as it did before wave I.
+        hash = (actor.EnemyLevel == 0 && actor.VisualKey is null)
+            ? hash
+            : Seed.Combine(
+                hash,
+                EnemyPresentationSalt,
+                Seed.FromInt(actor.EnemyLevel),
+                actor.VisualKey is null ? 0UL : StableHash.Of(actor.VisualKey));
+        // Rolled equipment only; zero (nothing rolled equipped) leaves the hash as it was before wave H.
+        return actor.ModifierDigest == 0UL ? hash : Seed.Combine(hash, ModifierDigestSalt, actor.ModifierDigest);
     }
+
+    private const ulong EnemyPresentationSalt = 0x656E656D792D7072UL; // "enemy-pr"
+    private const ulong ModifierDigestSalt = 0x6D6F642D64696765UL; // "mod-dige"
 
     // Key kinds are salted so a collision between a replicated-id key, a cell key and a position key is improbable (64-bit mixes, not injective).
     private const ulong CubeIdSalt = 0x637562652D696421UL; // "cube-id!"

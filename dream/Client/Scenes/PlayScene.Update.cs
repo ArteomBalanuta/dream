@@ -25,7 +25,11 @@ public partial class PlayScene
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
         HandleGlobalInput(keyboardState);
-        bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput;
+        // A dead local player sends no movement, look or use. Commands keep flowing (and keep their
+        // sequence), because the reconciler only compares on a new ack and the respawn snap needs one.
+        bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
+            _settings.CurrentRuntimeState.AllowGameplayInput,
+            _runtime.Player.Combatant.Health.IsAlive);
         // The frame only captures input; each prediction tick below turns it into one command
         // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
@@ -69,6 +73,7 @@ public partial class PlayScene
         UpdateLoopbackRemotePlayerDebugState();
         _combatFeedback.Update(delta, _settings.FloatingCombatText);
         _actionFeedback.Update(delta);
+        _lootFeedback.Update(delta);
     }
 
     // One prediction tick and its one command: the server gets every tick's command, in order,

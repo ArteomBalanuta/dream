@@ -25,6 +25,11 @@ public sealed class CombatFormulaSet
         "player_level"
     ];
 
+    private static readonly string[] DamageTakenVariables =
+    [
+        "armor"
+    ];
+
     private static readonly IReadOnlyDictionary<string, string[]> VariableSetsByFormulaKey =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
@@ -35,7 +40,11 @@ public sealed class CombatFormulaSet
             [CombatFormulaKeys.PlayerCriticalChance] = BaseContextVariables.Concat(["min_damage", "max_damage", "max_health"]).ToArray(),
             [CombatFormulaKeys.PlayerAttackIntervalSeconds] = BaseContextVariables.Concat(["min_damage", "max_damage", "max_health"]).ToArray(),
             [CombatFormulaKeys.PlayerExperienceToNextLevel] = ProgressionVariables,
-            [CombatFormulaKeys.EnemyExperienceReward] = EnemyRewardVariables
+            [CombatFormulaKeys.EnemyExperienceReward] = EnemyRewardVariables,
+            [CombatFormulaKeys.EnemyAttackDamage] = BaseContextVariables,
+            [CombatFormulaKeys.EnemyMaxHealth] = BaseContextVariables,
+            [CombatFormulaKeys.EnemyAttackIntervalSeconds] = BaseContextVariables,
+            [CombatFormulaKeys.PlayerDamageTakenFactor] = DamageTakenVariables
         };
 
     private readonly Dictionary<string, Func<IReadOnlyDictionary<string, double>, double>> _compiledExpressions;

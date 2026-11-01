@@ -31,9 +31,26 @@ public class ViewModelCatalog
         return definition;
     }
 
+    // For a held slot. An id this client does not register (a retired kind with an old visual, a
+    // server-only visual, a hostile or null id) shows the debug item instead of throwing, and so
+    // does an id that is not a held-item definition. GetDefinition keeps throwing for tools and tests.
+    public ViewModelDefinition Resolve(string? id)
+    {
+        if (id is not null &&
+            _definitions.TryGetValue(id, out ViewModelDefinition definition) &&
+            definition.Slot == ViewModelSlot.HeldItem)
+        {
+            return definition;
+        }
+
+        return GetDefinition(ViewModelAssets.DebugHeldItemDefinition.Id);
+    }
+
     public static ViewModelCatalog CreateDefault()
     {
-        return new ViewModelCatalog(ViewModelAssets.BuiltInDefinitions, ViewModelAssets.DefaultLoadout);
+        return new ViewModelCatalog(
+            ViewModelAssets.BuiltInDefinitions.Append(ViewModelAssets.EmptyHeldItemDefinition),
+            ViewModelAssets.DefaultLoadout);
     }
 
     private static Dictionary<string, ViewModelDefinition> BuildDefinitionMap(

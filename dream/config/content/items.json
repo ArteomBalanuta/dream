@@ -1,0 +1,136 @@
+{
+  "version": 2,
+  "starterKitVersion": 2,
+  "unrecordedStarterKitVersion": 1,
+  "starterKit": [
+    { "item": "tool.builder-hammer", "version": 1 },
+    { "item": "tool.field-blade", "version": 1 },
+    { "item": "tool.stone-maul", "version": 1 },
+    { "item": "tool.survey-lantern", "version": 1 },
+    { "item": "tool.torch", "version": 2 }
+  ],
+  "items": [
+    {
+      "key": "tool.builder-hammer",
+      "displayName": "Builder Hammer",
+      "description": "Reliable close-range construction tool for quick world edits.",
+      "visualId": "held.tool.builder",
+      "detailLines": [ "Role: Building", "Impact: +2 Strength", "Tempo: +0.25 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 2 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 0.25 }
+      ],
+      "equipSlots": ["MainHand"]
+    },
+    {
+      "key": "tool.field-blade",
+      "displayName": "Field Blade",
+      "description": "Short combat blade with quick recovery and clean follow-up swings.",
+      "visualId": "held.tool.blade",
+      "detailLines": [ "Role: Combat", "Impact: +4 Strength", "Tempo: +1.50 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 4 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 1.5 }
+      ],
+      "equipSlots": ["MainHand"]
+    },
+    {
+      "key": "tool.stone-maul",
+      "displayName": "Stone Maul",
+      "description": "Heavy breaker meant for deliberate hits and strong stagger pressure.",
+      "visualId": "held.tool.maul",
+      "detailLines": [ "Role: Breaker", "Impact: +8 Strength", "Tempo: -0.75 Attack Speed" ],
+      "heldLight": "None",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 8 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": -0.75 }
+      ],
+      "equipSlots": ["MainHand"]
+    },
+    {
+      "key": "tool.survey-lantern",
+      "displayName": "Survey Lantern",
+      "description": "Utility tool for traversal loadouts and world inspection passes.",
+      "visualId": "held.tool.lantern",
+      "detailLines": [ "Role: Utility", "Impact: +1 Strength", "Tempo: +0.10 Attack Speed" ],
+      "heldLight": "Lantern",
+      "modifiers": [
+        { "stat": "Strength", "op": "Flat", "value": 1 },
+        { "stat": "AttackSpeed", "op": "Flat", "value": 0.1 }
+      ],
+      "equipSlots": ["MainHand", "OffHand"]
+    },
+    {
+      "key": "tool.torch",
+      "displayName": "Torch",
+      "description": "A burning torch that lights the ground around you after dark.",
+      "visualId": "held.tool.torch",
+      "detailLines": [ "Role: Light", "Light: warm, radius 8" ],
+      "heldLight": "Torch",
+      "modifiers": [],
+      "equipSlots": ["MainHand", "OffHand"]
+    },
+    {
+      "key": "gear.iron-blade",
+      "displayName": "Iron Blade",
+      "description": "A forged blade. Each one is a little different from the last.",
+      "visualId": "held.tool.blade",
+      "detailLines": [ "Role: Combat", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "equipSlots": ["MainHand"],
+      "rolls": {
+        "common": [ { "stat": "Strength", "min": 4, "max": 5 }, { "stat": "AttackSpeed", "min": 1.0, "max": 1.5 } ],
+        "uncommon": [ { "stat": "Strength", "min": 5, "max": 7 }, { "stat": "AttackSpeed", "min": 1.25, "max": 1.75 } ],
+        "rare": [ { "stat": "Strength", "min": 7, "max": 9 }, { "stat": "AttackSpeed", "min": 1.5, "max": 2.0 } ]
+      }
+    },
+    {
+      "key": "gear.ward-lantern",
+      "displayName": "Ward Lantern",
+      "description": "A shuttered lantern that turns blows aside while it burns.",
+      "visualId": "held.tool.lantern",
+      "detailLines": [ "Role: Ward", "Light: soft, wide", "Stats: rolled when made" ],
+      "heldLight": "Lantern",
+      "modifiers": [],
+      "equipSlots": ["OffHand"],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 1, "max": 2 } ],
+        "uncommon": [ { "stat": "Armor", "min": 2, "max": 4 } ],
+        "rare": [ { "stat": "Armor", "min": 4, "max": 6 } ]
+      }
+    },
+    {
+      "key": "gear.leather-cap",
+      "displayName": "Leather Cap",
+      "description": "A stitched cap that keeps the worst of it off your head.",
+      "visualId": "worn.head",
+      "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "equipSlots": ["Head"],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 1, "max": 3 }, { "stat": "Vitality", "min": 0, "max": 1 } ],
+        "uncommon": [ { "stat": "Armor", "min": 3, "max": 5 }, { "stat": "Vitality", "min": 1, "max": 2 } ],
+        "rare": [ { "stat": "Armor", "min": 5, "max": 8 }, { "stat": "Vitality", "min": 2, "max": 4 } ]
+      }
+    },
+    {
+      "key": "gear.leather-vest",
+      "displayName": "Leather Vest",
+      "description": "A boiled-leather vest, stiff and warm.",
+      "visualId": "worn.body",
+      "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "equipSlots": ["Body"],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 2, "max": 4 }, { "stat": "Vitality", "min": 1, "max": 2 } ],
+        "uncommon": [ { "stat": "Armor", "min": 4, "max": 7 }, { "stat": "Vitality", "min": 2, "max": 4 } ],
+        "rare": [ { "stat": "Armor", "min": 7, "max": 11 }, { "stat": "Vitality", "min": 4, "max": 6 } ]
+      }
+    }
+  ]
+}

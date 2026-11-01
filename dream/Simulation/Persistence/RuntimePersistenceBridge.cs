@@ -2,9 +2,12 @@ using System.Collections.Concurrent;
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Characters;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.Stats;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -55,8 +58,8 @@ internal sealed partial class RuntimePersistenceBridge
     private readonly List<ObjectId> _removedFractureOriginIds = [];
     // Profiles by player name: every active player's, plus those of the players who left most
     // recently (see MarkProfileDeparted), so it is bounded however many names clients make up.
-    private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _knownProfileNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PersistedPlayerProfile> _profileCache = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _knownProfileNames = new(StringComparer.Ordinal);
     // Sessions whose join failed before their saved state was restored (TryLoadPlayerForRestore);
     // their in-memory stats are defaults, so PersistPlayerProfile must not save them over the row.
     // Keyed by session, not display name, so another session sharing the name still saves; an
@@ -68,12 +71,14 @@ internal sealed partial class RuntimePersistenceBridge
     // so TryLoadPlayerForRestore prefers this newer copy, as it prefers the cached profile. Bounded
     // like the profile cache: an entry goes when its name rejoins, is captured attached by a
     // checkpoint, or has its profile evicted.
-    private readonly Dictionary<string, PersistedPlayerWorldState> _departedWorldStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PersistedPlayerWorldState> _departedWorldStates = new(StringComparer.Ordinal);
     private readonly Dictionary<ObjectId, PersistedPlacedCube> _persistedCubes = [];
 
     // Join-time persisted-player loads by player name (see BeginPersistedPlayerPrefetch): started
     // on receive threads, consumed on the tick.
-    private readonly ConcurrentDictionary<string, PersistedPlayerPrefetch> _playerPrefetches = new(StringComparer.OrdinalIgnoreCase);
+    // Keyed by (name, account): part of a result (how many characters the token owns) is per token.
+    private readonly ConcurrentDictionary<PrefetchKey, PersistedPlayerPrefetch> _playerPrefetches = new(PrefetchKeyComparer.Instance);
+    private readonly IAccountRepository? _accounts;
 
     // The ports are already resolved by the runtime (an inline write queue and a repository
     // checkpoint writer when only repositories were given); any of them may be null.
@@ -87,8 +92,10 @@ internal sealed partial class RuntimePersistenceBridge
         EnemyRegistry enemies,
         SceneEventHub events,
         ObjectIdAllocator objectIds,
-        ObjectIdentityMap objectIdentities)
+        ObjectIdentityMap objectIdentities,
+        IAccountRepository? accounts = null)
     {
+        _accounts = accounts;
         _host = host;
         _playerProfiles = playerProfiles;
         _worldPersistence = worldPersistence;
@@ -116,6 +123,8 @@ internal sealed partial class RuntimePersistenceBridge
     // Marks a session unrestored, as a failed synchronous join read does (tests).
     internal void MarkSessionUnrestored(PlayerSessionId sessionId) => _unrestoredPlayerSessions.Add(sessionId);
 
+    public bool HasAccounts => _accounts != null;
+
     // Starts loading a joining player's persisted profile, world state and inventory on the persistence
     // worker, so the join itself (applied on the tick) does no database I/O. Called by the host
     // when the join request arrives (it does not wait for the load); thread-safe. The read is
@@ -124,7 +133,7 @@ internal sealed partial class RuntimePersistenceBridge
     // The load is read-only (TryGet): a join request that is never applied creates no profile row;
     // TryLoadPlayerForRestore creates it when the join is applied. Null when the runtime has
     // no profiles; a prefetch that cannot be queued (the queue is closed) completes as failed.
-    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName)
+    public PersistedPlayerPrefetch? BeginPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
         // A join request read while the server shuts down must not restart the drained write queue
@@ -136,17 +145,23 @@ internal sealed partial class RuntimePersistenceBridge
 
         IPlayerProfileRepository profiles = _playerProfiles;
         IWorldPersistenceRepository? world = _worldPersistence;
-        PersistedPlayerPrefetch prefetch = new(playerName);
-        _playerPrefetches[playerName] = prefetch;
+        IAccountRepository? accounts = _accounts;
+        PersistedPlayerPrefetch prefetch = new(playerName, account);
+        _playerPrefetches[new PrefetchKey(playerName, account)] = prefetch;
         void Load()
         {
             try
             {
-                PersistedPlayerProfile? profile = profiles.TryGet(playerName);
+                // The lookup comes first: an existing character is loaded under its own key, which
+                // may differ from the typed name.
+                CharacterLookup? lookup = accounts?.Lookup(playerName, account);
+                string key = lookup?.Existing?.Key.Value ?? playerName;
+                PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(
                     profile,
-                    world?.TryGetPlayerWorldState(playerName),
-                    world?.LoadPlayerInventory(playerName));
+                    world?.TryGetPlayerWorldState(key),
+                    world?.LoadPlayerInventory(key),
+                    lookup);
             }
             catch (Exception ex)
             {
@@ -172,18 +187,43 @@ internal sealed partial class RuntimePersistenceBridge
         return prefetch;
     }
 
+    // The account lookup for a join, from memory when the join's prefetch loaded it, else read here
+    // after the queued writes drained (a non-deferred host, tests; never the dedicated server's tick,
+    // which routes a join only once its prefetch is Ready). Without accounts nothing is checked.
+    public CharacterLookup ResolveCharacterLookup(string typedName, AccountKey? account)
+    {
+        if (_accounts == null)
+        {
+            return default;
+        }
+
+        if (_playerPrefetches.TryGetValue(new PrefetchKey(typedName, account), out PersistedPlayerPrefetch? prefetch)
+            && prefetch.Lookup is { } prefetched)
+        {
+            return prefetched;
+        }
+
+        NetworkDiagnosticsLog.Write("server.persistence.join-sync-read", $"keyLength={typedName.Length}");
+        if (_writes != null && !_writes.Flush(TimeSpan.FromSeconds(5)))
+        {
+            throw new InvalidOperationException("Saved data is still being written; retry the join.");
+        }
+
+        return _accounts.Lookup(typedName, account);
+    }
+
     // Tick side of the join prefetch. Ready when TryLoadPlayerForRestore for this name can run
     // without touching the database (no profiles, or the prefetch loaded); Pending while it runs;
     // Failed when it failed; Missing when there is none (another join consumed it, or it was
     // discarded). Reads only memory.
-    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName)
+    public PersistedPlayerLoadState GetPersistedPlayerLoadState(string playerName, AccountKey? account = null)
     {
         if (_playerProfiles == null)
         {
             return PersistedPlayerLoadState.Ready;
         }
 
-        if (!_playerPrefetches.TryGetValue(playerName, out PersistedPlayerPrefetch? prefetch))
+        if (!_playerPrefetches.TryGetValue(new PrefetchKey(playerName, account), out PersistedPlayerPrefetch? prefetch))
         {
             return PersistedPlayerLoadState.Missing;
         }
@@ -198,21 +238,102 @@ internal sealed partial class RuntimePersistenceBridge
 
     // True when the name's state is Ready. With startIfMissing a name with no prefetch starts one
     // and reports false, so the caller defers the join.
-    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing)
+    public bool IsPersistedPlayerReady(string playerName, bool startIfMissing, AccountKey? account = null)
     {
-        PersistedPlayerLoadState state = GetPersistedPlayerLoadState(playerName);
+        PersistedPlayerLoadState state = GetPersistedPlayerLoadState(playerName, account);
         if (state == PersistedPlayerLoadState.Missing && startIfMissing)
         {
-            BeginPersistedPlayerPrefetch(playerName);
+            BeginPersistedPlayerPrefetch(playerName, account);
         }
 
         return state == PersistedPlayerLoadState.Ready;
     }
 
     // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
-    public void DiscardPersistedPlayerPrefetch(string playerName)
+    public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
     {
-        _playerPrefetches.TryRemove(playerName, out _);
+        _playerPrefetches.TryRemove(new PrefetchKey(playerName, account), out _);
+    }
+
+    // Removes the prefetch for a name whatever its account (the restore and eviction paths do not know
+    // the account yet); the one without an account first.
+    private bool TryRemovePrefetchByName(string playerName, out PersistedPlayerPrefetch? prefetch)
+    {
+        if (_playerPrefetches.TryRemove(new PrefetchKey(playerName, null), out prefetch))
+        {
+            return true;
+        }
+
+        foreach (PrefetchKey key in _playerPrefetches.Keys)
+        {
+            if (CharacterNames.Comparer.Equals(key.Name, playerName)
+                && _playerPrefetches.TryRemove(key, out prefetch))
+            {
+                return true;
+            }
+        }
+
+        prefetch = null;
+        return false;
+    }
+
+    // G-D4: a join that claims or creates a character makes every other pending prefetch for that
+    // character (under any typed name) or for that account stale: they restart behind the queued claim
+    // and read the new owner. The joining prefetch was consumed by the restore before this runs.
+    private void InvalidatePrefetches(string typedName, CharacterKey key, AccountKey account)
+    {
+        foreach (KeyValuePair<PrefetchKey, PersistedPlayerPrefetch> entry in _playerPrefetches)
+        {
+            PrefetchKey candidate = entry.Key;
+            bool sameCharacter = CharacterNames.Comparer.Equals(candidate.Name, typedName)
+                || CharacterNames.Comparer.Equals(candidate.Name, key.Value)
+                || (entry.Value.Lookup?.Existing?.Key is { } prefetchedKey && prefetchedKey.Equals(key));
+            if (sameCharacter || candidate.Account.Equals(account))
+            {
+                _playerPrefetches.TryRemove(candidate, out _);
+            }
+        }
+    }
+
+    // After a checked join was applied (WorldSessionRuntime.CommitCharacterAccess): queues the account
+    // row and, for a claim or a new character, the ownership write behind the profile save the restore
+    // queued, then drops the prefetches the claim made stale. Tick thread; the write runs on the queue.
+    public void CommitCharacterAccess(string typedName, in CharacterAccessDecision access)
+    {
+        if (_accounts == null
+            || access.Account is not { } account
+            || access.Outcome is CharacterAccessOutcome.Unchecked or CharacterAccessOutcome.Rejected)
+        {
+            return;
+        }
+
+        bool claim = access.Outcome is CharacterAccessOutcome.ClaimUnowned or CharacterAccessOutcome.CreateNew;
+        CharacterKey key = access.Key;
+        IAccountRepository accounts = _accounts;
+        _writes?.Enqueue(() =>
+        {
+            if (!accounts.RecordJoin(account, key, claim, DateTime.UtcNow))
+            {
+                NetworkDiagnosticsLog.Write("server.character.claim-lost", $"keyLength={key.Value.Length}");
+            }
+        });
+        if (claim)
+        {
+            InvalidatePrefetches(typedName, key, account);
+        }
+    }
+
+    private readonly record struct PrefetchKey(string Name, AccountKey? Account);
+
+    private sealed class PrefetchKeyComparer : IEqualityComparer<PrefetchKey>
+    {
+        public static readonly PrefetchKeyComparer Instance = new();
+
+        public bool Equals(PrefetchKey x, PrefetchKey y) =>
+            CharacterNames.Comparer.Equals(x.Name, y.Name) && x.Account.Equals(y.Account);
+
+        public int GetHashCode(PrefetchKey key) =>
+            HashCode.Combine(CharacterNames.Comparer.GetHashCode(key.Name), key.Account);
     }
 
     // The persistence half of WorldSessionRuntime.RestorePersistedPlayerState: resolves the joining
@@ -226,6 +347,19 @@ internal sealed partial class RuntimePersistenceBridge
         out PersistedPlayerProfile profile,
         out PersistedPlayerWorldState? worldState,
         out PersistedPlayerInventory? inventory)
+        => TryLoadPlayerForRestore(sessionId, playerName, playerName, account: null, out profile, out worldState, out inventory);
+
+    // playerName is the character's persistence key. prefetchName and account name the join's prefetch
+    // (it was started under the typed name, which may differ from the key); with no account the
+    // prefetch is found by name whatever its account.
+    public bool TryLoadPlayerForRestore(
+        PlayerSessionId sessionId,
+        string playerName,
+        string prefetchName,
+        AccountKey? account,
+        out PersistedPlayerProfile profile,
+        out PersistedPlayerWorldState? worldState,
+        out PersistedPlayerInventory? inventory)
     {
         inventory = null;
         if (_playerProfiles == null)
@@ -235,14 +369,26 @@ internal sealed partial class RuntimePersistenceBridge
             return false;
         }
 
-        if (_playerPrefetches.TryRemove(playerName, out PersistedPlayerPrefetch? prefetch)
-            && prefetch.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
+        PersistedPlayerPrefetch? prefetch;
+        bool hadPrefetch = account is { } joinAccount
+            ? _playerPrefetches.TryRemove(new PrefetchKey(prefetchName, joinAccount), out prefetch)
+            : TryRemovePrefetchByName(prefetchName, out prefetch);
+        if (hadPrefetch
+            && prefetch!.TryGetLoadResult(out PersistedPlayerProfile? prefetched, out PersistedPlayerWorldState? prefetchedWorld))
         {
-            // Every profile save this runtime queues goes through SaveProfile, which caches it, so a
-            // cached profile is at least as new as the row the prefetch read. That covers a save
-            // queued after the prefetch: a reconnect whose old connection is released (and its
-            // profile saved) after the new connection asked to join.
-            if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached))
+            // Every profile save this runtime queues goes through SaveProfile, which caches it with the
+            // time it was queued. The cached copy wins unless the prefetched row is strictly newer AND
+            // the cached copy was saved before the prefetch began. A row another world wrote since
+            // (profiles are global, two worlds can be hosted at once) is newer than a copy cached when
+            // this player left, and a prefetch started after that save reads behind it. But a save made
+            // after the prefetch began (a reconnect whose old connection is released after the new one
+            // asked to join) may be missing from the row the prefetch read, and a later write that
+            // bumps updated_utc without progress (checkpoint vitals, a claim, `release`) must not make
+            // that stale row win; so the cached copy stands.
+            if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile cached)
+                && !(prefetched is { } newer
+                    && newer.UpdatedUtc > cached.UpdatedUtc
+                    && cached.UpdatedUtc < prefetch.StartedUtc))
             {
                 profile = cached;
             }
@@ -255,7 +401,7 @@ internal sealed partial class RuntimePersistenceBridge
                 // A new player: the read-only prefetch found no row and the join is now applied, so
                 // the row is created here, on the write queue rather than the tick.
                 profile = PersistedPlayerProfile.CreateDefault(playerName, DateTime.UtcNow);
-                SaveProfile(playerName, profile);
+                profile = SaveProfile(playerName, profile);
             }
 
             worldState = prefetchedWorld;
@@ -378,43 +524,29 @@ internal sealed partial class RuntimePersistenceBridge
 
         foreach (PersistedEnemyInstance enemy in ordered)
         {
+            // A retired or unknown kind: the row is kept (checkpoints never delete rows) but the
+            // enemy is not restored. The population step spawns a wolf when none is active.
+            if (!ContentCatalog.Shipped.TryGetEnemy(enemy.EnemyKind, out EnemyTemplate? template))
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.persistence.restore-skipped-enemy",
+                    $"objectId={enemy.ObjectId} kind={enemy.EnemyKind} reason=unknown-enemy-kind");
+                continue;
+            }
+
             if (!_host.TryAllocateEnemyActorId(out int actorId))
             {
                 // No enemy id left: restore the world without it.
                 continue;
             }
 
-            _enemies.Add(CreatePersistedEnemy(enemy, actorId));
+            // The home is not persisted: a restored wolf idles at its role's spawn on this map.
+            Vector3 home = template.SpawnRole == EnemySpawnRole.NightExtra
+                ? WolfSpawnPolicy.ResolveNightSpawn(map.Width, map.Depth)
+                : WolfSpawnPolicy.ResolveInitialSpawn(map.Width, map.Depth);
+            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
         }
-    }
-
-    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy, int actorId)
-    {
-        EnemyCombatant combatant = new(
-            () => enemy.Position,
-            _events,
-            actorId: actorId,
-            maxHealth: enemy.Stats.MaxHealth,
-            attackDamage: Math.Max(1, enemy.Stats.Strength + 2),
-            attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
-            anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
-        combatant.Health.SetAuthoritativeState(enemy.Stats.CurrentHealth, enemy.Stats.MaxHealth);
-
-        EnemyActor actor = new(
-            combatant,
-            enemy.Position,
-            aggroRange: 10f,
-            attackRange: 1.35f,
-            moveSpeed: Math.Max(0f, enemy.Stats.MovementSpeed),
-            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfDefinition.CollisionRadius,
-            collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: enemy.DisplayName,
-            enemyKind: enemy.EnemyKind,
-            level: enemy.Stats.Level);
-        actor.SetFacing(enemy.Facing);
-        return actor;
     }
 
     public void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
@@ -428,22 +560,23 @@ internal sealed partial class RuntimePersistenceBridge
             return;
         }
 
-        PersistedPlayerProfile existing = GetCachedProfile(player.DisplayName);
-        SaveProfile(player.DisplayName, existing with
+        // Agility, Energy and MovementSpeed are not simulated: they keep the values the row was loaded with.
+        string key = player.CharacterKey.Value;
+        PersistedPlayerProfile existing = GetCachedProfile(key);
+        SaveProfile(key, existing with
         {
             DisplayName = player.DisplayName,
             InteractionMode = _host.GetSessionInteractionMode(sessionId),
-            Stats = new PersistedCreatureStats(
-                CurrentHealth: combatant.Health.CurrentHealth,
-                MaxHealth: combatant.Health.MaxHealth,
-                Strength: combatant.BaseStats.Strength,
-                Agility: 10,
-                Vitality: combatant.BaseStats.Vitality,
-                Energy: 10,
-                MovementSpeed: 6f,
-                AttackSpeed: combatant.BaseStats.AttackSpeed,
-                Level: combatant.Level,
-                Experience: combatant.Experience)
+            Stats = existing.Stats with
+            {
+                CurrentHealth = combatant.Health.CurrentHealth,
+                MaxHealth = combatant.Health.MaxHealth,
+                Strength = combatant.BaseStats.Strength,
+                Vitality = combatant.BaseStats.Vitality,
+                AttackSpeed = combatant.BaseStats.AttackSpeed,
+                Level = combatant.Level,
+                Experience = combatant.Experience
+            }
         });
     }
 
@@ -474,16 +607,16 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         PersistedPlayerWorldState state = new(
-            player.DisplayName,
+            player.CharacterKey.Value,
             position,
             facing,
             CurrentHealth: currentHealth,
             CurrentEnergy: 0,
             UpdatedUtc: DateTime.UtcNow);
-        if (_profileCache.ContainsKey(player.DisplayName))
+        if (_profileCache.ContainsKey(player.CharacterKey.Value))
         {
             // Only names the profile LRU tracks, so EvictDepartedPlayerState bounds this cache.
-            _departedWorldStates[player.DisplayName] = state;
+            _departedWorldStates[player.CharacterKey.Value] = state;
         }
 
         EnqueueWorldWrite(world => world.SavePlayerWorldState(state));
@@ -614,7 +747,7 @@ internal sealed partial class RuntimePersistenceBridge
     public const int DefaultMaxDepartedProfiles = PlayerSessionRegistry.DefaultMaxDepartedSessions;
 
     private readonly LinkedList<string> _departedProfileNames = new();
-    private readonly Dictionary<string, LinkedListNode<string>> _departedProfileNodes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LinkedListNode<string>> _departedProfileNodes = new(StringComparer.Ordinal);
 
     // Settable for tests.
     public int MaxDepartedProfiles { get; set; } = DefaultMaxDepartedProfiles;
@@ -660,7 +793,7 @@ internal sealed partial class RuntimePersistenceBridge
     private void EvictCachedProfile(string playerName)
     {
         if (_profileCache.Remove(playerName, out PersistedPlayerProfile profile)
-            && !string.Equals(profile.PlayerName, playerName, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(profile.PlayerName, playerName, StringComparison.Ordinal)
             && !IsProfileNameActive(profile.PlayerName))
         {
             // CacheProfile also stores the profile under the repository's own name for it.
@@ -672,7 +805,21 @@ internal sealed partial class RuntimePersistenceBridge
 
         // A prefetch already loaded for this name may predate the save the cache held; with the
         // cache entry gone a join would apply it, so drop it and let the join load afresh.
-        _playerPrefetches.TryRemove(playerName, out _);
+        RemovePrefetchesOfCharacter(playerName);
+    }
+
+    // Every prefetch that was typed as the key or resolved to it (a different typed name can reach the same
+    // character), whatever its account.
+    private void RemovePrefetchesOfCharacter(string key)
+    {
+        foreach (KeyValuePair<PrefetchKey, PersistedPlayerPrefetch> entry in _playerPrefetches)
+        {
+            if (CharacterNames.Comparer.Equals(entry.Key.Name, key)
+                || (entry.Value.Lookup?.Existing?.Key.Value is { } resolved && string.Equals(resolved, key, StringComparison.Ordinal)))
+            {
+                _playerPrefetches.TryRemove(entry.Key, out _);
+            }
+        }
     }
 
     private void EvictDepartedPlayerState(string playerName)
@@ -685,7 +832,7 @@ internal sealed partial class RuntimePersistenceBridge
     // Names that own a persisted cube (restored or placed this run). IsValidPersistenceOwnerName
     // accepts them without a repository read; unlike _knownProfileNames (cached profile names,
     // evicted with the profile LRU) this grows only with cube placements, not with every join.
-    private readonly HashSet<string> _cubeOwnerNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _cubeOwnerNames = new(StringComparer.Ordinal);
 
     public int KnownProfileNameCount => _knownProfileNames.Count;
 
@@ -695,7 +842,7 @@ internal sealed partial class RuntimePersistenceBridge
         {
             if (!player.IsLocal
                 && player.IsSpawned
-                && string.Equals(player.DisplayName, playerName, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(player.CharacterKey.Value, playerName, StringComparison.Ordinal))
             {
                 return true;
             }
@@ -704,11 +851,22 @@ internal sealed partial class RuntimePersistenceBridge
         return false;
     }
 
-    public void SaveProfile(string playerName, PersistedPlayerProfile profile)
+    // Returns the profile as cached and queued, with its stamp.
+    public PersistedPlayerProfile SaveProfile(string playerName, PersistedPlayerProfile profile)
     {
+        // Stamped when queued, and strictly after the copy it replaces (the clock may not have moved):
+        // the repository stores this stamp, and a restore compares it with a prefetched row's.
+        DateTime stamp = DateTime.UtcNow;
+        if (_profileCache.TryGetValue(playerName, out PersistedPlayerProfile previous) && stamp <= previous.UpdatedUtc)
+        {
+            stamp = previous.UpdatedUtc.AddTicks(1);
+        }
+
+        profile = profile with { UpdatedUtc = stamp };
         CacheProfile(playerName, profile);
         IPlayerProfileRepository profiles = _playerProfiles!;
         _writes?.Enqueue(() => profiles.Save(profile));
+        return profile;
     }
 
     // Loads the rubble groups, prunes the stale ones and heals lost terrain overrides; returns the kept
@@ -1018,6 +1176,9 @@ internal sealed partial class RuntimePersistenceBridge
 
     private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, ObjectId objectId, DateTime now)
     {
+        // The row holds the enemy's instance stats (wave I): what a spawn took from its template, what a
+        // restore read from the row. Agility and Energy are not simulated and keep the factory defaults.
+        ref readonly StatBlock stats = ref enemy.Combatant.StatSheet.Base;
         return new PersistedEnemyInstance(
             objectId,
             enemy.EnemyKind,
@@ -1027,12 +1188,12 @@ internal sealed partial class RuntimePersistenceBridge
             new PersistedCreatureStats(
                 CurrentHealth: enemy.Combatant.Health.CurrentHealth,
                 MaxHealth: enemy.Combatant.Health.MaxHealth,
-                Strength: 10,
-                Agility: 10,
-                Vitality: 10,
-                Energy: 0,
+                Strength: (int)stats[StatId.Strength],
+                Agility: (int)stats[StatId.Agility],
+                Vitality: (int)stats[StatId.Vitality],
+                Energy: (int)stats[StatId.Energy],
                 MovementSpeed: enemy.MoveSpeed,
-                AttackSpeed: 1f / Math.Max(0.05f, enemy.Combatant.AttackIntervalSeconds),
+                AttackSpeed: stats[StatId.AttackSpeed],
                 Level: enemy.Level),
             now,
             now);
@@ -1074,7 +1235,7 @@ internal sealed partial class RuntimePersistenceBridge
         bool identityMatches =
             _objectIdentities.TryGetObjectId(record.Actor.Id, out ObjectId bound) &&
             bound == persistedCube.ObjectId &&
-            string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.OrdinalIgnoreCase);
+            string.Equals(record.OwnerPlayerName, persistedCube.OwnerPlayerName, StringComparison.Ordinal);
         if (identityMatches)
         {
             return record;

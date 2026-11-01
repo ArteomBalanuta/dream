@@ -370,6 +370,12 @@ public class ClientScenePresenterLongSessionIntegrationTests
                 entry.DisplayName = displayName;
                 entry.CurrentHealth = actor.CurrentHealth;
                 entry.MaxHealth = actor.MaxHealth;
+                if (actor.IsAlive && !entry.IsAlive)
+                {
+                    // Wave I (I-D27): dead to alive is a respawn, so the avatar does not slide from where it died.
+                    entry.Buffer.Clear();
+                }
+
                 entry.IsAlive = actor.IsAlive;
                 entry.IsMoving = entry.LastPosition.HasValue && (actor.Position - entry.LastPosition.Value).LengthSquared > 0.0001f;
                 entry.LastPosition = actor.Position;

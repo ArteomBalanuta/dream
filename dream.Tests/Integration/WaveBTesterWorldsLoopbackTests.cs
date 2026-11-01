@@ -153,6 +153,14 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
                     MigrationTestDatabase.Execute(holder, "BEGIN IMMEDIATE;");
                     locked.Set();
                     Thread.Sleep(lockHoldMilliseconds);
+                    // On a loaded machine the first write can start so late that its busy_timeout outlasts
+                    // the fixed hold, and then nothing retried. Hold on until one write has been refused.
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+                    while (one.Runtime.PersistenceWrites!.LockRetries + two.Runtime.PersistenceWrites!.LockRetries == 0 && DateTime.UtcNow < deadline)
+                    {
+                        Thread.Sleep(50);
+                    }
+
                     MigrationTestDatabase.Execute(holder, "COMMIT;");
                 });
                 Assert.True(locked.Wait(TimeSpan.FromSeconds(10)));
@@ -306,7 +314,10 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
 
         runtime.Dispose();
         output.WriteLine($"snapshots: {total} B over 200 ticks");
-        Assert.Equal(58_107L, total);
+        // 58,107 B at protocol v9 plus one digit per frame is 58,307 B; the wolf bite change (a chasing wolf stops
+        // in bite range and bites) moved it to 58,827 B; the last fix loop (far wolf spawn, join protection: the
+        // wolf stands still and nobody is bitten in 200 ticks) moves it to 58,140 B.
+        Assert.Equal(58_140L, total);
     }
 
     [Fact]
@@ -314,12 +325,12 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
     {
         TransportJsonCodec codec = new();
         ClientHelloMessage hello = new("tester");
-        byte[] v7 = codec.Encode(new TransportEnvelope(8, hello.MessageKind, 1), hello);
+        byte[] v7 = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, hello.MessageKind, 1), hello);
         Assert.Equal(hello.MessageKind, codec.DecodeFromClient(v7).Envelope.MessageKind);
 
-        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":8", "\"protocolVersion\":6", StringComparison.Ordinal));
+        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":11", "\"protocolVersion\":6", StringComparison.Ordinal));
         Assert.NotEqual(v7, v6);
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => codec.DecodeFromClient(v6));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 8.", error.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 11.", error.Message);
     }
 }

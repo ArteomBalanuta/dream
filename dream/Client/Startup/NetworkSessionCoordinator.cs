@@ -1,3 +1,4 @@
+using Dream.Client.Identity;
 using Dream.Client.Networking;
 using Dream.Server;
 
@@ -10,12 +11,23 @@ public sealed class NetworkSessionCoordinator
     private Task? _pendingConnectionTask;
     private RemoteClientSession? _connectedSession;
 
+    private readonly string? _contentError;
+    private readonly IClientIdentityStore? _identity;
+
+    // contentError (ClientContentCheck) is why the game's content files cannot be used; with it no
+    // local server starts and Use Local Server shows the message. A remote connect is unaffected.
     public NetworkSessionCoordinator(
         ILocalServerHandle localServer,
-        IRemoteSessionConnector connector)
+        IRemoteSessionConnector connector,
+        string? contentError = null,
+        IClientIdentityStore? identity = null)
     {
+        // A null identity store leaves the join token null, so a test coordinator never touches the
+        // real token file.
+        _identity = identity;
         _localServer = localServer;
         _connector = connector;
+        _contentError = contentError;
         RefreshIdleState();
     }
 
@@ -43,13 +55,53 @@ public sealed class NetworkSessionCoordinator
     // is actually used instead of on every launch.
     public void EnsureLocalServerStarted()
     {
-        if (_localServer.IsStarted)
+        if (_contentError != null || _localServer.IsStarted)
         {
             return;
         }
 
         _localServer.EnsureStarted();
         RefreshIdleState();
+    }
+
+    // The Use Local Server button: starts the local server (again, when the last start failed, so a
+    // second window can host after the first one closed) and returns its endpoint. False, with the
+    // status refreshed, when the server is not ready: the caller then leaves the host and port the
+    // player entered alone, and nothing is persisted.
+    public bool TryUseLocalServer(string playerName, out ClientConnectionOptions? options)
+    {
+        // A connect is in flight: refreshing the idle state would flip Connecting to ReadyToConnect and
+        // let a second BeginConnect run beside it (one session would leak).
+        if (IsBusy)
+        {
+            options = null;
+            return false;
+        }
+
+        if (_localServer.ErrorMessage != null)
+        {
+            _localServer.ResetFailure();
+        }
+
+        EnsureLocalServerStarted();
+        RefreshIdleState();
+        if (_contentError != null)
+        {
+            // The only action the content error blocks: the in-process server reads the catalog.
+            State = ConnectionFlowState.Failed;
+            StatusMessage = _contentError;
+            options = null;
+            return false;
+        }
+
+        if (!_localServer.IsReady)
+        {
+            options = null;
+            return false;
+        }
+
+        options = UseLocalServerDefaults(playerName);
+        return true;
     }
 
     public ClientConnectionOptions UseLocalServerDefaults(string playerName)
@@ -81,13 +133,29 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
-
+        // A remote connect never reads the game's content files (the server sends everything the
+        // client draws), so a content error does not block it. Only the local server needs them.
         if (!options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out string? error))
         {
             State = ConnectionFlowState.Failed;
             StatusMessage = error ?? "Connection settings are invalid.";
             _pendingConnectionTask = Task.CompletedTask;
             return;
+        }
+
+        if (_identity != null)
+        {
+            try
+            {
+                resolved = resolved! with { AccountToken = _identity.GetOrCreateToken(ServerKeyFor(resolved)) };
+            }
+            catch (IOException ex)
+            {
+                State = ConnectionFlowState.Failed;
+                StatusMessage = ex.Message;
+                _pendingConnectionTask = Task.CompletedTask;
+                return;
+            }
         }
 
         State = ConnectionFlowState.Connecting;
@@ -174,6 +242,12 @@ public sealed class NetworkSessionCoordinator
         State = ConnectionFlowState.WaitingForLocalServer;
         StatusMessage = _localServer.StartingStatus ?? "Starting local server...";
     }
+
+    // "local" for every loopback address and port (the integrated server on whatever port it gets, a
+    // dedicated server on this computer, another window's server), else host:port. One person keeps one
+    // account across them.
+    private string ServerKeyFor(RemoteClientOptions options) =>
+        ClientIdentityStore.ServerKeyFor(options.Host, options.Port, IsLoopbackHost(options.Host));
 
     private static bool IsLoopbackHost(string host) => LoopbackHost.IsLoopback(host);
 }

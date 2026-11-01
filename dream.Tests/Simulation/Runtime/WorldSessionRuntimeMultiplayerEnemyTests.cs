@@ -20,7 +20,8 @@ public class WorldSessionRuntimeMultiplayerEnemyTests
         runtime.AttachRemoteSession(new PlayerSessionId("session-a"));
         runtime.AttachRemoteSession(new PlayerSessionId("session-b"));
 
-        for (int tick = 1; tick <= 160; tick++)
+        // The join window (192 ticks) first, then 160 ticks of the wolf.
+        for (int tick = 1; tick <= 160 + PlayerRespawnRules.SpawnProtectionTicks; tick++)
         {
             runtime.AdvanceAuthoritativeTick(
                 (ulong)tick,

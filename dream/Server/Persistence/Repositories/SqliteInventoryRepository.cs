@@ -53,6 +53,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             i.stack_count,
             i.created_utc,
             i.updated_utc,
+            i.rolled_modifiers,
             NULL AS kit_version
         FROM player_inventory_slots AS s
         LEFT JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
@@ -61,7 +62,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         SELECT
             g.player_name,
             NULL, NULL, NULL,
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
             g.kit_version
         FROM player_starter_grants AS g
         WHERE g.world_id = $worldId AND g.player_name = $playerName
@@ -69,7 +70,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         """;
 
     // LoadPlayerInventorySql's last column.
-    private const int KitVersionOrdinal = 16;
+    private const int KitVersionOrdinal = 17;
 
     private const string UpsertSlotSql = """
         INSERT INTO player_inventory_slots (
@@ -92,6 +93,19 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         """;
 
     private const string DeleteSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName;";
+
+    private const string DeleteSlotSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName AND slot_index = $slotIndex AND item_instance_id = $expectedItemInstanceId;";
+
+    private const string DestroyItemSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName AND item_instance_id = $itemInstanceId;";
+
+    // The item row goes only when no slot (of any player) still references it.
+    private const string DestroyItemRowSql = """
+        DELETE FROM item_instances
+        WHERE world_id = $worldId AND item_instance_id = $itemInstanceId
+          AND NOT EXISTS (
+              SELECT 1 FROM player_inventory_slots AS s
+              WHERE s.world_id = $worldId AND s.item_instance_id = $itemInstanceId);
+        """;
 
     // The recorded version never goes down, so a stale write cannot undo a newer grant.
     private const string UpsertStarterGrantSql = """
@@ -160,6 +174,24 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
 
     public void DeleteInventorySlots(string playerName) =>
         Execute(DeleteSlotsSql, playerName, static (command, name) => command.BindText("$playerName", name.Trim()));
+
+    public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) =>
+        Execute(DeleteSlotSql, (playerName, slotIndex, expectedItemInstanceId), static (command, d) =>
+        {
+            command.BindText("$playerName", d.playerName.Trim());
+            command.BindInt64("$slotIndex", d.slotIndex);
+            command.BindInt64("$expectedItemInstanceId", d.expectedItemInstanceId);
+        });
+
+    public void DestroyInventoryItem(string playerName, long itemInstanceId)
+    {
+        Execute(DestroyItemSlotsSql, (playerName, itemInstanceId), static (command, d) =>
+        {
+            command.BindText("$playerName", d.playerName.Trim());
+            command.BindInt64("$itemInstanceId", d.itemInstanceId);
+        });
+        Execute(DestroyItemRowSql, itemInstanceId, static (command, id) => command.BindInt64("$itemInstanceId", id));
+    }
 
     // updated_utc is the write time.
     public void SaveStarterKitGrant(string playerName, int kitVersion) =>

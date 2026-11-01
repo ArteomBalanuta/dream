@@ -241,7 +241,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 {
                     string name = reader.GetString(1);
                     // Migration 0005 renumbers the ids of cubes, rubble and enemies, so they are not compared.
-                    if (name != "world_id" && !RenumberedColumns.Contains(name))
+                    if (name != "world_id" && name != "account_id" && name != "rolled_modifiers" && !RenumberedColumns.Contains(name))
                     {
                         columns.Add(name);
                     }
@@ -255,7 +255,11 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
             StringBuilder tableText = new();
             using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = $"SELECT {string.Join(", ", columns)} FROM {table} ORDER BY {string.Join(", ", columns)};";
+            // Migration 0009 seeds four enemy and armor formulas; the legacy rows themselves must not change.
+            string filter = table == "combat_formulas"
+                ? " WHERE formula_key NOT IN ('enemy.attack_damage', 'enemy.max_health', 'enemy.attack_interval_seconds', 'player.damage_taken_factor')"
+                : string.Empty;
+            command.CommandText = $"SELECT {string.Join(", ", columns)} FROM {table}{filter} ORDER BY {string.Join(", ", columns)};";
             using SqliteDataReader rows = command.ExecuteReader();
             while (rows.Read())
             {

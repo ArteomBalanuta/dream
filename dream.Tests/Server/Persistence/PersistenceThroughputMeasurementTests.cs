@@ -66,6 +66,11 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
 
         List<double> joinTicks = [];
         List<double> quietTicks = [];
+        // Every tick from the join messages until the last reply: the cost of getting a join applied,
+        // whichever tick (the first or a later one) the join lands on.
+        List<double> windowTotals = [];
+        List<double> windowMaxima = [];
+        List<int> windowLengths = [];
         int depthAtJoin = 0;
         for (int round = 0; round < JoinRounds; round++)
         {
@@ -75,23 +80,49 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
                 .Select(index => Task.Run(() =>
                 {
                     string session = $"join-{round}-{index}";
-                    host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}"));
+                    host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}", Dream.Tests.Support.TestAccountTokens.For($"Name {session}")));
                 }))
                 .ToArray();
             Assert.True(Task.WaitAll(joins, TimeSpan.FromSeconds(30)));
 
-            joinTicks.Add(TimeTick(host));
+            double windowTotal = TimeTick(host);
+            double windowMax = windowTotal;
+            int windowTicks = 1;
+            joinTicks.Add(windowTotal);
             List<PendingConnectionReply> replies = [];
             for (int i = 0; i < 8 && replies.Count < JoinsPerRound; i++)
             {
                 host.DrainPendingJoinRepliesInto(replies);
                 if (replies.Count < JoinsPerRound)
                 {
-                    quietTicks.Add(TimeTick(host));
+                    double quiet = TimeTick(host);
+                    quietTicks.Add(quiet);
+                    windowTotal += quiet;
+                    windowMax = Math.Max(windowMax, quiet);
+                    windowTicks++;
                 }
             }
 
             quietTicks.Add(TimeTick(host));
+            // Wave G: a join with no token is rejected at once on an account host and costs no tick, so
+            // the measurement is only valid when every join was accepted. Ticks spent waiting for the
+            // replies count in the join window but not in the two older figures.
+            DateTime replyDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (replies.Count < JoinsPerRound && DateTime.UtcNow < replyDeadline)
+            {
+                double waited = TimeTick(host);
+                windowTotal += waited;
+                windowMax = Math.Max(windowMax, waited);
+                windowTicks++;
+                host.DrainPendingJoinRepliesInto(replies);
+                Thread.Sleep(2);
+            }
+
+            windowTotals.Add(windowTotal);
+            windowMaxima.Add(windowMax);
+            windowLengths.Add(windowTicks);
+            Assert.Equal(JoinsPerRound, replies.Count);
+            Assert.All(replies, reply => Assert.IsType<JoinAcceptedMessage>(reply.Message));
             _ = host.CreateSnapshotMessage();
         }
 
@@ -99,7 +130,9 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
         string line =
             $"join tick ({JoinsPerRound} joins, backlog {BacklogWritesPerRound} writes, max depth {depthAtJoin}): " +
             $"mean {joinTicks.Average():0.0} ms, max {joinTicks.Max():0.0} ms [{string.Join(", ", joinTicks.Select(value => value.ToString("0.0")))}]; " +
-            $"other ticks mean {quietTicks.Average():0.0} ms, max {quietTicks.Max():0.0} ms";
+            $"other ticks mean {quietTicks.Average():0.0} ms, max {quietTicks.Max():0.0} ms; " +
+            $"join window (join messages to last reply): mean {windowTotals.Sum() / windowLengths.Sum():0.00} ms per tick over {windowLengths.Sum()} ticks, " +
+            $"total per round {windowTotals.Average():0.0} ms, max tick {windowMaxima.Max():0.0} ms";
         output.WriteLine(line);
         WriteArtifact("persistence-join-tick.txt", line);
     }

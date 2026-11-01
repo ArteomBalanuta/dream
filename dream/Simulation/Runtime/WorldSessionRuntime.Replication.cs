@@ -191,6 +191,9 @@ public sealed partial class WorldSessionRuntime
         foreach (IAuthoritativePlayerTarget playerTarget in _snapshotPlayerTargets)
         {
             string displayName = TryResolveDisplayName(playerTarget.SessionId);
+            // The inventory is keyed by the character key, which differs from the display name for a
+            // renamed or migrated character.
+            string characterKey = TryResolveCharacterKey(playerTarget.SessionId);
             actors.Add(new ActorSnapshot(
                 playerTarget.ActorId,
                 CreatureKind.Player,
@@ -208,8 +211,9 @@ public sealed partial class WorldSessionRuntime
                     playerTarget.Combatant.Experience,
                     EvaluateSnapshotExperienceToNextLevel(playerTarget.Combatant)),
                 StarvedTicks: CaptureStarvedTicks(playerTarget.SessionId),
-                // T2f: derived from the inventory (allocation-free), so not in the checksum.
-                HeldLight: _inventory.ResolveEquippedHeldLight(displayName)));
+                // T2f: derived from the inventory (cached, allocation-free), so not in the checksum.
+                HeldLight: _inventory.ResolveEquippedHeldLight(characterKey),
+                ModifierDigest: _inventory.ResolveModifierDigest(characterKey)));
         }
 
         _snapshotPlayerTargets.Clear();
@@ -229,7 +233,11 @@ public sealed partial class WorldSessionRuntime
                 null,
                 actor.DisplayName,
                 null,
-                actor.BehaviorState));
+                actor.BehaviorState,
+                // Level 1 and the default visual stay off the wire (0 and null), so a wolf-only
+                // world keeps its pre-wave-I bytes (EnemyPresentation group, protocol v11).
+                EnemyLevel: actor.Level == 1 ? 0 : actor.Level,
+                VisualKey: actor.VisualKey));
         }
 
         return actors;

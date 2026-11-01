@@ -25,6 +25,12 @@ public sealed class RemotePlayerInterpolationBuffer
         _buffer.AddSample(sample.ServerTick, sample.Position, sample.Facing);
     }
 
+    // Drops every sample, so a respawn does not interpolate from the death position.
+    public void Clear()
+    {
+        _buffer.Clear();
+    }
+
     public bool TrySample(double renderTick, out InterpolatedActorPose pose)
     {
         return _buffer.TrySample(renderTick, out pose);

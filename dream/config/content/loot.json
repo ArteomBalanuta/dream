@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "key": "wolf",
+      "drops": 1,
+      "nothingWeight": 75,
+      "items": [
+        { "item": "gear.leather-cap", "weight": 10 },
+        { "item": "gear.leather-vest", "weight": 5 },
+        { "item": "gear.iron-blade", "weight": 5 },
+        { "item": "gear.ward-lantern", "weight": 5 }
+      ],
+      "rarity": { "common": 85, "uncommon": 13, "rare": 2 }
+    },
+    {
+      "key": "dire-wolf",
+      "drops": 2,
+      "nothingWeight": 50,
+      "items": [
+        { "item": "gear.leather-cap", "weight": 15 },
+        { "item": "gear.leather-vest", "weight": 15 },
+        { "item": "gear.iron-blade", "weight": 10 },
+        { "item": "gear.ward-lantern", "weight": 10 }
+      ],
+      "rarity": { "common": 60, "uncommon": 32, "rare": 8 }
+    }
+  ]
+}

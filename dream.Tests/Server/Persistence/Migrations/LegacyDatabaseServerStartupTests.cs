@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0006\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0009\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
@@ -96,7 +96,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         Assert.Single(database.Backups());
         database.ExecuteScript("INSERT INTO schema_version (version, name, applied_utc) VALUES (99, 'from_the_future', '2030-01-01T00:00:00.0000000Z');");
         MigrationTestDatabase.ReleasePooledConnections();
-        string[] filesBefore = Directory.GetFiles(database.RootDirectory).Order().ToArray();
+        string[] filesBefore = Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray();
         byte[] bytesBefore = File.ReadAllBytes(database.DatabasePath);
 
         List<string> log = [];
@@ -107,9 +107,10 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         output.WriteLine(error.Message);
         Assert.Equal(99, error.StoredVersion);
         Assert.Contains("99", error.Message, StringComparison.Ordinal);
-        Assert.Empty(log);
+        // The content digest comes before the database is touched; nothing else may be logged.
+        Assert.Empty(log.Where(line => !line.StartsWith("server.content.digest ", StringComparison.Ordinal)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database.DatabasePath));
-        Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Order().ToArray());
+        Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray());
     }
 
     // A player, a stone cube at (20, 1, 20), the pre-T2 starter inventory (hammer equipped), a

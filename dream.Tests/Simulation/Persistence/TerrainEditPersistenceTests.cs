@@ -553,6 +553,10 @@ public sealed class TerrainEditPersistenceTests
         {
         }
 
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        {
+        }
+
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
         {
             Calls.Add("RepairCubeRecord");
@@ -727,6 +731,14 @@ public sealed class TerrainEditPersistenceTests
         }
 
         public void DeleteInventorySlots(string playerName)
+        {
+        }
+
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
+        {
+        }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId)
         {
         }
 

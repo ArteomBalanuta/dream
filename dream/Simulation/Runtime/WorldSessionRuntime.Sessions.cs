@@ -19,11 +19,32 @@ public sealed partial class WorldSessionRuntime
     private int _nextRemoteActorId = 2;
     private readonly SortedSet<int> _releasedRemoteActorIds = [];
 
-    public ConnectedPlayer AttachRemoteSession(PlayerSessionId sessionId, string? displayName = null)
+    // character: the persistence key and display name a checked join resolved (JoinSession with an
+    // access decision); null leaves the key following the typed display name, as on hosts without accounts.
+    public ConnectedPlayer AttachRemoteSession(
+        PlayerSessionId sessionId,
+        string? displayName = null,
+        Dream.Simulation.Characters.CharacterKey? character = null)
     {
+        bool alreadyAttached = _sessions.TryGet(sessionId, out ConnectedPlayer? before) && before != null && before.IsSpawned;
         ConnectedPlayer attached = AttachRemoteSessionCore(sessionId, displayName);
+        if (character is { } key)
+        {
+            attached.BindCharacter(key, displayName ?? key.Value);
+        }
+
+        // Every join, first or returning, is protected for the same window as a respawn and it ends on the
+        // player's first attack. Without it a new player who stands still where they joined was bitten within
+        // 9 ticks and killed in about 8.6 s, then looped through respawns (a wolf spawned near the world
+        // spawn). The window is per seat and counted in server ticks; a rejoin gets its own, not the old one.
+        // A repeated join of a seat that is already attached does not start a new window.
+        if (!alreadyAttached)
+        {
+            attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
+        }
+
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
-        MarkProfileActive(attached.DisplayName);
+        MarkProfileActive(attached.CharacterKey.Value);
         return attached;
     }
 
@@ -147,9 +168,14 @@ public sealed partial class WorldSessionRuntime
         _buildMaterialSelections.Remove(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
+        // Wave I: a rejoin that finds the character dead waits a fresh 5 s, and an undrained push for
+        // a seat that left has nowhere to go.
+        player.RespawnAtTick = 0;
+        player.ProtectedThroughTick = 0;
+        _pendingLoot.Remove(sessionId);
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.
-        MarkProfileDeparted(player.DisplayName);
+        MarkProfileDeparted(player.CharacterKey.Value);
         _primaryPlayerTarget = null;
 
         if (PrimaryRemoteSessionId == sessionId)
@@ -184,6 +210,7 @@ public sealed partial class WorldSessionRuntime
     {
         _sessionInteractionModes.Remove(player.SessionId);
         _buildMaterialSelections.Remove(player.SessionId);
+        _pendingLoot.Remove(player.SessionId);
     }
 
     // Sessions with a stored interaction mode (tests): at most the registry's Count.
@@ -225,8 +252,8 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        PersistedPlayerProfile profile = GetCachedProfile(player.DisplayName);
-        SaveProfile(player.DisplayName, profile with
+        PersistedPlayerProfile profile = GetCachedProfile(player.CharacterKey.Value);
+        SaveProfile(player.CharacterKey.Value, profile with
         {
             DisplayName = player.DisplayName,
             InteractionMode = interactionMode
@@ -302,10 +329,19 @@ public sealed partial class WorldSessionRuntime
             Math.Clamp(basePosition.Z + 2f, 0.5f, Map.Depth - 0.5f));
     }
 
+    // Display text only (rosters, actor names). Persistence uses TryResolveCharacterKey.
     private string TryResolveDisplayName(PlayerSessionId sessionId)
     {
         return _sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null
             ? player.DisplayName
+            : sessionId.Value;
+    }
+
+    // The persistence key of the session's character (the session id for an unknown session).
+    private string TryResolveCharacterKey(PlayerSessionId sessionId)
+    {
+        return _sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null
+            ? player.CharacterKey.Value
             : sessionId.Value;
     }
 }

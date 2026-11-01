@@ -127,23 +127,35 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         ServerPersistenceBundle Start() =>
             ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
 
-        Task<ServerPersistenceBundle> a = Task.Run(() =>
+        // Both race through the migration; the world lease then lets exactly one host the world.
+        Task<ServerPersistenceBundle?> a = Task.Run(() =>
         {
             go.Wait();
-            return Start();
+            return TryStart();
         });
-        Task<ServerPersistenceBundle> b = Task.Run(() =>
+        Task<ServerPersistenceBundle?> b = Task.Run(() =>
         {
             go.Wait();
-            return Start();
+            return TryStart();
         });
         go.Set();
-        using ServerPersistenceBundle first = await a;
-        using ServerPersistenceBundle second = await b;
+        ServerPersistenceBundle?[] results = [await a, await b];
+        using ServerPersistenceBundle first = Assert.Single(results, r => r != null)!;
+        Assert.Single(results, r => r == null);
+
+        ServerPersistenceBundle? TryStart()
+        {
+            try
+            {
+                return Start();
+            }
+            catch (Dream.Server.Hosting.WorldHeldException)
+            {
+                return null;
+            }
+        }
 
         Assert.Equal(WorldId.Default, first.WorldId);
-        Assert.Equal(first.SimulationSeed, second.SimulationSeed);
-        Assert.Equal(first.WorldTimeTicks, second.WorldTimeTicks);
         SqliteConnection.ClearAllPools();
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));

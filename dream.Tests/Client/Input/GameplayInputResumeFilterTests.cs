@@ -58,6 +58,35 @@ public class GameplayInputResumeFilterTests
     }
 
     [Fact]
+    public void Filter_KeepsSuppressingAnAttackHeldThroughTheBlockedPeriod_UntilItIsReleased()
+    {
+        GameplayInputResumeFilter filter = new();
+
+        _ = filter.Filter(CreateFrame(sequence: 1, yawDelta: 0f, forwardAxis: 0f), allowGameplayInput: false);
+        PlayerCommandFrame first = filter.Filter(CreateFrame(sequence: 2, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: true), allowGameplayInput: true);
+        PlayerCommandFrame second = filter.Filter(CreateFrame(sequence: 3, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: true), allowGameplayInput: true);
+        PlayerCommandFrame released = filter.Filter(CreateFrame(sequence: 4, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: false), allowGameplayInput: true);
+        PlayerCommandFrame pressedAgain = filter.Filter(CreateFrame(sequence: 5, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: true), allowGameplayInput: true);
+
+        Assert.False(first.PrimaryUsePressed);
+        Assert.False(second.PrimaryUsePressed);
+        Assert.False(released.PrimaryUsePressed);
+        Assert.True(pressedAgain.PrimaryUsePressed);
+    }
+
+    [Fact]
+    public void Filter_PassesAnAttackPressedAfterTheResumeFrame_WhenItWasNotHeldBefore()
+    {
+        GameplayInputResumeFilter filter = new();
+
+        _ = filter.Filter(CreateFrame(sequence: 1, yawDelta: 0f, forwardAxis: 0f), allowGameplayInput: false);
+        _ = filter.Filter(CreateFrame(sequence: 2, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: false), allowGameplayInput: true);
+        PlayerCommandFrame next = filter.Filter(CreateFrame(sequence: 3, yawDelta: 0f, forwardAxis: 0f, primaryUsePressed: true), allowGameplayInput: true);
+
+        Assert.True(next.PrimaryUsePressed);
+    }
+
+    [Fact]
     public void Filter_DoesNotSuppressInitialGameplayLookDelta()
     {
         GameplayInputResumeFilter filter = new();

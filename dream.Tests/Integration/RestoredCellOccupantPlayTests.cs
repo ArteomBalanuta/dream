@@ -57,7 +57,9 @@ public sealed class RestoredCellOccupantPlayTests(ITestOutputHelper output)
             Assert.True(await server.FlushAllAsync());
         }
 
-        // Can the player walk out? Hold the move key (forward, then each other direction) for 3 s each.
+        // Can the player walk out? (Wave I: the wolf in the cell kills the saved player before this, and she
+        // respawns at the world spawn, so these four walks start from the spawn and only print where she ends.)
+        // Hold the move key (forward, then each other direction) for 3 s each.
         foreach ((string name, PlayerMoveIntent move, Vector3 facing) in new[]
         {
             ("forward", new PlayerMoveIntent(1f, 0f), Vector3.UnitZ),
@@ -77,8 +79,12 @@ public sealed class RestoredCellOccupantPlayTests(ITestOutputHelper output)
             output.WriteLine($"walked {name} for 3 s: player {Describe(server, after.Position)}");
         }
 
-        // Control: a second player, not saved anywhere, with the same input.
+        // Control: a second player, not saved anywhere, with the same input. Wave I: alice died in the cell and
+        // respawned at the world spawn, then walked out of the map, so bob no longer joins beside the cell;
+        // he starts on the lane alice's first walk proved clear (the spawn, walking forward).
         await using WireLoopbackClient control = await server.ConnectAndJoinAsync("bob");
+        Assert.True(server.Runtime.TryGetSessionPlayerTarget(new Dream.Multiplayer.Sessions.PlayerSessionId("bob"), out Dream.Simulation.Runtime.IAuthoritativePlayerTarget? bob));
+        bob!.SetWorldPosition(new Vector3(5f, 1.5f, 5f));
         ActorSnapshot start = server.Runtime.CaptureActorSnapshots().First(a => a.SessionId == "bob");
         for (int tick = 0; tick < 192; tick++)
         {

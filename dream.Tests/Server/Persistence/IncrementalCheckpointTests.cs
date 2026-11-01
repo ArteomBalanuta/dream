@@ -92,19 +92,28 @@ public sealed class IncrementalCheckpointTests
     }
 
     [Fact]
-    public void Merge_PlayerRowsAreKeyedByNameIgnoringCase()
+    public void Merge_PlayerRowsAreKeyedByCharacterKey_CaseSensitiveAndTrimmed()
     {
+        // Wave G (G-D7): a character key compares ordinally, so "Alice" and "alice" are two characters whose
+        // rows a merged checkpoint keeps apart; only surrounding whitespace is ignored.
         PersistenceCheckpoint first = Incremental() with
         {
-            PlayerVitals = [new PlayerCheckpointVitals("Alice", PlayerInteractionMode.Building, 50, 100)]
+            PlayerVitals =
+            [
+                new PlayerCheckpointVitals("Alice", PlayerInteractionMode.Building, 50, 100),
+                new PlayerCheckpointVitals("alice", PlayerInteractionMode.Building, 55, 100)
+            ]
         };
         PersistenceCheckpoint second = Incremental() with
         {
-            PlayerVitals = [new PlayerCheckpointVitals("alice ", PlayerInteractionMode.Combat, 40, 100)]
+            PlayerVitals = [new PlayerCheckpointVitals("Alice ", PlayerInteractionMode.Combat, 40, 100)]
         };
 
-        PlayerCheckpointVitals vitals = Assert.Single(PersistenceCheckpoint.Merge(first, second).PlayerVitals);
-        Assert.Equal(40, vitals.CurrentHealth);
+        PlayerCheckpointVitals[] vitals = PersistenceCheckpoint.Merge(first, second).PlayerVitals.ToArray();
+
+        Assert.Equal(2, vitals.Length);
+        Assert.Equal(40, Assert.Single(vitals, v => v.PlayerName.Trim() == "Alice").CurrentHealth);
+        Assert.Equal(55, Assert.Single(vitals, v => v.PlayerName == "alice").CurrentHealth);
     }
 
     [Fact]

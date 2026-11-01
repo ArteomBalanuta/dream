@@ -84,17 +84,17 @@ public sealed class StartupMenuRenderer : IDisposable
         ImGui.InputText("Port", ref portBuffer, 16);
         ImGui.InputText("Player Name", ref playerNameBuffer, 64);
 
+        if (isBusy)
+        {
+            ImGui.BeginDisabled();
+        }
+
         if (ImGui.Button("Use Local Server"))
         {
             useLocalServerPressed = true;
         }
 
         ImGui.SameLine();
-        if (isBusy)
-        {
-            ImGui.BeginDisabled();
-        }
-
         if (ImGui.Button("Connect"))
         {
             connectPressed = true;

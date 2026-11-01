@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
+using Dream.Simulation.Stats;
 
 namespace Dream.Tests.Simulation.Players;
 
@@ -32,14 +33,16 @@ public class PlayerCombatantCombatStatTests
     }
 
     [Fact]
-    public void ApplyEquippedToolModifier_Adjusts_EffectiveStats_WithoutOverwriting_BaseStats()
+    public void ApplyEquipment_Adjusts_EffectiveStats_WithoutOverwriting_BaseStats()
     {
         PlayerCombatant combatant = new(() => Vector3.Zero);
         combatant.ApplyBaseStats(new PlayerCombatStats { Strength = 12, AttackSpeed = 2.5f, Vitality = 11 });
 
-        combatant.ApplyEquippedToolModifier(new ToolStatModifier(
-            StrengthBonus: 4,
-            AttackSpeedBonus: 1.5f));
+        EquipmentLoadout equipment = new();
+        equipment.Set(
+            EquipmentSlot.MainHand,
+            [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.AttackSpeed, StatOp.Flat, 1.5f)]);
+        combatant.ApplyEquipment(equipment);
 
         Assert.Equal(12, combatant.BaseStats.Strength);
         Assert.Equal(2.5f, combatant.BaseStats.AttackSpeed, 3);
@@ -50,6 +53,51 @@ public class PlayerCombatantCombatStatTests
         Assert.Equal(37, combatant.DerivedStats.MinDamage);
         Assert.Equal(74, combatant.DerivedStats.MaxDamage);
         Assert.Equal(0.25f, combatant.DerivedStats.AttackIntervalSeconds, 3);
+    }
+
+    [Fact]
+    public void ApplyEquipment_SumsAllFourSlots_AndReadsArmor()
+    {
+        PlayerCombatant combatant = new(() => Vector3.Zero);
+        combatant.ApplyBaseStats(new PlayerCombatStats { Strength = 10, AttackSpeed = 2f, Vitality = 10 });
+        Assert.Equal(0, combatant.EffectiveArmor);
+
+        EquipmentLoadout equipment = new();
+        equipment.Set(EquipmentSlot.MainHand, [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.AttackSpeed, StatOp.Flat, 1f)]);
+        equipment.Set(EquipmentSlot.OffHand, [new StatModifier(StatId.Strength, StatOp.Flat, 1f), new StatModifier(StatId.Armor, StatOp.Flat, 3f)]);
+        equipment.Set(EquipmentSlot.Head, [new StatModifier(StatId.Armor, StatOp.Flat, 5f), new StatModifier(StatId.Vitality, StatOp.Flat, 2f)]);
+        equipment.Set(EquipmentSlot.Body, [new StatModifier(StatId.Armor, StatOp.Flat, 8f), new StatModifier(StatId.Vitality, StatOp.Flat, 3f)]);
+        combatant.ApplyEquipment(equipment);
+
+        Assert.Equal(15, combatant.Stats.Strength);
+        Assert.Equal(3f, combatant.Stats.AttackSpeed, 3);
+        Assert.Equal(15, combatant.Stats.Vitality);
+        Assert.Equal(16, combatant.EffectiveArmor);
+        // The base stats and the base of Armor are untouched.
+        Assert.Equal(10, combatant.BaseStats.Strength);
+        Assert.Equal(0f, combatant.StatSheet.Base[StatId.Armor]);
+
+        equipment.Clear();
+        combatant.ApplyEquipment(equipment);
+
+        Assert.Equal(10, combatant.Stats.Strength);
+        Assert.Equal(0, combatant.EffectiveArmor);
+    }
+
+    [Fact]
+    public void ApplyEquipment_RescalesHealthOnce_ByTheFinalMaximum()
+    {
+        PlayerCombatant combatant = new(() => Vector3.Zero);
+        int baseMax = combatant.Health.MaxHealth;
+        combatant.Health.SetAuthoritativeState(baseMax / 2, baseMax);
+        EquipmentLoadout equipment = new();
+        equipment.Set(EquipmentSlot.Head, [new StatModifier(StatId.Vitality, StatOp.Flat, 2f)]);
+        equipment.Set(EquipmentSlot.Body, [new StatModifier(StatId.Vitality, StatOp.Flat, 3f)]);
+
+        combatant.ApplyEquipment(equipment);
+
+        Assert.True(combatant.Health.MaxHealth > baseMax);
+        Assert.Equal((double)combatant.Health.MaxHealth / 2, combatant.Health.CurrentHealth, 1.0);
     }
 
     [Fact]

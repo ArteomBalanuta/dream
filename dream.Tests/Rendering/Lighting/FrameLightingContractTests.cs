@@ -185,9 +185,10 @@ public class FrameLightingContractTests
             world);
         Assert.Single(Regex.Matches(world, @"UploadFrameLighting\("));
 
+        // Wave H3 adds the optional off-hand draw after the hands and the held item, in the same bracket.
         string viewModels = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "ViewModels", "ViewModelRenderer.cs"));
         Assert.Matches(
-            @"_render\.BindViewModelLighting\(\);\s*try\s*\{\s*DrawSlot\([^;]*;\s*DrawSlot\([^;]*;\s*\}\s*finally\s*\{\s*_render\.BindWorldLighting\(\);",
+            @"_render\.BindViewModelLighting\(\);\s*try\s*\{\s*DrawSlot\([^;]*;\s*DrawSlot\([^;]*;\s*(?:if \([^)]*\)\s*\{\s*DrawSlot\([^;]*;\s*\}\s*)?\}\s*finally\s*\{\s*_render\.BindWorldLighting\(\);",
             viewModels);
 
         string buffer = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Lighting", "FrameLightingBuffer.cs"));

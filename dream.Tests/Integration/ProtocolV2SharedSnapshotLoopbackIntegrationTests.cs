@@ -213,7 +213,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             }
 
             string expectedPrefix =
-                $"{{\"protocolVersion\":8,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},{ack}\"payload\":";
+                $"{{\"protocolVersion\":11,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},{ack}\"payload\":";
             Assert.Equal(expectedPrefix, Encoding.UTF8.GetString(frame.Payload, 0, frame.PayloadOffset));
             Assert.Equal((byte)'}', frame.Payload[^1]);
             Assert.Equal(frame.Payload.Length - 1, frame.PayloadOffset + frame.PayloadJson.Length);
@@ -442,7 +442,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
         public async Task HandshakeAsync()
         {
             await SendAsync(new ClientHelloMessage($"raw-{SessionId}"));
-            await SendAsync(new ClientJoinRequestMessage(SessionId, $"Name {SessionId}"));
+            await SendAsync(new ClientJoinRequestMessage(SessionId, $"Name {SessionId}", Dream.Tests.Support.TestAccountTokens.For($"Name {SessionId}")));
         }
 
         public Task WaitForJoinAcceptedAsync()

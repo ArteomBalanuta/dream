@@ -31,6 +31,9 @@ public sealed class ServerRoutingContext
 
     public ClientJoinRequestMessage? LastJoinRequest { get; set; }
 
+    // The character and account this connection joined as; null until a checked join is applied.
+    public Dream.Simulation.Characters.JoinHolderIdentity? JoinedIdentity { get; set; }
+
     public PlayerCommandMessage? LastCommandMessage { get; set; }
 
     public PlayerActionMessage? LastActionMessage { get; set; }

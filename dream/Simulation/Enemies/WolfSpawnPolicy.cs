@@ -6,7 +6,14 @@ namespace Dream.Simulation.Enemies;
 public static class WolfSpawnPolicy
 {
     public const float FloorSurfaceY = 1f;
-    private static readonly Vector3 DefaultSpawn = new(5.5f, FloorSurfaceY, 2.5f);
+
+    // The wolves spawn in the far corner from the world spawn (5, 5): the day wolf this far in from the
+    // map's far edges, the night's second wolf a little closer to the corner. On the 30 m map the day wolf is
+    // 30 m from the world spawn and the night one 32 m, past every template's aggro range (10 and 12 m), so
+    // a player who joins and stands still is not attacked at once. Maps under about 16 m are too small to
+    // keep that distance; the spawns then clamp inside the map as close to the corner as they go.
+    private const float DayInsetFromFarCorner = 3.5f;
+    private const float NightInsetFromFarCorner = 2.5f;
 
     // A night spawn closer than this (horizontally) to the day spawn counts as the same place.
     private const float MinimumSpawnSeparation = 1f;
@@ -23,22 +30,21 @@ public static class WolfSpawnPolicy
     public static Vector3 ResolveInitialSpawn(int width, int depth)
     {
         return new Vector3(
-            ClampAxis(DefaultSpawn.X, width),
+            ClampAxis(width - DayInsetFromFarCorner, width),
             FloorSurfaceY,
-            ClampAxis(DefaultSpawn.Z, depth));
+            ClampAxis(depth - DayInsetFromFarCorner, depth));
     }
 
-    // The second wolf a night adds: the day spawn mirrored into the opposite corner,
-    // (width - 5.5, 1, depth - 2.5), clamped like the day spawn. On a map where that lands on the
-    // day spawn (small or symmetric), it steps 2 cells away from the day spawn instead; a map too
-    // small for any step keeps the clamped corner. Pure, so every server picks the same cell.
+    // The second wolf a night adds: (width - 2.5, 1, depth - 2.5), clamped like the day spawn. On a map
+    // where that lands on the day spawn (a very small one), it steps 2 cells away from the day spawn
+    // instead; a map too small for any step keeps the clamped corner. Pure, so every server picks the same cell.
     public static Vector3 ResolveNightSpawn(int width, int depth)
     {
         Vector3 day = ResolveInitialSpawn(width, depth);
         Vector3 night = new(
-            ClampAxis(width - DefaultSpawn.X, width),
+            ClampAxis(width - NightInsetFromFarCorner, width),
             FloorSurfaceY,
-            ClampAxis(depth - DefaultSpawn.Z, depth));
+            ClampAxis(depth - NightInsetFromFarCorner, depth));
         if (!Overlaps(night, day))
         {
             return night;

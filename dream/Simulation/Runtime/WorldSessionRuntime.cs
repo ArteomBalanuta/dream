@@ -84,6 +84,9 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private int _primaryTicksSinceCommand;
     // Set while a cube registration must not export a CubeIdentified delta (see OnCubeIdAssigned).
     private bool _suppressCubeIdExports;
+    // Wave I: where a respawning player is put (the runtime's player start position); see
+    // ResolveRespawnPosition.
+    private readonly Vector3 _worldSpawn;
 
     // A square default-generator world of the given floor size (id 1, "default").
     public WorldSessionRuntime(
@@ -124,18 +127,23 @@ public sealed partial class WorldSessionRuntime : IDisposable
         PersistenceWriteQueue? persistenceWrites = null,
         ulong simulationSeed = DefaultSimulationSeed,
         bool headlessMap = true,
-        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null)
+        IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
+        IAccountRepository? accounts = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         World = world;
         StoredTerrain = storedTerrain;
         SimulationSeed = simulationSeed;
+        _worldSpawn = playerStartPosition;
         _headlessMap = headlessMap;
         _writes = persistenceWrites ??
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);
         _events = events;
         _playerProfiles = playerProfiles;
-        _inventory = new PlayerInventoryService(worldPersistence, _writes, _objectIds);
+        _inventory = new PlayerInventoryService(worldPersistence, _writes, _objectIds)
+        {
+            ActionGate = SpendInventoryActionBudget,
+        };
         IPersistenceCheckpointWriter? resolvedCheckpointWriter = checkpointWriter ??
             (worldPersistence != null ? new RepositoryPersistenceCheckpointWriter(playerProfiles, worldPersistence) : null);
         _combatFormulaService = combatFormulaService ?? CombatFormulaService.Default;
@@ -157,11 +165,13 @@ public sealed partial class WorldSessionRuntime : IDisposable
         Player = new Player(Map, Physics, playerBody, playerStartPosition, _events, _combatFormulaService);
         LocalPlayerSessionId = PlayerSessionId.LocalDefault;
         _sessions.SessionForgotten = OnSessionForgotten;
-        _sessions.Register(
+        ConnectedPlayer localSeat = _sessions.Register(
             LocalPlayerSessionId,
             Player.Combatant.Actor.Id,
             isLocal: true,
             displayName: "local-player");
+        // The first spawn is protected like a respawn (see AttachRemoteSession).
+        localSeat.ProtectedThroughTick = PlayerRespawnRules.SpawnProtectionTicks;
         _sessionInteractionModes[LocalPlayerSessionId] = PlayerInteractionMode.Building;
         _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
 
@@ -169,7 +179,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         _enemies = new EnemyRegistry();
         _combatResolver = CreateCombatResolver();
         _persistence = new RuntimePersistenceBridge(
-            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities);
+            this, _playerProfiles, worldPersistence, resolvedCheckpointWriter, _writes, _worldObjects, _enemies, _events, _objectIds, _objectIdentities, accounts);
         SubscribeReplicationExports();
 
         try

@@ -62,7 +62,7 @@ public class EnemyActorTests
     [Fact]
     public void Update_Stops_At_StandOff_Distance_Before_Reaching_Player()
     {
-        EnemyActor actor = CreateActor(moveSpeed: 10f, preferredStandOffDistance: 2f);
+        EnemyActor actor = CreateActor(moveSpeed: 10f, preferredStandOffDistance: 2f, attackRange: 3f);
 
         actor.Update(1f, new Vector3(4f, 0f, 0f));
 
@@ -109,14 +109,14 @@ public class EnemyActorTests
         Assert.Equal(Vector3.UnitZ, actor.Forward);
     }
 
-    private static EnemyActor CreateActor(float moveSpeed = 3f, float preferredStandOffDistance = 1.25f)
+    private static EnemyActor CreateActor(float moveSpeed = 3f, float preferredStandOffDistance = 1.25f, float attackRange = 1.25f)
     {
         EnemyCombatant combatant = new(() => Vector3.Zero, maxHealth: 30, attackDamage: 6, attackIntervalSeconds: 1f);
         return new EnemyActor(
             combatant,
             Vector3.Zero,
             aggroRange: 5f,
-            attackRange: 1.25f,
+            attackRange: attackRange,
             moveSpeed: moveSpeed,
             preferredStandOffDistance: preferredStandOffDistance);
     }

@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using Dream.Assets;
+using Dream.Client.Identity;
 using Dream.Client.Networking;
 using Dream.Client.Scenes;
 using Dream.Client.Startup;
@@ -7,6 +8,7 @@ using Dream.Configuration;
 using Dream.Rendering.Core;
 using Dream.Rendering.ViewModels;
 using Dream.Server;
+using Dream.Server.Hosting;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using System.Diagnostics;
@@ -28,6 +30,7 @@ public class Game : GameWindow
     // Replaced with a fresh, unstarted handle when a play session ends: the ended session's
     // integrated server is stopped with it, and the next local session starts a new one.
     private ILocalServerHandle _localServer;
+    private string? _contentError;
     // The stops of the integrated servers let go of so far. They all share one world database, so
     // a new integrated server starts only after them, and the window close waits for them.
     private readonly LocalServerShutdownGate _localServerShutdown = new();
@@ -74,6 +77,14 @@ public class Game : GameWindow
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
         _localServer = CreateLocalServerHandle();
+        // A client that only joins a remote server never passes ServerBootstrap's content check, so
+        // the content is read once here; a failure is shown on the connection screen.
+        _contentError = ClientContentCheck.TryReadShipped();
+        if (_contentError != null)
+        {
+            Console.Error.WriteLine($"[startup] {_contentError}");
+        }
+
         if (RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions))
         {
             ShowStartupScene(
@@ -104,7 +115,9 @@ public class Game : GameWindow
         return new OnDemandLocalServerHandle(
             () => IntegratedLocalServerHandle.StartAsync(
                 hostFactory: () => ServerBootstrap.CreateAuthoritativeHost(
-                    new ServerStartOptions(NewWorldSize: _settings.FloorSize))).AsTask().GetAwaiter().GetResult(),
+                    new ServerStartOptions(
+                        NewWorldSize: _settings.FloorSize,
+                        MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait))).AsTask().GetAwaiter().GetResult(),
             startAfter: () => _localServerShutdown.Pending);
     }
 
@@ -132,7 +145,11 @@ public class Game : GameWindow
                 relaunchLocalServerFor.Port);
         }
 
-        NetworkSessionCoordinator coordinator = new(_localServer, connector);
+        NetworkSessionCoordinator coordinator = new(
+            _localServer,
+            connector,
+            _contentError,
+            ClientIdentityStore.ForCurrentUser());
         ClientConnectionOptions initialOptions = resolveLocalPort
             ? coordinator.ResolveInitialOptions(options)
             : options;

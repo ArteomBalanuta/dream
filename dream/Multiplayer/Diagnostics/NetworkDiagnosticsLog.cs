@@ -113,6 +113,12 @@ public static class NetworkDiagnosticsLog
         WriteEnabled(category, messageFactory(state));
     }
 
+    // Lets the next WriteEvery of this key through. For tests that assert a rate limited line.
+    internal static void ForgetRateLimitKey(string key)
+    {
+        RateLimiter.Forget(key);
+    }
+
     // Enables diagnostics on the calling thread only and sends its (category, message) pairs to
     // the sink instead of the console and the log file, until the returned scope is disposed.
     // Rate limiting still applies, through the process-wide limiter.
@@ -182,8 +188,65 @@ public static class NetworkDiagnosticsLog
             $"({value.X:0.00},{value.Y:0.00},{value.Z:0.00})");
     }
 
+    // Every line goes through here, and lines carry client-chosen text (player names above all). A control
+    // character (a newline would start a forged log line, an escape sequence drives the terminal) or a
+    // bidirectional formatting character (it reorders the text after it) is written as \uXXXX, so one
+    // call is always exactly one line of plain text. Plain strings are returned as they are.
+    public static string Sanitize(string text)
+    {
+        int bad = -1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (NeedsEscape(text[i]))
+            {
+                bad = i;
+                break;
+            }
+        }
+
+        if (bad < 0)
+        {
+            return text;
+        }
+
+        System.Text.StringBuilder builder = new(text.Length + 16);
+        builder.Append(text, 0, bad);
+        for (int i = bad; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (NeedsEscape(c))
+            {
+                builder.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                builder.Append(c);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    // Numeric on purpose, the literals would be invisible characters: U+2028 and U+2029 separators,
+    // U+061C, U+200E and U+200F marks, U+202A to U+202E and U+2066 to U+2069 bidi controls.
+    private static bool NeedsEscape(char c)
+    {
+        int code = c;
+        return char.IsControl(c)
+            || code is 0x2028 or 0x2029 or 0x061C or 0x200E or 0x200F
+            || (code >= 0x202A && code <= 0x202E)
+            || (code >= 0x2066 && code <= 0x2069);
+    }
+
     private static void WriteEnabled(string category, string message)
     {
+        category = Sanitize(category);
+        // The collision report is multi-line by design and holds only server-made numbers, no client text.
+        if (!string.Equals(category, Dream.Simulation.Players.Player.CollisionReportCategory, StringComparison.Ordinal))
+        {
+            message = Sanitize(message);
+        }
+
         if (t_captureSink is Action<string, string> captureSink)
         {
             captureSink(category, message);

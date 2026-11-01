@@ -21,6 +21,9 @@ public sealed record RuntimePersistencePorts(
     // WorldDescriptor.Default. (Named Descriptor because World is the world repository.)
     public WorldDescriptor? Descriptor { get; init; }
 
+    // Accounts and character ownership (global); null for hosts without accounts.
+    public IAccountRepository? Accounts { get; init; }
+
     // The terrain chunks of a stored world, as loaded; null for generated worlds.
     public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; init; }
 

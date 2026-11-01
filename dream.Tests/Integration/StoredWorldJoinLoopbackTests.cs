@@ -14,16 +14,21 @@ namespace Dream.Tests.Integration;
 // is unchanged by wave E.
 public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper output)
 {
-    // Measured at wave E C0 (3e30c12, protocol v8) before A, B or C merged: a client joins the
+    // Measured at wave E C0 (3e30c12, protocol v8) before A, B or C merged (the protocol digit is
+    // normalised to 8 below, so wave G's v9 changes nothing else in these frames): a client joins the
     // generated 56x8x56 world of StoredWorldDb(stored: false) (seed 20261029) and the server ticks
     // three more times with a snapshot per tick; the pinned frames are the join's (the snapshot frames
     // are checked to arrive but not byte-compared, see CaptureGeneratedJoinAsync). Generated worlds send no terrain manifest and no
     // terrain frames, so every frame must stay byte-identical (plan rule 4, decision E7).
+    // Re-pinned in the last fix loop of wave I, and the only cause is the day wolf's spawn in the join's actor
+    // list: (5.5, 1, 2.5) became (52.5, 1, 52.5), 2 bytes longer in all (8,492 -> 8,494). Sha-256 was
+    // 40391109031e35d0..., now e98ef020127c415a....
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 8_492;
+    private const long C0TotalBytes = 8_494;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "40391109031e35d04b26c1232579691b99ac37bd1d68166b003232bed4b42a42";
+    private const string C0Sha256 = "e98ef020127c415ab79985482d11c5bf337f438024737d1df779b44bfff8a2ee";
+    private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
     public async Task GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture()
@@ -38,6 +43,30 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         Assert.Equal(C0FrameKinds, first.Kinds);
         Assert.Equal(C0TotalBytes, first.TotalBytes);
         Assert.Equal(C0FrameCount, first.Kinds.Split(',').Length);
+
+        // The real frame, before any normalisation. Wave H's gate is 3,565 B + 15%.
+        output.WriteLine($"server.join-accepted, starter kit: {first.JoinAcceptedBytes:N0} B");
+        Assert.True(first.JoinAcceptedBytes <= JoinAcceptedGateBytes, $"{first.JoinAcceptedBytes} B");
+    }
+
+    // The normalisation may remove only the three new fields, in their place behind detailLines: rarity,
+    // isRolled, an item's other fields and a field out of order must all stay and fail the capture.
+    [Theory]
+    [InlineData(
+        "\"detailLines\":[\"a\"],\"modifiers\":[{\"stat\":0,\"op\":0,\"value\":1}],\"heldLight\":1,\"equipSlots\":3,\"stackCount\":1",
+        "\"detailLines\":[\"a\"],\"stackCount\":1")]
+    [InlineData(
+        "\"detailLines\":[],\"equipSlots\":1,\"rarity\":2,\"isRolled\":true",
+        "\"detailLines\":[],\"rarity\":2,\"isRolled\":true")]
+    [InlineData(
+        "\"detailLines\":[],\"heldLight\":1,\"modifiers\":[]",
+        "\"detailLines\":[],\"modifiers\":[]")]
+    [InlineData(
+        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3",
+        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3")]
+    public void TheEquipmentFieldNormalisation_RemovesOnlyTheThreeNewFieldsAfterDetailLines(string frame, string expected)
+    {
+        Assert.Equal(expected, ItemEquipmentFields().Replace(frame, "$1"));
     }
 
     // Over real TCP a client joins a stored World10k: checksum, raised key sets and rubble equal.
@@ -136,7 +165,13 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         {
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
-            string text = TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0");
+            // Protocols v9 (wave G), v10 (wave H) and v11 (wave I) change only the version digit of these frames; compare as v8.
+            // Wave H also adds the item fields of the equipment model (modifiers, heldLight, equipSlots, after
+            // an item's detailLines) to the inventory in join-accepted; they are stripped here so every other
+            // byte still matches the capture. Their size is pinned by StarterKitInventoryBytesTests.
+            string text = ItemEquipmentFields().Replace(
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":11", "\"protocolVersion\":8"),
+                "$1");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));
@@ -147,16 +182,23 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         string kinds = string.Join(",", frames.Select(frame => frame.Decoded.Envelope.MessageKind));
         return new FrameCapture(kinds, total, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant())
         {
-            Texts = [.. texts]
+            Texts = [.. texts],
+            JoinAcceptedBytes = frames.Single(frame => frame.Decoded.Envelope.MessageKind == "server.join-accepted").Payload.Length
         };
     }
 
     [System.Text.RegularExpressions.GeneratedRegex(@"""(currentServerTick|serverTick)"":\d+")]
     private static partial System.Text.RegularExpressions.Regex TickNumber();
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"(""detailLines"":\[[^\]]*\])(?:,""modifiers"":\[[^\]]*\])?(?:,""heldLight"":\d+)?(?:,""equipSlots"":\d+)?")]
+    private static partial System.Text.RegularExpressions.Regex ItemEquipmentFields();
+
     private sealed record FrameCapture(string Kinds, long TotalBytes, string Sha256)
     {
         public string[] Texts { get; init; } = [];
+
+        // The join-accepted frame's real payload length, before normalisation.
+        public int JoinAcceptedBytes { get; init; }
 
         public bool Equals(FrameCapture? other) => other != null && Kinds == other.Kinds && TotalBytes == other.TotalBytes && Sha256 == other.Sha256;
 

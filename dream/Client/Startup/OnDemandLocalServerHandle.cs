@@ -62,6 +62,35 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
         _pendingStart = StartAfterAsync(previousStop);
     }
 
+    // Clears a failed start so the next EnsureStarted runs the start again. The failed handle holds
+    // nothing to stop (a failed start released its host), so it is disposed on the spot.
+    public void ResetFailure()
+    {
+        if (_disposed || _pendingStart is { IsCompleted: false })
+        {
+            return;
+        }
+
+        ILocalServerHandle? failed = _started;
+        if (failed != null)
+        {
+            if (failed.ErrorMessage == null)
+            {
+                return;
+            }
+
+            _started = null;
+            failed.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        else if (_startFailure == null)
+        {
+            return;
+        }
+
+        _startFailure = null;
+        _pendingStart = null;
+    }
+
     public Task WaitForStartAsync()
     {
         return _pendingStart ?? Task.CompletedTask;

@@ -597,6 +597,14 @@ public class ReplicatedIdIntegrationTests
         {
         }
 
+        public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
+        {
+        }
+
+        public void DestroyInventoryItem(string playerName, long itemInstanceId)
+        {
+        }
+
         public void SaveStarterKitGrant(string playerName, int kitVersion)
         {
         }

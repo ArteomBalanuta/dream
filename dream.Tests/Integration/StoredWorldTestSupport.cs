@@ -11,6 +11,7 @@ using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -257,7 +258,7 @@ internal sealed class SoakServer : IDisposable
         Runtime = host.Runtime!;
         foreach (string session in new[] { Primary, Secondary })
         {
-            Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}")));
+            Assert.Empty(_host.HandleClientMessage($"connection-{session}", new ClientJoinRequestMessage(session, $"Name {session}", Dream.Tests.Support.TestAccountTokens.For($"Name {session}"))));
         }
 
         Assert.True(Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);

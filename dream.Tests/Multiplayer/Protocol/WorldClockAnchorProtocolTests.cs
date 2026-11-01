@@ -19,7 +19,7 @@ public class WorldClockAnchorProtocolTests
         string json = EncodeToJson(join);
 
         Assert.Equal(
-            """{"protocolVersion":8,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":1234,"worldClock":{"serverTick":1234,"worldTicks":98765,"ticksPerDay":115200,"startOffsetTicks":38400}}}""",
+            """{"protocolVersion":11,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":1234,"worldClock":{"serverTick":1234,"worldTicks":98765,"ticksPerDay":115200,"startOffsetTicks":38400}}}""",
             json);
     }
 

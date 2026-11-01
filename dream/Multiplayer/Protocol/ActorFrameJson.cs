@@ -27,9 +27,12 @@ namespace Dream.Multiplayer.Protocol;
 //       Progression null | [level, experience, experienceToNextLevel]
 //       Starved     starvedTicks
 //       Equipment   heldLight (HeldLightKind), protocol v6
+//       EnemyPresentation  enemyLevel, visualKey|null, protocol v11 (absolute, also in a delta)
 // A Full record carries every group through Starved (groups is 255), and Equipment (511) only
 // when the held light is not None; a Full record without Equipment means None. A delta record
-// carries Equipment when the held light changed. An idle actor costs its id and a comma; a
+// carries Equipment when the held light changed. EnemyPresentation (512) is carried by a Full
+// record only when the level is not 0 or the visual key is not null (a Full Dire Wolf is 767), and
+// by a delta record when either changed; without it an enemy is level 1 with the default visual. An idle actor costs its id and a comma; a
 // walking player about 20 bytes (`[18,2,410,0,-205],` is 18, pinned by DeltaActorSnapshotTests),
 // about 30 while it also turns (the Facing group adds three more changes).
 // The frame as a standalone converter. The codec reaches the frame through the snapshot envelope's
@@ -55,6 +58,9 @@ internal static class ActorFrameJson
     private static readonly JsonEncodedText Actors = JsonEncodedText.Encode("actors");
 
     private const int InitialScratchLength = 32;
+
+    // A wire enemy level outside 0..this is hostile; the client clamps what it displays further.
+    internal const int MaxEnemyLevel = 1_000_000;
 
     // A frame decoded earlier, written back exactly as it came.
     public static void Write(Utf8JsonWriter writer, ActorWireFrame frame)
@@ -184,6 +190,12 @@ internal static class ActorFrameJson
         if ((groups & ActorFieldGroups.Equipment) != 0)
         {
             writer.WriteNumberValue((int)record.HeldLight);
+        }
+
+        if ((groups & ActorFieldGroups.EnemyPresentation) != 0)
+        {
+            writer.WriteNumberValue(record.EnemyLevel);
+            WriteNullableString(writer, record.VisualKey);
         }
 
         writer.WriteEndArray();
@@ -401,6 +413,19 @@ internal static class ActorFrameJson
             heldLight = (HeldLightKind)rawHeldLight;
         }
 
+        int enemyLevel = 0;
+        string? visualKey = null;
+        if ((groups & ActorFieldGroups.EnemyPresentation) != 0)
+        {
+            enemyLevel = NextInt32(ref reader);
+            if (enemyLevel is < 0 or > MaxEnemyLevel)
+            {
+                throw new JsonException($"Actor {actorId}'s enemy level {enemyLevel} is out of range.");
+            }
+
+            visualKey = NextNullableString(ref reader);
+        }
+
         ExpectEndArray(ref reader, "actor record");
         return new ActorWireRecord(
             actorId,
@@ -422,7 +447,9 @@ internal static class ActorFrameJson
             combatStats,
             progression,
             starvedTicks,
-            heldLight);
+            heldLight,
+            enemyLevel,
+            visualKey);
     }
 
     private static void WriteNullableString(Utf8JsonWriter writer, string? value)

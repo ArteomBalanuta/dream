@@ -33,7 +33,7 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
     [Fact]
     public void ChasingWolf_UnderCoalescedSnapshots_NeverRendersBackwards_AndARespawnSnaps()
     {
-        using EnemyReplicationDriver driver = new(output);
+        using EnemyReplicationDriver driver = new(output, oldSpawn: true);
         Vector3 spawn = driver.WolfPosition!.Value;
 
         // The player walks off along +Z in short bursts; the wolf chases. Several coalescing
@@ -273,13 +273,29 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         private int _lastDeliveredLife;
         private int _frame;
 
-        public EnemyReplicationDriver(ITestOutputHelper output)
+        // The day wolf spawns in the far corner now, 47 m from the player's start. oldSpawn puts it back at
+        // (5.5, 1, 2.5), next to the start, for the walking chase; otherwise the player is moved to 3 m from
+        // the wolf's real spawn, so a respawn still lands near the death place. Either way the join
+        // window is ended: these tests are about replication, not the window.
+        public EnemyReplicationDriver(ITestOutputHelper output, bool oldSpawn = false)
         {
             _output = output;
             _host = ServerBootstrap.CreateAuthoritativeHost(persistence: null);
             Runtime = _host.Runtime!;
             Assert.Empty(_host.HandleClientMessage("connection-a", new ClientJoinRequestMessage(Session, "Name A")));
             AdvanceOneTick();
+            PlayerSessionId session = new(Session);
+            Dream.Tests.Simulation.Runtime.WaveIRuntimeKit.EndProtection(Runtime, session);
+            if (oldSpawn)
+            {
+                CurrentWolf!.SetPosition(new Vector3(5.5f, 1f, 2.5f));
+            }
+            else
+            {
+                Assert.True(Runtime.TryGetSessionPlayerTarget(session, out IAuthoritativePlayerTarget? target));
+                target!.SetWorldPosition(CurrentWolf!.Position + new Vector3(-3f, 0.5f, 0f));
+            }
+
             List<PendingConnectionReply> replies = [];
             _host.DrainPendingJoinRepliesInto(replies);
             JoinAcceptedMessage accepted = Assert.IsType<JoinAcceptedMessage>(Assert.Single(replies, reply => reply.Message is JoinAcceptedMessage).Message);

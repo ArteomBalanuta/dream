@@ -5,6 +5,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Simulation.Players;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Load;
 
@@ -88,7 +89,7 @@ public sealed class BotClient : IAsyncDisposable
         long started = Stopwatch.GetTimestamp();
         CountingClientTransport transport = new(new TcpClientConnector());
         RemoteClientSession session = await RemoteClientSession.ConnectAsync(
-            new RemoteClientOptions("127.0.0.1", port, sessionId, sessionId, "load-bot"),
+            new RemoteClientOptions("127.0.0.1", port, sessionId, sessionId, "load-bot", TestAccountTokens.For(sessionId)),
             transport,
             new TransportJsonCodec(),
             framer,

@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "enemies": [
+    {
+      "key": "Wolf",
+      "displayName": "Wolf",
+      "level": 1,
+      "strength": 10,
+      "vitality": 10,
+      "attackSpeed": 0.952381,
+      "aggroRange": 10,
+      "attackRange": 1.35,
+      "moveSpeed": 2.8,
+      "visualKey": "enemy.wolf",
+      "spawnRole": "Primary",
+      "lootTable": "wolf"
+    },
+    {
+      "key": "DireWolf",
+      "displayName": "Dire Wolf",
+      "level": 3,
+      "strength": 16,
+      "vitality": 30,
+      "attackSpeed": 1.0,
+      "aggroRange": 12,
+      "attackRange": 1.35,
+      "moveSpeed": 3.2,
+      "visualKey": "enemy.dire-wolf",
+      "spawnRole": "NightExtra",
+      "lootTable": "dire-wolf"
+    }
+  ]
+}
