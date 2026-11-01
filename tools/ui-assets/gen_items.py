@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import forge as fg  # noqa: E402
 import uiart  # noqa: E402
 from uiart import PPU, SCALE, SS, Atlas, Sprite, fbm, rng, sdf, token  # noqa: E402
 
@@ -1298,13 +1299,66 @@ def write_ramps(out: Path) -> None:
     (out / "tier_ramps.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 
 
+ICON_EXPOSURE = 0.50   # the icons sit on dark cells in a dark window: they must not be the brightest thing on screen
+ICON_ALBEDO = 0.72    # and a little darker still, so aged gold and paint stop shouting
+ICON_DESAT = 0.75      # linear-light saturation kept; pure toy colours read cheap next to forged iron
+
+
+def forge_render(s: Scene) -> tuple:
+    """The painted scene buffers, lit through forge: linear-light GGX with Schlick Fresnel and baked AO, bloom and a
+    filmic curve in finish(). The buffers already carry normals, albedo, metal, gloss and emission, so the shapes and
+    colours stay the designed ones; only the light transport changes. Returns hi-res float RGBA and the mask channels."""
+    H, W = s.H, s.W
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    n = s.nrm.copy()
+    n[..., 0] += (xx / W - 0.5) * 0.30   # the slight lens bend, so flat faces take a gradient
+    n[..., 1] += (yy / H - 0.5) * 0.30
+    n /= np.linalg.norm(n, axis=2, keepdims=True)
+    nz = n[..., 2:]
+    lin = uiart.srgb_to_linear(np.clip(s.alb, 0, 1))
+    lum = (lin @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
+    lin = (lum + (lin - lum) * ICON_DESAT) * ICON_ALBEDO
+    metal = s.metal[..., None]
+    spec_col = (1 - s.tintk[..., None]) + np.clip(lin * 2.2, 0, 1) * s.tintk[..., None]
+    f0 = (0.022 + 0.05 * np.clip(s.spec, 0, 2)[..., None]) * spec_col * (1 - metal) + np.clip(lin * 1.25, 0, 0.8) * metal
+    rough = np.clip(np.sqrt(2.0 / (s.gloss + 2.0)) * 1.6, 0.12, 0.85)
+    surf = fg.Surface((lin * (1 - metal)).astype(np.float32), f0.astype(np.float32), rough.astype(np.float32),
+                      np.zeros((H, W), np.float32), np.zeros((H, W), np.float32), s.a.copy())
+    # forge's rig has no sky, so polished metal would turn black: give it a dim fill from above (faces that look up take more)
+    sky = 0.55 + 0.45 * np.clip(-n[..., 1:2], 0, 1)
+    surf.emit = (lin * s.emis[..., None] * 2.6 + np.clip(lin * 1.25, 0, 0.8) * metal * sky * 0.075).astype(np.float32)
+    maps = fg.Maps(n.astype(np.float32), s.ao.astype(np.float32), np.ones((H, W), np.float32), np.zeros((H, W), np.float32),
+                   np.zeros((H, W), np.float32), np.zeros((H, W), np.float32))
+    img = fg.finish(fg.light(surf, maps), s.a, exposure=ICON_EXPOSURE)
+    fres = (1 - np.clip(nz[..., 0], 0, 1)) ** 3
+    solid = s.a > 0.5
+    d = quick_sdf(solid) / PPU
+    rim = 1 - smooth(0.0, 1.4, np.maximum(d, 0))
+    rim = np.clip(rim * 0.8 + fres * 0.6, 0, 1)
+    refl = np.clip(0.5 + 0.35 * n[..., 0] + 0.35 * n[..., 1], 0, 1)
+    mask = np.dstack((s.metal, refl, rim, np.clip(s.emis, 0, 1))).astype(np.float32)
+    return img, mask
+
+
 def render_icon(name: str) -> tuple:
     cols, rows, fn = ICONS[name]
     s = Scene(SEED_NAME.get(name, name), cols, rows)
     fn(s)
     s.center(getattr(fn, "top", None))
-    img, mask = s.render()
-    return uiart.downsample(img), mask_down(mask, s.a)
+    img, mask = forge_render(s)
+    return defringe(fg.downsample(img)), mask_down(mask, s.a)
+
+
+def defringe(rgba: np.ndarray, floor: int = 48) -> np.ndarray:
+    """Faint edge pixels take the average colour of the solid pixels around them: un-premultiplying a sliver of
+    coverage is noisy, and the noise would travel into every tier variant and the atlas bleed."""
+    out = rgba.copy()
+    w = (rgba[..., 3] >= floor).astype(np.float32)
+    num = np.stack([fg.blur(rgba[..., c].astype(np.float32) * w, 1.4) for c in range(3)], axis=2)
+    den = fg.blur(w, 1.4)[..., None]
+    faint = (rgba[..., 3] > 0) & (rgba[..., 3] < floor) & (den[..., 0] > 0.02)
+    out[..., :3][faint] = np.clip(num / np.maximum(den, 0.02) + 0.5, 0, 255).astype(np.uint8)[faint]
+    return out
 
 
 def main(out_root: Path) -> None:
