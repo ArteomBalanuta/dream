@@ -262,7 +262,7 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         Assert.Equal(3, a.Notices.Count(notice => !notice.Lost));
         Assert.Equal(1, a.Notices.Count(notice => notice.Lost));
         Assert.Equal(4, b.Notices.Count(notice => !notice.Lost));
-        Assert.Empty(b.Notices.Where(notice => notice.Lost));
+        Assert.DoesNotContain(b.Notices, notice => notice.Lost);
         Assert.Equal(InventoryConstants.BackpackSlotCount, a.Inventory!.Value.Slots.Count(slot => slot.Item != null));
         Assert.Equal(InventoryConstants.BackpackSlotCount, b.Inventory!.Value.Slots.Count(slot => slot.Item != null));
     }
