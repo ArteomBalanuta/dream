@@ -195,6 +195,21 @@ def check_colours() -> None:
     pr = px("btn.plate24.pressed")
     if pr[2, 48, :3].mean() >= pr[-3, 48, :3].mean():
         fail("pressed plate must swap bevels")
+    # every state has to read at a glance, not just differ
+    for base, other, floor in (
+        ("btn.plate24.normal", "btn.plate24.hover", 14), ("btn.plate24.normal", "btn.plate24.pressed", 10), ("btn.plate24.normal", "btn.plate24.disabled", 10),
+        ("btn.plate44x32.normal", "btn.plate44x32.hover", 14), ("btn.plate44x32.normal", "btn.plate44x32.pressed", 10),
+        ("win.setoption.tab.normal", "win.setoption.tab.hover", 10), ("win.arrow.down.normal", "win.arrow.down.hover", 8),
+        ("glyph.close.normal", "glyph.close.hover", 8), ("glyph.repair.normal", "glyph.repair.hover", 8),
+        ("glyph.store.normal", "glyph.store.hover", 8), ("glyph.combine.normal", "glyph.combine.hover", 8),
+    ):
+        x, y = px(base).astype(float), px(other).astype(float)
+        mask = (x[..., 3] > 128) & (y[..., 3] > 128)
+        d = np.abs(x[..., :3] - y[..., :3]).mean(axis=2)[mask].mean()
+        print(f"state {other}: {d:.1f}")
+        if d < floor:
+            fail(f"{other}: only {d:.1f} from {base}, want {floor}")
+
     rod = px("win.scroll.rod")
     mid = rod[:, rod.shape[1] // 2, :3].mean(axis=1)
     if mid.max() < 110 or mid.argmax() > 16:
@@ -218,6 +233,15 @@ def check_silhouettes() -> None:
         cover = (s[..., 3] > 128).mean()
         if cover < 0.05:
             fail(f"sil.{n}: covers only {cover:.2f}")
+        if n == "wings":
+            if cover < 0.3:
+                fail(f"sil.wings: covers only {cover:.2f}, want a large spread pair")
+            body = np.median(solid[:, :3].mean(axis=1))
+            if body < 42:
+                fail(f"sil.wings: body {body:.0f} too dim")
+            centre = s[:, s.shape[1] // 2 - 8 : s.shape[1] // 2 + 8, 3]
+            if (centre > 128).mean() > 0.02:
+                fail("sil.wings: no central knot, the pair must stand apart")
     for n in ("pet", "wings", "pendant"):
         if peaks.get(n, 0) > 0x7E + 6:
             fail(f"sil.{n}: dim peak {peaks[n]:.0f} over #7E7E7E")

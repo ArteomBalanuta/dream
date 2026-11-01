@@ -861,7 +861,7 @@ def build_wells() -> list[Sprite]:
 # silhouettes --------------------------------------------------------------------------
 
 
-def chrome(R: Relief, peak: float = 1.0, name: str = "sil", fade=0.4, sharp=1.0) -> np.ndarray:
+def chrome(R: Relief, peak: float = 1.0, name: str = "sil", fade=0.4, sharp=1.0, lift=1.0) -> np.ndarray:
     """Photographed pewter: an environment lookup rather than a Phong lobe, so curved plates
     pick up a soft window, a dark horizon and a thin floor bounce."""
     H = R.H + (ua.fbm(R.h, R.w, name + ".b", 1.6, 3) - 0.5) * 0.06 * (R.A > 0)
@@ -875,7 +875,7 @@ def chrome(R: Relief, peak: float = 1.0, name: str = "sil", fade=0.4, sharp=1.0)
     window = 0.46 * smooth(s, 0.62, 0.93) + 0.62 * sharp * smooth(s, 0.9, 0.965)
     horizon = 0.3 * np.exp(-(((rz + 0.05) / 0.3) ** 2))
     bounce = 0.26 * smooth(rx + ry, 0.75, 1.15)
-    v = (sky + window - horizon + bounce) * R.T
+    v = (sky + window - horizon + bounce) * R.T * lift
     occ = 1 - np.clip((gblur(R.H, 1.1 * PPU) - R.H) * 0.55, 0, 0.85)
     v = v * occ
     yy, xx = np.mgrid[0:R.h, 0:R.w].astype(np.float32)
@@ -1001,19 +1001,19 @@ def boot(R: Relief, ox, oy, z, s=1.0):
     R.poly(P([(1.2, 28.6), (5, 27), (22.6, 27), (22.8, 30), (2.2, 30)]), STEEL, z, 1.2, 0.8)
     R.poly(P(bez((0.6, 28), (2.5, 23), (6, 21.4), (11.5, 19)) + bez((11.5, 19), (13, 16), (13.6, 12), (13.2, 6)) + [(24, 5)] + bez((24, 5), (23.6, 13), (24.2, 20), (23.4, 28))), STEEL, z + 0.6, 7.5, 5.6, belly=0.85)
     R.poly(P(bez((11.8, 3.6), (15, 1.6), (21, 1), (25.6, 2)) + [(25.2, 6.4)] + bez((25.2, 6.4), (21, 5.6), (16, 6), (12.4, 7.6))), STEEL, z + 7.4, 2.2, 1.6, belly=0.6)
-    for a, b in (((3.8, 23.2), (9.2, 26.6)), ((7, 21.6), (12.6, 26.2)), ((10.6, 19.8), (15.6, 25.4))):
-        seam(R, P(bez(a, (a[0] + 3, a[1] + 0.5), (b[0] - 1, b[1] - 3), b)), 0.45 * s, 0.5, 0.25)
+    for a, b in (((5.6, 22.8), (8.2, 27.2)), ((10.8, 20), (13.2, 27.2))):
+        seam(R, P(bez(a, (a[0] + 1.6, a[1] + 0.8), (b[0] - 0.6, b[1] - 2), b)), 0.3 * s, 0.22, 0.45)
     seam(R, P(bez((12.6, 17), (15.5, 18.6), (20, 18.6), (23.2, 17.4))), 0.5 * s, 0.5, 0.25)
-    R.ellipsoid(ox + 19.3 * s, oy + 21.5 * s, 1.5 * s, 1.5 * s, 0, STEEL, z + 6.2, 0.8)
+    R.ellipsoid(ox + 19.3 * s, oy + 21.5 * s, 1.0 * s, 1.0 * s, 0, STEEL, z + 7.4, 0.5)
     R.poly(P([(21.2, 26.4), (25.8, 26.6), (26, 30), (21.4, 30)]), STEEL, z + 0.2, 1.8, 1.0)  # heel
 
 
 def sil_boots() -> np.ndarray:
     R = Relief(40, 40)
-    boot(R, 12.2, 3.2, 0.3, 0.9)
+    boot(R, 13.6, 2.2, 0.3, 0.9)
     R.T[:] = 0.66
     boot2 = Relief(40, 40)
-    boot(boot2, 5.2, 7.4, 6.5, 0.97)
+    boot(boot2, 3.6, 7.2, 6.5, 0.97)
     sel = boot2.A > 0
     R.H[sel] = boot2.H[sel]
     R.A[sel] = 1
@@ -1053,36 +1053,33 @@ def sil_gloves() -> np.ndarray:
 
 def sil_weapon_left() -> np.ndarray:
     R = Relief(40, 60)
-    # the bow behind: two recurve limbs, a leather grip and a string
-    up = bez((12, 28), (6.5, 20), (11.5, 9.5), (26, 5), n=40)
-    low = bez((12, 28), (9, 35), (9.5, 42), (17, 50), n=40)
-    R.poly(ribbon(up, lambda t: 3.0 - 1.9 * t), STEEL, 0.5, 2.0, 1.4, ridge=0.2)
-    R.poly(ribbon(low, lambda t: 3.0 - 1.9 * t), STEEL, 0.5, 2.0, 1.4, ridge=0.2)
-    R.poly(ribbon(bez((26, 5), (28, 4.6), (30, 5), (31, 3.2), n=12), lambda t: 1.1 - 0.7 * t), STEEL, 0.5, 1, 0.6)
-    R.poly(ribbon(bez((17, 50), (18, 51), (17.8, 53), (19.6, 54), n=12), lambda t: 1.1 - 0.7 * t), STEEL, 0.5, 1, 0.6)
-    R.poly(ribbon(bez((11.4, 24), (10.8, 26), (10.9, 29), (11.8, 32), n=12), lambda t: 3.9), STEEL, 1.4, 2.2, 1.3)
-    for y in (25.2, 27, 28.8, 30.6):
-        seam(R, [(9, y), (13.8, y + 0.4)], 0.32, 0.4, 0.35)
-    R.poly(ribbon([(31, 3.4), (19.4, 53.6)], lambda t: 0.3), STEEL, 0.3, 0.3, 0.2)
-    # the sword in front, point up and right, guard low and left
-    tip, base = (33.6, 7.6), (11.6, 48)
-    dx, dy = base[0] - tip[0], base[1] - tip[1]
-    ln = math.hypot(dx, dy)
-    ux, uy = dx / ln, dy / ln
-    px_, py_ = -uy, ux
+    # a quiver slung behind: tube, collar, stitched strap and a sheaf of fletched arrows
+    def Q(a, b):
+        return (11 + 0.42 * a + 0.91 * b, 53 - 0.91 * a + 0.42 * b)
 
-    def S(a, b):
-        return (tip[0] + ux * a + px_ * b, tip[1] + uy * a + py_ * b)
-
-    R.poly([S(0, 0), S(5, 2.4), S(ln - 1, 2.0), S(ln - 1, 0)], STEEL, 4, 2.4, 2.0)
-    R.poly([S(0, 0), S(5, -2.4), S(ln - 1, -2.0), S(ln - 1, 0)], STEEL, 4.6, 2.6, 2.0)
-    R.groove([S(7, 0), S(ln - 2, 0)], 0.5, 0.5)
-    R.poly([S(ln - 2.0, -7), S(ln - 0.2, -7.6), S(ln + 0.8, -3), S(ln + 0.8, 3), S(ln - 0.2, 7.6), S(ln - 2.0, 7)], STEEL, 7.2, 1.9, 1.3)
-    R.poly([S(ln + 0.5, -1.1), S(ln + 7, -1.1), S(ln + 7, 1.1), S(ln + 0.5, 1.1)], STEEL, 6, 1.6, 1.0)
-    for a in (2.4, 4.2, 6):
-        seam(R, [S(ln + a, -1.3), S(ln + a, 1.3)], 0.3, 0.3, 0.4)
-    c = S(ln + 8.2, 0)
-    R.ellipsoid(c[0], c[1], 1.9, 1.9, 0, STEEL, 6.5, 1.5)
+    for off, top in ((-2.6, 45), (0, 48), (2.6, 44.5)):
+        R.poly([Q(30, off - 0.4), Q(top, off - 0.4), Q(top, off + 0.4), Q(30, off + 0.4)], STEEL, 0.4, 0.9, 0.4)
+        R.poly([Q(top - 5.5, off), Q(top - 3.8, off - 1.5), Q(top + 1.6, off - 1.4), Q(top, off), Q(top + 1.6, off + 1.4), Q(top - 3.8, off + 1.5)], STEEL, 0.8, 1.5, 0.8)
+        seam(R, [Q(top - 4, off), Q(top + 0.4, off)], 0.22, 0.2, 0.5)
+    R.poly([Q(0, -3.6), Q(2.4, -5.2), Q(33, -6), Q(33, 6), Q(2.4, 5.2), Q(0, 3.6)], STEEL, 1.0, 6, 4.4, belly=0.85)
+    R.poly([Q(30.5, -6.5), Q(34, -6.5), Q(34, 6.5), Q(30.5, 6.5)], STEEL, 6.4, 1.5, 1.0)
+    for a in (8, 20):
+        R.poly([Q(a, -5.8), Q(a + 2.2, -5.8), Q(a + 2.2, 5.8), Q(a, 5.8)], STEEL, 6.2, 1.2, 0.7)
+    R.T[:] = 0.68
+    # the bow crosses in front: strung, belly to the upper right
+    B = Relief(40, 60)
+    up = bez((28, 27), (31, 16), (23, 7.5), (9.5, 5), n=40)
+    low = bez((28, 27), (31.5, 36), (34, 45), (30.5, 55), n=40)
+    B.poly(ribbon(up, lambda t: 3.3 - 2.2 * t), STEEL, 6, 2.2, 1.4, ridge=0.2)
+    B.poly(ribbon(low, lambda t: 3.3 - 2.2 * t), STEEL, 6, 2.2, 1.4, ridge=0.2)
+    B.poly(ribbon(bez((9.5, 5), (7.5, 4.6), (6.4, 6), (4.6, 5.4), n=12), lambda t: 1.2 - 0.8 * t), STEEL, 6, 1, 0.6)
+    B.poly(ribbon(bez((30.5, 55), (30, 56.2), (31.2, 56.8), (30.8, 58), n=12), lambda t: 1.2 - 0.8 * t), STEEL, 6, 1, 0.6)
+    B.poly(ribbon(bez((27.8, 22), (28.6, 25), (28.6, 29), (28.4, 32), n=12), lambda t: 4.3), STEEL, 7.6, 2.3, 1.3)
+    for y in (23.2, 25.2, 27.2, 29.2, 31):
+        seam(B, [(26, y + 0.2), (30.8, y)], 0.32, 0.4, 0.35)
+    B.poly(ribbon([(9.5, 5), (30.5, 55)], lambda t: 0.36), STEEL, 7, 0.3, 0.2)
+    sel = B.A > 0
+    R.H[sel], R.T[sel], R.A[sel] = B.H[sel], B.T[sel], 1
     return chrome(R, 0.93, "sil.weapon.left")
 
 
@@ -1096,26 +1093,30 @@ def sil_weapon_right() -> np.ndarray:
     seam(R, [(18.3, 10), (17, 52)], 0.4, 0.4, 0.45)
     seam(R, bez((7.4, 24), (14, 22.5), (22, 22.5), (30.2, 24)), 0.4, 0.4, 0.45)
     R.T[:] = 0.5
-    # the mace, handle to the lower left, flanged star head to the upper right
-    a, b = (29.5, 13), (9.6, 53)
-    M = Relief(40, 60)
-    M.poly(ribbon([a, b], lambda t: 2.0 + 0.2 * t), STEEL, 6, 2.0, 1.2)
+    # a bearded axe laid over it: long haft to the lower left, blade towards the shield
+    a, b = (28.5, 14), (10.5, 55)
     dx, dy = b[0] - a[0], b[1] - a[1]
     ln = math.hypot(dx, dy)
     ux, uy = dx / ln, dy / ln
-    for f, w in ((0.97, 3.2), (0.91, 2.4), (0.78, 2.6), (0.74, 3.0), (0.24, 3.4)):
-        cx, cy = a[0] + dx * f, a[1] + dy * f
-        M.poly(ribbon([(cx - ux * 0.6, cy - uy * 0.6), (cx + ux * 0.6, cy + uy * 0.6)], lambda t: w), STEEL, 7.2, 1.2, 0.7)
-    for f in (0.79, 0.83, 0.87):
-        cx, cy = a[0] + dx * f, a[1] + dy * f
-        seam(M, [(cx + uy * 1.4, cy - ux * 1.4), (cx - uy * 1.4, cy + ux * 1.4)], 0.32, 0.3, 0.4)
-    cx, cy = a
-    for i in range(8):
-        ang = math.tau * i / 8 + 0.35
-        tipx, tipy = cx + math.cos(ang) * 10.4, cy + math.sin(ang) * 10.4
-        bx, by = -math.sin(ang) * 2.5, math.cos(ang) * 2.5
-        M.poly([(cx + bx, cy + by), (tipx, tipy), (cx - bx, cy - by)], STEEL, 7, 3.2, 1.4)
-    M.ellipsoid(cx, cy, 5.8, 5.8, 0, STEEL, 7, 5.4)
+    px_, py_ = -uy, ux
+
+    def S(along, across):
+        return (a[0] + ux * along + px_ * across, a[1] + uy * along + py_ * across)
+
+    M = Relief(40, 60)
+    M.poly(ribbon([S(-3.4, 0), S(ln, 0)], lambda t: 2.1 + 0.3 * t), STEEL, 6, 2.0, 1.2)
+    for f, w in ((0.34, 3.0), (0.92, 3.2), (0.99, 3.6)):
+        M.poly(ribbon([S(ln * f - 0.7, 0), S(ln * f + 0.7, 0)], lambda t: w), STEEL, 7.2, 1.2, 0.7)
+    for f in (0.74, 0.78, 0.82, 0.86):
+        seam(M, [S(ln * f, -1.5), S(ln * f, 1.5)], 0.32, 0.3, 0.4)
+    blade = bez(S(-0.8, 1), S(-2.6, 5), S(-4.4, 6.4), S(-7, 10.6), n=14) + bez(S(-7, 10.6), S(-1, 13.8), S(7, 14), S(14.6, 10), n=18) + bez(S(14.6, 10), S(11.4, 7.4), S(8.6, 4.4), S(8.4, 1), n=14)
+    M.poly(blade, STEEL, 6.4, 4.0, 2.6, belly=0.8)
+    edge = bez(S(-5.4, 9.2), S(0, 11.6), S(6.4, 11.8), S(12.4, 8.9), n=20)
+    seam(M, edge, 0.3, 0.45, 0.42)
+    M.poly([S(0.8, -1), S(3.2, -7.6), S(6.4, -1)], STEEL, 7, 2.6, 1.1)
+    M.poly([S(-1.5, -1.7), S(8.4, -1.7), S(8.4, 1.7), S(-1.5, 1.7)], STEEL, 8.6, 1.8, 1)
+    for along in (1.2, 5.8):
+        M.ellipsoid(*S(along, 0), 0.6, 0.6, 0, STEEL, 10, 0.4)
     sel = M.A > 0
     R.H[sel] = M.H[sel]
     R.T[sel] = M.T[sel]
@@ -1123,31 +1124,39 @@ def sil_weapon_right() -> np.ndarray:
     return chrome(R, 0.95, "sil.weapon.right")
 
 
-def blade_wing(R, root, tip, wid, z):
-    mx, my = (root[0] + tip[0]) / 2, (root[1] + tip[1]) / 2
-    dx, dy = tip[0] - root[0], tip[1] - root[1]
-    p = bez(root, (mx - dy * 0.1, my + dx * 0.1), (mx + dx * 0.25 - dy * 0.14, my + dy * 0.25 + dx * 0.14), tip, n=30)
-    R.poly(ribbon(p, lambda t: 0.3 + wid * math.sin(math.pi * t**0.7)), STEEL, z, 1.1, 1.3, ridge=0.2)
-    seam(R, p[:27], 0.28, 0.25, 0.5)
-
-
 def sil_pet() -> np.ndarray:
+    """A coiled familiar: a small drake asleep in its own tail, head lifted over the coil."""
     R = Relief(40, 40)
-    # four long blade wings in an X around a thin floating figure
-    cx = 20
-    blade_wing(R, (cx - 1, 15.5), (5, 4.4), 5.0, 0.5)
-    blade_wing(R, (cx - 1, 18.5), (4.4, 26.2), 3.9, 0.3)
-    R.mirrored_about(20)
-    R.poly(bez((20, 15), (18.2, 18), (18, 22), (18.8, 25)) + bez((18.8, 25), (19.2, 29), (19.4, 33), (20, 37)) + [(20.1, 15)], STEEL, 2, 1.3, 1.1)
-    R.poly(bez((20, 15), (21.8, 18), (22, 22), (21.2, 25)) + bez((21.2, 25), (20.8, 29), (20.6, 33), (20, 37)) + [(19.9, 15)], STEEL, 2, 1.3, 1.1)
-    R.ellipsoid(20, 12.8, 1.9, 2.3, 0, STEEL, 2.4, 1.8)
-    R.poly(ribbon(bez((18.8, 16), (15, 19), (15.4, 24), (16.8, 26.4), n=14), lambda t: 0.9 - 0.5 * t), STEEL, 2, 0.7, 0.5)
-    R.poly(ribbon(bez((21.2, 16), (25, 19), (24.6, 24), (23.2, 26.4), n=14), lambda t: 0.9 - 0.5 * t), STEEL, 2, 0.7, 0.5)
-    img = chrome(R, 0.5, "sil.pet", fade=0.2, sharp=0.75)
+    cx, cy = 20, 22.5
+    turns = 2.1
+    pts = []
+    n = 150
+    for i in range(n + 1):
+        t = i / n
+        ang = -0.5 + t * turns * math.tau
+        rad = 14.6 - t * 11.6
+        pts.append((cx + rad * math.cos(ang) * 1.08, cy + rad * math.sin(ang) * 0.94))
+    R.poly(ribbon(pts, lambda t: 0.5 + 6.2 * min(t * 2.4, 1) ** 0.8), STEEL, 0.5, 2.7, 1.5, belly=0.7)
+    # scutes along the spine
+    for i in range(10, n - 2, 4):
+        (x0, y0), (x1, y1) = pts[i - 1], pts[i + 1]
+        ax, ay = x1 - x0, y1 - y0
+        ln = math.hypot(ax, ay) or 1
+        w = 0.5 + 2.4 * min(i / n * 2.4, 1) ** 0.8
+        darken(R, [(pts[i][0] - ay / ln * w, pts[i][1] + ax / ln * w), (pts[i][0] + ay / ln * w, pts[i][1] - ax / ln * w)], 0.2, 0.62)
+    # neck and head rising from the centre towards the upper right
+    neck = bez((19.6, 23), (21, 18), (24.6, 14.4), (28.4, 12.6), n=20)
+    R.poly(ribbon(neck, lambda t: 5.2 - 2.1 * t), STEEL, 3.6, 2.2, 1.4, belly=0.6)
+    R.poly(bez((25.2, 12), (28, 8.6), (31.6, 8.4), (36.4, 11.4), n=12) + [(32.4, 14.2), (27.6, 16)], STEEL, 5.6, 2.2, 1.4, belly=0.6)
+    R.poly(ribbon(bez((27.4, 10.4), (25.4, 8), (23.2, 6.4), (20.6, 6.2), n=14), lambda t: 2.0 * (1 - t) + 0.15), STEEL, 6.6, 1, 0.7)
+    R.poly(ribbon(bez((29.6, 9.4), (28.4, 6.8), (26.8, 5), (24.6, 3.8), n=14), lambda t: 1.7 * (1 - t) + 0.15), STEEL, 6.2, 1, 0.7)
+    seam(R, [(29.4, 12.4), (33.2, 12.2), (35.2, 11.8)], 0.3, 0.4, 0.4)
+    R.ellipsoid(29.6, 10.8, 0.6, 0.45, 12, STEEL, 7.8, 0.3)
+    img = chrome(R, 0.5, "sil.pet", fade=0.2, sharp=0.8, lift=1.5)
     # the faint pool of light behind it
     h, w = R.h, R.w
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    pool = np.exp(-(((xx / PPU - 20) / 11) ** 2 + ((yy / PPU - 19) / 13) ** 2))
+    pool = np.exp(-(((xx / PPU - 20) / 12) ** 2 + ((yy / PPU - 21) / 12) ** 2))
     back = rgba(h, w, "#6C6C6E")
     back[..., 3] = pool * 0.3
     return ua.over(back, img)
@@ -1164,16 +1173,21 @@ def feather(R, root, ang, ln, wid, curl, z):
 
 
 def sil_wings() -> np.ndarray:
+    """One spread pair: arms rising from two separate shoulders, primaries sweeping out and down."""
     R = Relief(60, 40)
-    # low fanned wings, outer primaries lowest so each one overlaps the next
-    for i in range(7):
-        feather(R, (26 - i * 1.7, 16 + i * 0.9), 183 - i * 13.5, 23.5 - i * 1.6, 5.2, 4, 0.3 + i * 0.5)
-    for i in range(5):
-        feather(R, (26.5 - i * 2.0, 15.4 + i * 0.7), 179 - i * 22, 14.5 - i * 0.9, 4.8, 2.5, 4 + i * 0.4)
-    R.poly(bez((29, 16.2), (24, 11.6), (15, 11.2), (9.5, 15)) + [(17, 20.6), (28.8, 21)], STEEL, 6.4, 3, 1.8, belly=0.7)
+    arm = bez((24.8, 24), (24, 10), (18, 4.2), (9.6, 3.6), n=40)
+    # flight feathers hang from the arm, outermost first so each inner one overlaps it
+    for i in range(10):
+        root = arm[int((0.99 - i * 0.094) * 40)]
+        tip_y = 30 + 7 * math.sin(i / 9 * math.pi / 2)
+        feather(R, (root[0], root[1] + 0.6), 99 - i * 1.6, tip_y - root[1], 5.0, 1.8, 0.3 + i * 0.42)
+    # a row of coverts along the arm
+    for i in range(8):
+        root = arm[int((0.95 - i * 0.12) * 40)]
+        feather(R, root, 124 - i * 6, 9.6, 4.0, 1.2, 4.8 + i * 0.3)
+    R.poly(ribbon(arm, lambda t: 3.8 - 2.7 * t), STEEL, 7, 2.4, 1.3, belly=0.5)
     R.mirrored_about(30)
-    R.ellipsoid(30, 17.4, 1.8, 3.4, 0, STEEL, 6.4, 2.4)
-    return chrome(R, 0.5, "sil.wings", fade=0.3, sharp=0.75)
+    return chrome(R, 0.5, "sil.wings", fade=0.12, sharp=0.85, lift=1.75)
 
 
 def sil_pendant() -> np.ndarray:
@@ -1266,7 +1280,7 @@ def plate(w_u, h_u, name, edges, face_gain=1.0, swap=False, desat=False, faces=(
     rgb *= (0.88 + 0.12 * smooth(depth, 1.0, 1.9))[..., None]
     for eid, (a, b) in ((1, top), (2, right), (3, bottom), (4, left)):
         sel = edge == eid
-        rgb[sel] = _lerp(a, b, depth)[sel]
+        rgb[sel] = _lerp(a, b, depth)[sel] * (1 + (face_gain - 1) * 0.5)
     out = np.dstack((np.clip(rgb, 0, 1), np.ones((h, w), dtype=np.float32))).astype(np.float32)
     for cx in (rivet_in, w_u - rivet_in):
         for cy in (rivet_in, h_u - rivet_in):
@@ -1367,17 +1381,20 @@ def glyph_combine(hover) -> np.ndarray:
     return glyph_finish(R, hover, shadow=(0.6, 0.7), name="glyph.combine")
 
 
+HOVER_GAIN = 1.3  # the spec's +10% does not read on a dark plate; bevels get half of this
+
+
 def build_plates() -> list[Sprite]:
     e24 = (("#BDBFBE", "#96979A"), ("#7E8084", "btn.bevel.right"), ("btn.wall", "#0A0A0A"), ("#000001", "#0A0A0B"))
     e44 = (("#BFBEC3", "#99989C"), ("#A2A1A6", "#8A898E"), ("#1D1F20", "#141516"), ("#212327", "#000000"))
     f44 = ("#3F3B41", "#4C4A51", "#5A5660")
     out = [
         Sprite("btn.plate24.normal", plate(24, 24, "btn24", e24)),
-        Sprite("btn.plate24.hover", plate(24, 24, "btn24", e24, 1.1)),
+        Sprite("btn.plate24.hover", plate(24, 24, "btn24", e24, HOVER_GAIN)),
         Sprite("btn.plate24.pressed", plate(24, 24, "btn24", e24, swap=True)),
         Sprite("btn.plate24.disabled", plate(24, 24, "btn24", e24, desat=True)),
         Sprite("btn.plate44x32.normal", plate(44, 32, "btn44", e44, faces=f44)),
-        Sprite("btn.plate44x32.hover", plate(44, 32, "btn44", e44, 1.1, faces=f44)),
+        Sprite("btn.plate44x32.hover", plate(44, 32, "btn44", e44, HOVER_GAIN, faces=f44)),
         Sprite("btn.plate44x32.pressed", plate(44, 32, "btn44", e44, swap=True, faces=f44)),
     ]
     for nm, fn in (("close", glyph_close), ("repair", glyph_repair), ("store", glyph_store), ("combine", glyph_combine)):
