@@ -102,8 +102,40 @@ public class PathFollowerTests
 
         Assert.True(gaveUp);
         Assert.True(follower.GaveUp);
-        Assert.Equal(PathFollower.MaxFailedReplans - 1, replans);
+        Assert.Equal(PathFollower.MaxFailedReplans, replans);
         Assert.False(follower.HasPath);
+    }
+
+    [Fact]
+    public void WalkingBackBetweenStuckReplans_KeepsTheFailures_ButANormalPathClearsThem()
+    {
+        GridPathfinderTests.FakeWorld world = new();
+        PathFollower follower = new();
+        NavCell[] path = [new NavCell(2, 1, 2), new NavCell(9, 1, 2)];
+        follower.SetPath(path, viaStartCentre: false);
+
+        // Each cycle shuffles 0.2 m, then pins for the jump and replan windows.
+        int replans = 0;
+        Vector3 body = Start;
+        for (int tick = 0; tick < PathFollower.StuckWindowTicks * 60 && !follower.GaveUp; tick++)
+        {
+            if (tick % (PathFollower.StuckWindowTicks * 3) == 0)
+            {
+                body.X = replans % 2 == 0 ? Start.X + 0.2f : Start.X;
+            }
+
+            if (follower.Step(body, world).NeedsReplan)
+            {
+                replans++;
+                follower.SetPath(path, viaStartCentre: true);
+            }
+        }
+
+        Assert.True(follower.GaveUp);
+        Assert.Equal(PathFollower.MaxFailedReplans, replans);
+
+        follower.SetPath(path, viaStartCentre: false);
+        Assert.False(follower.GaveUp);
     }
 
     [Fact]

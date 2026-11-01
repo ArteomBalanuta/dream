@@ -57,6 +57,9 @@ public interface IClickPathing
 {
     bool HasPath { get; }
 
+    // True when Arrived from the last Step means the stuck replans ran out, not that the goal was reached.
+    bool GaveUp { get; }
+
     // Cells of the last planned path, for the capture log.
     int LastPathCells { get; }
 
@@ -75,6 +78,8 @@ public sealed class NavPathing : IClickPathing
     private readonly List<NavCell> _path = new();
 
     public bool HasPath => _follower.HasPath;
+
+    public bool GaveUp => _follower.GaveUp;
 
     public int LastPathCells => _path.Count;
 
@@ -106,8 +111,6 @@ public sealed class ClickMoveController
     public const float EnemyRepathMetres = 1f;
     public const int EnemyRepathTicks = 32;
     public const int HeldRepathTicks = 16;
-    public const int MaxFailedReplans = 3;
-    private const float ReplanProgressMetres = 2f;
 
     private readonly IClickMoveHost _host;
     private readonly IClickPathing _pathing;
@@ -126,8 +129,6 @@ public sealed class ClickMoveController
     private Vector3 _rightHoldPoint;
     private int _ticksSincePlan;
     private int _ticksSinceHeldPick;
-    private int _failedReplans;
-    private Vector3 _lastReplanPosition;
 
     public ClickMoveController(IClickMoveHost host, IClickPathing pathing)
     {
@@ -291,7 +292,7 @@ public sealed class ClickMoveController
 
         if (_ticksSincePlan >= EnemyRepathTicks && (target.Anchor - _plannedAnchor).Length > EnemyRepathMetres)
         {
-            Plan(world, CellOf(target.Anchor), viaStartCentre: false);
+            Plan(world, NavCell.FromBody(target.Anchor), viaStartCentre: false);
             _plannedAnchor = target.Anchor;
         }
 
@@ -340,25 +341,19 @@ public sealed class ClickMoveController
         NavStep step = _pathing.Step(body, world);
         if (step.NeedsReplan)
         {
-            if ((body - _lastReplanPosition).Length >= ReplanProgressMetres)
-            {
-                _failedReplans = 0;
-            }
-
-            _lastReplanPosition = body;
-            if (++_failedReplans > MaxFailedReplans)
-            {
-                Cancel();
-                return WithForward(command, 0f);
-            }
-
-            NavCell goal = _goal == ClickGoalKind.Attack && _target is not null ? CellOf(_target.Anchor) : _goalCell;
+            NavCell goal = _goal == ClickGoalKind.Attack && _target is not null ? NavCell.FromBody(_target.Anchor) : _goalCell;
             Plan(world, goal, viaStartCentre: true);
             return command;
         }
 
         if (step.Arrived)
         {
+            if (_pathing.GaveUp)
+            {
+                Cancel();
+                return WithForward(command, 0f);
+            }
+
             _pathing.Clear();
             if (_goal == ClickGoalKind.Walk)
             {
@@ -408,7 +403,7 @@ public sealed class ClickMoveController
         _ticksSinceHeldPick = 0;
         if (pick.Kind == ClickPickKind.Enemy && pick.Target is { IsAlive: true } enemy)
         {
-            BeginGoal(ClickGoalKind.Attack, CellOf(enemy.Anchor));
+            BeginGoal(ClickGoalKind.Attack, NavCell.FromBody(enemy.Anchor));
             _target = enemy;
             _plannedAnchor = enemy.Anchor;
             Plan(world, _goalCell, viaStartCentre: false);
@@ -476,14 +471,12 @@ public sealed class ClickMoveController
         _goalCell = cell;
         _modeSent = false;
         _ticksSincePlan = 0;
-        _failedReplans = 0;
-        _lastReplanPosition = _host.BodyCentre;
     }
 
     private bool Plan(INavWorld world, NavCell goal, bool viaStartCentre)
     {
         _ticksSincePlan = 0;
-        return _pathing.Plan(world, CellOf(_host.BodyCentre), goal, viaStartCentre, out _);
+        return _pathing.Plan(world, NavCell.FromBody(_host.BodyCentre), goal, viaStartCentre, out _);
     }
 
     private bool InAttackRange() =>
@@ -491,8 +484,4 @@ public sealed class ClickMoveController
 
     private bool InBuildRange() =>
         _goal == ClickGoalKind.Build && (_goalCell.Centre - _host.Eye).Length <= (_buildWalking ? BuildStopMetres : BuildStartWalkMetres);
-
-    // The cell a body centre occupies, as NavCell.FromBody defines it: the level is the body cell.
-    private static NavCell CellOf(Vector3 p) =>
-        new((int)MathF.Floor(p.X), (int)MathF.Floor(p.Y), (int)MathF.Floor(p.Z));
 }

@@ -20,6 +20,10 @@ public sealed class PathFollower
     public const float StuckProgressMetres = 0.05f;
     public const int MaxFailedReplans = 3;
 
+    // A stuck replan heads back through the start cell, so only real distance from the last replan
+    // counts as getting anywhere; a short walk back must not clear the failures.
+    public const float ReplanProgressMetres = 2f;
+
     private readonly List<NavCell> _path = [];
     private int _index;
     private int _jumpCooldown;
@@ -27,6 +31,7 @@ public sealed class PathFollower
     private Vector3 _windowStart;
     private bool _jumpTried;
     private int _failedReplans;
+    private Vector3 _lastReplanBody;
     private int _pinnedTicks;
     private Vector3 _lastBody;
     private bool _hasLastBody;
@@ -118,7 +123,6 @@ public sealed class PathFollower
             if (Vector3.Distance(bodyCentre, _windowStart) >= StuckProgressMetres)
             {
                 _jumpTried = false;
-                _failedReplans = 0;
             }
             else if (!_jumpTried)
             {
@@ -129,7 +133,12 @@ public sealed class PathFollower
             else
             {
                 _jumpTried = false;
-                if (++_failedReplans >= MaxFailedReplans)
+                if (_failedReplans > 0 && Vector3.Distance(bodyCentre, _lastReplanBody) >= ReplanProgressMetres)
+                {
+                    _failedReplans = 0;
+                }
+
+                if (_failedReplans >= MaxFailedReplans)
                 {
                     GaveUp = true;
                     _path.Clear();
@@ -137,6 +146,8 @@ public sealed class PathFollower
                     return new NavStep(Vector3.Zero, false, true, false);
                 }
 
+                _failedReplans++;
+                _lastReplanBody = bodyCentre;
                 return new NavStep(Vector3.Zero, false, false, true);
             }
         }

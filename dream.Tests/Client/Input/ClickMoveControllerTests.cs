@@ -62,6 +62,8 @@ public class ClickMoveControllerTests
     {
         public bool HasPath { get; set; }
 
+        public bool GaveUp { get; private set; }
+
         public int LastPathCells => 3;
 
         public int PlanCalls { get; private set; }
@@ -74,6 +76,11 @@ public class ClickMoveControllerTests
 
         public NavStep NextStep { get; set; } = new(Vector3.UnitX, false, false, false);
 
+        // Behaves as PathFollower does when the body cannot move: each Step is one stuck verdict.
+        public bool StuckForever { get; set; }
+
+        private int _failedReplans;
+
         public bool Plan(INavWorld world, NavCell start, NavCell goal, bool viaStartCentre, out bool reachedGoal)
         {
             PlanCalls++;
@@ -81,15 +88,39 @@ public class ClickMoveControllerTests
             LastViaStart = viaStartCentre;
             HasPath = true;
             reachedGoal = true;
+            if (!viaStartCentre)
+            {
+                _failedReplans = 0;
+                GaveUp = false;
+            }
+
             return true;
         }
 
-        public void Clear() => HasPath = false;
+        public void Clear()
+        {
+            HasPath = false;
+            _failedReplans = 0;
+            GaveUp = false;
+        }
 
         public NavStep Step(Vector3 bodyCentre, INavWorld world)
         {
             StepCalls++;
-            return NextStep;
+            if (!StuckForever)
+            {
+                return NextStep;
+            }
+
+            if (_failedReplans >= PathFollower.MaxFailedReplans)
+            {
+                GaveUp = true;
+                HasPath = false;
+                return new NavStep(Vector3.Zero, false, true, false);
+            }
+
+            _failedReplans++;
+            return new NavStep(Vector3.Zero, false, false, true);
         }
     }
 
@@ -394,9 +425,9 @@ public class ClickMoveControllerTests
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
         controller.OnFrame(Pointer(left: true), true);
-        pathing.NextStep = new NavStep(Vector3.Zero, false, false, NeedsReplan: true);
+        pathing.StuckForever = true;
 
-        for (int n = 1; n <= ClickMoveController.MaxFailedReplans; n++)
+        for (int n = 1; n <= PathFollower.MaxFailedReplans; n++)
         {
             controller.SteerTick(controller.MarkFrame(Frame()));
             Assert.Equal(ClickGoalKind.Walk, controller.Goal);
@@ -407,6 +438,26 @@ public class ClickMoveControllerTests
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.Equal(0f, result.MoveIntent.ForwardAxis);
-        Assert.Equal(1 + ClickMoveController.MaxFailedReplans, pathing.PlanCalls);
+        Assert.Equal(1 + PathFollower.MaxFailedReplans, pathing.PlanCalls);
+    }
+
+    [Fact]
+    public void RealFollower_ABodyThatCannotMove_EndsTheGoal()
+    {
+        FakeHost host = new() { NextPick = Ground(12, 5) };
+        ClickMoveController controller = new(host, new NavPathing());
+        controller.OnFrame(Pointer(left: true), true);
+
+        int ticks = 0;
+        while (controller.Goal != ClickGoalKind.None && ticks < PathFollower.StuckWindowTicks * 20)
+        {
+            controller.SteerTick(controller.MarkFrame(Frame()));
+            ticks++;
+        }
+
+        // A jump window then a replan window for each of the three replans, then the same to give up.
+        Assert.Equal(ClickGoalKind.None, controller.Goal);
+        Assert.Equal(PathFollower.StuckWindowTicks * 2 * (PathFollower.MaxFailedReplans + 1), ticks);
+        Assert.False(controller.IsWalking);
     }
 }
