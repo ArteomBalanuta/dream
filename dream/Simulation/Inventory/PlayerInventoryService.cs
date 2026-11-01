@@ -178,7 +178,10 @@ internal sealed class PlayerInventoryService
     // starter kinds introduced after the kit version the player has received (the whole kit for a
     // new player; see GrantStarterKit) and, on first sight of the inventory only (no starter grant
     // recorded yet, H-D3), equips the lowest occupied slot whose item may be held in the main hand
-    // when the main hand is empty. After that an empty hand stays empty. False when the inventory
+    // when the main hand is empty. After that an empty hand stays empty. The writes of one call
+    // (items, slots, equip, grant record) are buffered into ONE queued closure, so they land
+    // together or not at all: a crash or a failed write leaves the player as before (a new player
+    // is seeded again by the next join) or with the complete grant. False when the inventory
     // could not be loaded yet (see TryLoadSynchronously).
     public bool Ensure(string playerName)
     {
@@ -187,6 +190,34 @@ internal sealed class PlayerInventoryService
             return false;
         }
 
+        List<Action<IWorldPersistenceRepository>> buffer = [];
+        _ensureBuffer = buffer;
+        try
+        {
+            EnsureCore(playerName);
+        }
+        finally
+        {
+            _ensureBuffer = null;
+        }
+
+        if (buffer.Count > 0)
+        {
+            EnqueueWorldWrite(world =>
+            {
+                foreach (Action<IWorldPersistenceRepository> write in buffer)
+                {
+                    write(world);
+                }
+            });
+        }
+
+        RefreshEquippedSummary(playerName);
+        return true;
+    }
+
+    private void EnsureCore(string playerName)
+    {
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
         bool firstSight = !_starterKitByPlayer.ContainsKey(playerName);
         bool hasBackpackContent = HasBackpackContent(slots);
@@ -202,14 +233,11 @@ internal sealed class PlayerInventoryService
             EquipFirstOccupiedSlotIfNone(playerName, slots);
         }
 
-        // Last, so a crash before it leaves no grant record and the next join repairs the inventory.
+        // Last in the closure, so the grant record never lands without the items.
         if (grantedVersion is int version)
         {
             RecordStarterKitGrant(playerName, version);
         }
-
-        RefreshEquippedSummary(playerName);
-        return true;
     }
 
     // Equips the item in a backpack slot into an equipment slot and queues the writes. With no target
@@ -409,7 +437,8 @@ internal sealed class PlayerInventoryService
                 playerName,
                 new PersistedInventorySlot(playerName, from, other.ItemInstanceId, now),
                 toRow,
-                -1);
+                -1,
+                0);
         }
         else
         {
@@ -885,16 +914,19 @@ internal sealed class PlayerInventoryService
     //   top-up may have granted it).
     // - A full backpack receives nothing; the version recorded then stops below the first kind that
     //   did not fit, so it is granted once a slot is free.
-    // - The grant record is not queued here: the caller queues it (RecordStarterKitGrant) after the
-    //   first-sight main-hand equip, so a crash between the kit and the equip leaves no record and the
-    //   next join repairs the empty hand (H-D3). Returns the version to record, or null when it does
-    //   not rise, which makes a second call write nothing.
+    // - The grant record is not queued here: the caller records it (RecordStarterKitGrant) after the
+    //   first-sight main-hand equip. Ensure buffers the kit, the equip and the record into one queued
+    //   closure, so they land together or not at all. Returns the version to record, or null when it
+    //   does not rise, which makes a second call write nothing.
+    // - With no record, a backpack holding exactly the first k (1 to kit size - 1) version-1 kinds in
+    //   slots 0..k-1 and nothing else is the leftover of a seed that was cut short (written before
+    //   seeding was one closure): it is taken as a new player's, so the missing kinds arrive.
     private int? GrantStarterKit(string playerName, Dictionary<int, long> slots, bool isTopUp)
     {
         bool recorded = _starterKitByPlayer.TryGetValue(playerName, out int receivedVersion);
         if (!recorded)
         {
-            receivedVersion = isTopUp ? ToolCatalog.UnrecordedStarterKitVersion : 0;
+            receivedVersion = isTopUp && !IsCutShortSeed(slots) ? ToolCatalog.UnrecordedStarterKitVersion : 0;
         }
 
         if (recorded && receivedVersion >= ToolCatalog.CurrentStarterKitVersion)
@@ -929,6 +961,44 @@ internal sealed class PlayerInventoryService
         }
 
         return recorded && grantedVersion <= receivedVersion ? null : grantedVersion;
+    }
+
+    // True when the backpack holds exactly a strict, in-order prefix of the version-1 kit in slots
+    // 0..k-1 and nothing else (see GrantStarterKit).
+    private bool IsCutShortSeed(Dictionary<int, long> slots)
+    {
+        IReadOnlyList<StarterKitEntry> kit = ToolCatalog.StarterKit;
+        int firstVersionKinds = 0;
+        while (firstVersionKinds < kit.Count && kit[firstVersionKinds].IntroducedVersion <= ToolCatalog.UnrecordedStarterKitVersion)
+        {
+            firstVersionKinds++;
+        }
+
+        int occupied = 0;
+        foreach (int slotIndex in slots.Keys)
+        {
+            if (slotIndex >= 0 && slotIndex < InventoryConstants.BackpackSlotCount)
+            {
+                occupied++;
+            }
+        }
+
+        if (occupied < 1 || occupied >= firstVersionKinds)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < occupied; index++)
+        {
+            if (!slots.TryGetValue(index, out long itemInstanceId)
+                || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance item)
+                || !string.Equals(item.ItemKind, kit[index].ItemKind, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void RecordStarterKitGrant(string playerName, int grantedVersion)
@@ -1099,7 +1169,7 @@ internal sealed class PlayerInventoryService
         PersistedInventorySlot? first,
         PersistedInventorySlot? second,
         int deleteSlotIndex,
-        long deleteExpectedItemId = 0)
+        long deleteExpectedItemId)
     {
         NoteWriteQueued(playerName);
         EnqueueWorldWrite(world =>
@@ -1121,8 +1191,17 @@ internal sealed class PlayerInventoryService
         });
     }
 
+    // Set while Ensure runs: its writes are collected and queued as one closure.
+    private List<Action<IWorldPersistenceRepository>>? _ensureBuffer;
+
     private void EnqueueWorldWrite(Action<IWorldPersistenceRepository> write)
     {
+        if (_ensureBuffer != null && _worldPersistence != null && _writes != null)
+        {
+            _ensureBuffer.Add(write);
+            return;
+        }
+
         if (_worldPersistence == null || _writes == null)
         {
             return;

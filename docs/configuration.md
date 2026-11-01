@@ -393,7 +393,7 @@ Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or back
 | 102 | Head. |
 | 103 | Body. |
 
-A row in 100..103 holds the id of an item that normally also has a backpack row, and one item may be in one equipment slot. An older row in slot 100 may have no backpack row; it moves to the lowest free backpack slot when it is unequipped or displaced, and a full backpack rejects that action. Which slots an item may occupy comes from `equipSlots` in `items.json`. Armor is shown and summed but changes no combat result yet. Inventory actions have a budget per session: a burst of 16 actions that would write, refilling 8 a second, counted in server ticks.
+A row in 100..103 holds the id of an item that normally also has a backpack row, and one item may be in one equipment slot. An older row in slot 100 may have no backpack row; it moves to the lowest free backpack slot when it is unequipped or displaced, and a full backpack rejects that action. Which slots an item may occupy comes from `equipSlots` in `items.json`. Armor is shown and summed but changes no combat result yet. Inventory actions have a budget per session: a burst of 16 actions that would write, refilling 8 a second, counted in server ticks. A dead player can still use inventory actions (equip, move, unequip); that is harmless, because none of them revives the player.
 
 ## Project Content Layout
 

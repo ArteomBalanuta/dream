@@ -21,6 +21,36 @@ public class HealthStateTests
         Assert.True(receipt.WasFatal);
         Assert.False(health.IsAlive);
     }
+
+    [Theory]
+    [InlineData(100, 1, 1)]
+    [InlineData(100, 2, 1)]
+    [InlineData(50, 1, 1)]
+    public void SetMaxHealthPreservingRatio_NeverRoundsALivingActorDownToZero(int maxHealth, int currentHealth, int newMax)
+    {
+        HealthState health = new(maxHealth);
+        health.SetAuthoritativeState(currentHealth, maxHealth);
+
+        health.SetMaxHealthPreservingRatio(newMax);
+
+        Assert.True(health.IsAlive);
+        Assert.Equal(1, health.CurrentHealth);
+    }
+
+    [Fact]
+    public void SetMaxHealthPreservingRatio_KeepsTheDeadDead_AndScalesTheLivingByRatio()
+    {
+        HealthState dead = new(100);
+        dead.ApplyDamage(100);
+        dead.SetMaxHealthPreservingRatio(10);
+        Assert.False(dead.IsAlive);
+        Assert.Equal(0, dead.CurrentHealth);
+
+        HealthState half = new(100);
+        half.SetAuthoritativeState(50, 100);
+        half.SetMaxHealthPreservingRatio(10);
+        Assert.Equal(5, half.CurrentHealth);
+    }
 }
 
 public class CombatActorHandleTests

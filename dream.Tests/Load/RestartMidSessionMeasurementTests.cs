@@ -260,6 +260,10 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default), "the second stop released the world");
         RestartObservation before = Observe(db, accountsWired);
+        string healthWithGear = Convert.ToString(
+            db.Scalar($"SELECT current_hp FROM player_world_state WHERE player_name = '{geared}';"),
+            System.Globalization.CultureInfo.InvariantCulture)!;
+        Assert.NotEmpty(healthWithGear);
         Assert.Equal(RolledGear.Length, before.RollsByCharacter[geared].Length);
         Assert.Equal(RolledGear.Length, before.EquipmentByCharacter[geared].Length);
 
@@ -319,6 +323,15 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemInstanceId),
                 worn.Equipment!.Select(row => row.Item!.Value.ItemInstanceId));
 
+            // The rolled modifiers and rarity the client sees are the ones it saw before the restart.
+            static string[] RollText(PlayerInventorySnapshot snapshot) => snapshot.Equipment!
+                .Select(row => row.Item!.Value)
+                .Prepend(snapshot.EquippedSlot!.Value.Item!.Value)
+                .Select(item => $"{item.ItemInstanceId}:{item.Rarity}:{item.IsRolled}:" + string.Join(
+                    ",", (item.Modifiers ?? []).Select(m => $"{m.Stat}/{m.Op}/{m.Value:R}")))
+                .ToArray();
+            Assert.Equal(RollText(gearedInventory), RollText(worn));
+
             foreach (WireLoopbackClient client in again)
             {
                 await server3.DisconnectAsync(client);
@@ -327,6 +340,11 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
         Assert.False(WorldHostLease.IsHeld(db.DatabasePath, WorldId.Default));
         RestartObservation after = Observe(db, accountsWired);
+        Assert.Equal(
+            healthWithGear,
+            Convert.ToString(
+                db.Scalar($"SELECT current_hp FROM player_world_state WHERE player_name = '{geared}';"),
+                System.Globalization.CultureInfo.InvariantCulture));
         foreach ((string name, Action<RestartObservation, RestartObservation> check) in Invariants)
         {
             try

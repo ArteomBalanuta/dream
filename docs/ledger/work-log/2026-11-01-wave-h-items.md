@@ -77,3 +77,27 @@ Run on copies of the 4 `legacy-e` databases, Debug build, `dream --server`. Clie
 ## Full suite
 
 Debug, two runs, both on the final glue. `dc85582`: 4,419 passed, 0 failed, 43 skipped. `6537031`: 4,421 passed, 0 failed, 43 skipped; the two extra are the contract tests added between them. The flake did not fail in either run.
+
+## Verification after the fix loops
+
+What the tester measured on the tip after the fix loops:
+
+| Gate | Measured |
+| --- | --- |
+| Join accepted (starter kit) | 4,048 B, under the 4,099 B gate |
+| Join of a fully rolled character | 9,400 B, no gate |
+| Checkpoint cost | 1.02x |
+| Integrity check | 7.1 ms |
+| Migration of 100,003 items | 91.7 ms |
+| Rolls from 144 grants | all within their ranges |
+
+Duplication attacks over real TCP (replayed and raced equips, moves and unequips) left every row audit clean: no item in two places, no lost item.
+
+Fix loop 2 made a new player's seed (kit items, slots, main-hand equip, grant record) one queued closure, so a crash leaves either a new player or the complete grant. A seed cut short by the old per-item writes (the first 1 to 3 version-1 kit items in slots 0..k-1, nothing else, no grant row) is read as a new player's, so the next join gives the missing kinds without duplicating what is there. Any other inventory with no grant row is still a pre-kit one, and a player with a grant row is never given an old kind again.
+
+Known limits:
+
+- No one has seen the panel on screen.
+- A failed save can leave one item in two slot rows until a later write fixes it. Nothing is lost.
+- Inventory actions while dead were not run over real TCP.
+- The perf harness does not equip gear, so its numbers cover no gear.

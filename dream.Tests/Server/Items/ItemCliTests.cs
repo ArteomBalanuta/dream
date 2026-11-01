@@ -214,6 +214,26 @@ public sealed class ItemCliTests
         Assert.Equal("100", lines[2].Split('\t')[0]);
     }
 
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void ABusyDatabase_Exits7_AndSaysSo(int sqliteCode)
+    {
+        // A locked database surfaces as SQLITE_BUSY (5) or SQLITE_LOCKED (6) from the first statement.
+        StringWriter output = new();
+        StringWriter error = new();
+
+        int exit = ItemCli.Run(
+            ["list", "1", "Bob"],
+            () => throw new SqliteException("database is locked", sqliteCode),
+            output,
+            error);
+
+        Assert.Equal(ItemCli.ExitWorldHeld, exit);
+        Assert.Contains("busy", error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
     [Fact]
     public void ASchemaNewerThanTheBuild_Exits3_AndInvalidContentExits8()
     {

@@ -116,8 +116,9 @@ public sealed class StarterKitGrantPersistenceTests
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
         Assert.Equal(0, writes.FailedWrites);
-        // The gate, then one write (item and slot together) per kit item, the equipped slot and the grant.
-        Assert.Equal(1 + ToolCatalog.StarterKit.Count + 1 + 1, writes.CompletedWrites);
+        // The gate, then ONE write for the whole seed (every kit item with its slot, the equipped
+        // slot and the grant), so they land together or not at all.
+        Assert.Equal(1 + 1, writes.CompletedWrites);
         // The gate's group touches no database; one group commits all of the seeding's writes, the
         // grant included.
         Assert.Equal(1, writes.CommittedGroups - groupsBefore);
