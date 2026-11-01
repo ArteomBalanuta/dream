@@ -9,6 +9,8 @@ namespace Dream.Simulation.Enemies;
 
 public sealed class EnemyActor
 {
+    private const float StandOffRangeFraction = 0.9f;
+
     public EnemyActor(
         EnemyCombatant combatant,
         Vector3 startPosition,
@@ -29,7 +31,10 @@ public sealed class EnemyActor
         AggroRange = Math.Max(attackRange, aggroRange);
         AttackRange = Math.Max(0.1f, attackRange);
         MoveSpeed = Math.Max(0f, moveSpeed);
-        PreferredStandOffDistance = Math.Max(AttackRange, preferredStandOffDistance);
+        // The stop point lies inside the attack range (90% of it at most), so a wolf that has stopped can bite.
+        PreferredStandOffDistance = Math.Min(
+            preferredStandOffDistance > 0f ? preferredStandOffDistance : AttackRange,
+            AttackRange * StandOffRangeFraction);
         CollisionRadius = Math.Max(0.1f, collisionRadius);
         CollisionHeight = Math.Max(0.1f, collisionHeight);
         DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Enemy" : displayName.Trim();

@@ -11,6 +11,7 @@ using Dream.Server.Persistence.Repositories;
 using Dream.Server.Persistence.Store;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -237,6 +238,7 @@ internal sealed class SoakServer : IDisposable
     public const string Primary = "session-a";
     public const string Secondary = "session-b";
     private readonly int _slotTicks;
+    private readonly bool _clearEnemies;
     private const float Reach = 3.2f;
     private const float BuildReach = 2.5f;
 
@@ -254,6 +256,7 @@ internal sealed class SoakServer : IDisposable
     {
         _host = host;
         _slotTicks = slotTicks;
+        _clearEnemies = clearEnemies;
         Runtime = host.Runtime!;
         foreach (string session in new[] { Primary, Secondary })
         {
@@ -288,6 +291,16 @@ internal sealed class SoakServer : IDisposable
     // One server tick of the script. localTick starts at 0 and counts ticks run by this server.
     public void Step(int localTick)
     {
+        if (_clearEnemies)
+        {
+            // The day wolf respawns after the clear. Since the wolf bite change it would walk to the players and
+            // stand in the line of their attacks, so it waits in a far corner (both runs do the same).
+            foreach (EnemyActor enemy in Runtime.Enemies.ActiveActors)
+            {
+                enemy.SetPosition(new Vector3(50f, 1f, 50f));
+            }
+        }
+
         bool slotStart = localTick % _slotTicks == 0;
         PlayerInteractionMode mode = PlayerInteractionMode.Combat;
         BuildUseIntent? build = null;

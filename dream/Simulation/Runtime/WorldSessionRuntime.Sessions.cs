@@ -160,6 +160,7 @@ public sealed partial class WorldSessionRuntime
         // Wave I: a rejoin that finds the character dead waits a fresh 5 s, and an undrained push for
         // a seat that left has nowhere to go.
         player.RespawnAtTick = 0;
+        player.ProtectedThroughTick = 0;
         _pendingLoot.Remove(sessionId);
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.

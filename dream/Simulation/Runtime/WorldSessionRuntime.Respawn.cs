@@ -66,7 +66,31 @@ public sealed partial class WorldSessionRuntime
         seat.Combatant.Health.SetAuthoritativeState(maxHealth, maxHealth);
         seat.SetWorldPosition(ResolveRespawnPosition(Map, _worldSpawn));
         player.RespawnAtTick = 0;
+        // Enemy steps of ticks tick+1 .. tick+SpawnProtectionTicks skip this player.
+        player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
     }
+
+    // The tick's players minus those under spawn protection: what enemies target and bite. Reused list,
+    // no allocation. Separation still uses the full list, so a protected body stays solid.
+    private void FillEnemyTargets(List<IAuthoritativePlayerTarget> all, List<IAuthoritativePlayerTarget> targets)
+    {
+        targets.Clear();
+        ulong tick = CurrentServerTick;
+        for (int i = 0; i < all.Count; i++)
+        {
+            IAuthoritativePlayerTarget target = all[i];
+            if (_sessions.TryGet(target.SessionId, out ConnectedPlayer? player)
+                && player != null
+                && player.ProtectedThroughTick >= tick)
+            {
+                continue;
+            }
+
+            targets.Add(target);
+        }
+    }
+
+    private readonly List<IAuthoritativePlayerTarget> _enemyTargets = [];
 
     // The world spawn, lifted one cell at a time while a cell the body overlaps, or the one above it, holds a solid cube.
     // The body is one cell wide and centered on X/Z, so at a whole-number X/Z it overlaps two cells on each axis.

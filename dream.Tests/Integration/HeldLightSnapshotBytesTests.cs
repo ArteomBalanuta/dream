@@ -17,7 +17,9 @@ namespace Dream.Tests.Integration;
 public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
 {
     // 58,107 B at protocol v9; v10 widens the envelope's "protocolVersion" by one digit in each of the 200 frames.
-    private const long WaveT1SnapshotBytes = 58_307;
+    // Wolf bite change: 58,827 B. The wolf now chases to its bite range (about 1.3 m, was 2.0 m) and bites the
+    // player standing there, so its position and the player's health change in the snapshots.
+    private const long WaveT1SnapshotBytes = 58_827;
 
     [Fact]
     public void NoLight_200Ticks_IsStill58307Bytes()

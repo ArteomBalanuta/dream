@@ -46,6 +46,10 @@ public sealed class ConnectedPlayer
     // primary Player is reused by successive sessions and a secondary is disposed on detach.
     internal ulong RespawnAtTick;
 
+    // The last server tick whose enemy step ignores this player (spawn protection after a respawn), or 0
+    // for none. Not persisted; cleared on detach and when the player attacks.
+    internal ulong ProtectedThroughTick;
+
     // The registry this player is registered in (null once it forgets the player); told when the
     // spawn state changes so it can keep its active and departed sets (PlayerSessionRegistry).
     internal PlayerSessionRegistry? Registry { get; set; }
