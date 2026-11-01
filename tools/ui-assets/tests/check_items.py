@@ -82,6 +82,8 @@ def check_icons(doc: dict, sheet: np.ndarray) -> list[str]:
         if r["pivot"] != [24, 24]:
             errs.append(f"{name}: pivot {r['pivot']}")
         a = sheet[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"], 3]
+        if a[0].any() or a[-1].any() or a[:, 0].any() or a[:, -1].any():
+            errs.append(f"{name}: art clipped by the sprite edge")
         x0, y0, x1, y1 = art_box(a)
         bw, bh = (x1 - x0) / s, (y1 - y0) / s
         if bw > w_u + 6 or bh > h_u + 6:
@@ -136,6 +138,27 @@ def check_variants(doc: dict, sheet: np.ndarray) -> list[str]:
                 near = (solid >= 247).all(axis=1).mean()
                 if near > 0.20:
                     errs.append(f"{name}: enhanced {near:.0%} near white")
+    return errs
+
+
+def check_tier_look(doc: dict, sheet: np.ndarray) -> list[str]:
+    """Tiers must be told apart at a glance, and Enhanced must keep the item's own hue."""
+    errs = []
+
+    def px(image, name):
+        r = doc["sprites"][name]
+        s = np.asarray(Image.open(ITEMS / image).convert("RGBA"))[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"]]
+        return s[s[..., 3] > 200][:, :3].astype(float)
+
+    for name in sorted(FOOTPRINT):
+        base, unc = px("items.png", name), px("items_uncommon.png", name)
+        if np.abs(unc - base).mean() < 10:
+            errs.append(f"{name}: Uncommon too close to Common")
+        if (unc - base).mean(axis=0)[1] > (unc - base).mean(axis=0)[0]:
+            errs.append(f"{name}: Uncommon not shifted towards rose")
+    c = np.median(px("items_enhanced.png", "item.shield.kite"), axis=0)
+    if c[0] < c[2] + 40:
+        errs.append(f"enhanced shield lost its red: {c}")
     return errs
 
 
@@ -227,6 +250,7 @@ def main() -> int:
     errs += check_names(doc)
     errs += check_icons(doc, sheet)
     errs += check_variants(doc, sheet)
+    errs += check_tier_look(doc, sheet)
     errs += check_mask_semantics(doc)
     errs += check_aura(doc)
     errs += check_ramps()
