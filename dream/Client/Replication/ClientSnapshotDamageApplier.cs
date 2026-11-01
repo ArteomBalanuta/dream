@@ -41,10 +41,18 @@ public static class ClientSnapshotDamageApplier
 
             if (runtime.TryResolveCombatActor(damageEvent.ActorId, out CombatActorHandle actor))
             {
-                events.Publish(new DamageAppliedEvent(actor, damageEvent.Amount, FloatingCombatTextKind.Regular));
+                events.Publish(new DamageAppliedEvent(actor, damageEvent.Amount, ResolveHitKind(damageEvent.HitKind)));
             }
         }
     }
+
+    // A value this client does not know (a newer or hostile peer) is a regular hit.
+    public static FloatingCombatTextKind ResolveHitKind(FloatingCombatTextKind sent) => sent switch
+    {
+        FloatingCombatTextKind.Critical => FloatingCombatTextKind.Critical,
+        FloatingCombatTextKind.Incoming => FloatingCombatTextKind.Incoming,
+        _ => FloatingCombatTextKind.Regular
+    };
 
     // A damage event carries an actor id but no session, and the server reuses a player actor id
     // once its session leaves. The events of one snapshot span the whole interval since the

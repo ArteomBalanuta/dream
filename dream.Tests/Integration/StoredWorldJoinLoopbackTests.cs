@@ -170,7 +170,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // an item's detailLines) to the inventory in join-accepted; they are stripped here so every other
             // byte still matches the capture. Their size is pinned by StarterKitInventoryBytesTests.
             string text = ItemEquipmentFields().Replace(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":11", "\"protocolVersion\":8"),
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":12", "\"protocolVersion\":8"),
                 "$1");
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);

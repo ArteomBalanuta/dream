@@ -68,13 +68,9 @@ public static class ClientAuthoritativeActionApplier
             // as a bare delta used to replace that cube with a default-material cube without an id
             // when the snapshot came first (the server sends each tick's snapshot before its action
             // results), and to add an unsequenced cube the checksum did not cover when it came last.
-            case CombatResolutionResult combat when combat.DamageApplied > 0 && combat.TargetActorId.HasValue:
-                if (runtime.TryResolveCombatActor(combat.TargetActorId.Value, out CombatActorHandle actor))
-                {
-                    events.Publish(new DamageAppliedEvent(actor, combat.DamageApplied, FloatingCombatTextKind.Regular));
-                }
-                break;
-
+            // A combat result publishes no DamageAppliedEvent here: the snapshot that carries the same
+            // hit (ClientSnapshotDamageApplier) already does, and publishing from both showed two
+            // floating numbers per local hit.
             case PlayerStatsUpdateResult statsUpdate:
                 runtime.Player.Combatant.ApplyBaseStats(statsUpdate.Stats.ToCombatStats());
                 break;
