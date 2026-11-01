@@ -1136,9 +1136,15 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // route (delivered before the tick's snapshot), not the action results, because kills happen inside
     // the tick golden. A session with no claim (it left) drops its push. Steady-state ticks only read a
     // count.
+    //
+    // An inventory action's result waits for the next snapshot and carries the inventory of its own
+    // tick, while a push goes out at once. The client keeps whichever it applies last, so a push that
+    // overtook such a result would be overwritten by the older inventory and the looted item would
+    // vanish from the client until its next inventory change. So the push waits until no such result
+    // is queued; the snapshot is built when it is sent, so it stays the newest.
     private void ServePendingInventoryPushes(WorldSessionRuntime? runtime)
     {
-        if (runtime == null || !runtime.HasPendingInventoryPushes)
+        if (runtime == null || !runtime.HasPendingInventoryPushes || HasUndeliveredInventoryResult())
         {
             return;
         }
@@ -1154,6 +1160,20 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         _inventoryPushScratch.Clear();
+    }
+
+    // Runs only on a tick with a push pending, so its enumerator does not touch steady-state ticks.
+    private bool HasUndeliveredInventoryResult()
+    {
+        foreach (AuthoritativeActionResult result in _pendingActionResults)
+        {
+            if (result.Payload is InventoryChangedResult)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // WorldResyncRequestHandler only marks a connection; the full-world export runs here, on the

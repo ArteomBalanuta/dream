@@ -1,3 +1,4 @@
+using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 
 namespace Dream.Client.Presentation;
@@ -10,9 +11,8 @@ namespace Dream.Client.Presentation;
 // arrives late cannot reopen the overlay. Reset starts a new timeline (a join). Allocates nothing.
 public sealed class ClientDeathTracker
 {
-    // The server's wait (5 s of authoritative ticks). Glue: take this from PlayerRespawnRules.DelayTicks
-    // once the server stream lands; the type did not exist in the client stream's base.
-    public const int RespawnDelayTicks = 5 * SimulationClock.AuthoritativeTicksPerSecond;
+    // The server's wait.
+    public const int RespawnDelayTicks = PlayerRespawnRules.DelayTicks;
 
     private bool _hasObservation;
     private ulong _newestTick;

@@ -42,7 +42,7 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
 
     public WorldSessionRuntime Runtime => Host.Runtime!;
 
-    public static Task<WireLoopbackServer> StartAsync(DedicatedServerHost host)
+    public static Task<WireLoopbackServer> StartAsync(DedicatedServerHost host, ServerConnectionOptions? options = null)
     {
         DedicatedServerService service = new(
             host,
@@ -50,7 +50,7 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             new TransportJsonCodec(),
             new LengthPrefixedMessageFramer(),
             // Tests step the server one tick at a time and wait for that tick's snapshot.
-            PerTickSnapshots.Options);
+            options ?? PerTickSnapshots.Options);
         service.Start();
         return Task.FromResult(new WireLoopbackServer(host, service));
     }
