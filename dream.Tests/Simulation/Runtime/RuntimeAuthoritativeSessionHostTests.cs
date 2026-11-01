@@ -946,7 +946,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -956,7 +956,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "2.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,
@@ -979,7 +979,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -989,7 +989,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "1000 + level * 23", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "enemy_level * 14", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,
@@ -1026,7 +1026,7 @@ public class RuntimeAuthoritativeSessionHostTests
         InMemoryPlayerProfileRepository playerProfiles = new();
         InMemoryWorldPersistenceRepository worldPersistence = new();
         CombatFormulaService formulas = CombatFormulaService.CreateForDefinitions(
-            new[]
+            Dream.Tests.Support.WaveIFormulas.With(new[]
             {
                 new CombatFormulaDefinition("player.min_damage", "5 + strength * 2", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.max_damage", "10 + strength * 4", "test", true, DateTime.UtcNow),
@@ -1036,7 +1036,7 @@ public class RuntimeAuthoritativeSessionHostTests
                 new CombatFormulaDefinition("player.attack_interval_seconds", "1.0 / attack_speed", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("player.experience_to_next_level", "level * 10", "test", true, DateTime.UtcNow),
                 new CombatFormulaDefinition("enemy.experience_reward", "35", "test", true, DateTime.UtcNow)
-            });
+            }));
         SceneEventHub events = new();
         using WorldSessionRuntime runtime = new(
             10,

@@ -51,8 +51,12 @@ public enum ActorFieldGroups
     // light differs from the base, a Full record only when the held light is not None, so a world
     // with no light equipped keeps its v5 bytes. A Full record without it means None.
     Equipment = 256,
+    // EnemyLevel and VisualKey (wave I, protocol v11). Not implied by Full: a Full record sets it
+    // only when the level is not 0 or the key is not null, a delta record when either differs from
+    // the base. A Full record without it means level 1 and the default visual.
+    EnemyPresentation = 512,
     // Every bit a record may carry.
-    Valid = All | Equipment
+    Valid = All | Equipment | EnemyPresentation
 }
 
 // Transforms are quantized at 1/4096 m, the step the compact world format already uses for moved
@@ -125,7 +129,9 @@ public readonly record struct ActorWireRecord(
     PlayerCombatStatsSnapshot? CombatStats = null,
     PlayerProgressionSnapshot? Progression = null,
     int StarvedTicks = 0,
-    HeldLightKind HeldLight = HeldLightKind.None)
+    HeldLightKind HeldLight = HeldLightKind.None,
+    int EnemyLevel = 0,
+    string? VisualKey = null)
 {
     public bool IsFull => (Groups & ActorFieldGroups.Full) != 0;
 
@@ -152,16 +158,28 @@ public readonly record struct ActorWireRecord(
             Progression,
             EnemyBehaviorState,
             StarvedTicks,
-            HeldLight);
+            HeldLight,
+            0UL,
+            EnemyLevel,
+            VisualKey);
     }
 
     public static ActorWireRecord Full(in ActorSnapshot actor)
     {
+        ActorFieldGroups fullGroups = ActorFieldGroups.All;
+        if (actor.HeldLight != HeldLightKind.None)
+        {
+            fullGroups |= ActorFieldGroups.Equipment;
+        }
+
+        if (actor.EnemyLevel != 0 || actor.VisualKey is not null)
+        {
+            fullGroups |= ActorFieldGroups.EnemyPresentation;
+        }
+
         return new ActorWireRecord(
             actor.ActorId,
-            actor.HeldLight == HeldLightKind.None
-                ? ActorFieldGroups.All
-                : ActorFieldGroups.All | ActorFieldGroups.Equipment,
+            fullGroups,
             actor.Kind,
             actor.SessionId,
             actor.DisplayName,
@@ -179,7 +197,9 @@ public readonly record struct ActorWireRecord(
             actor.CombatStats,
             actor.Progression,
             actor.StarvedTicks,
-            actor.HeldLight);
+            actor.HeldLight,
+            actor.EnemyLevel,
+            actor.VisualKey);
     }
 
     // The record that turns baseActor (as the client holds it) into actor. Transforms compare by
@@ -243,6 +263,12 @@ public readonly record struct ActorWireRecord(
             groups |= ActorFieldGroups.Equipment;
         }
 
+        if (actor.EnemyLevel != baseActor.EnemyLevel
+            || !string.Equals(actor.VisualKey, baseActor.VisualKey, StringComparison.Ordinal))
+        {
+            groups |= ActorFieldGroups.EnemyPresentation;
+        }
+
         return new ActorWireRecord(
             actor.ActorId,
             groups,
@@ -260,7 +286,9 @@ public readonly record struct ActorWireRecord(
             CombatStats: actor.CombatStats,
             Progression: actor.Progression,
             StarvedTicks: actor.StarvedTicks,
-            HeldLight: actor.HeldLight);
+            HeldLight: actor.HeldLight,
+            EnemyLevel: actor.EnemyLevel,
+            VisualKey: actor.VisualKey);
     }
 }
 

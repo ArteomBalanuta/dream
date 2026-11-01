@@ -250,6 +250,7 @@ public sealed class ActorStateCache
 
             bool health = (groups & ActorFieldGroups.Health) != 0;
             bool mode = (groups & ActorFieldGroups.Mode) != 0;
+            bool enemyPresentation = (groups & ActorFieldGroups.EnemyPresentation) != 0;
             Actor = new ActorSnapshot(
                 actor.ActorId,
                 actor.Kind,
@@ -265,7 +266,10 @@ public sealed class ActorStateCache
                 (groups & ActorFieldGroups.Progression) != 0 ? record.Progression : actor.Progression,
                 mode ? record.EnemyBehaviorState : actor.EnemyBehaviorState,
                 (groups & ActorFieldGroups.Starved) != 0 ? record.StarvedTicks : actor.StarvedTicks,
-                (groups & ActorFieldGroups.Equipment) != 0 ? record.HeldLight : actor.HeldLight);
+                (groups & ActorFieldGroups.Equipment) != 0 ? record.HeldLight : actor.HeldLight,
+                0UL,
+                enemyPresentation ? record.EnemyLevel : actor.EnemyLevel,
+                enemyPresentation ? record.VisualKey : actor.VisualKey);
         }
     }
 }

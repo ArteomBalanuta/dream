@@ -255,7 +255,11 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
             StringBuilder tableText = new();
             using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = $"SELECT {string.Join(", ", columns)} FROM {table} ORDER BY {string.Join(", ", columns)};";
+            // Migration 0009 seeds four enemy and armor formulas; the legacy rows themselves must not change.
+            string filter = table == "combat_formulas"
+                ? " WHERE formula_key NOT IN ('enemy.attack_damage', 'enemy.max_health', 'enemy.attack_interval_seconds', 'player.damage_taken_factor')"
+                : string.Empty;
+            command.CommandText = $"SELECT {string.Join(", ", columns)} FROM {table}{filter} ORDER BY {string.Join(", ", columns)};";
             using SqliteDataReader rows = command.ExecuteReader();
             while (rows.Read())
             {

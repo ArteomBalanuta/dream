@@ -2,7 +2,9 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
+using Dream.Simulation.Rules;
 using Dream.Simulation.World;
 
 namespace Dream.Simulation.Runtime;
@@ -26,6 +28,8 @@ public sealed partial class WorldSessionRuntime
     public const int DayWolfTarget = 1;
     public const int NightWolfTarget = 2;
 
+    CombatFormulaService IRuntimePersistenceHost.CombatFormulas => _combatFormulaService;
+
     // The first wolf of a world (restore with no persisted enemy), at the day spawn.
     private void SpawnInitialWolf()
     {
@@ -41,28 +45,10 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        // Every number comes from enemies.json (loaded at startup, never parsed here).
+        // The stats come from enemies.json (loaded at startup, never parsed here); EnemyFactory derives
+        // damage, health and the attack interval through the enemy.* formulas.
         EnemyTemplate template = ContentCatalog.Shipped.Wolf;
-        EnemyCombatant combatant = new(
-            () => spawnPosition,
-            _events,
-            actorId: actorId,
-            maxHealth: template.MaxHealth,
-            attackDamage: template.AttackDamage,
-            attackIntervalSeconds: template.AttackIntervalSeconds,
-            anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
-        EnemyActor wolf = new(
-            combatant,
-            spawnPosition,
-            aggroRange: template.AggroRange,
-            attackRange: template.AttackRange,
-            moveSpeed: template.MoveSpeed,
-            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfDefinition.CollisionRadius,
-            collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: template.DisplayName,
-            enemyKind: template.Key,
-            level: template.Level);
+        EnemyActor wolf = EnemyFactory.Spawn(template, spawnPosition, actorId, _events, _combatFormulaService);
         _enemies.Add(wolf);
         PersistEnemy(wolf);
     }

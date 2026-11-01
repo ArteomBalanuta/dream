@@ -9,6 +9,8 @@ public sealed class ContentKeyRulesTests
 {
     private static string ShippedItemsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
 
+    private static string ShippedLootJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
+
     private static string ShippedEnemiesJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.EnemiesFileName));
 
     [Fact]
@@ -17,7 +19,7 @@ public sealed class ContentKeyRulesTests
         string items = ShippedItemsJson.Replace("\"key\": \"tool.field-blade\"", "\"key\": \" tool.field-blade\"");
 
         ContentValidationException ex = Assert.Throws<ContentValidationException>(
-            () => ContentCatalog.Load(items, ShippedEnemiesJson));
+            () => ContentCatalog.Load(items, ShippedEnemiesJson, ShippedLootJson));
 
         Assert.Contains("leading or trailing whitespace", ex.Message, StringComparison.Ordinal);
     }
@@ -28,7 +30,7 @@ public sealed class ContentKeyRulesTests
         string enemies = ShippedEnemiesJson.Replace("\"key\": \"Wolf\"", "\"key\": \"Wolf \"");
 
         ContentValidationException ex = Assert.Throws<ContentValidationException>(
-            () => ContentCatalog.Load(ShippedItemsJson, enemies));
+            () => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
 
         Assert.Contains("leading or trailing whitespace", ex.Message, StringComparison.Ordinal);
     }
@@ -39,7 +41,7 @@ public sealed class ContentKeyRulesTests
         string enemies = ShippedEnemiesJson.Replace("\"key\": \"Wolf\"", "\"key\": \"wolf\"");
 
         ContentValidationException ex = Assert.Throws<ContentValidationException>(
-            () => ContentCatalog.Load(ShippedItemsJson, enemies));
+            () => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
 
         Assert.Contains("case-sensitive", ex.Message, StringComparison.Ordinal);
     }
@@ -62,7 +64,7 @@ public sealed class ContentKeyRulesTests
         string second = items.Replace(
             original, $"\"displayName\": \"A\",{newline}      \"description\": \"B|C Reliable");
         Assert.NotEqual(
-            ContentCatalog.Load(first, ShippedEnemiesJson).ContentDigest,
-            ContentCatalog.Load(second, ShippedEnemiesJson).ContentDigest);
+            ContentCatalog.Load(first, ShippedEnemiesJson, ShippedLootJson).ContentDigest,
+            ContentCatalog.Load(second, ShippedEnemiesJson, ShippedLootJson).ContentDigest);
     }
 }

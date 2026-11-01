@@ -40,9 +40,9 @@ public sealed class ItemRollsMigrationMeasurementTests(ITestOutputHelper output)
         SchemaMigrationResult result = database.Schema.EnsureSchema();
         watch.Stop();
 
-        output.WriteLine($"migration 0008 on {before:N0} items: {watch.Elapsed.TotalMilliseconds:F1} ms (v{result.FromVersion} to v{result.ToVersion})");
+        output.WriteLine($"migrations 0008 and 0009 on {before:N0} items: {watch.Elapsed.TotalMilliseconds:F1} ms (v{result.FromVersion} to v{result.ToVersion})");
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(8, result.ToVersion);
+        Assert.Equal(9, result.ToVersion);
         Assert.True(before >= Items, $"seeded {before}");
         Assert.Equal(before, Count(database));
         Assert.True(watch.Elapsed.TotalMilliseconds <= 1000, $"migration took {watch.Elapsed.TotalMilliseconds:F1} ms (gate 1000 ms)");

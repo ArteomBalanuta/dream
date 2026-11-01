@@ -984,6 +984,9 @@ public sealed class ServerConnection : IAsyncDisposable
                 case ServerActionMessage action:
                     _codec.Encode(envelope, action, _frameWriter);
                     break;
+                case InventoryPushMessage push:
+                    _codec.Encode(envelope, push, _frameWriter);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");
@@ -1147,6 +1150,7 @@ public sealed class ServerConnection : IAsyncDisposable
             ServerSnapshotMessage snapshot => NetworkDiagnosticsLog.DescribeSnapshot(snapshot.Snapshot),
             ServerActionMessage action => $"session={action.Result.SessionId} actionSeq={action.Result.ActionSequence} accepted={action.Result.Accepted} payload={action.Result.Payload?.GetType().Name ?? "none"}",
             ServerHelloMessage hello => $"server={hello.ServerName}",
+            InventoryPushMessage push => $"notices={push.Notices.Count} inventory={(push.Inventory.HasValue ? 1 : 0)}",
             _ => string.Empty
         };
 

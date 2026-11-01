@@ -9,10 +9,12 @@ public sealed class ContentStringBoundsTests
 {
     private static string ShippedItemsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
 
+    private static string ShippedLootJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
+
     private static string ShippedEnemiesJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.EnemiesFileName));
 
     private static ContentValidationException ItemsFail(string items) =>
-        Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(items, ShippedEnemiesJson));
+        Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(items, ShippedEnemiesJson, ShippedLootJson));
 
     private static string WithItemField(string field, string oldValue, string newJsonValue)
     {
@@ -27,7 +29,7 @@ public sealed class ContentStringBoundsTests
     [Fact]
     public void TheShippedContent_StaysValid_UnderTheBounds()
     {
-        ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson);
+        ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
         Assert.NotEmpty(catalog.Items);
     }
 
@@ -42,7 +44,7 @@ public sealed class ContentStringBoundsTests
     public void AnEnemyKey_WithAControlCharacter_IsRejected()
     {
         string enemies = ShippedEnemiesJson.Replace("\"key\": \"Wolf\"", "\"key\": \"Wo\\u0007lf\"");
-        ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies));
+        ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
         Assert.Contains("control characters", ex.Message, StringComparison.Ordinal);
     }
 
@@ -53,7 +55,7 @@ public sealed class ContentStringBoundsTests
         Assert.Contains("characters long", ItemsFail(items).Message, StringComparison.Ordinal);
 
         string atLimit = ShippedItemsJson.Replace("tool.field-blade", new string('k', ContentCatalog.MaxKeyLength), StringComparison.Ordinal);
-        Assert.NotNull(ContentCatalog.Load(atLimit, ShippedEnemiesJson));
+        Assert.NotNull(ContentCatalog.Load(atLimit, ShippedEnemiesJson, ShippedLootJson));
     }
 
     [Fact]
@@ -101,7 +103,7 @@ public sealed class ContentStringBoundsTests
     {
         string enemies = ShippedEnemiesJson.Replace("\"moveSpeed\": 2.8", $"\"moveSpeed\": {speed}");
         Assert.NotEqual(ShippedEnemiesJson, enemies);
-        ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies));
+        ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
         Assert.Contains("moveSpeed", ex.Message, StringComparison.Ordinal);
     }
 
@@ -109,6 +111,6 @@ public sealed class ContentStringBoundsTests
     public void TheMinimumMoveSpeed_IsAccepted()
     {
         string enemies = ShippedEnemiesJson.Replace("\"moveSpeed\": 2.8", "\"moveSpeed\": 0.01");
-        Assert.NotNull(ContentCatalog.Load(ShippedItemsJson, enemies));
+        Assert.NotNull(ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
     }
 }

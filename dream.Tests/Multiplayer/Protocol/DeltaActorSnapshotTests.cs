@@ -549,6 +549,103 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
         output.WriteLine(keyJson);
     }
 
+    private static ActorSnapshot Enemy(int id, int level = 0, string? visualKey = null, Vector3? position = null) =>
+        new(id, CreatureKind.Enemy, null, position ?? new Vector3(5f, 1f, 5f), Vector3.UnitX, 100, 100, true,
+            DisplayName: level == 3 ? "Dire Wolf" : "Wolf", EnemyBehaviorState: EnemyBehaviorState.Idle, EnemyLevel: level, VisualKey: visualKey);
+
+    // Wave I (protocol v11): a wolf is mask 255 with no new bytes; a Dire Wolf is 767 with level and key.
+    [Fact]
+    public void EnemyPresentation_IsOmittedForAWolf_AndCarriedForADire()
+    {
+        ActorSnapshot wolf = Enemy(2001);
+        ActorSnapshot dire = Enemy(2002, 3, "enemy.dire-wolf");
+        ActorSnapshot lit = Player(17, "session-17", new Vector3(10f, 2f, 30f)) with { HeldLight = Dream.Simulation.Inventory.HeldLightKind.Torch };
+
+        Assert.Equal(255, (int)ActorWireRecord.Full(wolf).Groups);
+        Assert.Equal(511, (int)ActorWireRecord.Full(lit).Groups);
+        Assert.Equal(767, (int)ActorWireRecord.Full(dire).Groups);
+
+        ActorSnapshot[] actors = [wolf, dire];
+        string key = Encoding.UTF8.GetString(EncodePayload(new TransportJsonCodec(), new ServerSnapshotMessage(
+            Envelope(2, new Dictionary<string, ulong>(), actors) with { ActorDelta = new ActorDeltaChain().Next(2, actors) }) { SharedBody = true }));
+        output.WriteLine(key);
+        Assert.Contains("[2001,255,1,null,\"Wolf\",", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("[2001,767", key, StringComparison.Ordinal);
+        Assert.Contains("[2002,767,1,null,\"Dire Wolf\",", key, StringComparison.Ordinal);
+        Assert.Contains(",3,\"enemy.dire-wolf\"]", key, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnemyPresentation_RoundTripsInAKeyframe_AndAsADelta()
+    {
+        TransportJsonCodec codec = new();
+        ActorStateCache cache = new();
+        ActorDeltaChain chain = new();
+        ActorSnapshot[] first = [Enemy(2001), Enemy(2002, 3, "enemy.dire-wolf")];
+        ActorSnapshot[] second = [Enemy(2001), Enemy(2002, 3, "enemy.dire-wolf", new Vector3(6f, 1f, 5f))];
+        // Same identity, new presentation: only the presentation group changes for each.
+        ActorSnapshot[] third = [Enemy(2001, 3, "enemy.dire-wolf") with { DisplayName = "Wolf" }, Enemy(2002, 0, null, new Vector3(6f, 1f, 5f)) with { DisplayName = "Dire Wolf" }];
+
+        ServerSnapshotMessage a = new(Envelope(2, new Dictionary<string, ulong>(), first) with { ActorDelta = chain.Next(2, first) });
+        ServerSnapshotMessage b = new(Envelope(4, new Dictionary<string, ulong>(), second) with { ActorDelta = chain.Next(4, second) });
+        ServerSnapshotMessage c = new(Envelope(6, new Dictionary<string, ulong>(), third) with { ActorDelta = chain.Next(6, third) });
+        Assert.True(a.Snapshot.ActorDelta!.Value.IsKeyframe);
+        Assert.False(b.Snapshot.ActorDelta!.Value.IsKeyframe);
+
+        ServerSnapshotMessage ra = cache.Apply(Assert.IsType<ServerSnapshotMessage>(codec.Decode(EncodeShared(codec, a, null, 1)).Message));
+        Assert.Equal((0, null), (ra.Snapshot.Actors[0].EnemyLevel, ra.Snapshot.Actors[0].VisualKey));
+        Assert.Equal((3, "enemy.dire-wolf"), (ra.Snapshot.Actors[1].EnemyLevel, ra.Snapshot.Actors[1].VisualKey));
+
+        // An unchanged presentation costs nothing in a delta.
+        string bJson = Encoding.UTF8.GetString(EncodePayload(codec, b with { SharedBody = true }));
+        Assert.DoesNotContain("enemy.dire-wolf", bJson, StringComparison.Ordinal);
+        ServerSnapshotMessage rb = cache.Apply(Assert.IsType<ServerSnapshotMessage>(codec.Decode(EncodeShared(codec, b, null, 2)).Message));
+        Assert.Equal((3, "enemy.dire-wolf"), (rb.Snapshot.Actors[1].EnemyLevel, rb.Snapshot.Actors[1].VisualKey));
+
+        string cJson = Encoding.UTF8.GetString(EncodePayload(codec, c with { SharedBody = true }));
+        output.WriteLine(cJson);
+        Assert.Contains("[2001,512,3,\"enemy.dire-wolf\"]", cJson, StringComparison.Ordinal);
+        ServerSnapshotMessage rc = cache.Apply(Assert.IsType<ServerSnapshotMessage>(codec.Decode(EncodeShared(codec, c, null, 3)).Message));
+        Assert.Equal((3, "enemy.dire-wolf"), (rc.Snapshot.Actors[0].EnemyLevel, rc.Snapshot.Actors[0].VisualKey));
+        Assert.Equal(0, rc.Snapshot.Actors[1].EnemyLevel);
+        Assert.Null(rc.Snapshot.Actors[1].VisualKey);
+    }
+
+    [Fact]
+    public void EnemyPresentation_HostileValues_AreRefusedOrCarriedWithoutThrowing()
+    {
+        string longKey = new('k', 5000);
+        string frame = "{\"seq\":1,\"actors\":[[1,767,1,null,\"x\",0,0,0,0,0,0,1,1,1,null,0,null,null,0,1000000," + System.Text.Json.JsonSerializer.Serialize(longKey) + "]]}";
+        string payload = $"{{\"snapshot\":{{\"serverTick\":1,\"actorFrame\":{frame},\"interactionMode\":0}}}}";
+
+        ServerSnapshotMessage message = System.Text.Json.JsonSerializer.Deserialize<ServerSnapshotMessage>(payload, TransportJsonCodecOptions)!;
+
+        ActorWireRecord record = message.Snapshot.ActorFrame!.Records[0];
+        Assert.Equal(1_000_000, record.EnemyLevel);
+        Assert.Equal(longKey, record.VisualKey);
+        string tooHigh = payload.Replace("1000000,", "1000001,");
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => System.Text.Json.JsonSerializer.Deserialize<ServerSnapshotMessage>(tooHigh, TransportJsonCodecOptions));
+    }
+
+    // The legacy actor list (join-accepted, a resync) carries the same two fields, left out at the defaults.
+    [Fact]
+    public void EnemyPresentation_InTheLegacyActorList_IsLeftOutAtTheDefaults_AndRoundTrips()
+    {
+        TransportJsonCodec codec = new();
+        ActorSnapshot[] actors = [Enemy(2001), Enemy(2002, 3, "enemy.dire-wolf")];
+        ServerSnapshotMessage message = new(Envelope(2, new Dictionary<string, ulong>(), actors));
+
+        string json = Encoding.UTF8.GetString(codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message));
+
+        Assert.Equal(1, CountOccurrences(json, "\"enemyLevel\""));
+        Assert.Equal(1, CountOccurrences(json, "\"visualKey\""));
+        ServerSnapshotMessage decoded = Assert.IsType<ServerSnapshotMessage>(codec.Decode(Encoding.UTF8.GetBytes(json)).Message);
+        Assert.Equal(0, decoded.Snapshot.Actors[0].EnemyLevel);
+        Assert.Null(decoded.Snapshot.Actors[0].VisualKey);
+        Assert.Equal((3, "enemy.dire-wolf"), (decoded.Snapshot.Actors[1].EnemyLevel, decoded.Snapshot.Actors[1].VisualKey));
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => codec.Decode(Encoding.UTF8.GetBytes(json.Replace("\"enemyLevel\":3", "\"enemyLevel\":2000000"))));
+    }
+
     // The per-connection ack: the shared body carries no session's sequence, and each connection's
     // header carries its own only, so a broadcast to P players writes O(P) acks, not O(P^2).
     [Fact]
@@ -625,9 +722,12 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
 
     // Decoding and rebuilding a 40-actor keyframe plus the 40-actor delta after it: two record
     // arrays (about 5 KB each) and two actor arrays (about 4 KB each), the 80 strings of the
-    // keyframe's full records, and the messages and envelopes. Measured 22.4 KB (Debug); the delta
-    // alone (about 9.5 KB) costs about what a 40-actor snapshot cost to decode as the full list.
-    private const long DeltaDecodeBudgetBytes = 24 * 1024;
+    // keyframe's full records, and the messages and envelopes. Measured 22.4 KB (Debug) before wave I;
+    // wave I added two fields (an int and a string reference, 16 B with padding) to ActorWireRecord and
+    // ActorSnapshot, so those four arrays grew by about 2.6 KB (measured 25.0 KB) and the budget went
+    // from 24 KB to 26 KB. Nothing is allocated per actor beyond the arrays. The delta alone (about
+    // 9.5 KB) costs about what a 40-actor snapshot cost to decode as the full list.
+    private const long DeltaDecodeBudgetBytes = 26 * 1024;
 
     // A mangled frame is a JsonException, never a half-built actor.
     [Theory]
@@ -635,6 +735,10 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
     [InlineData("{\"seq\":1,\"actors\":[[1,255,0]]}")]
     [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,1,0,null,null]]}")]
     [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,512]]}")]
+    [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,1024,1]]}")]
+    [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,512,1000001,null]]}")]
+    [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,512,-1,null]]}")]
+    [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,512,3,7]]}")]
     [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,8,1,1,2]]}")]
     [InlineData("{\"seq\":2,\"base\":1,\"actors\":[[1,2,1,2,3,4]]}")]
     [InlineData("{\"seq\":2,\"base\":1,\"actors\":[\"1\"]}")]

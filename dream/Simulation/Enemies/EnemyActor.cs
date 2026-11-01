@@ -20,7 +20,8 @@ public sealed class EnemyActor
         float collisionHeight = 1.2f,
         string displayName = "Wolf",
         string enemyKind = "Wolf",
-        int level = 1)
+        int level = 1,
+        string? visualKey = null)
     {
         Combatant = combatant;
         Position = startPosition;
@@ -34,6 +35,7 @@ public sealed class EnemyActor
         DisplayName = string.IsNullOrWhiteSpace(displayName) ? "Enemy" : displayName.Trim();
         EnemyKind = string.IsNullOrWhiteSpace(enemyKind) ? "Enemy" : enemyKind.Trim();
         Level = Math.Max(1, level);
+        VisualKey = visualKey;
         combatant.SetPositionProvider(() => Position);
     }
 
@@ -60,6 +62,9 @@ public sealed class EnemyActor
     public string EnemyKind { get; }
 
     public int Level { get; }
+
+    // The client's model and tint key (wave I); null is the default visual (the wolf).
+    public string? VisualKey { get; }
 
     public EnemyBehaviorState BehaviorState { get; private set; }
 

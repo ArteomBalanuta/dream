@@ -13,4 +13,6 @@ public sealed class ClientRoutingContext
     public ServerSnapshotEnvelope? LastSnapshot { get; set; }
 
     public AuthoritativeActionResult? LastActionResult { get; set; }
+
+    public InventoryPushMessage? LastInventoryPush { get; set; }
 }
