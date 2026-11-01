@@ -74,6 +74,18 @@ public partial class PlayScene
             persistDesktopConfig = true;
         }
 
+        if (request.UiScale.HasValue)
+        {
+            _settings.SetUiScale(request.UiScale.Value);
+            persistDesktopConfig |= request.UiScaleCommitted;
+        }
+
+        if (request.CloseInventory && _settings.InventoryVisible)
+        {
+            // The classic satchel button. GameplayInputResumeFilter swallows a click still held.
+            _settings.ToggleInventory();
+        }
+
         if (request.EquipInventorySlotIndex.HasValue)
         {
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(
@@ -84,6 +96,11 @@ public partial class PlayScene
 
         if (request.InventoryAction is InventoryHudAction inventoryAction)
         {
+            if (_hudCapture is not null)
+            {
+                Console.WriteLine($"[hud-capture] intent sent: {inventoryAction.Kind} slot={inventoryAction.SlotIndex} target={inventoryAction.Target} item={inventoryAction.ItemInstanceId}");
+            }
+
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
@@ -125,7 +142,10 @@ public partial class PlayScene
     // validates every one of them and creates nothing from them.
     internal static IPlayerActionPayload ToInventoryIntent(in InventoryHudAction action) => action.Kind switch
     {
-        InventoryHudActionKind.Unequip => new InventoryUnequipIntent(action.SlotIndex),
+        // Target is the bag anchor the item should land on; FirstFitCell (-1) lets the server pick.
+        InventoryHudActionKind.Unequip => new InventoryUnequipIntent(
+            action.SlotIndex,
+            action.Target == CharacterPanelModel.FirstFitCell ? null : action.Target),
         InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
         InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
         _ => new InventoryEquipIntent(action.SlotIndex, action.Target)

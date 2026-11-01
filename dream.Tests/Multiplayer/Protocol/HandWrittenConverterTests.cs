@@ -8,6 +8,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Tests.Utilities;
@@ -118,6 +119,36 @@ public class HandWrittenConverterTests(ITestOutputHelper output)
             new PlayerSessionId("s"), 1, new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(int.MinValue, -0f, int.MaxValue))));
         AssertByteIdentical(new ServerActionMessage(new AuthoritativeActionResult(
             "s", 1, 2, true, new PlayerStatsUpdateResult(new PlayerCombatStatsSnapshot(1, float.Epsilon, 2)))));
+    }
+
+    // Protocol v13: PlayerInventorySnapshot is written by PlayerInventorySnapshotJsonConverter, which the
+    // reference registers too (the compact shape has no reflection equivalent). The codec must be using it
+    // (the reflection shape is far larger), in the join, the push and an inventory action result alike.
+    [Fact]
+    public void InventorySnapshot_IsWrittenByTheCompactConverter_InEveryMessageThatCarriesIt()
+    {
+        PlayerInventorySnapshot inventory = InventoryWireSamples.Starter("Alice");
+        JoinAcceptedMessage join = new("session-a", 1, 2, null, Inventory: inventory);
+        InventoryPushMessage push = new(inventory, [new LootNotice("Leather Cap", Dream.Simulation.Inventory.ItemRarity.Rare, Lost: false)]);
+        ServerActionMessage result = new(new AuthoritativeActionResult("s", 1, 2, true, new InventoryChangedResult(inventory)));
+
+        AssertByteIdentical(join);
+        AssertByteIdentical(push);
+        AssertByteIdentical(result);
+
+        AssertCompact(join);
+        AssertCompact(push);
+        AssertCompact(result);
+
+        static void AssertCompact<TMessage>(TMessage message)
+            where TMessage : IProtocolMessage
+        {
+            System.Buffers.ArrayBufferWriter<byte> compact = new();
+            new TransportJsonCodec().EncodePayload(message, compact);
+            int reflection = JsonSerializer.SerializeToUtf8Bytes(message, ProtocolWireOptions.V3Reflection).Length;
+            Assert.Contains("\"bag\":[[", Encoding.UTF8.GetString(compact.WrittenSpan), StringComparison.Ordinal);
+            Assert.True(compact.WrittenCount * 3 < reflection, $"{typeof(TMessage).Name}: {compact.WrittenCount} B compact, {reflection} B as reflection");
+        }
     }
 
     [Fact]

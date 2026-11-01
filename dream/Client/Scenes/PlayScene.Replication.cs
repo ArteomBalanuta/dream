@@ -86,8 +86,12 @@ public partial class PlayScene
                 snapshotMessage.Snapshot,
                 _remoteClient.SessionId,
                 _predictionReconciler);
-            RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            // Add or update first so an enemy that spawned and was hit in this snapshot exists, then
+            // damage, then remove: the killing blow's target is still in the registry while its number
+            // resolves. All three still run before the presenter.
+            RemoteEnemyStateApplier.AddOrUpdateEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
+            RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
@@ -318,6 +322,7 @@ public partial class PlayScene
     private void ApplyInventorySnapshot(PlayerInventorySnapshot? inventory)
     {
         _inventory = inventory;
+        _inventoryApplyCount++;
         EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
 
         _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);

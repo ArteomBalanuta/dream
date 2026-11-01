@@ -6,6 +6,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Integration;
 
@@ -38,13 +39,17 @@ public sealed class HeldLightLoopbackTests(ITestOutputHelper output)
         HeldLightKind expected = ToolCatalog.Resolve(lightSlot.Item!.Value.ItemKind).HeldLight;
         output.WriteLine($"equipping {lightSlot.Item.Value.ItemKind} (slot {lightSlot.SlotIndex}), expecting {expected}");
 
+        // Equipping puts the item it displaces in the bag, so the anchors move: each step finds the item by id.
+        int AnchorOf(long itemInstanceId) =>
+            rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value.AnchorOfId(itemInstanceId);
+
         await EquipAndWaitAsync(rig, holder, 1, lightSlot.SlotIndex, expected);
         Assert.Equal(expected, RemoteLightOf(observer, holder));
 
-        await EquipAndWaitAsync(rig, holder, 2, darkSlot.SlotIndex, HeldLightKind.None);
+        await EquipAndWaitAsync(rig, holder, 2, AnchorOf(darkSlot.Item!.Value.ItemInstanceId), HeldLightKind.None);
         Assert.Equal(HeldLightKind.None, RemoteLightOf(observer, holder));
 
-        await EquipAndWaitAsync(rig, holder, 3, lightSlot.SlotIndex, expected);
+        await EquipAndWaitAsync(rig, holder, 3, AnchorOf(lightSlot.Item.Value.ItemInstanceId), expected);
         Assert.Equal(expected, RemoteLightOf(observer, holder));
         rig.AssertNoChainBreaksOrWithheldActors();
     }

@@ -12,6 +12,7 @@ using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Support;
 using Dream.Simulation.World.Geometry;
 using static Dream.Tests.Integration.PersistentWorldSeedDeterminismIntegrationTests;
 
@@ -39,7 +40,9 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
         {
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             await TickAsync(server, 4);
-            Assert.Equal(5, Inventory(server).Slots.Count(slot => slot.Item is not null));
+            // The hammer is worn; the other four kit items are in the bag.
+            Assert.Equal(5, Inventory(server).AllItems().Count());
+            Assert.Equal(4, Inventory(server).Slots.Count(slot => slot.Item is not null));
             await server.DisconnectAsync(client);
             await TickAsync(server, 2);
         }
@@ -64,7 +67,8 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             PlayerInventorySnapshot inventory = Inventory(server);
             InventorySlotSnapshot torch = Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch");
-            Assert.Equal(4, torch.SlotIndex);
+            // The hammer is worn, so the top-up's 1x2 torch takes the first fit, the corner at anchor 0.
+            Assert.Equal(0, torch.SlotIndex);
             Assert.Equal("tool.builder-hammer", inventory.EquippedSlot?.Item?.ItemKind);
 
             await client.SendActionAsync(new InventoryEquipIntent(torch.SlotIndex));
@@ -96,8 +100,11 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
                 await TickAsync(server, 40);
                 Assert.Equal(wolves, ActiveWolfIds(server.Runtime));
                 PlayerInventorySnapshot inventory = Inventory(server);
-                Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch");
-                Assert.Equal(5, inventory.Slots.Count(slot => slot.Item is not null));
+                // The torch is worn (no bag row); the hammer it displaced and the other three kit items are
+                // in the bag, and nothing was topped up again.
+                Assert.DoesNotContain(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch");
+                Assert.Equal(5, inventory.AllItems().Count());
+                Assert.Equal(1, inventory.AllItems().Count(item => item.ItemKind == "tool.torch"));
                 Assert.Equal("tool.torch", inventory.EquippedSlot?.Item?.ItemKind);
                 Assert.Equal(HeldLightKind.Torch, PlayerActor(server).HeldLight);
                 await server.DisconnectAsync(client);

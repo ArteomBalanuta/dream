@@ -24,7 +24,9 @@ namespace Dream.Server.Items;
 // Output is tab-separated. `grant` is offline: it takes the world's lease (as `--worlds` does) and
 // runs as one owned transaction. It needs a starter-grant row in that world; without one the next join
 // would treat the inventory as a pre-kit legacy one. `list` takes no lease. A character matches by
-// display name (ignoring ASCII case), then by exact key.
+// display name (ignoring ASCII case), then by exact key. A granted item goes to the first fit of the
+// 8x8 bag board (rows 0..63 are bag anchors); `list` prints the slot index of each row as stored
+// (0..63 bag, 100..111 worn, 200..215 held back).
 public static class ItemCli
 {
     public const int ExitOk = 0;
@@ -43,9 +45,15 @@ public static class ItemCli
 
     private const string GrantRowSql = "SELECT COUNT(*) FROM player_starter_grants WHERE world_id = $world AND player_name = $key;";
 
-    private const string BackpackSlotsSql = """
-        SELECT slot_index FROM player_inventory_slots
-        WHERE world_id = $world AND player_name = $key AND slot_index >= 0 AND slot_index < $count;
+    // The bag rows in anchor order, with the kind of their item (NULL for a missing one), to find the
+    // first fit for the new item. Rows the load-time repair would move are placed or left out the same
+    // way it does it (first come first kept).
+    private const string BagRowsSql = """
+        SELECT s.slot_index, i.item_kind
+        FROM player_inventory_slots AS s
+        LEFT JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
+        WHERE s.world_id = $world AND s.player_name = $key AND s.slot_index >= 0 AND s.slot_index < $count
+        ORDER BY s.slot_index;
         """;
 
     private const string WorldSql = "SELECT seed, world_time_ticks FROM worlds WHERE world_id = $world;";
@@ -325,25 +333,30 @@ public static class ItemCli
             return ExitNotFound;
         }
 
-        bool[] used = new bool[InventoryConstants.BackpackSlotCount];
+        BagBoard board = new();
         using (SqliteCommand command = connection.CreateCommand())
         {
             command.Transaction = transaction;
-            command.CommandText = BackpackSlotsSql;
+            command.CommandText = BagRowsSql;
             command.Parameters.AddWithValue("$world", worldId);
             command.Parameters.AddWithValue("$key", key);
             command.Parameters.AddWithValue("$count", InventoryConstants.BackpackSlotCount);
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read())
             {
-                used[reader.GetInt32(0)] = true;
+                string? rowKind = reader.IsDBNull(1) ? null : reader.GetString(1);
+                board.TryPlace(reader.GetInt32(0), content.TryGetItem(rowKind ?? string.Empty, out ItemDefinition? rowDefinition)
+                    ? rowDefinition.Footprint
+                    : ItemFootprint.One);
             }
         }
 
-        int slot = Array.IndexOf(used, false);
+        int slot = board.FirstFit(definition.Footprint);
         if (slot < 0)
         {
-            error.WriteLine($"The backpack of '{CharacterCli.Sanitize(key)}' is full. Nothing was changed.");
+            error.WriteLine(
+                $"The bag of '{CharacterCli.Sanitize(key)}' is full: there is no room for a " +
+                $"{definition.Footprint.Cols}x{definition.Footprint.Rows} item ('{safeKind}'). Nothing was changed.");
             return ExitNotFound;
         }
 

@@ -56,8 +56,10 @@ public sealed class WaveCTesterLockstepTwoRestartsTests(ITestOutputHelper output
     {
         int firstDivergence = -1;
         compared = 0;
-        using PersistentScriptedServer first = new(left.OpenBundle());
-        using PersistentScriptedServer second = new(right.OpenBundle());
+        // The seed is random per database, so the cube built in an earlier phase may or may not have
+        // broken by the end of it. Later phases start with it standing when it did not.
+        using PersistentScriptedServer first = new(left.OpenBundle(), allowOccupiedBuildCell: true);
+        using PersistentScriptedServer second = new(right.OpenBundle(), allowOccupiedBuildCell: true);
         Assert.Equal(first.Seed, second.Seed);
         Assert.Equal(first.Hash(), second.Hash());
         Assert.Equal(first.Runtime.ObjectIds.Next, second.Runtime.ObjectIds.Next);

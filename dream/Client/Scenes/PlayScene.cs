@@ -13,6 +13,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Ui;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -65,7 +66,9 @@ public partial class PlayScene : IDisposable
     private bool _wasSettingsTogglePressed;
     private bool _wasInventoryTogglePressed;
     private bool _wasCameraViewTogglePressed;
+    private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
+    private readonly CursorChangeLookHoldoff _lookHoldoff = new();
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
     private double _lastPresentedFrameMilliseconds;
@@ -76,6 +79,8 @@ public partial class PlayScene : IDisposable
     private GpuFrameTimer? _gpuTimer;
     private RenderCounterSnapshot _lastFrameCounters;
     private PlayerInventorySnapshot? _inventory;
+    // How many inventory snapshots have been applied; the capture script waits on it.
+    private int _inventoryApplyCount;
     private bool _disposed;
 
     // Inputs and output of the prediction tick for the current frame. The tick stream calls a
@@ -97,7 +102,18 @@ public partial class PlayScene : IDisposable
 
     private double RemotePlayerRenderTick => _serverTickClock.RenderTick;
 
-    public CursorState DesiredCursorState => _settings.CurrentRuntimeState.DesiredCursorState;
+    // The classic inventory draws its own cursor, so the OS cursor hides (it can still leave the
+    // window; a drop outside cancels). Settings and the ImGui surface keep the normal cursor.
+    public CursorState DesiredCursorState =>
+        ClassicCursorPolicy.Decide(
+            _render.ClassicHudCursorActive,
+            _settings.InventoryVisible,
+            _settings.SettingsVisible,
+            _windowFocused,
+            _settings.CurrentRuntimeState.DesiredCursorState);
+
+    // Set by Render each frame; true until the first one.
+    private bool _windowFocused = true;
 
     public Vector3 LastReportedPlayerPosition => _runtime.Player.LastReportedPosition;
 

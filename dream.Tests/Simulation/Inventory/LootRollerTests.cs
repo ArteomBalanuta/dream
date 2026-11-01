@@ -123,6 +123,8 @@ public sealed class LootRollerTests(ITestOutputHelper output)
         string picks = string.Join(" ", Enumerable.Range(0, 10).Select(n => Describe(dire, new ItemRollSeed(20261101UL, 500UL + (ulong)n, 0xFEEDUL, 42UL, n % 2))));
 
         output.WriteLine(picks);
-        Assert.Equal("nothing nothing nothing nothing nothing gear.leather-cap/Rare nothing gear.leather-vest/Uncommon gear.leather-vest/Uncommon gear.leather-cap/Common", picks);
+        // Classic HUD iteration 2 added nine kinds to the table with the same nothing weight and total, so
+        // the "nothing" positions and the rarities are those of wave I; only the kinds picked moved.
+        Assert.Equal("nothing nothing nothing nothing nothing gear.leather-vest/Rare nothing gear.ward-lantern/Uncommon gear.ward-lantern/Uncommon gear.leather-vest/Common", picks);
     }
 }

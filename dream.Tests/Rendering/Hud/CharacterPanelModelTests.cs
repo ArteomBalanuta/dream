@@ -106,14 +106,17 @@ public sealed class CharacterPanelModelTests
     }
 
     [Fact]
-    public void SlotRows_AreTheFourSlotsInOrder_WithTheirItems()
+    public void SlotRows_AreTheTwelveSlotsInOrder_WithTheirItems()
     {
         CharacterSlotRow[] rows = CharacterPanelModel.BuildSlotRows(FullInventory());
 
-        Assert.Equal([EquipmentSlot.MainHand, EquipmentSlot.OffHand, EquipmentSlot.Head, EquipmentSlot.Body], rows.Select(r => r.Slot));
-        Assert.Equal([100, 101, 102, 103], rows.Select(r => r.SlotIndex));
-        Assert.Equal(["Blade", "Lantern", "Cap", "Vest"], rows.Select(r => r.ItemLabel));
-        Assert.Equal(["Main Hand", "Off Hand", "Head", "Body"], rows.Select(r => r.SlotLabel));
+        Assert.Equal(Enum.GetValues<EquipmentSlot>(), rows.Select(r => r.Slot));
+        Assert.Equal(Enumerable.Range(100, 12), rows.Select(r => r.SlotIndex));
+        Assert.Equal(["Blade", "Lantern", "Cap", "Vest"], rows.Take(4).Select(r => r.ItemLabel));
+        Assert.All(rows.Skip(4), row => Assert.Null(row.Item));
+        Assert.Equal(
+            ["Main Hand", "Off Hand", "Head", "Body", "Hands", "Feet", "Legs", "Neck", "Left Ring", "Right Ring", "Back", "Companion"],
+            rows.Select(r => r.SlotLabel));
     }
 
     [Fact]
@@ -124,7 +127,7 @@ public sealed class CharacterPanelModelTests
             [
                 new InventorySlotSnapshot(100, Item(1, "Sneaky main")),
                 new InventorySlotSnapshot(99, Item(2, "Below")),
-                new InventorySlotSnapshot(104, Item(3, "Above")),
+                new InventorySlotSnapshot(112, Item(3, "Above")),
                 new InventorySlotSnapshot(int.MinValue, Item(4, "Min")),
                 new InventorySlotSnapshot(102, null)
             ]);
@@ -133,7 +136,7 @@ public sealed class CharacterPanelModelTests
 
         Assert.All(rows, row => Assert.Null(row.Item));
         Assert.All(rows, row => Assert.Equal("Empty", row.ItemLabel));
-        Assert.Equal(4, CharacterPanelModel.BuildSlotRows(null).Length);
+        Assert.Equal(EquipmentSlots.Count, CharacterPanelModel.BuildSlotRows(null).Length);
     }
 
     [Theory]
@@ -188,8 +191,11 @@ public sealed class CharacterPanelModelTests
         Assert.Equal([EquipmentSlot.MainHand, EquipmentSlot.OffHand], CharacterPanelModel.AllowedSlots(3));
         Assert.Equal([EquipmentSlot.Body], CharacterPanelModel.AllowedSlots(8));
         Assert.Empty(CharacterPanelModel.AllowedSlots(0));
-        Assert.Empty(CharacterPanelModel.AllowedSlots(-16));
-        Assert.Equal(4, CharacterPanelModel.AllowedSlots(-1).Count);
+        Assert.Empty(CharacterPanelModel.AllowedSlots(-4096));
+        Assert.Equal(
+            [EquipmentSlot.Hands, EquipmentSlot.Feet, EquipmentSlot.Legs, EquipmentSlot.Neck, EquipmentSlot.RingLeft, EquipmentSlot.RingRight, EquipmentSlot.Back, EquipmentSlot.Companion],
+            CharacterPanelModel.AllowedSlots(-16 & 0xFFF));
+        Assert.Equal(EquipmentSlots.Count, CharacterPanelModel.AllowedSlots(-1).Count);
     }
 
     [Fact]
@@ -229,15 +235,16 @@ public sealed class CharacterPanelModelTests
 
         CharacterMenuEntry unequip = Assert.Single(menu, e => e.Action.Kind == InventoryHudActionKind.Unequip);
         Assert.Equal(100, unequip.Action.SlotIndex);
+        Assert.Equal(CharacterPanelModel.FirstFitCell, unequip.Action.Target);
         Assert.DoesNotContain(menu, e => e.Action.Kind == InventoryHudActionKind.Destroy);
     }
 
     [Theory]
     [InlineData(-1)]
-    [InlineData(16)]
+    [InlineData(64)]
     [InlineData(100)]
     [InlineData(int.MaxValue)]
-    public void BackpackMenu_AndMoveTargets_AreEmptyForASlotOutsideTheBackpack(int slot)
+    public void BackpackMenu_AndMoveTargets_AreEmptyForASlotOutsideTheBag(int slot)
     {
         PlayerInventorySnapshot inventory = FullInventory();
 
@@ -245,42 +252,124 @@ public sealed class CharacterPanelModelTests
         Assert.Empty(CharacterPanelModel.MoveTargets(inventory, slot));
     }
 
-    [Fact]
-    public void EquipmentMenu_IsOneUnequipIntent_OfThatSlot()
+    [Theory]
+    [InlineData(16)]
+    [InlineData(63)]
+    public void BackpackMenu_AcceptsEveryAnchorOfTheEightByEightBag(int slot)
     {
-        CharacterMenuEntry entry = Assert.Single(CharacterPanelModel.EquipmentMenu(EquipmentSlot.OffHand));
+        List<CharacterMenuEntry> menu = CharacterPanelModel.BackpackMenu(FullInventory(), slot, Item(1, "x", 1));
 
-        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Unequip, 101), entry.Action);
+        Assert.NotEmpty(menu);
+        Assert.All(menu.Where(e => e.Action.Kind != InventoryHudActionKind.Unequip), e => Assert.Equal(slot, e.Action.SlotIndex));
+    }
+
+    [Theory]
+    [InlineData(EquipmentSlot.MainHand, 100)]
+    [InlineData(EquipmentSlot.OffHand, 101)]
+    [InlineData(EquipmentSlot.Feet, 105)]
+    [InlineData(EquipmentSlot.RingRight, 109)]
+    [InlineData(EquipmentSlot.Companion, 111)]
+    public void EquipmentMenu_IsOneUnequipIntent_OfThatSlot_WithNoCellNamed(EquipmentSlot slot, int index)
+    {
+        CharacterMenuEntry entry = Assert.Single(CharacterPanelModel.EquipmentMenu(slot));
+
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Unequip, index, CharacterPanelModel.FirstFitCell), entry.Action);
+        Assert.Equal(-1, entry.Action.Target);
         Assert.False(entry.RequiresConfirm);
     }
 
     [Fact]
-    public void MoveTargets_AreEveryOtherBackpackSlot_AndOneMoveIntentEach()
+    public void FirstFitCell_IsNotACell()
     {
+        Assert.True(CharacterPanelModel.FirstFitCell < 0);
+        Assert.Equal(0, default(InventoryHudAction).Target);
+    }
+
+    [Fact]
+    public void MoveTargets_AreTheFirstSixteenFreeAnchors_RowMajor_AndOneMoveIntentEach()
+    {
+        // Items sit on cells 0, 3 and 5 (all 1x1 for an unknown kind): from 5, the other two cells are a
+        // swap, not a free spot.
         List<InventoryHudAction> targets = CharacterPanelModel.MoveTargets(FullInventory(), 5);
 
-        Assert.Equal(15, targets.Count);
-        Assert.DoesNotContain(targets, t => t.Target == 5);
+        Assert.Equal([1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], targets.Select(t => t.Target));
+        Assert.Equal(CharacterPanelModel.MaxMoveTargets, targets.Count);
         Assert.All(targets, t =>
         {
             Assert.Equal(InventoryHudActionKind.Move, t.Kind);
             Assert.Equal(5, t.SlotIndex);
-            Assert.InRange(t.Target, 0, 15);
         });
+    }
+
+    [Fact]
+    public void MoveTargets_FollowTheFootprint_NotJustTheAnchorCell()
+    {
+        InventoryItemSnapshot big = Item(1, "Big", 1) with { ItemKind = "big" };
+        InventoryItemSnapshot small = Item(2, "Small", 1) with { ItemKind = "small" };
+        PlayerInventorySnapshot inventory = new("p", 8, 8, [new InventorySlotSnapshot(0, big), new InventorySlotSnapshot(10, small)]);
+
+        List<InventoryHudAction> targets = CharacterPanelModel.MoveTargets(
+            inventory,
+            0,
+            kind => kind == "big" ? new ItemFootprint(2, 3) : ItemFootprint.One);
+
+        // 2x3 from anchor 1, 2, 9 or 10 would cover the small item (a swap), and anchors in column 7 run off the board.
+        Assert.Equal([3, 4, 5, 6, 8, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22], targets.Select(t => t.Target));
+    }
+
+    [Fact]
+    public void MoveTargets_AreEmptyForAnAnchorWithNoItem_AndForACoveredCell()
+    {
+        InventoryItemSnapshot big = Item(1, "Big", 1) with { ItemKind = "big" };
+        PlayerInventorySnapshot inventory = new("p", 8, 8, [new InventorySlotSnapshot(9, big)]);
+        Func<string?, ItemFootprint> footprint = kind => kind == "big" ? new ItemFootprint(2, 3) : ItemFootprint.One;
+
+        Assert.Empty(CharacterPanelModel.MoveTargets(inventory, 40, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(inventory, 10, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(inventory, 17, footprint));
+        Assert.NotEmpty(CharacterPanelModel.MoveTargets(inventory, 9, footprint));
     }
 
     [Theory]
     [InlineData(int.MaxValue, int.MaxValue)]
     [InlineData(-3, 4)]
     [InlineData(0, 0)]
-    public void MoveTargets_ClampAHostileGridSize(int columns, int rows)
+    public void MoveTargets_IgnoreAHostileGridSize_AndStayOnTheBoard(int columns, int rows)
     {
-        PlayerInventorySnapshot inventory = new("p", columns, rows, []);
+        PlayerInventorySnapshot inventory = new("p", columns, rows, [new InventorySlotSnapshot(0, Item(1, "x", 1))]);
 
         List<InventoryHudAction> targets = CharacterPanelModel.MoveTargets(inventory, 0);
 
-        Assert.True(targets.Count <= 15);
-        Assert.All(targets, t => Assert.InRange(t.Target, 0, 15));
+        // The grid is clamped to the bag's cells (8x8 since classic HUD iteration 2), never past them.
+        Assert.Equal(CharacterPanelModel.MaxMoveTargets, targets.Count);
+        Assert.All(targets, t => Assert.InRange(t.Target, 1, 63));
+    }
+
+    [Fact]
+    public void MoveTargets_HostileSnapshots_DoNotThrow_AndOverlapsKeepTheFirstItem()
+    {
+        Func<string?, ItemFootprint> footprint = kind => kind == "big" ? new ItemFootprint(2, 3) : ItemFootprint.One;
+        InventoryItemSnapshot big = Item(1, "Big", 1) with { ItemKind = "big" };
+        InventoryItemSnapshot small = Item(2, "Small", 1);
+        PlayerInventorySnapshot overlapping = new(
+            "p", 8, 8,
+            [
+                new InventorySlotSnapshot(9, big),
+                new InventorySlotSnapshot(10, small),   // under the big item: skipped
+                new InventorySlotSnapshot(7, big),      // off the right edge: skipped
+                new InventorySlotSnapshot(-4, small),
+                new InventorySlotSnapshot(64, small),
+                new InventorySlotSnapshot(200, small),
+                new InventorySlotSnapshot(30, null),
+                new InventorySlotSnapshot(31, small with { ItemInstanceId = 0 })
+            ]);
+
+        Assert.Empty(CharacterPanelModel.MoveTargets(overlapping, 10, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(overlapping, 7, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(overlapping, 30, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(overlapping, 31, footprint));
+        Assert.NotEmpty(CharacterPanelModel.MoveTargets(overlapping, 9, footprint));
+        Assert.Empty(CharacterPanelModel.MoveTargets(new PlayerInventorySnapshot("p", 8, 8, null!), 0, footprint));
     }
 
     [Fact]

@@ -159,6 +159,7 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
         }
 
         int pushStep = 0;
+        int griefMoves = 0;
         for (int step = 1; step <= 60; step++)
         {
             if (server.Runtime.Enemies.ActiveActors.FirstOrDefault() is { } wolf)
@@ -169,7 +170,8 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
 
             if (grief(step))
             {
-                await griefer.SendActionAsync(new InventoryMoveIntent(0, 1));
+                // The blade (a 2x3 at anchor 2) there and back, so every move is a real change.
+                await griefer.SendActionAsync(griefMoves++ % 2 == 0 ? new InventoryMoveIntent(2, 26) : new InventoryMoveIntent(26, 2));
             }
 
             await victim.SendCommandAsync(PlayerMoveIntent.None, Vector3.UnitZ, attack: true);

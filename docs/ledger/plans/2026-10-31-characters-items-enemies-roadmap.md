@@ -322,6 +322,15 @@ Migration `0009_enemy_formulas.sql`: seed `enemy.attack_damage` = `strength + 2`
 
 Ground drops and pickup, level-up stat points, timed effects, a character picker UI, stacking consumables, Movement Speed as a real stat.
 
+**Enemy pathing.** Wolves walk in straight lines and stop at the first wall. Fix loop 5 of wave I (blocked wolf teleports home, legacy wolf migration, target shielding, rejoin protection limit) was stopped unfinished and is not in `master`. The user will address pathing later.
+
+**Classic MMO UI.** Not scheduled, and not yet planned by the architect. Specs: `docs/superpowers/specs/2026-11-01-classic-mmo-ui/` (uncommitted); start with `00-README.md`, and `04-dream-gap-map.md` has the gap table, effort estimates and a suggested order. `06-review-findings.md` overrides the specs where they differ. Art: branch `integrate/ui-assets` at `5c2f193`, 198 sprites, not merged and not integrated with the game. That branch's base must be checked against `master` before any merge.
+
+- **Foundation:** atlas loader, sprite and 9-slice layer, UI scale in 0.25 steps, anchored layout. ImGui is the whole UI today.
+- **Blockers:** the mouse is grabbed in play; no keyboard reaches ImGui; bag items are 1x1 but icons are drawn for multi-cell footprints; equipped items alias a bag slot; crit and damage type don't reach client combat text (needs a protocol bump); per-item tint or glow needs a renderer change.
+- **Missing systems:** mana, second gauge, skills, hotbar, chat, gold, combine. A licensed UI font is also needed.
+- **Open decisions (user):** camera and click mode, paper-doll slot count, equipped-item rule, multi-cell bag, hide or show UI for missing systems, tier mapping, base branch.
+
 ### Order
 
 Wave F now, then G, H, I. Each user decision set blocks only its wave. H depends on F. G is independent of H and could swap with it, but a character seam before item ownership work avoids redoing `PlayerInventoryService`.

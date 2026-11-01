@@ -9,12 +9,15 @@ using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Server.Persistence;
 
 // SCALE-7 remainder: inventories are loaded per player (with the join prefetch) and evicted with
 // the departed-profile LRU, instead of all being loaded at startup and kept forever. Item ids come
 // from the database's highest id, so they never collide with an inventory that is not loaded.
+// Classic HUD iteration 2: a new inventory is the hammer in the main hand and the blade at anchor 2, the
+// maul at 4, the lantern at 6 and the torch at 7.
 public sealed class PerPlayerInventoryPersistenceTests
 {
     [Fact]
@@ -147,7 +150,7 @@ public sealed class PerPlayerInventoryPersistenceTests
             // The equip's slot write waits behind a slow write when the player leaves, is evicted
             // (no departed profiles are kept) and asks to join again.
             runtime.PersistenceWrites!.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
-            Assert.True(runtime.ProcessAuthoritativeAction(Equip("session-a", sequence: 1, slotIndex: 3)).Accepted);
+            Assert.True(runtime.ProcessAuthoritativeAction(Equip("session-a", sequence: 1, slotIndex: 6)).Accepted);
             host.ReleaseConnection("connection-1");
             Assert.Equal(0, runtime.LoadedInventoryCount);
             host.HandleClientMessage("connection-2", new ClientJoinRequestMessage("session-a", "Player A"));
@@ -164,7 +167,7 @@ public sealed class PerPlayerInventoryPersistenceTests
         Assert.Equal("session-a", runtime.PrimaryRemoteSessionId?.Value);
         PlayerInventorySnapshot rejoined = Capture(runtime, "session-a");
         Assert.Equal(ItemIds(joined), ItemIds(rejoined));
-        Assert.Equal(SlotItemId(joined, 3), EquippedItemId(rejoined));
+        Assert.Equal(SlotItemId(joined, 6), EquippedItemId(rejoined));
     }
 
     // Review S3: the queue drops a failed write, so an inventory whose write failed is the only
@@ -186,8 +189,8 @@ public sealed class PerPlayerInventoryPersistenceTests
         WaitForWrites(runtime);
         world.FailSlotWrites = false;
         Assert.Equal(failedBefore + 1, runtime.PersistenceWrites.FailedWrites);
-        // The row still names the first starter item.
-        Assert.Equal(SlotItemId(joined, 0), EquippedRowItemId(world, "Visitor"));
+        // The row still names the first starter item, the hammer.
+        Assert.Equal(EquippedItemId(joined), EquippedRowItemId(world, "Visitor"));
 
         host.ReleaseSession("visitor");
         Assert.Equal(0, runtime.ProfileCacheCount);
@@ -220,7 +223,7 @@ public sealed class PerPlayerInventoryPersistenceTests
             // The equip's write is still queued (and will fail) when the player leaves and is evicted.
             runtime.PersistenceWrites!.Enqueue(() => gate.Wait(TimeSpan.FromSeconds(30)));
             world.FailSlotWrites = true;
-            Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 3)).Accepted);
+            Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 6)).Accepted);
             host.ReleaseSession("visitor");
             Assert.Equal(0, runtime.LoadedInventoryCount);
             Assert.Equal(1, runtime.UnconfirmedInventoryEvictionCount);
@@ -232,12 +235,12 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         WaitForWrites(runtime);
         world.FailSlotWrites = false;
-        Assert.Equal(SlotItemId(joined, 0), EquippedRowItemId(world, "Visitor"));
+        Assert.Equal(EquippedItemId(joined), EquippedRowItemId(world, "Visitor"));
 
         host.JoinSession("visitor-again", "Visitor");
         PlayerInventorySnapshot rejoined = Capture(runtime, "visitor-again");
         Assert.Equal(ItemIds(joined), ItemIds(rejoined));
-        Assert.Equal(SlotItemId(joined, 3), EquippedItemId(rejoined));
+        Assert.Equal(SlotItemId(joined, 6), EquippedItemId(rejoined));
         Assert.Equal(0, runtime.UnconfirmedInventoryEvictionCount);
     }
 
@@ -250,11 +253,11 @@ public sealed class PerPlayerInventoryPersistenceTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("visitor", "Visitor");
         PlayerInventorySnapshot joined = Capture(runtime, "visitor");
-        Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 1)).Accepted);
+        Assert.True(runtime.ProcessAuthoritativeAction(Equip("visitor", sequence: 1, slotIndex: 2)).Accepted);
         host.ReleaseSession("visitor");
         Assert.Equal(0, runtime.LoadedInventoryCount);
         WaitForWrites(runtime);
-        Assert.Equal(SlotItemId(joined, 1), EquippedRowItemId(world, "Visitor"));
+        Assert.Equal(SlotItemId(joined, 2), EquippedRowItemId(world, "Visitor"));
 
         // The next eviction forgets the confirmed one.
         host.JoinSession("other", "Other");
@@ -267,7 +270,7 @@ public sealed class PerPlayerInventoryPersistenceTests
         int loadsBefore = world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory));
         host.JoinSession("visitor-again", "Visitor");
         Assert.Equal(loadsBefore + 1, world.Calls(nameof(IWorldPersistenceRepository.LoadPlayerInventory)));
-        Assert.Equal(SlotItemId(joined, 1), EquippedItemId(Capture(runtime, "visitor-again")));
+        Assert.Equal(SlotItemId(joined, 2), EquippedItemId(Capture(runtime, "visitor-again")));
     }
 
     [Fact]
@@ -435,10 +438,7 @@ public sealed class PerPlayerInventoryPersistenceTests
 
     private static HashSet<long> ItemIds(PlayerInventorySnapshot snapshot)
     {
-        return snapshot.Slots
-            .Where(slot => slot.Item.HasValue)
-            .Select(slot => slot.Item!.Value.ItemInstanceId)
-            .ToHashSet();
+        return snapshot.AllItems().Select(item => item.ItemInstanceId).ToHashSet();
     }
 
     private static long SlotItemId(PlayerInventorySnapshot snapshot, int slotIndex)
@@ -516,16 +516,15 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         public void Seed(string playerName, long firstItemId)
         {
+            // The hammer worn and the others at their first fits.
+            int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7];
             for (int i = 0; i < ToolCatalog.StarterItemKinds.Count; i++)
             {
                 // One item of each starter kind, like a seeded inventory, so Ensure's starter
                 // top-up (wave T2) finds nothing missing.
                 _items[firstItemId + i] = Item(firstItemId + i, playerName, ToolCatalog.StarterItemKinds[i]);
-                _slots[(playerName, i)] = new PersistedInventorySlot(playerName, i, firstItemId + i, DateTime.UtcNow);
+                _slots[(playerName, anchors[i])] = new PersistedInventorySlot(playerName, anchors[i], firstItemId + i, DateTime.UtcNow);
             }
-
-            _slots[(playerName, InventoryConstants.EquippedSlotIndex)] =
-                new PersistedInventorySlot(playerName, InventoryConstants.EquippedSlotIndex, firstItemId, DateTime.UtcNow);
         }
 
         private void Count(string method) => _calls[method] = Calls(method) + 1;

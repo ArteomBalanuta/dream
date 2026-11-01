@@ -8,16 +8,17 @@ using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Inventory;
 
-// Wave H1: the four equipment slots on PlayerInventoryService (slot rules from content, targets,
-// the one-slot-only rule, stats and light per slot). A new player's starter kit is, by slot:
-// 0 hammer (id 1), 1 blade (2), 2 maul (3), 3 lantern (4), 4 torch (5); the hammer is equipped.
+// Wave H1: the equipment slots on PlayerInventoryService (slot rules from content, targets, the
+// one-slot-only rule, stats and light per slot). A new player's starter kit is: the hammer (id 1) in the
+// main hand, and in the bag (anchors of the first fits) the blade (id 2) at 2, the maul (3) at 4, the
+// lantern (4) at 6 and the torch (5) at 7.
 public sealed class EquipmentSlotTests
 {
     private const string Player = "Alice";
-    private const int Blade = 1;
-    private const int Maul = 2;
-    private const int Lantern = 3;
-    private const int Torch = 4;
+    private const int Blade = 2;
+    private const int Maul = 4;
+    private const int Lantern = 6;
+    private const int Torch = 7;
 
     internal static PlayerInventoryService Create(EquipmentTestWorld world, out PersistenceWriteQueue writes)
     {
@@ -56,8 +57,11 @@ public sealed class EquipmentSlotTests
             InventorySlotSnapshot off = Assert.Single(snapshot.Equipment!);
             Assert.Equal(EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand), off.SlotIndex);
             Assert.Equal("tool.torch", off.Item!.Value.ItemKind);
-            Assert.True(snapshot.Slots[Blade].IsEquipped);
-            Assert.True(snapshot.Slots[Torch].IsEquipped);
+            // The blade and the torch left the bag; the hammer the blade displaced took the blade's place.
+            Assert.Equal("tool.builder-hammer", snapshot.ItemAt(Blade)!.Value.ItemKind);
+            Assert.Null(snapshot.ItemAt(Torch));
+            Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
+            Assert.True(snapshot.BoardIsConsistent());
         }
     }
 
@@ -85,11 +89,16 @@ public sealed class EquipmentSlotTests
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
         using (writes)
         {
+            Assert.True(inventory.Ensure(Player));
+            long torchId = inventory.BuildSnapshot(Player).IdAt(Torch);
+            Assert.NotEqual(0, torchId);
+
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch));
 
             Dictionary<int, long> rows = world.SlotsOf(Player);
-            Assert.Equal(inventory.BuildSnapshot(Player).Slots[Torch].Item!.Value.ItemInstanceId, rows[100]);
+            Assert.Equal(torchId, rows[100]);
             Assert.False(rows.ContainsKey(101));
+            Assert.False(rows.ContainsKey(Torch));
         }
     }
 
@@ -101,7 +110,8 @@ public sealed class EquipmentSlotTests
         using (writes)
         {
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch));
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch, 101));
+            // The torch is worn now; moving it between the hands names the worn slot as the source.
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, 100, 101));
 
             PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
             Assert.Null(snapshot.EquippedSlot!.Value.Item);
@@ -124,13 +134,13 @@ public sealed class EquipmentSlotTests
             Assert.Equal(
                 InventoryEquipOutcome.Equipped,
                 inventory.TryGrantRolled(Player, "gear.leather-cap", ItemRarity.Common, new ItemRollSeed(1, 2, 3, 4, 5)));
-            int capSlot = 5;
+            int capSlot = inventory.AnchorOf(Player, "gear.leather-cap");
             Dictionary<int, long> rowsBefore = world.SlotsOf(Player);
             int writesBefore = world.SlotWrites;
 
             Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, Maul, 101));
             Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, capSlot, 103));
-            foreach (int badTarget in new[] { -1, 99, 104, int.MaxValue, int.MinValue })
+            foreach (int badTarget in new[] { -1, 99, 112, int.MaxValue, int.MinValue })
             {
                 Assert.Equal(InventoryEquipOutcome.TargetOutOfRange, inventory.TryEquip(Player, Maul, badTarget));
             }
@@ -146,10 +156,11 @@ public sealed class EquipmentSlotTests
 
     [Theory]
     [InlineData(-1)]
-    [InlineData(16)]
+    [InlineData(64)]
     [InlineData(99)]
-    [InlineData(100)]
-    [InlineData(104)]
+    [InlineData(112)]
+    [InlineData(200)]
+    [InlineData(215)]
     [InlineData(int.MaxValue)]
     [InlineData(int.MinValue)]
     public void BadBackpackSlot_IsRejectedAsOutOfRange(int slotIndex)
@@ -169,11 +180,34 @@ public sealed class EquipmentSlotTests
         }
     }
 
+    // A worn slot is not a bag cell: moving or destroying "from" it is out of range. (Equip may name one as
+    // its source, to move a worn item to another worn slot.)
+    [Theory]
+    [InlineData(100)]
+    [InlineData(104)]
+    [InlineData(111)]
+    public void AWornIndex_IsNotABagCell_ForMoveAndDestroy(int slotIndex)
+    {
+        EquipmentTestWorld world = new();
+        PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
+        using (writes)
+        {
+            Assert.True(inventory.Ensure(Player));
+            int writesBefore = world.SlotWrites;
+
+            Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, inventory.TryMove(Player, slotIndex, 0));
+            Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, inventory.TryMove(Player, 0, slotIndex));
+            Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, inventory.TryDestroy(Player, slotIndex, 1));
+            Assert.Equal(writesBefore, world.SlotWrites);
+        }
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(0)]
     [InlineData(99)]
-    [InlineData(104)]
+    [InlineData(112)]
+    [InlineData(200)]
     [InlineData(int.MaxValue)]
     public void Unequip_OfANonEquipmentIndex_IsRejectedAsOutOfRange(int slotIndex)
     {
@@ -200,22 +234,34 @@ public sealed class EquipmentSlotTests
             Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryMove(Player, 9, 10));
             Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryDestroy(Player, 9, 1));
             Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryUnequip(Player, 103));
+            // Cell 10 is covered by the blade (a 2x3 anchored at 2) without being its anchor: no item starts there.
+            Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryEquip(Player, 10));
+            Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryMove(Player, 10, 40));
+            Assert.Equal(InventoryEquipOutcome.SlotEmpty, inventory.TryDestroy(Player, 10, 2));
             Assert.Equal(writesBefore, world.SlotWrites);
         }
     }
 
+    // Only a hand-edited row can hold the worn item in the bag as well (no action leaves one), so the
+    // fixture writes both rows. Equipping what the target holds, moving a cell onto itself and "moving"
+    // a worn item to its own slot are accepted and write nothing.
     [Fact]
     public void ReEquipOfWhatTheTargetAlreadyHolds_IsAccepted_AndWritesNothing()
     {
         EquipmentTestWorld world = new();
+        world.PutItem(EquipmentTestWorld.MakeItem(50, Player, "tool.field-blade"));
+        world.PutSlot(Player, 0, 50);
+        world.PutSlot(Player, 100, 50);
+        world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion);
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
         using (writes)
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Blade));
+            Assert.True(inventory.Ensure(Player));
             int writesBefore = world.SlotWrites;
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Blade));
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryMove(Player, 3, 3));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, 0));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, 100, 100));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryMove(Player, 0, 0));
 
             Assert.Equal(writesBefore, world.SlotWrites);
         }
@@ -253,7 +299,6 @@ public sealed class EquipmentSlotTests
             Roll = new ItemRoll(ItemRarity.Rare, [new StatModifier(StatId.Strength, StatOp.Flat, 9)]),
         };
         world.PutItem(retired);
-        world.PutSlot(Player, 0, 60);
         world.PutSlot(Player, 100, 60);
         world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion);
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
@@ -268,7 +313,8 @@ public sealed class EquipmentSlotTests
             InventoryItemSnapshot shown = inventory.BuildSnapshot(Player).EquippedSlot!.Value.Item!.Value;
             Assert.Null(shown.Modifiers);
             Assert.Equal(0, shown.EquipSlots);
-            Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, 0));
+            // A worn item of a kind the catalog does not know cannot be moved to another slot either.
+            Assert.Equal(InventoryEquipOutcome.NotEquippable, inventory.TryEquip(Player, 100, 101));
             Assert.Equal(60L, world.SlotsOf(Player)[100]);
         }
     }
@@ -278,7 +324,6 @@ public sealed class EquipmentSlotTests
     {
         EquipmentTestWorld world = new();
         world.PutItem(EquipmentTestWorld.MakeItem(70, Player, "gear.iron-blade", ItemRoll.Damaged));
-        world.PutSlot(Player, 0, 70);
         world.PutSlot(Player, 100, 70);
         world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion);
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
@@ -302,7 +347,6 @@ public sealed class EquipmentSlotTests
         EquipmentTestWorld world = new();
         ItemRoll roll = new(ItemRarity.Common, [new StatModifier(StatId.Vitality, StatOp.Flat, 3)]);
         world.PutItem(EquipmentTestWorld.MakeItem(80, Player, "tool.field-blade", roll));
-        world.PutSlot(Player, 0, 80);
         world.PutSlot(Player, 100, 80);
         world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion);
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);

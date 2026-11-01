@@ -11,7 +11,7 @@ using Dream.Tests.Multiplayer.Protocol;
 
 namespace Dream.Tests.Integration;
 
-// A protocol v11 client against a fake server over real loopback TCP. The fake reads the client's
+// A protocol v13 client against a fake server over real loopback TCP. The fake reads the client's
 // hello and join request, then answers with a ServerHello from another protocol version: either
 // a whole v1 envelope (what a real v1 server sends) or a v2 envelope whose hello reports another
 // version. The connect must fail with a reason that names both versions, and that reason must be
@@ -31,7 +31,7 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v1; this client uses v11.", error.Message);
+        Assert.Equal("Server uses protocol v1; this client uses v13.", error.Message);
         Assert.Equal(1, error.PeerVersion);
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, error.LocalVersion);
         await server.WaitForClientMessagesAsync(2);
@@ -40,7 +40,7 @@ public class ProtocolVersionMismatchClientTests
     [Fact]
     public async Task ConnectAsync_WhenTheServerHelloReportsAnotherVersion_FailsWithAProtocolMismatch()
     {
-        await using FakeServer server = FakeServer.Start(FakeServer.V2EnvelopeHelloFrame(reportedVersion: 12));
+        await using FakeServer server = FakeServer.Start(FakeServer.V2EnvelopeHelloFrame(reportedVersion: 14));
 
         ProtocolVersionMismatchException error = await Assert.ThrowsAsync<ProtocolVersionMismatchException>(async () =>
         {
@@ -48,8 +48,8 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v12; this client uses v11.", error.Message);
-        Assert.Equal(12, error.PeerVersion);
+        Assert.Equal("Server uses protocol v14; this client uses v13.", error.Message);
+        Assert.Equal(14, error.PeerVersion);
     }
 
     // SCALE-1 moved the wire to protocol v3; a v2 server (a v2 envelope with a v2 hello, written
@@ -65,9 +65,9 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v2; this client uses v11.", error.Message);
+        Assert.Equal("Server uses protocol v2; this client uses v13.", error.Message);
         Assert.Equal(2, error.PeerVersion);
-        Assert.Equal(11, error.LocalVersion);
+        Assert.Equal(13, error.LocalVersion);
     }
 
     // SCALE-2 moved the wire to protocol v4 (delta actor frames, the ack in the envelope header).
@@ -84,10 +84,10 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v3; this client uses v11.", error.Message);
+        Assert.Equal("Server uses protocol v3; this client uses v13.", error.Message);
         Assert.Equal(3, error.PeerVersion);
-        Assert.Equal(11, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 3. Supported version: 11.", error.InnerException!.Message);
+        Assert.Equal(13, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 3. Supported version: 13.", error.InnerException!.Message);
     }
 
     // T1 moved the wire to protocol v5 (the world clock anchor in join-accepted). A v4 server (a
@@ -104,10 +104,10 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v4; this client uses v11.", error.Message);
+        Assert.Equal("Server uses protocol v4; this client uses v13.", error.Message);
         Assert.Equal(4, error.PeerVersion);
-        Assert.Equal(11, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 4. Supported version: 11.", error.InnerException!.Message);
+        Assert.Equal(13, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 4. Supported version: 13.", error.InnerException!.Message);
     }
 
     // T2f moved the wire to protocol v6 (each player actor's held light, the Equipment group of an
@@ -124,10 +124,10 @@ public class ProtocolVersionMismatchClientTests
                 new RemoteClientOptions("127.0.0.1", server.Port, "session-a", "player-a", "mismatch-test"));
         }).WaitAsync(Timeout);
 
-        Assert.Equal("Server uses protocol v5; this client uses v11.", error.Message);
+        Assert.Equal("Server uses protocol v5; this client uses v13.", error.Message);
         Assert.Equal(5, error.PeerVersion);
-        Assert.Equal(11, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 5. Supported version: 11.", error.InnerException!.Message);
+        Assert.Equal(13, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 5. Supported version: 13.", error.InnerException!.Message);
     }
 
     // What a v5 client reads from a v6 server's rejection: the frame's top-level version is
@@ -136,13 +136,13 @@ public class ProtocolVersionMismatchClientTests
     [Fact]
     public void AV6Frame_ReadsAsForeign_ForTheVersionCheckEveryOlderBuildRuns()
     {
-        JoinRejectedMessage rejection = new("Client uses protocol v5; this server uses v11.");
+        JoinRejectedMessage rejection = new("Client uses protocol v5; this server uses v13.");
         byte[] payload = new TransportJsonCodec().Encode(
             new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, rejection.MessageKind, 1),
             rejection);
 
         Assert.True(ProtocolVersionMismatchException.TryReadProtocolVersion(payload, out int version));
-        Assert.Equal(11, version);
+        Assert.Equal(13, version);
         Assert.Null(ProtocolVersionMismatchException.ReadForeignProtocolVersion(payload));
     }
 
@@ -171,7 +171,7 @@ public class ProtocolVersionMismatchClientTests
         await coordinator.WaitForPendingConnectionAsync().WaitAsync(Timeout);
 
         Assert.Equal(ConnectionFlowState.Failed, coordinator.State);
-        Assert.Equal("Server uses protocol v1; this client uses v11.", coordinator.StatusMessage);
+        Assert.Equal("Server uses protocol v1; this client uses v13.", coordinator.StatusMessage);
         Assert.False(coordinator.TryTakeConnectedSession(out _));
     }
 
@@ -193,7 +193,7 @@ public class ProtocolVersionMismatchClientTests
             await Task.Delay(10);
         }
 
-        Assert.Equal("Server uses protocol v1; this client uses v11.", session.DisconnectReason);
+        Assert.Equal("Server uses protocol v1; this client uses v13.", session.DisconnectReason);
         Assert.False(session.TryDequeueInbound(out _));
         // The receive loop ended normally, so disposing does not resurface the decode error.
         await session.DisposeAsync();

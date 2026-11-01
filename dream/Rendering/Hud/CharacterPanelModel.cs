@@ -34,7 +34,7 @@ public readonly record struct CharacterStatRow(
     string EffectiveText,
     string? Note);
 
-// One of the four equipment slots. Item is the snapshot's item, if any.
+// One of the twelve equipment slots. Item is the snapshot's item, if any.
 public readonly record struct CharacterSlotRow(
     EquipmentSlot Slot,
     int SlotIndex,
@@ -55,12 +55,32 @@ public static class CharacterPanelModel
     public const string ArmorNote = "reduces damage taken";
     public const int MaxTooltipLines = 8;
 
+    // InventoryHudAction.Target of an Unequip that names no cell: the server takes the first fit. The
+    // default Target of 0 is a real cell (the top-left one), so every Unequip says which it means.
+    public const int FirstFitCell = -1;
+
+    // The most anchors MoveTargets lists for the F3 panel's "Move To" menu.
+    public const int MaxMoveTargets = 16;
+
+    // Held-back rows (200..215) are items the server could not place on the board. The windows do not
+    // draw them; they only show how many there are.
+    public const int HeldBackFirstSlot = 200;
+    public const int HeldBackSlots = 16;
+
     public static string SlotLabel(EquipmentSlot slot) => slot switch
     {
         EquipmentSlot.MainHand => "Main Hand",
         EquipmentSlot.OffHand => "Off Hand",
         EquipmentSlot.Head => "Head",
         EquipmentSlot.Body => "Body",
+        EquipmentSlot.Hands => "Hands",
+        EquipmentSlot.Feet => "Feet",
+        EquipmentSlot.Legs => "Legs",
+        EquipmentSlot.Neck => "Neck",
+        EquipmentSlot.RingLeft => "Left Ring",
+        EquipmentSlot.RingRight => "Right Ring",
+        EquipmentSlot.Back => "Back",
+        EquipmentSlot.Companion => "Companion",
         _ => "Slot"
     };
 
@@ -80,13 +100,13 @@ public static class CharacterPanelModel
             IntRow(CharacterStat.Strength, "Strength", status.BaseStrength, status.Strength, null),
             AttackSpeedRow(status.BaseAttackSpeed, status.AttackSpeed),
             IntRow(CharacterStat.Vitality, "Vitality", status.BaseVitality, status.Vitality, null),
-            // Armor has no base value and, in wave H, no effect on combat.
+            // Armor has no base value; it mitigates the damage the player takes (PlayerCombatant.MitigateDamage).
             IntRow(CharacterStat.Armor, "Armor", 0, status.Armor, ArmorNote)
         ];
     }
 
-    // Always the four slots in slot order. A slot the snapshot does not fill, or fills with a bad
-    // index, is empty. EquippedSlot is the main hand; Equipment holds 101..103, and an entry
+    // Always the twelve slots in slot order. A slot the snapshot does not fill, or fills with a bad
+    // index, is empty. EquippedSlot is the main hand; Equipment holds 101..111, and an entry
     // naming 100 or anything else is ignored.
     public static CharacterSlotRow[] BuildSlotRows(PlayerInventorySnapshot? inventory)
     {
@@ -125,7 +145,7 @@ public static class CharacterPanelModel
         return rows;
     }
 
-    // The equipment slots an item may go to, in slot order. Bits outside the four slots are ignored.
+    // The equipment slots an item may go to, in slot order. Bits outside the twelve slots are ignored.
     public static List<EquipmentSlot> AllowedSlots(int equipSlotMask)
     {
         List<EquipmentSlot> slots = new(EquipmentSlots.Count);
@@ -140,6 +160,14 @@ public static class CharacterPanelModel
 
         return slots;
     }
+
+    // What follows the count on the held-back line, shared by both inventory surfaces.
+    public static string HeldBackSuffix(int count) =>
+        count == 1 ? " item held back: make room" : " items held back: make room";
+
+    // True when the EquipmentSlots mask lets an item occupy the slot. Allocation free.
+    public static bool CanEquipTo(int equipSlotMask, EquipmentSlot slot) =>
+        (equipSlotMask & EquipmentSlots.MaskOf(slot)) != 0;
 
     // Lines for a tooltip, from a rolled item's own modifiers (an unrolled item's lines are its
     // DetailLines). Unknown stats, percent modifiers and non-finite values are skipped.
@@ -192,15 +220,16 @@ public static class CharacterPanelModel
         _ => "Common"
     };
 
-    // The context menu of a backpack item: Equip to each allowed slot, Unequip when it is held, and
-    // Destroy (behind a confirm) when it is not. Move targets come from MoveTargets.
+    // The context menu of a bag item: Equip to each allowed slot, Unequip when it is held, and
+    // Destroy (behind a confirm) when it is not. backpackSlotIndex is the item's anchor cell (0..63).
+    // Move targets come from MoveTargets.
     public static List<CharacterMenuEntry> BackpackMenu(
         in PlayerInventorySnapshot inventory,
         int backpackSlotIndex,
         in InventoryItemSnapshot item)
     {
         List<CharacterMenuEntry> entries = new();
-        if (backpackSlotIndex < 0 || backpackSlotIndex >= InventoryConstants.BackpackSlotCount)
+        if (backpackSlotIndex < 0 || backpackSlotIndex >= BagGrid.CellCount)
         {
             return entries;
         }
@@ -218,7 +247,7 @@ public static class CharacterPanelModel
         {
             entries.Add(new CharacterMenuEntry(
                 "Unequip",
-                new InventoryHudAction(InventoryHudActionKind.Unequip, heldIn),
+                new InventoryHudAction(InventoryHudActionKind.Unequip, heldIn, FirstFitCell),
                 RequiresConfirm: false));
         }
         else
@@ -240,26 +269,39 @@ public static class CharacterPanelModel
         [
             new CharacterMenuEntry(
                 "Unequip",
-                new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(slot)),
+                new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(slot), FirstFitCell),
                 RequiresConfirm: false)
         ];
     }
 
-    // The backpack slots an item may be moved to: every slot of the grid except its own. The grid
-    // size is the snapshot's, clamped to the 16 backpack slots, so a hostile size lists no bad index.
-    public static List<InventoryHudAction> MoveTargets(in PlayerInventorySnapshot inventory, int fromSlotIndex)
+    // The anchors the bag item at fromSlotIndex (its anchor cell) can move to without displacing another
+    // item, in row-major order and at most MaxMoveTargets of them. Decided by BagGrid.PlanMove on a
+    // board built from the snapshot's sparse Slots (first item wins a cell; off-board items are
+    // ignored), so it agrees with the server. footprintOf is the shipped catalog unless a test passes
+    // its own.
+    public static List<InventoryHudAction> MoveTargets(
+        in PlayerInventorySnapshot inventory,
+        int fromSlotIndex,
+        Func<string?, ItemFootprint>? footprintOf = null)
     {
         List<InventoryHudAction> targets = new();
-        if (fromSlotIndex < 0 || fromSlotIndex >= InventoryConstants.BackpackSlotCount)
+        if ((uint)fromSlotIndex >= BagGrid.CellCount)
         {
             return targets;
         }
 
-        long gridSize = (long)Math.Max(inventory.Columns, 0) * Math.Max(inventory.Rows, 0);
-        int count = (int)Math.Min(gridSize, InventoryConstants.BackpackSlotCount);
-        for (int target = 0; target < count; target++)
+        Span<sbyte> owners = stackalloc sbyte[BagGrid.CellCount];
+        Span<ItemFootprint> footprints = stackalloc ItemFootprint[BagGrid.CellCount];
+        BuildBoard(inventory, footprintOf ?? BagGrid.FootprintOf, owners, footprints);
+        if (owners[fromSlotIndex] != fromSlotIndex)
         {
-            if (target != fromSlotIndex)
+            return targets;
+        }
+
+        for (int target = 0; target < BagGrid.CellCount && targets.Count < MaxMoveTargets; target++)
+        {
+            if (target != fromSlotIndex
+                && BagGrid.PlanMove(owners, footprints, fromSlotIndex, target).Verdict == BagMoveVerdict.Move)
             {
                 targets.Add(new InventoryHudAction(InventoryHudActionKind.Move, fromSlotIndex, target));
             }
@@ -268,7 +310,51 @@ public static class CharacterPanelModel
         return targets;
     }
 
-    // The equipment slot index (100..103) holding the item, or -1.
+    // Owners (anchor per cell or -1) and footprints (by anchor) of the bag a snapshot describes. A slot
+    // outside 0..63, an empty slot, an item that runs off the board and an item that overlaps one
+    // placed before it are skipped.
+    private static void BuildBoard(
+        in PlayerInventorySnapshot inventory,
+        Func<string?, ItemFootprint> footprintOf,
+        Span<sbyte> owners,
+        Span<ItemFootprint> footprints)
+    {
+        owners.Fill(-1);
+        footprints.Clear();
+        IReadOnlyList<InventorySlotSnapshot>? slots = inventory.Slots;
+        if (slots is null)
+        {
+            return;
+        }
+
+        ulong occupied = 0;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            InventorySlotSnapshot slot = slots[i];
+            if (slot.Item is not InventoryItemSnapshot item || item.ItemInstanceId == 0)
+            {
+                continue;
+            }
+
+            ItemFootprint footprint = footprintOf(item.ItemKind);
+            if (!BagGrid.TryMask(slot.SlotIndex, footprint, out ulong mask) || (occupied & mask) != 0)
+            {
+                continue;
+            }
+
+            occupied |= mask;
+            footprints[slot.SlotIndex] = footprint;
+            for (int cell = 0; cell < BagGrid.CellCount; cell++)
+            {
+                if ((mask & (1UL << cell)) != 0)
+                {
+                    owners[cell] = (sbyte)slot.SlotIndex;
+                }
+            }
+        }
+    }
+
+    // The equipment slot index (100..111) holding the item, or -1.
     public static int FindEquipmentSlotHolding(in PlayerInventorySnapshot inventory, long itemInstanceId)
     {
         CharacterSlotRow[] rows = BuildSlotRows(inventory);

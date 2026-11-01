@@ -4,6 +4,7 @@ using Dream.Client.Presentation;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Ui;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -19,6 +20,10 @@ namespace Dream.Rendering.Core;
 
 public readonly record struct HudFrameResult(
     HudInteractionRequest Request);
+
+// Scene data the classic HUD shows that DrawHUD's arguments do not carry. The scene sets it every
+// frame before the HUD pass, like WorldTransferHud (a plain struct, so nothing per frame grows).
+public readonly record struct HudSceneState(Vector3 PlayerPosition);
 
 public partial class Render
 {
@@ -81,6 +86,233 @@ public partial class Render
     // it when it sends a new selection (PlayScene.HudRequests.cs), not per frame.
     public GeometryMaterialId? BuildMaterialSelection { get; set; }
 
+    public HudSceneState HudScene { get; set; }
+
+    private HudSurfaceSelector? _hudSelector;
+    private ClassicHudSurface? _classicSurface;
+    private bool _classicBackendCreated;
+    private bool _classicCursorActive;
+    private bool _classicSurfaceActive;
+    private const float MaxLoadingStepSeconds = 0.1f;
+    private readonly List<FloatingCombatTextRenderState> _classicCombatText = new();
+    private readonly List<HudWorldLabel> _classicLabels = new();
+
+    // True while the classic HUD draws (or is about to draw) the sprite cursor: inventory open,
+    // Settings closed. The scene hides the OS cursor then. Read by Update before the frame is drawn,
+    // so it is predicted from the surface state instead of waiting for the last draw; otherwise the
+    // OS cursor and the sprite cursor would both show for the first frame after V.
+    public bool ClassicHudCursorActive => _classicCursorActive || ClassicHudWillDraw();
+
+    // Test-only pointer override (DREAM_HUD_CAPTURE_SCRIPT). Null in normal play, which keeps the
+    // real mouse the only source.
+    internal UiScriptedPointer? ScriptedPointer { get; set; }
+
+    // The classic surface and its view, for the capture script's logs and rect lookups.
+    internal ClassicHudSurface? ClassicSurfaceForCapture => _classicSurface;
+
+    private bool ClassicHudWillDraw() =>
+        _hudSelector is not null && ClassicCursorPolicy.WillDraw(_hudSelector.Current, _classicSurface?.State);
+
+    public HudSurface CurrentHudSurface(GameSettings settings) => HudSelector(settings).Current;
+
+    // F3. A no-op unless the admin setting is available; also drops any drag in progress.
+    public bool ToggleAdminHud(GameSettings settings)
+    {
+        bool changed = HudSelector(settings).ToggleAdmin();
+        if (changed)
+        {
+            _classicSurface?.Input.CancelDrag();
+        }
+
+        return changed;
+    }
+
+    private HudSurfaceSelector HudSelector(GameSettings settings) =>
+        _hudSelector ??= new HudSurfaceSelector(settings.AdminHudAvailable, settings.ForceImGuiHud);
+
+    // Called once, on the render thread, with the GL context current.
+    private IClassicHudBackend CreateClassicHudBackend() => new GlClassicHudBackend(this);
+
+    private void LatchClassicHud(HudSurfaceSelector selector, string reason, Exception? fault = null)
+    {
+        if (selector.Latch(reason))
+        {
+            _classicCursorActive = false;
+            // One fault-log line, once; the ImGui surface takes over for the rest of the run.
+            RenderFaultLog.Shared.Report("hud-classic", fault ?? new InvalidOperationException(reason));
+        }
+    }
+
+    // Creates the backend on first use and latches ImGui on a failed or stuck load.
+    private void ObserveClassicHud(HudSurfaceSelector selector, float deltaSeconds)
+    {
+        if (selector.Latched || selector.ForcedImGui)
+        {
+            return;
+        }
+
+        if (!_classicBackendCreated)
+        {
+            _classicBackendCreated = true;
+            try
+            {
+                _classicSurface = new ClassicHudSurface(CreateClassicHudBackend());
+            }
+            catch (Exception ex)
+            {
+                LatchClassicHud(selector, ex.Message, ex);
+                return;
+            }
+        }
+
+        ClassicHudSurface? surface = _classicSurface;
+        if (surface is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Starts the atlas on the first call, then uploads at most one page per frame.
+            BeginHudFrame();
+            if (selector.Observe(surface.State, surface.Backend.FailureReason, deltaSeconds))
+            {
+                _classicCursorActive = false;
+                RenderFaultLog.Shared.Report("hud-classic", new InvalidOperationException(selector.LatchReason ?? "classic HUD failed"));
+            }
+        }
+        catch (Exception ex)
+        {
+            LatchClassicHud(selector, ex.Message, ex);
+        }
+    }
+
+    // Projects the combat text and actor labels, hands the frame to the classic surface and reads
+    // back what the player picked. False while the atlas is still loading.
+    private bool DrawClassicHud(
+        bool windowFocused,
+        GameSettings settings,
+        MouseState mouseState,
+        Camera camera,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        IReadOnlyList<EnemyActor> activeEnemies,
+        CombatFeedbackSystem combatFeedback,
+        string? rejectionMessage,
+        HudStatusSnapshot status,
+        PlayerInventorySnapshot? inventory,
+        IEnemyRenderPoseSource? enemyPoseSource,
+        double enemyRenderTick,
+        out InventoryHudAction? action,
+        out bool closeInventory)
+    {
+        action = null;
+        closeInventory = false;
+        ClassicHudSurface? surface = _classicSurface;
+        if (surface is null || surface.State != ClassicHudBackendState.Ready)
+        {
+            return false;
+        }
+
+        ProjectClassicCombatText(camera, combatFeedback, settings.FloatingCombatText, settings.CameraViewMode);
+        ProjectClassicLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
+
+        // One coordinate source for the pointer: the same window position ImGui gets, in the same
+        // pixels the layout uses (the window's client size and the framebuffer are one size here).
+        UiPointer pointer;
+        if (ScriptedPointer is { Active: true } scripted)
+        {
+            // Capture script only: synthetic states through the same router. Focus does not apply.
+            pointer = new UiPointer(
+                scripted.Position,
+                scripted.LeftDown,
+                scripted.RightDown,
+                settings.InventoryVisible && !settings.SettingsVisible);
+        }
+        else
+        {
+            bool interactive = windowFocused
+                && settings.InventoryVisible
+                && !settings.SettingsVisible
+                && !ImGui.GetIO().WantCaptureMouse;
+            pointer = new UiPointer(
+                new Vector2(mouseState.Position.X, mouseState.Position.Y),
+                mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left),
+                mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right),
+                interactive);
+        }
+
+        Vector2i size = GetSafeViewportSize(_currentSize);
+        ClassicHudFrame frame = new()
+        {
+            Width = size.X,
+            Height = size.Y,
+            ConfiguredScale = settings.UiScaleSetting,
+            Pointer = pointer,
+            Status = status,
+            Inventory = inventory,
+            InventoryOpen = settings.InventoryVisible,
+            PlayerPosition = HudScene.PlayerPosition,
+            RejectionMessage = rejectionMessage,
+            WorldTransfer = WorldTransferHud,
+            Loot = LootFeed,
+            CombatText = _classicCombatText,
+            Labels = _classicLabels
+        };
+        HudSurfaceSelector selector = HudSelector(settings);
+        bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
+        if (fault is not null)
+        {
+            LatchClassicHud(selector, fault.Message, fault);
+        }
+
+        return drew;
+    }
+
+    private void ProjectClassicCombatText(Camera camera, CombatFeedbackSystem combatFeedback, FloatingCombatTextTuning tuning, CameraViewMode viewMode)
+    {
+        _classicCombatText.Clear();
+        combatFeedback.CollectRenderStates(_floatingCombatTextStates, tuning);
+        for (int i = 0; i < _floatingCombatTextStates.Count; i++)
+        {
+            // The anchor alone: the sprite panel adds its own rise and jitter in pixels, so the ImGui
+            // path offsets stay out. A state that cannot be projected is dropped.
+            FloatingCombatTextRenderState state = _floatingCombatTextStates[i];
+            bool projected = TryProjectWorldToScreen(camera, state.WorldAnchor, out System.Numerics.Vector2 screen);
+            if (IncomingNumberAnchor.UsesScreenAnchor(state.Kind, viewMode, projected))
+            {
+                // The local player's own number in first person: its anchor is at the camera.
+                Vector2i viewport = GetSafeViewportSize(_currentSize);
+                _classicCombatText.Add(state with { ScreenAnchor = IncomingNumberAnchor.ScreenAnchor(viewport.X, viewport.Y) });
+            }
+            else if (projected)
+            {
+                _classicCombatText.Add(state with { ScreenAnchor = new Vector2(screen.X, screen.Y) });
+            }
+        }
+    }
+
+    private void ProjectClassicLabels(
+        Camera camera,
+        IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
+        IReadOnlyList<EnemyActor> activeEnemies,
+        IEnemyRenderPoseSource? enemyPoseSource,
+        double enemyRenderTick)
+    {
+        _classicLabels.Clear();
+        List<WorldActorLabelState> labels = _worldActorLabels;
+        labels.Clear();
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels);
+        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick);
+        for (int i = 0; i < labels.Count; i++)
+        {
+            WorldActorLabelState label = labels[i];
+            if (TryProjectWorldToScreen(camera, label.WorldAnchor, out System.Numerics.Vector2 screen))
+            {
+                _classicLabels.Add(new HudWorldLabel(new Vector2(screen.X, screen.Y), label.DisplayName, label.HealthLabel));
+            }
+        }
+    }
+
     public HudFrameResult DrawHUD(
         FrameEventArgs args,
         bool windowFocused,
@@ -101,9 +333,45 @@ public partial class Render
     {
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
+        HudSurfaceSelector selector = HudSelector(settings);
+        // Capped so one long frame (a world load) cannot use up the loading timeout by itself.
+        ObserveClassicHud(selector, MathF.Min((float)args.Time, MaxLoadingStepSeconds));
         BeginHudFrame(args, windowFocused, settings, mouseState);
-        DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
-        DrawWorldActorLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
+
+        InventoryHudAction? classicAction = null;
+        bool classicClose = false;
+        if (selector.Current == HudSurface.Classic)
+        {
+            // CPU build, then one submit. A failure latches ImGui and this same frame falls through
+            // to the ImGui surface (the build touches no GL, and the backend restores GL state).
+            try
+            {
+                bool drew = DrawClassicHud(
+                    windowFocused, settings, mouseState, camera, remotePlayers, activeEnemies,
+                    combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
+                    out classicAction, out classicClose);
+                _classicCursorActive = drew && settings.InventoryVisible && !settings.SettingsVisible;
+            }
+            catch (Exception ex)
+            {
+                classicAction = null;
+                classicClose = false;
+                LatchClassicHud(selector, ex.Message, ex);
+            }
+        }
+        else
+        {
+            _classicCursorActive = false;
+        }
+
+        // Read by DrawHudInterface: with the classic surface it keeps only Settings and Build.
+        _classicSurfaceActive = selector.Current == HudSurface.Classic;
+        if (!_classicSurfaceActive)
+        {
+            DrawFloatingCombatText(camera, combatFeedback, settings.FloatingCombatText);
+            DrawWorldActorLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
+        }
+
         HudInteractionRequest request = DrawHudInterface(
             settings,
             status,
@@ -113,6 +381,15 @@ public partial class Render
             performance,
             WorldTransferHud,
             inventory);
+        if (classicAction is not null || classicClose)
+        {
+            request = request with
+            {
+                InventoryAction = classicAction ?? request.InventoryAction,
+                CloseInventory = classicClose || request.CloseInventory
+            };
+        }
+
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
         GL.Enable(EnableCap.DepthTest);
@@ -283,7 +560,11 @@ public partial class Render
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
-        io.MouseDrawCursor = overlayVisible;
+        // The classic inventory draws its own sprite cursor, so the ImGui one stays off there, except
+        // over an ImGui window (the Build panel), where the sprite cursor is not drawn and the OS one
+        // is hidden.
+        bool classicCursor = ClassicHudCursorActive && settings.InventoryVisible && !settings.SettingsVisible && !io.WantCaptureMouse;
+        io.MouseDrawCursor = overlayVisible && !classicCursor;
         io.MousePos = overlayVisible
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)
             : new System.Numerics.Vector2(-float.MaxValue, -float.MaxValue);

@@ -8,7 +8,9 @@ using Xunit;
 namespace Dream.Tests.Multiplayer.Protocol;
 
 // Wave H C0 (protocol v10): the new intents, and the item fields that are left off the wire at their
-// defaults so a plain item costs nothing extra.
+// defaults so a plain item costs nothing extra. Protocol v13 writes an item as one compact entry
+// (PlayerInventorySnapshotJsonConverter; its shapes are pinned in PlayerInventorySnapshotConverterTests):
+// flags and a modifier list for what is specific to the item, the rest from the catalog on read.
 public sealed class InventoryItemWireTests
 {
     private static string EncodeAction(IPlayerActionPayload payload)
@@ -72,7 +74,7 @@ public sealed class InventoryItemWireTests
     public void APlainItem_AddsNoBytesForTheNewFields()
     {
         TransportJsonCodec codec = new();
-        InventoryItemSnapshot plain = new(1, "tool.torch", "Torch", "held.tool.torch", 1, "d", ["l"]);
+        InventoryItemSnapshot plain = InventoryWireSamples.Item("tool.torch", 1);
         string json = EncodeResult(codec, plain);
 
         Assert.DoesNotContain("modifiers", json);
@@ -81,34 +83,33 @@ public sealed class InventoryItemWireTests
         Assert.DoesNotContain("rarity", json);
         Assert.DoesNotContain("isRolled", json);
         Assert.DoesNotContain("\"equipment\"", json);
+        // No flags, no modifiers, no text: five elements.
+        Assert.Contains("\"bag\":[[0,1,\"tool.torch\",0,[]]]", json);
     }
 
     [Fact]
-    public void ARolledItem_WritesItsFieldsByTheirPlannedNames()
+    public void ARolledItem_IsWrittenAsFlagsAndModifiers_AndReadBackWithTheCatalogsTextLightAndSlots()
     {
         TransportJsonCodec codec = new();
-        InventoryItemSnapshot rolled = new(
-            1, "gear.iron-blade", "Iron Blade", "held.tool.blade", 1, "d", ["l"],
-            Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 4f)],
-            HeldLight: HeldLightKind.Torch,
-            EquipSlots: 3,
-            Rarity: ItemRarity.Rare,
-            IsRolled: true);
+        InventoryItemSnapshot rolled = InventoryWireSamples.Item(
+            "gear.iron-blade", 1, ItemRarity.Rare, rolled: true, [new StatModifier(StatId.Strength, StatOp.Flat, 4f)]);
         string json = EncodeResult(codec, rolled);
 
-        Assert.Contains("\"modifiers\":[{\"stat\":0,\"op\":0,\"value\":4}]", json);
-        Assert.Contains("\"heldLight\":1", json);
-        Assert.Contains("\"equipSlots\":3", json);
-        Assert.Contains("\"rarity\":2", json);
-        Assert.Contains("\"isRolled\":true", json);
+        // Flags: rarity 2 (rare) + 4 (rolled); the modifier list is stat, value.
+        Assert.Contains("\"bag\":[[0,1,\"gear.iron-blade\",6,[0,4]]]", json);
+        Assert.DoesNotContain("heldLight", json);
+        Assert.DoesNotContain("equipSlots", json);
+        Assert.DoesNotContain("isRolled", json);
 
         DecodedProtocolMessage decoded = codec.Decode(Encoding.UTF8.GetBytes(json));
         InventoryItemSnapshot back = Assert.IsType<InventoryChangedResult>(
             Assert.IsType<ServerActionMessage>(decoded.Message).Result.Payload).Inventory.Slots[0].Item!.Value;
         Assert.Equal(rolled.ItemInstanceId, back.ItemInstanceId);
         Assert.Equal(rolled.Modifiers, back.Modifiers);
-        Assert.Equal(HeldLightKind.Torch, back.HeldLight);
-        Assert.Equal(3, back.EquipSlots);
+        Assert.Equal(rolled.DisplayName, back.DisplayName);
+        Assert.Equal(rolled.Description, back.Description);
+        Assert.Equal(rolled.HeldLight, back.HeldLight);
+        Assert.Equal(EquipmentSlots.MaskOf(EquipmentSlot.MainHand), back.EquipSlots);
         Assert.Equal(ItemRarity.Rare, back.Rarity);
         Assert.True(back.IsRolled);
     }

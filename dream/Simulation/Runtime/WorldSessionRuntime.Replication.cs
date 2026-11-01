@@ -325,7 +325,8 @@ public sealed partial class WorldSessionRuntime
                 evt.Amount,
                 ActorDied: !evt.Actor.Damageable.Health.IsAlive,
                 evt.Actor.Damageable.Health.CurrentHealth,
-                evt.Actor.Damageable.Health.MaxHealth));
+                evt.Actor.Damageable.Health.MaxHealth,
+                HitKind: evt.Kind));
         }));
 
         _subscriptions.Add(_events.Subscribe<ActorDiedEvent>(evt =>

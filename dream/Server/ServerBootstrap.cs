@@ -505,7 +505,8 @@ public static class ServerBootstrap
             CanOccupy = (kind, slotIndex) =>
                 !content.TryGetItem(kind, out ItemDefinition? item)
                 || (EquipmentSlots.TryFromSlotIndex(slotIndex, out EquipmentSlot slot)
-                    && (item.EquipSlotMask & EquipmentSlots.MaskOf(slot)) != 0)
+                    && (item.EquipSlotMask & EquipmentSlots.MaskOf(slot)) != 0),
+            FootprintOf = kind => content.TryGetItem(kind, out ItemDefinition? item) ? item.Footprint : ItemFootprint.One
         };
     }
 

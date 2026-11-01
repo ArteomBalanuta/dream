@@ -223,13 +223,16 @@ public sealed class PlaySceneEquipmentSnapshotTests
         InventoryItemSnapshot item = new(
             1, "gear.iron-blade", "Iron Blade", "held.tool.blade", 1, "d", [],
             Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.Armor, StatOp.Flat, 4f)],
-            EquipSlots: 1);
+            EquipSlots: 1, Rarity: ItemRarity.Rare, IsRolled: true);
         ServerActionMessage message = new(new AuthoritativeActionResult(
             "s", 1, 1, Accepted: true, Payload: new InventoryChangedResult(new PlayerInventorySnapshot("p", 4, 4, [new InventorySlotSnapshot(0, item)]))));
         string json = Encoding.UTF8.GetString(codec.Encode(
             new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message));
-        Assert.Contains("\"value\":4}", json);
-        string hostile = json.Replace("\"value\":4}", "\"value\":1e99}");
+
+        // The compact wire entry (protocol v13): [anchor,id,kind,flags,[stat,value,...]].
+        const string honest = "[0,1,\"gear.iron-blade\",6,[0,4,6,4]]";
+        Assert.Contains(honest, json);
+        string hostile = json.Replace(honest, "[0,1,\"gear.iron-blade\",6,[0,1e99,6,4]]");
 
         PlayerInventorySnapshot decoded;
         try
@@ -290,7 +293,12 @@ public sealed class PlaySceneEquipmentSnapshotTests
     public void IntentFields_CarryTheActionsNumbers()
     {
         Assert.Equal(new InventoryEquipIntent(3, 101), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.EquipTo, 3, 101)));
-        Assert.Equal(new InventoryUnequipIntent(102), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102)));
+        // No cell named (-1): the field is left out and the server takes the first fit.
+        Assert.Equal(new InventoryUnequipIntent(102), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, CharacterPanelModel.FirstFitCell)));
+        Assert.Null(((InventoryUnequipIntent)PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, -1))).TargetCell);
+        // A named cell travels, including cell 0, which is the top-left anchor and not "unset".
+        Assert.Equal(new InventoryUnequipIntent(102, 37), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, 37)));
+        Assert.Equal(new InventoryUnequipIntent(102, 0), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102)));
         Assert.Equal(new InventoryMoveIntent(1, 5), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Move, 1, 5)));
         Assert.Equal(new InventoryDestroyIntent(2, 99), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Destroy, 2, 0, 99)));
     }

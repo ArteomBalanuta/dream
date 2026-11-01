@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Dream.Tests.Simulation.Inventory;
 
-// Wave H C0: the equipment slot indices (100..103) and the per-slot modifier store.
+// Wave H C0: the equipment slot indices (100..111 since classic HUD iteration 2) and the per-slot modifier store.
 public sealed class EquipmentSlotsTests
 {
     [Theory]
@@ -12,7 +12,15 @@ public sealed class EquipmentSlotsTests
     [InlineData(101, EquipmentSlot.OffHand)]
     [InlineData(102, EquipmentSlot.Head)]
     [InlineData(103, EquipmentSlot.Body)]
-    public void TheFourSlotIndices_MapBothWays(int index, EquipmentSlot expected)
+    [InlineData(104, EquipmentSlot.Hands)]
+    [InlineData(105, EquipmentSlot.Feet)]
+    [InlineData(106, EquipmentSlot.Legs)]
+    [InlineData(107, EquipmentSlot.Neck)]
+    [InlineData(108, EquipmentSlot.RingLeft)]
+    [InlineData(109, EquipmentSlot.RingRight)]
+    [InlineData(110, EquipmentSlot.Back)]
+    [InlineData(111, EquipmentSlot.Companion)]
+    public void TheTwelveSlotIndices_MapBothWays(int index, EquipmentSlot expected)
     {
         Assert.True(EquipmentSlots.TryFromSlotIndex(index, out EquipmentSlot slot));
         Assert.Equal(expected, slot);
@@ -21,7 +29,7 @@ public sealed class EquipmentSlotsTests
 
     [Theory]
     [InlineData(99)]
-    [InlineData(104)]
+    [InlineData(112)]
     [InlineData(-1)]
     [InlineData(0)]
     [InlineData(15)]
@@ -38,13 +46,16 @@ public sealed class EquipmentSlotsTests
     [Fact]
     public void TheConstants_AreThePlanned()
     {
-        Assert.Equal(4, EquipmentSlots.Count);
+        Assert.Equal(12, EquipmentSlots.Count);
         Assert.Equal(100, EquipmentSlots.FirstSlotIndex);
-        Assert.Equal(103, EquipmentSlots.LastSlotIndex);
+        Assert.Equal(111, EquipmentSlots.LastSlotIndex);
         Assert.Equal(InventoryConstants.EquippedSlotIndex, EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand));
-        Assert.Equal([1, 2, 4, 8], Enum.GetValues<EquipmentSlot>().Select(EquipmentSlots.MaskOf));
-        // The enum values are the StatSheet source slots: main hand stays on today's source slot 0.
-        Assert.Equal([0, 1, 2, 3], Enum.GetValues<EquipmentSlot>().Select(slot => (int)slot));
+        Assert.Equal([1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048], Enum.GetValues<EquipmentSlot>().Select(EquipmentSlots.MaskOf));
+        // The enum values are the StatSheet source slots: the original four keep sources 0..3 and the
+        // appended eight take 4..11, all inside the sheet's capacity.
+        Assert.Equal([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], Enum.GetValues<EquipmentSlot>().Select(slot => (int)slot));
+        Assert.Equal(EquipmentSlots.Count, Enum.GetValues<EquipmentSlot>().Length);
+        Assert.True(EquipmentSlots.Count <= StatSheet.SourceCapacity);
     }
 
     [Theory]

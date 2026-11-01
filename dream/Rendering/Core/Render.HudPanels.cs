@@ -39,57 +39,68 @@ public partial class Render
         int? equipInventorySlotIndex = null;
         BuildMaterialChoice? buildMaterial = null;
         InventoryHudAction? inventoryAction = null;
+        float? uiScale = null;
+        bool uiScaleCommitted = false;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
-
-        ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
-        ImGui.Begin("HUD",
-            ImGuiWindowFlags.NoTitleBar |
-            ImGuiWindowFlags.AlwaysAutoResize |
-            ImGuiWindowFlags.NoMove |
-            (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
-            ImGuiWindowFlags.NoFocusOnAppearing );
-
+        // The classic surface draws the status, inventory, loot lines and death text itself; ImGui
+        // keeps only Settings and the Build panel then.
+        bool imGuiSurface = !_classicSurfaceActive;
+        // The developer controls show only where the admin setting is available (admin_hud or
+        // DREAM_ADMIN_HUD). Display only: nothing is sent, and the server enforces nothing here.
+        bool devControls = settings.AdminHudAvailable;
         Span<byte> hudText = stackalloc byte[HudText.StackBufferBytes];
-        DrawWorldTransferIndicator(worldTransfer, hudText);
-        ImGui.TextUnformatted(status.HealthLabel);
-        ImGui.TextUnformatted(status.ModeLabel);
-        ImGui.TextUnformatted(status.DamageLabel);
-        ImGui.TextUnformatted(status.LevelLabel);
-        ImGui.TextUnformatted(status.ExperiencePercentLabel);
-        ImGui.TextUnformatted(status.ExperienceProgressLabel);
-        if (!string.IsNullOrWhiteSpace(connectionLabel))
+
+        if (imGuiSurface)
         {
-            HudText.Text(hudText, $"Server: {connectionLabel}");
-        }
-        if (playerRoster.Count > 0)
-        {
-            HudText.Text(hudText, $"Players: {playerRoster.Count}");
-        }
-        if (!string.IsNullOrWhiteSpace(rejectionMessage))
-        {
-            // TextColored is a printf format, so the colour is pushed around unformatted text.
-            ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f));
-            ImGui.TextUnformatted(rejectionMessage);
-            ImGui.PopStyleColor();
-        }
-        HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
-        if (settings.ShowPerformanceCounters && performance.HasCounters)
-        {
-            for (int lineIndex = 0; lineIndex < FramePerformanceSnapshot.HudLineCount; lineIndex++)
+            ImGui.SetNextWindowPos(new System.Numerics.Vector2(10, 10));
+            ImGui.Begin("HUD",
+                ImGuiWindowFlags.NoTitleBar |
+                ImGuiWindowFlags.AlwaysAutoResize |
+                ImGuiWindowFlags.NoMove |
+                (overlayVisible ? ImGuiWindowFlags.None : ImGuiWindowFlags.NoInputs) |
+                ImGuiWindowFlags.NoFocusOnAppearing );
+
+            DrawWorldTransferIndicator(worldTransfer, hudText);
+            ImGui.TextUnformatted(status.HealthLabel);
+            ImGui.TextUnformatted(status.ModeLabel);
+            ImGui.TextUnformatted(status.DamageLabel);
+            ImGui.TextUnformatted(status.LevelLabel);
+            ImGui.TextUnformatted(status.ExperiencePercentLabel);
+            ImGui.TextUnformatted(status.ExperienceProgressLabel);
+            if (!string.IsNullOrWhiteSpace(connectionLabel))
             {
-                if (performance.TryFormatHudLine(lineIndex, hudText, out int lineBytes))
+                HudText.Text(hudText, $"Server: {connectionLabel}");
+            }
+            if (playerRoster.Count > 0)
+            {
+                HudText.Text(hudText, $"Players: {playerRoster.Count}");
+            }
+            if (!string.IsNullOrWhiteSpace(rejectionMessage))
+            {
+                // TextColored is a printf format, so the colour is pushed around unformatted text.
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.45f, 0.35f, 1f));
+                ImGui.TextUnformatted(rejectionMessage);
+                ImGui.PopStyleColor();
+            }
+            HudText.Text(hudText, $"Resolution: {settings.WindowWidth} x {settings.WindowHeight}");
+            if (settings.ShowPerformanceCounters && performance.HasCounters)
+            {
+                for (int lineIndex = 0; lineIndex < FramePerformanceSnapshot.HudLineCount; lineIndex++)
                 {
-                    HudText.TextUnformatted(hudText[..lineBytes]);
-                }
-                else
-                {
-                    ImGui.TextUnformatted(performance.FormatHudLine(lineIndex));
+                    if (performance.TryFormatHudLine(lineIndex, hudText, out int lineBytes))
+                    {
+                        HudText.TextUnformatted(hudText[..lineBytes]);
+                    }
+                    else
+                    {
+                        ImGui.TextUnformatted(performance.FormatHudLine(lineIndex));
+                    }
                 }
             }
+            ImGui.Text("Press Esc for settings");
+            ImGui.Text("Press V for inventory");
+            ImGui.End();
         }
-        ImGui.Text("Press Esc for settings");
-        ImGui.Text("Press V for inventory");
-        ImGui.End();
 
         if (settings.SettingsVisible)
         {
@@ -129,29 +140,32 @@ public partial class Render
                     : CameraViewMode.FirstPerson;
             }
 
-            float currentNoclipSpeed = settings.NoclipSpeed;
-            if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+            if (devControls)
             {
-                noclipSpeed = currentNoclipSpeed;
-            }
+                float currentNoclipSpeed = settings.NoclipSpeed;
+                if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
+                {
+                    noclipSpeed = currentNoclipSpeed;
+                }
 
-            // The sliders edit the base stats; the effective ones (gear included) are only shown.
-            int currentStrength = status.BaseStrength;
-            if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
-            {
-                strength = currentStrength;
-            }
+                // The sliders edit the base stats; the effective ones (gear included) are only shown.
+                int currentStrength = status.BaseStrength;
+                if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
+                {
+                    strength = currentStrength;
+                }
 
-            float currentAttackSpeed = status.BaseAttackSpeed;
-            if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
-            {
-                attackSpeed = currentAttackSpeed;
-            }
+                float currentAttackSpeed = status.BaseAttackSpeed;
+                if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
+                {
+                    attackSpeed = currentAttackSpeed;
+                }
 
-            int currentVitality = status.BaseVitality;
-            if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
-            {
-                vitality = currentVitality;
+                int currentVitality = status.BaseVitality;
+                if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
+                {
+                    vitality = currentVitality;
+                }
             }
 
             FloatingCombatTextTuning textTuning = settings.FloatingCombatText;
@@ -186,30 +200,48 @@ public partial class Render
                 }
             }
 
-            DrawViewModelControls(settings);
-            DrawTimeOfDayControls(TimeOfDayOverride);
-
-            bool showCollision = settings.ShowCollisionGeometry;
-            if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
+            // HUD scale: 0 is auto (fit the window). Shown always; the classic HUD reads it.
+            // A configured value above what fits the window is not in use, so the slider shows the scale in use.
+            float uiScaleValue = settings.UiScaleSetting > 0f ? settings.ResolvedUiScale : 0f;
+            if (ImGui.SliderFloat("UI Scale (0 = auto)", ref uiScaleValue, 0f, UiScaleSliderMax, "%.2f"))
             {
-                showCollisionGeometry = showCollision;
+                uiScale = uiScaleValue;
             }
 
-            bool showPerformance = settings.ShowPerformanceCounters;
-            if (ImGui.Checkbox("Show Performance Counters", ref showPerformance))
+            // The scale applies while dragging; the config file is written once, on release.
+            if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                showPerformanceCounters = showPerformance;
+                uiScale = uiScaleValue;
+                uiScaleCommitted = true;
             }
 
-            int floorSize = settings.PendingFloorSize;
-            if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
+            if (devControls)
             {
-                stagedFloorSize = floorSize;
-            }
-            if (ImGui.Button("Set new world size"))
-            {
-                requestedFloorSize = floorSize;
-                stagedFloorSize = floorSize;
+                DrawViewModelControls(settings);
+                DrawTimeOfDayControls(TimeOfDayOverride);
+
+                bool showCollision = settings.ShowCollisionGeometry;
+                if (ImGui.Checkbox("Show Collision Geometry", ref showCollision))
+                {
+                    showCollisionGeometry = showCollision;
+                }
+
+                bool showPerformance = settings.ShowPerformanceCounters;
+                if (ImGui.Checkbox("Show Performance Counters", ref showPerformance))
+                {
+                    showPerformanceCounters = showPerformance;
+                }
+
+                int floorSize = settings.PendingFloorSize;
+                if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
+                {
+                    stagedFloorSize = floorSize;
+                }
+                if (ImGui.Button("Set new world size"))
+                {
+                    requestedFloorSize = floorSize;
+                    stagedFloorSize = floorSize;
+                }
             }
 
             ImGui.Text("Resolution Presets");
@@ -232,7 +264,7 @@ public partial class Render
             ImGui.End();
         }
 
-        if (settings.InventoryVisible)
+        if (imGuiSurface && settings.InventoryVisible)
         {
             DrawInventoryOverlay(inventory, status, ref equipInventorySlotIndex, ref inventoryAction);
         }
@@ -242,8 +274,12 @@ public partial class Render
             DrawBuildMaterialPanel(BuildMaterialSelection, overlayVisible, ref buildMaterial);
         }
 
-        DrawLootFeed(settings);
-        if (status.IsDead)
+        if (imGuiSurface)
+        {
+            DrawLootFeed(settings);
+        }
+
+        if (imGuiSurface && status.IsDead)
         {
             DrawDeathOverlay(settings, status);
         }
@@ -264,8 +300,12 @@ public partial class Render
             floatingCombatText,
             equipInventorySlotIndex,
             buildMaterial,
-            inventoryAction);
+            inventoryAction,
+            UiScale: uiScale,
+            UiScaleCommitted: uiScaleCommitted);
     }
+
+    private const float UiScaleSliderMax = 4f;
 
     // The "Build" window, shown in Building mode: Auto (the supporting cell's material) or one of
     // BuildMaterialCatalog.Placeable. It takes clicks only while an overlay has freed the mouse
@@ -426,20 +466,7 @@ public partial class Render
         ImGui.TextUnformatted($"Inventory: {snapshot.PlayerName}");
         DrawCharacterSection(snapshot, status, ref inventoryAction);
 
-        ImGui.SeparatorText("Backpack");
-        for (int row = 0; row < snapshot.Rows; row++)
-        {
-            for (int column = 0; column < snapshot.Columns; column++)
-            {
-                int slotIndex = (row * snapshot.Columns) + column;
-                InventorySlotSnapshot slot = FindInventorySlot(snapshot.Slots, slotIndex);
-                DrawInventorySlotButton(snapshot, slot, slotIndex, ref equipInventorySlotIndex, ref inventoryAction);
-                if (column < snapshot.Columns - 1)
-                {
-                    ImGui.SameLine();
-                }
-            }
-        }
+        DrawBackpackSection(snapshot, ref equipInventorySlotIndex, ref inventoryAction);
 
         if (_openDestroyPopup)
         {
@@ -523,67 +550,92 @@ public partial class Render
         ImGui.PushStyleColor(ImGuiCol.Text, color);
     }
 
-    private static InventorySlotSnapshot FindInventorySlot(IReadOnlyList<InventorySlotSnapshot> slots, int slotIndex)
+    // Buttons per row of the backpack flow.
+    private const int BackpackFlowColumns = 4;
+
+    // The bag is sparse: only the cells an item is anchored on appear in Slots, so the panel is a flow of
+    // one button per item (row-major by anchor, however the snapshot orders them), then a line for the
+    // items the server holds back because the board has no room for them.
+    private static void DrawBackpackSection(
+        PlayerInventorySnapshot snapshot,
+        ref int? equipInventorySlotIndex,
+        ref InventoryHudAction? inventoryAction)
     {
-        for (int index = 0; index < slots.Count; index++)
+        ImGui.SeparatorText("Backpack");
+        IReadOnlyList<InventorySlotSnapshot> slots = snapshot.Slots;
+        int heldBack = 0;
+        int shown = 0;
+        for (int anchor = 0; anchor < BagGrid.CellCount; anchor++)
         {
-            if (slots[index].SlotIndex == slotIndex)
+            for (int index = 0; index < slots.Count; index++)
             {
-                return slots[index];
+                InventorySlotSnapshot slot = slots[index];
+                if (slot.SlotIndex != anchor || slot.Item is not InventoryItemSnapshot)
+                {
+                    continue;
+                }
+
+                if (shown++ % BackpackFlowColumns != 0)
+                {
+                    ImGui.SameLine();
+                }
+
+                DrawInventorySlotButton(snapshot, slot, ref equipInventorySlotIndex, ref inventoryAction);
+                break;
             }
         }
 
-        return default;
+        for (int index = 0; index < slots.Count; index++)
+        {
+            int held = slots[index].SlotIndex - CharacterPanelModel.HeldBackFirstSlot;
+            if ((uint)held < CharacterPanelModel.HeldBackSlots && slots[index].Item is InventoryItemSnapshot)
+            {
+                heldBack++;
+            }
+        }
+
+        if (shown == 0)
+        {
+            ImGui.TextDisabled("Empty");
+        }
+
+        if (heldBack > 0)
+        {
+            ImGui.TextUnformatted(heldBack + CharacterPanelModel.HeldBackSuffix(heldBack));
+        }
     }
 
     private static void DrawInventorySlotButton(
         PlayerInventorySnapshot snapshot,
         InventorySlotSnapshot slot,
-        int gridSlotIndex,
         ref int? equipInventorySlotIndex,
         ref InventoryHudAction? inventoryAction)
     {
-        bool occupied = slot.Item is InventoryItemSnapshot;
         InventoryItemSnapshot item = slot.Item.GetValueOrDefault();
-        string label = occupied ? item.DisplayName : $"Empty##slot-{gridSlotIndex}";
+        ItemFootprint footprint = BagGrid.FootprintOf(item.ItemKind);
+        int row = slot.SlotIndex / BagGrid.Columns;
+        int column = slot.SlotIndex % BagGrid.Columns;
+        string label = $"{item.DisplayName}{(char)10}{footprint.Cols}x{footprint.Rows} at row {row + 1}, col {column + 1}##inventory-{slot.SlotIndex}";
 
-        if (slot.IsEquipped)
+        PushRarityColor(CharacterPanelModel.ColorKey(item.Rarity));
+        if (ImGui.Button(label, new System.Numerics.Vector2(160f, 44f)))
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.20f, 0.42f, 0.22f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.26f, 0.52f, 0.28f, 1f));
-        }
-
-        PushRarityColor(occupied ? CharacterPanelModel.ColorKey(item.Rarity) : RarityColorKey.Common);
-        if (ImGui.Button($"{label}##inventory-{gridSlotIndex}", new System.Numerics.Vector2(120f, 60f)))
-        {
-            if (occupied && slot.SlotIndex >= 0 && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
-            {
-                equipInventorySlotIndex = slot.SlotIndex;
-            }
+            equipInventorySlotIndex = slot.SlotIndex;
         }
 
         ImGui.PopStyleColor();
 
-        if (occupied)
-        {
-            DrawItemTooltip(item);
-            DrawBackpackContextMenu(snapshot, slot.SlotIndex, item, gridSlotIndex, ref inventoryAction);
-        }
-
-        if (slot.IsEquipped)
-        {
-            ImGui.PopStyleColor(2);
-        }
+        DrawItemTooltip(item);
+        DrawBackpackContextMenu(snapshot, slot.SlotIndex, item, ref inventoryAction);
     }
 
     private static void DrawBackpackContextMenu(
         PlayerInventorySnapshot snapshot,
         int slotIndex,
         InventoryItemSnapshot item,
-        int gridSlotIndex,
         ref InventoryHudAction? inventoryAction)
     {
-        if (!ImGui.BeginPopupContextItem($"inventory-menu-{gridSlotIndex}"))
+        if (!ImGui.BeginPopupContextItem($"inventory-menu-{slotIndex}"))
         {
             return;
         }
@@ -611,7 +663,7 @@ public partial class Render
         {
             foreach (InventoryHudAction target in CharacterPanelModel.MoveTargets(snapshot, slotIndex))
             {
-                if (ImGui.MenuItem($"Slot {target.Target + 1}"))
+                if (ImGui.MenuItem($"Row {(target.Target / BagGrid.Columns) + 1}, col {(target.Target % BagGrid.Columns) + 1}"))
                 {
                     inventoryAction = target;
                 }

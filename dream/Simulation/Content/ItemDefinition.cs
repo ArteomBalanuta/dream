@@ -25,7 +25,8 @@ public sealed record ItemRollTable(
 // An item as authored in items.json. Instances reference it by Key (item_kind), with no foreign key.
 // Modifiers are the flat modifiers of an unrolled instance, in file order. EquipSlots is in file
 // order and its first entry is the default target; EquipSlotMask is the same set as a bit mask
-// (EquipmentSlots.MaskOf). Rolls is null for an item that cannot be rolled.
+// (EquipmentSlots.MaskOf). Rolls is null for an item that cannot be rolled. Footprint is the size in
+// bag cells (1..4 by 1..4; the file's optional "footprint": [cols, rows], 1x1 when absent).
 public sealed record ItemDefinition(
     string Key,
     string DisplayName,
@@ -36,4 +37,5 @@ public sealed record ItemDefinition(
     IReadOnlyList<StatModifier> Modifiers,
     int EquipSlotMask,
     IReadOnlyList<EquipmentSlot> EquipSlots,
-    ItemRollTable? Rolls);
+    ItemRollTable? Rolls,
+    ItemFootprint Footprint);

@@ -52,7 +52,7 @@ public partial class PlayScene
         _render = new Render(_settings);
         _sky = new SkyRenderer();
         PreloadModels();
-        _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem());
+        _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem(), () => _runtime.Player.Combatant.Actor.Id);
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
         _diagnostics = new MultiplayerDiagnostics();
 

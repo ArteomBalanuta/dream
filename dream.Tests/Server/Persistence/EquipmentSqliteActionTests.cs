@@ -15,10 +15,13 @@ using Xunit;
 
 namespace Dream.Tests.Server.Persistence;
 
-// Wave H glue: H1's move, unequip, destroy and legacy-rescue cases on the production repository
+// Wave H glue: H1's move, unequip and destroy cases on the production repository
 // (ServerPersistenceBundle.World, the facade the runtime writes through), which InventoryActionTests
 // runs on the EquipmentTestWorld stand-in. Every case reads the rows back from a reopened bundle with a
 // new service, as a restart does, and no queued write may have failed (the queue only counts those).
+// Classic HUD iteration 2: the bag is a footprint board and a worn item has no bag row, so the rows are
+// the guarded deletes and upserts the footprint rules queue. A new player's kit: the hammer in the main
+// hand, the blade at anchor 2, the maul at 4, the lantern at 6 and the torch at 7.
 public sealed class EquipmentSqliteActionTests
 {
     private const string Player = "Alice";
@@ -90,54 +93,55 @@ public sealed class EquipmentSqliteActionTests
     }
 
     [Fact]
-    public void MovingAnEquippedItem_KeepsItEquipped_AndTheRowsSurviveARestart()
+    public void MovingAnItem_ChangesItsAnchor_AndTheRowsSurviveARestart()
     {
         using MigrationTestDatabase db = Migrated();
-        long bladeId;
+        long bladeId, hammerId;
         using (Run run = new(db))
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 1));
-            bladeId = MainHandId(run.Inventory);
+            Assert.True(run.Inventory.Ensure(Player));
+            bladeId = run.Inventory.BuildSnapshot(Player).IdAt(2);
+            hammerId = MainHandId(run.Inventory);
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 1, 9));
+            // The blade is a 2x3: rows 3-5 of columns 0-1 are free.
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 2, 24));
 
             Dictionary<int, long> rows = run.Rows();
-            Assert.False(rows.ContainsKey(1));
-            Assert.Equal(bladeId, rows[9]);
-            Assert.Equal(bladeId, rows[100]);
+            Assert.False(rows.ContainsKey(2));
+            Assert.Equal(bladeId, rows[24]);
+            Assert.Equal(hammerId, rows[100]);
         }
 
         using (Run restarted = new(db))
         {
             Assert.True(restarted.Inventory.Ensure(Player));
-            Assert.Equal(bladeId, MainHandId(restarted.Inventory));
-            Assert.Equal(bladeId, restarted.Inventory.BuildSnapshot(Player).Slots[9].Item!.Value.ItemInstanceId);
-            Assert.Null(restarted.Inventory.BuildSnapshot(Player).Slots[1].Item);
+            Assert.Equal(hammerId, MainHandId(restarted.Inventory));
+            Assert.Equal(bladeId, restarted.Inventory.BuildSnapshot(Player).IdAt(24));
+            Assert.Null(restarted.Inventory.BuildSnapshot(Player).ItemAt(2));
         }
     }
 
     [Fact]
-    public void SwappingTwoEquippedItems_SurvivesARestart()
+    public void SwappingTwoBagItems_SurvivesARestart()
     {
         using MigrationTestDatabase db = Migrated();
-        long torch, lantern;
+        long blade, maul, hammer;
         using (Run run = new(db))
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 4));
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 3, 101));
+            Assert.True(run.Inventory.Ensure(Player));
             PlayerInventorySnapshot before = run.Inventory.BuildSnapshot(Player);
-            torch = before.Slots[4].Item!.Value.ItemInstanceId;
-            lantern = before.Slots[3].Item!.Value.ItemInstanceId;
+            blade = before.IdAt(2);
+            maul = before.IdAt(4);
+            hammer = MainHandId(run.Inventory);
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 3, 4));
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 2, 4));
         }
 
         using Run restarted = new(db);
         Dictionary<int, long> rows = restarted.Rows();
-        Assert.Equal(torch, rows[3]);
-        Assert.Equal(lantern, rows[4]);
-        Assert.Equal(torch, rows[100]);
-        Assert.Equal(lantern, rows[101]);
+        Assert.Equal(maul, rows[2]);
+        Assert.Equal(blade, rows[4]);
+        Assert.Equal(hammer, rows[100]);
     }
 
     [Fact]
@@ -147,10 +151,12 @@ public sealed class EquipmentSqliteActionTests
         long torch;
         using (Run run = new(db))
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 4));
+            Assert.True(run.Inventory.Ensure(Player));
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 7));
             torch = MainHandId(run.Inventory);
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 4, 101));
+            // The worn torch moves to the off hand by naming its worn slot as the source.
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 100, 101));
         }
 
         using Run restarted = new(db);
@@ -160,7 +166,7 @@ public sealed class EquipmentSqliteActionTests
     }
 
     [Fact]
-    public void Unequip_KeepsTheBackpackRow_AndTheEmptyHandSurvivesARestart()
+    public void Unequip_PutsTheItemInTheBag_AndTheEmptyHandSurvivesARestart()
     {
         using MigrationTestDatabase db = Migrated();
         long hammer;
@@ -184,7 +190,7 @@ public sealed class EquipmentSqliteActionTests
     }
 
     [Fact]
-    public void UnequipOfALegacyItemWithNoBackpackRow_RescuesIt_AndARestartSeesTheRescue()
+    public void Unequip_TakesTheFirstFitAroundTheItemsThere_AndARestartSeesIt()
     {
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
@@ -201,22 +207,25 @@ public sealed class EquipmentSqliteActionTests
         }
 
         using Run restarted = new(db);
+        // The hammer is a 2x3 at anchor 0; the torch (1x2) goes to the first free cell, 2.
         Dictionary<int, long> rows = restarted.Rows();
-        Assert.Equal(90L, rows[1]);
+        Assert.Equal(90L, rows[2]);
+        Assert.Equal(91L, rows[0]);
         Assert.False(rows.ContainsKey(100));
         Assert.True(restarted.HasItem(90));
     }
 
     [Fact]
-    public void UnequipOfALegacyItem_WithAFullBackpack_IsRejected_AndTheRowsDoNotChange()
+    public void Unequip_WithAFullBag_IsRejected_AndTheRowsDoNotChange()
     {
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
         {
             Give(setup.World, Player, 100, 90, "tool.torch");
+            // 64 rings fill every cell of the board.
             for (int slot = 0; slot < InventoryConstants.BackpackSlotCount; slot++)
             {
-                Give(setup.World, Player, slot, 200 + slot, "tool.builder-hammer");
+                Give(setup.World, Player, slot, 200 + slot, "gear.iron-band");
             }
 
             setup.World.SaveStarterKitGrant(Player, ToolCatalog.CurrentStarterKitVersion);
@@ -237,7 +246,7 @@ public sealed class EquipmentSqliteActionTests
     }
 
     [Fact]
-    public void EquipOverALegacyItemWithNoBackpackRow_RescuesTheDisplacedItem_AcrossARestart()
+    public void EquipOverAWornItem_SendsTheDisplacedItemToTheBlades_Anchor_AcrossARestart()
     {
         using MigrationTestDatabase db = Migrated();
         using (Run setup = new(db))
@@ -255,22 +264,23 @@ public sealed class EquipmentSqliteActionTests
         using Run restarted = new(db);
         Dictionary<int, long> rows = restarted.Rows();
         Assert.Equal(91L, rows[100]);
-        Assert.Equal(90L, rows[1]);
+        // The torch it displaced took the blade's anchor, where its 1x2 fits.
+        Assert.Equal(90L, rows[0]);
     }
 
     [Fact]
-    public void Destroy_RemovesBothRows_AndNeitherARestartNorAKitTopUpReturnsTheItem()
+    public void Destroy_RemovesTheRowAndTheItem_AndNeitherARestartNorAKitTopUpReturnsIt()
     {
         using MigrationTestDatabase db = Migrated();
         long lantern;
         using (Run run = new(db))
         {
             Assert.True(run.Inventory.Ensure(Player));
-            lantern = run.Inventory.BuildSnapshot(Player).Slots[3].Item!.Value.ItemInstanceId;
+            lantern = run.Inventory.BuildSnapshot(Player).IdAt(6);
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryDestroy(Player, 3, lantern));
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryDestroy(Player, 6, lantern));
 
-            Assert.False(run.Rows().ContainsKey(3));
+            Assert.False(run.Rows().ContainsKey(6));
             Assert.False(run.HasItem(lantern));
         }
 
@@ -317,9 +327,8 @@ public sealed class EquipmentSqliteActionTests
         {
             setup.World.SaveItemInstance(EquipmentTestWorld.MakeItem(90, Player, "tool.torch", roll) with { ItemKind = "tool.retired" });
             setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 100, 90, DateTime.UtcNow));
-            setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 0, 90, DateTime.UtcNow));
-            Give(setup.World, Player, 1, 91, "tool.torch");
-            setup.World.SaveInventorySlot(new PersistedInventorySlot(Player, 102, 91, DateTime.UtcNow));
+            // A torch worn on the head, which its definition does not allow.
+            Give(setup.World, Player, 102, 91, "tool.torch");
             setup.World.SaveStarterKitGrant(Player, ToolCatalog.CurrentStarterKitVersion);
         }
 
@@ -347,14 +356,28 @@ public sealed class EquipmentSqliteActionTests
         }
     }
 
-    // What H3's panel sends for an unequip, from each of its two menus, is what TryUnequip takes.
+    // What the HUD's equipment menu sends for an unequip is what TryUnequip takes, for each of the twelve
+    // worn slots. (A worn item has no bag row, so the backpack menu has no Unequip entry any more.)
     [Fact]
-    public void TheHudsUnequipIntents_FromEitherMenu_AreAcceptedForAllFourSlots()
+    public void TheHudsUnequipIntent_FromTheEquipmentMenu_IsAcceptedForAllTwelveSlots()
     {
         using MigrationTestDatabase db = Migrated();
         using Run run = new(db);
-        string[] gear = ["gear.iron-blade", "gear.ward-lantern", "gear.leather-cap", "gear.leather-vest"];
+        // One item per slot; the two bands fill the left ring slot and then the right one.
+        string[] gear =
+        [
+            "gear.iron-blade", "gear.ward-lantern", "gear.leather-cap", "gear.leather-vest", "gear.iron-gauntlets",
+            "gear.iron-boots", "gear.plated-leggings", "gear.ward-pendant", "gear.iron-band", "gear.iron-band",
+            "gear.travel-cloak", "gear.ember-wisp",
+        ];
         Assert.True(run.Inventory.Ensure(Player));
+        // Room to pack twelve items back in whatever order the unequips come: the blade and the maul go.
+        foreach (string spare in new[] { "tool.field-blade", "tool.stone-maul" })
+        {
+            PlayerInventorySnapshot kit = run.Inventory.BuildSnapshot(Player);
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryDestroy(Player, kit.AnchorOf(spare), kit.ItemAt(kit.AnchorOf(spare))!.Value.ItemInstanceId));
+        }
+
         for (int i = 0; i < gear.Length; i++)
         {
             ItemRollSeed seed = new(1, 2, 3, 4, i);
@@ -363,9 +386,11 @@ public sealed class EquipmentSqliteActionTests
 
         void EquipAll()
         {
+            // The first of each kind that is still in the bag, to its default slot (the second band
+            // finds the right ring slot empty).
             foreach (string kind in gear)
             {
-                int slot = run.Inventory.BuildSnapshot(Player).Slots.First(row => row.Item?.ItemKind == kind).SlotIndex;
+                int slot = run.Inventory.AnchorOf(Player, kind);
                 Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, slot));
             }
         }
@@ -374,26 +399,18 @@ public sealed class EquipmentSqliteActionTests
         {
             InventoryUnequipIntent intent = Assert.IsType<InventoryUnequipIntent>(PlayScene.ToInventoryIntent(in action));
             Assert.InRange(intent.SlotIndex, EquipmentSlots.FirstSlotIndex, EquipmentSlots.LastSlotIndex);
-            return run.Inventory.TryUnequip(Player, intent.SlotIndex);
+            return run.Inventory.TryUnequip(Player, intent.SlotIndex, intent.TargetCell);
         }
 
         EquipAll();
+        Assert.Equal(gear.Length, run.Rows().Keys.Count(slot => slot >= EquipmentSlots.FirstSlotIndex));
         foreach (EquipmentSlot slot in Enum.GetValues<EquipmentSlot>())
         {
             Assert.Equal(InventoryEquipOutcome.Equipped, Send(CharacterPanelModel.EquipmentMenu(slot).Single().Action));
         }
 
-        EquipAll();
-        foreach (string kind in gear)
-        {
-            PlayerInventorySnapshot snapshot = run.Inventory.BuildSnapshot(Player);
-            InventorySlotSnapshot row = snapshot.Slots.First(s => s.Item?.ItemKind == kind);
-            InventoryItemSnapshot item = row.Item!.Value;
-            CharacterMenuEntry unequip = CharacterPanelModel.BackpackMenu(in snapshot, row.SlotIndex, in item).Single(entry => entry.Label == "Unequip");
-            Assert.Equal(InventoryEquipOutcome.Equipped, Send(unequip.Action));
-        }
-
         Assert.DoesNotContain(run.Rows().Keys, slot => slot >= EquipmentSlots.FirstSlotIndex);
+        Assert.True(run.Inventory.BuildSnapshot(Player).BoardIsConsistent());
     }
 
     [Fact]

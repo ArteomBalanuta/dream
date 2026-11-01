@@ -16,6 +16,7 @@ public sealed class LootFeedbackSystem
 
     private readonly string?[] _lines = new string?[MaxLines];
     private readonly float[] _remainingSeconds = new float[MaxLines];
+    private readonly ItemRarity[] _rarities = new ItemRarity[MaxLines];
     private int _count;
 
     // Lines currently shown, oldest first.
@@ -31,6 +32,19 @@ public sealed class LootFeedbackSystem
         return _lines[index]!;
     }
 
+    // The rarity the server sent with line index (any byte value; unknown values are the caller's to
+    // treat as no tier). Lines the system built itself read as Common. An out-of-range index throws
+    // ArgumentOutOfRangeException: callers loop over the line count.
+    public ItemRarity GetRarity(int index)
+    {
+        if ((uint)index >= (uint)_count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return _rarities[index];
+    }
+
     public void AddNotices(IReadOnlyList<LootNotice>? notices)
     {
         if (notices is null)
@@ -41,7 +55,7 @@ public sealed class LootFeedbackSystem
         int limit = Math.Min(notices.Count, InventoryPushMessage.MaxNotices);
         for (int i = 0; i < limit; i++)
         {
-            AddLine(Format(notices[i]));
+            AddLine(Format(notices[i]), notices[i].Rarity);
         }
     }
 
@@ -63,6 +77,7 @@ public sealed class LootFeedbackSystem
             }
 
             _lines[kept] = _lines[i];
+            _rarities[kept] = _rarities[i];
             _remainingSeconds[kept] = remaining;
             kept++;
         }
@@ -78,6 +93,7 @@ public sealed class LootFeedbackSystem
     public void Clear()
     {
         Array.Clear(_lines);
+        Array.Clear(_rarities);
         _count = 0;
     }
 
@@ -107,13 +123,14 @@ public sealed class LootFeedbackSystem
             : string.Concat("Looted: ", name, " (", rarity, ")");
     }
 
-    private void AddLine(string line)
+    private void AddLine(string line, ItemRarity rarity)
     {
         if (_count == MaxLines)
         {
             for (int i = 1; i < MaxLines; i++)
             {
                 _lines[i - 1] = _lines[i];
+                _rarities[i - 1] = _rarities[i];
                 _remainingSeconds[i - 1] = _remainingSeconds[i];
             }
 
@@ -121,6 +138,7 @@ public sealed class LootFeedbackSystem
         }
 
         _lines[_count] = line;
+        _rarities[_count] = rarity;
         _remainingSeconds[_count] = HoldSeconds;
         _count++;
     }

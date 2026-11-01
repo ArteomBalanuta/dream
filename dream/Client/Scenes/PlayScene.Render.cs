@@ -29,6 +29,8 @@ public partial class PlayScene
         // Uploads a few background-decoded models before anything draws this frame; draws only
         // poll the model cache, so a model never loads synchronously inside a draw call.
         // The counters cover the previous frame from here to here, HUD included.
+        _captureApplyClientSize = applyClientSize;
+        _windowFocused = windowFocused;
         _lastFrameCounters = RenderCounters.CaptureAndReset();
         GpuFrameTimer gpuTimer = _gpuTimer ??= new GpuFrameTimer(GlGpuQueryApi.Instance);
         gpuTimer.BeginFrame();
@@ -175,6 +177,8 @@ public partial class PlayScene
         long hudDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.Hud);
         _render.WorldTransferHud = CaptureWorldTransferHudState(_remoteClient);
+        _render.HudScene = new HudSceneState(LastReportedPlayerPosition);
+        AdvanceHudCaptureScript();
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
@@ -196,6 +200,7 @@ public partial class PlayScene
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);
         ApplyHudRequest(hudResult.Request, applyClientSize);
         _render.Hud.UpdateProjectionForSettings(_settings);
+        CaptureHudFrameIfRequested();
     }
 
     public void Resize(Vector2i size)

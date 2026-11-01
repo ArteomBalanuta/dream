@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
+using Dream.Tests.Support;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
@@ -319,8 +320,9 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 
         Assert.True(client.Applied.OfType<InventoryPushMessage>().Count() > pushes, "no push followed the kill");
         PlayerInventorySnapshot authoritative = server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(Session))!.Value;
-        Assert.Equal(2, authoritative.Slots.Count(slot => slot.Item is { IsRolled: true }));
-        Assert.Equal(2, client.Inventory!.Value.Slots.Count(slot => slot.Item is { IsRolled: true }));
+        // The first loot is worn (no bag row); the second is in the bag.
+        Assert.Equal(2, authoritative.AllItems().Count(item => item.IsRolled));
+        Assert.Equal(2, client.Inventory!.Value.AllItems().Count(item => item.IsRolled));
     }
 
     // Closes wave H's "inventory actions while dead were not run over real TCP": equip works, the dead stay

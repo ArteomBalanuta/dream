@@ -68,7 +68,7 @@ public class FloatingCombatTextSystemTests
     {
         FloatingCombatTextSystem system = new();
 
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < FloatingCombatTextSystem.MaxActivePerTarget + 2; i++)
         {
             system.Spawn(7, new Vector3(1f, 2f, 3f), 100 + i, FloatingCombatTextKind.Regular);
         }

@@ -31,4 +31,21 @@ public class AssetPathsTests
 
         Assert.Equal(expected, AssetPaths.Font("Arial.ttf"));
     }
+
+    [Fact]
+    public void Ui_Resolves_Under_Runtime_Ui_Directory()
+    {
+        string expected = Path.Combine(AppContext.BaseDirectory, "ui", "hud", "hud.json");
+
+        Assert.Equal(Path.Combine(AppContext.BaseDirectory, "ui"), AssetPaths.UiDirectory);
+        Assert.Equal(expected, AssetPaths.Ui(Path.Combine("hud", "hud.json")));
+    }
+
+    [Fact]
+    public void Ui_Assets_AreCopiedToTheOutputDirectory()
+    {
+        Assert.True(File.Exists(AssetPaths.Ui(Path.Combine("hud", "hud.json"))));
+        Assert.True(File.Exists(AssetPaths.Ui(Path.Combine("hud", "hud.png"))));
+        Assert.True(File.Exists(AssetPaths.Ui(Path.Combine("items", "items_rare.png"))));
+    }
 }

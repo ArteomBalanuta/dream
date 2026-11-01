@@ -26,6 +26,13 @@ public sealed class DesktopClientConfig
     // Render frame cap in FPS; 0 means uncapped.
     public int MaxFramesPerSecond { get; set; } = FrameRateCap.Default;
 
+    // Makes the F3 key and the developer controls in Settings available. Display only: it never
+    // reaches the server. DREAM_ADMIN_HUD overrides it for one run and is never saved.
+    public bool AdminHud { get; set; }
+
+    // HUD scale; 0 is auto (fit the window), other values snap to quarter steps in 1..4.
+    public float UiScale { get; set; }
+
     public ClientConnectionOptions ToConnectionOptions()
     {
         Sanitize();
@@ -51,6 +58,7 @@ public sealed class DesktopClientConfig
         NoclipSpeed = settings.NoclipSpeed;
         CameraViewMode = settings.CameraViewMode;
         FloatingCombatText = settings.FloatingCombatText;
+        UiScale = settings.UiScaleSetting;
         Sanitize();
     }
 
@@ -69,5 +77,6 @@ public sealed class DesktopClientConfig
 
         FloatingCombatText = FloatingCombatText.Clamp();
         MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
+        UiScale = HudOptions.SanitizeUiScale(UiScale);
     }
 }

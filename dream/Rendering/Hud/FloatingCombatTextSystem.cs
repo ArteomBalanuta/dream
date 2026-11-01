@@ -8,10 +8,11 @@ namespace Dream.Rendering.Hud;
 public sealed class FloatingCombatTextSystem
 {
     public const int DefaultPoolSize = 150;
-    public const int MaxActivePerTarget = 4;
+    public const int MaxActivePerTarget = 12;
 
     private readonly Entry[] _entries;
     private readonly Random _random = new(1337);
+    private long _spawnCounter;
 
     public FloatingCombatTextSystem(int capacity = DefaultPoolSize)
     {
@@ -26,9 +27,15 @@ public sealed class FloatingCombatTextSystem
 
     public void Spawn(int targetId, Vector3 worldAnchor, int amount, FloatingCombatTextKind kind)
     {
+        // At the cap the target's oldest number makes room for the new one, so the newest hit is
+        // never the one that goes missing.
         if (GetActiveCountForTarget(targetId) >= MaxActivePerTarget)
         {
-            return;
+            Entry? oldest = FindOldestForTarget(targetId);
+            if (oldest is not null)
+            {
+                oldest.Active = false;
+            }
         }
 
         Entry? entry = FindInactiveEntry();
@@ -43,6 +50,7 @@ public sealed class FloatingCombatTextSystem
         entry.Text = amount.ToString();
         entry.Kind = kind;
         entry.AgeSeconds = 0f;
+        entry.SpawnOrder = ++_spawnCounter;
         entry.HorizontalOffset = RandomHorizontalOffset();
     }
 
@@ -109,7 +117,12 @@ public sealed class FloatingCombatTextSystem
                 FloatingCombatTextMotion.EvaluateScale(motionAgeSeconds, style.ScaleMultiplier * resolvedTuning.SizeMultiplier),
                 alpha,
                 style,
-                style.LayerPriority));
+                style.LayerPriority,
+                entry.Kind,
+                entry.AgeSeconds * resolvedTuning.MotionSpeedMultiplier / FloatingCombatTextMotion.ClassicReferenceMotionSpeed,
+                entry.SpawnOrder,
+                entry.TargetId,
+                resolvedTuning.SizeMultiplier / FloatingCombatTextMotion.ClassicReferenceSizeMultiplier));
         }
 
         destination.Sort(static (left, right) => left.LayerPriority.CompareTo(right.LayerPriority));
@@ -127,6 +140,20 @@ public sealed class FloatingCombatTextSystem
         }
 
         return count;
+    }
+
+    private Entry? FindOldestForTarget(int targetId)
+    {
+        Entry? oldest = null;
+        foreach (Entry entry in _entries)
+        {
+            if (entry.Active && entry.TargetId == targetId && (oldest is null || entry.SpawnOrder < oldest.SpawnOrder))
+            {
+                oldest = entry;
+            }
+        }
+
+        return oldest;
     }
 
     private Entry? FindInactiveEntry()
@@ -160,6 +187,8 @@ public sealed class FloatingCombatTextSystem
         public FloatingCombatTextKind Kind { get; set; }
 
         public float AgeSeconds { get; set; }
+
+        public long SpawnOrder { get; set; }
 
         public float HorizontalOffset { get; set; }
     }

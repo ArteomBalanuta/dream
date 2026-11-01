@@ -15,6 +15,10 @@ namespace Dream.Tests.Server;
 
 // Wave H1: every hostile inventory intent is rejected with no state, row or write change, an action
 // only ever touches the sender's own inventory, and a flood of moves is held to the action budget.
+// Classic HUD iteration 2: the same holds for the footprint bag's own hostile input - an overlap, a
+// position off the board, huge integers, a "from" that is not the anchor of an item (an empty cell, a cell
+// an item only covers, a held-back row, a worn slot) and a "to" that is a worn slot. A new player's kit:
+// the hammer in the main hand, the blade at anchor 2, the maul at 4, the lantern at 6 and the torch at 7.
 public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
 {
     private const string Alice = "Hostalice";
@@ -31,6 +35,20 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
     private static AuthoritativeActionResult Act(WorldSessionRuntime runtime, string session, ref ulong sequence, IPlayerActionPayload payload)
         => runtime.ProcessAuthoritativeAction(new PlayerActionMessage(new PlayerSessionId(session), ++sequence, payload));
 
+    // Slot values that are never a bag cell: below zero, past the board, in the gap before the worn
+    // rows, past the worn rows, the held-back rows and the extremes of an int.
+    private static readonly int[] NeverABagCell = [-1, 64, 99, 112, 199, 200, 215, 216, int.MaxValue, int.MinValue];
+
+    // Values that are never a worn slot: the same, without the held-back rows being special.
+    private static readonly int[] NeverAWornSlot = [-1, 0, 63, 64, 99, 112, 199, 200, 215, int.MaxValue, int.MinValue];
+
+    private static string Layout(PlayerInventorySnapshot snapshot)
+        => string.Join(
+            ";",
+            snapshot.Slots.Select(slot => $"{slot.SlotIndex}={slot.Item?.ItemInstanceId}")
+                .Append($"worn100={snapshot.EquippedSlot?.Item?.ItemInstanceId}")
+                .Concat((snapshot.Equipment ?? []).Select(slot => $"worn{slot.SlotIndex}={slot.Item?.ItemInstanceId}")));
+
     [Fact]
     public void EveryHostileIntent_IsRejected_WithNoRowOrWriteChange()
     {
@@ -39,33 +57,72 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession("a", Alice);
         host.JoinSession("b", Bob);
-        long bobsBlade = world.SlotsOf(Bob)[1];
-        long aliceBlade = world.SlotsOf(Alice)[1];
+        long bobsBlade = world.SlotsOf(Bob)[2];
+        long aliceBlade = world.SlotsOf(Alice)[2];
+        long aliceHammer = world.SlotsOf(Alice)[100];
         Dictionary<int, long> aliceBefore = world.SlotsOf(Alice);
         Dictionary<int, long> bobBefore = world.SlotsOf(Bob);
+        string aliceLayout = Layout(runtime.TryCaptureInventorySnapshot(new PlayerSessionId("a"))!.Value);
         int writesBefore = world.SlotWrites;
         long itemsBefore = world.LoadItemInstances().Count;
 
         List<IPlayerActionPayload> hostile = [];
-        foreach (int bad in new[] { -1, 16, 99, 104, int.MaxValue, int.MinValue })
+        foreach (int bad in NeverABagCell)
         {
             hostile.Add(new InventoryEquipIntent(bad));
-            hostile.Add(new InventoryEquipIntent(1, bad));
-            hostile.Add(new InventoryUnequipIntent(bad));
+            hostile.Add(new InventoryEquipIntent(bad, 101));
             hostile.Add(new InventoryMoveIntent(bad, 3));
-            hostile.Add(new InventoryMoveIntent(3, bad));
+            hostile.Add(new InventoryMoveIntent(2, bad));
+            hostile.Add(new InventoryMoveIntent(bad, bad));
             hostile.Add(new InventoryDestroyIntent(bad, aliceBlade));
         }
 
-        hostile.Add(new InventoryEquipIntent(12));                         // empty slot
-        hostile.Add(new InventoryEquipIntent(2, 101));                     // maul in the off hand
-        hostile.Add(new InventoryEquipIntent(1, 102));                     // blade on the head
+        foreach (int bad in NeverAWornSlot)
+        {
+            hostile.Add(new InventoryEquipIntent(2, bad));
+            hostile.Add(new InventoryUnequipIntent(bad));
+            hostile.Add(new InventoryUnequipIntent(bad, 40));
+        }
+
+        // A target cell that is not a bag cell, for a real worn item.
+        foreach (int badCell in new[] { -1, 64, 100, 216, int.MaxValue, int.MinValue })
+        {
+            hostile.Add(new InventoryUnequipIntent(100, badCell));
+        }
+
+        hostile.Add(new InventoryEquipIntent(12));                         // a cell the maul covers, not its anchor
+        hostile.Add(new InventoryEquipIntent(4, 101));                     // maul in the off hand
+        hostile.Add(new InventoryEquipIntent(2, 102));                     // blade on the head
+        hostile.Add(new InventoryEquipIntent(100));                        // a worn item with no target slot
+        hostile.Add(new InventoryEquipIntent(100, 102));                   // the hammer on the head
+        hostile.Add(new InventoryEquipIntent(111, 100));                   // an empty worn slot as the source
         hostile.Add(new InventoryUnequipIntent(103));                      // nothing there
         hostile.Add(new InventoryMoveIntent(12, 13));                      // empty source
         hostile.Add(new InventoryDestroyIntent(12, 1));                    // empty slot
-        hostile.Add(new InventoryDestroyIntent(1, bobsBlade));             // another player's item id
-        hostile.Add(new InventoryDestroyIntent(1, aliceBlade + 1000));     // a stale id
-        hostile.Add(new InventoryDestroyIntent(0, world.SlotsOf(Alice)[100])); // the equipped item
+        hostile.Add(new InventoryDestroyIntent(2, bobsBlade));             // another player's item id
+        hostile.Add(new InventoryDestroyIntent(2, aliceBlade + 1000));     // a stale id
+        hostile.Add(new InventoryDestroyIntent(0, aliceHammer));           // the worn item, by a bag cell it is not in
+        hostile.Add(new InventoryDestroyIntent(100, aliceHammer));         // the worn item, by its worn slot
+
+        // The footprint rules: an overlap of two items, a position off the board, a "from" that is not an
+        // anchor, a held-back row, a worn slot as the source or as the target.
+        hostile.Add(new InventoryMoveIntent(2, 5));                        // the blade over the maul and the lantern
+        hostile.Add(new InventoryMoveIntent(4, 6));                        // the maul over the lantern and the torch
+        hostile.Add(new InventoryMoveIntent(2, 7));                        // a 2-wide blade at the last column
+        hostile.Add(new InventoryMoveIntent(2, 62));                       // a 3-tall blade at the last-but-one row
+        hostile.Add(new InventoryMoveIntent(2, 63));
+        hostile.Add(new InventoryMoveIntent(10, 40));                      // a cell the blade covers, not its anchor
+        hostile.Add(new InventoryMoveIntent(3, 40));
+        hostile.Add(new InventoryMoveIntent(200, 40));                     // a held-back row
+        hostile.Add(new InventoryMoveIntent(215, 40));
+        hostile.Add(new InventoryMoveIntent(100, 40));                     // a worn slot as the source
+        hostile.Add(new InventoryMoveIntent(111, 40));
+        hostile.Add(new InventoryMoveIntent(2, 100));                      // a worn slot as the target
+        hostile.Add(new InventoryMoveIntent(2, 111));
+        hostile.Add(new InventoryMoveIntent(2, 200));                      // a held-back row as the target
+        hostile.Add(new InventoryUnequipIntent(100, 2));                   // onto the blade
+        hostile.Add(new InventoryUnequipIntent(100, 7));                   // onto the torch
+        hostile.Add(new InventoryUnequipIntent(100, 63));                  // a 2x3 hammer at the last cell
 
         ulong sequence = 0;
         foreach (IPlayerActionPayload payload in hostile)
@@ -75,12 +132,15 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
             Assert.NotNull(result.Rejection);
         }
 
+        output.WriteLine($"{hostile.Count} hostile intents rejected");
+        Assert.True(hostile.Count > InventoryActionBudget.Burst * 4);
         Assert.Equal(aliceBefore, world.SlotsOf(Alice));
         Assert.Equal(bobBefore, world.SlotsOf(Bob));
+        Assert.Equal(aliceLayout, Layout(runtime.TryCaptureInventorySnapshot(new PlayerSessionId("a"))!.Value));
         Assert.Equal(writesBefore, world.SlotWrites);
         Assert.Equal(itemsBefore, world.LoadItemInstances().Count);
         // Rejections spent none of the budget: a legitimate action still goes through.
-        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(1, 9)).Accepted);
+        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
     }
 
     [Fact]
@@ -95,13 +155,13 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         ulong sequence = 0;
 
         Assert.True(Act(runtime, "a", ref sequence, new InventoryEquipIntent(4)).Accepted);
-        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(0, 10)).Accepted);
+        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
         Assert.True(Act(runtime, "a", ref sequence, new InventoryUnequipIntent(100)).Accepted);
 
         Assert.Equal(bobBefore, world.SlotsOf(Bob));
         Assert.NotEqual(bobBefore, world.SlotsOf(Alice));
         // An unknown session is rejected outright.
-        Assert.False(Act(runtime, "nobody", ref sequence, new InventoryMoveIntent(0, 10)).Accepted);
+        Assert.False(Act(runtime, "nobody", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
     }
 
     [Fact]
@@ -118,7 +178,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         for (int i = 0; i < 1000; i++)
         {
             // Alternate between two squares so every move that goes through is a real change.
-            IPlayerActionPayload move = accepted % 2 == 0 ? new InventoryMoveIntent(1, 12) : new InventoryMoveIntent(12, 1);
+            IPlayerActionPayload move = accepted % 2 == 0 ? new InventoryMoveIntent(2, 26) : new InventoryMoveIntent(26, 2);
             if (Act(runtime, "a", ref sequence, move).Accepted)
             {
                 accepted++;
@@ -144,7 +204,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         int aliceAccepted = 0;
         for (int i = 0; i < 40; i++)
         {
-            IPlayerActionPayload move = aliceAccepted % 2 == 0 ? new InventoryMoveIntent(1, 12) : new InventoryMoveIntent(12, 1);
+            IPlayerActionPayload move = aliceAccepted % 2 == 0 ? new InventoryMoveIntent(2, 26) : new InventoryMoveIntent(26, 2);
             aliceAccepted += Act(runtime, "a", ref sequence, move).Accepted ? 1 : 0;
         }
 
@@ -154,13 +214,13 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         int bobAccepted = 0;
         for (int i = 0; i < InventoryActionBudget.Burst; i++)
         {
-            Assert.False(Act(runtime, "a", ref sequence, new InventoryMoveIntent(1, 13)).Accepted);
-            IPlayerActionPayload move = i % 2 == 0 ? new InventoryMoveIntent(1, 12) : new InventoryMoveIntent(12, 1);
+            Assert.False(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, 40)).Accepted);
+            IPlayerActionPayload move = i % 2 == 0 ? new InventoryMoveIntent(2, 26) : new InventoryMoveIntent(26, 2);
             bobAccepted += Act(runtime, "b", ref sequence, move).Accepted ? 1 : 0;
         }
 
         Assert.Equal(InventoryActionBudget.Burst, bobAccepted);
-        Assert.False(Act(runtime, "b", ref sequence, new InventoryMoveIntent(1, 13)).Accepted);
+        Assert.False(Act(runtime, "b", ref sequence, new InventoryMoveIntent(2, 40)).Accepted);
     }
 
     [Fact]
@@ -169,7 +229,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
         Wave12DeltaActorLoopbackTests.Peer peer = await rig.JoinAsync("h1-flood");
         PlayerSessionId session = new(peer.SessionId);
-        int before = rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.Slots.Count(slot => slot.Item.HasValue);
+        int before = rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.AllItems().Count();
 
         ulong sequence = 0;
         for (int burst = 0; burst < 20; burst++)
@@ -178,7 +238,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
             {
                 IPlayerActionPayload payload = (i % 4) switch
                 {
-                    0 => new InventoryMoveIntent(1, 12),
+                    0 => new InventoryMoveIntent(2, 26),
                     1 => new InventoryEquipIntent(int.MaxValue, -5),
                     2 => new InventoryDestroyIntent(1, long.MinValue),
                     _ => (IPlayerActionPayload)new InventoryUnequipIntent(104),
@@ -195,7 +255,70 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         Assert.False(peer.Connection.IsFaulted);
         Assert.True(rig.Host.IsConnectionJoined(peer.Connection.ConnectionId));
         PlayerInventorySnapshot after = rig.Runtime.TryCaptureInventorySnapshot(session)!.Value;
-        Assert.Equal(before, after.Slots.Count(slot => slot.Item.HasValue));
+        Assert.Equal(before, after.AllItems().Count());
         Assert.Equal("tool.builder-hammer", after.EquippedSlot!.Value.Item!.Value.ItemKind);
+    }
+
+    // The footprint bag's own hostile input, as bytes on a real connection: nothing it sends changes the
+    // inventory, the connection stays up, and a legitimate move afterwards still goes through (the rejections
+    // spent none of the budget).
+    [Fact]
+    public async Task TheFootprintBagsHostileIntents_OverARealConnection_ChangeNothing_AndLeaveTheBudgetAlone()
+    {
+        await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
+        Wave12DeltaActorLoopbackTests.Peer peer = await rig.JoinAsync("h1-bag");
+        PlayerSessionId session = new(peer.SessionId);
+        string before = Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value);
+        IPlayerActionPayload[] hostile =
+        [
+            new InventoryMoveIntent(2, 5),                    // over two items
+            new InventoryMoveIntent(4, 6),
+            new InventoryMoveIntent(2, 7),                    // off the board
+            new InventoryMoveIntent(2, 62),
+            new InventoryMoveIntent(10, 40),                  // a cell an item covers, not its anchor
+            new InventoryMoveIntent(200, 40),                 // a held-back row
+            new InventoryMoveIntent(100, 40),                 // a worn slot as the source
+            new InventoryMoveIntent(2, 100),                  // a worn slot as the target
+            new InventoryMoveIntent(2, 111),
+            new InventoryMoveIntent(int.MaxValue, 0),         // huge integers
+            new InventoryMoveIntent(0, int.MinValue),
+            new InventoryEquipIntent(100),                    // a worn item with no target
+            new InventoryEquipIntent(111, 100),               // an empty worn slot
+            new InventoryEquipIntent(4, 101),                 // the maul in the off hand
+            new InventoryEquipIntent(100, 102),               // the hammer on the head
+            new InventoryUnequipIntent(100, 2),               // onto the blade
+            new InventoryUnequipIntent(100, 64),              // not a bag cell
+            new InventoryUnequipIntent(100, int.MaxValue),
+            new InventoryDestroyIntent(10, 1),
+            new InventoryDestroyIntent(100, 1),
+            new InventoryDestroyIntent(200, 1),
+        ];
+
+        ulong sequence = 0;
+        for (int burst = 0; burst < 20; burst++)
+        {
+            for (int i = 0; i < PlayerActionQueue.MaxPendingActionsPerSession; i++)
+            {
+                peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, hostile[((burst * PlayerActionQueue.MaxPendingActionsPerSession) + i) % hostile.Length]));
+            }
+
+            await rig.WaitUntilAsync(
+                () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context) && context?.LastActionMessage?.ActionSequence >= sequence,
+                $"the server to read action {sequence}");
+            await rig.StepAsync();
+        }
+
+        Assert.False(peer.Connection.IsFaulted);
+        Assert.True(rig.Host.IsConnectionJoined(peer.Connection.ConnectionId));
+        Assert.Equal(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
+
+        // A real move goes through: no hostile intent above spent the action budget.
+        peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, new InventoryMoveIntent(2, 24)));
+        await rig.WaitUntilAsync(
+            () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context) && context?.LastActionMessage?.ActionSequence >= sequence,
+            $"the server to read action {sequence}");
+        await rig.StepAsync();
+        Assert.NotEqual(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
+        Assert.NotEqual(0, rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.IdAt(24));
     }
 }

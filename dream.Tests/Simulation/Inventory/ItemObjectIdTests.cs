@@ -8,6 +8,7 @@ using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Dream.Tests.Server.Persistence;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Simulation.Inventory;
 
@@ -42,8 +43,7 @@ public sealed class ItemObjectIdTests
         Assert.Equal(ids.Next, inventory.NextItemInstanceId);
         Assert.Equal(
             Enumerable.Range(2, StarterCount).Select(id => (long)id),
-            inventory.BuildSnapshot("Solo").Slots.Where(slot => slot.Item.HasValue)
-                .Select(slot => slot.Item!.Value.ItemInstanceId).Distinct().Order());
+            inventory.BuildSnapshot("Solo").AllItems().Select(item => item.ItemInstanceId).Distinct().Order());
 
         // A loaded inventory above the counter raises it.
         inventory.ApplyLoaded("Late", new PersistedPlayerInventory(
@@ -119,10 +119,7 @@ public sealed class ItemObjectIdTests
     private static long[] ItemIds(WorldSessionRuntime runtime, string sessionId)
     {
         PlayerInventorySnapshot snapshot = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(sessionId))!.Value;
-        return [.. snapshot.Slots
-            .Where(slot => slot.Item.HasValue)
-            .Select(slot => slot.Item!.Value.ItemInstanceId)
-            .Distinct()];
+        return [.. snapshot.AllItems().Select(item => item.ItemInstanceId).Distinct()];
     }
 
     private static PersistedPlacedCube Cube(int id, Vector3 cell, string owner, DateTime now)

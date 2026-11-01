@@ -24,7 +24,7 @@ public class DisposeRobustnessStructuralTests
         Assert.DoesNotContain("DisposeHud", source);
         foreach (string step in new[]
         {
-            "_fallbackCubeBuffer.Dispose", "_staticTerrainTextures.Dispose", "DeleteFontTexture",
+            "_fallbackCubeBuffer.Dispose", "_staticTerrainTextures.Dispose", "DisposeClassicHud", "DeleteFontTexture",
             "_hudShader.Dispose", "_shaderObj.Dispose", "DeleteHudBuffers",
         })
         {

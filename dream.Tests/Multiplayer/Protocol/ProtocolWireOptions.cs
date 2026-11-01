@@ -18,6 +18,10 @@ internal static class ProtocolWireOptions
     // reflection equivalent, so its own converter (and the chunk message's) is the reference.
     public static readonly JsonSerializerOptions V3 = CreateV3();
 
+    // V3 without the compact inventory converter: the inventory as the reflection serializer writes it,
+    // which is what protocol v12 sent (every item with its full text). For size comparisons only.
+    public static readonly JsonSerializerOptions V3Reflection = CreateV3(compactInventory: false);
+
     // V1 options (explicit nulls, derived properties) with the v3 world, for decoding tests that
     // need a v1-shaped payload around a world the v3 codec can read.
     public static readonly JsonSerializerOptions V1WithV3World = CreateV1WithV3World();
@@ -34,11 +38,19 @@ internal static class ProtocolWireOptions
     // frame (its own converter is the reference, like the world's) in the place of "actors", and a
     // shared broadcast body leaves out lastAcceptedCommandSequences, which travels in the envelope
     // header instead.
-    private static JsonSerializerOptions CreateV3()
+    private static JsonSerializerOptions CreateV3(bool compactInventory = true)
     {
         JsonSerializerOptions options = CreateV2();
         options.Converters.Add(new WorldSnapshotJsonConverter());
         options.Converters.Add(new WorldChunkMessageJsonConverter());
+        // Protocol v13: the compact inventory snapshot has no reflection equivalent either (its item text
+        // is rehydrated from the catalog), so its own converter is the reference; the converter's bytes
+        // are pinned by literal expectations in PlayerInventorySnapshotConverterTests.
+        if (compactInventory)
+        {
+            options.Converters.Add(new PlayerInventorySnapshotJsonConverter());
+        }
+
         ((DefaultJsonTypeInfoResolver)options.TypeInfoResolver!).Modifiers.Add(AddActorFrames);
         return options;
     }
@@ -84,6 +96,7 @@ internal static class ProtocolWireOptions
     {
         JsonSerializerOptions options = CreateV1();
         options.Converters.Add(new WorldSnapshotJsonConverter());
+        options.Converters.Add(new PlayerInventorySnapshotJsonConverter());
         return options;
     }
 

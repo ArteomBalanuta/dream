@@ -39,7 +39,7 @@ Desktop startup now opens a primary multiplayer connection screen instead of dro
 
 ## Current State
 
-- Targets `net10.0` (`global.json` pins the SDK). Multiplayer protocol version is 3 (`TransportEnvelope.CurrentProtocolVersion`); join and resync worlds travel as chunked transfers.
+- Targets `net10.0` (`global.json` pins the SDK). Multiplayer protocol version is 13 (`TransportEnvelope.CurrentProtocolVersion`); join and resync worlds travel as chunked transfers.
 - Server: 64 Hz simulation, 32 Hz snapshots by default (`DREAM_SNAPSHOT_INTERVAL_TICKS`), frame limits of 64 KB client to server and 8 MB server to client, SQLite persistence in WAL mode with group-committed writes and incremental checkpoints.
 - Client: connection screen first; a session that ends (lost connection, 8 s server-silence watchdog, rejected or timed-out join) returns to it with the reason. Keepalive, join retries and the 45 s join timeout are listed in [docs/configuration.md](docs/configuration.md), Connection liveness.
 - Tests: `dotnet test dream.Tests\dream.Tests.csproj`; see [docs/build-and-run.md](docs/build-and-run.md), Testing, for the output-folder rule when a game is running, the opt-in load tests (`DREAM_LOAD_TEST=1`) and the performance harness.
@@ -56,10 +56,10 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `1`: select building mode
 - `2`: select combat mode
 - Left mouse button: perform the active mode's primary action
-- `V`: toggle inventory
+- `V`: toggle the inventory and character windows (drag items between bag and slots, right-click for the item menu, hover for stats)
 - `0`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
-- `Esc`: toggle the settings menu and release or re-grab the cursor
+- `Esc`: close the inventory if it is open, otherwise toggle the settings menu and release or re-grab the cursor
 
 ## Settings Menu
 

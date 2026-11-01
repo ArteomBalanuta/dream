@@ -21,7 +21,12 @@ public readonly record struct HudInteractionRequest(
     FloatingCombatTextTuning? FloatingCombatText,
     int? EquipInventorySlotIndex,
     BuildMaterialChoice? BuildMaterial = null,
-    InventoryHudAction? InventoryAction = null)
+    InventoryHudAction? InventoryAction = null,
+    bool CloseInventory = false,
+    // A UI scale picked in Settings: 0 is auto, other values snap to quarter steps (GameSettings.SetUiScale).
+    float? UiScale = null,
+    // The slider was released: only then is the scale written to the config file.
+    bool UiScaleCommitted = false)
 {
     public static HudInteractionRequest None => new(
         null,
@@ -42,13 +47,20 @@ public readonly record struct HudInteractionRequest(
 
 public enum InventoryHudActionKind : byte
 {
-    // Equip the backpack item in SlotIndex into the equipment slot index Target (100..103).
+    // Equip the bag item anchored at SlotIndex (0..63) into the equipment slot index Target (100..111).
+    // Also a move between two wells: SlotIndex is the source well (100..111), Target the other well; the
+    // server swaps when the target holds an item.
     EquipTo,
-    // Empty the equipment slot SlotIndex (100..103). The server refuses any other index.
+    // Empty the equipment slot SlotIndex (100..111). Target is the bag anchor (0..63) the item should
+    // land on, or -1 for the server's first fit; it travels as InventoryUnequipIntent.TargetCell (null
+    // for -1). Target defaults to 0, which is the cell 0 anchor, so a caller with no cell must pass -1.
+    // The server refuses any other SlotIndex.
     Unequip,
-    // Move or swap the backpack slot SlotIndex with the backpack slot Target.
+    // Move the bag item anchored at SlotIndex (0..63) so its top-left cell lands on the anchor Target
+    // (0..63). Over exactly one other item the two swap (BagGrid.PlanMove). A SlotIndex that is not the
+    // anchor of an item is refused.
     Move,
-    // Destroy the item ItemInstanceId in the slot SlotIndex. The HUD asks for a confirm first.
+    // Destroy the item ItemInstanceId anchored at SlotIndex (0..63). The HUD asks for a confirm first.
     Destroy
 }
 

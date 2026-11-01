@@ -30,8 +30,13 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*">
+    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*;ui\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Kept in the repo for the later tier effects, but nothing loads it (UiAtlasStore.FilePages):
+         not copied. Remove these lines when something loads it. -->
+    <None Update="ui\items\items_mask.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 

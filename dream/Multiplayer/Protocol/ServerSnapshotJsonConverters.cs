@@ -580,6 +580,7 @@ internal sealed class DamageEventDeltaJsonConverter : JsonConverter<DamageEventD
     private static readonly JsonEncodedText ActorDied = JsonEncodedText.Encode("actorDied");
     private static readonly JsonEncodedText CurrentHealth = JsonEncodedText.Encode("currentHealth");
     private static readonly JsonEncodedText MaxHealth = JsonEncodedText.Encode("maxHealth");
+    private static readonly JsonEncodedText Hit = JsonEncodedText.Encode("hit");
 
     public override DamageEventDelta Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -600,6 +601,7 @@ internal sealed class DamageEventDeltaJsonConverter : JsonConverter<DamageEventD
         bool actorDied = false;
         int currentHealth = 0;
         int maxHealth = 0;
+        FloatingCombatTextKind hitKind = FloatingCombatTextKind.Regular;
         while (HotPathJson.NextProperty(ref reader, nameof(DamageEventDelta)))
         {
             if (reader.ValueTextEquals(ActorId.EncodedUtf8Bytes))
@@ -626,13 +628,18 @@ internal sealed class DamageEventDeltaJsonConverter : JsonConverter<DamageEventD
             {
                 maxHealth = HotPathJson.ReadInt32(ref reader);
             }
+            else if (reader.ValueTextEquals(Hit.EncodedUtf8Bytes))
+            {
+                // An undefined value is kept as sent; the client treats it as Regular.
+                hitKind = (FloatingCombatTextKind)HotPathJson.ReadInt32(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
             }
         }
 
-        return new DamageEventDelta(actorId, kind, amount, actorDied, currentHealth, maxHealth);
+        return new DamageEventDelta(actorId, kind, amount, actorDied, currentHealth, maxHealth, hitKind);
     }
 
     internal static void WriteDamage(Utf8JsonWriter writer, in DamageEventDelta value)
@@ -644,6 +651,11 @@ internal sealed class DamageEventDeltaJsonConverter : JsonConverter<DamageEventD
         writer.WriteBoolean(ActorDied, value.ActorDied);
         writer.WriteNumber(CurrentHealth, value.CurrentHealth);
         writer.WriteNumber(MaxHealth, value.MaxHealth);
+        if (value.HitKind != FloatingCombatTextKind.Regular)
+        {
+            writer.WriteNumber(Hit, (int)value.HitKind);
+        }
+
         writer.WriteEndObject();
     }
 }

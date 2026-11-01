@@ -213,7 +213,7 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             }
 
             string expectedPrefix =
-                $"{{\"protocolVersion\":11,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},{ack}\"payload\":";
+                $"{{\"protocolVersion\":13,\"messageKind\":\"{frame.Decoded.Envelope.MessageKind}\",\"sequence\":{frame.Decoded.Envelope.Sequence},{ack}\"payload\":";
             Assert.Equal(expectedPrefix, Encoding.UTF8.GetString(frame.Payload, 0, frame.PayloadOffset));
             Assert.Equal((byte)'}', frame.Payload[^1]);
             Assert.Equal(frame.Payload.Length - 1, frame.PayloadOffset + frame.PayloadJson.Length);

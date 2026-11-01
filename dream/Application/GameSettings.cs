@@ -46,6 +46,16 @@ public class GameSettings
 
     public bool InventoryVisible { get; private set; }
 
+    // True when F3 and the developer controls in Settings are available (admin_hud=1 or DREAM_ADMIN_HUD=1).
+    // Display only: nothing about it is sent to the server, and the env override is never saved.
+    public bool AdminHudAvailable { get; private set; }
+
+    // DREAM_HUD=imgui: the ImGui surface for the whole run.
+    public bool ForceImGuiHud { get; private set; }
+
+    // The configured HUD scale; 0 is auto. See ResolvedUiScale for the scale in use.
+    public float UiScaleSetting { get; private set; }
+
     public RuntimeState CurrentRuntimeState { get; private set; } = new(RuntimeMode.Gameplay);
 
     public int WindowWidth { get; private set; }
@@ -57,7 +67,7 @@ public class GameSettings
     public event Action<FloorSizeAppliedEvent>? FloorSizeApplied;
     public event Action<RuntimeStateChangedEvent>? RuntimeStateChanged;
 
-    public GameSettings(Vector2i initialSize, ViewModelRigSettings? viewModelRig = null, DesktopClientConfig? clientConfig = null)
+    public GameSettings(Vector2i initialSize, ViewModelRigSettings? viewModelRig = null, DesktopClientConfig? clientConfig = null, HudOptions? hudOptions = null)
     {
         _defaultViewModelRig = (viewModelRig ?? ViewModelRigSettings.CreateDefault()).Clone();
         ViewModelRig = _defaultViewModelRig.Clone();
@@ -71,7 +81,20 @@ public class GameSettings
             FloatingCombatText = clientConfig.FloatingCombatText;
         }
 
+        HudOptions hud = hudOptions ?? HudOptions.ResolveFromEnvironment(clientConfig);
+        AdminHudAvailable = hud.AdminHudAvailable;
+        ForceImGuiHud = hud.ForceImGuiSurface;
+        UiScaleSetting = hud.UiScale;
+
         ApplyResolution(initialSize);
+    }
+
+    // The HUD scale in use for the current window size.
+    public float ResolvedUiScale => Dream.Rendering.Ui.UiScale.Resolve(WindowWidth, WindowHeight, UiScaleSetting);
+
+    public void SetUiScale(float configured)
+    {
+        UiScaleSetting = HudOptions.SanitizeUiScale(configured);
     }
 
     public void ApplyResolution(Vector2i size)

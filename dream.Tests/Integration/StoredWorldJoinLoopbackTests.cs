@@ -23,11 +23,15 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // Re-pinned in the last fix loop of wave I, and the only cause is the day wolf's spawn in the join's actor
     // list: (5.5, 1, 2.5) became (52.5, 1, 52.5), 2 bytes longer in all (8,492 -> 8,494). Sha-256 was
     // 40391109031e35d0..., now e98ef020127c415a....
+    // Re-pinned again by classic HUD iteration 2 (protocol v13), whose compact inventory snapshot replaces
+    // the join's whole inventory object: it is cut out below (StripInventory) and pinned apart, by
+    // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests, so the pin covers every
+    // other byte of the three frames. Sha-256 was e98ef020127c415a..., now df39f10be444bb95....  The join is 6,031 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 8_494;
+    private const long C0TotalBytes = 6_031;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "e98ef020127c415ab79985482d11c5bf337f438024737d1df779b44bfff8a2ee";
+    private const string C0Sha256 = "df39f10be444bb9563f2100d83e9436001a9eb6f9493b4ba3560038020a2cf4f";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
@@ -49,24 +53,24 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         Assert.True(first.JoinAcceptedBytes <= JoinAcceptedGateBytes, $"{first.JoinAcceptedBytes} B");
     }
 
-    // The normalisation may remove only the three new fields, in their place behind detailLines: rarity,
-    // isRolled, an item's other fields and a field out of order must all stay and fail the capture.
+    // The normalisation may cut out only the inventory object of a join-accepted frame, whole, and must
+    // leave every other byte (including text that merely looks like it) alone.
     [Theory]
     [InlineData(
-        "\"detailLines\":[\"a\"],\"modifiers\":[{\"stat\":0,\"op\":0,\"value\":1}],\"heldLight\":1,\"equipSlots\":3,\"stackCount\":1",
-        "\"detailLines\":[\"a\"],\"stackCount\":1")]
+        "{\"a\":1,\"inventory\":{\"playerName\":\"p\",\"bag\":[[0,1,\"k\",0,[]]],\"worn\":[]},\"b\":2}",
+        "{\"a\":1,\"inventory\":{},\"b\":2}")]
     [InlineData(
-        "\"detailLines\":[],\"equipSlots\":1,\"rarity\":2,\"isRolled\":true",
-        "\"detailLines\":[],\"rarity\":2,\"isRolled\":true")]
+        "{\"inventory\":{\"playerName\":\"} \\\" {\",\"bag\":[],\"worn\":[]},\"roster\":[]}",
+        "{\"inventory\":{},\"roster\":[]}")]
     [InlineData(
-        "\"detailLines\":[],\"heldLight\":1,\"modifiers\":[]",
-        "\"detailLines\":[],\"modifiers\":[]")]
+        "{\"roster\":[{\"displayName\":\"inventory\"}],\"x\":{}}",
+        "{\"roster\":[{\"displayName\":\"inventory\"}],\"x\":{}}")]
     [InlineData(
-        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3",
-        "\"heldLight\":1,\"modifiers\":[{\"stat\":0}],\"equipSlots\":3")]
-    public void TheEquipmentFieldNormalisation_RemovesOnlyTheThreeNewFieldsAfterDetailLines(string frame, string expected)
+        "{\"a\":1,\"inventory\":null,\"b\":2}",
+        "{\"a\":1,\"inventory\":null,\"b\":2}")]
+    public void TheInventoryNormalisation_CutsOutOnlyTheInventoryObject(string frame, string expected)
     {
-        Assert.Equal(expected, ItemEquipmentFields().Replace(frame, "$1"));
+        Assert.Equal(expected, StripInventory(frame));
     }
 
     // Over real TCP a client joins a stored World10k: checksum, raised key sets and rubble equal.
@@ -165,13 +169,13 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
         {
             // The server tick a join lands on depends on whether the harness clock needed its nudge
             // tick (currentServerTick is 0 or 1); everything else is fixed. Normalise the tick.
-            // Protocols v9 (wave G), v10 (wave H) and v11 (wave I) change only the version digit of these frames; compare as v8.
-            // Wave H also adds the item fields of the equipment model (modifiers, heldLight, equipSlots, after
-            // an item's detailLines) to the inventory in join-accepted; they are stripped here so every other
-            // byte still matches the capture. Their size is pinned by StarterKitInventoryBytesTests.
-            string text = ItemEquipmentFields().Replace(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":11", "\"protocolVersion\":8"),
-                "$1");
+            // Protocols v9 (wave G), v10 (wave H), v11 (wave I), v12 (classic HUD) and v13 change only the
+            // version digit of these frames, apart from the inventory object of join-accepted (v10 added item
+            // fields to it and v13 rewrote it as the compact snapshot); compare as v8 with the inventory cut
+            // out, so every other byte still matches the capture. The inventory's size and shape are pinned by
+            // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests.
+            string text = StripInventory(
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":13", "\"protocolVersion\":8"));
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));
@@ -190,8 +194,52 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     [System.Text.RegularExpressions.GeneratedRegex(@"""(currentServerTick|serverTick)"":\d+")]
     private static partial System.Text.RegularExpressions.Regex TickNumber();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"(""detailLines"":\[[^\]]*\])(?:,""modifiers"":\[[^\]]*\])?(?:,""heldLight"":\d+)?(?:,""equipSlots"":\d+)?")]
-    private static partial System.Text.RegularExpressions.Regex ItemEquipmentFields();
+    // Replaces the value of the "inventory" property, when it is an object, with {}. The object is found by
+    // counting braces outside strings, so a brace or an escaped quote in a name cannot end it early.
+    private static string StripInventory(string json)
+    {
+        const string Property = "\"inventory\":{";
+        int start = json.IndexOf(Property, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return json;
+        }
+
+        int depth = 0;
+        bool inString = false;
+        for (int i = start + Property.Length - 1; i < json.Length; i++)
+        {
+            char c = json[i];
+            if (inString)
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+            }
+            else if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}' && --depth == 0)
+            {
+                return string.Concat(json.AsSpan(0, start), "\"inventory\":{}", json.AsSpan(i + 1));
+            }
+        }
+
+        return json;
+    }
 
     private sealed record FrameCapture(string Kinds, long TotalBytes, string Sha256)
     {
