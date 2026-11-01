@@ -106,24 +106,6 @@
    "x": 436,
    "y": 4
   },
-  "item.boots.plate": {
-   "h": 208,
-   "meta": {
-    "footprint": [
-     2,
-     2
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 208,
-   "x": 868,
-   "y": 380
-  },
   "item.bow.verdant": {
    "h": 368,
    "meta": {
@@ -142,7 +124,43 @@
    "x": 4,
    "y": 4
   },
-  "item.cape.navy": {
+  "item.feather.azure": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 868,
+   "y": 380
+  },
+  "item.gear.ember-wisp": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 1004,
+   "y": 380
+  },
+  "item.gear.gossamer-wings": {
    "h": 208,
    "meta": {
     "footprint": [
@@ -160,12 +178,30 @@
    "x": 4,
    "y": 676
   },
-  "item.feather.azure": {
-   "h": 208,
+  "item.gear.hunting-spear": {
+   "h": 368,
+   "meta": {
+    "footprint": [
+     2,
+     4
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 220,
+   "y": 4
+  },
+  "item.gear.iron-band": {
+   "h": 128,
    "meta": {
     "footprint": [
      1,
-     2
+     1
     ]
    },
    "pivot": [
@@ -175,8 +211,8 @@
    "slice": null,
    "tile": "none",
    "w": 128,
-   "x": 300,
-   "y": 676
+   "x": 1140,
+   "y": 892
   },
   "item.gear.iron-blade": {
    "h": 288,
@@ -196,6 +232,42 @@
    "x": 652,
    "y": 4
   },
+  "item.gear.iron-boots": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 300,
+   "y": 676
+  },
+  "item.gear.iron-gauntlets": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 516,
+   "y": 676
+  },
   "item.gear.leather-cap": {
    "h": 208,
    "meta": {
@@ -211,7 +283,7 @@
    "slice": null,
    "tile": "none",
    "w": 208,
-   "x": 436,
+   "x": 732,
    "y": 676
   },
   "item.gear.leather-vest": {
@@ -229,64 +301,10 @@
    "slice": null,
    "tile": "none",
    "w": 208,
-   "x": 652,
+   "x": 948,
    "y": 676
   },
-  "item.gear.ward-lantern": {
-   "h": 208,
-   "meta": {
-    "footprint": [
-     1,
-     2
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 128,
-   "x": 868,
-   "y": 676
-  },
-  "item.gem.amber": {
-   "h": 128,
-   "meta": {
-    "footprint": [
-     1,
-     1
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 128,
-   "x": 1220,
-   "y": 892
-  },
-  "item.gloves.plate": {
-   "h": 208,
-   "meta": {
-    "footprint": [
-     2,
-     2
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 208,
-   "x": 1004,
-   "y": 676
-  },
-  "item.helm.gilded": {
+  "item.gear.plated-leggings": {
    "h": 208,
    "meta": {
     "footprint": [
@@ -304,11 +322,11 @@
    "x": 4,
    "y": 892
   },
-  "item.legs.verdant": {
+  "item.gear.travel-cloak": {
    "h": 208,
    "meta": {
     "footprint": [
-     2,
+     3,
      2
     ]
    },
@@ -318,11 +336,29 @@
    ],
    "slice": null,
    "tile": "none",
-   "w": 208,
+   "w": 288,
    "x": 220,
    "y": 892
   },
-  "item.pendant.ward": {
+  "item.gear.ward-lantern": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 516,
+   "y": 892
+  },
+  "item.gear.ward-pendant": {
    "h": 128,
    "meta": {
     "footprint": [
@@ -340,25 +376,7 @@
    "x": 4,
    "y": 1108
   },
-  "item.pet.wisp": {
-   "h": 208,
-   "meta": {
-    "footprint": [
-     2,
-     2
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 208,
-   "x": 436,
-   "y": 892
-  },
-  "item.relic.disc": {
+  "item.gem.amber": {
    "h": 128,
    "meta": {
     "footprint": [
@@ -376,7 +394,25 @@
    "x": 140,
    "y": 1108
   },
-  "item.ring.ice": {
+  "item.helm.gilded": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 652,
+   "y": 892
+  },
+  "item.relic.disc": {
    "h": 128,
    "meta": {
     "footprint": [
@@ -410,24 +446,6 @@
    "tile": "none",
    "w": 208,
    "x": 868,
-   "y": 4
-  },
-  "item.spear.crimson": {
-   "h": 368,
-   "meta": {
-    "footprint": [
-     2,
-     4
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 208,
-   "x": 220,
    "y": 4
   },
   "item.tool.builder-hammer": {
@@ -499,7 +517,7 @@
    "slice": null,
    "tile": "none",
    "w": 128,
-   "x": 652,
+   "x": 868,
    "y": 892
   },
   "item.tool.torch": {
@@ -517,25 +535,7 @@
    "slice": null,
    "tile": "none",
    "w": 128,
-   "x": 788,
-   "y": 892
-  },
-  "item.wings.gossamer": {
-   "h": 208,
-   "meta": {
-    "footprint": [
-     3,
-     2
-    ]
-   },
-   "pivot": [
-    24,
-    24
-   ],
-   "slice": null,
-   "tile": "none",
-   "w": 288,
-   "x": 924,
+   "x": 1004,
    "y": 892
   }
  },

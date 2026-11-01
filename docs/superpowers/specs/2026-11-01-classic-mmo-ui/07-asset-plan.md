@@ -31,9 +31,9 @@ Asset files only. No C#, csproj or shader changes. Output under `dream/ui/`, gen
 
 ## Toolkit contract
 
-`tools/ui-assets/uiart.py` is committed and read-only for workstreams; read it first. Request changes through the coordinator. `tokens.json` holds the spec palette, with `zen.*` renamed `currency.*`.
+`tools/ui-assets/uiart.py` is committed and read-only for workstreams; read it first. Request changes through the coordinator. `tokens.json` holds the spec palette, with `zen.*` renamed `currency.*`, plus the `forge.*` colours that `forge.py` reads (rust, dust, ivory, gold, bare steel).
 
-Each `gen_*.py` exposes `main(out_root: Path) -> None`, writes only its own directories and imports only `uiart`, numpy and Pillow (not `ImageFont`). `pivot` and `slice` are px. In `slice`, values are multiples of 4. State suffixes: `.normal .hover .pressed .disabled`. Hover = face +10%, pressed = swap bevels, disabled = 50% desaturated.
+Each `gen_*.py` exposes `main(out_root: Path) -> None`, writes only its own directories and imports only `uiart`, `forge`, `gemtrace`, numpy, Pillow and the standard library (`concurrent` and `os` for the gem tracer's process pool); never `ImageFont`. `pivot` and `slice` are px. In `slice`, values are multiples of 4. State suffixes: `.normal .hover .pressed .disabled`. Hover = face +10%, pressed = swap bevels, disabled = 50% desaturated.
 
 `sdf` costs seconds on big canvases: compute per element, not per full window.
 
@@ -126,12 +126,12 @@ Sprite = footprint + 6 u margin per side. `pivot` = footprint top-left (24,24 px
 
 | Footprint | u | Sprites |
 |---|---|---|
-| 1x1 | 32x32 | `item.relic.disc` `item.ring.ice` `item.gem.amber` `item.pendant.ward` |
+| 1x1 | 32x32 | `item.relic.disc` `item.gear.iron-band` `item.gem.amber` `item.gear.ward-pendant` |
 | 1x2 | 32x52 | `item.feather.azure` `item.tool.survey-lantern` `item.gear.ward-lantern` `item.tool.torch` |
-| 2x2 | 52x52 | `item.gear.leather-cap` `item.gear.leather-vest` `item.armor.bone` `item.helm.gilded` `item.armor.gilded` `item.legs.verdant` `item.gloves.plate` `item.boots.plate` `item.pet.wisp` |
+| 2x2 | 52x52 | `item.gear.leather-cap` `item.gear.leather-vest` `item.armor.bone` `item.helm.gilded` `item.armor.gilded` `item.gear.plated-leggings` `item.gear.iron-gauntlets` `item.gear.iron-boots` `item.gear.ember-wisp` |
 | 2x3 | 52x72 | `item.tool.builder-hammer` `item.tool.stone-maul` `item.tool.field-blade` `item.gear.iron-blade` `item.axe.twinbit` `item.shield.kite` |
-| 2x4 | 52x92 | `item.bow.verdant` `item.spear.crimson` |
-| 3x2 | 72x52 | `item.wings.gossamer` (veined alpha) `item.cape.navy` (3 u top overflow) |
+| 2x4 | 52x92 | `item.bow.verdant` `item.gear.hunting-spear` |
+| 3x2 | 72x52 | `item.gear.gossamer-wings` (veined alpha) `item.gear.travel-cloak` (3 u top overflow) |
 
 Verify the `tool.*` and `gear.*` names against `dream/config/content/items.json`; every key must have a sprite. Footprints are art-only; the grid is 1x1 today. Set `meta.pivotOverflow` only if needed.
 
@@ -154,3 +154,39 @@ Items and fx: all names exist including all `items.json` keys; footprint matches
 ## Previews
 
 Each workstream writes previews to `tools/ui-assets/previews/`: Window assembles Inventory and Combine at 01's rects; HUD assembles the 640x48 bar with dragons at 1920 wide; Items shows icons on `#232425` at 2.25x and digits in every type colour. Reviewed by eye for style against the screenshots, never pixel-diffed, and committed.
+
+## Iteration 2 (classic HUD): final names and sizes
+
+Pinned by the C0b art core. Everything here is written by the generators through `forge.py`; `tests/check_art.py` holds the value gates. `tests/check_manifest.py` parses only the Manifest tables above, so the HUD rows below move into table B when WS4 lands the sprites (then the hud count in `check_manifest.py` goes from 80 to 95).
+
+### Renderer
+
+`tools/ui-assets/forge.py`: linear-light GGX with Schlick Fresnel, baked horizon AO and key shadow, edge wear driven by the convexity of the primary form, soot, rust and dust, a filmic finish with bloom, and a premultiplied linear-light Mitchell downsample. Hi-res stays 16 px/u, atlases 4 px/u. Call chain: `Relief.render` (or `bake`, `age`, `light`, `finish`), then `downsample`. `Relief.sprite_banded` renders canvases above about 8 Mpx in bands. Sprites that tile pass `tile="x"`, `"y"` or `"xy"` to `Relief` and `wrap=` to `downsample`.
+
+### HUD sprites that change
+
+| Sprite | Was u | Now u | Notes |
+|---|---|---|---|
+| `hud.dragon.left/right` | 107x46 | 118x58 | pivot stays the bottom outer corner; the bottom 6 u overlap the plate; layout rect 0,-52,118,58 |
+| `hud.talon.left/right` | 59x46 | 71x52 | three talons bite into the gem; layout rect 128,-3,71,52 (right mirrored) |
+| `gem.hp.*` `gem.mp.*` | 50x50 | 50x50 | names and sizes unchanged, channels redefined below |
+
+### HUD sprites added
+
+| Sprite | u | Notes |
+|---|---|---|
+| `gem.setting.left/right` | 62x56 | dark forged bezel under the gem; suggested rect 92,-5,62,56 (right mirrored) |
+| `gem.hp.spill` `gem.mp.spill` | 128x64 | additive gem light on the iron and talons, alpha scales with fill |
+| `hudnum.0` to `hudnum.9` `hudnum.slash` | 8x12 | bold ivory bar numerals, one advance for all |
+
+### Gem layers
+
+`gem.<k>.full` is the stone filled to the top, tonemapped. `gem.<k>.empty` is the same geometry as dark glass with residue. `gem.<k>.mask`: R is the refraction-warped fill threshold (same orientation as the old grey mask, low at the top of the stone and high at the bottom, but bent by the stone so it is no longer constant along a row), G the meniscus weight, B the facet id used as phase, A the silhouette. `gem.<k>.spec` carries hot facet glints only. All four share one alpha. The old rule that `mask` is grey and constant along each row no longer holds; WS4 rewrites those checks in `check_hud.py`. This section supersedes the paragraph on gem layers in table B.
+
+### Items
+
+Nine sprites were renamed to their content keys, art unchanged: `item.gloves.plate` to `item.gear.iron-gauntlets`, `item.boots.plate` to `item.gear.iron-boots`, `item.legs.verdant` to `item.gear.plated-leggings`, `item.pendant.ward` to `item.gear.ward-pendant`, `item.ring.ice` to `item.gear.iron-band`, `item.cape.navy` to `item.gear.travel-cloak`, `item.wings.gossamer` to `item.gear.gossamer-wings`, `item.pet.wisp` to `item.gear.ember-wisp`, `item.spear.crimson` to `item.gear.hunting-spear`. Footprints and sizes are as in table C.
+
+### Art gates
+
+`tools/ui-assets/tests/check_art.py` measures our own generated art at 2.25 px/u against constants (no outside image is read): bar mean .16 to .24, median .08 to .14, p95 at least .72, p99 at least .92, share over .85 between 2 and 5 percent, saturation at least .26, 4u over 0.5u band at least 1.1; dragon 4u band at least .04 and ratio at least 1.5; HP gem saturation at least .78 and p95 at least .75; MP gem mean at least .22 and saturation at least .78; window slab std at least .14 and 4u band at least .025; frame high frequency at most .11 and p99 at most .60; empty cell high frequency at most .055. The default run proves the chain on a forged sample plate; `--art` measures `dream/ui`.

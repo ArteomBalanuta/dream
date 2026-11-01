@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "tools" / "ui-assets"
 UI = ROOT / "dream" / "ui"
 ALLOWED_MODULES = {"__future__", "json", "math", "sys", "pathlib", "numpy", "PIL", "uiart", "typing",
-                   "dataclasses", "re", "hashlib", "tempfile", "importlib", "zlib"}
+                   "dataclasses", "re", "hashlib", "tempfile", "importlib", "zlib",
+                   # forge.py (shared renderer), gemtrace.py (gem ray tracer) and its process pool over tiles
+                   "forge", "gemtrace", "concurrent", "os"}
 BAD_STR = re.compile(r"reference|\.webp|fonts|\.ttf|\.otf|https?:|screenshot", re.I)
 BAD_NAME = re.compile(r"(^|[._\-])(mu|muonline|zen|chaos|larkan|loch|arcana|soul|bless|webzen|kundun|lorencia)([._\-]|$)", re.I)
 errs: list[str] = []
@@ -44,6 +46,16 @@ for p in sorted(TOOLS.glob("*.py")):
     for tok in tokenize.generate_tokens(io.StringIO(src).readline):
         if tok.type == tokenize.NAME and tok.string in ("ImageFont", "urllib", "requests"):
             errs.append(f"{p.name}:{tok.start[0]}: token {tok.string}")
+
+# check_art.py holds the art gates as constants: it must never read an image or file itself, only generated
+# sprites through uiart helpers and generator previews.
+art_path = TOOLS / "tests" / "check_art.py"
+art_src = art_path.read_text(encoding="utf-8")
+for n in ast.walk(ast.parse(art_src)):
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("open", "read_bytes", "read_text", "load"):
+        errs.append(f"check_art.py:{n.lineno}: direct file read .{n.func.attr}")
+    if isinstance(n, ast.Constant) and isinstance(n.value, str) and BAD_STR.search(n.value) and len(n.value) < 200:
+        errs.append(f"check_art.py:{n.lineno}: string {n.value[:60]!r}")
 
 names: list[str] = []
 for jp in UI.rglob("*.json"):
