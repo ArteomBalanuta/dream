@@ -5,10 +5,11 @@ using ImGuiNET;
 
 namespace Dream.Rendering.Core;
 
-// The classic HUD's GL surface: atlas load, CPU build into a UiBatch, one submit. Render thread
-// only. Frame flow (see the plan, section 3): BeginHudFrame, then BuildClassicHud (CPU, no GL), then
-// SubmitClassicHud (GL). A failure here never throws out of BeginHudFrame; it shows up as
-// ClassicHudAtlasState == Failed and the HUD surface selector falls back to ImGui.
+// The classic HUD GL surface: atlas load, CPU build into a UiBatch, one submit. Render thread only.
+// Frame flow (see the plan, section 3): BeginHudFrame loads, then ClassicHudSurface.Draw builds through
+// GlClassicHudBackend (the one path into ClassicHud.Build) and submits. A failure here never throws
+// out of BeginHudFrame; it shows up as ClassicHudAtlasState == Failed and the HUD surface selector
+// falls back to ImGui.
 public partial class Render
 {
     private UiGlyphTable? _uiGlyphs;
@@ -78,30 +79,16 @@ public partial class Render
         }
     }
 
-    // CPU only, no GL calls: resets the batch for the current viewport, resolves the layout
-    // (configuredScale 0 is auto) and runs ClassicHud.Build into it. Returns false, building
-    // nothing, unless the atlas is Ready. Exceptions from panels propagate to the caller, which
-    // owns the single try/catch at the surface boundary.
-    public bool BuildClassicHud(HudView view, IUiInput input, IHudActions actions, float configuredScale, out UiLayout layout)
+    // CPU only, no GL calls: resets the batch for this layout.
+    private UiBatch BeginClassicHudBatch(in UiLayout layout)
     {
-        ArgumentNullException.ThrowIfNull(view);
-        ArgumentNullException.ThrowIfNull(input);
-        ArgumentNullException.ThrowIfNull(actions);
-        layout = default;
-        if (_uiBatch == null || _uiAtlas == null || _uiAtlas.State != UiAtlasState.Ready || _uiAtlas.Table == null)
-        {
-            return false;
-        }
-
-        OpenTK.Mathematics.Vector2i size = ViewportSize;
-        layout = UiLayout.Create(size.X, size.Y, configuredScale);
-        _uiBatch.BeginFrame(size.X, size.Y, layout.Scale);
-        ClassicHud.Build(_uiBatch, input, view, in layout, _uiAtlas.Table, actions);
-        return true;
+        UiBatch batch = _uiBatch ?? throw new InvalidOperationException("The classic HUD batch is not ready.");
+        batch.BeginFrame(in layout);
+        return batch;
     }
 
-    // GL: uploads the built vertices and draws them, then restores the GL state. Call after a true
-    // BuildClassicHud and before the ImGui windows. Does nothing when there is nothing built.
+    // GL: uploads the built vertices and draws them, then restores the GL state. Call after
+    // ClassicHud.Build and before the ImGui windows. Does nothing when there is nothing built.
     public void SubmitClassicHud()
     {
         if (_uiBatch == null || _uiGl == null || _uiAtlas == null || _uiAtlas.State != UiAtlasState.Ready)
@@ -159,6 +146,30 @@ public partial class Render
             {
                 gl?.Dispose();
             }
+        }
+    }
+
+    // The GL side of ClassicHudSurface. Render owns the atlas, batch and GL objects (DisposeClassicHud
+    // releases them), so this only forwards.
+    private sealed class GlClassicHudBackend(Render render) : IClassicHudBackend
+    {
+        public ClassicHudBackendState State => render.ClassicHudAtlasState switch
+        {
+            UiAtlasState.Ready => ClassicHudBackendState.Ready,
+            UiAtlasState.Failed => ClassicHudBackendState.Failed,
+            _ => ClassicHudBackendState.Loading
+        };
+
+        public string? FailureReason => render.ClassicHudFailureReason;
+
+        public UiSpriteTable? Sprites => render._uiAtlas?.Table;
+
+        public IUiCanvas BeginFrame(in UiLayout layout) => render.BeginClassicHudBatch(in layout);
+
+        public void Submit() => render.SubmitClassicHud();
+
+        void IDisposable.Dispose()
+        {
         }
     }
 }

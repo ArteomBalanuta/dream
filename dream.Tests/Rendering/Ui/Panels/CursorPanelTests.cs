@@ -62,6 +62,8 @@ public class CursorPanelTests
 
         public bool ModalActive { get; set; }
 
+        public UiPointer Pointer => default;
+
         public bool Button(int id, UiRect r) => false;
 
         public bool Hovered(int id, UiRect r) => false;

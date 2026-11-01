@@ -1,5 +1,9 @@
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Panels;
+using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
+using Dream.Tests.Rendering.Ui.Panels;
 using Dream.Tests.Support;
 using OpenTK.Mathematics;
 using SixLabors.ImageSharp.PixelFormats;
@@ -26,7 +30,7 @@ public class HudPreviewTests
     // Fixture scene: every primitive the batch has, drawn with the real sprites and the real font.
     private static void DrawFixtures(UiBatch b, UiSpriteTable t, UiLayout l)
     {
-        float s = l.Scale;
+        float s = l.PixelsPerTexel;
 
         // Bar: three groups stretched into their rects, gap fill tiled between them.
         b.Tile(t.Get(UiSpriteNames.GapFill), l.LeftGap, White);
@@ -239,6 +243,121 @@ public class HudPreviewTests
 
         Assert.True(sawFill, "expected fill-coloured pixels");
         Assert.True(sawRim, "expected rim-coloured pixels");
+    }
+
+    // ---- real panels on a populated view ----------------------------------------------------
+
+    private static HudStatusSnapshot Status(bool dead = false) => new(
+        73, 120, Dream.Simulation.Players.PlayerInteractionMode.Combat, 5, 9, 12, 1.2f, 14, 7, 40, 100, 10, 1f, 10, 3, dead, dead ? 5 : 0);
+
+    // Every item sprite the art has, cycling the three tiers, plus four worn items.
+    private static InventoryScene PopulatedScene()
+    {
+        InventoryScene scene = new();
+        ItemRarity[] tiers = [ItemRarity.Common, ItemRarity.Uncommon, ItemRarity.Rare];
+        int slot = 0;
+        foreach (string name in scene.Table.Names.Where(n => n.StartsWith("item.", StringComparison.Ordinal)).Order())
+        {
+            if (slot >= scene.Items.Length)
+            {
+                break;
+            }
+
+            scene.Items[slot] = InventoryScene.Item(slot + 1, name["item.".Length..], rarity: tiers[slot % 3], stack: slot % 5 == 4 ? 12 : 1);
+            slot++;
+        }
+
+        scene.Worn[0] = scene.Items[0];
+        scene.Equipped[0] = true;
+        scene.Worn[2] = scene.Items[1];
+        scene.Equipped[1] = true;
+        scene.Refresh();
+        scene.View.Status = Status();
+        scene.View.PlayerPosition = new Vector3(142.6f, 12f, -87.2f);
+        scene.View.Equipment = CharacterPanelModel.BuildSlotRows(scene.View.Inventory);
+        scene.View.StatRows = CharacterPanelModel.BuildStatRows(scene.View.Status);
+        return scene;
+    }
+
+    private static void BuildFrames(UiBatch b, UiSpriteTable t, UiLayout lay, HudView view, UiPointer[] frames)
+    {
+        UiInputRouter router = new();
+        NoActions actions = new();
+        foreach (UiPointer pointer in frames)
+        {
+            b.BeginFrame(in lay);
+            router.BeginFrame(pointer);
+            ClassicHud.Build(b, router, view, in lay, t, actions);
+            router.EndFrame();
+        }
+    }
+
+    private static UiPointer NoPointer => new(Vector2.Zero, false, false, false);
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    [InlineData(1440, 1024)]
+    public void RealPanels_PlayScene(int w, int h)
+    {
+        using InventoryScene scene = PopulatedScene();
+        scene.View.InventoryOpen = false;
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        FloatingCombatTextRenderState Number(string text, FloatingCombatTextKind kind, float x, long order) =>
+            new(text, Vector3.Zero, 0f, 0f, 0f, 1f, 1f, default, 0, kind, 0.3f, order, (int)order, 1f, new Vector2(x, h * 0.4f));
+        scene.View.CombatText = [
+            Number("128", FloatingCombatTextKind.Regular, w * 0.3f, 1),
+            Number("2047", FloatingCombatTextKind.Critical, w * 0.5f, 2),
+            Number("36", FloatingCombatTextKind.Incoming, w * 0.7f, 3)];
+        scene.View.Labels = [new HudWorldLabel(new Vector2(w * 0.5f, h * 0.25f), "Grey wolf Lv 4", "42/60")];
+
+        UiSoftwareCompositor c = Render("real-play", w, h, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [NoPointer]));
+
+        Assert.Equal((w, h), (c.Width, c.Height));
+    }
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    [InlineData(1440, 1024)]
+    public void RealPanels_InventoryOpen(int w, int h)
+    {
+        using InventoryScene scene = PopulatedScene();
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        Vector2 p = new(layout.Inventory.X + (70f * layout.Scale), layout.Inventory.Y + (300f * layout.Scale));
+        UiPointer pointer = new(p, false, false, true);
+
+        UiSoftwareCompositor c = Render("real-inventory", w, h, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [pointer]));
+
+        Assert.Equal((w, h), (c.Width, c.Height));
+    }
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    public void RealPanels_Tooltip(int w, int h)
+    {
+        using InventoryScene scene = PopulatedScene();
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        Vector2 p = InventoryScene.Centre(InventoryWindow.SlotRect(layout, layout.Inventory, 6));
+        UiPointer pointer = new(p, false, false, true);
+
+        UiSoftwareCompositor c = Render("real-tooltip", w, h, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [pointer, pointer, pointer]));
+
+        Assert.True(InventoryUiState.Current.HoverActive);
+        Assert.Equal((w, h), (c.Width, c.Height));
+    }
+
+    [Fact]
+    public void RealPanels_Dead()
+    {
+        using InventoryScene scene = PopulatedScene();
+        scene.View.InventoryOpen = false;
+        scene.View.Status = Status(dead: true);
+
+        UiSoftwareCompositor c = Render("real-dead", 1920, 1080, (b, t, lay) => BuildFrames(b, t, lay, scene.View, [NoPointer]));
+
+        Assert.Equal(1920, c.Width);
     }
 
     [Fact]

@@ -1,10 +1,5 @@
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using Dream.Rendering.Ui;
-using Image = SixLabors.ImageSharp.Image;
 
 namespace Dream.Client.Scenes;
 
@@ -121,7 +116,7 @@ public partial class PlayScene
         string path = script.FilePath(_hudCaptureStep);
         try
         {
-            WriteBackBufferPng(path);
+            _render.CaptureBackBufferPng(path);
             Console.WriteLine($"[hud-capture] wrote {path} surface={_render.CurrentHudSurface(_settings)}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -167,34 +162,5 @@ public partial class PlayScene
         }
 
         Console.WriteLine($"[hud-capture] step {step}: surface={_render.CurrentHudSurface(_settings)} admin={_settings.AdminHudAvailable}");
-    }
-
-    private void WriteBackBufferPng(string path)
-    {
-        Vector2i size = _render.ViewportSize;
-        int width = size.X;
-        int height = size.Y;
-        byte[] pixels = new byte[width * height * 4];
-        GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
-        GL.ReadBuffer(ReadBufferMode.Back);
-        GL.ReadPixels(0, 0, width, height, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
-
-        // GL rows run bottom to top; the PNG runs top to bottom. The framebuffer's alpha is not
-        // meaningful, so the image is written opaque.
-        byte[] flipped = new byte[pixels.Length];
-        int stride = width * 4;
-        for (int y = 0; y < height; y++)
-        {
-            System.Buffer.BlockCopy(pixels, (height - 1 - y) * stride, flipped, y * stride, stride);
-        }
-
-        for (int i = 3; i < flipped.Length; i += 4)
-        {
-            flipped[i] = 255;
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(flipped, width, height);
-        image.SaveAsPng(path);
     }
 }

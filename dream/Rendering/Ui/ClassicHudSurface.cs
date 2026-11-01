@@ -16,8 +16,9 @@ public interface IClassicHudBackend : IDisposable
     // Valid when State is Ready.
     UiSpriteTable? Sprites { get; }
 
-    // Starts a frame and returns the canvas the panels draw into. CPU only, no GL calls.
-    IUiCanvas BeginFrame(int viewportWidth, int viewportHeight);
+    // Starts a frame for this layout (viewport, texel scale, text scale) and returns the canvas the
+    // panels draw into. CPU only, no GL calls.
+    IUiCanvas BeginFrame(in UiLayout layout);
 
     // Uploads and draws what the canvas collected, then restores the GL state it changed.
     void Submit();
@@ -50,8 +51,6 @@ public readonly struct ClassicHudFrame
     public LootFeedbackSystem? Loot { get; init; }
 
     public IReadOnlyList<FloatingCombatTextRenderState>? CombatText { get; init; }
-
-    public IReadOnlyList<Vector2>? CombatTextScreen { get; init; }
 
     public IReadOnlyList<HudWorldLabel>? Labels { get; init; }
 }
@@ -90,7 +89,8 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         }
 
         _builder ??= new HudViewBuilder(sprites, _view);
-        if (_builder.Refresh(frame.Status, frame.Inventory))
+        _builder.Refresh(frame.Status, frame.Inventory);
+        if (_builder.InventoryChanged)
         {
             // The snapshot changed under a drag: the dragged slot may be a different item now.
             Input.CancelDrag();
@@ -103,12 +103,11 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.Loot = frame.Loot;
         v.InventoryOpen = frame.InventoryOpen;
         v.CombatText = frame.CombatText ?? Array.Empty<FloatingCombatTextRenderState>();
-        v.CombatTextScreen = frame.CombatTextScreen ?? Array.Empty<Vector2>();
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);
-        IUiCanvas canvas = _backend.BeginFrame(frame.Width, frame.Height);
+        IUiCanvas canvas = _backend.BeginFrame(in layout);
         ClassicHud.Build(canvas, Input, v, in layout, sprites, this);
         Input.EndFrame();
         _backend.Submit();

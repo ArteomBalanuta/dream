@@ -105,7 +105,7 @@ public sealed class StatusBarRecordingCanvas : IUiCanvas
     }
 }
 
-public sealed class StatusBarFakeInput : IUiInput, IUiPointerSource
+public sealed class StatusBarFakeInput : IUiInput
 {
     public UiPointer Pointer { get; set; }
 

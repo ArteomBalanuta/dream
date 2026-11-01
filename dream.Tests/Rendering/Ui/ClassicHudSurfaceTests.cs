@@ -34,7 +34,7 @@ public class ClassicHudSurfaceTests
         public int Submits { get; private set; }
         public int Width { get; private set; }
         public bool Disposed { get; private set; }
-        public IUiCanvas BeginFrame(int viewportWidth, int viewportHeight) { Begins++; Width = viewportWidth; return new NullCanvas(); }
+        public IUiCanvas BeginFrame(in UiLayout layout) { Begins++; Width = layout.ViewportWidth; return new NullCanvas(); }
         public void Submit() => Submits++;
         public void Dispose() => Disposed = true;
     }
@@ -111,7 +111,6 @@ public class ClassicHudSurfaceTests
         Assert.Equal("no", surface.View.RejectionMessage);
         Assert.Same(labels, surface.View.Labels);
         Assert.Empty(surface.View.CombatText);
-        Assert.Empty(surface.View.CombatTextScreen);
     }
 
     [Fact]

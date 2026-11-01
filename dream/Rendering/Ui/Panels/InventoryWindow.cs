@@ -30,12 +30,6 @@ public static class InventoryWindow
     internal const int IdConfirmDestroy = IdBase + 0x501;
     internal const int IdConfirmCancel = IdBase + 0x502;
 
-    // Sprites that exist in the art but are not in UiSpriteNames.Required: drawn when present.
-    internal const string ScrollRod = "win.scroll.rod";
-    internal const string LineBox = "win.linebox";
-    internal const string Plate44Normal = "btn.plate44x32.normal";
-    internal const string Plate44Hover = "btn.plate44x32.hover";
-
     private readonly record struct WellDef(
         EquipmentSlot Slot,
         string Well,
@@ -295,7 +289,7 @@ public static class InventoryWindow
 
             if (!dragging && i.RightClicked(IdWell + w, r))
             {
-                st.OpenMenu(v, index, r, i.PointerPosition);
+                st.OpenMenu(v, index, r, i.Pointer.Position);
             }
         }
 
@@ -338,7 +332,7 @@ public static class InventoryWindow
 
             if (i.RightClicked(IdBagSlot + slot, r))
             {
-                st.OpenMenu(v, slot, r, i.PointerPosition);
+                st.OpenMenu(v, slot, r, i.Pointer.Position);
             }
         }
 
@@ -428,7 +422,7 @@ public static class InventoryWindow
     // The pointer is over r. Uses the real position when the input offers it, otherwise Hovered.
     internal static bool OverRect(IUiInput i, int id, UiRect r)
     {
-        Vector2 p = i.PointerPosition;
+        Vector2 p = i.Pointer.Position;
         return float.IsFinite(p.X) && float.IsFinite(p.Y) ? r.Contains(p) : i.Hovered(id, r);
     }
 
@@ -504,7 +498,7 @@ public static class InventoryWindow
         if (inventoryKind)
         {
             c.NineSlice(strip, l.FromUnits(win, 34f, 12f, 120f, 8f), White);
-            if (s.TryGet(ScrollRod, out UiSprite rod))
+            if (s.TryGet(UiSpriteNames.WinScrollRod, out UiSprite rod))
             {
                 c.Sprite(rod, l.FromUnits(win, 16f, 22f, 158f, 10f), White);
             }

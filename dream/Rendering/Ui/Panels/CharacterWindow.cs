@@ -51,7 +51,7 @@ public static class CharacterWindow
     private static void DrawRow(IUiCanvas c, UiSpriteTable s, in UiLayout l, UiRect win, in CharacterStatRow row, float y)
     {
         UiRect box = l.FromUnits(win, RowX, y, RowW, RowH);
-        if (s.TryGet(InventoryWindow.LineBox, out UiSprite lineBox))
+        if (s.TryGet(UiSpriteNames.WinLineBox, out UiSprite lineBox))
         {
             c.NineSlice(lineBox, box, UiColor.White);
         }

@@ -24,12 +24,6 @@ public interface IUiInput
 
     bool ModalActive { get; set; }
 
-    // This frame's pointer (additive after C0, with a default so existing fakes still compile):
-    // the cursor panel and the drag ghost need the position.
-    UiPointer Pointer => default;
-
-    // Pointer position in pixels, or NaN when the input cannot tell. Additive default so existing
-    // implementations keep compiling; the router should override it (drag ghost and drop-target
-    // highlight read it, and fall back to Hovered when it is NaN).
-    Vector2 PointerPosition => new(float.NaN, float.NaN);
+    // The pointer this frame. Position is NaN when the input cannot tell where it is.
+    UiPointer Pointer { get; }
 }

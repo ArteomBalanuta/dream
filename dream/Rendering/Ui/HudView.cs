@@ -24,7 +24,6 @@ public sealed class HudView
     public const int WornSlots = 4;
 
     private static readonly IReadOnlyList<FloatingCombatTextRenderState> NoCombatText = Array.Empty<FloatingCombatTextRenderState>();
-    private static readonly IReadOnlyList<Vector2> NoScreenPoints = Array.Empty<Vector2>();
     private static readonly IReadOnlyList<HudWorldLabel> NoLabels = Array.Empty<HudWorldLabel>();
 
     public HudStatusSnapshot Status { get; set; }
@@ -49,13 +48,10 @@ public sealed class HudView
 
     public LootFeedbackSystem? Loot { get; set; }
 
+    // Only numbers the renderer could project; ScreenAnchor of each state is its pixel position.
     public IReadOnlyList<FloatingCombatTextRenderState> CombatText { get; set; } = NoCombatText;
 
     public IReadOnlyList<HudWorldLabel> Labels { get; set; } = NoLabels;
-
-    // Additive after C0: the screen anchor (pixels) of CombatText[i]. The surface projects the
-    // text and keeps only what is in front of the camera, so both lists have the same length.
-    public IReadOnlyList<Vector2> CombatTextScreen { get; set; } = NoScreenPoints;
 
     public bool InventoryOpen { get; set; }
 }

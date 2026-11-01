@@ -400,11 +400,7 @@ public class UiBatchTests
             b.PopClip();
         }
 
-        Frame();
-        Frame();
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        Frame();
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        long allocated = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(Frame);
 
         Assert.True(b.QuadCount > 1000);
         Assert.Equal(0, allocated);

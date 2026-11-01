@@ -25,6 +25,16 @@ public readonly record struct UiLayout(
     public const float WindowWidthUnits = 190f;
     public const float WindowHeightUnits = 432f;
 
+    // The art is authored at 4 texels per unit.
+    public const float ArtTexelsPerUnit = 4f;
+
+    // Screen pixels per sprite texel: what 9-slice borders and tile steps scale by.
+    public float PixelsPerTexel => Scale / ArtTexelsPerUnit;
+
+    // Multiplier on the baked font sizes. Panels lay text out in baked pixels (13 and 26), so it stays
+    // 1 until a scale where whole-number doubling is both needed and crisp.
+    public float TextScale => MathF.Max(1f, MathF.Floor(Scale / 2f));
+
     // configuredScale 0 is auto (see UiScale.Resolve).
     public static UiLayout Create(int width, int height, float configuredScale)
     {

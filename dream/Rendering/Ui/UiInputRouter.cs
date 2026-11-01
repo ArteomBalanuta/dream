@@ -126,8 +126,13 @@ public sealed class UiInputRouter : IUiInput
         }
     }
 
-    // F3 and a changed inventory snapshot call this. Nothing is dropped anywhere.
-    public void CancelDrag() => ClearDrag();
+    // F3 and a changed inventory snapshot call this. Nothing is dropped anywhere, and the press is
+    // forgotten so a button still held cannot start the same drag again on the new snapshot.
+    public void CancelDrag()
+    {
+        ClearDrag();
+        _pressId = NoId;
+    }
 
     public bool Hovered(int id, UiRect r)
     {

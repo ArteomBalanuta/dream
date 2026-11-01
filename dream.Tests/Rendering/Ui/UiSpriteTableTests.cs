@@ -225,12 +225,65 @@ public class UiSpriteTableTests
     }
 
     [Fact]
-    public void ClassicHud_Build_WithStubPanels_DoesNothing()
+    public void ClassicHud_Build_EmptyView_DrawsTheBarAndNoWindows()
     {
         UiSpriteTable table = LoadReal();
         UiLayout layout = UiLayout.Create(1920, 1080, 0f);
+        Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
+        CountingCanvas canvas = new();
+        NoActions actions = new();
 
-        ClassicHud.Build(null!, null!, new HudView(), in layout, table, null!);
+        ClassicHud.Build(canvas, new Dream.Tests.Support.NullUiInput(), new HudView(), in layout, table, actions);
+
+        // The bar always draws; windows and actions need an open inventory and a pointer.
+        Assert.True(canvas.Sprites > 20, $"{canvas.Sprites} sprites");
+        Assert.Equal(0, canvas.WindowDraws);
+        Assert.Equal(0, actions.Count);
+        Assert.Equal(0, canvas.ClipDepth);
+    }
+
+    private sealed class NoActions : IHudActions
+    {
+        public int Count { get; private set; }
+
+        public void Inventory(Dream.Rendering.Hud.InventoryHudAction action) => Count++;
+
+        public void CloseInventory() => Count++;
+    }
+
+    private sealed class CountingCanvas : IUiCanvas
+    {
+        public int Sprites { get; private set; }
+
+        public int WindowDraws { get; private set; }
+
+        public int ClipDepth { get; private set; }
+
+        private void Count(in UiSprite s)
+        {
+            Sprites++;
+            WindowDraws += s.Page == UiPage.Window ? 1 : 0;
+        }
+
+        public void Sprite(in UiSprite s, UiRect dst, UiColor tint) => Count(in s);
+
+        public void SpriteClipped(in UiSprite s, UiRect dst, UiRect srcNormalized, UiColor tint) => Count(in s);
+
+        public void NineSlice(in UiSprite s, UiRect dst, UiColor tint) => Count(in s);
+
+        public void Tile(in UiSprite s, UiRect dst, UiColor tint) => Count(in s);
+
+        public void Solid(UiRect dst, UiColor color) { }
+
+        public void MaskGlyph(in UiSprite s, UiRect dst, UiColor fill, UiColor rim) => Count(in s);
+
+        public float Text(ReadOnlySpan<char> text, OpenTK.Mathematics.Vector2 pos, UiTextStyle style, UiColor color) => 0f;
+
+        public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style) => 0f;
+
+        public void PushClip(UiRect r) => ClipDepth++;
+
+        public void PopClip() => ClipDepth--;
     }
 
     private static void CopyDirectory(string from, string to)

@@ -80,11 +80,12 @@ public sealed class UiBatch : IUiCanvas
         _glyphs = glyphs ?? throw new ArgumentNullException(nameof(glyphs));
     }
 
-    // Pixels per art unit. Border widths of 9-slices and the step of tiles are the art size times
-    // this. Set it from UiLayout.Scale each frame.
+    // Screen pixels per sprite texel. Border widths of 9-slices and the step of tiles are the art size
+    // times this. Set from UiLayout.PixelsPerTexel each frame.
     public float UnitScale { get; set; } = 1f;
 
-    // Multiplier on baked glyph size. 1 draws the font at its baked pixel size (13 and 26 px).
+    // Multiplier on baked glyph size. 1 draws the font at its baked pixel size (13 and 26 px). Set
+    // from UiLayout.TextScale each frame.
     public float TextScale { get; set; } = 1f;
 
     public int QuadCount => _quadCount;
@@ -139,6 +140,13 @@ public sealed class UiBatch : IUiCanvas
                 SetPageSize(page, w, h);
             }
         }
+    }
+
+    // One frame canvas for a layout: viewport, texel scale and text scale all come from it.
+    public void BeginFrame(in UiLayout layout)
+    {
+        BeginFrame(layout.ViewportWidth, layout.ViewportHeight, layout.PixelsPerTexel);
+        TextScale = layout.TextScale;
     }
 
     public void BeginFrame(int viewportWidth, int viewportHeight, float unitScale)

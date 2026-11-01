@@ -499,7 +499,7 @@ public static class ItemOverlays
 
     private static void DrawGhost(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, InventoryUiState st)
     {
-        Vector2 p = i.PointerPosition;
+        Vector2 p = i.Pointer.Position;
         if (!float.IsFinite(p.X) || !float.IsFinite(p.Y))
         {
             return;
@@ -663,7 +663,7 @@ public static class ItemOverlays
     private static bool DrawDialogButton(IUiCanvas c, IUiInput i, UiSpriteTable s, int id, UiRect r, string label, UiColor color)
     {
         bool hovered = i.Hovered(id, r);
-        if (s.TryGet(hovered ? InventoryWindow.Plate44Hover : InventoryWindow.Plate44Normal, out UiSprite plate))
+        if (s.TryGet(hovered ? UiSpriteNames.Plate44Hover : UiSpriteNames.Plate44Normal, out UiSprite plate))
         {
             c.Sprite(plate, r, White);
         }

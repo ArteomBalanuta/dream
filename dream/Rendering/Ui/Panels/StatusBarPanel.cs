@@ -59,7 +59,7 @@ public static class StatusBarPanel
         UiRect g = l.LeftGroup;
 
         // Inert stone slab (no icon), the coordinates plate, an inert gauge with its caps.
-        Sprite(c, s, "hud.slab.normal", l.FromUnits(g, 5f, 1f, 56f, 22f), white);
+        Sprite(c, s, UiSpriteNames.SlabNormal, l.FromUnits(g, 5f, 1f, 56f, 22f), white);
         UiRect coords = l.FromUnits(g, 5f, 24f, 56f, 22f);
         Sprite(c, s, UiSpriteNames.CoordsPlate, coords, white);
         Sprite(c, s, UiSpriteNames.GaugeEmpty, l.FromUnits(g, 73f, 5f, 15f, 35f), white);
@@ -99,8 +99,8 @@ public static class StatusBarPanel
         UiRect g = l.RightGroup;
 
         // Two inert slabs, an inert gauge and caps, and the MP gem as an empty stone with no number.
-        Sprite(c, s, "hud.slab.normal", l.FromUnits(g, 579f - RightStart, 1f, 56f, 22f), white);
-        Sprite(c, s, "hud.slab.normal", l.FromUnits(g, 579f - RightStart, 24f, 56f, 22f), white);
+        Sprite(c, s, UiSpriteNames.SlabNormal, l.FromUnits(g, 579f - RightStart, 1f, 56f, 22f), white);
+        Sprite(c, s, UiSpriteNames.SlabNormal, l.FromUnits(g, 579f - RightStart, 24f, 56f, 22f), white);
         Sprite(c, s, UiSpriteNames.GaugeEmpty, l.FromUnits(g, 552f - RightStart, 5f, 15f, 35f), white);
         Sprite(c, s, UiSpriteNames.GaugeCapRight, l.FromUnits(g, 543f - RightStart, 1f, 33f, 46f), white);
         Sprite(c, s, UiSpriteNames.GemMpEmpty, l.FromUnits(g, 492f - RightStart, -2f, 50f, 50f), white);
@@ -124,7 +124,7 @@ public static class StatusBarPanel
             c.Tile(fill, new UiRect(span.X, span.Y, MathF.Round(span.W * exp), span.H), white);
         }
 
-        if (s.TryGet("exp.tick", out UiSprite tick))
+        if (s.TryGet(UiSpriteNames.ExpTick, out UiSprite tick))
         {
             for (int t = 1; t < 10; t++)
             {
@@ -137,27 +137,27 @@ public static class StatusBarPanel
         Sprite(c, s, UiSpriteNames.ExpCup, cup, white);
 
         // Q/W/E: empty sockets, no letters, no input.
-        Sprite(c, s, "qwe.slot.q.normal", l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f), white);
-        Sprite(c, s, "qwe.slot.w.normal", l.FromUnits(g, 235f - CentreStart, 18f, 29f, 28f), white);
-        Sprite(c, s, "qwe.slot.e.normal", l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f), white);
+        Sprite(c, s, UiSpriteNames.QweSlotQ, l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f), white);
+        Sprite(c, s, UiSpriteNames.QweSlotW, l.FromUnits(g, 235f - CentreStart, 18f, 29f, 28f), white);
+        Sprite(c, s, UiSpriteNames.QweSlotE, l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f), white);
         for (int k = 0; k < NotchX.Length; k++)
         {
-            Sprite(c, s, "qwe.notch", l.FromUnits(g, NotchX[k] - CentreStart, 14f, 18f, 14f), white);
+            Sprite(c, s, UiSpriteNames.QweNotch, l.FromUnits(g, NotchX[k] - CentreStart, 14f, 18f, 14f), white);
         }
 
         // Skill tile: the mode. Combat shows the default attack icon; Building shows the disabled tile.
         UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
-        Sprite(c, s, "skill.bracket", bracket, white);
+        Sprite(c, s, UiSpriteNames.SkillBracket, bracket, white);
         bool combat = st.InteractionMode == PlayerInteractionMode.Combat;
         UiRect tile = l.FromUnits(g, 310.5f - CentreStart, 14.5f, 19f, 28f);
-        Sprite(c, s, combat ? UiSpriteNames.SkillTile : "skill.tile.disabled", tile, white);
+        Sprite(c, s, combat ? UiSpriteNames.SkillTile : UiSpriteNames.SkillTileDisabled, tile, white);
         if (combat)
         {
-            Sprite(c, s, "skill.icon.default", l.FromUnits(g, 311.5f - CentreStart, 15.5f, 17f, 26f), white);
+            Sprite(c, s, UiSpriteNames.SkillIconDefault, l.FromUnits(g, 311.5f - CentreStart, 15.5f, 17f, 26f), white);
         }
 
         // Icon buttons: banner and lens are inert frames; the satchel closes an open overlay.
-        Sprite(c, s, "iconbtn.plinth", l.FromUnits(g, 341f - CentreStart, 16.5f, 101f, 30f), white);
+        Sprite(c, s, UiSpriteNames.IconButtonPlinth, l.FromUnits(g, 341f - CentreStart, 16.5f, 101f, 30f), white);
         UiRect banner = l.FromUnits(g, 346f - CentreStart, 18f, 28f, 28f);
         UiRect lens = l.FromUnits(g, 377f - CentreStart, 18f, 28f, 28f);
         UiRect satchel = l.FromUnits(g, 408f - CentreStart, 18f, 28f, 28f);

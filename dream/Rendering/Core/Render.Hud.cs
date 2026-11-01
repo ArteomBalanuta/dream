@@ -93,8 +93,8 @@ public partial class Render
     private bool _classicBackendCreated;
     private bool _classicCursorActive;
     private bool _classicSurfaceActive;
+    private const float MaxLoadingStepSeconds = 0.1f;
     private readonly List<FloatingCombatTextRenderState> _classicCombatText = new();
-    private readonly List<Vector2> _classicCombatTextScreen = new();
     private readonly List<HudWorldLabel> _classicLabels = new();
 
     // True while the classic HUD drew with the sprite cursor last frame (inventory open, Settings
@@ -118,10 +118,8 @@ public partial class Render
     private HudSurfaceSelector HudSelector(GameSettings settings) =>
         _hudSelector ??= new HudSurfaceSelector(settings.AdminHudAvailable, settings.ForceImGuiHud);
 
-    // The one place the foundation workstream's GL layer plugs in: return its IClassicHudBackend
-    // (atlas store + UiBatch + submit). Called once, on the render thread, with the GL context
-    // current. Null means no backend is connected, and the classic surface latches ImGui.
-    private static IClassicHudBackend? CreateClassicHudBackend() => null;
+    // Called once, on the render thread, with the GL context current.
+    private IClassicHudBackend CreateClassicHudBackend() => new GlClassicHudBackend(this);
 
     private void LatchClassicHud(HudSurfaceSelector selector, string reason, Exception? fault = null)
     {
@@ -146,14 +144,7 @@ public partial class Render
             _classicBackendCreated = true;
             try
             {
-                IClassicHudBackend? backend = CreateClassicHudBackend();
-                if (backend is null)
-                {
-                    LatchClassicHud(selector, "no classic HUD backend is connected");
-                    return;
-                }
-
-                _classicSurface = new ClassicHudSurface(backend);
+                _classicSurface = new ClassicHudSurface(CreateClassicHudBackend());
             }
             catch (Exception ex)
             {
@@ -170,6 +161,8 @@ public partial class Render
 
         try
         {
+            // Starts the atlas on the first call, then uploads at most one page per frame.
+            BeginHudFrame();
             if (selector.Observe(surface.State, surface.Backend.FailureReason, deltaSeconds))
             {
                 _classicCursorActive = false;
@@ -236,7 +229,6 @@ public partial class Render
             WorldTransfer = WorldTransferHud,
             Loot = LootFeed,
             CombatText = _classicCombatText,
-            CombatTextScreen = _classicCombatTextScreen,
             Labels = _classicLabels
         };
         bool drew = surface.Draw(in frame);
@@ -251,20 +243,15 @@ public partial class Render
     private void ProjectClassicCombatText(Camera camera, CombatFeedbackSystem combatFeedback, FloatingCombatTextTuning tuning)
     {
         _classicCombatText.Clear();
-        _classicCombatTextScreen.Clear();
         combatFeedback.CollectRenderStates(_floatingCombatTextStates, tuning);
         for (int i = 0; i < _floatingCombatTextStates.Count; i++)
         {
+            // The anchor alone: the sprite panel adds its own rise and jitter in pixels, so the ImGui
+            // path offsets stay out. A state that cannot be projected is dropped.
             FloatingCombatTextRenderState state = _floatingCombatTextStates[i];
-            Vector3 worldPosition =
-                state.WorldAnchor +
-                (camera.Right * state.HorizontalOffset) +
-                (camera.Up * state.VerticalOffset) -
-                (camera.Front * state.DepthOffset);
-            if (TryProjectWorldToScreen(camera, worldPosition, out System.Numerics.Vector2 screen))
+            if (TryProjectWorldToScreen(camera, state.WorldAnchor, out System.Numerics.Vector2 screen))
             {
-                _classicCombatText.Add(state);
-                _classicCombatTextScreen.Add(new Vector2(screen.X, screen.Y));
+                _classicCombatText.Add(state with { ScreenAnchor = new Vector2(screen.X, screen.Y) });
             }
         }
     }
@@ -312,7 +299,8 @@ public partial class Render
         GL.Disable(EnableCap.DepthTest);
         DrawCrosshair(settings);
         HudSurfaceSelector selector = HudSelector(settings);
-        ObserveClassicHud(selector, (float)args.Time);
+        // Capped so one long frame (a world load) cannot use up the loading timeout by itself.
+        ObserveClassicHud(selector, MathF.Min((float)args.Time, MaxLoadingStepSeconds));
         BeginHudFrame(args, windowFocused, settings, mouseState);
 
         InventoryHudAction? classicAction = null;
@@ -537,8 +525,10 @@ public partial class Render
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
-        // The classic inventory draws its own sprite cursor, so ImGui's stays off there.
-        bool classicCursor = _classicCursorActive && settings.InventoryVisible && !settings.SettingsVisible;
+        // The classic inventory draws its own sprite cursor, so the ImGui one stays off there, except
+        // over an ImGui window (the Build panel), where the sprite cursor is not drawn and the OS one
+        // is hidden.
+        bool classicCursor = _classicCursorActive && settings.InventoryVisible && !settings.SettingsVisible && !io.WantCaptureMouse;
         io.MouseDrawCursor = overlayVisible && !classicCursor;
         io.MousePos = overlayVisible
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)

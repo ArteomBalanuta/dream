@@ -30,6 +30,16 @@ public static class UiSpriteNames
     public const string IconButtonNormal = "iconbtn.frame.normal";
     public const string IconButtonHover = "iconbtn.frame.hover";
     public const string IconButtonPressed = "iconbtn.frame.pressed";
+    public const string IconButtonPlinth = "iconbtn.plinth";
+    public const string SlabNormal = "hud.slab.normal";
+    public const string ExpTick = "exp.tick";
+    public const string SkillBracket = "skill.bracket";
+    public const string SkillTileDisabled = "skill.tile.disabled";
+    public const string SkillIconDefault = "skill.icon.default";
+    public const string QweSlotQ = "qwe.slot.q.normal";
+    public const string QweSlotW = "qwe.slot.w.normal";
+    public const string QweSlotE = "qwe.slot.e.normal";
+    public const string QweNotch = "qwe.notch";
 
     // Windows
     public const string WinCrownInventory = "win.crown.inventory";
@@ -40,6 +50,8 @@ public static class UiSpriteNames
     public const string WinSideRight = "win.side.right";
     public const string WinBottom = "win.bottom";
     public const string WinStrip = "win.strip";
+    public const string WinScrollRod = "win.scroll.rod";
+    public const string WinLineBox = "win.linebox";
     public const string CellEmpty = "cell.empty";
     public const string CellOccupied = "cell.occupied";
     public const string CellHover = "cell.hover";
@@ -57,6 +69,9 @@ public static class UiSpriteNames
     public const string ButtonNormal = "btn.plate24.normal";
     public const string ButtonHover = "btn.plate24.hover";
     public const string ButtonPressed = "btn.plate24.pressed";
+    public const string Plate44Normal = "btn.plate44x32.normal";
+    public const string Plate44Hover = "btn.plate44x32.hover";
+    public const string Plate44Pressed = "btn.plate44x32.pressed";
     public const string GlyphCloseNormal = "glyph.close.normal";
     public const string GlyphCloseHover = "glyph.close.hover";
 
@@ -80,10 +95,12 @@ public static class UiSpriteNames
         BaseLeft, BaseCentre, BaseRight, GapFill, DragonLeft, DragonRight, TalonLeft, TalonRight, CoordsPlate,
         GemHpEmpty, GemHpFull, GemMpEmpty, GaugeEmpty, GaugeCapLeft, GaugeCapRight,
         ExpCup, ExpFrame, ExpTrough, ExpFill, SkillTile, IconSatchel, IconButtonNormal, IconButtonHover, IconButtonPressed,
+        IconButtonPlinth, SlabNormal, ExpTick, SkillBracket, SkillTileDisabled, SkillIconDefault, QweSlotQ, QweSlotW, QweSlotE, QweNotch,
         WinCrownInventory, WinSlabInventory, WinCrownCombine, WinSlabCombine, WinSideLeft, WinSideRight, WinBottom, WinStrip,
+        WinScrollRod, WinLineBox,
         CellEmpty, CellOccupied, CellHover, CellInvalid, CellOverlayHover, CellOverlayInvalid,
         Well2x2, Well2x3, SilWeaponLeft, SilWeaponRight, SilHelm, SilArmor, TipPanel, TipBand,
-        ButtonNormal, ButtonHover, ButtonPressed, GlyphCloseNormal, GlyphCloseHover,
+        ButtonNormal, ButtonHover, ButtonPressed, Plate44Normal, Plate44Hover, Plate44Pressed, GlyphCloseNormal, GlyphCloseHover,
         CursorPointer, CursorPressed, CursorGrab, CursorForbid, CursorAttack,
         .. DigitNames
     ];

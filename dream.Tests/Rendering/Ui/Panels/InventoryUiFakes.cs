@@ -108,7 +108,7 @@ public sealed class InventoryFakeInput : IUiInput
 
     public bool ModalActive { get; set; }
 
-    public Vector2 PointerPosition => ReportPointer ? Pointer : new Vector2(float.NaN, float.NaN);
+    UiPointer IUiInput.Pointer => new(ReportPointer ? Pointer : new Vector2(float.NaN, float.NaN), false, false, true);
 
     public bool Button(int id, UiRect r) => LeftClick && r.Contains(Pointer);
 

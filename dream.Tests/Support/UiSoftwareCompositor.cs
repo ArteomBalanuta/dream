@@ -286,7 +286,7 @@ public static class HudPreview
         UiLayout layout = UiLayout.Create(width, height, configuredScale);
         UiBatch batch = new(glyphs ?? BlockGlyphs.Create());
         batch.SetSpriteTable(table!);
-        batch.BeginFrame(width, height, layout.Scale);
+        batch.BeginFrame(in layout);
         draw(batch, table!, layout);
 
         UiSoftwareCompositor compositor = new(width, height);
@@ -343,18 +343,26 @@ public sealed class NullUiInput : IUiInput
     public int ActiveDragPayload => -1;
 
     public bool ModalActive { get; set; }
+
+    public UiPointer Pointer => default;
+}
+
+// The one lock for test code that makes an ImGui context current: the current context is process-wide
+// and xUnit runs test classes in parallel.
+public static class ImGuiTestGate
+{
+    public static readonly object Gate = new();
 }
 
 // The real baked ImGui font (body 13 px and large 26 px) as a glyph table plus its texture, built in
 // a throwaway ImGui context. Needs the ImGui native library but no GL context or window.
 public static class RealFont
 {
-    private static readonly object Gate = new();
     private static (UiGlyphTable, UiTexturePixels)? s_cached;
 
     public static (UiGlyphTable Glyphs, UiTexturePixels Page) Get()
     {
-        lock (Gate)
+        lock (ImGuiTestGate.Gate)
         {
             if (s_cached is { } cached)
             {

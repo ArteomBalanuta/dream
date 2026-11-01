@@ -24,13 +24,19 @@ public sealed class HudViewBuilder
 
     public HudView View { get; }
 
+    // True when the last Refresh saw a different inventory snapshot from the one before. A status
+    // change alone (a health tick) leaves it false, so it does not cancel a drag.
+    public bool InventoryChanged { get; private set; }
+
     // Returns true when the rows were rebuilt (the inventory or the status changed).
     public bool Refresh(in HudStatusSnapshot status, PlayerInventorySnapshot? inventory)
     {
         HudView view = View;
         view.Status = status;
         view.Inventory = inventory;
-        if (_haveRows && _status.Equals(status) && SameInventory(_inventory, inventory))
+        bool sameInventory = SameInventory(_inventory, inventory);
+        InventoryChanged = _haveRows && !sameInventory;
+        if (_haveRows && sameInventory && _status.Equals(status))
         {
             return false;
         }
