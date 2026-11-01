@@ -53,6 +53,59 @@ public sealed class ClassicHudIntegrationTests : IDisposable
 
     private static Vector2 At(CanvasCall text) => new(text.TextPos.X + 2f, text.TextPos.Y + 2f);
 
+    // The whole path from a fresh snapshot to the drag: the builder decides what counts as a change,
+    // the panels keep or drop the drag on it.
+    [Fact]
+    public void FreshSnapshotWithTheSameContents_KeepsTheDrag_ButAChangedOneCancelsIt()
+    {
+        HudView view = new() { InventoryOpen = true };
+        HudViewBuilder builder = new(_scene.Table, view);
+        HudStatusSnapshot status = new(10, 10, default, 1, 2, 3, 1f, 4, 1, 0, 10);
+        builder.Refresh(status, _scene.View.Inventory);
+        UiLayout layout = _scene.Layout;
+        InventoryFakeCanvas Frame(Vector2 at, bool left)
+        {
+            InventoryFakeCanvas canvas = new(_scene.Table);
+            _router.BeginFrame(new UiPointer(at, left, false, true));
+            ClassicHud.Build(canvas, _router, view, in layout, _scene.Table, _scene.Actions);
+            _router.EndFrame();
+            return canvas;
+        }
+
+        Vector2 from = Centre(_scene.Slot(0));
+        Vector2 to = Centre(_scene.Slot(5));
+        Frame(from, false);
+        Frame(from, true);
+        Frame(from + new Vector2(12f, 0f), true);
+        Assert.Equal(0, _router.ActiveDragPayload);
+
+        // A new snapshot object with the same contents, and a health tick with it: still dragging.
+        _scene.Refresh();
+        builder.Refresh(status with { CurrentHealth = 9 }, _scene.View.Inventory);
+        Assert.False(builder.InventoryChanged);
+        Frame(to, true);
+        Assert.Equal(0, _router.ActiveDragPayload);
+        Frame(to, false);
+        Frame(to, false);
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Move, 0, 5), Assert.Single(_scene.Actions.Picked));
+
+        // Again, but the bag changes under the drag: it is cancelled and the drop sends nothing.
+        _scene.Actions.Picked.Clear();
+        Frame(from, false);
+        Frame(from, true);
+        Frame(from + new Vector2(12f, 0f), true);
+        Assert.Equal(0, _router.ActiveDragPayload);
+        _scene.Items[2] = InventoryScene.Item(13, "tool.torch");
+        _scene.Refresh();
+        builder.Refresh(status, _scene.View.Inventory);
+        Assert.True(builder.InventoryChanged);
+        _router.CancelDrag();
+        Frame(to, true);
+        Frame(to, false);
+        Frame(to, false);
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
     [Fact]
     public void Drag_BagToBag_EmitsOneMove()
     {
@@ -182,6 +235,15 @@ public sealed class ClassicHudIntegrationTests : IDisposable
         Assert.True(builder.Refresh(after, inventory));
         Assert.False(builder.InventoryChanged);
 
+        // A new snapshot object that reads the same is not a change, and keeps the old object so
+        // the panels' own reference checks do not see one either.
+        PlayerInventorySnapshot? old = builder.View.Inventory;
+        _scene.Refresh();
+        builder.Refresh(after, _scene.View.Inventory);
+        Assert.False(builder.InventoryChanged);
+        Assert.Same(old!.Value.Slots, builder.View.Inventory!.Value.Slots);
+
+        _scene.Items[2] = InventoryScene.Item(13, "tool.torch");
         _scene.Refresh();
         builder.Refresh(after, _scene.View.Inventory);
         Assert.True(builder.InventoryChanged);

@@ -39,6 +39,14 @@ public sealed class InventoryUiState
 
     public List<CharacterMenuEntry> MenuEntries { get; } = new(8);
 
+    // Where the menu rows and the confirm buttons were drawn last, in screen pixels. The capture
+    // script clicks them; nothing in the panels reads them.
+    internal List<UiRect> MenuRowRects { get; } = new(8);
+
+    internal UiRect ConfirmDestroyRect { get; set; }
+
+    internal UiRect ConfirmCancelRect { get; set; }
+
     public bool ConfirmOpen { get; private set; }
 
     public InventoryHudAction ConfirmAction { get; private set; }
@@ -232,6 +240,9 @@ internal sealed class TooltipContent
 // they sit on top; the menu and the confirm are modal.
 public static class ItemOverlays
 {
+    // How far right of the pointer the item menu starts, in units: the width of the cursor's hand.
+    internal const float MenuCursorGapUnits = 18f;
+
     public const int MaxWrappedLines = 6;
     public const int MaxDetailLines = 8;
     private const int MaxTextChars = 400;
@@ -536,7 +547,9 @@ public static class ItemOverlays
         float edge = 2f * scale;
         float w = widest + (2f * padX) + (2f * edge);
         float h = (entries.Count * rowH) + (2f * edge);
-        float x = MathF.Max(0f, MathF.Min(st.MenuPosition.X, l.ViewportWidth - w));
+        // The menu opens to the right of the pointer, clear of the gauntlet cursor, which would
+        // otherwise sit on the first row's text.
+        float x = MathF.Max(0f, MathF.Min(st.MenuPosition.X + (MenuCursorGapUnits * scale), l.ViewportWidth - w));
         float y = MathF.Max(0f, MathF.Min(st.MenuPosition.Y, l.ViewportHeight - h));
         UiRect panel = new(x, y, w, h);
 
@@ -556,9 +569,11 @@ public static class ItemOverlays
         }
 
         int picked = -1;
+        st.MenuRowRects.Clear();
         for (int n = 0; n < entries.Count; n++)
         {
             UiRect row = new(x + edge, y + edge + (n * rowH), w - (2f * edge), rowH);
+            st.MenuRowRects.Add(row);
             int id = InventoryWindow.IdMenuEntry + n;
             if (i.Hovered(id, row))
             {
@@ -645,6 +660,8 @@ public static class ItemOverlays
         float rowX = x + ((w - ((2f * btnW) + gap)) * 0.5f);
         UiRect destroy = new(rowX, rowY, btnW, btnH);
         UiRect cancel = new(rowX + btnW + gap, rowY, btnW, btnH);
+        st.ConfirmDestroyRect = destroy;
+        st.ConfirmCancelRect = cancel;
         bool destroyClicked = DrawDialogButton(c, i, s, InventoryWindow.IdConfirmDestroy, destroy, "Destroy", ItemTierStyle.Danger) && !fresh;
         bool cancelClicked = DrawDialogButton(c, i, s, InventoryWindow.IdConfirmCancel, cancel, "Cancel", ItemTierStyle.Body) && !fresh;
 

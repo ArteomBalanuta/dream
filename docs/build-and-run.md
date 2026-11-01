@@ -62,7 +62,8 @@ On startup, the game currently:
 - `1` / `2`: select building / combat mode
 - Left mouse button: the active mode's primary action (place a cube, or attack)
 - `F`: toggle frozen movement
-- `Esc`: open or close the settings menu
+- `V`: open or close the inventory and character windows; the cursor is released and shown as a sprite
+- `Esc`: close the inventory if it is open, otherwise open or close the settings menu
 
 When the settings menu is open, the cursor is released and gameplay input is paused.
 

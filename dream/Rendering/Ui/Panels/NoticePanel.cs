@@ -15,6 +15,9 @@ public static class NoticePanel
     public const float RowPitchUnits = 13f;
     public const float MaxWidthFraction = 0.8f;
 
+    // Narrower than this and the strip beside the windows is not worth using.
+    public const float MinFreeWidthPixels = 240f;
+
     private static readonly UiColor Gold = new(0xF5, 0xDD, 0xA5, 255);
     private static readonly UiColor Error = new(0xF4, 0x66, 0x50, 255);
     private static readonly UiColor Common = new(0xF9, 0xF8, 0xFA, 255);
@@ -37,6 +40,14 @@ public static class NoticePanel
         float pitch = MathF.Max(RowPitchUnits * l.Scale, PanelText.Height(UiTextStyle.Body) + 2f * pad);
         float centreX = l.ViewportWidth * 0.5f;
         float maxWidth = l.ViewportWidth * MaxWidthFraction;
+        if (v.InventoryOpen && l.Character.X >= MinFreeWidthPixels)
+        {
+            // The windows stand right of the middle: the notices centre in the free strip to their
+            // left instead of running over the stat rows.
+            centreX = l.Character.X * 0.5f;
+            maxWidth = l.Character.X * 0.95f;
+        }
+
         float entryY = EntryRowUnits * l.Scale;
 
         LootFeedbackSystem? loot = v.Loot;
@@ -71,14 +82,19 @@ public static class NoticePanel
 
         if (v.Status.IsDead)
         {
-            Death(c, v, l);
+            Death(c, v, l, centreX);
         }
     }
 
-    private static void Death(IUiCanvas c, HudView v, in UiLayout l)
+    private static void Death(IUiCanvas c, HudView v, in UiLayout l, float centreX)
     {
-        c.Solid(new UiRect(0f, 0f, l.ViewportWidth, l.ViewportHeight), Dim);
-        float centreX = l.ViewportWidth * 0.5f;
+        // The dim would sit over the inventory windows, which still work while dead (the server allows
+        // inventory actions then), so it steps aside while they are open.
+        if (!v.InventoryOpen)
+        {
+            c.Solid(new UiRect(0f, 0f, l.ViewportWidth, l.ViewportHeight), Dim);
+        }
+
         float y = l.ViewportHeight * 0.38f;
         PanelText.HaloCentred(c, HudStatusSnapshot.DeathTitle, centreX, y, UiTextStyle.Large, Error);
         PanelText.HaloCentred(c, v.Status.RespawnLabel, centreX, y + PanelText.Height(UiTextStyle.Large) + 8f * l.Scale, UiTextStyle.Body, Gold);

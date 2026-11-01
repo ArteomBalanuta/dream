@@ -56,10 +56,10 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `1`: select building mode
 - `2`: select combat mode
 - Left mouse button: perform the active mode's primary action
-- `V`: toggle inventory
+- `V`: toggle the inventory and character windows (drag items between bag and slots, right-click for the item menu, hover for stats)
 - `0`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
-- `Esc`: toggle the settings menu and release or re-grab the cursor
+- `Esc`: close the inventory if it is open, otherwise toggle the settings menu and release or re-grab the cursor
 
 ## Settings Menu
 

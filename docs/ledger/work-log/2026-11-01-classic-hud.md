@@ -67,3 +67,60 @@ Perf at 1440x1024, `DREAM_MAX_FPS=0`, an empty starter scene, only 1 or 2 usable
 - `NetworkDiagnosticsRateLimiterTests.ShouldLog_OnAnExistingKey_DoesNotAllocate` failed 3 of 3 under the filter `FullyQualifiedName~Allocat`, and passes alone and in both full runs. It uses a single measuring window. This work did not touch it or its code.
 - Hiding the developer sliders will surprise a user until `admin_hud=1` is set.
 - A new `DREAM_IDENTITY_FILE` on an existing database with the same client name is refused as "That character belongs to someone else", and the window stays on the connection screen. That is correct behaviour, but it stops a capture run.
+
+# Mouse wiring pass, 2026-11-01
+
+Brief: the classic windows had their pieces (router, panels, requests, server intents) but nobody had put a hand on them in the GL build. Base e3d6249, branch `worktree-agent-a7734485a0fa1450a`.
+
+## Plan: the path, traced
+
+Real mouse: `Game.OnRenderFrame` passes `MouseState` to `PlayScene.Render`, then `Render.Hud.DrawFrame`, then `Render.DrawHUD`, then `DrawClassicHud`, which builds a `UiPointer` (window position, both buttons, `Interactive` = focused, inventory open, Settings closed, ImGui not capturing). `ClassicHudSurface.Draw` refreshes the `HudView` (`HudViewBuilder`), runs `UiInputRouter.BeginFrame`, then `ClassicHud.Build`: character window, inventory window, bar, notices, item overlays (tooltip, menu, confirm, ghost), cursor. Panels answer through `IHudActions`; the surface keeps one action and a close flag. `DrawHUD` puts them in the `HudInteractionRequest`, and `PlayScene.ApplyHudRequest` turns an action into a `PlayerActionMessage` (`ToInventoryIntent`) on the remote client queue. The server answers with an `InventoryChangedResult` or a rejection; `ApplyInventorySnapshot` sets `_inventory` and the combatant's equipment, and the next frame the builder refills the view, so the stat rows follow. The cursor: `Game.OnUpdateFrame` reads `PlayScene.DesiredCursorState`.
+
+What was broken or unplugged:
+
+1. **The capture path had no pointer.** Nothing exercised hover, drag or menus in GL. Now a scripted pointer feeds the same router (below).
+2. **A fresh snapshot always looked like a change.** `PlayerInventorySnapshot.Equals` compares the lists by reference and every decoded snapshot has new lists, so any push (a loot notice, a result for an unrelated action) cancelled a drag. `HudViewBuilder` now compares contents and keeps the old object when they match, so the panels' own reference check agrees.
+3. **Opening V showed two cursors for a frame**: the "classic cursor is active" flag was set after the draw, so the first frame had the ImGui cursor, the sprite and the OS cursor. `Render.ClassicHudCursorActive` is now predicted from the surface state, for both `DesiredCursorState` and the ImGui cursor.
+4. **Mouse look after closing.** The OS moves or re-centres the cursor when the mode changes at the end of the closing Update, so the delta of the next frames is the jump. `GameplayInputResumeFilter` covers one frame. `CursorChangeLookHoldoff` zeroes look for three frames after input resumes. Opening needed nothing: gameplay input is already off.
+5. **Esc with the inventory open opened Settings.** Now it closes the inventory; from play it opens Settings as before. V is gated on nothing but Settings.
+6. **Draw commands**: 25 in inventory. Panels drew art, text, art, text. They now draw all window art, then the item icons one page per tier, then all text, with text cut to fit instead of clipped (a clip splits the command). The bar draws all art, then all text.
+7. **Mode label** sat on the EXP trough. It now stands on top of the bar, centred over the skill tile.
+8. **Item menu** opened under the gauntlet cursor and hid its first row. It now opens 18 u to the right.
+9. **Notices ran over the windows** (the rejection line crossed the stat rows) and the death dim covered the windows, though inventory works while dead. With the inventory open, notices and the death title centre in the strip left of the windows and the dim is not drawn.
+
+Not changed, because it was already right: pointer and layout share one pixel space (client size equals framebuffer size here; the scripted run at 1100x700 hit what it aimed at); the drag lifecycle, the drop rules, the menus and the confirm; a rejected action leaves the view as it was, so the item is already back (nothing moves optimistically); dead players: the server allows inventory actions and the client does not gate V.
+
+## Scripted pointer
+
+`DREAM_HUD_CAPTURE_SCRIPT` takes pointer steps (see `docs/configuration.md`). `Render.ScriptedPointer` is null unless a script runs; `DrawClassicHud` then uses it in place of the mouse (focus is ignored). The steps are built by `HudCapturePointerPlan` (pure, tested) and played by `PlayScene.Capture.cs`, which waits for the server's answer (snapshot applied, rejection shown, or a confirm opened; 240 frames at most), logs the inventory and stat rows before and after, and writes the PNG. `InventoryUiState` now records the menu row and confirm button rects the last frame drew, so a script can click them.
+
+## Real-game run
+
+Release build, copied to a scratch folder with its own `config/player-profiles.db` (throwaway), `DREAM_AUTO_CONNECT=1`, no `DREAM_SERVER_HOST` (integrated loopback), own `DREAM_IDENTITY_FILE`. One join to create the character, then `--items grant` for six rolled items (two Uncommon and one Rare blade or lantern, two caps, a Rare vest), which the HUD read back with rolled stats.
+
+Start (slot=item, `*` equipped alias): 0 builder hammer*, 1 field blade, 2 stone maul, 3 survey lantern, 4 torch, 5 iron blade Uncommon (Str +6, AtkSpd +1.35), 6 iron blade Rare (Str +9, AtkSpd +2), 7 ward lantern Uncommon (Armor +4), 8 leather cap Rare (Armor +6, Vit +2), 9 leather cap Uncommon, 10 leather vest Rare. Worn: hammer. Stats: Strength 12 (10 +2), Attack Speed 2.25, Vitality 10, Armor 0.
+
+| Step | Intent that reached the server | Result in the next snapshot |
+|---|---|---|
+| `drag:10:13` | Move 10 to 13 | vest at 13 |
+| `drag:6:5` (occupied) | Move 6 to 5 | the two blades swapped |
+| `drag:5:main` | EquipTo 5 into 100 | Rare blade worn, hammer unaliased; Strength 19 (10 +9), Attack Speed 4 |
+| `dragging:8:main`, `release` | none: invalid well (red overlay), nothing sent, no answer | unchanged |
+| `drag:8:head` | EquipTo 8 into 102 | cap worn; Vitality 12, Armor 6, HP 110 |
+| `drag:head:15` | Unequip 102 | Vitality 10, Armor 0 |
+| `rightclick:7`, `menu:0` | EquipTo 7 into 101 | lantern worn; Armor 4 |
+| `rightclick:4`, `menu:2`, `confirm:cancel` | none | torch kept |
+| `rightclick:4`, `menu:2`, `confirm:destroy` | Destroy slot 4, item 6 | torch gone |
+| `drag:main:11` | Unequip 100 | Strength 10, Attack Speed 2 |
+| `burst:5:6:100`, `DREAM_MAX_FPS=0` | 100 moves | 17 accepted, the rest rejected: "Inventory move rejected because too many inventory actions, try again shortly." shown in red; the view matched the server |
+| `v`, `esc`, `close`, `v` | none | cursor Hidden when open, Grabbed when closed; Esc closed the inventory and left Settings shut |
+| `size:1100:700` then `drag:6:main` | EquipTo 6 into 100 | works at 1100x700 (UI scale 1.25) |
+| `ui_scale=3` then `drag:8:head` | EquipTo 8 into 102 | works at scale 3 |
+
+Draw commands in the GL build (`[hud-capture]` lines): play 2 (was 5), inventory 10 (was 25), with a tooltip 12, with the item menu 12, with the destroy confirm 16. Headless worst case with all three tiers on screen and a tooltip: 12 (was 33).
+
+## Left for a human hand
+
+- Real mouse feel: the 4 px drag threshold, the cursor leaving the window while dragging (Hidden mode lets it), and the mouse-look jump after V or Esc on the user's driver (the hold-off is three frames; it was reasoned from GLFW behaviour, not measured).
+- A configured `ui_scale` above the auto fit for the window (3 at 1440x1024) pushes the lower windows under the bar. The pointer is still right; the layout was left alone.
+- Death with the inventory open was not seen in GL; the headless panels and the server rule cover it.

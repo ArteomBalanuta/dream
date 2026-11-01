@@ -134,7 +134,10 @@ public sealed class CharacterWindowTests : IDisposable
 
         _scene.Frame();
 
-        Assert.Contains(_scene.Canvas.Texts, t => t.Text == new string('N', 40));
+        // Cut to 40 characters, then to the width of the name strip (the text is cut, not clipped).
+        CanvasCall name = Assert.Single(_scene.Canvas.Texts, t => t.Text.Length > 0 && t.Text.All(ch => ch == 'N') && t.Color == ItemTierStyle.Body);
+        Assert.InRange(name.Text.Length, 1, 40);
+        Assert.True(_scene.Canvas.MeasureText(name.Text, UiTextStyle.Body) <= _scene.Layout.FromUnits(_scene.Layout.Character, 35f, 20f, 119f, 8f).W);
     }
 
     [Fact]

@@ -154,7 +154,11 @@ public class HudViewBuilderTests
 
         Assert.True(builder.Refresh(Status(health: 50), inv));
         Assert.NotSame(rows, builder.View.StatRows);
-        Assert.True(builder.Refresh(Status(health: 50), Inventory(new InventorySlotSnapshot(0, Item(1, "axe.twinbit")))));
+        // The same contents in new lists are the same inventory: nothing to rebuild, no change.
+        Assert.False(builder.Refresh(Status(health: 50), Inventory(new InventorySlotSnapshot(0, Item(1, "axe.twinbit")))));
+        Assert.False(builder.InventoryChanged);
+        Assert.True(builder.Refresh(Status(health: 50), Inventory(new InventorySlotSnapshot(0, Item(2, "axe.twinbit")))));
+        Assert.True(builder.InventoryChanged);
     }
 
     [Fact]

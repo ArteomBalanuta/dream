@@ -48,9 +48,14 @@ public static class StatusBarPanel
         BuildRight(c, l, s);
         BuildCentre(c, i, v, l, s, a);
 
-        // Dragons draw above everything else in the bar.
+        // Dragons draw above everything else in the bar's art.
         Sprite(c, s, UiSpriteNames.DragonLeft, l.FromUnits(l.LeftGroup, 0f, -46f, 107f, 46f), white);
         Sprite(c, s, UiSpriteNames.DragonRight, l.FromUnits(l.RightGroup, 533f - RightStart, -46f, 107f, 46f), white);
+
+        // All the bar's text last, in one draw command: no text overlaps the dragons, and the talons
+        // and gem must never cover it.
+        BuildLeftText(c, v, l);
+        BuildCentreText(c, v, l);
     }
 
     private static void BuildLeft(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
@@ -71,8 +76,14 @@ public static class StatusBarPanel
         float hp = st.MaxHealth <= 0 ? 0f : Math.Clamp(st.CurrentHealth / (float)st.MaxHealth, 0f, 1f);
         DrawGem(c, s, UiSpriteNames.GemHpEmpty, UiSpriteNames.GemHpFull, gem, hp);
         Sprite(c, s, UiSpriteNames.TalonLeft, l.FromUnits(g, 140f, 1f, 59f, 46f), white);
+    }
 
-        // Text after the art so the talons and gem never cover it.
+    private static void BuildLeftText(IUiCanvas c, HudView v, in UiLayout l)
+    {
+        UiRect g = l.LeftGroup;
+        UiRect coords = l.FromUnits(g, 5f, 24f, 56f, 22f);
+        UiRect gem = l.FromUnits(g, 98f, -2f, 50f, 50f);
+        HudStatusSnapshot st = v.Status;
         UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
         Span<char> buf = stackalloc char[48];
         if (buf.TryWrite(CultureInfo.InvariantCulture, $"{st.CurrentHealth}/{st.MaxHealth}", out int n))
@@ -175,8 +186,16 @@ public static class StatusBarPanel
 
         Sprite(c, s, satchelFrame, satchel, white);
         Sprite(c, s, UiSpriteNames.IconSatchel, l.FromUnits(g, 411f - CentreStart, 21f, 22f, 22f), white);
+    }
 
-        // Text last: level in the cup, EXP percent when the trough is tall enough, mode above the tile.
+    // Level in the cup, EXP percent when the trough is tall enough, and the mode label.
+    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l)
+    {
+        UiRect g = l.CentreGroup;
+        HudStatusSnapshot st = v.Status;
+        UiRect trough = l.FromUnits(g, 221f - CentreStart, 5f, 199f, 6f);
+        UiRect cup = l.FromUnits(g, 420f - CentreStart, 3f, 12f, 12f);
+        UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
         Span<char> buf = stackalloc char[32];
         float bodyH = PanelText.Height(UiTextStyle.Body);
         if (buf.TryWrite(CultureInfo.InvariantCulture, $"{st.Level}", out int n))
@@ -189,8 +208,14 @@ public static class StatusBarPanel
             PanelText.HaloCentred(c, buf[..n], trough.X + trough.W * 0.5f, trough.Y + (trough.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
         }
 
-        PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, bracket.Y - bodyH - 1f, UiTextStyle.Body, NumberColor);
+        // The mode label stands on top of the bar, centred over the skill tile: the EXP trough runs
+        // across the space just above the tile, and the label used to sit on it.
+        PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, ModeLabelY(g, l), UiTextStyle.Body, NumberColor);
     }
+
+    // Top of the mode label: its bottom edge two scaled units above the bar group.
+    internal static float ModeLabelY(UiRect centreGroup, in UiLayout l) =>
+        centreGroup.Y - PanelText.Height(UiTextStyle.Body) - (2f * l.Scale);
 
     private static void DrawGem(IUiCanvas c, UiSpriteTable s, string emptyName, string fullName, UiRect dst, float fill)
     {

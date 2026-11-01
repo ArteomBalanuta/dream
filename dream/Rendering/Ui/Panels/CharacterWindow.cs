@@ -24,44 +24,45 @@ public static class CharacterWindow
         }
 
         UiRect win = l.Character;
+        // Art first (frame, line boxes, close button), then every line of text, so the window is two
+        // draw commands. The text is cut to fit instead of clipped, which would split the command.
         InventoryWindow.DrawFrame(c, s, l, win, inventoryKind: false);
+        CharacterStatRow[] rows = v.StatRows ?? [];
+        int count = Math.Min(rows.Length, MaxRows);
+        for (int n = 0; n < count; n++)
+        {
+            if (s.TryGet(UiSpriteNames.WinLineBox, out UiSprite lineBox))
+            {
+                c.NineSlice(lineBox, l.FromUnits(win, RowX, RowY + (n * RowPitch), RowW, RowH), UiColor.White);
+            }
+        }
+
+        bool live = !InventoryUiState.Current.ModalOpen;
+        InventoryWindow.DrawCloseButton(c, i, l, s, a, win, InventoryWindow.IdCloseCharacter, live);
+
         InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), "Character", ItemTierStyle.Title);
         if (v.Inventory is Simulation.Inventory.PlayerInventorySnapshot inventory && inventory.PlayerName is { Length: > 0 } name)
         {
-            // Server text: clipped to the strip, never a format string.
+            // Server text: cut to the strip, never a format string.
             InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), name.AsSpan(0, Math.Min(name.Length, 40)), ItemTierStyle.Body);
         }
 
-        CharacterStatRow[] rows = v.StatRows ?? [];
         if (rows.Length == 0)
         {
             InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, RowY, RowW, RowH), "No data", ItemTierStyle.Dim);
         }
 
-        int count = Math.Min(rows.Length, MaxRows);
         for (int n = 0; n < count; n++)
         {
-            DrawRow(c, s, l, win, rows[n], RowY + (n * RowPitch));
+            DrawRow(c, l, win, rows[n], RowY + (n * RowPitch));
         }
-
-        bool live = !InventoryUiState.Current.ModalOpen;
-        InventoryWindow.DrawCloseButton(c, i, l, s, a, win, InventoryWindow.IdCloseCharacter, live);
     }
 
-    private static void DrawRow(IUiCanvas c, UiSpriteTable s, in UiLayout l, UiRect win, in CharacterStatRow row, float y)
+    private static void DrawRow(IUiCanvas c, in UiLayout l, UiRect win, in CharacterStatRow row, float y)
     {
         UiRect box = l.FromUnits(win, RowX, y, RowW, RowH);
-        if (s.TryGet(UiSpriteNames.WinLineBox, out UiSprite lineBox))
-        {
-            c.NineSlice(lineBox, box, UiColor.White);
-        }
-
         float padX = 2f * l.Scale;
         float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyTextPx) * 0.5f);
-        c.PushClip(box);
-
-        string label = row.Label ?? string.Empty;
-        InventoryWindow.DrawText(c, label.AsSpan(0, Math.Min(label.Length, 24)), new Vector2(box.X + padX, textY), ItemTierStyle.Body);
 
         // "10 +2 = 12", or just "12" when there is no bonus. Built in a stack buffer.
         Span<char> mem = stackalloc char[64];
@@ -77,9 +78,16 @@ public static class CharacterWindow
 
         b.Append(row.EffectiveText ?? string.Empty);
         ReadOnlySpan<char> value = b.Text;
+        float inner = box.W - (2f * padX);
+        value = value[..PanelText.FitLength(c, value, UiTextStyle.Body, inner)];
         float width = c.MeasureText(value, UiTextStyle.Body);
+
+        // The label gets what the value leaves, with a gap of one space.
+        string label = row.Label ?? string.Empty;
+        ReadOnlySpan<char> labelText = label.AsSpan(0, Math.Min(label.Length, 24));
+        labelText = labelText[..PanelText.FitLength(c, labelText, UiTextStyle.Body, MathF.Max(0f, inner - width - 2f))];
+        InventoryWindow.DrawText(c, labelText, new Vector2(box.X + padX, textY), ItemTierStyle.Body);
         InventoryWindow.DrawText(c, value, new Vector2(box.Right - padX - width, textY), hasBonus ? ItemTierStyle.Bonus : ItemTierStyle.Title);
-        c.PopClip();
 
         if (!string.IsNullOrEmpty(row.Note))
         {

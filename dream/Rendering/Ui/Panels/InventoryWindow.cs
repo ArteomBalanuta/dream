@@ -74,18 +74,20 @@ public static class InventoryWindow
         bool dragging = i.ActiveDragPayload >= 0;
         UiRect win = l.Inventory;
 
+        // Draw order is by texture page, not by widget: all window art (frame, wells, cells, buttons),
+        // then the item icons one page per tier, then all text. Nothing overlaps across those groups
+        // except as listed (icons over cells, text over both), so z-order is kept and the batch
+        // merges each group into one draw command.
         DrawFrame(c, s, l, win, inventoryKind: true);
-        DrawTextCentered(c, l.FromUnits(win, 34f, 12f, 120f, 8f), "Inventory", ItemTierStyle.Title);
 
         if (v.Inventory is null)
         {
-            DrawTextCentered(c, l.FromUnits(win, 15f, 200f, 160f, 20f), "Waiting for inventory...", ItemTierStyle.Dim);
             DrawCloseButton(c, i, l, s, a, win, IdCloseInventory, live);
+            DrawTextCentered(c, l.FromUnits(win, 34f, 12f, 120f, 8f), "Inventory", ItemTierStyle.Title);
+            DrawTextCentered(c, l.FromUnits(win, 15f, 200f, 160f, 20f), "Waiting for inventory...", ItemTierStyle.Dim);
             return;
         }
 
-        // Pass 1: wells and slot backing, input registration. Pass 2: icons on top, since art
-        // may overflow its footprint.
         for (int w = 0; w < Wells.Length; w++)
         {
             DrawWell(c, i, v, l, s, st, win, w, live, dragging);
@@ -96,12 +98,31 @@ public static class InventoryWindow
             DrawBagCells(c, i, v, l, s, st, win, slot, live, dragging);
         }
 
-        for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+        DrawCloseButton(c, i, l, s, a, win, IdCloseInventory, live);
+
+        for (ItemTier tier = ItemTier.Common; tier <= ItemTier.Rare; tier++)
         {
-            DrawBagIcon(c, v, l, s, st, win, slot);
+            for (int w = 0; w < Wells.Length; w++)
+            {
+                DrawWellIcon(c, v, l, st, win, w, tier);
+            }
+
+            for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+            {
+                DrawBagIcon(c, v, l, st, win, slot, tier);
+            }
         }
 
-        DrawCloseButton(c, i, l, s, a, win, IdCloseInventory, live);
+        DrawTextCentered(c, l.FromUnits(win, 34f, 12f, 120f, 8f), "Inventory", ItemTierStyle.Title);
+        for (int w = 0; w < Wells.Length; w++)
+        {
+            DrawWellLabel(c, v, l, win, w);
+        }
+
+        for (int slot = 0; slot < HudView.BackpackSlots; slot++)
+        {
+            DrawBagText(c, v, l, win, slot);
+        }
 
         if (i.TryEndDrag(out int payload, out Vector2 dropPosition))
         {
@@ -120,7 +141,6 @@ public static class InventoryWindow
         {
             st.ClearDrag();
         }
-
     }
 
     // ---- geometry ---------------------------------------------------------------------------
@@ -293,21 +313,34 @@ public static class InventoryWindow
             }
         }
 
-        if (has)
+        DrawDropHighlight(c, i, v, s, st, index, r, dragging);
+    }
+
+    private static void DrawWellIcon(IUiCanvas c, HudView v, in UiLayout l, InventoryUiState st, UiRect win, int w, ItemTier tier)
+    {
+        if (!TryItem(v.Worn, w, out _))
         {
-            HudItemView hv = v.Worn[w];
-            if (hv.HasIcon)
-            {
-                UiColor tint = st.IsDraggingSource(index) ? DraggedTint : White;
-                c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, r, l.Scale), tint);
-            }
-            else
-            {
-                DrawFallbackLabel(c, r, hv.Item.DisplayName);
-            }
+            return;
         }
 
-        DrawDropHighlight(c, i, v, s, st, index, r, dragging);
+        HudItemView hv = v.Worn[w];
+        if (!hv.HasIcon || hv.Tier != tier)
+        {
+            return;
+        }
+
+        UiRect r = WellRect(l, win, w);
+        UiColor tint = st.IsDraggingSource(EquipmentSlots.FirstSlotIndex + w) ? DraggedTint : White;
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, r, l.Scale), tint);
+    }
+
+    // An item with no sprite shows the start of its name, so it is never invisible.
+    private static void DrawWellLabel(IUiCanvas c, HudView v, in UiLayout l, UiRect win, int w)
+    {
+        if (TryItem(v.Worn, w, out _) && !v.Worn[w].HasIcon)
+        {
+            DrawFallbackLabel(c, WellRect(l, win, w), v.Worn[w].Item.DisplayName);
+        }
     }
 
     private static void DrawBagCells(
@@ -361,26 +394,38 @@ public static class InventoryWindow
         DrawDropHighlight(c, i, v, s, st, slot, r, dragging);
     }
 
-    private static void DrawBagIcon(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s, InventoryUiState st, UiRect win, int slot)
+    private static void DrawBagIcon(IUiCanvas c, HudView v, in UiLayout l, InventoryUiState st, UiRect win, int slot, ItemTier tier)
+    {
+        if (!TryItem(v.Backpack, slot, out _))
+        {
+            return;
+        }
+
+        HudItemView hv = v.Backpack[slot];
+        if (!hv.HasIcon || hv.Tier != tier)
+        {
+            return;
+        }
+
+        UiColor tint = hv.Equipped ? EquippedAliasTint : White;
+        if (st.IsDraggingSource(slot))
+        {
+            tint = DraggedTint;
+        }
+
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, SlotRect(l, win, slot), l.Scale), tint);
+    }
+
+    // Name stub for an item without a sprite, and the stack count, both over the icon.
+    private static void DrawBagText(IUiCanvas c, HudView v, in UiLayout l, UiRect win, int slot)
     {
         if (!TryItem(v.Backpack, slot, out InventoryItemSnapshot item))
         {
             return;
         }
 
-        HudItemView hv = v.Backpack[slot];
         UiRect r = SlotRect(l, win, slot);
-        if (hv.HasIcon)
-        {
-            UiColor tint = hv.Equipped ? EquippedAliasTint : White;
-            if (st.IsDraggingSource(slot))
-            {
-                tint = DraggedTint;
-            }
-
-            c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), IconRect(hv.Icon, r, l.Scale), tint);
-        }
-        else
+        if (!v.Backpack[slot].HasIcon)
         {
             DrawFallbackLabel(c, r, item.DisplayName);
         }
@@ -518,13 +563,14 @@ public static class InventoryWindow
         c.Text(text, pos, UiTextStyle.Body, color);
     }
 
+    // Centred in r. Text wider than r is cut to fit instead of clipped, so it stays in the same draw
+    // command as every other line of text.
     internal static void DrawTextCentered(IUiCanvas c, UiRect r, ReadOnlySpan<char> text, UiColor color)
     {
+        text = text[..PanelText.FitLength(c, text, UiTextStyle.Body, r.W)];
         float width = c.MeasureText(text, UiTextStyle.Body);
         float x = r.X + MathF.Max(0f, (r.W - width) * 0.5f);
         float y = r.Y + MathF.Floor((r.H - BodyTextPx) * 0.5f);
-        c.PushClip(r);
         DrawText(c, text, new Vector2(x, y), color);
-        c.PopClip();
     }
 }

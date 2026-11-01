@@ -39,6 +39,7 @@ public partial class PlayScene
             mouseState,
             allowGameplayInput);
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
+        rawCommandFrame = _lookHoldoff.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _commandTicks.CaptureInput(commandFrame);
@@ -107,17 +108,15 @@ public partial class PlayScene
         bool settingsTogglePressed = keyboardState.IsKeyDown(Keys.Escape);
         if (settingsTogglePressed && !_wasSettingsTogglePressed)
         {
-            _settings.ToggleSettings();
+            PressEscape();
         }
 
         _wasSettingsTogglePressed = settingsTogglePressed;
 
         bool inventoryTogglePressed = keyboardState.IsKeyDown(Keys.V);
-        if (inventoryTogglePressed &&
-            !_wasInventoryTogglePressed &&
-            !_settings.SettingsVisible)
+        if (inventoryTogglePressed && !_wasInventoryTogglePressed)
         {
-            _settings.ToggleInventory();
+            PressInventoryKey();
         }
 
         _wasInventoryTogglePressed = inventoryTogglePressed;
@@ -142,6 +141,28 @@ public partial class PlayScene
         }
 
         _wasAdminHudTogglePressed = adminHudTogglePressed;
+    }
+
+    // Esc closes an open inventory first (a second Esc opens Settings); from play it opens Settings, and
+    // in Settings it closes them. The capture script calls these same methods.
+    internal void PressEscape()
+    {
+        if (_settings.InventoryVisible && !_settings.SettingsVisible)
+        {
+            _settings.ToggleInventory();
+            return;
+        }
+
+        _settings.ToggleSettings();
+    }
+
+    // V opens and closes the inventory and character windows (not while Settings is open).
+    internal void PressInventoryKey()
+    {
+        if (!_settings.SettingsVisible)
+        {
+            _settings.ToggleInventory();
+        }
     }
 
     private void QueueRemoteCommandFrame(PlayerCommandFrame localCommandFrame)

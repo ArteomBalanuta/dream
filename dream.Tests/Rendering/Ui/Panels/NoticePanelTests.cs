@@ -121,6 +121,33 @@ public class NoticePanelTests
     }
 
     [Fact]
+    public void Death_WithTheInventoryOpen_DoesNotDimTheWindows_AndStaysLeftOfThem()
+    {
+        UiLayout layout = Layout();
+        HudView v = StatusBarTestData.View();
+        v.InventoryOpen = true;
+        v.Status = v.Status with { IsDead = true, RespawnSeconds = 3 };
+        StatusBarRecordingCanvas c = Run(v);
+
+        Assert.DoesNotContain(c.Calls, x => x.Kind == StatusBarCallKind.Solid && x.Rect.W >= layout.ViewportWidth);
+        Assert.All(c.Texts.Where(t => t.Text == "You died"), t => Assert.True(t.TextPos.X + (t.Text!.Length * 7f) < layout.Character.X));
+    }
+
+    [Fact]
+    public void Rejection_WithTheInventoryOpen_CentresInTheStripLeftOfTheWindows()
+    {
+        UiLayout layout = Layout();
+        HudView v = StatusBarTestData.View();
+        v.InventoryOpen = true;
+        v.RejectionMessage = "Inventory move rejected because too many inventory actions, try again shortly.";
+        StatusBarRecordingCanvas c = Run(v);
+
+        StatusBarCall band = Assert.Single(c.Calls, x => x.Kind == StatusBarCallKind.Solid);
+        Assert.True(band.Rect.Right <= layout.Character.X + 1f, $"band {band.Rect} runs into the character window at {layout.Character.X}");
+        Assert.InRange(band.Rect.X + (band.Rect.W * 0.5f), (layout.Character.X * 0.5f) - 1f, (layout.Character.X * 0.5f) + 1f);
+    }
+
+    [Fact]
     public void Alive_DrawsNoOverlayAndNothingWhenThereAreNoNotices()
     {
         StatusBarRecordingCanvas c = Run(StatusBarTestData.View());
