@@ -33,7 +33,8 @@ public sealed class LootFeedbackSystem
     }
 
     // The rarity the server sent with line index (any byte value; unknown values are the caller's to
-    // treat as no tier). Lines the system built itself, or an out-of-range index, read as Common.
+    // treat as no tier). Lines the system built itself read as Common. An out-of-range index throws
+    // ArgumentOutOfRangeException: callers loop over the line count.
     public ItemRarity GetRarity(int index)
     {
         if ((uint)index >= (uint)_count)

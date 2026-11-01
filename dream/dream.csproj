@@ -33,6 +33,11 @@
     <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*;ui\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Kept in the repo for the later tier effects, but nothing loads them (UiAtlasStore.FilePages):
+         not copied, which saves 1.19 MB in the build. Remove these two lines when something loads them. -->
+    <None Update="ui\items\items_enhanced.png;ui\items\items_mask.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

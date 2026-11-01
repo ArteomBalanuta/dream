@@ -173,11 +173,11 @@ The `camera_view` key currently accepts `first_person` or `third_person`.
 
 The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. VSync stays off. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
 
-The `admin_hud` key (`0` or `1`, default `0`) makes the F3 key and the developer controls in Settings available. The `ui_scale` key sets the classic HUD scale: `0` (default) fits the window, other values snap to quarter steps from 1 to 4. The Settings window has a UI Scale slider that writes `ui_scale` back. Missing keys use these defaults. The shipped `dream/config/desktop-client.txt` is not changed; the game adds the keys the next time it saves.
+The `admin_hud` key (`0` or `1`, default `0`) makes the F3 key and the developer controls in Settings available. The `ui_scale` key sets the classic HUD scale: `0` (default) fits the window, other values snap to quarter steps from 1 to 4 and are then capped at the auto fit for the window, because a larger scale pushes the windows under the bar (3 at 1440x1024 is used as 2; the Settings slider shows the scale in use). The Settings window has a UI Scale slider that writes `ui_scale` back. Missing keys use these defaults. The shipped `dream/config/desktop-client.txt` is not changed; the game adds the keys the next time it saves.
 
 ### HUD (classic and ImGui)
 
-The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the automatic fallback: if the sprite atlas is missing, corrupt, fails to upload or is still loading after 5 s, or if drawing throws, the game switches to ImGui for the rest of the run and writes one `[render-fault] [hud-classic]` line. This is independent of `admin_hud`.
+The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the automatic fallback: if the sprite atlas is missing, corrupt, fails to upload or is still loading after 5 s, or if drawing throws, or if OpenGL reports an error while a page is uploaded, while the renderer is created, or on its first draw (checked once and latched, not every frame), the game switches to ImGui for the rest of the run and writes one `[render-fault] [hud-classic]` line. This is independent of `admin_hud`. One exception to the fallback is the existing fatal rule: `GL_OUT_OF_MEMORY` and a lost context are latched Fatal by `GLUtils.CheckGLError`, and the window closes instead of falling back, because GL state is undefined after them. The classic HUD does not change that rule.
 
 - `admin_hud=1` (or `DREAM_ADMIN_HUD=1` for one run; `DREAM_ADMIN_HUD=0` turns a configured `1` off for one run): F3 swaps between the classic and the ImGui HUD, in-session only. Without it F3 does nothing. Once the classic HUD has failed, F3 is inert too.
 - Without admin availability, Settings hides the developer controls (Fly Speed, stats, collision geometry, performance counters, new world size, viewmodel tuning, time of day). Field of view, mouse sensitivity, third person, floating damage text, resolution presets, connection info and UI Scale stay. Set `admin_hud=1` to get them back.
@@ -452,7 +452,7 @@ The project currently expects:
 
 ## Runtime Settings Flow
 
-`Game.cs` now treats `Esc` as a global settings toggle. When settings are visible:
+`Esc` is the settings toggle, with one exception that holds on both HUD surfaces (classic and ImGui): with the inventory open and Settings closed, `Esc` closes the inventory and leaves Settings shut (it used to open Settings over it). From play, or with Settings open, `Esc` toggles Settings as before. When settings are visible:
 
 - the window cursor switches to `Normal`
 - gameplay movement input is paused
