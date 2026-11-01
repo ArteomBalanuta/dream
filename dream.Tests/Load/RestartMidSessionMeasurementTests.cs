@@ -17,6 +17,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Integration;
+using Dream.Tests.Simulation.Runtime;
 using Dream.Tests.Support;
 using Dream.Tests.Server.Persistence.Migrations;
 
@@ -128,6 +129,30 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 Assert.Equal(rows, after.EquipmentByCharacter[player]);
             }
         }),
+        ("a rolled item a kill dropped stays with its character, byte for byte, across the restart", (before, after) =>
+        {
+            // Wave I2. Run 2 has restart-a kill the wolf under a loot table that always drops, so exactly one
+            // character holds a rolled item in its backpack that it is not wearing (the geared character's are all worn).
+            Assert.Contains(before.LootByCharacter.Values, rows => rows.Length == 1);
+            Assert.Equal(before.LootByCharacter.Keys.Order(StringComparer.Ordinal), after.LootByCharacter.Keys.Order(StringComparer.Ordinal));
+            foreach ((string player, string[] rows) in before.LootByCharacter)
+            {
+                Assert.Equal(rows, after.LootByCharacter[player]);
+            }
+        }),
+        ("a character dead at the mid-session stop is alive after its wait in the next run", (before, after) =>
+        {
+            // Wave I2. Run 2 ends with restart-b killed and still waiting, so its stored health is 0; run 3 waits
+            // out the respawn delay before the clients leave.
+            Assert.Contains(before.HpByCharacter.Values, hp => hp == 0);
+            foreach ((string player, int hp) in before.HpByCharacter)
+            {
+                if (hp == 0)
+                {
+                    Assert.True(after.HpByCharacter[player] > 0, $"{player} is still dead after the next run");
+                }
+            }
+        }),
     ];
 
     internal sealed record RestartObservation(
@@ -148,7 +173,11 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         // Wave H2: per character, "itemId=storedRollText" of each item that has a stored roll (sorted), and
         // "slot=itemId" of each equipment row (slots 100..103, sorted by slot).
         IReadOnlyDictionary<string, string[]> RollsByCharacter,
-        IReadOnlyDictionary<string, string[]> EquipmentByCharacter);
+        IReadOnlyDictionary<string, string[]> EquipmentByCharacter,
+        // Wave I2: per character, "itemId=kind" of each rolled item in the backpack that is not worn (a kill's
+        // loot), and the stored health.
+        IReadOnlyDictionary<string, string[]> LootByCharacter,
+        IReadOnlyDictionary<string, int> HpByCharacter);
 
     [Fact]
     public async Task AServerStoppedMidSession_RestartsWithTheInvariantsIntact_AndTheRejoinedClientsMatch()
@@ -246,6 +275,15 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             gearedInventory = server2.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
             Assert.Equal(RolledGear[0], gearedInventory.EquippedSlot!.Value.Item!.Value.ItemKind);
             Assert.Equal(RolledGear[1..], gearedInventory.Equipment!.Select(row => row.Item!.Value.ItemKind));
+
+            // Wave I2: restart-a kills the wolf under a loot table that always drops and gets a rolled item,
+            // and restart-b is killed and is still waiting to respawn when the server stops.
+            server2.Runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1);
+            await KillAWolfAsync(server2, rejoined[0]);
+            WaveIRuntimeKit.Kill(server2.Runtime, Sessions[1]);
+            await server2.TickAsync();
+            Assert.True(await server2.FlushAllAsync());
+            Assert.False(WaveIRuntimeKit.Target(server2.Runtime, Sessions[1]).IsAlive);
         }
         finally
         {
@@ -289,6 +327,12 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 Assert.Equal(firstStop.ItemsByPlayer[player].Length + RolledGear.Length, before.ItemsByPlayer[player].Length);
                 Assert.Empty(firstStop.ItemsByPlayer[player].Except(before.ItemsByPlayer[player]));
             }
+            else if (player == WorldSessionRuntime.ResolveJoinPlayerName(Sessions[0], $"Name {Sessions[0]}"))
+            {
+                // Wave I2: the kill's loot is the one new item.
+                Assert.Equal(firstStop.ItemsByPlayer[player].Length + 1, before.ItemsByPlayer[player].Length);
+                Assert.Empty(firstStop.ItemsByPlayer[player].Except(before.ItemsByPlayer[player]));
+            }
             else
             {
                 Assert.Equal(firstStop.ItemsByPlayer[player], before.ItemsByPlayer[player]);
@@ -317,6 +361,19 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             }
 
             AssertClientsBuiltTheServersMap(server3, again);
+
+            // Wave I2: restart-b stopped dead; it respawns once its wait is over, with full health.
+            string deadName = Sessions[1];
+            IAuthoritativePlayerTarget revived = WaveIRuntimeKit.Target(server3.Runtime, deadName);
+            Assert.False(revived.IsAlive, "restart-b should restore dead");
+            for (int tick = 0; tick < PlayerRespawnRules.DelayTicks + 10 && !revived.IsAlive; tick++)
+            {
+                await server3.TickAsync();
+                Assert.True(await server3.FlushAllAsync());
+            }
+
+            Assert.True(revived.IsAlive, "restart-b never respawned");
+            Assert.Equal(revived.Combatant.Health.MaxHealth, revived.Combatant.Health.CurrentHealth);
             PlayerInventorySnapshot worn = server3.Runtime.TryCaptureInventorySnapshot(gearedSession)!.Value;
             Assert.Equal(gearedInventory.EquippedSlot!.Value.Item!.Value.ItemInstanceId, worn.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
             Assert.Equal(
@@ -357,6 +414,25 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             }
         }
 
+    }
+
+    // Holds the attack with the wolf one step in front of the client at 1 HP until the kill's loot push arrives.
+    private static async Task KillAWolfAsync(WireLoopbackServer server, WireLoopbackClient client)
+    {
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            WaveIRuntimeKit.AimWolfAt(server.Runtime, client.SessionId, wolfHealth: 1);
+            await client.SendCommandAsync(PlayerInteractionMode.Combat, PlayerMoveIntent.None, Vector3.UnitZ, attack: true);
+            await server.TickAsync();
+            Assert.True(await server.FlushAllAsync());
+            await client.WaitForSnapshotTickAsync(server.Runtime.CurrentServerTick);
+            if (client.Frames.Any(frame => frame.Decoded.Message is InventoryPushMessage))
+            {
+                return;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException("the kill never produced loot");
     }
 
     private static void AssertClientsBuiltTheServersMap(WireLoopbackServer server, List<WireLoopbackClient> clients)
@@ -466,6 +542,8 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         Dictionary<string, long?> owners = [];
         Dictionary<string, string[]> rolls = [];
         Dictionary<string, string[]> equipment = [];
+        Dictionary<string, string[]> loot = [];
+        Dictionary<string, int> hp = [];
         int accountCount;
         int accountsOverLimit;
         string integrity;
@@ -525,6 +603,23 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 "WHERE world_id = 1 AND slot_index >= 100 ORDER BY player_name, slot_index;",
                 equipment);
 
+            ReadGrouped(
+                connection,
+                "SELECT owner_player_name, item_instance_id || '=' || item_kind FROM item_instances " +
+                "WHERE world_id = 1 AND owner_player_name IS NOT NULL AND rolled_modifiers IS NOT NULL " +
+                "AND item_instance_id NOT IN (SELECT item_instance_id FROM player_inventory_slots WHERE world_id = 1 AND slot_index >= 100) " +
+                "ORDER BY owner_player_name, item_instance_id;",
+                loot);
+            using (SqliteCommand command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT player_name, current_hp FROM player_world_state;";
+                using SqliteDataReader reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    hp[reader.GetString(0)] = reader.GetInt32(1);
+                }
+            }
+
             using (SqliteCommand command = connection.CreateCommand())
             {
                 command.CommandText = "SELECT enemy_kind FROM enemy_instances WHERE world_id = 1;";
@@ -570,7 +665,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
 
         SqliteConnection.ClearAllPools();
-        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired, rolls, equipment);
+        return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired, rolls, equipment, loot, hp);
     }
 
     // Rows of (key, value) in query order, grouped by key.

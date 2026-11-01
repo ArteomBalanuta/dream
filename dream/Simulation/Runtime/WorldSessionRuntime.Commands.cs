@@ -61,6 +61,12 @@ public sealed partial class WorldSessionRuntime
     {
         _hasDeferredPrimarySeatUse = false;
         _triggeredSecondaryUseFrames.Clear();
+        if (!Player.Combatant.Health.IsAlive)
+        {
+            // Wave I: a dead seat does not move, jump or use; gravity, facing and the requested mode stay.
+            commandFrame = CreateStarvedCommandFrame(commandFrame);
+        }
+
         Player.Combatant.AdvanceCombat(delta);
         PlayerInteractionCommand interaction = commandFrame.ToInteractionCommand();
         ApplyInteractionModeSelection(commandFrame.SessionId, interaction);
@@ -125,6 +131,7 @@ public sealed partial class WorldSessionRuntime
             ResolvePlayerEnemySeparation(_tickPlayerTargets);
             // Do not keep a detached (disposed) secondary referenced until the next tick.
             _tickPlayerTargets.Clear();
+            AdvanceRespawns();
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
@@ -197,6 +204,14 @@ public sealed partial class WorldSessionRuntime
         if (!sequenceAccepted && !fromAcceptedCommand)
         {
             return CreateRejectedActionResult(message, "Action sequence is stale or has already been accepted.");
+        }
+
+        // Wave I: a dead player neither builds nor fights (inventory, stats, material and mode stay
+        // allowed). After the sequence step, so the rejected action is spent like any other; nothing
+        // else changes and no write is queued.
+        if (!context.Combatant.Health.IsAlive && message.Payload is BuildUseIntent or CombatUseIntent)
+        {
+            return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
         }
 
         return message.Payload switch

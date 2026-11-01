@@ -90,6 +90,9 @@ public sealed partial class WorldSessionRuntime
 
         public void DeletePersistedEnemy(int enemyId) => runtime.DeletePersistedEnemy(enemyId);
 
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+            => runtime.GrantLoot(killer, enemyKind, enemyActorId, tick);
+
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
             => runtime.RepairCubeRecordFromPersistence(record);
 

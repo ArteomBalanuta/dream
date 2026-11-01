@@ -84,6 +84,9 @@ public sealed partial class WorldSessionRuntime : IDisposable
     private int _primaryTicksSinceCommand;
     // Set while a cube registration must not export a CubeIdentified delta (see OnCubeIdAssigned).
     private bool _suppressCubeIdExports;
+    // Wave I: where a respawning player is put (the runtime's player start position); see
+    // ResolveRespawnPosition.
+    private readonly Vector3 _worldSpawn;
 
     // A square default-generator world of the given floor size (id 1, "default").
     public WorldSessionRuntime(
@@ -131,6 +134,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
         World = world;
         StoredTerrain = storedTerrain;
         SimulationSeed = simulationSeed;
+        _worldSpawn = playerStartPosition;
         _headlessMap = headlessMap;
         _writes = persistenceWrites ??
             (worldPersistence != null || playerProfiles != null ? PersistenceWriteQueue.Inline() : null);

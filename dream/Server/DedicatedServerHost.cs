@@ -89,6 +89,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly List<PlayerSessionId> _joinedSessionIds = [];
     private readonly List<PlayerCommandFrame> _tickCommands = [];
     private readonly List<QueuedPlayerAction> _tickActions = [];
+    private readonly List<SessionInventoryPush> _inventoryPushScratch = [];
     private int _connectionsChanged = 1;
     // Set under _authoritySync by Dispose. Every entry point that touches the runtime checks it
     // under the same lock, so a late ReleaseConnection (a connection loop's finally on a pool
@@ -1128,6 +1129,31 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         ServePendingWorldResyncs();
+        ServePendingInventoryPushes(runtime);
+    }
+
+    // Wave I: loot gained or lost this tick, one push per killer. It travels the pending-connection-reply
+    // route (delivered before the tick's snapshot), not the action results, because kills happen inside
+    // the tick golden. A session with no claim (it left) drops its push. Steady-state ticks only read a
+    // count.
+    private void ServePendingInventoryPushes(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingInventoryPushes)
+        {
+            return;
+        }
+
+        runtime.DrainInventoryPushesInto(_inventoryPushScratch);
+        for (int i = 0; i < _inventoryPushScratch.Count; i++)
+        {
+            SessionInventoryPush push = _inventoryPushScratch[i];
+            if (_sessionClaims.TryGetValue(push.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, push.Message));
+            }
+        }
+
+        _inventoryPushScratch.Clear();
     }
 
     // WorldResyncRequestHandler only marks a connection; the full-world export runs here, on the
