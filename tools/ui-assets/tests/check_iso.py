@@ -68,6 +68,7 @@ POTION_GATES = {
     "ring_peak_max": 0.45,        # peak alpha of the faint impact ring in the last frame
     "partial_ratio_max": 0.60,
 }
+EDGE_ALPHA = 16  # sprite and shadow alpha allowed on any canvas edge row or column
 SHEET = {"bg_share_min": 0.60, "line_max": 0.90, "band_px": 12}
 
 
@@ -219,6 +220,16 @@ def potion_errors(frames: list[np.ndarray], pivot: tuple) -> list[str]:
     return errs
 
 
+def edge_errors(label: str, layer: str, a: np.ndarray) -> list[str]:
+    """Nothing may touch the canvas border: alpha over EDGE_ALPHA on any edge row or column means the art is clipped."""
+    errs = []
+    sides = {"top": a[0], "bottom": a[-1], "left": a[:, 0], "right": a[:, -1]}
+    for side, line in sides.items():
+        if int(line.max()) > EDGE_ALPHA:
+            errs.append(f"{label}: {layer} touches the {side} edge, alpha {int(line.max())} at index {int(line.argmax())} ({int((line > EDGE_ALPHA).sum())} px over {EDGE_ALPHA})")
+    return errs
+
+
 def png(path: Path) -> np.ndarray | None:
     if not path.exists():
         return None
@@ -283,6 +294,34 @@ def self_test() -> list[str]:
     m = measure("flat", flat)
     if m["crisp"] != 1.0 or m["contrast"] > 1e-4 or m["sat_p95"] > 1e-3:
         errs.append(f"self-test: metrics wrong on a flat fill {m['crisp']} {m['contrast']} {m['sat_p95']}")
+    edge = flat.copy()
+    edge[0, 20] = (90, 90, 90, 200)
+    if not edge_errors("edge", "sprite", edge[..., 3]):
+        errs.append("self-test: alpha 200 on the top edge did not trip the edge gate")
+    if edge_errors("edge", "sprite", flat[..., 3]):
+        errs.append("self-test: a clear border tripped the edge gate")
+    frames = [np.zeros((64, 64, 4), np.uint8) for _ in range(4)]
+    for f in frames:
+        f[40:60, 20:44] = (200, 40, 220, 255)
+    ring = frames[3].copy()
+    ring[3:6, 3:6] = (200, 40, 220, 150)  # soft pixels far from the bottle, alpha .59
+    if not any("ring peak" in e for e in potion_errors(frames[:3] + [ring], (32, 60))):
+        errs.append("self-test: a bright impact ring did not trip the ring peak gate")
+    off = [f.copy() for f in frames]
+    off[2][40:60, 20:44] = 0
+    off[2][5:25, 20:44] = (200, 40, 220, 255)  # base far above the pivot
+    if not any("base at row" in e for e in potion_errors(off, (32, 60))):
+        errs.append("self-test: a frame with its base off the pivot did not trip the pivot gate")
+    bad = np.full((200, 200, 4), 255, np.uint8)
+    bad[..., :3] = BG
+    if sheet_errors(bad):
+        errs.append("self-test: a clean sheet failed the sheet gate")
+    bad[0, 0, :3] = (10, 10, 10)
+    if not any("outer band" in e for e in sheet_errors(bad)):
+        errs.append("self-test: a dirty sheet border did not trip the sheet gate")
+    bad[..., :3] = (90, 90, 90)
+    if not any("exact background" in e for e in sheet_errors(bad)):
+        errs.append("self-test: a sheet with no background did not trip the share gate")
     return errs
 
 
@@ -318,6 +357,9 @@ def main() -> int:
             if ring.any() and not im[..., :3][ring].any():
                 errs.append(f"{f}: RGB under alpha 0 is not bled, so not straight alpha")
             sprites[n].append(im)
+            errs += edge_errors(f, "sprite", im[..., 3])
+            if sh is not None:
+                errs += edge_errors(f, "shadow", sh[..., 3])
     statics = [n for n in names if n != POTION]
     stats = {}
     for n in names:
