@@ -91,7 +91,7 @@ public class WorldLabelsPanelTests
             .Select(n => new HudWorldLabel(new Vector2(100f + (n * 15f), 100f + (n % 7 * 60f)), "Label " + n, "1/1"))
             .ToArray();
         StatusBarRecordingCanvas c = Run(ViewWith(many));
-        Assert.True(c.Texts.Select(t => t.Text).Where(t => t!.StartsWith("Label ", StringComparison.Ordinal)).Distinct().Count() <= WorldLabelsPanel.MaxLabels);
+        Assert.True(c.Texts.Select(t => t.Text).Where(t => t!.StartsWith("Label ", StringComparison.Ordinal)).Distinct().Count() == WorldLabelsPanel.MaxLabels);
 
         UiBatch batch = new(BlockGlyphs.Create());
         UiLayout layout = Layout();
@@ -105,6 +105,20 @@ public class WorldLabelsPanelTests
         WorldLabelsPanel.Build(batch, ViewWith(many), layout);
 
         Assert.Equal(before, batch.QuadCount);
+    }
+
+    [Fact]
+    public void UndrawnLabels_DoNotUseUpTheCap()
+    {
+        HudWorldLabel[] labels = Enumerable.Range(0, WorldLabelsPanel.MaxLabels + 10)
+            .Select(n => n < WorldLabelsPanel.MaxLabels
+                ? new HudWorldLabel(new Vector2(-5000f, 100f), "Off " + n, "1/1")
+                : new HudWorldLabel(new Vector2(100f + (n * 40f), 300f), "On " + n, "1/1"))
+            .ToArray();
+        StatusBarRecordingCanvas c = Run(ViewWith(labels));
+
+        Assert.Equal(10, c.Texts.Select(t => t.Text).Where(t => t!.StartsWith("On ", StringComparison.Ordinal)).Distinct().Count());
+        Assert.DoesNotContain(c.Texts, t => t.Text!.StartsWith("Off ", StringComparison.Ordinal));
     }
 
     [Fact]

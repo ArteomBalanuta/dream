@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using Xunit;
+using Dream.Application;
 using Dream.Assets;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
@@ -92,14 +93,15 @@ public class ClassicHudFixLoopTests
         int faults = 0;
         int latches = 0;
 
-        bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out InventoryHudAction? action, out bool close, ex =>
+        bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out InventoryHudAction? action, out bool close, out Exception? fault);
+        if (fault is not null)
         {
             faults++;
-            if (selector.Latch(ex.Message))
+            if (selector.Latch(fault.Message))
             {
                 latches++;
             }
-        });
+        }
 
         Assert.False(drew);
         Assert.Null(action);
@@ -115,17 +117,44 @@ public class ClassicHudFixLoopTests
     // ---- the local player's incoming number in first person -----------------------------------
 
     [Theory]
-    [InlineData(FloatingCombatTextKind.Incoming, true, 0.2f, true)]    // anchor at the camera
-    [InlineData(FloatingCombatTextKind.Incoming, false, 5f, true)]     // behind the near plane
-    [InlineData(FloatingCombatTextKind.Incoming, true, 4f, false)]     // third person: over the character
-    [InlineData(FloatingCombatTextKind.Regular, true, 0.2f, false)]
-    [InlineData(FloatingCombatTextKind.Critical, false, 0.2f, false)]
-    public void IncomingNumber_UsesTheScreenAnchorOnlyAtOrBehindTheCamera(FloatingCombatTextKind kind, bool projected, float distance, bool expected)
+    [InlineData(FloatingCombatTextKind.Incoming, CameraViewMode.FirstPerson, true, true)]    // anchor at the camera
+    [InlineData(FloatingCombatTextKind.Incoming, CameraViewMode.FirstPerson, false, true)]   // behind the near plane
+    [InlineData(FloatingCombatTextKind.Incoming, CameraViewMode.ThirdPerson, true, false)]   // over the character
+    [InlineData(FloatingCombatTextKind.Incoming, CameraViewMode.ThirdPerson, false, true)]   // cannot be projected
+    [InlineData(FloatingCombatTextKind.Regular, CameraViewMode.FirstPerson, true, false)]
+    [InlineData(FloatingCombatTextKind.Critical, CameraViewMode.FirstPerson, false, false)]
+    [InlineData(FloatingCombatTextKind.Critical, CameraViewMode.ThirdPerson, false, false)]
+    public void IncomingNumber_UsesTheScreenAnchorByViewMode(FloatingCombatTextKind kind, CameraViewMode mode, bool projected, bool expected)
     {
-        Vector3 camera = new(10f, 2f, 10f);
-        Vector3 anchor = camera + new Vector3(0f, 0f, -distance);
+        Assert.Equal(expected, IncomingNumberAnchor.UsesScreenAnchor(kind, mode, projected));
+    }
 
-        Assert.Equal(expected, IncomingNumberAnchor.UsesScreenAnchor(kind, anchor, camera, projected));
+    // The anchor is frozen at spawn while the camera moves, so the decision cannot depend on distance.
+    [Theory]
+    [InlineData(0.2f)]
+    [InlineData(1.4f)]
+    [InlineData(1.6f)]
+    [InlineData(30f)]
+    public void IncomingNumber_InFirstPerson_StaysOnTheScreenAnchorHoweverFarTheCameraWalks(float distance)
+    {
+        Vector3 anchor = new(10f, 2f, 10f);
+        Vector3 camera = anchor + new Vector3(0f, 0f, distance);
+
+        Assert.True(camera != anchor);
+        Assert.True(IncomingNumberAnchor.UsesScreenAnchor(FloatingCombatTextKind.Incoming, CameraViewMode.FirstPerson, true));
+    }
+
+    [Theory]
+    [InlineData(0.2f)]
+    [InlineData(1.4f)]
+    [InlineData(30f)]
+    public void IncomingNumber_InThirdPerson_ProjectsOverTheCharacterEvenWhenTheCameraIsClose(float distance)
+    {
+        Vector3 anchor = new(10f, 2f, 10f);
+        Vector3 camera = anchor + new Vector3(0f, 0f, distance);
+
+        Assert.True(camera != anchor);
+        Assert.False(IncomingNumberAnchor.UsesScreenAnchor(FloatingCombatTextKind.Incoming, CameraViewMode.ThirdPerson, true));
     }
 
     [Theory]

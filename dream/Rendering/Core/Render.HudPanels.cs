@@ -40,6 +40,7 @@ public partial class Render
         BuildMaterialChoice? buildMaterial = null;
         InventoryHudAction? inventoryAction = null;
         float? uiScale = null;
+        bool uiScaleCommitted = false;
         bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
         // The classic surface draws the status, inventory, loot lines and death text itself; ImGui
         // keeps only Settings and the Build panel then.
@@ -207,6 +208,13 @@ public partial class Render
                 uiScale = uiScaleValue;
             }
 
+            // The scale applies while dragging; the config file is written once, on release.
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                uiScale = uiScaleValue;
+                uiScaleCommitted = true;
+            }
+
             if (devControls)
             {
                 DrawViewModelControls(settings);
@@ -293,7 +301,8 @@ public partial class Render
             equipInventorySlotIndex,
             buildMaterial,
             inventoryAction,
-            UiScale: uiScale);
+            UiScale: uiScale,
+            UiScaleCommitted: uiScaleCommitted);
     }
 
     private const float UiScaleSliderMax = 4f;

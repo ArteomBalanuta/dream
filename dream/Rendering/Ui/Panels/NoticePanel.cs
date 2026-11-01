@@ -1,4 +1,3 @@
-using System.Globalization;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Inventory;
 using OpenTK.Mathematics;
@@ -71,7 +70,7 @@ public static class NoticePanel
             Span<char> buf = stackalloc char[96];
             int kilobytes = (int)Math.Min(transfer.KilobytesReceived, int.MaxValue);
             int seconds = (int)Math.Min(transfer.WholeSecondsElapsed, int.MaxValue);
-            if (buf.TryWrite(CultureInfo.InvariantCulture, $"Receiving world... {kilobytes} KB, {seconds} s", out int n))
+            if (TryWriteTransferLine(buf, kilobytes, seconds, out int n))
             {
                 Line(c, buf[..n], centreX, entryY + below * pitch, pad, maxWidth, Gold);
                 below++;
@@ -84,6 +83,46 @@ public static class NoticePanel
         {
             Death(c, v, l, centreX);
         }
+    }
+
+    // "Receiving world... 412 KB, 6 s" through int.TryFormat: the interpolated TryWrite boxes each
+    // number while it runs in the PGO instrumented tier.
+    private static bool TryWriteTransferLine(Span<char> buf, int kilobytes, int seconds, out int written)
+    {
+        written = 0;
+        if (!TryAppend(buf, "Receiving world... ", ref written) ||
+            !TryAppendInt(buf, kilobytes, ref written) ||
+            !TryAppend(buf, " KB, ", ref written) ||
+            !TryAppendInt(buf, seconds, ref written) ||
+            !TryAppend(buf, " s", ref written))
+        {
+            written = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryAppend(Span<char> buf, ReadOnlySpan<char> text, ref int written)
+    {
+        if (!text.TryCopyTo(buf[written..]))
+        {
+            return false;
+        }
+
+        written += text.Length;
+        return true;
+    }
+
+    private static bool TryAppendInt(Span<char> buf, int value, ref int written)
+    {
+        if (!PanelText.TryWriteInt(buf[written..], value, out int n))
+        {
+            return false;
+        }
+
+        written += n;
+        return true;
     }
 
     private static void Death(IUiCanvas c, HudView v, in UiLayout l, float centreX)

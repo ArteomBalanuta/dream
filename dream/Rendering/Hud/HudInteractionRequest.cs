@@ -24,7 +24,9 @@ public readonly record struct HudInteractionRequest(
     InventoryHudAction? InventoryAction = null,
     bool CloseInventory = false,
     // A UI scale picked in Settings: 0 is auto, other values snap to quarter steps (GameSettings.SetUiScale).
-    float? UiScale = null)
+    float? UiScale = null,
+    // The slider was released: only then is the scale written to the config file.
+    bool UiScaleCommitted = false)
 {
     public static HudInteractionRequest None => new(
         null,

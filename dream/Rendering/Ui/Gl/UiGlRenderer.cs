@@ -90,9 +90,7 @@ public sealed class UiGlRenderer : IDisposable
         bool checkThisFrame = !_firstDrawChecked;
         if (checkThisFrame)
         {
-            for (int n = 0; n < GLUtils.MaxErrorsDrainedPerCheck && GL.GetError() != ErrorCode.NoError; n++)
-            {
-            }
+            GLUtils.CheckGLError("before classic HUD first draw");
         }
 
         bool drew = false;

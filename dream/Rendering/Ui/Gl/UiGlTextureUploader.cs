@@ -14,6 +14,9 @@ public sealed class UiGlTextureUploader : IUiTextureUploader
         int previous = GL.GetInteger(GetPName.TextureBinding2D);
         try
         {
+            // Drain errors pending from other code first, so they are not blamed on this upload.
+            // A pending Fatal is still latched by CheckGLError.
+            GLUtils.CheckGLError("before UI atlas upload");
             int handle = TextureDecoder.UploadTexture2DClamped(texture, MaxMipLevel);
 
             // A bad upload (out of memory, an unsupported size) leaves a GL error and an unusable
