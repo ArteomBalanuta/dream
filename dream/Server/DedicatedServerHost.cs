@@ -229,6 +229,20 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
     }
 
+    // The integrated server turns the development commands on; the dedicated server leaves them to
+    // DREAM_DEV_COMMANDS (ServerBootstrap).
+    public bool DevCommandsAllowed
+    {
+        get => _authority?.DevCommandsAllowed ?? false;
+        set
+        {
+            if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
+            {
+                runtimeAuthority.DevCommandsAllowed = value;
+            }
+        }
+    }
+
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
 
     public static DedicatedServerHost CreateDefault()

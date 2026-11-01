@@ -27,6 +27,7 @@ public partial class PlayScene
         ILocalServerHandle? localServer = null)
     {
         _settings = settings;
+        _commandInputFilter.AllowDevToggles = settings.AdminHudAvailable;
         _desktopClientConfig = clientConfig;
         _persistDesktopClientConfig = persistDesktopClientConfig;
         _localServer = localServer;

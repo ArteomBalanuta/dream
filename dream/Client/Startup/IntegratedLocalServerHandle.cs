@@ -66,6 +66,7 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         try
         {
             host = hostFactory();
+            host.DevCommandsAllowed = true;
             TcpServerTransport transport = new(IPAddress.Loopback, preferredPort);
             DedicatedServerService service = new(
                 host,
