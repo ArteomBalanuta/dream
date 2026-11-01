@@ -1183,11 +1183,25 @@ icon_cape_navy.top = 3.0
 # registry -----------------------------------------------------------------------------
 
 
+# Sprites that carry a content key name today were drawn under another name. Scene seeds come from the name,
+# so each keeps its original seed and the art is unchanged by the rename.
+SEED_NAME = {
+    "item.gear.iron-gauntlets": "item.gloves.plate",
+    "item.gear.iron-boots": "item.boots.plate",
+    "item.gear.plated-leggings": "item.legs.verdant",
+    "item.gear.ward-pendant": "item.pendant.ward",
+    "item.gear.iron-band": "item.ring.ice",
+    "item.gear.travel-cloak": "item.cape.navy",
+    "item.gear.gossamer-wings": "item.wings.gossamer",
+    "item.gear.ember-wisp": "item.pet.wisp",
+    "item.gear.hunting-spear": "item.spear.crimson",
+}
+
 ICONS: dict = {
     "item.relic.disc": (1, 1, icon_relic_disc),
-    "item.ring.ice": (1, 1, icon_ring_ice),
+    "item.gear.iron-band": (1, 1, icon_ring_ice),
     "item.gem.amber": (1, 1, icon_gem_amber),
-    "item.pendant.ward": (1, 1, icon_pendant_ward),
+    "item.gear.ward-pendant": (1, 1, icon_pendant_ward),
     "item.feather.azure": (1, 2, icon_feather_azure),
     "item.tool.survey-lantern": (1, 2, icon_survey_lantern),
     "item.gear.ward-lantern": (1, 2, icon_ward_lantern),
@@ -1197,14 +1211,14 @@ ICONS: dict = {
     "item.armor.bone": (2, 2, icon_armor_bone),
     "item.helm.gilded": (2, 2, icon_helm_gilded),
     "item.armor.gilded": (2, 2, icon_armor_gilded),
-    "item.legs.verdant": (2, 2, icon_legs_verdant),
-    "item.gloves.plate": (2, 2, icon_gloves_plate),
-    "item.boots.plate": (2, 2, icon_boots_plate),
-    "item.pet.wisp": (2, 2, icon_pet_wisp),
+    "item.gear.plated-leggings": (2, 2, icon_legs_verdant),
+    "item.gear.iron-gauntlets": (2, 2, icon_gloves_plate),
+    "item.gear.iron-boots": (2, 2, icon_boots_plate),
+    "item.gear.ember-wisp": (2, 2, icon_pet_wisp),
     "item.bow.verdant": (2, 4, icon_bow_verdant),
-    "item.spear.crimson": (2, 4, icon_spear_crimson),
-    "item.wings.gossamer": (3, 2, icon_wings_gossamer),
-    "item.cape.navy": (3, 2, icon_cape_navy),
+    "item.gear.hunting-spear": (2, 4, icon_spear_crimson),
+    "item.gear.gossamer-wings": (3, 2, icon_wings_gossamer),
+    "item.gear.travel-cloak": (3, 2, icon_cape_navy),
     "item.tool.builder-hammer": (2, 3, icon_builder_hammer),
     "item.tool.stone-maul": (2, 3, icon_stone_maul),
     "item.tool.field-blade": (2, 3, icon_field_blade),
@@ -1286,7 +1300,7 @@ def write_ramps(out: Path) -> None:
 
 def render_icon(name: str) -> tuple:
     cols, rows, fn = ICONS[name]
-    s = Scene(name, cols, rows)
+    s = Scene(SEED_NAME.get(name, name), cols, rows)
     fn(s)
     s.center(getattr(fn, "top", None))
     img, mask = s.render()
@@ -1375,7 +1389,7 @@ def preview(out_root: Path, previews: Path) -> None:
     previews = Path(previews)
     previews.mkdir(parents=True, exist_ok=True)
     sheet_for("items.png", names, 17, 17).convert("RGB").save(previews / "items_icons.png", compress_level=6)
-    wanted = {"item.axe.twinbit", "item.armor.gilded", "item.helm.gilded", "item.gear.iron-blade", "item.shield.kite", "item.gem.amber", "item.ring.ice"}
+    wanted = {"item.axe.twinbit", "item.armor.gilded", "item.helm.gilded", "item.gear.iron-blade", "item.shield.kite", "item.gem.amber", "item.gear.iron-band"}
     picks = [n for n in names if n in wanted]
     boards = [sheet_for(f"items{suf}.png", picks, cols=15, rows=5) for suf in ("", "_uncommon", "_rare", "_enhanced")]
     full = Image.new("RGB", (boards[0].width, sum(b.height for b in boards)))

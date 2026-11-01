@@ -25,13 +25,13 @@ THIRD_PARTY_OK = {"numpy", "PIL", "uiart"}
 STDLIB_OK = {"__future__", "json", "math", "pathlib", "sys"}
 
 EXPECTED = {
-    (1, 1): "item.relic.disc item.ring.ice item.gem.amber item.pendant.ward",
+    (1, 1): "item.relic.disc item.gear.iron-band item.gem.amber item.gear.ward-pendant",
     (1, 2): "item.feather.azure item.tool.survey-lantern item.gear.ward-lantern item.tool.torch",
     (2, 2): "item.gear.leather-cap item.gear.leather-vest item.armor.bone item.helm.gilded item.armor.gilded "
-            "item.legs.verdant item.gloves.plate item.boots.plate item.pet.wisp",
+            "item.gear.plated-leggings item.gear.iron-gauntlets item.gear.iron-boots item.gear.ember-wisp",
     (2, 3): "item.tool.builder-hammer item.tool.stone-maul item.tool.field-blade item.gear.iron-blade item.axe.twinbit item.shield.kite",
-    (2, 4): "item.bow.verdant item.spear.crimson",
-    (3, 2): "item.wings.gossamer item.cape.navy",
+    (2, 4): "item.bow.verdant item.gear.hunting-spear",
+    (3, 2): "item.gear.gossamer-wings item.gear.travel-cloak",
 }
 FOOTPRINT = {n: fp for fp, names in EXPECTED.items() for n in names.split()}
 
@@ -172,7 +172,7 @@ def check_mask_semantics(doc: dict) -> list[str]:
         share = (m[..., 0][art] > 128).mean()
         if metal_high != (share > 0.3):
             errs.append(f"{name}: metal share {share:.2f}")
-    for name in ("item.tool.torch", "item.pet.wisp", "item.gear.ward-lantern"):
+    for name in ("item.tool.torch", "item.gear.ember-wisp", "item.gear.ward-lantern"):
         r = doc["sprites"][name]
         if mask[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"], 3].max() < 128:
             errs.append(f"{name}: no emissive")
@@ -232,8 +232,8 @@ def check_palette(doc: dict, sheet: np.ndarray) -> list[str]:
     for name, test, label in (
         ("item.helm.gilded", lambda c: c[0] > c[1] > c[2] + 40, "gold"),
         ("item.feather.azure", lambda c: c[2] > c[0] + 25, "blue"),
-        ("item.cape.navy", lambda c: c[2] > c[0] + 25, "navy"),
-        ("item.spear.crimson", lambda c: c[0] > c[1] + 15, "red"),
+        ("item.gear.travel-cloak", lambda c: c[2] > c[0] + 25, "navy"),
+        ("item.gear.hunting-spear", lambda c: c[0] > c[1] + 15, "red"),
         ("item.armor.bone", lambda c: c.min() > 120, "pale"),
     ):
         c = typical_rgb(name)

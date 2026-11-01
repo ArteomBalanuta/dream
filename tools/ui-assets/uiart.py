@@ -4,6 +4,11 @@ Images are float32 HxWx4 straight RGBA in [0,1], sRGB-encoded. Masks are float32
 Geometry arguments are logical units (u), origin top-left, y down. Working canvases are
 hi-res at PPU px/u; `downsample` brings them to SCALE px/u as uint8 for atlases.
 Seeds come from crc32(name), so output is deterministic.
+
+Lighting in this module (`shade`, `material`) works on sRGB-encoded values and is the legacy path.
+New art goes through forge.py instead: linear-light GGX, baked AO and shadow, aging, filmic
+finish and a linear-light Mitchell downsample. Both routes end in the same Atlas, which takes uint8
+sprites (forge.downsample) or float hi-res sprites (the legacy box filter below).
 """
 from __future__ import annotations
 
@@ -48,6 +53,18 @@ def rng(name: str) -> np.random.Generator:
 
 def _px(u: float) -> int:
     return int(round(u * PPU))
+
+
+def srgb_to_linear(c: np.ndarray) -> np.ndarray:
+    """sRGB-encoded [0,1] to linear light; any shape, float32 out."""
+    c = np.asarray(c, dtype=np.float32)
+    return np.where(c <= 0.04045, c / 12.92, ((np.maximum(c, 0) + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+def linear_to_srgb(x: np.ndarray) -> np.ndarray:
+    """Linear light [0,1] to sRGB-encoded; any shape, float32 out."""
+    x = np.clip(np.asarray(x, dtype=np.float32), 0, 1)
+    return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1 / 2.4) - 0.055).astype(np.float32)
 
 
 # canvas and masks ---------------------------------------------------------------------
@@ -402,7 +419,11 @@ def inner_shadow(img, width_u: float, color: str) -> np.ndarray:
 
 
 def downsample(img, factor: int = SS) -> np.ndarray:
-    """Premultiplied box filter. Returns straight-alpha uint8 RGBA at img size / factor."""
+    """Legacy premultiplied box filter in sRGB-encoded space (gen_fx, old generators).
+
+    Returns straight-alpha uint8 RGBA at img size / factor. forge.downsample is the linear-light
+    Mitchell replacement that new art uses; it hands Atlas.add ready uint8 sprites.
+    """
     h, w = img.shape[0] // factor, img.shape[1] // factor
     a = img[: h * factor, : w * factor]
     pm = np.dstack((a[..., :3] * a[..., 3:], a[..., 3]))
