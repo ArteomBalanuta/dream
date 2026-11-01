@@ -13,23 +13,22 @@ public class ClassicHudFixLoopTests
 {
     // ---- cursor decision ----------------------------------------------------------------------
 
-    // classic active, inventory, settings, focused -> expected (gameplay state is Grabbed here).
+    // classic active, settings, focused -> expected (gameplay state is Normal here).
     [Theory]
-    [InlineData(true, true, false, true, CursorState.Hidden)]    // inventory open, classic drawing, focused
-    [InlineData(true, true, true, true, CursorState.Grabbed)]    // Settings open: OS cursor rules
-    [InlineData(true, false, false, true, CursorState.Grabbed)]  // play, nothing open
-    [InlineData(true, true, false, false, CursorState.Grabbed)]  // window not focused: keep an OS cursor
-    [InlineData(false, true, false, true, CursorState.Grabbed)]  // loading, latched, F3 to ImGui or forced ImGui
-    [InlineData(false, true, true, false, CursorState.Grabbed)]
-    public void CursorDecision_Table(bool classic, bool inventory, bool settings, bool focused, CursorState expected)
+    [InlineData(true, false, true, CursorState.Hidden)]    // classic drawing, focused: the sprite cursor is always on
+    [InlineData(true, true, true, CursorState.Normal)]     // Settings open: OS cursor rules
+    [InlineData(true, false, false, CursorState.Normal)]   // window not focused: keep an OS cursor
+    [InlineData(false, false, true, CursorState.Normal)]   // loading, latched, F3 to ImGui or forced ImGui
+    [InlineData(false, true, false, CursorState.Normal)]
+    public void CursorDecision_Table(bool classic, bool settings, bool focused, CursorState expected)
     {
-        Assert.Equal(expected, ClassicCursorPolicy.Decide(classic, inventory, settings, focused, CursorState.Grabbed));
+        Assert.Equal(expected, ClassicCursorPolicy.Decide(classic, settings, focused, CursorState.Normal));
     }
 
     [Fact]
     public void CursorDecision_KeepsTheGameplayStateWhenNotHidden()
     {
-        Assert.Equal(CursorState.Normal, ClassicCursorPolicy.Decide(false, true, false, true, CursorState.Normal));
+        Assert.Equal(CursorState.Grabbed, ClassicCursorPolicy.Decide(false, false, true, CursorState.Grabbed));
     }
 
     [Theory]

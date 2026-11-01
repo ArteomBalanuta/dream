@@ -1,0 +1,498 @@
+using OpenTK.Mathematics;
+using Dream.Client.Navigation;
+using Dream.Rendering.Core;
+using Dream.Simulation.Players;
+
+namespace Dream.Client.Input;
+
+public enum ClickGoalKind : byte
+{
+    None,
+    Walk,
+    Attack,
+    Build
+}
+
+public enum ClickPickKind : byte
+{
+    None,
+    Ground,
+    Enemy
+}
+
+// A live enemy as the controller sees it.
+public interface IClickTarget
+{
+    bool IsAlive { get; }
+
+    // The point the attack is aimed at (the combat anchor).
+    Vector3 Anchor { get; }
+}
+
+// What a cursor pick found. Ground: Cell is the last empty cell before the first blocked one and
+// Point the surface point. Enemy: Target is set and Point is its anchor.
+public readonly record struct ClickPick(ClickPickKind Kind, NavCell Cell, Vector3 Point, IClickTarget? Target);
+
+// The world the controller reads and acts on: implemented by the play scene, faked in tests.
+public interface IClickMoveHost
+{
+    INavWorld? World { get; }
+
+    Vector3 BodyCentre { get; }
+
+    Vector3 Eye { get; }
+
+    bool NoclipActive { get; }
+
+    PlayerInteractionMode Mode { get; }
+
+    // False without a camera of last frame, or when the cursor points at nothing.
+    bool TryPick(Vector2 screenPosition, out ClickPick pick);
+
+    void SetFacing(Vector3 direction);
+}
+
+// The path search and follower behind one seam.
+public interface IClickPathing
+{
+    bool HasPath { get; }
+
+    // Cells of the last planned path, for the capture log.
+    int LastPathCells { get; }
+
+    // False only when there is no standable start.
+    bool Plan(INavWorld world, NavCell start, NavCell goal, bool viaStartCentre, out bool reachedGoal);
+
+    void Clear();
+
+    NavStep Step(Vector3 bodyCentre, INavWorld world);
+}
+
+public sealed class NavPathing : IClickPathing
+{
+    private readonly GridPathfinder _finder = new();
+    private readonly PathFollower _follower = new();
+    private readonly List<NavCell> _path = new();
+
+    public bool HasPath => _follower.HasPath;
+
+    public int LastPathCells => _path.Count;
+
+    public bool Plan(INavWorld world, NavCell start, NavCell goal, bool viaStartCentre, out bool reachedGoal)
+    {
+        _path.Clear();
+        if (!_finder.TryFindPath(world, start, goal, _path, out reachedGoal))
+        {
+            _follower.Clear();
+            return false;
+        }
+
+        _follower.SetPath(_path, viaStartCentre);
+        return true;
+    }
+
+    public void Clear() => _follower.Clear();
+
+    public NavStep Step(Vector3 bodyCentre, INavWorld world) => _follower.Step(bodyCentre, world);
+}
+
+// Turns pointer presses into a goal (walk, attack, build) and the goal into one steered command per
+// 64 Hz prediction tick. OnFrame runs once per Update, SteerTick once per tick.
+public sealed class ClickMoveController
+{
+    public const float AttackRangeMetres = 3.2f;
+    public const float BuildStartWalkMetres = 2.5f;
+    public const float BuildStopMetres = 2.4f;
+    public const float EnemyRepathMetres = 1f;
+    public const int EnemyRepathTicks = 32;
+    public const int HeldRepathTicks = 16;
+    public const int MaxFailedReplans = 3;
+    private const float ReplanProgressMetres = 2f;
+
+    private readonly IClickMoveHost _host;
+    private readonly IClickPathing _pathing;
+    private bool _prevLeft;
+    private bool _prevRight;
+    private bool _leftArmed;
+    private bool _rightArmed;
+    private ClickGoalKind _goal;
+    private NavCell _goalCell;
+    private IClickTarget? _target;
+    private Vector3 _plannedAnchor;
+    private bool _modeSent;
+    private bool _buildWalking;
+    private bool _buildPulsed;
+    private bool _rightHold;
+    private Vector3 _rightHoldPoint;
+    private int _ticksSincePlan;
+    private int _ticksSinceHeldPick;
+    private int _failedReplans;
+    private Vector3 _lastReplanPosition;
+
+    public ClickMoveController(IClickMoveHost host, IClickPathing pathing)
+    {
+        _host = host ?? throw new ArgumentNullException(nameof(host));
+        _pathing = pathing ?? throw new ArgumentNullException(nameof(pathing));
+    }
+
+    public ClickGoalKind Goal => _goal;
+
+    public NavCell GoalCell => _goalCell;
+
+    public int LastPathCells => _pathing.LastPathCells;
+
+    // True while the goal needs the character to walk.
+    public bool IsWalking => _goal != ClickGoalKind.None && _pathing.HasPath && !InAttackRange() && !InBuildRange();
+
+    public void Cancel()
+    {
+        _goal = ClickGoalKind.None;
+        _target = null;
+        _rightHold = false;
+        _buildWalking = false;
+        _pathing.Clear();
+    }
+
+    // Frame level: press edges, picks and paths.
+    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput)
+    {
+        bool leftPressed = pointer.LeftDown && !_prevLeft;
+        bool rightPressed = pointer.RightDown && !_prevRight;
+        _prevLeft = pointer.LeftDown;
+        _prevRight = pointer.RightDown;
+
+        if (!allowGameplayInput)
+        {
+            _leftArmed = false;
+            _rightArmed = false;
+            Cancel();
+            return;
+        }
+
+        // A press counts only if the press edge itself is over no HUD; a drag that began on the HUD
+        // never becomes a world click.
+        if (leftPressed)
+        {
+            _leftArmed = !pointer.OverHud;
+        }
+        else if (!pointer.LeftDown)
+        {
+            _leftArmed = false;
+        }
+
+        if (rightPressed)
+        {
+            _rightArmed = !pointer.OverHud;
+        }
+        else if (!pointer.RightDown)
+        {
+            _rightArmed = false;
+            _rightHold = false;
+        }
+
+        if (_host.NoclipActive)
+        {
+            return;
+        }
+
+        if (rightPressed && _rightArmed)
+        {
+            OnRightPress(pointer.Position);
+        }
+        else if (leftPressed && _leftArmed)
+        {
+            OnLeftPress(pointer.Position);
+        }
+        else if (pointer.LeftDown && _leftArmed && _goal == ClickGoalKind.Walk && _ticksSinceHeldPick >= HeldRepathTicks)
+        {
+            RepathToCursor(pointer.Position);
+        }
+        else if (pointer.RightDown && _rightArmed && _rightHold && _ticksSinceHeldPick >= HeldRepathTicks)
+        {
+            _ticksSinceHeldPick = 0;
+            if (_host.TryPick(pointer.Position, out ClickPick pick) && pick.Kind != ClickPickKind.None)
+            {
+                _rightHoldPoint = pick.Point;
+            }
+        }
+    }
+
+    // Marks the raw frame as walking, so a send stall that zeroes the axes can be told apart.
+    public PlayerCommandFrame MarkFrame(PlayerCommandFrame frame)
+    {
+        if (!IsWalking)
+        {
+            return frame;
+        }
+
+        return WithForward(frame, 1f);
+    }
+
+    // Tick level, first line of the prediction tick.
+    public PlayerCommandFrame SteerTick(PlayerCommandFrame command)
+    {
+        _ticksSincePlan++;
+        _ticksSinceHeldPick++;
+        INavWorld? world = _host.World;
+        if (world is null || (_goal == ClickGoalKind.None && !_rightHold))
+        {
+            return command;
+        }
+
+        if (_goal == ClickGoalKind.None)
+        {
+            return Aim(command, _rightHoldPoint - _host.Eye, primary: true, mode: null);
+        }
+
+        if (_target is { IsAlive: false })
+        {
+            Cancel();
+            return command;
+        }
+
+        return _goal switch
+        {
+            ClickGoalKind.Attack => SteerAttack(command, world),
+            ClickGoalKind.Build => SteerBuild(command, world),
+            _ => SteerWalk(command, world)
+        };
+    }
+
+    private PlayerCommandFrame SteerWalk(PlayerCommandFrame command, INavWorld world)
+    {
+        if (!_pathing.HasPath)
+        {
+            Cancel();
+            return command;
+        }
+
+        // A send stall zeroed the axes: leave the command alone and do not step (stuck detection
+        // pauses with it).
+        return command.MoveIntent.ForwardAxis == 0f ? command : Walk(command, world);
+    }
+
+    private PlayerCommandFrame SteerAttack(PlayerCommandFrame command, INavWorld world)
+    {
+        IClickTarget target = _target!;
+        PlayerInteractionMode? requestedMode = null;
+        if (_host.Mode != PlayerInteractionMode.Combat && !_modeSent)
+        {
+            _modeSent = true;
+            requestedMode = PlayerInteractionMode.Combat;
+        }
+
+        if (InAttackRange())
+        {
+            _pathing.Clear();
+            // Primary only once the server mode is Combat, or a build would land instead of a hit.
+            command = Aim(command, target.Anchor - _host.Eye, _host.Mode == PlayerInteractionMode.Combat, requestedMode);
+            return WithForward(command, 0f);
+        }
+
+        if (_ticksSincePlan >= EnemyRepathTicks && (target.Anchor - _plannedAnchor).Length > EnemyRepathMetres)
+        {
+            Plan(world, CellOf(target.Anchor), viaStartCentre: false);
+            _plannedAnchor = target.Anchor;
+        }
+
+        if (requestedMode.HasValue)
+        {
+            command = command with { RequestedMode = new PlayerModeSwitchIntent(requestedMode) };
+        }
+
+        return !_pathing.HasPath || command.MoveIntent.ForwardAxis == 0f ? command : Walk(command, world);
+    }
+
+    private PlayerCommandFrame SteerBuild(PlayerCommandFrame command, INavWorld world)
+    {
+        Vector3 centre = _goalCell.Centre;
+        float distance = (centre - _host.Eye).Length;
+        if (_buildWalking ? distance <= BuildStopMetres : distance <= BuildStartWalkMetres)
+        {
+            _pathing.Clear();
+            _buildWalking = false;
+            // Primary for exactly one tick, then the goal is done.
+            bool press = !_buildPulsed;
+            command = WithForward(Aim(command, centre - _host.Eye, press, mode: null), 0f);
+            if (_buildPulsed)
+            {
+                Cancel();
+            }
+
+            _buildPulsed = true;
+            return command;
+        }
+
+        _buildWalking = true;
+        if (!_pathing.HasPath)
+        {
+            Cancel();
+            return command;
+        }
+
+        return command.MoveIntent.ForwardAxis == 0f ? command : Walk(command, world);
+    }
+
+    // One follower step: face the way of travel, jump when asked, replan when stuck.
+    private PlayerCommandFrame Walk(PlayerCommandFrame command, INavWorld world)
+    {
+        Vector3 body = _host.BodyCentre;
+        NavStep step = _pathing.Step(body, world);
+        if (step.NeedsReplan)
+        {
+            if ((body - _lastReplanPosition).Length >= ReplanProgressMetres)
+            {
+                _failedReplans = 0;
+            }
+
+            _lastReplanPosition = body;
+            if (++_failedReplans > MaxFailedReplans)
+            {
+                Cancel();
+                return WithForward(command, 0f);
+            }
+
+            NavCell goal = _goal == ClickGoalKind.Attack && _target is not null ? CellOf(_target.Anchor) : _goalCell;
+            Plan(world, goal, viaStartCentre: true);
+            return command;
+        }
+
+        if (step.Arrived)
+        {
+            _pathing.Clear();
+            if (_goal == ClickGoalKind.Walk)
+            {
+                _goal = ClickGoalKind.None;
+            }
+
+            return WithForward(command, 0f);
+        }
+
+        Vector3 direction = new(step.Direction.X, 0f, step.Direction.Z);
+        if (direction.LengthSquared > 0.000001f)
+        {
+            _host.SetFacing(direction.Normalized());
+        }
+
+        PlayerMoveIntent move = command.MoveIntent;
+        return command with
+        {
+            MoveIntent = move with { ForwardAxis = 1f, StrafeAxis = 0f, JumpPressed = move.JumpPressed || step.Jump }
+        };
+    }
+
+    private PlayerCommandFrame Aim(PlayerCommandFrame command, Vector3 direction, bool primary, PlayerInteractionMode? mode)
+    {
+        if (direction.LengthSquared > 0.000001f)
+        {
+            _host.SetFacing(direction.Normalized());
+        }
+
+        return command with
+        {
+            RequestedMode = mode.HasValue ? new PlayerModeSwitchIntent(mode) : command.RequestedMode,
+            PrimaryUsePressed = primary
+        };
+    }
+
+    private static PlayerCommandFrame WithForward(PlayerCommandFrame command, float forward) =>
+        command with { MoveIntent = command.MoveIntent with { ForwardAxis = forward, StrafeAxis = 0f } };
+
+    private void OnLeftPress(Vector2 position)
+    {
+        if (!_host.TryPick(position, out ClickPick pick) || _host.World is not { } world)
+        {
+            return;
+        }
+
+        _ticksSinceHeldPick = 0;
+        if (pick.Kind == ClickPickKind.Enemy && pick.Target is { IsAlive: true } enemy)
+        {
+            BeginGoal(ClickGoalKind.Attack, CellOf(enemy.Anchor));
+            _target = enemy;
+            _plannedAnchor = enemy.Anchor;
+            Plan(world, _goalCell, viaStartCentre: false);
+        }
+        else if (pick.Kind == ClickPickKind.Ground)
+        {
+            BeginGoal(ClickGoalKind.Walk, pick.Cell);
+            if (!Plan(world, pick.Cell, viaStartCentre: false))
+            {
+                Cancel();
+            }
+        }
+    }
+
+    private void OnRightPress(Vector2 position)
+    {
+        if (!_host.TryPick(position, out ClickPick pick) || pick.Kind == ClickPickKind.None || _host.World is not { } world)
+        {
+            return;
+        }
+
+        _ticksSinceHeldPick = 0;
+        if (_host.Mode == PlayerInteractionMode.Combat)
+        {
+            // Face the cursor point and hold primary while the button is down; no walking.
+            Cancel();
+            _rightHold = true;
+            _rightHoldPoint = pick.Point;
+            return;
+        }
+
+        if (pick.Kind != ClickPickKind.Ground)
+        {
+            return;
+        }
+
+        BeginGoal(ClickGoalKind.Build, pick.Cell);
+        _buildPulsed = false;
+        if ((pick.Cell.Centre - _host.Eye).Length > BuildStartWalkMetres)
+        {
+            _buildWalking = true;
+            if (!Plan(world, pick.Cell, viaStartCentre: false))
+            {
+                Cancel();
+            }
+        }
+    }
+
+    private void RepathToCursor(Vector2 position)
+    {
+        _ticksSinceHeldPick = 0;
+        if (!_host.TryPick(position, out ClickPick pick) || pick.Kind != ClickPickKind.Ground || pick.Cell == _goalCell || _host.World is not { } world)
+        {
+            return;
+        }
+
+        _goalCell = pick.Cell;
+        Plan(world, pick.Cell, viaStartCentre: false);
+    }
+
+    private void BeginGoal(ClickGoalKind kind, NavCell cell)
+    {
+        Cancel();
+        _goal = kind;
+        _goalCell = cell;
+        _modeSent = false;
+        _ticksSincePlan = 0;
+        _failedReplans = 0;
+        _lastReplanPosition = _host.BodyCentre;
+    }
+
+    private bool Plan(INavWorld world, NavCell goal, bool viaStartCentre)
+    {
+        _ticksSincePlan = 0;
+        return _pathing.Plan(world, CellOf(_host.BodyCentre), goal, viaStartCentre, out _);
+    }
+
+    private bool InAttackRange() =>
+        _goal == ClickGoalKind.Attack && _target is { IsAlive: true } t && (t.Anchor - _host.Eye).Length <= AttackRangeMetres;
+
+    private bool InBuildRange() =>
+        _goal == ClickGoalKind.Build && (_goalCell.Centre - _host.Eye).Length <= (_buildWalking ? BuildStopMetres : BuildStartWalkMetres);
+
+    // The cell a body centre occupies, as NavCell.FromBody defines it: the level is the body cell.
+    private static NavCell CellOf(Vector3 p) =>
+        new((int)MathF.Floor(p.X), (int)MathF.Floor(p.Y), (int)MathF.Floor(p.Z));
+}

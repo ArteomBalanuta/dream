@@ -2,6 +2,7 @@ using OpenTK.Windowing.Common;
 using Vector3 = OpenTK.Mathematics.Vector3;
 using Dream.Application;
 using Dream.Client.Input;
+using Dream.Client.Navigation;
 using Dream.Client.Networking;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
@@ -67,7 +68,7 @@ public partial class PlayScene : IDisposable
     private bool _wasInventoryTogglePressed;
     private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
-    private readonly CursorChangeLookHoldoff _lookHoldoff = new();
+    private ClickMoveController? _clickMoveController;
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
     private double _lastPresentedFrameMilliseconds;
@@ -101,15 +102,18 @@ public partial class PlayScene : IDisposable
 
     private double RemotePlayerRenderTick => _serverTickClock.RenderTick;
 
-    // The classic inventory draws its own cursor, so the OS cursor hides (it can still leave the
+    // The classic HUD draws its own sprite cursor, so the OS cursor hides (it can still leave the
     // window; a drop outside cancels). Settings and the ImGui surface keep the normal cursor.
     public CursorState DesiredCursorState =>
         ClassicCursorPolicy.Decide(
             _render.ClassicHudCursorActive,
-            _settings.InventoryVisible,
             _settings.SettingsVisible,
             _windowFocused,
             _settings.CurrentRuntimeState.DesiredCursorState);
+
+    // Created on first use: it needs this scene for its host, which a field initialiser cannot take.
+    private ClickMoveController _clickMove =>
+        _clickMoveController ??= new ClickMoveController(new ClickMoveHost(this), new NavPathing());
 
     // Set by Render each frame; true until the first one.
     private bool _windowFocused = true;
@@ -119,4 +123,67 @@ public partial class PlayScene : IDisposable
     public string ConnectedServerEndpoint => _remoteClient.Options.EndpointLabel;
 
     internal SceneEventHub Events => _events;
+
+    // Click-to-move reads the player and the map through this; the pick uses last frame's camera.
+    private sealed class ClickMoveHost : IClickMoveHost
+    {
+        private readonly PlayScene _scene;
+        private Dream.Simulation.World.Map? _navMap;
+        private MapNavWorld? _nav;
+
+        public ClickMoveHost(PlayScene scene)
+        {
+            _scene = scene;
+        }
+
+        public INavWorld? World
+        {
+            get
+            {
+                Dream.Simulation.World.Map map = _scene._runtime.Map;
+                if (!ReferenceEquals(map, _navMap))
+                {
+                    _navMap = map;
+                    _nav = new MapNavWorld(map);
+                }
+
+                return _nav;
+            }
+        }
+
+        public Vector3 BodyCentre => _scene._runtime.Player.GetWorldPosition();
+
+        public Vector3 Eye => _scene._runtime.Player.Camera.Position;
+
+        public bool NoclipActive => _scene._runtime.Player.IsNoclipEnabled;
+
+        public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
+
+        public bool TryPick(OpenTK.Mathematics.Vector2 screenPosition, out ClickPick pick)
+        {
+            pick = default;
+            Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
+            INavWorld? world = World;
+            if (camera is null || world is null)
+            {
+                return false;
+            }
+
+            if (!WorldCursorPicker.TryBuildRay(
+                camera.GetViewMatrix(),
+                _scene._render.ProjectionMatrix,
+                screenPosition,
+                _scene._render.ViewportSize,
+                out Vector3 origin,
+                out Vector3 direction))
+            {
+                return false;
+            }
+
+            pick = WorldCursorPicker.Pick(world, _scene._runtime.Enemies, origin, direction);
+            return pick.Kind != ClickPickKind.None;
+        }
+
+        public void SetFacing(Vector3 direction) => _scene._runtime.Player.SetFacing(direction);
+    }
 }

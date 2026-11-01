@@ -138,7 +138,7 @@ public class GameSettingsTests
     }
 
     [Fact]
-    public void ToggleInventory_Uses_Inventory_Runtime_Mode_And_Blocks_Gameplay_Input()
+    public void ToggleInventory_Uses_Inventory_Runtime_Mode_And_Keeps_Gameplay_Input()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));
 
@@ -146,7 +146,8 @@ public class GameSettingsTests
 
         Assert.True(settings.InventoryVisible);
         Assert.Equal(RuntimeMode.InventoryOverlay, settings.CurrentRuntimeState.Mode);
-        Assert.False(settings.CurrentRuntimeState.AllowGameplayInput);
+        Assert.True(settings.CurrentRuntimeState.AllowGameplayInput);
+        Assert.Equal(OpenTK.Windowing.Common.CursorState.Normal, settings.CurrentRuntimeState.DesiredCursorState);
     }
 
     [Fact]
