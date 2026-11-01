@@ -2,7 +2,7 @@
 
 Purpose: record wave I of `docs/ledger/plans/2026-10-31-characters-items-enemies-roadmap.md`. Plan: `docs/ledger/plans/2026-11-01-wave-i-plan.md`.
 
-Status: integrated on `integrate/engine-iteration`. Not pushed. Not merged into `master`. The tester's Release measurements and adversarial tests are below.
+Status: integrated on `integrate/engine-iteration`, two fix loops done. Not pushed. Not merged into `master`. Interactive play has not been checked. The tester's Release measurements and adversarial tests are below.
 
 ## Process
 
@@ -163,3 +163,12 @@ Tester, Release, `DREAM_LOAD_TEST=1`, `IncrementalCheckpointMeasurementTests.Wor
 - **Nits.** `EnemyFactory.Restore` uses `Math.Clamp(level, 1, MaxEnemyLevel)` and its comment says the first checkpoint with a diff writes the clamped value. Two stale comments repaired (`WorldSessionRuntime.Enemies.cs`, `WorldSessionRuntime.Respawn.cs`). The `EnemyFactoryTests` XP assertion compared a call with itself; it now asserts the reward at the clamped level is positive and lower than the reward at the stored 5000 (it does not run `AuthoritativeCombatResolver`).
 - **Unverified, not changed.** Respawn into rubble: fractured cells may have no Cube, so `IsSolidCell` may not see pieces. Queued action results are not purged on leave, so a stale `InventoryChangedResult` could reach a rejoined session.
 - **Full suite after merge 1433ec8.** One run (Debug, quiet machine, no stray processes): 4,719 passed, 0 failed, 46 skipped, 4,765 total, 2 m 40 s. `dream/dream.csproj` built with 0 errors and 16 warnings.
+
+## Review of fix loop 2, not fixed
+
+No Must fix. The two fix loops are used up, so these stay open until the user decides.
+
+- **Should fix: the `lost` notice replaces the first ordinary notice.** The client shows the last 4 lines of a push, so the first lost notices are evicted at once and "Backpack full" isn't seen. Replace the last ordinary notice instead. This needs more than 8 notices in one push; no item state is wrong.
+- **Should fix: no test covers the replacement.** `PendingLoot_IsBoundedAtTheNoticeCap...` only checks the count, and `server.loot.notice-dropped` has no test.
+- **Nits.** The log line names the kept item after a replacement. The log string is built before the enabled check and has no rate limit. The new push wait assumes a snapshot every tick and its comment is true only for an unheld session. The XP test doesn't prove a kill pays the clamped level, and the lower clamp has no test.
+- **Wolf stand-off (S5), left for the user.** A chasing wolf stops at 2.0 m but bites within 1.35 m, so a player standing still is never bitten. A fix puts all 10 tick golden checkpoints at risk and makes spawn camping possible, because the day wolf spawns 2.5 m from the world spawn.
