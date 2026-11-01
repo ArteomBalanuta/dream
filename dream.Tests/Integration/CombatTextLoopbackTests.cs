@@ -127,6 +127,34 @@ public sealed class CombatTextLoopbackTests(ITestOutputHelper output)
         Assert.Equal(FloatingCombatTextKind.Regular, Assert.Single(seen, e => e.Actor.Id == enemyId && e.Amount == 17).Kind);
     }
 
+    // The killing blow still gets its number: the damage applier resolves the target before the actor
+    // snapshot removes the dead enemy from the client registry.
+    [Fact]
+    public async Task ALethalHit_PublishesExactlyOneDamageAppliedEventOnTheClient()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(server, Session);
+        List<DamageAppliedEvent> seen = [];
+        using IDisposable subscription = ClientEvents(client).Subscribe<DamageAppliedEvent>(seen.Add);
+        await StepAsync(server, client, except: null, attack: false);
+        EnemyActor enemy = server.Runtime.Enemies.ActiveActors.First();
+        int enemyId = enemy.Combatant.Actor.Id;
+
+        IAuthoritativePlayerTarget target = WaveIRuntimeKitTarget(server);
+        enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+        enemy.Combatant.Health.SetAuthoritativeState(1, enemy.Combatant.Health.MaxHealth);
+
+        await StepAsync(server, client, enemy, attack: true);
+        for (int i = 0; i < 6; i++)
+        {
+            await StepAsync(server, client, enemy, attack: false);
+        }
+
+        Assert.True(enemy.Combatant.Health.CurrentHealth <= 0, "the hit did not kill the enemy");
+        Assert.Single(seen, e => e.Actor.Id == enemyId && e.Amount > 0);
+    }
+
     private static IAuthoritativePlayerTarget WaveIRuntimeKitTarget(WireLoopbackServer server) =>
         Dream.Tests.Simulation.Runtime.WaveIRuntimeKit.Target(server.Runtime, Session);
 }

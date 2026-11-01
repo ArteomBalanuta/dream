@@ -86,8 +86,10 @@ public partial class PlayScene
                 snapshotMessage.Snapshot,
                 _remoteClient.SessionId,
                 _predictionReconciler);
-            RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            // Damage first: the killing blow's target is gone from the registry once the actors apply,
+            // and a number needs the actor to resolve. Both still run before the presenter.
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
+            RemoteEnemyStateApplier.ApplyActorSnapshots(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
