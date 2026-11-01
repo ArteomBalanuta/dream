@@ -3,6 +3,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Players;
+using Dream.Simulation.Stats;
 
 namespace Dream.Client.Scenes;
 
@@ -148,6 +149,7 @@ public partial class PlayScene
             action.Target == CharacterPanelModel.FirstFitCell ? null : action.Target),
         InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
         InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
+        InventoryHudActionKind.SpendStat => new PlayerStatSpendIntent((StatId)action.SlotIndex, action.Target),
         _ => new InventoryEquipIntent(action.SlotIndex, action.Target)
     };
 

@@ -252,6 +252,8 @@ public sealed partial class WorldSessionRuntime
                 => ProcessBuildMaterialSelectAction(message, context.Player, materialIntent),
             PlayerStatsUpdateIntent statsIntent
                 => ProcessPlayerStatsUpdateAction(message, context.Combatant, statsIntent),
+            PlayerStatSpendIntent spendIntent
+                => ProcessPlayerStatSpendAction(message, context.Combatant, spendIntent),
             CombatUseIntent
                 => CreateRejectedActionResult(
                     message,
@@ -329,6 +331,35 @@ public sealed partial class WorldSessionRuntime
         }
 
         combatant.ApplyBaseStats(intent.Stats.ToCombatStats());
+        PersistPlayerProfile(message.SessionId, combatant);
+
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            CurrentServerTick,
+            Accepted: true,
+            Payload: new PlayerStatsUpdateResult(PlayerCombatStatsSnapshot.From(combatant.BaseStats)));
+    }
+
+    // Stat points. The context's combatant is the sending session's own character, so a client can only
+    // spend for itself. The budget comes from the level and the current base stats (PlayerStatRules).
+    private AuthoritativeActionResult ProcessPlayerStatSpendAction(
+        PlayerActionMessage message,
+        PlayerCombatant combatant,
+        PlayerStatSpendIntent intent)
+    {
+        if (!PlayerStatRules.TryValidateSpend(
+                combatant.Level,
+                PlayerCombatStatsSnapshot.From(combatant.BaseStats),
+                intent.Stat,
+                intent.Points,
+                out PlayerCombatStatsSnapshot newStats,
+                out string? invalidReason))
+        {
+            return CreateRejectedActionResult(message, $"Stat spend rejected: {invalidReason}");
+        }
+
+        combatant.ApplyBaseStats(newStats.ToCombatStats());
         PersistPlayerProfile(message.SessionId, combatant);
 
         return new AuthoritativeActionResult(

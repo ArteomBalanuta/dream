@@ -1,5 +1,6 @@
 using System.Globalization;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
 
 namespace Dream.Rendering.Hud;
@@ -103,6 +104,45 @@ public static class CharacterPanelModel
             // Armor has no base value; it mitigates the damage the player takes (PlayerCombatant.MitigateDamage).
             IntRow(CharacterStat.Armor, "Armor", 0, status.Armor, ArmorNote)
         ];
+    }
+
+    // Unspent stat points, from the level and base stats the server sent. The same rule the server
+    // checks a spend against (PlayerStatRules), so the panel never offers what would be refused.
+    public static int PointsAvailable(in HudStatusSnapshot status) =>
+        PlayerStatRules.PointsAvailable(status.Level, status.BaseStrength, status.BaseAttackSpeed, status.BaseVitality);
+
+    // True when the stat can take a point now: one is free and the stat is below its cap. Armor has
+    // no base value and never takes one.
+    public static bool CanSpend(in HudStatusSnapshot status, CharacterStat stat)
+    {
+        if (PointsAvailable(status) <= 0)
+        {
+            return false;
+        }
+
+        return stat switch
+        {
+            CharacterStat.Strength => status.BaseStrength < PlayerCombatStats.MaxStrength,
+            CharacterStat.Vitality => status.BaseVitality < PlayerCombatStats.MaxVitality,
+            CharacterStat.AttackSpeed => status.BaseAttackSpeed + PlayerStatRules.AttackSpeedPerPoint
+                <= PlayerCombatStats.MaxAttackSpeed + 0.0001f,
+            _ => false
+        };
+    }
+
+    // The action a spend button sends: one point on the stat. Null for a stat that takes none.
+    public static InventoryHudAction? SpendAction(CharacterStat stat)
+    {
+        StatId? id = stat switch
+        {
+            CharacterStat.Strength => StatId.Strength,
+            CharacterStat.AttackSpeed => StatId.AttackSpeed,
+            CharacterStat.Vitality => StatId.Vitality,
+            _ => null
+        };
+        return id is StatId spendable
+            ? new InventoryHudAction(InventoryHudActionKind.SpendStat, (int)spendable, 1)
+            : null;
     }
 
     // Always the twelve slots in slot order. A slot the snapshot does not fill, or fills with a bad

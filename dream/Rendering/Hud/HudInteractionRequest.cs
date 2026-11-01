@@ -61,7 +61,10 @@ public enum InventoryHudActionKind : byte
     // anchor of an item is refused.
     Move,
     // Destroy the item ItemInstanceId anchored at SlotIndex (0..63). The HUD asks for a confirm first.
-    Destroy
+    Destroy,
+    // Spend Target stat points on the stat whose StatId is SlotIndex (Strength, Vitality or Attack
+    // Speed). It travels as PlayerStatSpendIntent; the server checks the budget and the caps.
+    SpendStat
 }
 
 // One inventory action picked in the character panel. Only slot numbers and the id of an item the
