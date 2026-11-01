@@ -617,8 +617,16 @@ def validate_atlas(json_path: Path, rules: dict | None = None) -> list[str]:
         tile = r["tile"]
         for i in range(1, e + 1):
             top = s[(-i) % h] if "y" in tile else s[0]
-            if (sheet[y - i, x : x + w] != top).any():
-                errs.append(f"{tag}: bad top extrusion")
+            bottom = s[(i - 1) % h] if "y" in tile else s[-1]
+            left = s[:, (-i) % w] if "x" in tile else s[:, 0]
+            right = s[:, (i - 1) % w] if "x" in tile else s[:, -1]
+            if (
+                (sheet[y - i, x : x + w] != top).any()
+                or (sheet[y + h + i - 1, x : x + w] != bottom).any()
+                or (sheet[y : y + h, x - i] != left).any()
+                or (sheet[y : y + h, x + w + i - 1] != right).any()
+            ):
+                errs.append(f"{tag}: bad extrusion")
                 break
         if doc["kind"] == "color":
             a0 = s[..., 3] == 0
