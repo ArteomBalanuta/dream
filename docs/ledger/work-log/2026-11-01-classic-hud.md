@@ -331,3 +331,60 @@ Merged: 10.90 MB, over the 10 MB gate in `check_loader`. Fix: `save_png` uses le
 - Parked rows never come back on their own.
 - Not run in this pass: fallback (renamed `hud.png`), F3 toggle, hostile script, FPS comparison, GPU timing, 1100x700 dragon overlap, v6 database GL run, mood contact sheet.
 - `C:` ran out of space during the first 720p run. That run's output is discarded and the rerun went from `G:`.
+
+# Iteration 2 verification pass, 2026-11-01
+
+Tip under test: 5bdde6a on `integrate/classic-hud`. Release builds of 5bdde6a and of e6304a1 (`git archive`, no branch) into `artifacts/v3/` (git-ignored, on G:). Everything real ran on loopback only. The one server process I started (`lbhost`, loopback, port 5071) was stopped by me; one copy stayed up after a script crash and I stopped it by PID. The user's `dream.exe` (PID 22200, `play-build`) was running at the start of the pass and gone at the next check; I never touched it, and every timing below was taken with no `dream.exe` running (`tasklist`: 0 before each round). The windows this pass opened were my own copies; no focus call was made.
+
+## 1. Fallback and F3
+
+- `ui/hud/hud.png` renamed in a copied build: ImGui surface in all 5 captures (`surface=ImGui`) and exactly **one** `[render-fault] [hud-classic]` line (`sprite table: Could not find file ...hud.png`). F3 in that build keeps ImGui (the classic surface is latched out).
+- Intact build, `DREAM_ADMIN_HUD=1`, F3 as `WM_KEYDOWN` and `WM_KEYUP` posted to my own window handle only: Classic, ImGui, Classic, ImGui, ImGui after presses at writes 1, 2, 3 (captures say `surface=`). With `DREAM_ADMIN_HUD=0`, five Classic captures after the same three presses. No render fault in either.
+- ImGui inventory equip, move and destroy on the sparse 8x8 model: **not driven by a real pointer in GL.** OpenTK feeds ImGui from the polled `MouseState`; mouse messages posted to my window did not reach it (the arrow stayed where the desktop pointer was, and one posted move closed the inventory), and moving the real pointer would take the user's desktop. Instead `ImGuiFallbackInventoryTests` runs the real `Render.DrawInventoryOverlay` in a headless ImGui context. A scripted-mouse sweep finds exactly one equipping button per item anchor, and every Equip, Move To and Destroy entry the menus offer (`CharacterPanelModel`) is sent through `PlayScene.ToInventoryIntent` to a real `PlayerInventoryService` and accepted. The ImGui popup menus themselves (the right-click menu and the Destroy popup) were not clicked.
+
+## 2. Hostile script (v13, loopback)
+
+`artifacts/v3/hostile_v13.py` (raw sockets, no dream code) against `lbhost` on 127.0.0.1:5071 (netstat: loopback line only, no wildcard line), fresh database, items granted by `--items grant`. 138 single hostile intents, each sent and answered before the next so the rate limiter does not stand in for the rule: overlap over two or more items (40 of 181 possible drops), off the board (to 60, 63, 7, -1, 64, 1000, int max, int min), non-anchor `From` (13 cells), empty `From`, `From` 100 to 300, wells 100 to 111 and held-back 200 to 215 as `To`, equip into every wrong well and bad index, unequip of empty or bad slots, destroy with a wrong id, a non-anchor, -1 and an empty cell. **Accepted 0, unanswered 0, no `inventory.changed` sent.** Then 600 invalid moves in one burst: accepted 0, 584 answered "Too many pending player actions", 16 judged on merit, the connection stayed up. A wrong-typed intent (`from: "x"`) closes the connection and writes nothing. `item_instances` and `player_inventory_slots` (every column, `updated_utc` included) are equal before and after, and a rejoin returns an identical inventory. A valid move afterwards is accepted. (Unequip of the main hand answered "backpack is full": no 2x3 hole in that layout, a valid refusal.)
+
+## 3. Speed against e6304a1
+
+1920x1080, same scene (starter world after join, `DREAM_TIME_OF_DAY=noon`, no enemy near), Release, integrated loopback, `DREAM_MAX_FPS=0`, `size:1920:1080` first, each variant in its own copy with its own database and identity, 2 rounds alternating base and tip, play and inventory open, 16 s each, first 3 perf lines dropped (`artifacts/v3/perf_parse.py`).
+
+| Scene | FPS from the mean frame, base (r1, r2) | tip (r1, r2) | HUD CPU median (max), base / tip | GPU HUD median (max) |
+|---|---|---|---|---|
+| play | 3754, 3833 | 3901, 347 (one hitch frame in the mean) | 0.03 (0.13) / 0.03 (0.12) | 0.00 (0.01) both |
+| inventory | 2342, 4151 | 3481, 3767 | 0.04 (0.17) / 0.04 (0.22) | 0.01 (0.01 to 0.02) |
+
+The frame time is 0.2 to 0.4 ms and the log has one line a second, so the FPS figures carry hitches: no regression can be read from them and none can be excluded beyond "no HUD cost visible". HUD CPU and GPU HUD are equal on both and far under 1.5 and 1.0 ms. Draw commands (capture lines, tip): play 2 to 3, inventory 8 to 9, right-click menu 11, destroy confirm 15 at 1080p; 8, 10 and 14 at 1280x720 and at 1100x700. Quads at most 656 (limit 8192). The drag-ghost case was not captured in this pass (11 in the earlier one).
+
+**Allocation.** `ClassicHudGemAllocationTests`: 0 B per frame at 1080p and 720p while the gem eases after a health change, once the runtime has had 1.5 s to tier up (a first version with a 400-frame warm-up read 264 B on an early frame: tiering, as `StatusBarPanel` documents). A health or energy change itself allocates **464 B on its own frame**: `HudViewBuilder.Refresh` calls `CharacterPanelModel.BuildStatRows` whenever the status differs. It is once per change, not per frame, but a fight changes the health at the snapshot rate. The plan's "0 B per frame with the gem animating" holds for the frames between changes, not for the change frame.
+
+**720p median frame of 31 ms against 17 ms at 1080p.** Not reproduced: four runs at `DREAM_MAX_FPS=60` give a median of 16.7 to 17.0 ms at both sizes. The earlier run had 0.2 ms of CPU work per frame, so the 31 ms was idle time inside the frame cap, and it happened during the `C:` disk-full incident with the user's game running. Cause not established; I would call it machine state and not the HUD, but I could not prove which.
+
+**The 16.6 ms and 75 ms closed-window spikes** are the first HUD frame of the run (the first perf line, 736 to 854 ms in total): first-use atlas page upload and sprite table setup. Now: tip 10.9 to 17.1 ms (6 runs), e6304a1 27.1 ms. The 75 ms was one cold start and did not repeat.
+
+## 4. The 17th command at the 720p destroy confirm
+
+Not reproduced with an empty scene (14 at 720p, 15 at 1080p). The earlier capture `artifacts/iter2-gl/cap720/44-snap.png` shows a world label ("Lv ...", a wolf's nameplate) behind the confirm; the 1080p capture (`cap1080/46-snap.png`) shows none. One enemy label is one extra command. So 720p did not add one: the 720p scene happened to have a wolf in view. Based on the two images and the counts; I did not A/B the same scene.
+
+## 5. 1100x700
+
+The right dragon spans x 955 to 1100, y 575 to 640. The inventory panel ends at y 540 and its Close button is at about (900, 508): clear of both, a gap of about 35 px. 8 commands, no overlap.
+
+## 6. Databases
+
+- Synthetic v9, 15 items of 2x3 plus the worn hammer: after migration `--items list` shows 15 anchors (migration 0010 does not know footprints, by design); the first server start repaired the layout to 8 on the board and 7 held back, all 16 ids kept, the join played, `dropped=0`.
+- Synthetic v9 with a hand-edited row at slot 50: migrated to slot 20050 and kept (item 9999 stays in `item_instances`), integrity says "1 inventory slot row(s) outside the bag, equipment and held-back ranges (kept)", the join played with no fault, 9 commands. The plan text says parked rows at 300 up; the remap puts a hand-edited row at +20000.
+- v6 copies (the four sources, copies only). `--items list` itself migrates, so "before" is the raw v6 rows read with sqlite. db1 (join in GL, `dropped=0`): v6 rows hammer 0, blade 1, maul 2, lantern 3, worn blade 100; after: hammer 0, maul 4, lantern 6, worn blade 100, and the starter kit top-up added torch #274 at 2; every item id kept, the alias row gone. db2, db3, db4 by CLI only: v10, a backup each, integrity ok, no id lost for any character (49, 49 and 15 distinct ids).
+
+## 7. Art determinism
+
+Plain `check_art.py` (full): 0 errors, and `check_hud.py` (full): 95 + 5 sprites, 0 errors. Both include the generator double run. `check_art.py --art` (full) still fails the same five gates (bar p95 .6005, p99 .8870, share over .85 1.49%, 4u/0.5u band .8449, slab std .1352). This needed a venv with the pinned numpy and pillow (`artifacts/v3/venv`).
+
+## 8. Adversarial play (new tests)
+
+`ClassicHudIteration2AdversarialTests`, `ClassicHudIteration2RuntimeAdversarialTests`, `ImGuiFallbackInventoryTests`, `ClassicHudGemAllocationTests`. Equip all 12, then unequip into a bag with one free cell (1 accepted, 11 refused, layout unchanged on each refusal, ids conserved); a swap with no room (hammer for a torch) refused with nothing changed, and a spear swap accepted; a 2x4 spear at the four corners and refused one cell beyond; ring swap with the same kind in both wells (the modifier digest changes with the slot by design, the totals do not); held-back drain while a wolf bites and the player destroys six items; death with 8 held-back items; leave and rejoin with held-back items, and the join frame through the codec; a spear drop into a bag with room but no hole (lost notice, nothing changed); all 12 worn kept, with equal modifier totals and digest, across a restart on the production repository; two servers looting only the new kinds and equipping them, equal checksums every tick and equal inventories, a different seed differs. Leave and rejoin mid-drag is covered by the existing `WorldTransferMidDrag_CancelsTheDrop` and `ItemRemovedMidDrag_CancelsTheDropAndANewDragWorks`; I added nothing for it.
+
+## Suite
+
+Run 1 of 2 was cut: after 77 s no test finished for 9 minutes (testhost stuck; I killed the testhost I had started), with two failures before it (`ProtocolV2SlowClientLoopbackIntegrationTests.SlowClient_GetsMergedSnapshotsEncodedForItsConnection_ThatDecode_WithMutationsInOrder` and the one below). Run 2 (with `--blame-hang`): 5,954 passed, 1 failed, 46 skipped of 6,001, 2 m 43 s. The failure, `StoredWorldJoinLoopbackTests.GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture` (`Assert.NotEmpty(client.Snapshots())` at line 164: no snapshot after 3 ticks), fails whenever its class runs together (class filter: 2 of 2 with and 2 of 2 **without** my four new files) and passes alone (4 of 4). So this pass's tests do not cause it, but it is a failure at the tip that the integrator's run did not see; cause not found (order dependence inside the class, or the loopback clock nudge).
