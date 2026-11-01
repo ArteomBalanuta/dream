@@ -351,7 +351,7 @@ A second desktop client on the same database and world does not get a local serv
 
 **Formula probe at start (wave I).** Before the world opens, the server evaluates the enemy formulas for every enemy template and `player.damage_taken_factor` for armor 1..1000. A formula that fails, for example a hand-edited row that divides by zero, stops it with exit code **8** and the name of the formula, instead of failing on a spawn tick.
 
-**Integrity check on load.** After the lease and before the stored terrain is read, the server runs `WorldIntegrityCheck` over its world: `PRAGMA quick_check`, `PRAGMA foreign_key_check`, objects outside the world's bounds (cubes, rubble parent cells, terrain overrides), inventory slots that point at a missing item, an equipment slot (100..103) that matches no backpack slot of the same player, and item or enemy kinds the build does not know. Wave H adds four counts: an item in two equipment slots, a slot index outside 0..15 and 100..103, an item in an equipment slot its content does not allow, and a damaged stored roll (read only for rows that have one). An alias of a same-player backpack slot in 100..103 is no finding. A foreign-key violation or a damaged file (also a `SQLITE_CORRUPT` or `SQLITE_NOTADB` raised earlier in the start) stops the server with exit code **6**. Everything else is only counted, in one log line per finding, and never refuses the start, so a real legacy database is not rejected for soft problems. The known-kind predicates (`Func<string, bool>`) come from `ContentCatalog.Shipped` (`ServerBootstrap.IntegrityOptionsFor`); `WorldIntegrityCheck` itself accepts every kind unless it is given them. Cost on the World10k database (2.6 MB): about 2 ms without `quick_check` and about 7 ms with it. `quick_check` reads the whole file, so its cost grows with the file size; it stays on because that is one pass at start.
+**Integrity check on load.** After the lease and before the stored terrain is read, the server runs `WorldIntegrityCheck` over its world: `PRAGMA quick_check`, `PRAGMA foreign_key_check`, objects outside the world's bounds (cubes, rubble parent cells, terrain overrides), inventory slots that point at a missing item, a worn item (100..111) that still has a bag row of the same player, and item or enemy kinds the build does not know. Wave H adds four counts: an item in two equipment slots, a slot index outside 0..63, 100..111 and 200..215, an item in an equipment slot its content does not allow, and a damaged stored roll (read only for rows that have one). Bag items that overlap or run off the board and held-back rows are information only: they appear in the head line, and the server repairs the layout when it loads the inventory. A foreign-key violation or a damaged file (also a `SQLITE_CORRUPT` or `SQLITE_NOTADB` raised earlier in the start) stops the server with exit code **6**. Everything else is only counted, in one log line per finding, and never refuses the start, so a real legacy database is not rejected for soft problems. The known-kind predicates (`Func<string, bool>`) and the footprints come from `ContentCatalog.Shipped` (`ServerBootstrap.IntegrityOptionsFor`); `WorldIntegrityCheck` itself accepts every kind unless it is given them. Cost on the World10k database (2.6 MB): about 2 ms without `quick_check` and about 7 ms with it. `quick_check` reads the whole file, so its cost grows with the file size; it stays on because that is one pass at start.
 
 **Backup and restore.** `dream --db backup <path>` copies the whole database file with `SqliteConnection.BackupDatabase`, checks the copy with `integrity_check`, and moves it into place. It is safe while a server runs and refuses an existing destination. `dream --db restore <path> --yes` is an offline file swap. It takes the maintenance lock (so no start can create or open a world between its checks and the swap) and every world's lease (the worlds in the database plus every existing lock file), and exits **7** if either is held. It validates the source first: a schema version newer than this build exits **3**; a failed `integrity_check` or damaged pages (SQLite error 11) exit **6**; a missing source, a file that is not a SQLite database, a zero-byte file, or a SQLite file with neither a `worlds` nor a `player_profiles` table exits **2**. A legacy database from before `schema_version` has `player_profiles` and restores. It keeps the current file as `{db}.pre-restore.{timestamp}.bak` (a `-1`, `-2`... suffix if that name exists), then swaps the source in. The safety copy never depends on the health of the file being replaced: it uses the SQLite backup API and, when that fails because the live file is damaged (a bad header is error 26, a truncated file 11), a raw copy of the file with its `-wal` and `-shm`; so restoring over a damaged database, the case exit 6 tells the operator to fix, works. If the raw copy also fails, or the live file cannot be replaced (locked), the restore stops with exit **2**, the live file is left as it was and the staging file is removed; the next start migrates an older source with the usual backup. There is no per-world restore: player profiles are global, so restoring one world would leave orphans.
 
@@ -393,9 +393,9 @@ dream --items grant <world> <character> <item kind> [--rarity common|uncommon|ra
 dream --items list <world> <character>
 ```
 
-`grant` creates one rolled item in the character's lowest free backpack slot, as one transaction. It prints item id, slot, rarity and modifiers, tab-separated. Rarity defaults to common. `list` prints the character's slots, kinds, rarity and modifiers. `<world>` is an id or a name; `<character>` matches the display name ignoring ASCII case, then the exact key.
+`grant` creates one rolled item at the first spot of the 8x8 bag its footprint fits (row by row), as one transaction. It prints item id, slot, rarity and modifiers, tab-separated. Rarity defaults to common. `list` prints the character's slots, kinds, rarity and modifiers. `<world>` is an id or a name; `<character>` matches the display name ignoring ASCII case, then the exact key.
 
-`grant` is offline: it takes the world's lease, so it refuses a world a server is hosting. There is no live grant. The character must have joined that world once, because the starter grant row has to exist: without it the next join would treat the inventory as a pre-kit one. Only a kind with a `rolls` table in `items.json` can be granted (`gear.iron-blade`, `gear.ward-lantern`, `gear.leather-cap`, `gear.leather-vest`). `list` takes no lease.
+`grant` is offline: it takes the world's lease, so it refuses a world a server is hosting. There is no live grant. The character must have joined that world once, because the starter grant row has to exist: without it the next join would treat the inventory as a pre-kit one. Only a kind with a `rolls` table in `items.json` can be granted (every `gear.*` kind today). `list` takes no lease.
 
 Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or backpack full, 3 the database is newer than this build, 7 the world is held or the database is busy (a maintenance lock or a SQLite busy error), 8 invalid content.
 
@@ -403,13 +403,23 @@ Exit codes: 0 done, 1 usage, 2 not found, no starter grant, not rollable or back
 
 | Slot index | Meaning |
 | --- | --- |
-| 0..15 | Backpack. |
+| 0..63 | Bag: the top-left cell (`row * 8 + col`) of an item on the 8x8 board. The item covers its `footprint` from there. |
 | 100 | Main hand. |
 | 101 | Off hand. |
 | 102 | Head. |
 | 103 | Body. |
+| 104 | Hands. |
+| 105 | Feet. |
+| 106 | Legs. |
+| 107 | Neck. |
+| 108 | Left ring. |
+| 109 | Right ring. |
+| 110 | Back. |
+| 111 | Companion. |
+| 200..215 | Held back: items that did not fit the board when the inventory loaded. They move onto the board when room appears, and the inventory shows a count. Loot never lands here. |
+| 300 up | Parked: overflow past the 16 held-back rows, only reachable with hand-edited data or a large footprint change. Kept and inert: not shown, and not moved back on its own. |
 
-A row in 100..103 holds the id of an item that normally also has a backpack row, and one item may be in one equipment slot. An older row in slot 100 may have no backpack row; it moves to the lowest free backpack slot when it is unequipped or displaced, and a full backpack rejects that action. Which slots an item may occupy comes from `equipSlots` in `items.json`. Armor is shown and summed but changes no combat result yet. Inventory actions have a budget per session: a burst of 16 actions that would write, refilling 8 a second, counted in server ticks. A dead player can still use inventory actions (equip, move, unequip); that is harmless, because none of them revives the player.
+Any other index is an unknown row, kept and inert. A worn item has only its row in 100..111: it leaves the bag when equipped, and one item may be in one equipment slot. Unequipping puts it on the named cell, which must be free, or at the first fit, and a bag with no room rejects the action. A bag item dropped on an occupied spot swaps with the one item there, which goes to the mover's old anchor if it fits, else the first fit, else the move is refused. A worn item dropped on an occupied equipment slot swaps only when each item may occupy the other's slot. Which slots an item may occupy comes from `equipSlots` in `items.json`, and `footprint` is `[cols, rows]`, 1..4, default 1x1. Armor is shown and summed but changes no combat result yet. Inventory actions have a budget per session: a burst of 16 actions that would write, refilling 8 a second, counted in server ticks. A dead player can still use inventory actions (equip, move, unequip); that is harmless, because none of them revives the player.
 
 ### Loot tables: `config/content/loot.json`
 
@@ -429,7 +439,7 @@ Read at start with the other content files, and part of the content digest. `ene
 | `items` | The item kinds a roll can give. Each must exist in `items.json` and have `rolls`. |
 | `rarity` | Weights of the rarity the item is rolled at. |
 
-Weights are 0..1,000,000 with an int total and at least one above 0. Duplicates and unknown properties fail at load. The killing blow takes the drop. A dropped item goes into the backpack, and with a full backpack it is lost with a notice. There are no ground drops.
+Weights are 0..1,000,000 with an int total and at least one above 0. Duplicates and unknown properties fail at load. The killing blow takes the drop. A dropped item goes to the first spot of the bag its footprint fits, and when it fits nowhere it is lost with a notice, even with free cells showing. There are no ground drops.
 
 ### Enemies: `config/content/enemies.json` (version 2)
 

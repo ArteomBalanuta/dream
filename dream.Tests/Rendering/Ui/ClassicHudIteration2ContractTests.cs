@@ -7,7 +7,8 @@ namespace Dream.Tests.Rendering.Ui;
 
 // Classic HUD iteration 2, C0a: the contracts the parallel workstreams build against. A canvas that
 // knows nothing of the new draw calls keeps compiling and draws the plain sprite; the view carries 12
-// worn slots and the gem animation fields; the new sprite names exist but are not required yet.
+// worn slots and the gem animation fields; the new sprite names exist, and the bar art the panel is
+// built around (bezels, spill, numerals) is required now that it ships.
 public sealed class ClassicHudIteration2ContractTests
 {
     // Implements only what the interface required before this iteration.
@@ -118,7 +119,7 @@ public sealed class ClassicHudIteration2ContractTests
     }
 
     [Fact]
-    public void TheIterationTwoSpriteNames_AreDefined_ButNotYetRequired()
+    public void TheIterationTwoSpriteNames_AreDefined_AndTheBarArtIsRequired()
     {
         string[] added =
         [
@@ -138,23 +139,33 @@ public sealed class ClassicHudIteration2ContractTests
             ],
             added);
         Assert.Equal(added.Length, added.Distinct().Count());
-        Assert.All(added, name => Assert.DoesNotContain(name, UiSpriteNames.Required));
+
+        // The bar art merged, so an atlas without it fails Validate. The masks, glints, wells and
+        // silhouettes stay optional because their panels fall back without them.
+        string[] required =
+        [
+            UiSpriteNames.GemSettingLeft, UiSpriteNames.GemSettingRight, UiSpriteNames.GemHpSpill,
+            UiSpriteNames.GemMpSpill, UiSpriteNames.HudNumSlash,
+        ];
+        Assert.All(required, name => Assert.Contains(name, UiSpriteNames.Required));
+        Assert.All(added.Except(required), name => Assert.DoesNotContain(name, UiSpriteNames.Required));
+        Assert.All(UiSpriteNames.PendingRequired, name => Assert.Contains(name, UiSpriteNames.Required));
     }
 
     [Fact]
-    public void TheBarNumerals_AreNamedByDigit_AndNotRequiredYet()
+    public void TheBarNumerals_AreNamedByDigit_AndRequired()
     {
         for (int d = 0; d <= 9; d++)
         {
             Assert.Equal("hudnum." + d, UiSpriteNames.HudNum(d));
-            Assert.DoesNotContain(UiSpriteNames.HudNum(d), UiSpriteNames.Required);
+            Assert.Contains(UiSpriteNames.HudNum(d), UiSpriteNames.Required);
         }
     }
 
     [Fact]
     public void TheShippedArt_AlreadyHasTheSpritesThatExistToday()
     {
-        // The names whose art ships already; the rest (setting, spill, numerals) arrive with the art.
+        // The optional names; the required ones (setting, spill, numerals) are checked by Validate.
         Assert.True(UiSpriteTable.TryLoad(Dream.Assets.AssetPaths.UiDirectory, out UiSpriteTable? table, out string error), error);
         foreach (string name in new[]
         {

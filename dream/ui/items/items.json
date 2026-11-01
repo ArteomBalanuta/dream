@@ -19,11 +19,6 @@
     "name": "rare"
    },
    {
-    "image": "items_enhanced.png",
-    "kind": "color",
-    "name": "enhanced"
-   },
-   {
     "image": "items_mask.png",
     "kind": "mask",
     "name": "mask"

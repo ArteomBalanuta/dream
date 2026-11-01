@@ -337,7 +337,8 @@ public static class InventoryWindow
     // exactly one other item are Valid and everything else is Invalid. A bag item dropped on an
     // occupied well swaps, and shows Invalid when the displaced item has nowhere to go. A worn item
     // dropped on a bag anchor is unequipped there, which needs its whole footprint free; dropped on
-    // another well it moves there (a swap when that well is taken) if its slot mask allows it.
+    // another well it moves there if its slot mask allows it. When that well is taken the two swap,
+    // which also needs the other item's mask to allow the source well (the server's rule).
     internal static DropVerdict TryResolveDrop(HudView v, int source, int target, out InventoryHudAction action)
     {
         action = default;
@@ -364,6 +365,19 @@ public static class InventoryWindow
                 if (!CharacterPanelModel.CanEquipTo(worn.EquipSlots, targetSlot))
                 {
                     return DropVerdict.Invalid;
+                }
+
+                if (TryItem(v.Worn, (int)targetSlot, out InventoryItemSnapshot other))
+                {
+                    if (other.ItemInstanceId == worn.ItemInstanceId)
+                    {
+                        return DropVerdict.None;
+                    }
+
+                    if (!CharacterPanelModel.CanEquipTo(other.EquipSlots, sourceSlot))
+                    {
+                        return DropVerdict.Invalid;
+                    }
                 }
 
                 action = new InventoryHudAction(InventoryHudActionKind.EquipTo, source, target);
@@ -683,8 +697,8 @@ public static class InventoryWindow
         }
     }
 
-    // "N items held back: make room" in the free band under the bag; nothing at 0. The server holds back
-    // items it has no room for and places them as space appears.
+    // "1 item held back: make room" or "N items held back: make room" in the free band under the bag;
+    // nothing at 0. The server holds back items it has no room for and places them as space appears.
     private static void DrawHeldBackLine(IUiCanvas c, HudView v, in UiLayout l, UiRect win)
     {
         if (v.HeldBackCount <= 0)
@@ -695,7 +709,7 @@ public static class InventoryWindow
         Span<char> mem = stackalloc char[48];
         UiTextBuilder b = new(mem);
         b.Append(v.HeldBackCount);
-        b.Append(" items held back: make room");
+        b.Append(CharacterPanelModel.HeldBackSuffix(v.HeldBackCount));
         UiRect band = l.FromUnits(win, HeldBackLeftUnits, HeldBackTopUnits, BagColumns * CellUnits, 8f);
         DrawText(c, b.Text, new Vector2(band.X, band.Y), ItemTierStyle.Danger);
     }

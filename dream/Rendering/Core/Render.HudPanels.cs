@@ -601,7 +601,7 @@ public partial class Render
 
         if (heldBack > 0)
         {
-            ImGui.TextUnformatted($"{heldBack} items held back: make room");
+            ImGui.TextUnformatted(heldBack + CharacterPanelModel.HeldBackSuffix(heldBack));
         }
     }
 

@@ -99,7 +99,7 @@ def check_variants(doc: dict, sheet: np.ndarray) -> list[str]:
     errs = []
     variants = doc["meta"].get("variants", [])
     names = {v["name"]: v for v in variants}
-    if set(names) != {"uncommon", "rare", "enhanced", "mask"}:
+    if set(names) != {"uncommon", "rare", "mask"}:
         return [f"variants {sorted(names)}"]
     if names["mask"]["kind"] != "mask":
         errs.append("mask variant kind")
@@ -130,19 +130,11 @@ def check_variants(doc: dict, sheet: np.ndarray) -> list[str]:
                     errs.append(f"{name}: empty rim channel")
                 if (so[..., :3][sa[..., 3] == 0] != 0).any():
                     errs.append(f"{name}: mask outside art")
-        if v["name"] == "enhanced":
-            for name in icons:
-                r = doc["sprites"][name]
-                so = other[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"]]
-                solid = so[so[..., 3] > 200][:, :3]
-                near = (solid >= 247).all(axis=1).mean()
-                if near > 0.20:
-                    errs.append(f"{name}: enhanced {near:.0%} near white")
     return errs
 
 
 def check_tier_look(doc: dict, sheet: np.ndarray) -> list[str]:
-    """Tiers must be told apart at a glance, and Enhanced must keep the item's own hue."""
+    """Tiers must be told apart at a glance."""
     errs = []
 
     def px(image, name):
@@ -156,9 +148,6 @@ def check_tier_look(doc: dict, sheet: np.ndarray) -> list[str]:
             errs.append(f"{name}: Uncommon too close to Common")
         if (unc - base).mean(axis=0)[1] > (unc - base).mean(axis=0)[0]:
             errs.append(f"{name}: Uncommon not shifted towards rose")
-    c = np.median(px("items_enhanced.png", "item.shield.kite"), axis=0)
-    if c[0] < c[2] + 40:
-        errs.append(f"enhanced shield lost its red: {c}")
     return errs
 
 

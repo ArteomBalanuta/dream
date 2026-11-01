@@ -381,7 +381,7 @@ public sealed class InventoryWindowTests : IDisposable
 
         _scene.Frame();
 
-        string line = $"{count} items held back: make room";
+        string line = count == 1 ? "1 item held back: make room" : $"{count} items held back: make room";
         CanvasCall text = _scene.Canvas.Texts.Single(t => t.Text == line && t.Color == ItemTierStyle.Danger);
         UiRect band = _scene.Layout.FromUnits(_scene.Layout.Inventory, 15f, 364f, 160f, 8f);
         Assert.Equal(band.X, text.TextPos.X, 3);
@@ -1117,6 +1117,40 @@ public sealed class InventoryWindowTests : IDisposable
                 InventoryHudActionKind.EquipTo,
                 EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand),
                 EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)),
+            Assert.Single(_scene.Actions.Picked));
+    }
+
+    [Fact]
+    public void Drag_WellOntoATakenWell_WhoseItemCannotComeBack_ShowsInvalidAndEmitsNothing()
+    {
+        // The server refuses this swap (EquipFromWell): the blade may not sit in the off hand.
+        _scene.Worn[(int)EquipmentSlot.OffHand] = InventoryScene.Item(1, "gear.ward-lantern", HandsMask);
+        _scene.Worn[(int)EquipmentSlot.MainHand] = InventoryScene.Item(2, "gear.iron-blade", EquipmentSlots.MaskOf(EquipmentSlot.MainHand));
+        _scene.Refresh();
+
+        Hold(InventoryScene.Centre(_scene.Well((int)EquipmentSlot.OffHand)), InventoryScene.Centre(_scene.Well((int)EquipmentSlot.MainHand)));
+        Assert.Equal(_scene.Well((int)EquipmentSlot.MainHand), _scene.Canvas.Named("cell.overlay.invalid").Single().Rect);
+        Assert.Empty(_scene.Canvas.Named("cell.overlay.hover"));
+        _scene.Input.ReleaseDrag = true;
+        _scene.Frame();
+
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_WellOntoATakenWell_WhoseItemCanComeBack_IsAValidSwap()
+    {
+        _scene.Worn[(int)EquipmentSlot.OffHand] = InventoryScene.Item(1, "gear.ward-lantern", HandsMask);
+        _scene.Worn[(int)EquipmentSlot.MainHand] = InventoryScene.Item(2, "gear.ward-lantern", HandsMask);
+        _scene.Refresh();
+
+        Drag(_scene.Well((int)EquipmentSlot.OffHand), _scene.Well((int)EquipmentSlot.MainHand));
+
+        Assert.Equal(
+            new InventoryHudAction(
+                InventoryHudActionKind.EquipTo,
+                EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand),
+                EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand)),
             Assert.Single(_scene.Actions.Picked));
     }
 

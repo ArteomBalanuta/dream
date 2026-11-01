@@ -1367,7 +1367,6 @@ def main(out_root: Path) -> None:
     variants = [
         {"name": "uncommon", "image": "items_uncommon.png", "kind": "color"},
         {"name": "rare", "image": "items_rare.png", "kind": "color"},
-        {"name": "enhanced", "image": "items_enhanced.png", "kind": "color"},
         {"name": "mask", "image": "items_mask.png", "kind": "mask"},
     ]
     meta = {"variants": variants, "channels": {"mask": "R metal, G reflect, B rim, A emissive"}}
@@ -1382,7 +1381,9 @@ def main(out_root: Path) -> None:
         sheets["base"].add(Sprite(name, rgba, pivot=pivot, meta=info))
         sheets["mask"].add(Sprite(name, mask, pivot=pivot, meta=info))
         for tier, img in tier_variants(rgba, mask).items():
-            sheets[tier].add(Sprite(name, img, pivot=pivot, meta=info))
+            # No page for the enhanced look until something draws it: dream/ui has a size budget.
+            if tier in sheets:
+                sheets[tier].add(Sprite(name, img, pivot=pivot, meta=info))
     blob = aura_blob()
     centre = (blob.shape[1] // 2, blob.shape[0] // 2)
     for key, atlas in sheets.items():
@@ -1445,7 +1446,7 @@ def preview(out_root: Path, previews: Path) -> None:
     sheet_for("items.png", names, 17, 17).convert("RGB").save(previews / "items_icons.png", compress_level=6)
     wanted = {"item.axe.twinbit", "item.armor.gilded", "item.helm.gilded", "item.gear.iron-blade", "item.shield.kite", "item.gem.amber", "item.gear.iron-band"}
     picks = [n for n in names if n in wanted]
-    boards = [sheet_for(f"items{suf}.png", picks, cols=15, rows=5) for suf in ("", "_uncommon", "_rare", "_enhanced")]
+    boards = [sheet_for(f"items{suf}.png", picks, cols=15, rows=5) for suf in ("", "_uncommon", "_rare")]
     full = Image.new("RGB", (boards[0].width, sum(b.height for b in boards)))
     y = 0
     for b in boards:

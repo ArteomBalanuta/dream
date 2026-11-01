@@ -31,7 +31,7 @@ public class UiSpriteTableTests
         }
 
         Assert.True(table.TryGetPageSize(UiPage.Hud, out int w, out int h));
-        Assert.Equal((1692, 1452), (w, h));
+        Assert.Equal((1898, 1532), (w, h));
     }
 
     [Fact]

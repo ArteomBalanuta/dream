@@ -592,8 +592,9 @@ The details and measurements are in `docs/performance-and-optimizations.md`, Che
 
 The gameplay inventory slice uses:
 
-- backpack slots `0..15`
-- equipment slots `100..103`, each an alias of the item's backpack row when it has one
+- bag anchors `0..63` on the 8x8 board
+- equipment slots `100..111`; a worn item has only this row
+- held-back rows `200..215`, overflow parked from `300` up
 - item definitions resolved in code by `item_kind`
 - per-item held-viewmodel selection resolved by `visual_id`
 

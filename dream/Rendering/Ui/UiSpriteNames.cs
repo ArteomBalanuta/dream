@@ -75,9 +75,8 @@ public static class UiSpriteNames
     public const string GlyphCloseNormal = "glyph.close.normal";
     public const string GlyphCloseHover = "glyph.close.hover";
 
-    // Classic HUD iteration 2. Constants only: none is in Required yet, so a build with the old art
-    // still passes UiSpriteTable.Validate. The art workstreams ship them; the gem runtime (WS3) adds
-    // the ones it cannot draw without to Required once they exist.
+    // Classic HUD iteration 2. The bezels, spill light and numerals are in Required (PendingRequired);
+    // the panels draw the rest when the atlas has them and go without when it does not.
     public const string GemMpFull = "gem.mp.full";
     public const string GemHpMask = "gem.hp.mask";
     public const string GemHpSpec = "gem.hp.spec";
@@ -112,19 +111,15 @@ public static class UiSpriteNames
 
     private static readonly string[] HudNumNames = ["hudnum.0", "hudnum.1", "hudnum.2", "hudnum.3", "hudnum.4", "hudnum.5", "hudnum.6", "hudnum.7", "hudnum.8", "hudnum.9"];
 
-    // Bar numeral sprite "hudnum.<d>" for d in 0..9 (not in Required yet).
+    // Bar numeral sprite "hudnum.<d>" for d in 0..9.
     public static string HudNum(int d) => HudNumNames[d];
 
     // Item icon sprite for an ItemKind such as "tool.torch": "item.tool.torch".
     public static string Item(string itemKind) => "item." + itemKind;
 
-    // Iteration 2, WS3 (gem runtime and bar panel). The new bar art the panel draws when the atlas has
-    // it and goes without when it does not: the bezels under the gems, the gems' spill light and the bar
-    // numerals. They are NOT in Required, because the art that adds them has not merged and a build
-    // with the old art must still pass UiSpriteTable.Validate. When the art workstream merges, the
-    // integrator appends exactly this list to Required (".. PendingRequired") and drops these names
-    // from the "not yet required" contract test. Nothing else needs to change: the gem masks, glints
-    // and gem.mp.full already ship and the panel falls back to the plain clipped gem without them.
+    // Iteration 2, WS3 (gem runtime and bar panel). The bar art that arrived with the forged atlas: the
+    // bezels under the gems, the gems' spill light and the bar numerals. Part of Required. The gem masks,
+    // glints and gem.mp.full are not: the panel falls back to the plain clipped gem without them.
     public static IReadOnlyList<string> PendingRequired { get; } =
     [
         GemSettingLeft, GemSettingRight, GemHpSpill, GemMpSpill, HudNumSlash, .. HudNumNames
@@ -142,6 +137,7 @@ public static class UiSpriteNames
         Well2x2, Well2x3, SilWeaponLeft, SilWeaponRight, SilHelm, SilArmor, TipPanel, TipBand,
         ButtonNormal, ButtonHover, ButtonPressed, Plate44Normal, Plate44Hover, Plate44Pressed, GlyphCloseNormal, GlyphCloseHover,
         CursorPointer, CursorPressed, CursorGrab, CursorForbid, CursorAttack,
-        .. DigitNames
+        .. DigitNames,
+        .. PendingRequired
     ];
 }

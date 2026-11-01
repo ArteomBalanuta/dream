@@ -161,6 +161,10 @@ public static class CharacterPanelModel
         return slots;
     }
 
+    // What follows the count on the held-back line, shared by both inventory surfaces.
+    public static string HeldBackSuffix(int count) =>
+        count == 1 ? " item held back: make room" : " items held back: make room";
+
     // True when the EquipmentSlots mask lets an item occupy the slot. Allocation free.
     public static bool CanEquipTo(int equipSlotMask, EquipmentSlot slot) =>
         (equipSlotMask & EquipmentSlots.MaskOf(slot)) != 0;

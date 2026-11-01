@@ -45,9 +45,10 @@ public sealed class ClassicHudGemTests
         (UiPage.Digits, "fx/dmg_digits_x4.json", "fx/dmg_digits_x4.png"),
     ];
 
-    // The real tables with the iteration 2 bar sprites added on the Hud page (bezels, spill, numerals) and
-    // optionally the gem masks and glints removed. Rects are inside the real image; the pixels they point at
-    // belong to other sprites, so this is for layout and command tests, not for pixels.
+    // The real tables with the iteration 2 bar sprites (bezels, spill, numerals) left in (addNewArt) or taken
+    // out to stand for an atlas from before them, and optionally the gem masks and glints removed. Without the
+    // bar sprites the masks on the real page are not the old ones, so this is for layout and command tests,
+    // not for pixels.
     private static UiSpriteTable ModifiedTable(bool addNewArt, bool removeMaskAndGlints = false)
     {
         UiSpriteTable table = new();
@@ -67,18 +68,12 @@ public sealed class ClassicHudGemTests
                     }
                 }
 
-                if (addNewArt)
+                if (!addNewArt)
                 {
-                    for (int d = 0; d < 10; d++)
+                    foreach (string name in UiSpriteNames.PendingRequired)
                     {
-                        sprites.Add("hudnum." + d, Rect(36 * d, 1000, 32, 48));
+                        sprites.Remove(name);
                     }
-
-                    sprites.Add("hudnum.slash", Rect(360, 1000, 32, 48));
-                    sprites.Add("gem.setting.left", Rect(400, 1000, 248, 224));
-                    sprites.Add("gem.setting.right", Rect(650, 1000, 248, 224));
-                    sprites.Add("gem.hp.spill", Rect(900, 1000, 512, 256));
-                    sprites.Add("gem.mp.spill", Rect(0, 1100, 512, 256));
                 }
 
                 json = root.ToJsonString();
@@ -89,18 +84,6 @@ public sealed class ClassicHudGemTests
 
         return table;
     }
-
-    private static JsonObject Rect(int x, int y, int w, int h) => new()
-    {
-        ["x"] = x,
-        ["y"] = y,
-        ["w"] = w,
-        ["h"] = h,
-        ["pivot"] = new JsonArray(0, 0),
-        ["slice"] = null,
-        ["tile"] = "none",
-        ["meta"] = new JsonObject(),
-    };
 
     // A 64 x 48 Hud page with a 16 x 16 gem family per kind: full (200,40,40), empty (20,20,200), a level map,
     // glints. levelMapArt adds the two setting sprites (the marker of the baked maps) and flips the mask to the
@@ -346,7 +329,7 @@ public sealed class ClassicHudGemTests
     {
         foreach (bool newArt in new[] { false, true })
         {
-            UiSpriteTable table = newArt ? ModifiedTable(addNewArt: true) : RealTable();
+            UiSpriteTable table = ModifiedTable(addNewArt: newArt);
             foreach ((int w, int h) in new[] { (1280, 720), (1920, 1080), (1440, 1024) })
             {
                 UiLayout layout = UiLayout.Create(w, h, 0f);
@@ -801,7 +784,7 @@ public sealed class ClassicHudGemTests
     public void WithoutTheNewArt_NoSettingOrSpillIsDrawn_AndTheGemsStillDraw()
     {
         UiLayout l = UiLayout.Create(1920, 1080, 0f);
-        StatusBarRecordingCanvas c = Run(RealTable(), BarView(0.5f), l);
+        StatusBarRecordingCanvas c = Run(ModifiedTable(addNewArt: false), BarView(0.5f), l);
 
         foreach (string absent in new[] { "gem.setting.left", "gem.setting.right", "gem.hp.spill", "gem.mp.spill" })
         {
@@ -931,7 +914,7 @@ public sealed class ClassicHudGemTests
     public void WithoutTheNumeralArt_HealthAndLevelAreText_AsToday()
     {
         UiLayout l = UiLayout.Create(1920, 1080, 0f);
-        StatusBarRecordingCanvas c = Run(RealTable(), BarView(73f / 120f), l);
+        StatusBarRecordingCanvas c = Run(ModifiedTable(addNewArt: false), BarView(73f / 120f), l);
 
         Assert.Contains(c.Texts, t => t.Text == "73/120");
         Assert.Contains(c.Texts, t => t.Text == "7");
@@ -943,8 +926,8 @@ public sealed class ClassicHudGemTests
     [InlineData(true)]
     public void NoManaNumberIsEverDrawn_WithOrWithoutTheNumeralArt(bool newArt)
     {
-        UiSpriteTable table = newArt ? ModifiedTable(addNewArt: true) : RealTable();
-        foreach ((int w, int h) in new[] { (1280, 720), (1920, 1080), (2560, 1080) })
+        UiSpriteTable table = ModifiedTable(addNewArt: newArt);
+foreach ((int w, int h) in new[] { (1280, 720), (1920, 1080), (2560, 1080) })
         {
             UiLayout l = UiLayout.Create(w, h, 0f);
             StatusBarRecordingCanvas c = Run(table, BarView(1f, hp: 120, maxHp: 120), l);

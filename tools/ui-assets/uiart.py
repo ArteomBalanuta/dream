@@ -480,7 +480,8 @@ class Sprite:
 def save_png(rgba_u8: np.ndarray, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba_u8, "RGBA").save(path, format="PNG", compress_level=6)
+    # Level 9: the forged pages are noisy and dream/ui has a budget (check_loader).
+    Image.fromarray(rgba_u8, "RGBA").save(path, format="PNG", compress_level=9)
 
 
 class Atlas:

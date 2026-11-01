@@ -141,7 +141,7 @@ Sprite = footprint + 6 u margin per side. `pivot` = footprint top-left (24,24 px
 
 Verify the `tool.*` and `gear.*` names against `dream/config/content/items.json`; every key must have a sprite. Footprints are art-only; the grid is 1x1 today. Set `meta.pivotOverflow` only if needed.
 
-Tiers share one layout: `items.json` with `meta.variants` listing the PNGs, `items.png` (Common), `items_uncommon.png` (light tint), `items_rare.png` (frozen orange cycle key `axe.cycle` with rims), `items_enhanced.png` (gold, whitened, capped at 80%), `items_mask.png` (`kind:"mask"`; R metal, G reflect coord, B rim, A emissive), `tier_ramps.png/json` (256x16 per row: rare cycle, enhanced, chrome), and `fx.aura.blob` in `items.png` (30x30 u, soft radial).
+Tiers share one layout: `items.json` with `meta.variants` listing the PNGs, `items.png` (Common), `items_uncommon.png` (light tint), `items_rare.png` (frozen orange cycle key `axe.cycle` with rims), `items_mask.png` (`kind:"mask"`; R metal, G reflect coord, B rim, A emissive), `tier_ramps.png/json` (256x16 per row: rare cycle, enhanced, chrome), and `fx.aura.blob` in `items.png` (30x30 u, soft radial).
 
 Combat text in `dream/ui/fx/`: `dmg_digits.png/json` holds `dmg.0`-`dmg.9`, `dmg.plus`, `dmg.comma`, 12x16 texels, `scale:1`, extrude 1. Bitmaps as strings in code. R fill, G rim + 1-texel down-right shadow, B 0, A = R+G. `meta.advance=11`. `dmg_digits_x4.png/json` is the same at 48x64 by box upscale, plus `dmg.miss` (128x44) and `dmg.miss.M/i/s`: thin polygons, ~3 px-equivalent stroke, R fill, G soft shadow. Spec 05 Glyph plan.
 
