@@ -236,6 +236,26 @@ public sealed class DedicatedServerService : IAsyncDisposable
     public async ValueTask<ServerConnection> AcceptNextClientAsync(CancellationToken cancellationToken = default)
     {
         ITransportConnection accepted = await _transport.AcceptClientAsync(cancellationToken);
+        while (ConnectionOptions.MaxConnections > 0 && _connections.Count >= ConnectionOptions.MaxConnections)
+        {
+            // Over the cap: closed right after accept, before it gets a connection, loop or context.
+            NetworkDiagnosticsLog.Write(
+                "server.accept.refused",
+                $"connection={accepted.ConnectionId} connections={_connections.Count} max={ConnectionOptions.MaxConnections}");
+            try
+            {
+                await accepted.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.connection.close-failed",
+                    $"connection={accepted.ConnectionId} error={ex.GetType().Name}: {ex.Message}");
+            }
+
+            accepted = await _transport.AcceptClientAsync(cancellationToken);
+        }
+
         ServerConnection connection = new(accepted, _host, _codec, _framer, ConnectionOptions);
         AttachConnection(connection);
         NetworkDiagnosticsLog.Write(
@@ -596,6 +616,8 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // its transport is closed before its writer is awaited (a dead peer may hold a socket write).
     // The host already released it, so its release here finds nothing left. A connection the
     // service already removed (its loop ended, or a liveness fault) is left to that path.
+    private static readonly TimeSpan TakeoverNoticeFlushTimeout = TimeSpan.FromMilliseconds(250);
+
     private async ValueTask CloseTakenOverConnectionAsync(string connectionId)
     {
         if (!_connections.TryGetValue(connectionId, out ServerConnection? connection)
@@ -607,6 +629,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
         _takenOverConnections[connection] = 0;
         try
         {
+            // The old client hears why before its socket closes. Bounded, so a dead peer cannot hold the tick.
+            connection.Enqueue(new JoinRejectedMessage(DedicatedServerHost.OpenedElsewhereRejectionReason));
+            await connection.FlushOutboundAsync(TakeoverNoticeFlushTimeout);
             await connection.CloseTransportAsync();
         }
         catch (Exception ex)

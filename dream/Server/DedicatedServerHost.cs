@@ -58,6 +58,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public const string SessionInUseRejectionReason =
         "Session already in use: another connection is still active for it.";
 
+    // Sent to a connection whose seat a same-account join took over, just before its socket closes.
+    public const string OpenedElsewhereRejectionReason = "This character was opened somewhere else.";
+
     public const string JoinThrottledRejectionReason =
         "Too many join attempts for this name.";
 
@@ -104,6 +107,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // the service's own release for it runs. A mark stays until a new connection with the same id
     // attaches (ForgetTakenOverConnection); ids are remote endpoints, so that is a new socket.
     private readonly ConcurrentQueue<string> _takenOverConnectionQueue = new();
+    // Minimum gap between joins from one already-joined connection.
+    public static readonly TimeSpan RepeatJoinInterval = TimeSpan.FromSeconds(5);
+    private readonly ConcurrentDictionary<string, long> _lastRepeatJoin = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _takenOverConnections = new(StringComparer.Ordinal);
 
     public DedicatedServerHost(
@@ -312,6 +318,20 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             if (message is ClientJoinRequestMessage rawJoinRequest)
             {
+                // A joined connection may repeat a join (a name change is refused, a same-seat repeat
+                // re-exports the world) at most once per RepeatJoinInterval; extras are dropped unanswered.
+                if (context.LastJoinRequest != null)
+                {
+                    long joinNow = TimeProvider.GetTimestamp();
+                    if (_lastRepeatJoin.TryGetValue(connectionId, out long lastRepeat)
+                        && joinNow - lastRepeat < (long)(RepeatJoinInterval.TotalSeconds * TimeProvider.TimestampFrequency))
+                    {
+                        return Array.Empty<IServerToClientMessage>();
+                    }
+
+                    _lastRepeatJoin[connectionId] = joinNow;
+                }
+
                 // On a host with accounts the token is checked and replaced by its hash before anything
                 // throttles, queues, routes or stores the message, so no later code (PendingJoin,
                 // LastJoinRequest, logs) can see it. A bad or missing token starts no prefetch.
@@ -1002,6 +1022,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     {
         lock (_authoritySync)
         {
+            _lastRepeatJoin.TryRemove(connectionId, out _);
             if (_disposed)
             {
                 _pendingJoins.RemoveAll(join => string.Equals(join.ConnectionId, connectionId, StringComparison.Ordinal));
