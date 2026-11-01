@@ -131,4 +131,9 @@ public partial class Render : IDisposable
     public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
 
     public Matrix4 ProjectionMatrix => _projection;
+
+    // Set by the play scene each frame; inert until the isometric view uses them.
+    public Dream.Simulation.Players.Camera? LastWorldCamera { get; set; }
+
+    public Vector3? FogOrigin { get; set; }
 }

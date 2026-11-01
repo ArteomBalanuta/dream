@@ -126,17 +126,6 @@ public partial class PlayScene
 
         _wasInventoryTogglePressed = inventoryTogglePressed;
 
-        bool cameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
-        if (cameraViewTogglePressed &&
-            !_wasCameraViewTogglePressed &&
-            _settings.CurrentRuntimeState.AllowGameplayInput)
-        {
-            _settings.ToggleCameraViewMode();
-            PersistDesktopClientConfig();
-        }
-
-        _wasCameraViewTogglePressed = cameraViewTogglePressed;
-
         // F3 swaps the classic HUD for the ImGui one and back. Display only: a no-op unless the
         // admin setting is available, in-session, never saved, and nothing is sent.
         bool adminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);

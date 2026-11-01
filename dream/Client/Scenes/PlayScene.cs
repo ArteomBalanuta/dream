@@ -65,7 +65,6 @@ public partial class PlayScene : IDisposable
     private readonly ServerTickClock _serverTickClock = new();
     private bool _wasSettingsTogglePressed;
     private bool _wasInventoryTogglePressed;
-    private bool _wasCameraViewTogglePressed;
     private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
     private readonly CursorChangeLookHoldoff _lookHoldoff = new();

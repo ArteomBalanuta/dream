@@ -26,7 +26,7 @@ public class GameSettings
 
     public float NoclipSpeed { get; set; } = 18f;
 
-    public CameraViewMode CameraViewMode { get; private set; } = CameraViewMode.FirstPerson;
+    public CameraViewMode CameraViewMode { get; private set; } = CameraViewMode.Isometric;
 
     public float JumpVelocity { get; set; } = 5f;
 
@@ -77,7 +77,6 @@ public class GameSettings
             FieldOfViewDegrees = clientConfig.FieldOfViewDegrees;
             MouseSensitivity = clientConfig.MouseSensitivity;
             NoclipSpeed = clientConfig.NoclipSpeed;
-            CameraViewMode = clientConfig.CameraViewMode;
             FloatingCombatText = clientConfig.FloatingCombatText;
         }
 
@@ -148,16 +147,10 @@ public class GameSettings
         ShowPerformanceCounters = showPerformanceCounters;
     }
 
+    // The view is always isometric; the argument is accepted and ignored.
     public void SetCameraViewMode(CameraViewMode cameraViewMode)
     {
-        CameraViewMode = cameraViewMode;
-    }
-
-    public void ToggleCameraViewMode()
-    {
-        CameraViewMode = CameraViewMode == CameraViewMode.FirstPerson
-            ? CameraViewMode.ThirdPerson
-            : CameraViewMode.FirstPerson;
+        CameraViewMode = CameraViewMode.Isometric;
     }
 
     public void ApplyFloatingCombatTextTuning(FloatingCombatTextTuning tuning)

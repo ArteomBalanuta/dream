@@ -162,12 +162,18 @@ public static class DesktopClientTextConfig
         return value.Trim().Replace("-", "_", StringComparison.OrdinalIgnoreCase).ToLowerInvariant() switch
         {
             "third_person" or "thirdperson" or "3rd_person" or "3rd" => CameraViewMode.ThirdPerson,
+            "isometric" or "iso" => CameraViewMode.Isometric,
             _ => CameraViewMode.FirstPerson
         };
     }
 
     private static string SerializeCameraViewMode(CameraViewMode mode)
     {
-        return mode == CameraViewMode.ThirdPerson ? "third_person" : "first_person";
+        return mode switch
+        {
+            CameraViewMode.ThirdPerson => "third_person",
+            CameraViewMode.Isometric => "isometric",
+            _ => "first_person"
+        };
     }
 }
