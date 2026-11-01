@@ -40,6 +40,12 @@ public sealed class ConnectedPlayer
     // place; it is counted in server ticks, never wall time.
     internal InventoryActionBudget InventoryBudget;
 
+    // Wave I: the server tick this seat respawns at, or 0 when no timer runs. Set by the runtime's
+    // respawn scan when it first sees the seat's player dead, cleared on respawn and on detach. It is
+    // not persisted (current_hp = 0 is the persisted state), and it lives on the session because the
+    // primary Player is reused by successive sessions and a secondary is disposed on detach.
+    internal ulong RespawnAtTick;
+
     // The registry this player is registered in (null once it forgets the player); told when the
     // spawn state changes so it can keep its active and departed sets (PlayerSessionRegistry).
     internal PlayerSessionRegistry? Registry { get; set; }

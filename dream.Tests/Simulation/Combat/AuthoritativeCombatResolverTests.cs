@@ -168,7 +168,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Equal(2, combatant.Level);
         Assert.Equal(377, combatant.Experience);
         Assert.Equal(
-            ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}"],
+            // Wave I: the loot is granted after the delete, so a crash between them loses a drop, never duplicates it.
+            ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}", $"GrantLoot session-a Wolf {EnemyActorId} 5"],
             fixture.Host.Calls);
         Assert.Empty(fixture.Enemies.ActiveActors);
     }
@@ -433,6 +434,9 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             => Calls.Add($"PersistPlayerProgression {sessionId.Value} {combatant.Level}/{combatant.Experience}");
 
         public void DeletePersistedEnemy(int enemyId) => Calls.Add($"DeletePersistedEnemy {enemyId}");
+
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+            => Calls.Add($"GrantLoot {killer.Value} {enemyKind} {enemyActorId} {tick}");
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
         {

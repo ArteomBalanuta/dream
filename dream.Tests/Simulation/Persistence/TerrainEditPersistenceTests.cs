@@ -553,6 +553,10 @@ public sealed class TerrainEditPersistenceTests
         {
         }
 
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        {
+        }
+
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
         {
             Calls.Add("RepairCubeRecord");

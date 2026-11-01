@@ -157,6 +157,10 @@ public sealed partial class WorldSessionRuntime
         _buildMaterialSelections.Remove(sessionId);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
+        // Wave I: a rejoin that finds the character dead waits a fresh 5 s, and an undrained push for
+        // a seat that left has nowhere to go.
+        player.RespawnAtTick = 0;
+        _pendingLoot.Remove(sessionId);
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.
         MarkProfileDeparted(player.CharacterKey.Value);
@@ -194,6 +198,7 @@ public sealed partial class WorldSessionRuntime
     {
         _sessionInteractionModes.Remove(player.SessionId);
         _buildMaterialSelections.Remove(player.SessionId);
+        _pendingLoot.Remove(player.SessionId);
     }
 
     // Sessions with a stored interaction mode (tests): at most the registry's Count.

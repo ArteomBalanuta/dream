@@ -125,8 +125,9 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
     public void Simulate(float deltaTime, PlayerSimulationTuning tuning)
     {
         PlayerCommandFrame command = _lastCommand ?? PlayerCommandFrame.CreateIdle(SessionId, 0);
-        if (_ticksSinceCommand > WorldSessionRuntime.MaxCommandRepeatTicks)
+        if (_ticksSinceCommand > WorldSessionRuntime.MaxCommandRepeatTicks || !Combatant.Health.IsAlive)
         {
+            // Starved, or dead (wave I): idle input; facing and the requested mode are kept.
             command = WorldSessionRuntime.CreateStarvedCommandFrame(command);
         }
 
