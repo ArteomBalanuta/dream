@@ -40,7 +40,7 @@ Status: integrated on `integrate/engine-iteration`. Not pushed. Not merged into 
 
 Reading the code, a lost write needs more than this. `RunGroup` requeues a write whose transaction could not start, a failed commit replays each write, and writes happen inside an immediate transaction, so a busy error in the middle of a group is not expected. `FailedWrites` was 0 in every run.
 
-**`ChunkEncode_OfRestingCubes_AllocatesNothingPerCube`: not reproduced.** 0 B in 8 runs alone, 2 with 64 spinners, and 3 with all 621 `Dream.Tests.Multiplayer` tests at 32 spinners. No log of the C0 failure survives, so its size is unknown. No cause is established. If it recurs, the assertion prints the bytes.
+**`ChunkEncode_OfRestingCubes_AllocatesNothingPerCube`: not reproduced.** 0 B in 8 runs alone, 6 with 64 spinners, 3 with all 621 `Dream.Tests.Multiplayer` tests at 32 spinners, and 2 full suites. No log of the C0 failure survives, so its size is unknown. No cause is established. If it recurs, the assertion prints the bytes.
 
 ## Worst-case wire size
 
