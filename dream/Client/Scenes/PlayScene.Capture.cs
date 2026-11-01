@@ -32,6 +32,9 @@ namespace Dream.Client.Scenes;
 //   size:<w>:<h>              resize the window (the same path as the Settings resolution)
 //   walkto:<x>:<z>:<maxFrames> click the ground at that cell (projected through last frame's camera, or
 //                             the screen edge toward it) until the character is within 1.5 m or the frames run out
+//   screenclick:<x>:<y>      left click at a window pixel (for the world or HUD click gate)
+//   buildat:<x>:<z>          right click the ground at that cell
+//   cell:<x>:<z>             print which levels of that column hold a cell, and the player and goal
 //   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
 //                             mode (the real command path), then capture; for damage numbers and death
@@ -156,6 +159,8 @@ public partial class PlayScene
     private int _captureWalkFrames;
     private int _captureWalkClicks;
     private int _captureWalkRest;
+    private float _captureWalkMetres;
+    private Vector3 _captureWalkLast;
 
     private bool CaptureRunning =>
         _hudCapture is not null && !_hudCaptureDone && _hudCaptureFrames + 1 >= HudCaptureScript.WarmupFrames
@@ -290,6 +295,33 @@ public partial class PlayScene
                 _captureWalkFrames = 0;
                 _captureWalkClicks = 0;
                 _captureWalkRest = 0;
+                _captureWalkMetres = 0f;
+                _captureWalkLast = _captureWalkStart;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.ScreenClick:
+                HudCapturePointerPlan.Click(_capturePointerFrames, new Vector2(spec.A, spec.B));
+                _capturePhase = CapturePhase.Pointer;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.BuildAt:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                if (TryCaptureWalkClickPoint(in layout, player, new Vector3(spec.A + 0.5f, player.Y, spec.B + 0.5f), out Vector2 at))
+                {
+                    HudCapturePointerPlan.RightClick(_capturePointerFrames, at);
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] buildat {spec.A},{spec.B}: pixel {at.X:0},{at.Y:0}, mode {_runtime.InteractionMode}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.CellProbe:
+                LogCaptureCell(spec.A, spec.B);
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
                 _captureWritesPng = false;
                 break;
             case HudCaptureVerb.Wait:
@@ -438,12 +470,14 @@ public partial class PlayScene
         Vector3 target = new(_captureWalk.A + 0.5f, player.Y, _captureWalk.B + 0.5f);
         float remaining = new Vector2(player.X - target.X, player.Z - target.Z).Length;
         _captureWalkFrames++;
+        _captureWalkMetres += new Vector2(player.X - _captureWalkLast.X, player.Z - _captureWalkLast.Z).Length;
+        _captureWalkLast = player;
         if (remaining <= CaptureWalkReachMetres || _captureWalkFrames >= _captureWalk.C)
         {
             bool reached = remaining <= CaptureWalkReachMetres;
             Console.WriteLine(
                 $"[hud-capture] walkto {_captureWalk.A},{_captureWalk.B} start={_captureWalkStart.X:0.0},{_captureWalkStart.Y:0.0},{_captureWalkStart.Z:0.0} " +
-                $"end={player.X:0.0},{player.Y:0.0},{player.Z:0.0} clicks={_captureWalkClicks} pathCells={_clickMove.LastPathCells} reached={(reached ? "true" : "false")}");
+                $"end={player.X:0.0},{player.Y:0.0},{player.Z:0.0} clicks={_captureWalkClicks} pathCells={_clickMove.LastPathCells} walked={_captureWalkMetres:0.0} reached={(reached ? "true" : "false")}");
             _capturePointerFrames.Clear();
             _capturePointerIndex = 0;
             SetCapturePointer(_captureLast with { LeftDown = false, RightDown = false });
@@ -472,7 +506,6 @@ public partial class PlayScene
             _capturePointerIndex = 0;
             HudCapturePointerPlan.Click(_capturePointerFrames, at);
             _captureWalkClicks++;
-
             _captureWalkRest = 0;
         }
     }
@@ -678,6 +711,18 @@ public partial class PlayScene
         sb.Append("  player: ").Append(at.X.ToString("0.0")).Append(',').Append(at.Y.ToString("0.0")).Append(',').Append(at.Z.ToString("0.0")).AppendLine();
         sb.Append("  inventory open: ").Append(_settings.InventoryVisible).Append(", settings open: ").Append(_settings.SettingsVisible).Append(", cursor: ").Append(DesiredCursorState);
         Console.WriteLine(sb.ToString());
+    }
+
+    private void LogCaptureCell(int x, int z)
+    {
+        StringBuilder sb = new();
+        for (int y = 1; y <= 4; y++)
+        {
+            sb.Append(_runtime.Map.TryGetGeometryCellAtCell(x, y, z) is null ? " ." : " " + y);
+        }
+
+        Vector3 at = _runtime.Player.GetWorldPosition();
+        Console.WriteLine($"[hud-capture] cell {x},{z}: levels{sb} player {at.X:0.0},{at.Y:0.0},{at.Z:0.0} goal {_clickMove.Goal}");
     }
 
     private static string DescribeItem(InventoryItemSnapshot item)

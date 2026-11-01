@@ -30,7 +30,10 @@ internal enum HudCaptureVerb : byte
     Snap,
     Log,
     Fight,
-    WalkTo
+    WalkTo,
+    ScreenClick,
+    BuildAt,
+    CellProbe
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
@@ -117,6 +120,15 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 && int.TryParse(parts[3], out int walkFrames) && walkFrames is > 0 and <= 20000:
                 // x and z are the target cell, the frame cap rides in C.
                 spec = new(HudCaptureVerb.WalkTo, walkX, walkZ, walkFrames);
+                return true;
+            case "screenclick" when parts.Length == 3 && int.TryParse(parts[1], out int clickX) && int.TryParse(parts[2], out int clickY):
+                spec = new(HudCaptureVerb.ScreenClick, clickX, clickY);
+                return true;
+            case "buildat" when parts.Length == 3 && int.TryParse(parts[1], out int buildX) && int.TryParse(parts[2], out int buildZ):
+                spec = new(HudCaptureVerb.BuildAt, buildX, buildZ);
+                return true;
+            case "cell" when parts.Length == 3 && int.TryParse(parts[1], out int cellX) && int.TryParse(parts[2], out int cellZ):
+                spec = new(HudCaptureVerb.CellProbe, cellX, cellZ);
                 return true;
             case "size" when parts.Length == 3 && int.TryParse(parts[1], out int width) && int.TryParse(parts[2], out int height)
                 && width is >= 640 and <= 4096 && height is >= 480 and <= 2304:
