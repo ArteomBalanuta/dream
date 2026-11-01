@@ -697,7 +697,7 @@ def icon_gem_amber(s):
         return 0.55 * np.exp(-(((x - 10) / 3.4) ** 2 + ((y - 10.5) / 5.0) ** 2))
 
     s.ellipse(10, 10, 5.5, 8.1, gemstone("#3A2410"), prof="flat", cast=0.5, thick=(0.3, 0.4))
-    s.cut(10, 10, 5.2, 7.8, gemstone("#D9822A"), n=10, table=0.42, glow=glow)
+    s.cut(10, 10, 5.2, 7.8, gemstone("#C8701C"), n=12, table=0.56, glow=glow)
 
 
 def icon_pendant_ward(s):
@@ -713,7 +713,7 @@ def icon_pendant_ward(s):
 # 1x2 ----------------------------------------------------------------------------------
 
 
-def flame(s, cx, base, w, h, c_out="#E8480C", c_mid="#FFA61E", c_core="#FFF6C8"):
+def flame(s, cx, base, w, h, c_out="#E8480C", c_mid="#FFA61E", c_core="#FFF6C8", glow=1.0):
     def tongue(k, c, emis):
         ww, hh = w * k, h * k
         pts = cr([(cx - ww * 0.5, base - hh * 0.12), (cx - ww * 0.55, base - hh * 0.42), (cx - ww * 0.18, base - hh * 0.68),
@@ -722,9 +722,9 @@ def flame(s, cx, base, w, h, c_out="#E8480C", c_mid="#FFA61E", c_core="#FFF6C8")
                   (cx, base + hh * 0.03)], 6, True)
         s.poly(pts, dict(c=c, metal=0, gloss=20, spec=0.1, mott=0.05, tint=0.5, emis=emis), bevel=3, prof="pillow", slope=0.3, cast=0)
 
-    tongue(1.0, c_out, 0.65)
-    tongue(0.72, c_mid, 0.85)
-    tongue(0.42, c_core, 1.0)
+    tongue(1.0, c_out, 0.65 * glow)
+    tongue(0.72, c_mid, 0.85 * glow)
+    tongue(0.42, c_core, glow)
 
 
 def icon_feather_azure(s):
@@ -884,10 +884,9 @@ def icon_armor_bone(s):
         f = (lambda p: mirror(p, 20)) if flip else (lambda p: p)
         s.poly(f(cr([(25, 7), (29, 3.2), (34, 4.6), (35.6, 9.6), (33, 13), (28, 12.4)], 5, True)), BONE, bevel=4.8, slope=0.65, thick=(0.4, 0.6))
         s.poly(f([(32, 4.4), (reach, -0.8), (35.4, 8.4)]), M(BONE, c="#FBF6E6"), bevel=2.2, prof="chamfer", slope=0.8, thick=(0.3, 0.4))
-    # a small skull on the breast
-    s.ellipse(20, 7.8, 3.6, 3.2, M(BONE, c="#F6EFDC"), bevel=3.2, cast=0.7)
-    s.ellipse(18.7, 7.8, 0.85, 0.95, BLACK, prof="flat", cast=0)
-    s.ellipse(21.3, 7.8, 0.85, 0.95, BLACK, prof="flat", cast=0)
+    # collar bones tie the shoulders to the sternum
+    for side in (1, -1):
+        s.stroke(cr([(20, 8.6), (20 + side * 4.6, 7.2), (20 + side * 9, 8.4)], 5), 2.3, M(BONE, c="#F6EFDC"), width_end=1.6, cast=0.8)
 
 
 def gilded(**kw) -> dict:
@@ -897,7 +896,7 @@ def gilded(**kw) -> dict:
 def icon_helm_gilded(s):
     s.place(-6, 0.98, (20, 20))
     # tall thin crest sweeping up and back
-    crest = cr([(21.5, 9), (23.5, 2), (30, -4.5), (39, -7.5), (34, -3), (29.5, 2.4), (26.6, 9.6)], 6)
+    crest = cr([(21.5, 9), (23.5, 3), (29, -0.6), (36.6, -3.4), (33, -0.2), (29.2, 4), (26.6, 9.6)], 6)
     s.poly(crest, gilded(), bevel=1.8, prof="chamfer", slope=0.9, thick=(0.3, 0.4))
     # bowl
     bowl = cr([(8, 24), (8.2, 14), (13, 7), (20, 5), (27, 7), (31.8, 14), (32, 24), (28, 30), (20, 31.6), (12, 30)], 6, True)
@@ -1000,46 +999,57 @@ def icon_gloves_plate(s):
     gauntlet(s, -14, -6.4, 0.4)
 
 
-def sabaton(s, flip):
-    f = (lambda p: mirror(p, 20)) if flip else (lambda p: p)
-    s.poly(f([(0.6, 36.4), (4, 34), (17.6, 33.6), (19.4, 36), (19, 38.8), (1.2, 38.8)]), M(BLACK, c="#2C2824", metal=0.2), bevel=0.8, thick=(0.3, 0.5))
-    s.poly(f(cr([(8.6, 4), (18.4, 4), (18.8, 14), (19.2, 26), (19.6, 35), (8, 35), (8.4, 20)], 4, True)), STEEL, bevel=5, slope=0.6, thick=(0.4, 0.6))
-    for q in ([(10.8, 22), (11, 35.4), (6.4, 35.4), (6, 26.6)], [(6.6, 26), (7, 35.4), (3, 35.6), (2.8, 29.6)], [(3.2, 29), (3.4, 35.6), (0.2, 36.6), (0, 33.8)]):
-        s.poly(f(q), STEEL, bevel=2.2, slope=0.7, thick=(0.3, 0.4), cast=0.8)
-    s.poly(f(cr([(7.4, 3), (13.5, 1.4), (19.4, 3), (19.4, 6.8), (13.5, 7.8), (7.8, 6.8)], 4, True)), DARK_STEEL, bevel=1.5, thick=(0.3, 0.5), cast=0.7)
-    s.rivets(f([(10, 5), (13.5, 4.8), (17, 5)]), 0.6, GOLD)
-    s.groove(f(cr([(8.6, 13.5), (13.5, 14.6), (18.8, 13.5)], 4)), w=0.6, depth=0.55, dark=0.5)
-    s.ellipse(*f([(14.6, 27)])[0], 2.4, 2.4, GOLD, bevel=1.9, thick=(0.3, 0.4), cast=0.7)
+def sabaton(s, dx, dy, shade=1.0):
+    """One plate boot in side profile, toe to the left."""
+    o = lambda p: shift(p, dx, dy)  # noqa: E731
+    st = M(STEEL, c=col("#98A0AB") * shade)
+    dk = M(DARK_STEEL, c=col(DARK_STEEL["c"]) * shade)
+    sole = M(BLACK, c=col("#2C2824") * shade, metal=0.2)
+    # heel block and sole under everything
+    s.poly(o([(18, 34.6), (26.4, 34.6), (26.6, 39), (19, 39)]), sole, bevel=0.8, thick=(0.2, 0.4))
+    s.poly(o([(-2.6, 35), (19, 35), (19, 37.4), (-1, 37.2)]), sole, bevel=0.7, thick=(0.2, 0.4))
+    # greave: narrow at the ankle, swelling over the calf
+    shaft = cr([(11.4, 3.4), (23.4, 2.6), (25, 12), (23.2, 23), (25.8, 31), (25.8, 35.6), (13, 35.6), (12.6, 23), (12.4, 12)], 5, True)
+    s.poly(o(shaft), st, bevel=6, slope=0.55, thick=(0.4, 0.5))
+    # one smooth foot shell ending in a pointed toe; lame lines are cut into it, not stacked on it
+    foot = cr([(15.6, 21), (9.4, 25.6), (3.6, 29.8), (-1.2, 32.8), (-3.2, 34.6), (-1, 36), (15.8, 36)], 6, True)
+    s.poly(o(foot), st, bevel=5.4, slope=0.6, thick=(0.3, 0.4), cast=0.75)
+    for pts in ([(10.8, 25), (12.4, 30), (11.6, 36)], [(6.2, 28), (7.8, 32), (7.2, 36)], [(2.2, 30.8), (3.4, 33.4), (3, 36)]):
+        s.groove(o(cr(pts, 4)), w=0.55, depth=0.55, dark=0.45)
+    # ankle lames, cuff and pivot
+    s.groove(o(cr([(12.6, 19.4), (18, 20.4), (23.6, 19.4)], 4)), w=0.6, depth=0.55, dark=0.45, clip=False)
+    s.groove(o(cr([(12.4, 11.6), (18, 12.8), (24.6, 11.6)], 4)), w=0.6, depth=0.55, dark=0.45, clip=False)
+    cuff = [(10.2, 1.8), (24.6, 0.4), (25.2, 5.6), (11, 7)]
+    s.poly(o(cuff), dk, bevel=1.5, thick=(0.3, 0.4), cast=0.7)
+    s.poly(o([(10.1, 1.1), (24.6, -0.3), (24.7, 1.1), (10.2, 2.5)]), GOLD, bevel=0.6, cast=0.4)
+    s.ellipse(*o([(18.6, 26.4)])[0], 2.2, 2.2, GOLD, bevel=1.8, thick=(0.2, 0.3), cast=0.7)
 
 
 def icon_boots_plate(s):
-    s.place(0, 0.92, (20, 20))
-    sabaton(s, True)
-    sabaton(s, False)
+    s.place(0, 0.9, (20, 20))
+    sabaton(s, 11.5, -2.8, 0.68)
+    sabaton(s, -1.5, 1.6)
 
 
 def icon_pet_wisp(s):
-    s.place(0, 1.0)
+    """A dim captive flame: pale core, dark streaming tail, no face."""
+    # curves meet at hard tips, so the tail streams up and right in three tongues
+    outline = cr([(5, 28), (6, 19), (12, 12), (19, 8), (30, 0)], 5) + cr([(30, 0), (27, 8), (26, 12), (38, 9)], 5)[1:]
+    outline += cr([(38, 9), (32, 15), (30, 19), (37, 23)], 5)[1:] + cr([(37, 23), (29, 27), (25, 33), (16, 37), (8, 35), (5, 28)], 5)[1:-1]
+    head = (14.0, 26.0)
 
-    def body(x, y):
-        r = np.hypot((x - 19.5) / 12.5, (y - 19) / 12.5)
-        t = np.clip(r, 0, 1)[..., None]
-        c = col("#F2FEFF") * (1 - t) ** 2 + col("#6FE6EE") * 2 * t * (1 - t) + col("#1567A8") * t * t
-        return c
+    def layer(k, c0, c1, emis):
+        def paint(x, y):
+            t = np.clip(np.hypot(x - head[0], y - head[1]) / (30 * k), 0, 1)[..., None]
+            return col(c0) * (1 - t) + col(c1) * t
 
-    def lum(x, y):
-        return 0.86 * np.exp(-((np.hypot(x - 19.5, y - 19) / 12) ** 2))
+        pts = [(head[0] + (x - head[0]) * k, head[1] + (y - head[1]) * k) for x, y in outline]
+        mat = dict(c=c0, metal=0.1, gloss=60, spec=0.35, mott=0.08, tint=0.5)
+        s.poly(pts, mat, bevel=9 * k, prof="pillow", slope=0.45, paint=paint, emis=emis, cast=0.15)
 
-    tail = cr([(9, 12), (14, 7), (21, 5), (29, 8.6), (33.6, 16), (37.4, 22), (32.6, 22.6), (35.2, 30), (28, 28.4), (28, 36.4), (21.4, 31.4), (12.4, 31), (7, 25), (5.6, 18)], 6, True)
-    s.poly(tail, dict(c="#7FE8F2", metal=0.1, gloss=80, spec=0.7, mott=0.05, tint=0.4), bevel=14, prof="round", slope=0.55, paint=body, emis=lum, thick=(0.3, 0.4))
-    s.ellipse(14.6, 15.4, 3.6, 2.7, dict(c="#FFFFFF", metal=0, gloss=20, spec=0, mott=0, tint=0, emis=0.9), deg=-30, bevel=2, prof="pillow", cast=0)
-    # eyes give it a face: a pet, not just another orb
-    for x in (15.4, 23.6):
-        s.ellipse(x, 19.4, 1.8, 2.4, M(BLACK, c="#0C2A44"), bevel=1, cast=0.25)
-        s.ellipse(x - 0.5, 18.4, 0.65, 0.65, dict(c="#FFFFFF", metal=0, gloss=20, spec=0, mott=0, tint=0, emis=1.0), prof="flat", cast=0)
-    s.stroke(cr([(17.4, 23.4), (19.5, 24.6), (21.6, 23.4)], 4), 0.8, M(BLACK, c="#0C2A44"), cast=0.1)
-    for x, y, r in ((4, 8, 1.5), (37, 9, 1.1), (5.6, 33.6, 1.0)):
-        s.ellipse(x, y, r, r, dict(c="#BDF6FB", metal=0, gloss=60, spec=0.4, mott=0, tint=0.5, emis=0.85), bevel=r, cast=0)
+    layer(1.0, "#155C86", "#06162C", 0.35)
+    layer(0.66, "#3BA6BE", "#0E4468", 0.5)
+    layer(0.34, "#C8F0EC", "#3F9CB0", 0.62)
 
 
 # 2x4 ----------------------------------------------------------------------------------
@@ -1213,7 +1223,7 @@ RAMP_KEYS = {
 }
 UNCOMMON_TINT = "#F08FB0"
 RARE_KEY, RARE_RIM = "axe.cycle", "#F1C385"
-ENHANCED_CAP = 0.8
+ENHANCED_CAP = 0.55
 
 
 def luma(rgb: np.ndarray) -> np.ndarray:
@@ -1231,13 +1241,16 @@ def tier_variants(rgba: np.ndarray, mask: np.ndarray) -> dict:
         return np.dstack(((np.clip(c, 0, 1) * 255 + 0.5).astype(np.uint8), rgba[..., 3]))
 
     pink = col(UNCOMMON_TINT)
-    uncommon = rgb * (0.82 + 0.18 * pink / pink.max()) * 1.04 + rim * 0.10 * pink
+    uncommon = rgb * (0.55 + 0.45 * pink / pink.max()) * 1.1 + rim * 0.35 * pink + 0.09 * pink  # the lift reaches dark cloth, which a multiply cannot
     orange = col(RARE_KEY) * np.clip(lum * 1.75, 0, 1.25)
     amount = 0.3 + 0.6 * metal
     rare = rgb * (1 - amount) + orange * amount + rim * 0.34 * col(RARE_RIM)
+    # base hue survives: only metal goes gold, cloth and paint stay themselves but brighter
     gold = col("gold.material") * np.clip(lum * 1.7, 0, 1.2)
-    white = np.clip(0.2 + 0.8 * lum, 0, ENHANCED_CAP)
-    enhanced = (gold * (1 - white) + white) * np.clip(0.42 + lum * 1.3, 0, 1)
+    gilt = 0.12 + 0.55 * metal
+    warm = np.minimum((rgb * (1 - gilt) + gold * gilt) * 1.22, 0.92)
+    white = np.clip(0.05 + 0.5 * lum, 0, ENHANCED_CAP)
+    enhanced = warm * (1 - white) + white
     return {"uncommon": pack(uncommon), "rare": pack(rare), "enhanced": pack(enhanced)}
 
 
