@@ -3,9 +3,11 @@ using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Characters;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Server;
 
@@ -259,7 +261,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
                 new PlayerActionHandler(),
-                new WorldResyncRequestHandler()
+                new WorldResyncRequestHandler(),
+                new ChatMessageHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
@@ -276,7 +279,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
                 new PlayerActionHandler(),
-                new WorldResyncRequestHandler()
+                new WorldResyncRequestHandler(),
+                new ChatMessageHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
@@ -396,13 +400,67 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             context.ClearOutboundMessages();
             context.ClearJoinConflict();
+            context.Clock = TimeProvider;
             _router.RouteServerInbound(context, message);
+            if (context.PendingChats.Count > 0)
+            {
+                DeliverPendingChats(context);
+            }
+
             if (message is ClientJoinRequestMessage routedJoin)
             {
                 CompleteJoinAttempt(context, routedJoin);
             }
 
             return context.OutboundMessages.ToArray();
+        }
+    }
+
+    // Hands the lines ChatMessageHandler queued on the context to ChatRouter and queues the results
+    // as pending connection replies, so the simulation never sees chat. Under the tick lock.
+    private void DeliverPendingChats(ServerRoutingContext context)
+    {
+        List<ClientChatMessage> lines = [.. context.PendingChats];
+        context.PendingChats.Clear();
+        if (Runtime is not { } runtime
+            || !_connectionClaims.TryGetValue(context.ConnectionId, out string? senderSession))
+        {
+            return;
+        }
+
+        List<ChatParticipant> participants = [];
+        ChatParticipant? sender = null;
+        foreach (ActorSnapshot actor in runtime.CaptureActorSnapshots())
+        {
+            if (actor.Kind != CreatureKind.Player
+                || actor.SessionId == null
+                || !_sessionClaims.TryGetValue(actor.SessionId, out string? connectionId))
+            {
+                continue;
+            }
+
+            ChatParticipant participant = new(connectionId, actor.DisplayName ?? actor.SessionId, actor.Position);
+            participants.Add(participant);
+            if (string.Equals(actor.SessionId, senderSession, StringComparison.Ordinal))
+            {
+                sender = participant;
+            }
+        }
+
+        if (sender is not { } found)
+        {
+            return;
+        }
+
+        List<PendingConnectionReply> replies = [];
+        for (int i = 0; i < lines.Count; i++)
+        {
+            ChatRouter.Route(found, lines[i], participants, runtime.CurrentServerTick, replies);
+        }
+
+        for (int i = 0; i < replies.Count; i++)
+        {
+            _pendingConnectionReplies.Enqueue(replies[i]);
         }
     }
 
