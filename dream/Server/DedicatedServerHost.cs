@@ -465,9 +465,28 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ArgumentNullException.ThrowIfNull(destination);
 
         destination.Clear();
-        while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
+        // Under the tick lock, like the purge in ReleaseConnection, so a purge never reorders what a drain takes.
+        lock (_authoritySync)
         {
-            destination.Add(actionResult);
+            while (_pendingActionResults.TryDequeue(out AuthoritativeActionResult actionResult))
+            {
+                destination.Add(actionResult);
+            }
+        }
+    }
+
+    // Drops the queued results of a departed session, keeping the rest in order. A result carries the
+    // inventory of its own tick and is delivered by session id, so one left queued across a leave and a
+    // rejoin of the same id would reach the new connection after its JoinAccepted. Caller holds _authoritySync.
+    private void PurgePendingActionResults(string sessionId)
+    {
+        int count = _pendingActionResults.Count;
+        for (int i = 0; i < count && _pendingActionResults.TryDequeue(out AuthoritativeActionResult result); i++)
+        {
+            if (!string.Equals(result.SessionId, sessionId, StringComparison.Ordinal))
+            {
+                _pendingActionResults.Enqueue(result);
+            }
         }
     }
 
@@ -1027,6 +1046,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     // The departed session's queued actions would otherwise wait forever.
                     _actionQueue.RemoveSession(new PlayerSessionId(sessionId));
                     _commandInbox.Remove(new PlayerSessionId(sessionId));
+                    PurgePendingActionResults(sessionId);
                     if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
                     {
                         runtimeAuthority.ReleaseSession(sessionId);

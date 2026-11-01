@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 
 namespace Dream.Simulation.Runtime;
 
@@ -83,10 +84,16 @@ public sealed partial class WorldSessionRuntime
         int maxX = (int)MathF.Floor(x + halfBody - epsilon);
         int minZ = (int)MathF.Floor(z - halfBody + epsilon);
         int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
+        // A fractured cube leaves no Cube in its cell: its rubble pieces are separate bodies that can lie
+        // anywhere (they move), so they are tested by their own boxes, not by cell.
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble = [];
+        map.CaptureFracturePiecesInto(rubble);
         while (y < map.Height - 0.5f)
         {
             int cellY = (int)MathF.Floor(y);
-            if (!AnySolidCell(map, minX, maxX, cellY, minZ, maxZ) && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ))
+            if (!AnySolidCell(map, minX, maxX, cellY, minZ, maxZ)
+                && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ)
+                && !AnyPieceInBody(rubble, x, z, cellY, halfBody - epsilon))
             {
                 break;
             }
@@ -111,6 +118,30 @@ public sealed partial class WorldSessionRuntime
                 {
                     return true;
                 }
+            }
+        }
+
+        return false;
+    }
+
+    // The body spans two cells in height (cellY and the one above), like the cube test.
+    private static bool AnyPieceInBody(
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> pieces,
+        float x,
+        float z,
+        int cellY,
+        float halfBody)
+    {
+        for (int i = 0; i < pieces.Count; i++)
+        {
+            GeometryFracturePiece piece = pieces[i].Piece;
+            float half = piece.SideLength * 0.5f;
+            if (MathF.Abs(piece.Center.X - x) < halfBody + half
+                && MathF.Abs(piece.Center.Z - z) < halfBody + half
+                && piece.Center.Y + half > cellY
+                && piece.Center.Y - half < cellY + 2)
+            {
+                return true;
             }
         }
 

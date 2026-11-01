@@ -2,6 +2,8 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
+using Dream.Tests.Simulation.Runtime;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Content;
@@ -110,6 +112,54 @@ public sealed class EnemyFactoryTests
         EnemyRegistry clientEnemies = new();
         RemoteEnemyStateApplier.ApplyActorSnapshots(clientEnemies, [decodedActor]);
         Assert.Equal(1000, Assert.Single(clientEnemies.ActiveActors).Level);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void ARestore_OfARowBelowLevelOne_UsesLevelOne_ForTheActorAndTheWire(int storedLevel)
+    {
+        PersistedEnemyInstance row = WolfIntervalBitsTest.Row(strength: 16, vitality: 30, attackSpeed: 1.0f, currentHealth: 200, maxHealth: 200, "DireWolf", level: storedLevel);
+
+        EnemyActor restored = EnemyFactory.Restore(row, Dire(), 2100, Events, CombatFormulaService.Default);
+
+        Assert.Equal(1, restored.Level);
+    }
+
+    // Kills a restored enemy through the real path (ProcessAuthoritativeAction -> AuthoritativeCombatResolver ->
+    // AwardEnemyKillExperience) and returns what the killer ended with.
+    private static (int Level, int Experience) KillerAfterKillingARowOfLevel(int storedLevel)
+    {
+        PlayerSessionId killer = new("xp-killer");
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        runtime.AttachRemoteSession(killer, killer.Value);
+        ulong tick = 0;
+        WaveIRuntimeKit.Tick(runtime, ref tick, 3);
+        WaveIRuntimeKit.EnterCombat(runtime, killer);
+        runtime.Enemies.Clear();
+        PersistedEnemyInstance row = WolfIntervalBitsTest.Row(strength: 16, vitality: 30, attackSpeed: 1.0f, currentHealth: 200, maxHealth: 200, "DireWolf", level: storedLevel);
+        runtime.Enemies.Add(EnemyFactory.Restore(row, Dire(), 2100, Events, CombatFormulaService.Default));
+
+        AuthoritativeActionResult result = WaveIRuntimeKit.HitWolf(runtime, killer, actionSequence: 1);
+
+        Assert.True(Assert.IsType<CombatResolutionResult>(result.Payload).TargetDied);
+        PlayerCombatant combatant = WaveIRuntimeKit.Target(runtime, killer.Value).Combatant;
+        return (combatant.Level, combatant.Experience);
+    }
+
+    [Theory]
+    [InlineData(5000, 1000)]
+    [InlineData(0, 1)]
+    [InlineData(-5, 1)]
+    public void AKillOfARestoredRow_PaysTheClampedLevel_ThroughTheRealCombatPath(int storedLevel, int clampedLevel)
+    {
+        (int Level, int Experience) paid = KillerAfterKillingARowOfLevel(storedLevel);
+        (int Level, int Experience) expected = KillerAfterKillingARowOfLevel(clampedLevel);
+
+        Assert.Equal(expected, paid);
+        // The two ends differ, so the comparison above can fail.
+        (int Level, int Experience) other = KillerAfterKillingARowOfLevel(clampedLevel == 1 ? 1000 : 1);
+        Assert.NotEqual(expected, other);
     }
 
     [Fact]

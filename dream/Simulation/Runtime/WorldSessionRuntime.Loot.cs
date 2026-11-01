@@ -86,7 +86,7 @@ public sealed partial class WorldSessionRuntime
         }
     }
 
-    private void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged)
+    internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged)
     {
         if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))
         {
@@ -105,22 +105,32 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        // Full: a lost notice (the player must learn the backpack overflowed) replaces the first ordinary
-        // one; anything else is dropped. Either way the drop is logged. Only reached past the cap.
+        // Full: a lost notice (the player must learn the backpack overflowed) replaces the LAST ordinary
+        // one, because the client shows only the tail of a push (LootFeedbackSystem.MaxLines); anything
+        // else is dropped. Either way the drop is logged. Only reached past the cap.
+        string? replaced = null;
         if (lost)
         {
-            for (int i = 0; i < pending.Notices.Count; i++)
+            for (int i = pending.Notices.Count - 1; i >= 0; i--)
             {
                 if (!pending.Notices[i].Lost)
                 {
+                    replaced = pending.Notices[i].ItemDisplayName;
                     pending.Notices[i] = notice;
                     break;
                 }
             }
         }
 
-        NetworkDiagnosticsLog.Write("server.loot.notice-dropped", $"session={session.Value} item={drop.ItemKind} lost={lost}");
+        NetworkDiagnosticsLog.WriteEvery(
+            "server.loot.notice-dropped",
+            NoticeDroppedLogInterval,
+            "server.loot.notice-dropped",
+            (session.Value, drop.ItemKind, lost, replaced),
+            static state => $"session={state.Value} item={state.ItemKind} lost={state.lost} replaced={state.replaced ?? "none"}");
     }
+
+    private static readonly TimeSpan NoticeDroppedLogInterval = TimeSpan.FromMilliseconds(200);
 
     // Moves every session's pending loot into destination as one push each (the snapshot is built once
     // per session however many items it gained) and clears the pending state. Called by the host after
