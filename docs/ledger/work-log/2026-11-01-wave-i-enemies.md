@@ -97,7 +97,7 @@ Tester, Release, `DREAM_LOAD_TEST=1`, tip `f635442`-based (tests only; no produc
 | World10k join 0 (bytes per join) | identical to C0 | 233,182 B at C0 and at tip |
 | Join with 9 items, fully rolled | 9,400 B | not measured: no test in the tree builds that case. Worst case (16 rolled, 4 worn) join is 9,351 B, push 8,423 B, push with 8 notices 8,857 B, gate 16,000 B |
 | Lost-only push | 256 B | `ALostOnlyPush_HasNoInventory_AndStaysSmall` passes (asserts at most 256 B; the value is not printed) |
-| World10k full checkpoint | C0 x 1.05 | **fails numerically.** Full-every-capture write mean, 12 paired runs: C0 34.6-35.2 ms, tip 37.5-39.0 ms (+9 to +11%); tip max 83-90 ms against 60-66 ms. Bisect: I1 merge 34, I2 merge 35.5-37.9, I3 merge and tip 38. I3 changes only Client, Rendering and a shader, and no checkpoint code changed in the wave, so the cause is not found in server code. Unexplained; not a settled regression |
+| World10k full checkpoint | C0 x 1.05 | **harness artifact, not a checkpoint cost** (see "World10k checkpoint gate settled" below). Full-every-capture write mean, median of 12 alternating fresh-process runs: C0 34.97 ms, tip 38.0 ms (+8.7%), but the same C0 source with 400 empty test facts added to the test assembly also reads 38.0 ms |
 | Join-window total | C0 x 1.10 | C0 15.0 ms, tip 13.5 ms per round |
 | Integrity check, World10k | 15 ms | 7.20 ms (C0 7.15) |
 | Migration 0009 | 50 ms | 0008 and 0009 together on 100,003 items: 108-141 ms (v7 to v9, two runs). The two are not split, so the 0009 figure alone is not measured |
@@ -109,6 +109,31 @@ Tester, Release, `DREAM_LOAD_TEST=1`, tip `f635442`-based (tests only; no produc
 Load harness (`ServerLoadTests`): Smoke8, Light8 and Players32 pass with tick-loop p99 0.98, 0.35 and 6.27 ms. World10k tick-loop p99 416 ms, 347 dropped ticks (the old known cannot-keep-real-time scenario; no baseline taken at C0). Soak (30 min) and the stored-world soaks were not run.
 
 `KillBurstMeasurementTests` runs 100 real kills at 5 a second, in real time, across 10 characters. Seating them with `AttachRemoteSession` alone gave 10 failed writes, one each, because no profile row existed. That was the test's mistake, and it now seats them as a join does.
+
+## World10k checkpoint gate settled
+
+Tester, Release, `DREAM_LOAD_TEST=1`, `IncrementalCheckpointMeasurementTests.World10k_FullVersusIncrementalCheckpoints`, one fresh `dotnet test <dll>` process per sample, builds in detached worktrees under `artifacts/gate` (removed afterwards). Full-every-capture write mean per run (6 writes of 14,001 rows each), 12 rounds with the order rotated every round:
+
+| Build | Median | Min - max |
+| --- | --- | --- |
+| C0 `de4c374` (prebuilt `verify-bin-c0`) | 34.97 ms | 34.38 - 37.40 |
+| C0 second build (control) | 35.34 ms | 34.32 - 38.43 (noisier: 3 runs at 37.5 - 38.4) |
+| I2 merge `7275d21` (fc0bc71's parent) | 34.94 ms | 34.47 - 36.62 |
+| I3 merge `fc0bc71` | 37.75 ms | 37.04 - 38.25 |
+| Tip `66399a6`, build A | 38.00 ms | 37.73 - 38.26 |
+| Tip `66399a6`, build B (control) | 37.98 ms | 37.13 - 38.80 |
+
+- **Step is real in this test binary and sits at the I3 merge.** `7275d21` to `fc0bc71` is +8%; `fc0bc71` to tip is flat. Two tip builds agree to 0.02 ms, so build-to-build code layout does not explain it. The two C0 builds agree in median (0.4 ms apart, one build noisier). Tip max write 80 - 85 ms against about 60 ms at C0 / I2.
+- **Same work is written.** Rows per write are 14,001 at C0, I2, I3 and tip; the seeder, scenario and checkpoint code (`dream/Server/Persistence`, `dream/Simulation/Persistence`, `dream/config`) are unchanged from C0 to tip except `enemies.json` (+14 lines). Migrations 0008 and 0009 and the item_rolls/enemy columns are in C0 already. Bytes and statement counts were not instrumented.
+- **Cause: the size of the test assembly.** The I2 source was rebuilt with one extra file of 400 trivial `[Fact]` methods (20 classes), nothing else, no production change, and the same filter. Six alternating runs: I2 34.5 - 35.4 ms (median 34.8), I2 + 400 empty facts 37.3 - 38.8 (median 38.2), tip 37.5 - 39.1 (median 38.1). The empty facts reproduce the whole step. I3 added about 60 tests. The mechanism inside the process is not pinned: with `DOTNET_TieredCompilation=0` I2 reads 32.0 and tip 34.9 (gap stays); with `DOTNET_TieredPGO=0` 34.3 against 34.9 (gap mostly gone, noisy); with `DOTNET_GCgen0size=0x10000000` 38.2 against 38.7 (gap gone, both slower); `DOTNET_gcConcurrent=0` 35.2 against 38.1 (gap stays); 5 alternating runs each. That points at heap and GC or PGO state left by xunit discovery of a larger assembly, not at the write path, but this was not confirmed with a profile.
+- **Verdict.** No checkpoint code or data changed, the same rows are written, and an empty-test padding of the C0-era source gives the same number, so this is not a wave I checkpoint regression. The 1.05 gate cannot be judged by comparing binaries with different test counts; to measure it cleanly, run the C0 and tip comparisons from test assemblies with the same test set. Production code was not changed.
+
+### Kill burst and allocation, rerun at tip (Release, 8 alternating rounds)
+
+- Fight-only p99 (`Kills100_WithNoLoot_TickTimes`): C0 0.17 - 0.19 ms (median 0.18), tip 0.19 - 0.22 (median 0.19). `KillBurstFightOnlyBaselineTests` was copied into a C0 worktree to build it there; `KillBurstMeasurementTests` does not exist at C0.
+- Kill burst p99 (`Kills100_WithASureDrop...`) at tip: 0.20, 0.20, 0.21, 0.20, 0.22, 0.23, 0.20, 0.20 ms (median 0.20); single worst tick 7.0 - 7.3 ms. The limit is 1.25 x C0 fight-only p99, 0.21 - 0.24 ms depending on the C0 run (0.225 at the median). Passes in most runs with no margin; the 0.23 run (and the 0.22) sit at the limit. Loot notices from loop 2 do not show: the fight-only run without loot is within 0.01 ms of the loot run, and it also drifts +0.01 ms against C0, which may be the same assembly-size effect (not tested).
+- Tick allocation gate: `RespawnAllocationTests`, `WorldSessionRuntimeEquipmentAllocationTests`, `WorldSessionRuntimeTickAllocationTests`, `AHitWithArmor40_AllocatesNothing` filter: tip 11 of 11 pass, C0 8 of 8 (the respawn tests do not exist at C0), 3 rounds each, 0 failures.
+
 
 ## Tester findings
 
