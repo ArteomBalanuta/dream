@@ -2,10 +2,9 @@ using Dream.Simulation.Content;
 
 namespace Dream.Client.Startup;
 
-// A client that only joins a remote server never goes through ServerBootstrap, so nothing validated
-// the content files (config/content) it reads for item and enemy definitions. The client reads
-// ContentCatalog.Shipped once at start; a failure becomes a message for the connection screen
-// instead of an exception on the first snapshot.
+// The local server reads the content files (config/content) through ServerBootstrap, and a client that
+// only joins a remote server does not need them (wave I). The client reads ContentCatalog.Shipped once
+// at start; a failure becomes a message for Use Local Server, and a remote connect is unaffected.
 public static class ClientContentCheck
 {
     // Null when the content loads; otherwise the message to show.
