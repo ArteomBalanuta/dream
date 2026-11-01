@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Content;
@@ -146,8 +147,8 @@ public sealed class ContentCatalog
         ArgumentNullException.ThrowIfNull(lootJson);
 
         ParsedItems items = ParseItems(itemsJson);
-        ParsedEnemies enemies = ParseEnemies(enemiesJson);
         ParsedLoot loot = ParseLoot(lootJson, items);
+        ParsedEnemies enemies = ParseEnemies(enemiesJson, loot);
         string digest = ComputeDigest(items, enemies, loot);
         return new ContentCatalog(
             items.ByKey,
@@ -473,13 +474,13 @@ public sealed class ContentCatalog
 
     private sealed record ParsedEnemies(Dictionary<string, EnemyTemplate> ByKey, List<EnemyTemplate> List);
 
-    private static ParsedEnemies ParseEnemies(string json)
+    private static ParsedEnemies ParseEnemies(string json, ParsedLoot loot)
     {
         using JsonDocument document = ParseDocument(EnemiesFileName, json);
         JsonElement root = document.RootElement;
         ExpectObject(EnemiesFileName, "$", root);
         Dictionary<string, JsonElement> properties = ReadProperties(EnemiesFileName, "$", root, ["version", "enemies"]);
-        _ = ReadInt(EnemiesFileName, "$.version", properties["version"], 1, 1);
+        _ = ReadInt(EnemiesFileName, "$.version", properties["version"], 2, 2);
 
         Dictionary<string, EnemyTemplate> byKey = new(StringComparer.OrdinalIgnoreCase);
         List<EnemyTemplate> list = [];
@@ -494,17 +495,35 @@ public sealed class ContentCatalog
                 EnemiesFileName,
                 path,
                 enemyElement,
-                ["key", "displayName", "level", "maxHealth", "attackDamage", "attackIntervalSeconds", "aggroRange", "attackRange", "moveSpeed"]);
+                ["key", "displayName", "level", "strength", "vitality", "attackSpeed", "aggroRange", "attackRange", "moveSpeed", "visualKey", "spawnRole"],
+                optional: ["attackIntervalSeconds", "lootTable"]);
+            float? interval = enemy.TryGetValue("attackIntervalSeconds", out JsonElement intervalElement)
+                ? ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", intervalElement, 0.05f, 3600f)
+                : null;
+            string? lootTable = null;
+            if (enemy.TryGetValue("lootTable", out JsonElement lootElement))
+            {
+                lootTable = ReadKey(EnemiesFileName, $"{path}.lootTable", lootElement);
+                if (!loot.ByKey.ContainsKey(lootTable))
+                {
+                    throw Fail(EnemiesFileName, $"{path}.lootTable", $"references missing loot table '{Truncate(lootTable)}'");
+                }
+            }
+
             EnemyTemplate template = new(
                 ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
                 ReadName(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
                 ReadInt(EnemiesFileName, $"{path}.level", enemy["level"], 1, 1000),
-                ReadInt(EnemiesFileName, $"{path}.maxHealth", enemy["maxHealth"], 1, 1_000_000),
-                ReadInt(EnemiesFileName, $"{path}.attackDamage", enemy["attackDamage"], 1, 1_000_000),
-                ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", enemy["attackIntervalSeconds"], 0.05f, 3600f),
+                ReadInt(EnemiesFileName, $"{path}.strength", enemy["strength"], PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength),
+                ReadInt(EnemiesFileName, $"{path}.vitality", enemy["vitality"], PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality),
+                ReadFloat(EnemiesFileName, $"{path}.attackSpeed", enemy["attackSpeed"], PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),
+                interval,
                 ReadFloat(EnemiesFileName, $"{path}.aggroRange", enemy["aggroRange"], 0.1f, 1000f),
                 ReadFloat(EnemiesFileName, $"{path}.attackRange", enemy["attackRange"], 0.1f, 1000f),
-                ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f));
+                ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f),
+                ReadVisualId(EnemiesFileName, $"{path}.visualKey", enemy["visualKey"]),
+                lootTable,
+                ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]));
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -521,7 +540,23 @@ public sealed class ContentCatalog
             throw Fail(EnemiesFileName, "$.enemies", $"required enemy '{WolfKey}' is missing (the population step spawns it; the key is case-sensitive)");
         }
 
+        if (!list.Any(template => template.SpawnRole == EnemySpawnRole.Primary))
+        {
+            throw Fail(EnemiesFileName, "$.enemies", "needs at least one enemy with spawnRole 'Primary'");
+        }
+
         return new ParsedEnemies(byKey, list);
+    }
+
+    private static EnemySpawnRole ReadSpawnRole(string path, JsonElement element)
+    {
+        string name = ReadString(EnemiesFileName, path, element);
+        return name switch
+        {
+            "Primary" => EnemySpawnRole.Primary,
+            "NightExtra" => EnemySpawnRole.NightExtra,
+            _ => throw Fail(EnemiesFileName, path, $"unknown spawn role '{Truncate(name)}' (Primary or NightExtra)"),
+        };
     }
 
     // ---- loot ----
@@ -679,16 +714,19 @@ public sealed class ContentCatalog
             }
         }
 
-        text.Append("enemies.v2\n");
+        text.Append("enemies.v3\n");
         foreach (EnemyTemplate enemy in enemies.List.OrderBy(e => e.Key, StringComparer.Ordinal))
         {
             text.Append("enemy|");
             AppendField(text, enemy.Key).Append('|');
             AppendField(text, enemy.DisplayName).Append('|')
-                .Append(enemy.Level.ToString(c)).Append('|').Append(enemy.MaxHealth.ToString(c)).Append('|')
-                .Append(enemy.AttackDamage.ToString(c)).Append('|').Append(enemy.AttackIntervalSeconds.ToString("R", c)).Append('|')
+                .Append(enemy.Level.ToString(c)).Append('|').Append(enemy.Strength.ToString(c)).Append('|')
+                .Append(enemy.Vitality.ToString(c)).Append('|').Append(enemy.AttackSpeed.ToString("R", c)).Append('|')
+                .Append(enemy.AttackIntervalSeconds.HasValue ? enemy.AttackIntervalSeconds.Value.ToString("R", c) : "-").Append('|')
                 .Append(enemy.AggroRange.ToString("R", c)).Append('|').Append(enemy.AttackRange.ToString("R", c)).Append('|')
-                .Append(enemy.MoveSpeed.ToString("R", c)).Append('\n');
+                .Append(enemy.MoveSpeed.ToString("R", c)).Append('|');
+            AppendField(text, enemy.VisualKey).Append('|');
+            AppendField(text, enemy.LootTable ?? "-").Append('|').Append(enemy.SpawnRole.ToString()).Append('\n');
         }
 
         text.Append("loot.v1\n");

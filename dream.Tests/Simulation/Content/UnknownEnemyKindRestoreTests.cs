@@ -30,8 +30,9 @@ public sealed class UnknownEnemyKindRestoreTests
             // Wolf numbers still come from the template: range and aggro are not the row's.
             Assert.Equal(10f, restored.AggroRange);
             Assert.Equal(1.35f, restored.AttackRange);
-            // Damage is the template's, not derived from the stored Strength (30 here: a derivation would give 32).
-            Assert.Equal(12, restored.Combatant.AttackDamage);
+            // Wave I (I-D4): an enemy's stats are instance stats, so damage is derived from the row's
+            // Strength (30 here: strength + 2 gives 32). Every real wolf row has Strength 10 and gives 12.
+            Assert.Equal(32, restored.Combatant.AttackDamage);
 
             // Checkpoints never delete rows: one full checkpoint later, the Dragon row is still there.
             runtime.PersistCheckpoint();

@@ -233,7 +233,11 @@ public sealed partial class WorldSessionRuntime
                 null,
                 actor.DisplayName,
                 null,
-                actor.BehaviorState));
+                actor.BehaviorState,
+                // Level 1 and the default visual stay off the wire (0 and null), so a wolf-only
+                // world keeps its pre-wave-I bytes (EnemyPresentation group, protocol v11).
+                EnemyLevel: actor.Level == 1 ? 0 : actor.Level,
+                VisualKey: actor.VisualKey));
         }
 
         return actors;

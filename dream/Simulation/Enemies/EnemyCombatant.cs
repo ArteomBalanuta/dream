@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Enemies;
 
@@ -19,7 +20,8 @@ public sealed class EnemyCombatant : IDamageable, ICombatAnchorProvider
         int maxHealth = 40,
         int attackDamage = 10,
         float attackIntervalSeconds = 1.1f,
-        float anchorHeightOffset = WolfDefinition.CombatAnchorHeight)
+        float anchorHeightOffset = WolfDefinition.CombatAnchorHeight,
+        StatBlock? baseStats = null)
     {
         _positionProvider = positionProvider;
         _eventHub = eventHub;
@@ -28,7 +30,35 @@ public sealed class EnemyCombatant : IDamageable, ICombatAnchorProvider
         AttackIntervalSeconds = Math.Max(0.05f, attackIntervalSeconds);
         Health = new HealthState(maxHealth);
         Actor = new CombatActorHandle(actorId, CreatureKind.Enemy, this, this);
+
+        // An enemy's stats are instance stats (wave I). Without an explicit block (a test's scripted
+        // enemy) the sheet holds what every persisted enemy row used to be written with.
+        StatBlock block;
+        if (baseStats.HasValue)
+        {
+            block = baseStats.Value;
+        }
+        else
+        {
+            block = default;
+            block[StatId.Strength] = DefaultStrength;
+            block[StatId.Agility] = DefaultAgility;
+            block[StatId.Vitality] = DefaultVitality;
+            block[StatId.Energy] = DefaultEnergy;
+            block[StatId.AttackSpeed] = 1f / Math.Max(0.05f, AttackIntervalSeconds);
+        }
+
+        StatSheet.SetBase(block);
     }
+
+    public const int DefaultStrength = 10;
+    public const int DefaultAgility = 10;
+    public const int DefaultVitality = 10;
+    public const int DefaultEnergy = 0;
+
+    // Base stats plus (for now) no modifier sources. Damage, interval and maximum health are derived
+    // from it once, by EnemyFactory, through the enemy.* formulas.
+    public StatSheet StatSheet { get; } = new();
 
     public int AttackDamage { get; }
 

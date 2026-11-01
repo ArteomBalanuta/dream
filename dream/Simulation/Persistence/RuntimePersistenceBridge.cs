@@ -7,6 +7,7 @@ using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.Stats;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -539,41 +540,9 @@ internal sealed partial class RuntimePersistenceBridge
                 continue;
             }
 
-            _enemies.Add(CreatePersistedEnemy(enemy, template, actorId));
+            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
         }
-    }
-
-    private EnemyActor CreatePersistedEnemy(PersistedEnemyInstance enemy, EnemyTemplate template, int actorId)
-    {
-        EnemyCombatant combatant = new(
-            () => enemy.Position,
-            _events,
-            actorId: actorId,
-            maxHealth: enemy.Stats.MaxHealth,
-            // Attack damage comes from the template, as for a freshly spawned enemy: every row
-            // written so far has Strength 10 (damage 12), and a stored strength must not make damage
-            // depend on the restart history after enemies.json is edited. Max health, attack
-            // interval (from the row's attack speed) and move speed are still read from the row.
-            attackDamage: template.AttackDamage,
-            attackIntervalSeconds: Math.Max(0.05f, 1f / Math.Max(0.1f, enemy.Stats.AttackSpeed)),
-            anchorHeightOffset: WolfDefinition.CombatAnchorHeight);
-        combatant.Health.SetAuthoritativeState(enemy.Stats.CurrentHealth, enemy.Stats.MaxHealth);
-
-        EnemyActor actor = new(
-            combatant,
-            enemy.Position,
-            aggroRange: template.AggroRange,
-            attackRange: template.AttackRange,
-            moveSpeed: Math.Max(0f, enemy.Stats.MovementSpeed),
-            preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
-            collisionRadius: WolfDefinition.CollisionRadius,
-            collisionHeight: WolfDefinition.CollisionHeight,
-            displayName: enemy.DisplayName,
-            enemyKind: enemy.EnemyKind,
-            level: enemy.Stats.Level);
-        actor.SetFacing(enemy.Facing);
-        return actor;
     }
 
     public void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
@@ -1203,6 +1172,9 @@ internal sealed partial class RuntimePersistenceBridge
 
     private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, ObjectId objectId, DateTime now)
     {
+        // The row holds the enemy's instance stats (wave I): what a spawn took from its template, what a
+        // restore read from the row. Agility and Energy are not simulated and keep the factory defaults.
+        ref readonly StatBlock stats = ref enemy.Combatant.StatSheet.Base;
         return new PersistedEnemyInstance(
             objectId,
             enemy.EnemyKind,
@@ -1212,12 +1184,12 @@ internal sealed partial class RuntimePersistenceBridge
             new PersistedCreatureStats(
                 CurrentHealth: enemy.Combatant.Health.CurrentHealth,
                 MaxHealth: enemy.Combatant.Health.MaxHealth,
-                Strength: 10,
-                Agility: 10,
-                Vitality: 10,
-                Energy: 0,
+                Strength: (int)stats[StatId.Strength],
+                Agility: (int)stats[StatId.Agility],
+                Vitality: (int)stats[StatId.Vitality],
+                Energy: (int)stats[StatId.Energy],
                 MovementSpeed: enemy.MoveSpeed,
-                AttackSpeed: 1f / Math.Max(0.05f, enemy.Combatant.AttackIntervalSeconds),
+                AttackSpeed: stats[StatId.AttackSpeed],
                 Level: enemy.Level),
             now,
             now);

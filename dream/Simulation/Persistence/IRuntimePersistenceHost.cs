@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Players;
+using Dream.Simulation.Rules;
 using Dream.Simulation.World;
 
 namespace Dream.Simulation.Persistence;
@@ -28,6 +29,10 @@ internal interface IRuntimePersistenceHost
         out Vector3 facing,
         out int currentHealth,
         out int maxHealth);
+
+    // The formulas an enemy's damage and attack interval are derived with (EnemyFactory).
+    // Defaults to the built-in formulas so test fakes need not provide them.
+    CombatFormulaService CombatFormulas => CombatFormulaService.Default;
 
     // Enemy actor id allocation and the default spawn (the runtime's enemy partial).
     bool TryAllocateEnemyActorId(out int actorId);
