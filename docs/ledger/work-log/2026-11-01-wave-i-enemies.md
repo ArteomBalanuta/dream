@@ -2,7 +2,7 @@
 
 Purpose: record wave I of `docs/ledger/plans/2026-10-31-characters-items-enemies-roadmap.md`. Plan: `docs/ledger/plans/2026-11-01-wave-i-plan.md`.
 
-Status: integrated on `integrate/engine-iteration`, two fix loops done. Not pushed. Not merged into `master`. Interactive play has not been checked. The tester's Release measurements and adversarial tests are below.
+Status: final. Integrated on `integrate/engine-iteration` through fix loop 4 (merge `45efecc`) and verified below. Not pushed. Not merged into `master`. Interactive play, the picture on screen and `dream.exe --server` itself have not been checked.
 
 ## Process
 
@@ -297,3 +297,56 @@ The last fix loop of wave I, on `ee50e67` (tip of `integrate/engine-iteration`).
 - **6. Parks.** With the far spawn and the leash, the parks in `SoakServer` (`StoredWorldTestSupport`), `PersistentScriptedServer`, `IncrementalCheckpointTests` (`ParkWolves`), `CheckpointLeaveRaceLoopbackTests` and `WaveIAdversarialTests` are gone and those tests pass without them (the (50, 1, 50) park was outside the 30 m map). `Wave13ExtractedSeamsLoopbackTests` no longer parks the wolf; it asserts the wolf stays idle at its home. Parks remain only where a test needs a wolf to stand still near a player: it places the player beside the wolf's home (`WaveIRuntimeKit.PlaceBeside`).
 - **Verification.** Filtered runs while working, then two full runs (Debug, quiet machine). Run 1: 4,790 passed, 4 failed (three tests that assumed the wolf beside the spawn and one that parked it), 46 skipped, 4,840 total, 3 m 33 s. After fixing them, run 2: **4,794 passed, 0 failed, 46 skipped, 4,840 total**, 3 m 19 s. `dream/dream.csproj` builds with 0 errors and 17 warnings (all existing).
 - **Nits.** `ProtectedThroughTick != 0` is checked in `FillEnemyTargets`. `GameplayInputResumeFilter` suppresses a use held through the pause until it has been released once (`Filter_KeepsSuppressingAnAttackHeldThroughTheBlockedPeriod_UntilItIsReleased`); a real attack still ends protection. `docs/architecture.md` (stop point, rubble, spawns, reach, leash), the `WolfDefinition` margin comment and the `ResolveRespawnPosition` comment are corrected. `ResolveRespawnPosition` takes a scratch list (a runtime field) instead of allocating one per respawn. `LootGrantTests` no longer sleeps: `NetworkDiagnosticsLog.ForgetRateLimitKey` clears the key. The tests that assumed the wolf beside the spawn (`WolfBite*`, the interpolation replication tests, the host, combat-queue and action-flow tests, the tick-equivalence script) now place the wolf or the player explicitly.
+
+## Verification of fix loop 4: merge `45efecc`
+
+Integrator, 2026-11-01. `worktree-agent-a82638be965b3ed05` (`07223a5`) merged into `ee50e67` with `--no-ff`, no conflicts. No production code changed by this step.
+
+### Build and full suite
+
+`dotnet build dream/dream.csproj`: 0 errors, 17 warnings. One full run, Debug, quiet machine (no stray dotnet, testhost or spinner process; only the compiler server, 7% CPU): **4,794 passed, 0 failed, 46 skipped, 4,840 total**, 3 m 5 s.
+
+### Terrain at the wolf spawns
+
+Throwaway test (not committed) on the shipped world: `WorldDescriptor.Default`, 56 x 8 x 56, generator `default` version 1, which ignores the seed, so every generated default world has this terrain. A real runtime at 22:00.
+
+- **Spawns are free.** The real wolves stood at (52.5, 1, 52.5) (Wolf) and (53.5, 1, 53.5) (Dire Wolf). `CanOccupy` is true at both, floor at y 0, air at y 1 and 2. The far corner has no raised terrain; the nearest landmark is the mound at about (46 to 50, 16 to 20).
+- **They can stand and move.** A 0.25 m flood fill of the wolf's body at its level reaches 42,080 of 42,154 free points from both spawns, the world spawn included. This is connectivity only: a wolf has no path finding, it walks straight.
+- **Real chase.** A player stood at 8 places 6 to 9 m from each spawn, in the map, with a real wolf: bitten every time, 108 to 181 ticks for the day wolf with a stop gap of 1.31 to 1.34 m. At night the Wolf may be the biter, so the Dire Wolf's own bites were not separated. All 16 runs walked home within 0.05 m afterwards.
+- **Finding: the leash does not get a wolf round terrain.** `ReturnHome` walks straight and a blocked step leaves the wolf where it is. From (5.39, 1, 3.04), the row in 3 of the 4 legacy databases, a wolf with the player 40 m away ended at (6.69, 1, 4.40), `Idle`, after 100 s, pressed against the raised block that starts at x = 7. From (6.68, 1, 4.97) it did not move. From (20, 30), (40, 12) and (30, 22) it got home. So on an upgraded world the old wolf stays about 2 m from the world spawn for good, and a join there is bitten once the 3 s are over. The same goes for any wolf lured behind a landmark. Fresh worlds are not affected. Not fixed: it needs path finding or a rule for moving a stuck wolf, which is a design call.
+
+### Real processes (loopback only)
+
+`lbhost` and the driver rebuilt against the merge (`dotnet build dream/dream.csproj -c Release -o app`), `dotnet app/lbhost.dll` on 127.0.0.1, clients with `DREAM_IDENTITY_FILE`. `flow_i.py` on the 4 `legacy-e` copies: **37 of 37 on each, 148 of 148.**
+
+Changes to the flow (the earlier version is `flow_i.before-loop4.py` in the scratchpad):
+
+- **Hunts** now put the wolf rows at (52.5, 52.5) and the hunter at (49.5, 52.5). The old flow relied on the next wolf spawning beside the world spawn; it now spawns in the far corner, and the driver walks straight, so it never arrived. A run with no notice goes back, up to 6 times, because 75% of wolf kills drop nothing and a dead hunter wakes at the world spawn. One attempt was enough in the final run.
+- **The still player** stands at (4, 5), not (7, 5). (7, 5) is inside a raised terrain cube, and the new bite line refuses there, correctly: 3 of the 4 databases failed that check and everything chained to it (8 failures each) until it moved. The legacy wolf rows stay where they are for these checks.
+- **New check: join protection.** First bite 216 ticks after the idle start, on every database.
+- **New check: fresh world, idle 30 s, day and night**, 4 databases each: a new database and identity at (5, 5), 30.0 s, 1,919 to 1,921 ticks, health 100 to 100, no death; the Dire Wolf is listed at night. `integrity_check` now runs before these, on the legacy copy.
+
+First bite after a respawn: 202 to 204 ticks. The watcher's slide was 0.000 on three databases and 0.523 m on the fourth (0.5 and 0.445 m in earlier runs of this round), against a limit of 1.0 m; the cause was not looked into. Earlier runs in this round failed for the flow's faults above: the old hunt, the (7, 5) position, and a run with 3 failures on one database, where a 100-health hunter died before a drop. The 148 is the last run, of the final script.
+
+Not run: a separate `lbhost` probe of the stuck wolf gave no result, because its player did not land at the written position. The finding above comes from the runtime test, plus the wolf positions the flow logged.
+
+### Release (`DREAM_LOAD_TEST=1`)
+
+Base `ee50e67` against tip `45efecc`, **same test set, 4,713 tests listed on both**: the tip's `dream.Tests` copied into a detached worktree at `ee50e67`, with compile-only edits there: `EnemyActor.HomePosition`, `BiteVerticalReach`, `StandOffRangeFraction` made public, an empty `ForgetRateLimitKey`. One fresh process per sample, 4 rounds, order alternated. Worktree removed afterwards.
+
+| Measurement | Gate | Base (4 runs) | Tip (4 runs) | Result |
+| --- | --- | --- | --- | --- |
+| Tick allocation, tick goldens, checksum goldens, wolf interval bits, `WolfBiteAndSpawnProtectionTests`, `ABitingTick_AllocatesNothing` | 0 B | not run (goldens were re-pinned) | 70 of 70, 3 rounds | pass |
+| Kill burst p99, sure drop | none set against this base | 0.67, 0.65, 0.53, 0.42 ms (median 0.59) | 0.85, 0.79, 0.33, 0.35 ms (median 0.57) | passed all 8 |
+| Kill burst, worst tick | none | 7.2 - 9.07 ms | 7.37 - 9.14 ms | equal |
+| Kill burst drain, failed writes, items | 100 ms, 0, 100 | 0.4 ms, 0, 100 | 0.3 - 0.9 ms, 0, 100 | pass |
+| Fight-only p99 | n/a | 0.67, 0.54, 0.49, 0.46 ms (median 0.52) | 0.64, 0.33, 0.35, 0.66 ms (median 0.50) | equal |
+| Smoke8 tick-loop p99 | test guard | 1.52, 3.01, 2.73, 1.85 ms (median 2.29) | 1.03, 3.32, 1.68, 1.38 ms (median 1.53) | pass |
+| Light8 tick-loop p99 | test guard | 0.57, 1.14, 0.73, 1.14 ms (median 0.93) | 0.70, 1.32, 0.93, 0.93 ms (median 0.93) | pass |
+| Players32 tick-loop p99 | test guard | 9.72, 21.22, 11.82, 6.91 ms (median 10.77) | 20.21, 17.46, 10.21, 7.25 ms (median 13.84) | pass, 0 dropped ticks, spread too wide to read a change |
+
+All of these runs were noisier than round 4, base as well as tip (kill-burst p99 about 0.6 against 0.2 ms), and no cause was looked for. So the wave's fixed 1.25 x C0 kill-burst limit was not re-judged here: C0 was not rerun. Tip against this base shows no change. Players32 reaches 20 ms in two tip runs and 21 ms in one base run.
+
+### Not verified
+
+`dream.exe --server` itself, a real `PlayScene.Update`, the picture on screen, the long soaks (not rerun on this merge), a stored world's wolf, and the join size gates (not rerun).
