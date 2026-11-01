@@ -118,6 +118,18 @@ public static class UiSpriteNames
     // Item icon sprite for an ItemKind such as "tool.torch": "item.tool.torch".
     public static string Item(string itemKind) => "item." + itemKind;
 
+    // Iteration 2, WS3 (gem runtime and bar panel). The new bar art the panel draws when the atlas has
+    // it and goes without when it does not: the bezels under the gems, the gems' spill light and the bar
+    // numerals. They are NOT in Required, because the art that adds them has not merged and a build
+    // with the old art must still pass UiSpriteTable.Validate. When the art workstream merges, the
+    // integrator appends exactly this list to Required (".. PendingRequired") and drops these names
+    // from the "not yet required" contract test. Nothing else needs to change: the gem masks, glints
+    // and gem.mp.full already ship and the panel falls back to the plain clipped gem without them.
+    public static IReadOnlyList<string> PendingRequired { get; } =
+    [
+        GemSettingLeft, GemSettingRight, GemHpSpill, GemMpSpill, HudNumSlash, .. HudNumNames
+    ];
+
     public static IReadOnlyList<string> Required { get; } =
     [
         BaseLeft, BaseCentre, BaseRight, GapFill, DragonLeft, DragonRight, TalonLeft, TalonRight, CoordsPlate,

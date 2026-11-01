@@ -20,6 +20,38 @@ public class StatusBarPanelTests
 
     private static UiRect GemRect(UiLayout l) => l.FromUnits(l.LeftGroup, 98f, -2f, 50f, 50f);
 
+    // The bar draws a number as text, or as "hudnum" sprites when the art has them. This accepts either:
+    // the text itself, or one numeral sprite per character (digits and the slash) in left to right order.
+    private static bool ShowsNumber(StatusBarRecordingCanvas c, string number)
+    {
+        if (c.Texts.Any(t => t.Text == number))
+        {
+            return true;
+        }
+
+        string[] names = number.Select(ch => ch == '/' ? "hudnum.slash" : "hudnum." + ch).ToArray();
+        List<string?> drawn = c.Calls.Where(x => x.Kind == StatusBarCallKind.Sprite && x.Name is not null && x.Name.StartsWith("hudnum.", StringComparison.Ordinal))
+            .Select(x => x.Name).ToList();
+        for (int start = 0; start + names.Length <= drawn.Count; start++)
+        {
+            if (drawn.Skip(start).Take(names.Length).SequenceEqual(names))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The status bar the way the surface feeds it: the drawn level is the health fraction.
+    private static HudView ViewAtLevel(int hp, int maxHp)
+    {
+        HudView v = StatusBarTestData.View(hp, maxHp);
+        v.HealthLevel = maxHp <= 0 ? 0f : Math.Clamp(hp / (float)maxHp, 0f, 1f);
+        v.ManaLevel = StatusBarPanel.ManaGemFill;
+        return v;
+    }
+
     [Theory]
     [InlineData(0, 100)]
     [InlineData(50, 100)]
@@ -27,37 +59,31 @@ public class StatusBarPanelTests
     [InlineData(0, 0)]
     [InlineData(500, 100)]
     [InlineData(-5, 100)]
-    public void HpGem_FullStoneIsClippedFromTheTop(int hp, int max)
+    public void HpGem_IsOneLiquidStoneAtTheDrawnLevel(int hp, int max)
     {
         UiLayout l = Layout1080();
-        StatusBarRecordingCanvas c = Run(StatusBarTestData.View(hp, max), l);
+        StatusBarRecordingCanvas c = Run(ViewAtLevel(hp, max), l);
         UiRect gem = GemRect(l);
         float fill = max <= 0 ? 0f : Math.Clamp(hp / (float)max, 0f, 1f);
 
-        Assert.Single(c.Sprites("gem.hp.empty"));
-        List<StatusBarCall> full = c.Sprites("gem.hp.full").ToList();
-        if (fill <= 0f)
-        {
-            Assert.Empty(full);
-            return;
-        }
-
-        StatusBarCall call = Assert.Single(full);
-        Assert.Equal(StatusBarCallKind.Clipped, call.Kind);
-        Assert.Equal(new UiRect(0f, 1f - fill, 1f, fill), call.Src);
-        Assert.Equal(gem.Bottom, call.Rect.Bottom, 3);
-        Assert.Equal(gem.H * fill, call.Rect.H, 3);
-        Assert.Equal(gem.X, call.Rect.X, 3);
-        Assert.Equal(gem.W, call.Rect.W, 3);
+        // One quad of the full stone: the canvas does the empty glass and the level. No separate empty
+        // stone and no clipped copy.
+        StatusBarCall call = Assert.Single(c.Sprites("gem.hp.full"));
+        Assert.Equal(StatusBarCallKind.Gem, call.Kind);
+        Assert.Equal(UiGemKind.Health, call.Gem.Kind);
+        Assert.Equal(fill, call.Gem.Fill, 4);
+        Assert.Equal(gem, call.Rect);
+        Assert.Empty(c.Sprites("gem.hp.empty"));
+        Assert.DoesNotContain(c.Calls, x => x.Kind == StatusBarCallKind.Clipped);
     }
 
     [Fact]
-    public void HpGem_Half_ShowsTheHealthTextOnTheGem()
+    public void HpGem_Half_ShowsTheHealthNumberOnTheGem()
     {
         UiLayout l = Layout1080();
-        StatusBarRecordingCanvas c = Run(StatusBarTestData.View(50, 100), l);
+        StatusBarRecordingCanvas c = Run(ViewAtLevel(50, 100), l);
 
-        Assert.Contains(c.Texts, t => t.Text == "50/100");
+        Assert.True(ShowsNumber(c, "50/100"));
     }
 
     [Fact]
@@ -82,7 +108,7 @@ public class StatusBarPanelTests
         Assert.Equal(MathF.Round(span.W * 0.5f), fill.Rect.W, 2);
         Assert.Equal(span.X, fill.Rect.X, 2);
         Assert.Contains(c.Texts, t => t.Text == "50%");
-        Assert.Contains(c.Texts, t => t.Text == "12");
+        Assert.True(ShowsNumber(c, "12"));
     }
 
     [Fact]
@@ -157,16 +183,25 @@ public class StatusBarPanelTests
     [InlineData(1920, 1080)]
     [InlineData(1280, 720)]
     [InlineData(2560, 1080)]
-    public void NoManaNumberOrFullStoneIsEverDrawn(int w, int h)
+    public void NoManaNumberIsEverDrawn_AndTheStoneIsOneLiquidQuadAtTheManaConstant(int w, int h)
     {
         UiLayout l = UiLayout.Create(w, h, 0f);
-        StatusBarRecordingCanvas c = Run(StatusBarTestData.View(33, 100, 10, 100), l);
+        HudView v = ViewAtLevel(33, 100);
+        v.Status = v.Status with { Experience = 10 };
+        StatusBarRecordingCanvas c = Run(v, l);
 
         UiRect mp = l.FromUnits(l.RightGroup, 492f - 441f, -2f, 50f, 50f);
-        Assert.Single(c.Sprites("gem.mp.empty"));
-        Assert.Empty(c.Sprites("gem.mp.full"));
+        StatusBarCall gem = Assert.Single(c.Sprites("gem.mp.full"));
+        Assert.Equal(StatusBarCallKind.Gem, gem.Kind);
+        Assert.Equal(UiGemKind.Mana, gem.Gem.Kind);
+        Assert.Equal(StatusBarPanel.ManaGemFill, gem.Gem.Fill, 4);
+        Assert.Equal(0f, gem.Gem.Pulse);
+        Assert.Equal(mp, gem.Rect);
+        Assert.Empty(c.Sprites("gem.mp.empty"));
         Assert.Empty(c.Sprites("gem.mp.mask"));
         Assert.DoesNotContain(c.Texts, t => mp.Contains(t.TextPos));
+        // No numeral sprite sits on the right group either.
+        Assert.DoesNotContain(c.Calls, x => x.Name is not null && x.Name.StartsWith("hudnum.", StringComparison.Ordinal) && x.Rect.X >= l.RightGroup.X);
         // Every text the bar draws is on the left group or the centre group; none on the right group.
         Assert.DoesNotContain(c.Texts, t => t.TextPos.X >= l.RightGroup.X);
     }
@@ -257,8 +292,8 @@ public class StatusBarPanelTests
         Assert.Equal(l.RightGap, tiles[1]);
 
         // The gem sits inside the left group, the mana gem inside the right group, both full height.
-        UiRect hpGem = Assert.Single(c.Sprites("gem.hp.empty")).Rect;
-        UiRect mpGem = Assert.Single(c.Sprites("gem.mp.empty")).Rect;
+        UiRect hpGem = Assert.Single(c.Sprites("gem.hp.full")).Rect;
+        UiRect mpGem = Assert.Single(c.Sprites("gem.mp.full")).Rect;
         Assert.True(hpGem.X >= l.LeftGroup.X && hpGem.Right <= l.LeftGroup.Right);
         Assert.True(mpGem.X >= l.RightGroup.X && mpGem.Right <= l.RightGroup.Right + 0.01f);
         Assert.Equal(hpGem.W, mpGem.W, 3);
@@ -275,12 +310,15 @@ public class StatusBarPanelTests
         int left = c.Calls.FindIndex(x => x.Name == "hud.dragon.left");
         int right = c.Calls.FindIndex(x => x.Name == "hud.dragon.right");
         int firstText = c.Calls.FindIndex(x => x.Kind == StatusBarCallKind.Text);
-        int lastArt = c.Calls.FindLastIndex(x => x.Kind != StatusBarCallKind.Text && x.Name != "hud.dragon.left" && x.Name != "hud.dragon.right");
+        // The bar's numerals are Hud-page sprites that follow the dragons; everything else is under them.
+        int lastArt = c.Calls.FindLastIndex(x => x.Kind != StatusBarCallKind.Text && x.Name != "hud.dragon.left" && x.Name != "hud.dragon.right"
+            && !(x.Name?.StartsWith("hudnum.", StringComparison.Ordinal) ?? false));
         Assert.True(left >= 0 && right > left);
         // Above all the bar's art; the text follows in one run (no text overlaps a dragon).
         Assert.True(lastArt < left);
         Assert.True(firstText > right);
-        Assert.Equal(l.Bar.Y, c.Calls[left].Rect.Bottom, 2);
+        // The dragons stand 6 u over the plate: their bottom edge is 6 u below the top of the bar.
+        Assert.Equal(l.Bar.Y + 6f * l.Scale, c.Calls[left].Rect.Bottom, 2);
         Assert.Equal(0f, c.Calls[left].Rect.X);
         Assert.Equal(l.ViewportWidth, c.Calls[right].Rect.Right, 2);
     }

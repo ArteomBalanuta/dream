@@ -42,10 +42,14 @@ public sealed class UiTexturePixels(int width, int height, byte[] rgba)
 // draw commands, the same vertex modes and the same premultiplied blend (ONE, ONE_MINUS_SRC_ALPHA).
 // Sampling is bilinear with clamp-to-edge and no mip levels. It proves layout, UVs, clipping and
 // z-order, not GL state. Pixel centres decide coverage, like the GL fill rule for these quads.
+// The Gem and Additive modes follow uiFragment.glsl line by line (same constants, same order), with
+// the gem offsets and rects the GL layer uploads read from the batch, so a preview of the liquid gem
+// is the shader's own arithmetic. The framebuffer is 8-bit, so each blend result clamps to 0..1.
 public sealed class UiSoftwareCompositor
 {
     private readonly float[] _canvas; // premultiplied RGBA, 0..1
     private readonly Dictionary<UiPage, UiTexturePixels> _pages = [];
+    private UiBatch? _batch;
 
     public UiSoftwareCompositor(int width, int height)
     {
@@ -89,6 +93,7 @@ public sealed class UiSoftwareCompositor
 
     public void Draw(UiBatch batch)
     {
+        _batch = batch;
         ReadOnlySpan<UiVertex> vertices = batch.Vertices;
         foreach (UiDrawCommand cmd in batch.Commands)
         {
@@ -136,7 +141,8 @@ public sealed class UiSoftwareCompositor
     {
         UiVertex tl = v[0];
         UiVertex br = v[2];
-        uint mode = tl.Mode;
+        uint word = tl.Mode;
+        uint mode = UiVertexMode.Base(word);
         if (mode != UiVertexMode.Solid && texture == null)
         {
             return;
@@ -186,7 +192,20 @@ public sealed class UiSoftwareCompositor
                     float u = tl.U + (br.U - tl.U) * fx;
                     float vv = tl.V + (br.V - tl.V) * fy;
                     Sample(texture!, u, vv, out float cr, out float cg, out float cb, out float ca);
-                    if (mode == UiVertexMode.Mask)
+                    if (mode == UiVertexMode.Gem)
+                    {
+                        ShadeGem(texture!, word, u, vv, (tr, tg, tb, ta), (rr, rg, rb, ra), (cr, cg, cb, ca), out sr, out sg, out sb, out sa);
+                    }
+                    else if (mode == UiVertexMode.Additive)
+                    {
+                        // Output (rgb * a, 0): the blend then adds it to what is there.
+                        float add = ca * ta;
+                        sr = cr * tr * add;
+                        sg = cg * tg * add;
+                        sb = cb * tb * add;
+                        sa = 0f;
+                    }
+                    else if (mode == UiVertexMode.Mask)
                     {
                         float fill = cr * ta;
                         float rim = cg * ra;
@@ -206,12 +225,78 @@ public sealed class UiSoftwareCompositor
 
                 int i = (y * Width + x) * 4;
                 float inv = 1f - sa;
-                _canvas[i] = sr + _canvas[i] * inv;
-                _canvas[i + 1] = sg + _canvas[i + 1] * inv;
-                _canvas[i + 2] = sb + _canvas[i + 2] * inv;
-                _canvas[i + 3] = sa + _canvas[i + 3] * inv;
+                _canvas[i] = MathF.Min(sr + _canvas[i] * inv, 1f);
+                _canvas[i + 1] = MathF.Min(sg + _canvas[i + 1] * inv, 1f);
+                _canvas[i + 2] = MathF.Min(sb + _canvas[i + 2] * inv, 1f);
+                _canvas[i + 3] = MathF.Min(sa + _canvas[i + 3] * inv, 1f);
             }
         }
+    }
+
+    // The Gem branch of uiFragment.glsl. (u, v) is the quad's UV at this pixel and c the sample of the full
+    // stone there; the empty glass, level map and glints are read at the offsets the batch holds.
+    private void ShadeGem(
+        UiTexturePixels texture,
+        uint word,
+        float u,
+        float v,
+        (float R, float G, float B, float A) tint,
+        (float R, float G, float B, float A) rim,
+        (float R, float G, float B, float A) c,
+        out float sr,
+        out float sg,
+        out float sb,
+        out float sa)
+    {
+        UiBatch batch = _batch!;
+        int k = (int)((word >> UiVertexMode.GemKindShift) & 1u);
+        bool legacy = (word & UiVertexMode.GemLegacyMask) != 0;
+        ReadOnlySpan<float> offsets = batch.GemOffsets;
+        ReadOnlySpan<float> rects = batch.GemRects;
+        float localX = (u - rects[k * 4]) / rects[k * 4 + 2];
+        float localY = (v - rects[k * 4 + 1]) / rects[k * 4 + 3];
+        Sample(texture, u + offsets[3 * k * 2], v + offsets[3 * k * 2 + 1], out float gr, out float gg, out float gb, out float ga);
+        Sample(texture, u + offsets[(3 * k + 1) * 2], v + offsets[(3 * k + 1) * 2 + 1], out float dr, out float dg, out float db, out float _);
+        Sample(texture, u + offsets[(3 * k + 2) * 2], v + offsets[(3 * k + 2) * 2 + 1], out float lr, out float lg, out float lb, out float la);
+
+        const float tau = 6.2831853f;
+        float thr = legacy ? 1f - dr : dr;
+        float wobble = legacy ? 0f : 0.006f * MathF.Sin(tau * (rim.G + db));
+        float lvl = Mix(-0.03f, 1.03f, rim.R) + wobble;
+        float liquid = SmoothStep(thr - 0.012f, thr + 0.012f, lvl);
+        float r = Mix(gr, c.R, liquid);
+        float g = Mix(gg, c.G, liquid);
+        float b = Mix(gb, c.B, liquid);
+
+        float ends = SmoothStep(0f, 0.03f, rim.R) * (1f - SmoothStep(0.97f, 1f, rim.R));
+        float e = (thr - lvl) / 0.018f;
+        float meniscus = MathF.Exp(-e * e) * (legacy ? 1f : dg) * ends * 1.2f;
+        r += meniscus * c.R;
+        g += meniscus * c.G;
+        b += meniscus * c.B;
+
+        float s = (0.5f * (localX + localY) - Mix(-0.25f, 1.25f, rim.A)) / 0.09f;
+        float glint = la * MathF.Exp(-s * s);
+        r += lr * glint;
+        g += lg * glint;
+        b += lb * glint;
+
+        float pulse = 1f + 0.35f * rim.B * liquid;
+        r = MathF.Min(r * pulse * tint.R, 1f);
+        g = MathF.Min(g * pulse * tint.G, 1f);
+        b = MathF.Min(b * pulse * tint.B, 1f);
+        sa = Mix(ga, c.A, liquid) * tint.A;
+        sr = r * sa;
+        sg = g * sa;
+        sb = b * sa;
+    }
+
+    private static float Mix(float a, float b, float t) => a + (b - a) * t;
+
+    private static float SmoothStep(float edge0, float edge1, float x)
+    {
+        float t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
     }
 
     // Bilinear sample, clamp to edge, straight alpha (like the GL texture).

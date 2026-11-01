@@ -8,7 +8,8 @@ namespace Dream.Rendering.Ui.Gl;
 // The only part of the classic HUD that talks to OpenGL for drawing. Owns one program, one VAO, a
 // dynamic vertex buffer sized for a full batch and a static index buffer. Submit uploads the used
 // part of the vertex array with one BufferSubData, draws one call per UiDrawCommand and restores the
-// GL state it changed. Render thread only.
+// GL state it changed. One program draws every vertex mode, the liquid gem and the additive spill
+// included, so they cost no extra draw. Render thread only.
 public sealed class UiGlRenderer : IDisposable
 {
     private static readonly int VertexSize = Unsafe.SizeOf<UiVertex>();
@@ -16,6 +17,8 @@ public sealed class UiGlRenderer : IDisposable
     private readonly Shader _shader;
     private readonly int _viewportLocation;
     private readonly int _textureLocation;
+    private readonly int _gemOffsetLocation;
+    private readonly int _gemRectLocation;
     private int _vao;
     private int _vbo;
     private int _ebo;
@@ -30,6 +33,8 @@ public sealed class UiGlRenderer : IDisposable
         {
             _viewportLocation = GL.GetUniformLocation(_shader.Handle, "uViewport");
             _textureLocation = GL.GetUniformLocation(_shader.Handle, "uTexture");
+            _gemOffsetLocation = GL.GetUniformLocation(_shader.Handle, "uGemOffset");
+            _gemRectLocation = GL.GetUniformLocation(_shader.Handle, "uGemRect");
 
             _vao = GL.GenVertexArray();
             _vbo = GL.GenBuffer();
@@ -111,6 +116,13 @@ public sealed class UiGlRenderer : IDisposable
             _shader.Use();
             GL.Uniform2(_viewportLocation, (float)batch.ViewportWidth, (float)batch.ViewportHeight);
             GL.Uniform1(_textureLocation, 0);
+
+            // The Gem vertex mode finds its empty glass, level map and glints at fixed UV offsets from
+            // the full stone: six (u, v) pairs and the two stone rects, resolved from the sprite table.
+            ReadOnlySpan<float> gemOffsets = batch.GemOffsets;
+            ReadOnlySpan<float> gemRects = batch.GemRects;
+            GL.Uniform2(_gemOffsetLocation, UiBatch.GemKindCount * 3, ref Unsafe.AsRef(in gemOffsets[0]));
+            GL.Uniform4(_gemRectLocation, UiBatch.GemKindCount, ref Unsafe.AsRef(in gemRects[0]));
 
             GL.BindVertexArray(_vao);
             GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);

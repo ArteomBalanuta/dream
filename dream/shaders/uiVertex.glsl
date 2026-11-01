@@ -1,5 +1,7 @@
 #version 330 core
-// Classic HUD batch: positions are screen pixels with a top-left origin.
+// Classic HUD batch: positions are screen pixels with a top-left origin. The mode word is passed
+// through untouched: its low byte is the fragment path and a gem vertex carries its kind in the bits
+// above (see uiFragment.glsl).
 uniform vec2 uViewport;
 layout(location = 0) in vec2 aPosition;
 layout(location = 1) in vec2 aUv;
