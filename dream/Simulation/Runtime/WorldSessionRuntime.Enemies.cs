@@ -30,15 +30,40 @@ public sealed partial class WorldSessionRuntime
 
     CombatFormulaService IRuntimePersistenceHost.CombatFormulas => _combatFormulaService;
 
+    // The content the population step spawns from. The shipped catalog; a test seam for catalogs with
+    // other templates (for example none with the NightExtra role).
+    internal ContentCatalog EnemyContent { get; set; } = ContentCatalog.Shipped;
+
     // The first wolf of a world (restore with no persisted enemy), at the day spawn.
     private void SpawnInitialWolf()
     {
-        SpawnWolf(WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth));
+        SpawnEnemy(FindTemplate(EnemySpawnRole.Primary) ?? EnemyContent.Wolf, WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth));
     }
 
-    // A new, persisted wolf at spawnPosition with the next enemy id. Allocates (the actor, its
-    // closure, the queued row write), so it only runs on a spawn tick.
-    private void SpawnWolf(Vector3 spawnPosition)
+    // The first template with the role, in the catalog's file order. Null when none has it.
+    private EnemyTemplate? FindTemplate(EnemySpawnRole role)
+    {
+        IReadOnlyList<EnemyTemplate> templates = EnemyContent.Enemies;
+        for (int i = 0; i < templates.Count; i++)
+        {
+            if (templates[i].SpawnRole == role)
+            {
+                return templates[i];
+            }
+        }
+
+        return null;
+    }
+
+    private bool IsNightExtra(EnemyActor enemy)
+    {
+        return EnemyContent.TryGetEnemy(enemy.EnemyKind, out EnemyTemplate template)
+            && template.SpawnRole == EnemySpawnRole.NightExtra;
+    }
+
+    // A new, persisted enemy of template at spawnPosition with the next enemy id. Allocates (the actor,
+    // its closure, the queued row write), so it only runs on a spawn tick.
+    private void SpawnEnemy(EnemyTemplate template, Vector3 spawnPosition)
     {
         if (!TryAllocateEnemyActorId(out int actorId))
         {
@@ -47,10 +72,9 @@ public sealed partial class WorldSessionRuntime
 
         // The stats come from enemies.json (loaded at startup, never parsed here); EnemyFactory derives
         // damage, health and the attack interval through the enemy.* formulas.
-        EnemyTemplate template = ContentCatalog.Shipped.Wolf;
-        EnemyActor wolf = EnemyFactory.Spawn(template, spawnPosition, actorId, _events, _combatFormulaService);
-        _enemies.Add(wolf);
-        PersistEnemy(wolf);
+        EnemyActor enemy = EnemyFactory.Spawn(template, spawnPosition, actorId, _events, _combatFormulaService);
+        _enemies.Add(enemy);
+        PersistEnemy(enemy);
     }
 
     // Monotonic and deterministic. Ids are never reused (a despawned or killed wolf's id stays
@@ -82,10 +106,14 @@ public sealed partial class WorldSessionRuntime
     // WorldClock.Advance and after the enemies acted and the dead were pruned. The clock is a
     // gameplay input here, so it is a pure function of (persisted world ticks, TicksPerDay, tick
     // count), which lockstep servers must share. At most one change per tick:
-    // - fewer active wolves than the target (2 at night, else 1): spawn one, at the day spawn when
-    //   none is active, otherwise at the night spawn;
-    // - not night and more than one active: remove the active wolf with the highest actor id, and
-    //   queue its row delete like a kill does (checkpoints never delete rows).
+    // - fewer active enemies than the target (2 at night, else 1): spawn one. With none active, the
+    //   first Primary template at the day spawn. With one active at night, the role that is missing
+    //   at the night spawn (a Primary when the active one is a NightExtra, otherwise a NightExtra;
+    //   a catalog with no NightExtra spawns another Primary, as before the Dire Wolf);
+    // - not night and more than one active: remove the owned NightExtra with the highest actor id,
+    //   else the owned enemy with the highest actor id, and queue its row delete like a kill does
+    //   (checkpoints never delete rows).
+    // The per-tick scan only counts; the templates are consulted on spawn and despawn ticks.
     // A restore that already holds the night's two wolves therefore spawns no third. Allocates
     // nothing except on the spawn and despawn ticks.
     //
@@ -127,16 +155,73 @@ public sealed partial class WorldSessionRuntime
         int target = night ? NightWolfTarget : DayWolfTarget;
         if (activeWolves < target)
         {
-            SpawnWolf(activeWolves == 0
-                ? WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth)
-                : WolfSpawnPolicy.ResolveNightSpawn(Map.Width, Map.Depth));
+            if (activeWolves == 0)
+            {
+                SpawnEnemy(FindTemplate(EnemySpawnRole.Primary) ?? EnemyContent.Wolf, WolfSpawnPolicy.ResolveInitialSpawn(Map.Width, Map.Depth));
+            }
+            else
+            {
+                SpawnEnemy(ChooseMissingRoleTemplate(), WolfSpawnPolicy.ResolveNightSpawn(Map.Width, Map.Depth));
+            }
+
             return;
         }
 
-        if (!night && ownedWolves > DayWolfTarget && _enemies.Remove(highestOwnedActorId))
+        if (!night && ownedWolves > DayWolfTarget)
         {
-            DeletePersistedEnemy(highestOwnedActorId);
+            int removeId = HighestOwnedNightExtraId();
+            if (removeId == 0)
+            {
+                removeId = highestOwnedActorId;
+            }
+
+            if (_enemies.Remove(removeId))
+            {
+                DeletePersistedEnemy(removeId);
+            }
         }
+    }
+
+    // The template for the night slot: a NightExtra unless an active enemy already is one.
+    private EnemyTemplate ChooseMissingRoleTemplate()
+    {
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
+        bool hasNightExtra = false;
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            if (enemies[i].IsActive && IsNightExtra(enemies[i]))
+            {
+                hasNightExtra = true;
+                break;
+            }
+        }
+
+        EnemyTemplate? template = FindTemplate(hasNightExtra ? EnemySpawnRole.Primary : EnemySpawnRole.NightExtra);
+        return template ?? FindTemplate(EnemySpawnRole.Primary) ?? EnemyContent.Wolf;
+    }
+
+    // The highest actor id among active, runtime-owned NightExtra enemies; 0 when there is none.
+    private int HighestOwnedNightExtraId()
+    {
+        int highest = 0;
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            EnemyActor enemy = enemies[i];
+            int actorId = enemy.Combatant.Actor.Id;
+            if (!enemy.IsActive
+                || actorId < ReplicatedActorIdRanges.FirstEnemyId
+                || actorId >= _nextEnemyActorId
+                || actorId <= highest
+                || !IsNightExtra(enemy))
+            {
+                continue;
+            }
+
+            highest = actorId;
+        }
+
+        return highest;
     }
 
     private void ResolvePlayerEnemySeparation(List<IAuthoritativePlayerTarget> playerTargets)

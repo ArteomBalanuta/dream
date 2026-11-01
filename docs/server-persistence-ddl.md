@@ -248,6 +248,16 @@ Schema version 8 (plan `docs/ledger/plans/2026-11-01-wave-h-plan.md`). `item_ins
 - The integrity check treats a `100..103` row as a legitimate alias of a same-player backpack row, and adds four soft counts: `ItemsInTwoEquipmentSlots` (extra equipment rows of one item of one player), `UnknownSlotIndexes` (outside `0..15` and `100..103`), `EquipmentSlotMismatches` (a kind in a slot its definition does not allow; decided by `WorldIntegrityOptions.CanOccupy`, wired in `ServerBootstrap.IntegrityOptionsFor`, and an unknown kind is not also counted here) and `DamagedItemRolls` (reads only rows with a stored roll).
 - `dream --items grant <world> <character> <item kind> [--rarity common|uncommon|rare]` and `dream --items list <world> <character>` (`Server/Items/ItemCli.cs`) are tab-separated. `grant` is offline: it takes the world's lease (exit 7 when held), needs a `player_starter_grants` row for the character in that world (else exit 2, so the next join does not take the inventory for a pre-kit one), writes the item row (owner = the character key, state `Inventory`, stack 1) and the lowest free backpack slot in one transaction, and prints item id, slot, rarity and modifiers. The roll is seeded with `(worlds.seed, worlds.world_time_ticks, StableHash.Of(key), 0, item id)`; the item id as drop index is fine because the command is not lockstep. `list` takes no lease and prints slot, item id, kind, rarity and modifiers (`-` for an unrolled item, `damaged` for a damaged roll). Exit codes: 0 ok, 1 usage, 2 not found, no grant row, kind not rollable or backpack full, 3 schema too new, 7 held or database busy, 8 invalid content.
 
+## Enemy formulas and armor (migration 0009, wave I)
+
+Schema version 9 (plan `docs/ledger/plans/2026-11-01-wave-i-plan.md`). The migration only inserts four `combat_formulas` rows, with `ON CONFLICT(formula_key) DO NOTHING` so a hand-edited row is kept: `enemy.attack_damage` (`strength + 2`), `enemy.max_health` (`50 + vitality * 5`), `enemy.attack_interval_seconds` (`1.0 / attack_speed`) and `player.damage_taken_factor` (`100 / (100 + armor)`, variable `armor` only). A fresh database has 12 formulas. No table is rebuilt and no `enemy_instances` row changes, so the five object-id triggers stay and `foreign_key_check` is untouched.
+
+- **Enemy stats are instance stats (I-D4).** A new spawn copies Strength, Vitality, Attack Speed and Level from its `enemies.json` template into its `enemy_instances` row. A restore reads those from the row and derives attack damage and the attack interval through the `enemy.*` formulas; maximum and current health are the row's. Aggro, attack range, body, visual and loot come from the template. A balance edit therefore reaches new spawns only; an existing enemy keeps what it was born with until it dies.
+- **No enemy row migration (I-D6).** Every stored row is a Wolf, and its Strength 10, Vitality 10 and Attack Speed already equal the Wolf template's real values. Agility 10 and Energy 0 stay as written. The Dire Wolf (`DireWolf`, level 3, Strength 16, Vitality 30, Attack Speed 1.0) is just another `enemy_kind` value; `--worlds copy` and export carry its row like any other.
+- **Armor.** `PlayerCombatant` evaluates `player.damage_taken_factor` only when its effective Armor changes (never per hit). Armor 0 or less takes the hit unchanged and evaluates nothing; otherwise damage is `max(1, round_away_from_zero(amount * factor))` with the factor clamped to 0..1 in code.
+- **Startup probe.** `ServerBootstrap.ProbeFormulas` evaluates the `enemy.*` formulas for every template and `player.damage_taken_factor` for Armor 1..1000 before the world opens; a failure (a division by zero, a non-finite result) names the formula and exits with code 8.
+- A retired or unknown `enemy_kind` is logged and skipped on restore, its row is kept, and the integrity check counts it (`UnknownEnemyKinds`). The population step then spawns a Primary enemy if none is active.
+
 ## Accounts and characters (migration 0007, wave G)
 
 Schema version 7 (plan `docs/ledger/plans/2026-10-31-wave-g-plan.md`). `accounts` holds `account_id` (AUTOINCREMENT), `token_hash` (BLOB, `CHECK (length(token_hash) = 32)`, unique), `created_utc` and `last_seen_utc`. The hash is the SHA-256 of the player's 32-byte token; the token itself is never stored, so a database backup holds no usable secret. `player_profiles` gains `account_id INTEGER NULL REFERENCES accounts(account_id) ON DELETE SET NULL` (partial index `ix_player_profiles_account_id`). A character with `account_id IS NULL` is unowned (a legacy character, or one released with `--characters release`); the first token to join it claims it, up to 5 characters per account. `player_name` stays the immutable key. `display_name` is what people type and see, and is unique ignoring ASCII case (`ux_player_profiles_display_name`, `COLLATE NOCASE`). Migration 0007 renames duplicate display names to `<name>~<n>`; the `.bak` taken before it holds the originals.
@@ -396,7 +406,7 @@ Key fields:
 - `display_name`
 - `position_*`, `facing_*`
 - `current_hp`, `max_hp`
-- creature stats and tempo columns
+- creature stats and tempo columns: Strength, Vitality, Attack Speed and `level` are instance stats copied from the template at spawn and read back at restore (wave I); Agility 10 and Energy 0 stay as written
 - `level`
 - timestamps
 
@@ -493,7 +503,7 @@ Used for:
 - authoritative player stat derivation
 - rebalance of HP, damage, crit, and attack cadence without recompiling
 - rebalance of XP thresholds and enemy XP rewards without recompiling
-- server startup validation of required combat-rule rows
+- server startup validation of required combat-rule rows (since wave I: 12 keys, including `enemy.attack_damage`, `enemy.max_health`, `enemy.attack_interval_seconds` and `player.damage_taken_factor`, and a startup probe of the enemy and armor formulas)
 
 Important note:
 
