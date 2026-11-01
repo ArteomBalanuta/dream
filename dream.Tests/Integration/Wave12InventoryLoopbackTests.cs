@@ -76,7 +76,13 @@ public sealed class Wave12InventoryLoopbackTests(ITestOutputHelper output)
             Assert.False(results.Single(result => result.ActionSequence == 1).Accepted);
             PlayerInventorySnapshot secondVisit = InventoryOf(early);
             Assert.Equal(ItemIds(firstVisit), ItemIds(secondVisit));
-            Assert.Equal(equippedFirst, secondVisit.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
+            // Run 1 left the blade in the main hand and the hammer it displaced at anchor 2. Equipping anchor 2 now
+            // swaps them back: the hammer is worn, and the blade takes its anchor. That is only possible against
+            // the persisted inventory, never a re-seeded one.
+            long persistedHammer = firstVisit.IdAt(2);
+            Assert.NotEqual(0, persistedHammer);
+            Assert.Equal(persistedHammer, secondVisit.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
+            Assert.Equal(equippedFirst, secondVisit.IdAt(2));
             output.WriteLine($"run 2: pre-join equip results {results.Count(result => result.ActionSequence == 1)}; Beta ids {string.Join(",", betaIds)}; Alpha ids {string.Join(",", ItemIds(secondVisit))}");
             Assert.Equal(2, runtime.LoadedInventoryCount);
         }

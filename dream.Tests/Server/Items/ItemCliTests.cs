@@ -108,6 +108,30 @@ public sealed class ItemCliTests
         Assert.Equal(["0", "2"], new[] { x[1], y[1] });
     }
 
+    // Held-back rows (200..215), worn rows and rows outside every range are not bag cells, so they never
+    // block a grant; rows that overlap are placed first come first kept, like the server's repair does.
+    [Fact]
+    public void Grant_LooksAtTheBoardOnly_HeldBackWornAndUnknownRowsDoNotBlockIt_AndAnOverlappingRowIsIgnored()
+    {
+        using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript(
+            "INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state, stack_count) " +
+            "VALUES (1, 50, 'gear.iron-blade', 'B', 'v', 'bob~2', 'Inventory', 1);" +
+            "INSERT INTO player_inventory_slots (world_id, player_name, slot_index, item_instance_id) VALUES " +
+            "(1, 'bob~2', 200, 50), (1, 'bob~2', 215, 50), (1, 'bob~2', 100, 50), (1, 'bob~2', 20016, 50), (1, 'bob~2', 112, 50);");
+
+        (int exit, string output, _) = Run(db, "grant", "1", "bob", "gear.iron-blade");
+        Assert.Equal(0, exit);
+        Assert.Equal("0", output.Split('\t')[1]);
+
+        // A blade at 0 and another at 16 (under the first one's third row): the second does not count as
+        // placed, so the next 2x3 goes to 2.
+        db.ExecuteScript("INSERT INTO player_inventory_slots (world_id, player_name, slot_index, item_instance_id) VALUES (1, 'bob~2', 16, 50);");
+        (int second, string secondOutput, _) = Run(db, "grant", "1", "bob", "gear.iron-blade");
+        Assert.Equal(0, second);
+        Assert.Equal("2", secondOutput.Split('\t')[1]);
+    }
+
     [Fact]
     public void Grant_IsDeterministicForTheSameDatabaseState()
     {

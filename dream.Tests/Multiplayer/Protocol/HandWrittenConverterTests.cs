@@ -136,13 +136,18 @@ public class HandWrittenConverterTests(ITestOutputHelper output)
         AssertByteIdentical(push);
         AssertByteIdentical(result);
 
-        foreach (IProtocolMessage message in new IProtocolMessage[] { join, push, result })
+        AssertCompact(join);
+        AssertCompact(push);
+        AssertCompact(result);
+
+        static void AssertCompact<TMessage>(TMessage message)
+            where TMessage : IProtocolMessage
         {
             System.Buffers.ArrayBufferWriter<byte> compact = new();
             new TransportJsonCodec().EncodePayload(message, compact);
-            int reflection = JsonSerializer.SerializeToUtf8Bytes(message, message.GetType(), ProtocolWireOptions.V3Reflection).Length;
+            int reflection = JsonSerializer.SerializeToUtf8Bytes(message, ProtocolWireOptions.V3Reflection).Length;
             Assert.Contains("\"bag\":[[", Encoding.UTF8.GetString(compact.WrittenSpan), StringComparison.Ordinal);
-            Assert.True(compact.WrittenCount * 3 < reflection, $"{message.GetType().Name}: {compact.WrittenCount} B compact, {reflection} B as reflection");
+            Assert.True(compact.WrittenCount * 3 < reflection, $"{typeof(TMessage).Name}: {compact.WrittenCount} B compact, {reflection} B as reflection");
         }
     }
 

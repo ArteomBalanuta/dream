@@ -258,4 +258,67 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         Assert.Equal(before, after.AllItems().Count());
         Assert.Equal("tool.builder-hammer", after.EquippedSlot!.Value.Item!.Value.ItemKind);
     }
+
+    // The footprint bag's own hostile input, as bytes on a real connection: nothing it sends changes the
+    // inventory, the connection stays up, and a legitimate move afterwards still goes through (the rejections
+    // spent none of the budget).
+    [Fact]
+    public async Task TheFootprintBagsHostileIntents_OverARealConnection_ChangeNothing_AndLeaveTheBudgetAlone()
+    {
+        await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
+        Wave12DeltaActorLoopbackTests.Peer peer = await rig.JoinAsync("h1-bag");
+        PlayerSessionId session = new(peer.SessionId);
+        string before = Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value);
+        IPlayerActionPayload[] hostile =
+        [
+            new InventoryMoveIntent(2, 5),                    // over two items
+            new InventoryMoveIntent(4, 6),
+            new InventoryMoveIntent(2, 7),                    // off the board
+            new InventoryMoveIntent(2, 62),
+            new InventoryMoveIntent(10, 40),                  // a cell an item covers, not its anchor
+            new InventoryMoveIntent(200, 40),                 // a held-back row
+            new InventoryMoveIntent(100, 40),                 // a worn slot as the source
+            new InventoryMoveIntent(2, 100),                  // a worn slot as the target
+            new InventoryMoveIntent(2, 111),
+            new InventoryMoveIntent(int.MaxValue, 0),         // huge integers
+            new InventoryMoveIntent(0, int.MinValue),
+            new InventoryEquipIntent(100),                    // a worn item with no target
+            new InventoryEquipIntent(111, 100),               // an empty worn slot
+            new InventoryEquipIntent(4, 101),                 // the maul in the off hand
+            new InventoryEquipIntent(100, 102),               // the hammer on the head
+            new InventoryUnequipIntent(100, 2),               // onto the blade
+            new InventoryUnequipIntent(100, 64),              // not a bag cell
+            new InventoryUnequipIntent(100, int.MaxValue),
+            new InventoryDestroyIntent(10, 1),
+            new InventoryDestroyIntent(100, 1),
+            new InventoryDestroyIntent(200, 1),
+        ];
+
+        ulong sequence = 0;
+        for (int burst = 0; burst < 20; burst++)
+        {
+            for (int i = 0; i < PlayerActionQueue.MaxPendingActionsPerSession; i++)
+            {
+                peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, hostile[((burst * PlayerActionQueue.MaxPendingActionsPerSession) + i) % hostile.Length]));
+            }
+
+            await rig.WaitUntilAsync(
+                () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context) && context?.LastActionMessage?.ActionSequence >= sequence,
+                $"the server to read action {sequence}");
+            await rig.StepAsync();
+        }
+
+        Assert.False(peer.Connection.IsFaulted);
+        Assert.True(rig.Host.IsConnectionJoined(peer.Connection.ConnectionId));
+        Assert.Equal(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
+
+        // A real move goes through: no hostile intent above spent the action budget.
+        peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, new InventoryMoveIntent(2, 24)));
+        await rig.WaitUntilAsync(
+            () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context) && context?.LastActionMessage?.ActionSequence >= sequence,
+            $"the server to read action {sequence}");
+        await rig.StepAsync();
+        Assert.NotEqual(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
+        Assert.NotEqual(0, rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.IdAt(24));
+    }
 }
