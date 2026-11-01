@@ -80,7 +80,7 @@ public sealed class ClassicHudIteration2ContractTests
     }
 
     [Fact]
-    public void TheHudView_HasOneWornSlotPerEquipmentSlot_AndTheBagStaysSixteenUntilTheGridFlips()
+    public void TheHudView_HasOneWornSlotPerEquipmentSlot_AndOneBagAnchorPerCellOfTheEightByEightBoard()
     {
         HudView view = new();
 
@@ -88,9 +88,12 @@ public sealed class ClassicHudIteration2ContractTests
         Assert.Equal(EquipmentSlots.Count, HudView.WornSlots);
         Assert.Equal(HudView.WornSlots, view.Worn.Length);
 
-        // WS2 flips the backpack to 64 anchors; until then it is the old 4x4.
-        Assert.Equal(16, HudView.BackpackSlots);
-        Assert.Equal(InventoryConstants.BackpackSlotCount, HudView.BackpackSlots);
+        // The bag is the 8x8 board: Backpack is indexed by anchor cell, BagCells by cell.
+        Assert.Equal(64, HudView.BackpackSlots);
+        Assert.Equal(BagGrid.CellCount, HudView.BackpackSlots);
+        Assert.Equal(HudView.BackpackSlots, view.Backpack.Length);
+        Assert.Equal(HudView.BackpackSlots, view.BagCells.Length);
+        Assert.Equal(HudView.BackpackSlots, view.BagFootprints.Length);
     }
 
     [Fact]

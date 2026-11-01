@@ -290,7 +290,12 @@ public sealed class PlaySceneEquipmentSnapshotTests
     public void IntentFields_CarryTheActionsNumbers()
     {
         Assert.Equal(new InventoryEquipIntent(3, 101), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.EquipTo, 3, 101)));
-        Assert.Equal(new InventoryUnequipIntent(102), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102)));
+        // No cell named (-1): the field is left out and the server takes the first fit.
+        Assert.Equal(new InventoryUnequipIntent(102), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, CharacterPanelModel.FirstFitCell)));
+        Assert.Null(((InventoryUnequipIntent)PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, -1))).TargetCell);
+        // A named cell travels, including cell 0, which is the top-left anchor and not "unset".
+        Assert.Equal(new InventoryUnequipIntent(102, 37), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102, 37)));
+        Assert.Equal(new InventoryUnequipIntent(102, 0), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102)));
         Assert.Equal(new InventoryMoveIntent(1, 5), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Move, 1, 5)));
         Assert.Equal(new InventoryDestroyIntent(2, 99), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Destroy, 2, 0, 99)));
     }

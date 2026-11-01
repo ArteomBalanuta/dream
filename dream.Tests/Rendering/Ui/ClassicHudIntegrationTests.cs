@@ -273,13 +273,13 @@ public sealed class ClassicHudIntegrationTests : IDisposable
     [Theory]
     [InlineData(1280, 720)]
     [InlineData(1920, 1080)]
-    public void RealCell_TilesTwoByTwoInABagSlot_AtTheLayoutTexelScale(int width, int height)
+    public void RealCell_TilesTwoByTwoOverAFourCellFootprint_AtTheLayoutTexelScale(int width, int height)
     {
         UiLayout layout = UiLayout.Create(width, height, 0f);
         UiBatch batch = new(BlockGlyphs.Create());
         batch.SetSpriteTable(_scene.Table);
         batch.BeginFrame(in layout);
-        UiRect slot = InventoryWindow.SlotRect(layout, layout.Inventory, 0);
+        UiRect slot = InventoryWindow.ItemRect(layout, layout.Inventory, 0, new Dream.Simulation.Inventory.ItemFootprint(2, 2));
 
         batch.Tile(_scene.Table.Get(UiSpriteNames.CellOccupied), slot, UiColor.White);
 

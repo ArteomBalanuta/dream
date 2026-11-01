@@ -466,20 +466,7 @@ public partial class Render
         ImGui.TextUnformatted($"Inventory: {snapshot.PlayerName}");
         DrawCharacterSection(snapshot, status, ref inventoryAction);
 
-        ImGui.SeparatorText("Backpack");
-        for (int row = 0; row < snapshot.Rows; row++)
-        {
-            for (int column = 0; column < snapshot.Columns; column++)
-            {
-                int slotIndex = (row * snapshot.Columns) + column;
-                InventorySlotSnapshot slot = FindInventorySlot(snapshot.Slots, slotIndex);
-                DrawInventorySlotButton(snapshot, slot, slotIndex, ref equipInventorySlotIndex, ref inventoryAction);
-                if (column < snapshot.Columns - 1)
-                {
-                    ImGui.SameLine();
-                }
-            }
-        }
+        DrawBackpackSection(snapshot, ref equipInventorySlotIndex, ref inventoryAction);
 
         if (_openDestroyPopup)
         {
@@ -563,67 +550,92 @@ public partial class Render
         ImGui.PushStyleColor(ImGuiCol.Text, color);
     }
 
-    private static InventorySlotSnapshot FindInventorySlot(IReadOnlyList<InventorySlotSnapshot> slots, int slotIndex)
+    // Buttons per row of the backpack flow.
+    private const int BackpackFlowColumns = 4;
+
+    // The bag is sparse: only the cells an item is anchored on appear in Slots, so the panel is a flow of
+    // one button per item (row-major by anchor, however the snapshot orders them), then a line for the
+    // items the server holds back because the board has no room for them.
+    private static void DrawBackpackSection(
+        PlayerInventorySnapshot snapshot,
+        ref int? equipInventorySlotIndex,
+        ref InventoryHudAction? inventoryAction)
     {
-        for (int index = 0; index < slots.Count; index++)
+        ImGui.SeparatorText("Backpack");
+        IReadOnlyList<InventorySlotSnapshot> slots = snapshot.Slots;
+        int heldBack = 0;
+        int shown = 0;
+        for (int anchor = 0; anchor < BagGrid.CellCount; anchor++)
         {
-            if (slots[index].SlotIndex == slotIndex)
+            for (int index = 0; index < slots.Count; index++)
             {
-                return slots[index];
+                InventorySlotSnapshot slot = slots[index];
+                if (slot.SlotIndex != anchor || slot.Item is not InventoryItemSnapshot)
+                {
+                    continue;
+                }
+
+                if (shown++ % BackpackFlowColumns != 0)
+                {
+                    ImGui.SameLine();
+                }
+
+                DrawInventorySlotButton(snapshot, slot, ref equipInventorySlotIndex, ref inventoryAction);
+                break;
             }
         }
 
-        return default;
+        for (int index = 0; index < slots.Count; index++)
+        {
+            int held = slots[index].SlotIndex - CharacterPanelModel.HeldBackFirstSlot;
+            if ((uint)held < CharacterPanelModel.HeldBackSlots && slots[index].Item is InventoryItemSnapshot)
+            {
+                heldBack++;
+            }
+        }
+
+        if (shown == 0)
+        {
+            ImGui.TextDisabled("Empty");
+        }
+
+        if (heldBack > 0)
+        {
+            ImGui.TextUnformatted($"{heldBack} items held back: make room");
+        }
     }
 
     private static void DrawInventorySlotButton(
         PlayerInventorySnapshot snapshot,
         InventorySlotSnapshot slot,
-        int gridSlotIndex,
         ref int? equipInventorySlotIndex,
         ref InventoryHudAction? inventoryAction)
     {
-        bool occupied = slot.Item is InventoryItemSnapshot;
         InventoryItemSnapshot item = slot.Item.GetValueOrDefault();
-        string label = occupied ? item.DisplayName : $"Empty##slot-{gridSlotIndex}";
+        ItemFootprint footprint = BagGrid.FootprintOf(item.ItemKind);
+        int row = slot.SlotIndex / BagGrid.Columns;
+        int column = slot.SlotIndex % BagGrid.Columns;
+        string label = $"{item.DisplayName}{(char)10}{footprint.Cols}x{footprint.Rows} at row {row + 1}, col {column + 1}##inventory-{slot.SlotIndex}";
 
-        if (slot.IsEquipped)
+        PushRarityColor(CharacterPanelModel.ColorKey(item.Rarity));
+        if (ImGui.Button(label, new System.Numerics.Vector2(160f, 44f)))
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.20f, 0.42f, 0.22f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.26f, 0.52f, 0.28f, 1f));
-        }
-
-        PushRarityColor(occupied ? CharacterPanelModel.ColorKey(item.Rarity) : RarityColorKey.Common);
-        if (ImGui.Button($"{label}##inventory-{gridSlotIndex}", new System.Numerics.Vector2(120f, 60f)))
-        {
-            if (occupied && slot.SlotIndex >= 0 && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
-            {
-                equipInventorySlotIndex = slot.SlotIndex;
-            }
+            equipInventorySlotIndex = slot.SlotIndex;
         }
 
         ImGui.PopStyleColor();
 
-        if (occupied)
-        {
-            DrawItemTooltip(item);
-            DrawBackpackContextMenu(snapshot, slot.SlotIndex, item, gridSlotIndex, ref inventoryAction);
-        }
-
-        if (slot.IsEquipped)
-        {
-            ImGui.PopStyleColor(2);
-        }
+        DrawItemTooltip(item);
+        DrawBackpackContextMenu(snapshot, slot.SlotIndex, item, ref inventoryAction);
     }
 
     private static void DrawBackpackContextMenu(
         PlayerInventorySnapshot snapshot,
         int slotIndex,
         InventoryItemSnapshot item,
-        int gridSlotIndex,
         ref InventoryHudAction? inventoryAction)
     {
-        if (!ImGui.BeginPopupContextItem($"inventory-menu-{gridSlotIndex}"))
+        if (!ImGui.BeginPopupContextItem($"inventory-menu-{slotIndex}"))
         {
             return;
         }
@@ -651,7 +663,7 @@ public partial class Render
         {
             foreach (InventoryHudAction target in CharacterPanelModel.MoveTargets(snapshot, slotIndex))
             {
-                if (ImGui.MenuItem($"Slot {target.Target + 1}"))
+                if (ImGui.MenuItem($"Row {(target.Target / BagGrid.Columns) + 1}, col {(target.Target % BagGrid.Columns) + 1}"))
                 {
                     inventoryAction = target;
                 }

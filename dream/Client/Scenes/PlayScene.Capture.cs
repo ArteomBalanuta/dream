@@ -32,7 +32,9 @@ namespace Dream.Client.Scenes;
 //   wait:<frames>, snap, log  idle, capture, print the inventory
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
 //                             mode (the real command path), then capture; for damage numbers and death
-// <slot> is 0..15 for the bag, 100..103 or main|off|head|body for the equipment wells.
+// <slot> is 0..63 for a bag anchor (row * 8 + col; the drag target is where the item's anchor lands, with the
+// item centred on the pointer), or 100..111 / main|off|head|body|hands|feet|legs|neck|ring1|ring2|back|pet
+// for an equipment well.
 internal sealed class HudCaptureScript
 {
     public const string DirectoryVariable = "DREAM_HUD_CAPTURE";
@@ -49,7 +51,7 @@ internal sealed class HudCaptureScript
     // Frames between setting a state and reading it.
     public const int SettleFrames = 20;
 
-    public const int MaxSteps = 40;
+    public const int MaxSteps = 80;
 
     private HudCaptureScript(string directory, string[] steps, HudCaptureStepSpec[] specs)
     {
@@ -242,7 +244,7 @@ public partial class PlayScene
                     break;
                 }
 
-                if (!HudCapturePointerPlan.TryBuild(spec, in layout, _captureLast.Position, menuRow, confirm, _capturePointerFrames))
+                if (!HudCapturePointerPlan.TryBuild(spec, in layout, _captureLast.Position, menuRow, confirm, _capturePointerFrames, _render.ClassicSurfaceForCapture?.View))
                 {
                     Console.WriteLine($"[hud-capture] step {name}: nothing to aim at (no such slot, menu row or dialog)");
                     break;
@@ -477,7 +479,7 @@ public partial class PlayScene
         }
         else
         {
-            sb.Append("  bag:");
+            sb.Append("  bag (anchor=item):");
             foreach (InventorySlotSnapshot slot in inv.Slots)
             {
                 if (slot.Item is InventoryItemSnapshot item)

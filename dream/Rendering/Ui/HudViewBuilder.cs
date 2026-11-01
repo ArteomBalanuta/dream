@@ -59,7 +59,7 @@ public sealed class HudViewBuilder
         {
             _inventory = view.Inventory;
             view.Equipment = CharacterPanelModel.BuildSlotRows(inventory);
-            FillBackpack(view.Backpack, inventory);
+            FillBackpack(view, inventory);
             FillWorn(view.Worn, view.Equipment);
             ItemRowRebuilds++;
         }
@@ -189,30 +189,43 @@ public sealed class HudViewBuilder
         return true;
     }
 
-    private void FillBackpack(HudItemView[] backpack, PlayerInventorySnapshot? inventory)
+    // The bag is sparse: only anchors that hold an item appear in Slots. Items are placed in snapshot
+    // order and the first one wins a cell, so a hostile snapshot with overlapping or off-board items
+    // shows the earlier items and skips the later ones. Held-back rows are counted, not drawn.
+    private void FillBackpack(HudView view, PlayerInventorySnapshot? inventory)
     {
-        Array.Clear(backpack);
+        view.ClearBag();
         IReadOnlyList<InventorySlotSnapshot>? slots = inventory?.Slots;
         if (slots is null)
         {
             return;
         }
 
+        int heldBack = 0;
         for (int i = 0; i < slots.Count; i++)
         {
             InventorySlotSnapshot slot = slots[i];
-            if ((uint)slot.SlotIndex >= (uint)backpack.Length || slot.Item is not InventoryItemSnapshot item)
+            if (slot.Item is not InventoryItemSnapshot item || item.ItemInstanceId == 0)
             {
                 continue;
             }
 
-            if (backpack[slot.SlotIndex].Item.ItemInstanceId != 0)
+            int heldIndex = slot.SlotIndex - CharacterPanelModel.HeldBackFirstSlot;
+            if ((uint)heldIndex < CharacterPanelModel.HeldBackSlots)
+            {
+                heldBack |= 1 << heldIndex;
+                continue;
+            }
+
+            if ((uint)slot.SlotIndex >= (uint)view.Backpack.Length || view.Backpack[slot.SlotIndex].Item.ItemInstanceId != 0)
             {
                 continue;
             }
 
-            backpack[slot.SlotIndex] = _catalog.Describe(item, slot.IsEquipped);
+            view.TryPlaceBagItem(slot.SlotIndex, _catalog.Describe(item, slot.IsEquipped));
         }
+
+        view.HeldBackCount = System.Numerics.BitOperations.PopCount((uint)heldBack);
     }
 
     private void FillWorn(HudItemView[] worn, CharacterSlotRow[] equipment)

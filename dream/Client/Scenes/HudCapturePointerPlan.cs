@@ -44,19 +44,28 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
 
     public int BurstMoves => B >> 16;
 
-    // Slot names for the script: bag slots are 0..15, the four wells 100..103.
+    // Slot names for the script: bag anchors are 0..63 (row * 8 + col), the twelve wells 100..111, named
+    // main, off, head, body, hands, feet, legs, neck, ring1, ring2, back and pet.
     public static bool TryParseSlot(string text, out int slot)
     {
         slot = text switch
         {
-            "main" => EquipmentSlots.FirstSlotIndex,
-            "off" => EquipmentSlots.FirstSlotIndex + 1,
-            "head" => EquipmentSlots.FirstSlotIndex + 2,
-            "body" => EquipmentSlots.FirstSlotIndex + 3,
+            "main" => EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand),
+            "off" => EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand),
+            "head" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Head),
+            "body" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Body),
+            "hands" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Hands),
+            "feet" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Feet),
+            "legs" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Legs),
+            "neck" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Neck),
+            "ring1" => EquipmentSlots.ToSlotIndex(EquipmentSlot.RingLeft),
+            "ring2" => EquipmentSlots.ToSlotIndex(EquipmentSlot.RingRight),
+            "back" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Back),
+            "pet" => EquipmentSlots.ToSlotIndex(EquipmentSlot.Companion),
             _ => int.TryParse(text, out int n) ? n : -1
         };
 
-        return (slot >= 0 && slot < 16) || (slot >= EquipmentSlots.FirstSlotIndex && slot < EquipmentSlots.FirstSlotIndex + 4);
+        return (slot >= 0 && slot < BagGrid.CellCount) || (slot >= EquipmentSlots.FirstSlotIndex && slot <= EquipmentSlots.LastSlotIndex);
     }
 
     // The step grammar of DREAM_HUD_CAPTURE_SCRIPT, one comma-separated token. False for anything
@@ -145,10 +154,12 @@ internal static class HudCapturePointerPlan
 
     public const int HoldFrames = 2;
 
+    // Where the pointer rests to pick an item up or hover it: the middle of a bag anchor's cell (inside the
+    // item, whatever its footprint) or of a well.
     public static bool TryCentre(in UiLayout layout, int slot, out Vector2 centre)
     {
         UiRect r;
-        if (slot >= 0 && slot < 16)
+        if (slot >= 0 && slot < BagGrid.CellCount)
         {
             r = InventoryWindow.SlotRect(layout, layout.Inventory, slot);
         }
@@ -163,6 +174,27 @@ internal static class HudCapturePointerPlan
         }
 
         centre = new Vector2(r.X + (r.W * 0.5f), r.Y + (r.H * 0.5f));
+        return true;
+    }
+
+    // Where the pointer goes to drop an item with this footprint on a slot. A well is its middle. For a
+    // bag anchor it is the middle of the footprint placed there, because the drop is centred on the
+    // pointer (decision D12); an anchor where the footprint does not fit lands on the nearest one that
+    // does, as a hand would get, and the point stays inside the board.
+    public static bool TryDropPoint(in UiLayout layout, int slot, ItemFootprint footprint, out Vector2 point)
+    {
+        if (!(slot >= 0 && slot < BagGrid.CellCount))
+        {
+            return TryCentre(in layout, slot, out point);
+        }
+
+        UiRect cell = InventoryWindow.SlotRect(layout, layout.Inventory, slot);
+        UiRect board = InventoryWindow.BagRect(layout, layout.Inventory);
+        float x = cell.X + (footprint.Cols * 0.5f * cell.W);
+        float y = cell.Y + (footprint.Rows * 0.5f * cell.H);
+        point = new Vector2(
+            Math.Clamp(x, board.X, board.Right - 0.5f),
+            Math.Clamp(y, board.Y, board.Bottom - 0.5f));
         return true;
     }
 
@@ -219,16 +251,25 @@ internal static class HudCapturePointerPlan
     }
 
     // Builds the frames of a pointer step. last is where the pointer was left (a release lets go
-    // there). False when the step needs a rect that is not on screen.
+    // there). view, when given, tells how big the dragged item is so a drop point can centre its
+    // footprint on the target anchor; without it every item counts as 1x1. False when the step needs a
+    // rect that is not on screen.
     public static bool TryBuild(
         HudCaptureStepSpec spec,
         in UiLayout layout,
         Vector2 last,
         UiRect? menuRow,
         UiRect? confirmButton,
-        List<ScriptedPointerFrame> frames)
+        List<ScriptedPointerFrame> frames,
+        HudView? view = null)
     {
         frames.Clear();
+        ItemFootprint footprint = ItemFootprint.One;
+        if (view is not null && InventoryWindow.TryDragFootprint(view, spec.A, out ItemFootprint dragged))
+        {
+            footprint = dragged;
+        }
+
         switch (spec.Verb)
         {
             case HudCaptureVerb.Hover:
@@ -249,7 +290,7 @@ internal static class HudCapturePointerPlan
                 return true;
             case HudCaptureVerb.Drag:
             case HudCaptureVerb.Dragging:
-                if (!TryCentre(in layout, spec.A, out Vector2 from) || !TryCentre(in layout, spec.B, out Vector2 to))
+                if (!TryCentre(in layout, spec.A, out Vector2 from) || !TryDropPoint(in layout, spec.B, footprint, out Vector2 to))
                 {
                     return false;
                 }
@@ -257,7 +298,10 @@ internal static class HudCapturePointerPlan
                 Drag(frames, from, to, release: spec.Verb == HudCaptureVerb.Drag);
                 return true;
             case HudCaptureVerb.Burst:
-                if (!TryCentre(in layout, spec.A, out Vector2 burstFrom) || !TryCentre(in layout, spec.BurstSlotB, out Vector2 burstTo))
+                if (!TryCentre(in layout, spec.A, out Vector2 burstFrom)
+                    || !TryCentre(in layout, spec.BurstSlotB, out Vector2 burstFromB)
+                    || !TryDropPoint(in layout, spec.BurstSlotB, footprint, out Vector2 burstTo)
+                    || !TryDropPoint(in layout, spec.A, footprint, out Vector2 burstBack))
                 {
                     return false;
                 }
@@ -267,7 +311,7 @@ internal static class HudCapturePointerPlan
                 for (int move = 0; move < spec.BurstMoves; move++)
                 {
                     bool forward = move % 2 == 0;
-                    Drag(frames, forward ? burstFrom : burstTo, forward ? burstTo : burstFrom, release: true, lead: 1, steps: 2, hold: 1);
+                    Drag(frames, forward ? burstFrom : burstFromB, forward ? burstTo : burstBack, release: true, lead: 1, steps: 2, hold: 1);
                 }
 
                 return true;

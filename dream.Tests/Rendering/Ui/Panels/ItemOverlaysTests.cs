@@ -140,7 +140,7 @@ public sealed class ItemOverlaysTests : IDisposable
         ClickMenuEntry("Destroy...");
         Assert.True(_scene.Canvas.HasText("This cannot be undone."));
 
-        _scene.Items[2] = InventoryScene.Item(5555, "ring.ice");
+        _scene.Items[2] = InventoryScene.Item(5555, "gear.iron-band");
         _scene.Refresh();
         _scene.Frame();
 
@@ -156,13 +156,14 @@ public sealed class ItemOverlaysTests : IDisposable
         RightClickSlot(2);
         ClickMenuEntry("Destroy...");
 
-        _scene.Items[9] = InventoryScene.Item(77, "ring.ice");
+        _scene.Items[9] = InventoryScene.Item(77, "gear.iron-band");
         _scene.Refresh();
         _scene.Frame();
 
         Assert.True(_scene.Canvas.HasText("This cannot be undone."));
     }
 
+    // A bag row that is also worn can only come from a hand-edited database; the menu still handles it.
     [Fact]
     public void EquippedBagItem_OffersUnequipAndNoDestroy()
     {
@@ -192,7 +193,7 @@ public sealed class ItemOverlaysTests : IDisposable
         ClickMenuEntry("Unequip");
 
         Assert.Equal(
-            new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand)),
+            new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(EquipmentSlot.MainHand), CharacterPanelModel.FirstFitCell),
             Assert.Single(_scene.Actions.Picked));
     }
 
@@ -210,7 +211,7 @@ public sealed class ItemOverlaysTests : IDisposable
         Assert.False(_scene.Canvas.HasText("Destroy..."));
         ClickMenuEntry("Unequip");
         Assert.Equal(
-            new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(EquipmentSlot.Head)),
+            new InventoryHudAction(InventoryHudActionKind.Unequip, EquipmentSlots.ToSlotIndex(EquipmentSlot.Head), CharacterPanelModel.FirstFitCell),
             Assert.Single(_scene.Actions.Picked));
     }
 
@@ -258,11 +259,11 @@ public sealed class ItemOverlaysTests : IDisposable
     public void Menu_RightClickOnAnotherSlot_ClosesItAndOpensNoSecondMenu()
     {
         _scene.Items[2] = InventoryScene.Item(11, "helm.gilded", HeadMask);
-        _scene.Items[3] = InventoryScene.Item(12, "ring.ice");
+        _scene.Items[6] = InventoryScene.Item(12, "gear.iron-band");
         _scene.Refresh();
         RightClickSlot(2);
 
-        RightClickSlot(3);
+        RightClickSlot(6);
         _scene.Frame();
 
         Assert.False(_scene.Canvas.HasText("Destroy..."));
@@ -327,7 +328,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void Tooltip_ShowsOnHoverWithNameInTierColour()
     {
-        _scene.Items[5] = InventoryScene.Item(31, "ring.ice", rarity: ItemRarity.Rare) with { IsRolled = true };
+        _scene.Items[5] = InventoryScene.Item(31, "gear.iron-band", rarity: ItemRarity.Rare) with { IsRolled = true };
         _scene.Refresh();
 
         _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(5));
@@ -344,7 +345,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void Tooltip_ListsRolledModifiersInTheBonusColour()
     {
-        InventoryItemSnapshot rolled = InventoryScene.Item(31, "ring.ice", rarity: ItemRarity.Uncommon) with
+        InventoryItemSnapshot rolled = InventoryScene.Item(31, "gear.iron-band", rarity: ItemRarity.Uncommon) with
         {
             IsRolled = true,
             Modifiers = [new StatModifier(StatId.Strength, StatOp.Flat, 3f)]
@@ -362,7 +363,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void Tooltip_ShowsTheStackCount()
     {
-        _scene.Items[5] = InventoryScene.Item(31, "ring.ice", stack: 7);
+        _scene.Items[5] = InventoryScene.Item(31, "gear.iron-band", stack: 7);
         _scene.Refresh();
 
         _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(5));
@@ -374,7 +375,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void Tooltip_ServerTextIsLiteralAndWrapped()
     {
-        InventoryItemSnapshot hostile = InventoryScene.Item(31, "ring.ice") with
+        InventoryItemSnapshot hostile = InventoryScene.Item(31, "gear.iron-band") with
         {
             DisplayName = "100% {0} %s",
             Description = new string('w', 300) + " tail %d",
@@ -397,7 +398,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void Tooltip_LongNameWrapsByWidthInsteadOfSpillingOut()
     {
-        InventoryItemSnapshot item = InventoryScene.Item(31, "ring.ice") with
+        InventoryItemSnapshot item = InventoryScene.Item(31, "gear.iron-band") with
         {
             DisplayName = "Gilded Ring of the Frozen Northern Wastes and Beyond",
             Description = null
@@ -445,7 +446,7 @@ public sealed class ItemOverlaysTests : IDisposable
     [Fact]
     public void HoverFrame_AllocatesNothingOnceWarm()
     {
-        _scene.Items[5] = InventoryScene.Item(31, "ring.ice", rarity: ItemRarity.Rare, stack: 3);
+        _scene.Items[5] = InventoryScene.Item(31, "gear.iron-band", rarity: ItemRarity.Rare, stack: 3);
         _scene.Worn[2] = InventoryScene.Item(9, "helm.gilded", HeadMask);
         _scene.Refresh();
         _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(5));
@@ -463,6 +464,136 @@ public sealed class ItemOverlaysTests : IDisposable
         });
 
         Assert.Equal(0L, bytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DragFrame_WithAGhostAndAHighlight_AllocatesNothingOnceWarm(bool overBusyCells)
+    {
+        _scene.Items[9] = InventoryScene.Item(31, "axe.twinbit", rarity: ItemRarity.Rare);
+        _scene.Items[40] = InventoryScene.Item(32, "gem.amber");
+        _scene.Items[41] = InventoryScene.Item(33, "gear.iron-band");
+        _scene.Worn[2] = InventoryScene.Item(9, "helm.gilded", HeadMask);
+        _scene.Refresh();
+        NullCanvas canvas = new(_scene.Table);
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        InventoryWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        _scene.Input.EndFrame();
+        Assert.Equal(9, _scene.Input.ActiveDragPayload);
+        // Over the board: free cells, or two items at once (a blocked drop).
+        UiRect over = overBusyCells ? _scene.Slot(33) : _scene.Slot(27);
+        _scene.Input.Pointer = InventoryScene.Centre(over);
+        for (int n = 0; n < 3; n++)
+        {
+            InventoryWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+            ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        }
+
+        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        {
+            InventoryWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+            ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        });
+
+        Assert.Equal(0L, bytes);
+        Assert.True(InventoryUiState.Current.DragActive);
+    }
+
+    // ---- drag ghost -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("gem.amber", 1, 1)]
+    [InlineData("feather.azure", 1, 2)]
+    [InlineData("helm.gilded", 2, 2)]
+    [InlineData("axe.twinbit", 2, 3)]
+    [InlineData("bow.verdant", 2, 4)]
+    [InlineData("gear.travel-cloak", 3, 2)]
+    public void Ghost_CoversTheWholeFootprintAndIsCentredOnThePointer(string kind, int cols, int rows)
+    {
+        _scene.Items[9] = InventoryScene.Item(1, kind);
+        _scene.Refresh();
+        Vector2 pointer = new(400f, 300f);
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = pointer;
+        _scene.Frame();
+
+        CanvasCall ghost = _scene.Canvas.Named("item." + kind).Last();
+        Assert.Equal(200, ghost.Color.A);
+        float scale = _scene.Layout.Scale;
+        UiRect box = new(pointer.X - (cols * 10f * scale), pointer.Y - (rows * 10f * scale), cols * 20f * scale, rows * 20f * scale);
+        Assert.Equal(InventoryWindow.IconRect(_scene.Table.Get("item." + kind), box, scale), ghost.Rect);
+        Assert.Equal(pointer.X, ghost.Rect.X + (ghost.Rect.W / 2f), 3);
+        Assert.Equal(pointer.Y, ghost.Rect.Y + (ghost.Rect.H / 2f), 3);
+    }
+
+    [Fact]
+    public void Ghost_OfAWornItemCoversItsFootprintToo()
+    {
+        _scene.Worn[0] = InventoryScene.Item(1, "gear.iron-blade", MainMask);   // 2x3
+        _scene.Refresh();
+        Vector2 pointer = new(400f, 300f);
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Well(0));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = pointer;
+        _scene.Frame();
+
+        CanvasCall ghost = _scene.Canvas.Named("item.gear.iron-blade").Last();
+        float scale = _scene.Layout.Scale;
+        UiRect box = new(pointer.X - (20f * scale), pointer.Y - (30f * scale), 40f * scale, 60f * scale);
+        Assert.Equal(InventoryWindow.IconRect(_scene.Table.Get("item.gear.iron-blade"), box, scale), ghost.Rect);
+        Assert.Equal(200, ghost.Color.A);
+    }
+
+    [Fact]
+    public void Ghost_FollowsThePointerOverTheBoardWithoutSnapping()
+    {
+        _scene.Items[9] = InventoryScene.Item(1, "axe.twinbit");
+        _scene.Refresh();
+        Vector2 pointer = InventoryScene.Centre(_scene.Slot(40)) + new Vector2(3.3f, 1.7f);
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = pointer;
+        _scene.Frame();
+
+        CanvasCall ghost = _scene.Canvas.Named("item.axe.twinbit").Last();
+        Assert.Equal(pointer.X, ghost.Rect.X + (ghost.Rect.W / 2f), 3);
+        Assert.Equal(pointer.Y, ghost.Rect.Y + (ghost.Rect.H / 2f), 3);
+    }
+
+    [Fact]
+    public void Ghost_IsNotDrawnWhenTheDragWasCancelled_OrWhenTheItemHasNoArt()
+    {
+        _scene.Items[9] = InventoryScene.Item(1, "axe.twinbit");
+        _scene.Items[40] = InventoryScene.Item(2, "nothing.known");
+        _scene.Refresh();
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(40));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = new Vector2(400f, 300f);
+        _scene.Frame();
+        Assert.Single(_scene.Canvas.Calls.Where(c => c.Name.StartsWith("item.", StringComparison.Ordinal)));   // the axe in place, no ghost
+
+        _scene.Input.ReleaseDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Refresh();   // a new snapshot while carrying
+        _scene.Input.Pointer = new Vector2(400f, 300f);
+        _scene.Frame();
+
+        Assert.Single(_scene.Canvas.Named("item.axe.twinbit"));
     }
 
     // ---- tier style -------------------------------------------------------------------------
