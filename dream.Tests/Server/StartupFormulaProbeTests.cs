@@ -44,6 +44,29 @@ public sealed class StartupFormulaProbeTests
         Assert.Contains(expectedInMessage, ex.Message, StringComparison.Ordinal);
     }
 
+    // N3: a template that pins its interval never reads the interval formula on a spawn, but a restore does,
+    // so the probe must evaluate it for such a template too.
+    [Fact]
+    public void ABadIntervalFormula_FailsTheProbe_EvenForATemplateThatPinsItsInterval()
+    {
+        CombatFormulaService service = CombatFormulaService.CreateForDefinitions(
+            WithExpression("enemy.attack_interval_seconds", "1 / (strength - 10)"));
+        string dir = ContentCatalog.ShippedDirectory;
+        string enemies = File.ReadAllText(Path.Combine(dir, ContentCatalog.EnemiesFileName))
+            .Replace("\"level\": 1,", "\"level\": 1,\n      \"attackIntervalSeconds\": 1.5,", StringComparison.Ordinal);
+        Assert.Contains("attackIntervalSeconds", enemies, StringComparison.Ordinal);
+        ContentCatalog content = ContentCatalog.Load(
+            File.ReadAllText(Path.Combine(dir, ContentCatalog.ItemsFileName)),
+            enemies,
+            File.ReadAllText(Path.Combine(dir, ContentCatalog.LootFileName)));
+        Assert.Equal(1.5f, content.Wolf.AttackIntervalSeconds);
+
+        ContentValidationException ex = Assert.Throws<ContentValidationException>(
+            () => ServerBootstrap.ProbeFormulas(service, content));
+
+        Assert.Contains("enemy.attack_interval_seconds", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AProductionStart_WithABadStoredFormula_StopsWithExitCode8_BeforeAnyTick()
     {

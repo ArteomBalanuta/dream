@@ -56,7 +56,7 @@ public static class RemoteEnemyStateApplier
     private const string ClientDisplayNameFallback = "Wolf";
 
     // Wire levels are hostile; 0 (absent) is level 1.
-    public const int MaxDisplayLevel = 9999;
+    public const int MaxDisplayLevel = Dream.Client.Presentation.ClientScenePresenter.MaxDisplayLevel;
 
     // A longer visual key is not any known key; it draws the default wolf and is not kept.
     public const int MaxVisualKeyLength = 64;

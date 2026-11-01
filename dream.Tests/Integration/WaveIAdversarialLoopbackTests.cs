@@ -82,9 +82,10 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
         await client.LeaveAsync();
     }
 
-    // Plan I-D18 and the glue fix: a push waits while an inventory result is queued. That queue is
-    // server-wide, so one player's inventory actions on every tick must not hold back another player's loot.
-    private static async Task<(int Steps, int GrieferInventoryResults)> StepsUntilThePushAsync(bool grief)
+    // A push waits while an inventory result of its own session is queued (wave I fix loop 1: the hold
+    // is per session, not server-wide), so another player's inventory actions, on every tick or on
+    // exactly the tick of the kill, must not hold back a killer's loot.
+    private static async Task<(int Steps, int GrieferInventoryResults)> StepsUntilThePushAsync(Func<int, bool> grief)
     {
         using MigrationTestDatabase db = new();
         await using WireLoopbackServer server = await StartAsync(db);
@@ -108,7 +109,7 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
                 wolf.Combatant.Health.SetAuthoritativeState(1, wolf.Combatant.Health.MaxHealth);
             }
 
-            if (grief)
+            if (grief(step))
             {
                 await griefer.SendActionAsync(new InventoryMoveIntent(0, 1));
             }
@@ -137,12 +138,24 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
     [Fact]
     public async Task AnotherPlayersInventoryActionOnEveryTick_DoesNotHoldBackAKillersPush()
     {
-        (int control, _) = await StepsUntilThePushAsync(grief: false);
-        (int griefed, int results) = await StepsUntilThePushAsync(grief: true);
+        (int control, _) = await StepsUntilThePushAsync(_ => false);
+        (int griefed, int results) = await StepsUntilThePushAsync(_ => true);
 
         output.WriteLine($"push after {control} steps alone, {griefed} steps with a neighbour acting every tick ({results} inventory results seen)");
         Assert.True(control < 60, $"the control never got its push ({control})");
         Assert.True(results > 0, "the neighbour's inventory actions never produced inventory results: the test did not attack what it claims to");
         Assert.True(griefed <= control + 4, $"the push took {griefed} steps against {control} when a neighbour acted every tick");
+    }
+
+    [Fact]
+    public async Task AnotherPlayersEquipOnTheExactTickOfTheKill_DoesNotDelayAKillersPushByEvenOneStep()
+    {
+        (int control, _) = await StepsUntilThePushAsync(_ => false);
+        Assert.True(control < 60, $"the control never got its push ({control})");
+        (int griefed, int results) = await StepsUntilThePushAsync(step => step == control);
+
+        output.WriteLine($"push after {control} steps alone, {griefed} steps with a neighbour equipping on step {control} ({results} inventory results seen)");
+        Assert.True(results > 0, "the neighbour's inventory action never produced an inventory result: the test did not attack what it claims to");
+        Assert.Equal(control, griefed);
     }
 }

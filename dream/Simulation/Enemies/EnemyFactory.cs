@@ -64,11 +64,14 @@ internal static class EnemyFactory
         // A row is hostile on load: SetBase clamps what the sheet keeps, and the formulas see the same values.
         PersistedCreatureStats stored = row.Stats;
         StatBlock stats = Clamped(stored.Strength, stored.Agility, stored.Vitality, stored.Energy, stored.MovementSpeed, stored.AttackSpeed);
+        // The level is hostile too: a row above the content maximum is clamped here (the row itself is
+        // not rewritten), so kill XP and the wire value agree on one number.
+        int level = Math.Min(stored.Level, ContentCatalog.MaxEnemyLevel);
         EnemyCombatDerivedStats derived = formulas.EvaluateEnemyDerivedStats(
             (int)stats[StatId.Strength],
             stats[StatId.AttackSpeed],
             (int)stats[StatId.Vitality],
-            stored.Level,
+            level,
             intervalOverride: null);
 
         Vector3 position = row.Position;
@@ -83,7 +86,7 @@ internal static class EnemyFactory
             baseStats: stats);
         combatant.Health.SetAuthoritativeState(stored.CurrentHealth, stored.MaxHealth);
 
-        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, stored.Level);
+        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level);
         actor.SetFacing(row.Facing);
         return actor;
     }

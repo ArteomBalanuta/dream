@@ -202,6 +202,7 @@ public sealed class LootGrantTests
     public void TwoKillsInOneTick_GiveOnePushWithTwoNotices_AndTheSnapshotIsBuiltOnce()
     {
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
+        int before = Backpack(runtime, Killer).Length;
 
         runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick);
         runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5001, tick);
@@ -211,6 +212,8 @@ public sealed class LootGrantTests
         InventoryPushMessage push = Assert.Single(pushes).Message;
         Assert.Equal(2, push.Notices.Count);
         Assert.NotNull(push.Inventory);
+        // Built once, when the push is drained (after both grants): that one snapshot already holds both items.
+        Assert.Equal(before + 2, push.Inventory!.Value.Slots.Count(slot => slot.Item != null));
         Assert.False(runtime.HasPendingInventoryPushes);
     }
 

@@ -27,6 +27,7 @@ public sealed class ContentCatalog
     public const string DefaultEnemyVisualKey = "enemy.wolf";
 
     public const int MaxLootDrops = 4;
+    public const int MaxEnemyLevel = 1000;
     public const int MaxLootWeight = 1_000_000;
     public const int MaxLootEntries = 64;
 
@@ -513,7 +514,7 @@ public sealed class ContentCatalog
             EnemyTemplate template = new(
                 ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
                 ReadName(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
-                ReadInt(EnemiesFileName, $"{path}.level", enemy["level"], 1, 1000),
+                ReadInt(EnemiesFileName, $"{path}.level", enemy["level"], 1, MaxEnemyLevel),
                 ReadInt(EnemiesFileName, $"{path}.strength", enemy["strength"], PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength),
                 ReadInt(EnemiesFileName, $"{path}.vitality", enemy["vitality"], PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality),
                 ReadFloat(EnemiesFileName, $"{path}.attackSpeed", enemy["attackSpeed"], PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),

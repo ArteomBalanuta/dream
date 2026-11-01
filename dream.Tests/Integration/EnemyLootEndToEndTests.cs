@@ -396,8 +396,13 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 
         Assert.True(await client.FlushAsync());
         await client.PumpUntilAsync(
-            c => c.Applied.OfType<InventoryPushMessage>().Any() && c.Session.WorldTransfersCompleted > transfers,
+            // The resync itself, not the session's transfer counter: the receive thread bumps the counter
+            // just after it queues the world, so a pump that drained before the queue and checked after
+            // the bump saw the counter ahead of Applied (resync index -1).
+            c => c.Applied.OfType<InventoryPushMessage>().Any()
+                && c.Applied.Any(message => message is ServerSnapshotMessage { Snapshot.World: not null }),
             "the push and the resync");
+        Assert.True(client.Session.WorldTransfersCompleted > transfers);
 
         int push = client.Applied.ToList().FindIndex(message => message is InventoryPushMessage);
         int resync = client.Applied.ToList().FindIndex(message => message is ServerSnapshotMessage { Snapshot.World: not null });

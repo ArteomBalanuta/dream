@@ -1,6 +1,9 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Client.Replication;
+using Dream.Multiplayer.Protocol;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Players;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
@@ -71,6 +74,38 @@ public sealed class EnemyFactoryTests
         Assert.Equal("enemy.dire-wolf", restored.VisualKey);
         Assert.Equal(row.Facing, restored.Forward);
         Assert.Equal(row.Position, restored.Position);
+    }
+
+    [Fact]
+    public void ARestore_OfARowAboveTheContentMaximumLevel_UsesTheClampedLevelForXpAndTheWire()
+    {
+        PersistedEnemyInstance row = WolfIntervalBitsTest.Row(strength: 16, vitality: 30, attackSpeed: 1.0f, currentHealth: 200, maxHealth: 200, "DireWolf", level: 5000);
+
+        EnemyActor restored = EnemyFactory.Restore(row, Dire(), 2100, Events, CombatFormulaService.Default);
+
+        Assert.Equal(ContentCatalog.MaxEnemyLevel, restored.Level);
+        Assert.Equal(1000, ContentCatalog.MaxEnemyLevel);
+        // Kill XP reads the actor's level (AuthoritativeCombatResolver), so it is the 1000 reward.
+        CombatFormulaService formulas = CombatFormulaService.Default;
+        Assert.Equal(formulas.EvaluateEnemyExperienceReward(1000, 1), formulas.EvaluateEnemyExperienceReward(restored.Level, 1));
+
+        // The wire value (WorldSessionRuntime.Replication) through the real codec, then the client's applier.
+        ActorSnapshot wire = new(
+            restored.Combatant.Actor.Id, CreatureKind.Enemy, null, restored.Position, restored.Forward,
+            restored.Combatant.Health.CurrentHealth, restored.Combatant.Health.MaxHealth, true,
+            EnemyLevel: restored.Level == 1 ? 0 : restored.Level);
+        ServerSnapshotMessage message = new(new ServerSnapshotEnvelope(
+            11, new Dictionary<string, ulong>(), [wire], PlayerInteractionMode.Combat, null, [], [], WorldChecksum: 0, WorldChecksumSequence: 0));
+        TransportJsonCodec codec = new();
+        DecodedProtocolMessage decoded = codec.Decode(codec.Encode(
+            new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message));
+        ServerSnapshotMessage received = Assert.IsType<ServerSnapshotMessage>(decoded.Message);
+        ActorSnapshot decodedActor = Assert.Single(received.Snapshot.Actors);
+        Assert.Equal(1000, decodedActor.EnemyLevel);
+
+        EnemyRegistry clientEnemies = new();
+        RemoteEnemyStateApplier.ApplyActorSnapshots(clientEnemies, [decodedActor]);
+        Assert.Equal(1000, Assert.Single(clientEnemies.ActiveActors).Level);
     }
 
     [Fact]
