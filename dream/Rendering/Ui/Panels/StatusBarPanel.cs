@@ -9,14 +9,51 @@ namespace Dream.Rendering.Ui.Panels;
 // them, then the dragons last. Positions are the art's own layout in units (u), read from the
 // generator: a rect given in bar units x is group-relative x minus the group's start (0, 199, 441).
 // Real data only: HP gem fill, EXP trough and level, mode, coordinates, satchel. Everything the game
-// has no system for (MP, the two gauges, the stone slabs, Q/W/E, banner and lens) is drawn as an
-// empty art socket with no number, no key letter and no input.
+// has no system for (the two gauges, the stone slabs, Q/W/E, banner and lens) is drawn as an
+// empty art socket with no number, no key letter and no input. The one exception is the MP gem, see
+// ManaGemFill.
+//
+// The gems are liquid: the panel hands the canvas the eased level the surface computed (HudView
+// HealthLevel and ManaLevel) and the canvas draws the stone in its Gem mode, one quad on the Hud page.
+// Draw order inside a group: the bezel under the gem, the gem, the talons (they bite over the stone), then
+// the gem's additive light on the iron and the talons. Numerals are sprites on the same page, drawn after
+// the dragons, so the whole bar's art stays in one draw command and the text follows in another.
 public static class StatusBarPanel
 {
     public const int SatchelButtonId = 0x5B01;
 
+    // How full the MP gem is drawn. A visual choice, not data: the game has no mana system, so there is
+    // no value to show and no number is ever drawn on this gem. The stone is drawn full and lit so it
+    // does not read as a dead black socket next to the HP gem. 0 draws it empty again.
+    public const float ManaGemFill = 1f;
+
     private const float CentreStart = UiLayout.LeftGroupUnits;
     private const float RightStart = UiLayout.RightGroupStartUnits;
+
+    // Art layout in bar units (left side; the right side mirrors across the 640 u bar). The gem is
+    // 50 x 50 at (98, -2); the bezel and the spill are centred on it.
+    private const float GemX = 98f;
+    private const float GemY = -2f;
+    private const float GemSize = 50f;
+    private const float SettingW = 62f;
+    private const float SettingH = 56f;
+    private const float SpillW = 128f;
+    private const float SpillH = 64f;
+    private const float TalonX = 128f;
+    private const float TalonY = -3f;
+    private const float TalonW = 71f;
+    private const float TalonH = 52f;
+    private const float DragonY = -52f;
+    private const float DragonW = 118f;
+    private const float DragonH = 58f;
+
+    // The two gems' glint sweeps run half a period apart.
+    private const float ManaSweepOffsetSeconds = GemAnimation.SweepPeriodSeconds * 0.5f;
+
+    // Bar numerals ("hudnum.*"): the gap between two glyphs in units, and the smallest shrink that
+    // still reads (below it the text fallback is used).
+    private const float NumeralTracking = 0.5f;
+    private const float MinNumeralScale = 0.5f;
 
     private static readonly UiColor NumberColor = new(0xF8, 0xF4, 0xE8, 255);
     private static readonly UiColor CoordsColor = new(0xA9, 0xA9, 0xA9, 255);
@@ -45,17 +82,22 @@ public static class StatusBarPanel
         Sprite(c, s, UiSpriteNames.BaseRight, l.RightGroup, white);
 
         BuildLeft(c, v, l, s);
-        BuildRight(c, l, s);
+        BuildRight(c, v, l, s);
         BuildCentre(c, i, v, l, s, a);
 
-        // Dragons draw above everything else in the bar's art.
-        Sprite(c, s, UiSpriteNames.DragonLeft, l.FromUnits(l.LeftGroup, 0f, -46f, 107f, 46f), white);
-        Sprite(c, s, UiSpriteNames.DragonRight, l.FromUnits(l.RightGroup, 533f - RightStart, -46f, 107f, 46f), white);
+        // Dragons draw above everything else in the bar's art. Their bottom edge is 6 u over the plate.
+        Sprite(c, s, UiSpriteNames.DragonLeft, l.FromUnits(l.LeftGroup, 0f, DragonY, DragonW, DragonH), white);
+        Sprite(c, s, UiSpriteNames.DragonRight, l.FromUnits(l.RightGroup, UiLayout.BarWidthUnits - DragonW - RightStart, DragonY, DragonW, DragonH), white);
+
+        // The bar's numerals are Hud-page sprites, so they join the art's draw command; the talons,
+        // gem and dragons are under them. A number the art has no glyph for falls back to text.
+        bool hpNumerals = TryDrawHealthNumerals(c, v, l, s);
+        bool levelNumerals = TryDrawLevelNumerals(c, v, l, s);
 
         // All the bar's text last, in one draw command: no text overlaps the dragons, and the talons
         // and gem must never cover it.
-        BuildLeftText(c, v, l);
-        BuildCentreText(c, v, l);
+        BuildLeftText(c, v, l, hpNumerals);
+        BuildCentreText(c, v, l, levelNumerals);
     }
 
     private static void BuildLeft(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
@@ -70,23 +112,25 @@ public static class StatusBarPanel
         Sprite(c, s, UiSpriteNames.GaugeEmpty, l.FromUnits(g, 73f, 5f, 15f, 35f), white);
         Sprite(c, s, UiSpriteNames.GaugeCapLeft, l.FromUnits(g, 64f, 1f, 33f, 46f), white);
 
-        // HP gem: the empty stone, then the full stone clipped from the top down to the fill level.
-        UiRect gem = l.FromUnits(g, 98f, -2f, 50f, 50f);
-        HudStatusSnapshot st = v.Status;
-        float hp = st.MaxHealth <= 0 ? 0f : Math.Clamp(st.CurrentHealth / (float)st.MaxHealth, 0f, 1f);
-        DrawGem(c, s, UiSpriteNames.GemHpEmpty, UiSpriteNames.GemHpFull, gem, hp);
-        Sprite(c, s, UiSpriteNames.TalonLeft, l.FromUnits(g, 140f, 1f, 59f, 46f), white);
+        // HP gem: the bezel under it, the liquid stone at the eased level, then the talons over its edge
+        // and the gem's light on the iron and the talons.
+        UiRect gem = l.FromUnits(g, GemX, GemY, GemSize, GemSize);
+        Sprite(c, s, UiSpriteNames.GemSettingLeft, CentredOnGem(l, g, GemX, SettingW, SettingH), white);
+        DrawGem(c, s, UiGemKind.Health, gem, v.HealthLevel, v.GemPulse, v.AnimationSeconds, 0f);
+        Sprite(c, s, UiSpriteNames.TalonLeft, l.FromUnits(g, TalonX, TalonY, TalonW, TalonH), white);
+        DrawSpill(c, s, UiSpriteNames.GemHpSpill, CentredOnGem(l, g, GemX, SpillW, SpillH), v.HealthLevel, v.GemPulse);
     }
 
-    private static void BuildLeftText(IUiCanvas c, HudView v, in UiLayout l)
+    private static void BuildLeftText(IUiCanvas c, HudView v, in UiLayout l, bool hpNumeralsDrawn)
     {
         UiRect g = l.LeftGroup;
         UiRect coords = l.FromUnits(g, 5f, 24f, 56f, 22f);
-        UiRect gem = l.FromUnits(g, 98f, -2f, 50f, 50f);
+        UiRect gem = l.FromUnits(g, GemX, GemY, GemSize, GemSize);
         HudStatusSnapshot st = v.Status;
         UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
         Span<char> buf = stackalloc char[48];
-        if (PanelText.TryWritePair(buf, st.CurrentHealth, '/', st.MaxHealth, out int n))
+        int n;
+        if (!hpNumeralsDrawn && PanelText.TryWritePair(buf, st.CurrentHealth, '/', st.MaxHealth, out n))
         {
             PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
         }
@@ -104,18 +148,23 @@ public static class StatusBarPanel
         }
     }
 
-    private static void BuildRight(IUiCanvas c, in UiLayout l, UiSpriteTable s)
+    private static void BuildRight(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
     {
         UiColor white = UiColor.White;
         UiRect g = l.RightGroup;
 
-        // Two inert slabs, an inert gauge and caps, and the MP gem as an empty stone with no number.
+        // Two inert slabs, an inert gauge and caps. The MP gem is drawn at ManaGemFill, lit, with no
+        // number: the right side mirrors the left across the bar.
         Sprite(c, s, UiSpriteNames.SlabNormal, l.FromUnits(g, 579f - RightStart, 1f, 56f, 22f), white);
         Sprite(c, s, UiSpriteNames.SlabNormal, l.FromUnits(g, 579f - RightStart, 24f, 56f, 22f), white);
         Sprite(c, s, UiSpriteNames.GaugeEmpty, l.FromUnits(g, 552f - RightStart, 5f, 15f, 35f), white);
         Sprite(c, s, UiSpriteNames.GaugeCapRight, l.FromUnits(g, 543f - RightStart, 1f, 33f, 46f), white);
-        Sprite(c, s, UiSpriteNames.GemMpEmpty, l.FromUnits(g, 492f - RightStart, -2f, 50f, 50f), white);
-        Sprite(c, s, UiSpriteNames.TalonRight, l.FromUnits(g, 441f - RightStart, 1f, 59f, 46f), white);
+        float gemX = UiLayout.BarWidthUnits - GemX - GemSize - RightStart;
+        UiRect gem = l.FromUnits(g, gemX, GemY, GemSize, GemSize);
+        Sprite(c, s, UiSpriteNames.GemSettingRight, CentredOnGem(l, g, gemX, SettingW, SettingH), white);
+        DrawGem(c, s, UiGemKind.Mana, gem, v.ManaLevel, 0f, v.AnimationSeconds, ManaSweepOffsetSeconds);
+        Sprite(c, s, UiSpriteNames.TalonRight, l.FromUnits(g, UiLayout.BarWidthUnits - TalonX - TalonW - RightStart, TalonY, TalonW, TalonH), white);
+        DrawSpill(c, s, UiSpriteNames.GemMpSpill, CentredOnGem(l, g, gemX, SpillW, SpillH), v.ManaLevel, 0f);
     }
 
     private static void BuildCentre(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
@@ -189,7 +238,7 @@ public static class StatusBarPanel
     }
 
     // Level in the cup, EXP percent when the trough is tall enough, and the mode label.
-    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l)
+    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l, bool levelNumeralsDrawn)
     {
         UiRect g = l.CentreGroup;
         HudStatusSnapshot st = v.Status;
@@ -198,7 +247,8 @@ public static class StatusBarPanel
         UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
         Span<char> buf = stackalloc char[32];
         float bodyH = PanelText.Height(c, UiTextStyle.Body);
-        if (PanelText.TryWriteInt(buf, st.Level, out int n))
+        int n;
+        if (!levelNumeralsDrawn && PanelText.TryWriteInt(buf, st.Level, out n))
         {
             PanelText.HaloCentred(c, buf[..n], cup.X + cup.W * 0.5f, cup.Y + (cup.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
         }
@@ -217,18 +267,137 @@ public static class StatusBarPanel
     internal static float ModeLabelY(IUiCanvas c, UiRect centreGroup, in UiLayout l) =>
         centreGroup.Y - PanelText.Height(c, UiTextStyle.Body) - (2f * l.Scale);
 
-    private static void DrawGem(IUiCanvas c, UiSpriteTable s, string emptyName, string fullName, UiRect dst, float fill)
+    // A rect w x h u centred on the gem whose left edge is gemX (group-relative u).
+    private static UiRect CentredOnGem(in UiLayout l, UiRect group, float gemX, float w, float h) =>
+        l.FromUnits(group, gemX + GemSize * 0.5f - w * 0.5f, GemY + GemSize * 0.5f - h * 0.5f, w, h);
+
+    // One gem: a single liquid quad when the art has the gem's empty glass, level map and glints, so the
+    // canvas does the fill, meniscus, glint sweep and pulse in its Gem mode. Art without them (and any
+    // table that lacks the family) keeps the plain look: the empty stone, then the full stone clipped
+    // from the top down to the level.
+    private static void DrawGem(IUiCanvas c, UiSpriteTable s, UiGemKind kind, UiRect dst, float level, float pulse, float seconds, float sweepOffsetSeconds)
     {
+        level = Saturate(level);
+        if (UiBatch.TryGetGemFamily(s, kind, out UiSprite full, out _, out _, out _))
+        {
+            c.Gem(full, dst, kind, level, GemAnimation.Phase(seconds), Saturate(pulse), GemAnimation.Sweep(seconds, sweepOffsetSeconds), UiColor.White);
+            return;
+        }
+
+        string emptyName = kind == UiGemKind.Health ? UiSpriteNames.GemHpEmpty : UiSpriteNames.GemMpEmpty;
+        string fullName = kind == UiGemKind.Health ? UiSpriteNames.GemHpFull : UiSpriteNames.GemMpFull;
         if (s.TryGet(emptyName, out UiSprite empty))
         {
             c.Sprite(empty, dst, UiColor.White);
         }
 
-        if (fill > 0f && s.TryGet(fullName, out UiSprite full))
+        if (level > 0f && s.TryGet(fullName, out UiSprite stone))
         {
-            float h = dst.H * fill;
-            c.SpriteClipped(full, new UiRect(dst.X, dst.Bottom - h, dst.W, h), new UiRect(0f, 1f - fill, 1f, fill), UiColor.White);
+            float h = dst.H * level;
+            c.SpriteClipped(stone, new UiRect(dst.X, dst.Bottom - h, dst.W, h), new UiRect(0f, 1f - level, 1f, level), UiColor.White);
         }
+    }
+
+    // The gem's light on the iron and the talons: the spill sprite added over the bar, its alpha scaling
+    // with the level (and a little with the pulse). Nothing when the art has no spill or the gem is empty.
+    private static void DrawSpill(IUiCanvas c, UiSpriteTable s, string name, UiRect dst, float level, float pulse)
+    {
+        float alpha = MathF.Min(Saturate(level) * (1f + 0.25f * Saturate(pulse)), 1f);
+        if (alpha * 255f < 0.5f || !s.TryGet(name, out UiSprite spill))
+        {
+            return;
+        }
+
+        c.Additive(spill, dst, new UiColor(255, 255, 255, (byte)MathF.Round(alpha * 255f)));
+    }
+
+    // 0..1, NaN as 0.
+    private static float Saturate(float v) => float.IsNaN(v) ? 0f : Math.Clamp(v, 0f, 1f);
+
+    // Health as bar numerals ("73/120") centred above the gem's bottom edge. False when the art has no
+    // numerals (or no glyph for a character, such as a minus sign): the text path draws it instead.
+    private static bool TryDrawHealthNumerals(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
+    {
+        Span<char> buf = stackalloc char[48];
+        if (!PanelText.TryWritePair(buf, v.Status.CurrentHealth, '/', v.Status.MaxHealth, out int n))
+        {
+            return false;
+        }
+
+        UiRect gem = l.FromUnits(l.LeftGroup, GemX, GemY, GemSize, GemSize);
+        return TryDrawNumerals(c, s, l, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - 4f * l.Scale, false, gem.W, 14f * l.Scale);
+    }
+
+    // The level as bar numerals, shrunk to sit inside the EXP cup.
+    private static bool TryDrawLevelNumerals(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
+    {
+        Span<char> buf = stackalloc char[32];
+        if (!PanelText.TryWriteInt(buf, v.Status.Level, out int n))
+        {
+            return false;
+        }
+
+        UiRect cup = l.FromUnits(l.CentreGroup, 420f - CentreStart, 3f, 12f, 12f);
+        return TryDrawNumerals(c, s, l, buf[..n], cup.X + cup.W * 0.5f, cup.Y + cup.H * 0.5f, true, cup.W * 0.85f, cup.H * 0.75f);
+    }
+
+    // Draws text made of "hudnum" glyph sprites (digits and a slash) at the art's own size, shrunk to fit
+    // maxW x maxH px, and centred on centreX. anchorY is the bottom edge, or the centre when
+    // anchorIsCentre. Nothing is drawn, and false is returned, when a character has no glyph or the
+    // numbers would shrink below MinNumeralScale.
+    private static bool TryDrawNumerals(IUiCanvas c, UiSpriteTable s, in UiLayout l, ReadOnlySpan<char> text, float centreX, float anchorY, bool anchorIsCentre, float maxW, float maxH)
+    {
+        if (text.IsEmpty)
+        {
+            return false;
+        }
+
+        float texel = l.PixelsPerTexel;
+        float tracking = NumeralTracking * l.Scale;
+        float width = tracking * (text.Length - 1);
+        float height = 0f;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!TryNumeral(s, text[i], out UiSprite glyph))
+            {
+                return false;
+            }
+
+            width += glyph.W * texel;
+            height = MathF.Max(height, glyph.H * texel);
+        }
+
+        if (width <= 0f || height <= 0f)
+        {
+            return false;
+        }
+
+        float scale = MathF.Min(1f, MathF.Min(maxW / width, maxH / height));
+        if (scale < MinNumeralScale)
+        {
+            return false;
+        }
+
+        float bottom = MathF.Round(anchorIsCentre ? anchorY + height * scale * 0.5f : anchorY);
+        float x = centreX - width * scale * 0.5f;
+        for (int i = 0; i < text.Length; i++)
+        {
+            TryNumeral(s, text[i], out UiSprite glyph);
+            float x0 = MathF.Round(x);
+            float x1 = MathF.Round(x + glyph.W * texel * scale);
+            float y0 = MathF.Round(bottom - glyph.H * texel * scale);
+            c.Sprite(glyph, new UiRect(x0, y0, x1 - x0, bottom - y0), UiColor.White);
+            x += (glyph.W * texel + tracking) * scale;
+        }
+
+        return true;
+    }
+
+    private static bool TryNumeral(UiSpriteTable s, char ch, out UiSprite glyph)
+    {
+        string? name = ch == '/' ? UiSpriteNames.HudNumSlash : ch is >= '0' and <= '9' ? UiSpriteNames.HudNum(ch - '0') : null;
+        glyph = default;
+        return name is not null && s.TryGet(name, out glyph);
     }
 
     private static void Sprite(IUiCanvas c, UiSpriteTable s, string name, UiRect dst, UiColor tint)

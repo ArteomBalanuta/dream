@@ -16,8 +16,13 @@ public enum StatusBarCallKind
     Tile,
     Solid,
     Mask,
-    Text
+    Text,
+    Gem,
+    Additive
 }
+
+// The arguments of an IUiCanvas.Gem call; default on every other call.
+public readonly record struct StatusBarGem(UiGemKind Kind, float Fill, float Phase, float Pulse, float Sweep);
 
 public readonly record struct StatusBarCall(
     StatusBarCallKind Kind,
@@ -26,7 +31,8 @@ public readonly record struct StatusBarCall(
     UiColor Color,
     string? Name,
     string? Text,
-    Vector2 TextPos);
+    Vector2 TextPos,
+    StatusBarGem Gem = default);
 
 // Fake IUiCanvas for the status bar, notice, label and cursor panels. With Recording off it only
 // counts, so allocation tests measure the panel and not the recorder. Sprites are named by
@@ -52,8 +58,11 @@ public sealed class StatusBarRecordingCanvas : IUiCanvas
 
     public int Count { get; private set; }
 
+    // Every sprite-like call of that name: plain, clipped, the liquid Gem and the Additive spill.
     public IEnumerable<StatusBarCall> Sprites(string name) =>
-        Calls.Where(c => c.Kind is StatusBarCallKind.Sprite or StatusBarCallKind.Clipped && c.Name == name);
+        Calls.Where(c => c.Kind is StatusBarCallKind.Sprite or StatusBarCallKind.Clipped or StatusBarCallKind.Gem or StatusBarCallKind.Additive && c.Name == name);
+
+    public IEnumerable<StatusBarCall> Gems => Calls.Where(c => c.Kind == StatusBarCallKind.Gem);
 
     public IEnumerable<StatusBarCall> Texts => Calls.Where(c => c.Kind == StatusBarCallKind.Text);
 
@@ -76,6 +85,11 @@ public sealed class StatusBarRecordingCanvas : IUiCanvas
 
     public void MaskGlyph(in UiSprite s, UiRect dst, UiColor fill, UiColor rim) => Add(StatusBarCallKind.Mask, s, dst, default, fill);
 
+    public void Gem(in UiSprite full, UiRect dst, UiGemKind kind, float fill, float phase, float pulse, float sweep, UiColor tint) =>
+        Add(StatusBarCallKind.Gem, full, dst, default, tint, new StatusBarGem(kind, fill, phase, pulse, sweep));
+
+    public void Additive(in UiSprite s, UiRect dst, UiColor tint) => Add(StatusBarCallKind.Additive, s, dst, default, tint);
+
     public float Text(ReadOnlySpan<char> text, Vector2 pos, UiTextStyle style, UiColor color)
     {
         Count++;
@@ -94,13 +108,13 @@ public sealed class StatusBarRecordingCanvas : IUiCanvas
 
     public void PopClip() => Count++;
 
-    private void Add(StatusBarCallKind kind, in UiSprite s, UiRect dst, UiRect src, UiColor tint)
+    private void Add(StatusBarCallKind kind, in UiSprite s, UiRect dst, UiRect src, UiColor tint, StatusBarGem gem = default)
     {
         Count++;
         if (Recording)
         {
             string? name = _names!.TryGetValue(s, out string? n) ? n : null;
-            Calls.Add(new StatusBarCall(kind, dst, src, tint, name, null, default));
+            Calls.Add(new StatusBarCall(kind, dst, src, tint, name, null, default, gem));
         }
     }
 }

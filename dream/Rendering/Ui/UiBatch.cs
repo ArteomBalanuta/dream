@@ -3,7 +3,8 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui;
 
-// How the fragment stage reads a vertex.
+// How the fragment stage reads a vertex. The mode is the low byte of UiVertex.Mode; a Gem vertex also
+// carries which gem it draws and which art generation its mask comes from in the bits above it.
 public static class UiVertexMode
 {
     // Texture colour times tint, premultiplied.
@@ -14,6 +15,26 @@ public static class UiVertexMode
 
     // Flat colour, no texture sample.
     public const uint Solid = 2;
+
+    // A liquid gem. The quad's UVs cover gem.<k>.full; the fragment stage reads the empty glass, the level
+    // map and the glints from the same page at a fixed UV offset each (UiBatch.GemOffsets). Rim bytes:
+    // R fill 0..1, G surface phase, B low-health pulse, A glint sweep. Tint is the colour and fade.
+    public const uint Gem = 3;
+
+    // Texture colour times tint added to what is below: output (rgb * a, 0) in the premultiplied blend.
+    public const uint Additive = 4;
+
+    // The mode is the low byte of the Mode word.
+    public const uint BaseMask = 0xFF;
+
+    // Gem vertices: bit 8 is the gem kind (0 health, 1 mana).
+    public const int GemKindShift = 8;
+
+    // Gem vertices: bit 9 is set when the mask sprite is the old top-down gradient (R 0 at the top of
+    // the stone, 1 at the bottom, G and B unused). Clear means the baked level map.
+    public const uint GemLegacyMask = 1u << 9;
+
+    public static uint Base(uint mode) => mode & BaseMask;
 }
 
 // 28 bytes. Colours are R,G,B,A in memory order (R in the low byte).
@@ -58,6 +79,7 @@ public sealed class UiBatch : IUiCanvas
     public const int MaxQuads = 8192;
     public const int MaxCommands = 256;
     public const int MaxClipDepth = 16;
+    public const int GemKindCount = 2;
 
     private static readonly int PageCount = Enum.GetValues<UiPage>().Length;
 
@@ -67,6 +89,15 @@ public sealed class UiBatch : IUiCanvas
     private readonly float[] _pageWidth = new float[PageCount];
     private readonly float[] _pageHeight = new float[PageCount];
     private readonly UiGlyphTable _glyphs;
+
+    // Gem uniforms, resolved from the sprite table. Offsets: per gem kind three (u, v) deltas from the
+    // full stone to the empty glass, the level map and the glints; rects: per kind the full stone's
+    // (u, v, du, dv) on its page. Plain arrays so the GL layer uploads them without a copy.
+    private readonly float[] _gemOffsets = new float[GemKindCount * 3 * 2];
+    private readonly float[] _gemRects = new float[GemKindCount * 4];
+    private readonly bool[] _gemReady = new bool[GemKindCount];
+    private readonly UiSprite[] _gemFull = new UiSprite[GemKindCount];
+    private bool _gemLegacy = true;
 
     private int _quadCount;
     private int _commandCount;
@@ -142,6 +173,90 @@ public sealed class UiBatch : IUiCanvas
                 SetPageSize(page, w, h);
             }
         }
+
+        ResolveGems(table);
+    }
+
+    // True when the gem of this kind can be drawn in the Gem mode: its full, empty, level map and glint
+    // sprites are in the table, on one page of known size, and are the same size. Otherwise Gem draws
+    // the plain full sprite and the panel keeps its clipped fallback.
+    public bool IsGemReady(UiGemKind kind) => (uint)kind < GemKindCount && _gemReady[(int)kind];
+
+    // True while the mask sprites are the old top-down gradient (the art has no gem setting yet, the
+    // marker of the baked level maps). Gem vertices carry it in UiVertexMode.GemLegacyMask.
+    public bool GemMasksAreLegacy => _gemLegacy;
+
+    // Six (u, v) pairs for the Gem mode: kind * 3 + 0 empty glass, + 1 level map, + 2 glints, each the
+    // UV delta from gem.<k>.full. The fragment stage adds them to the quad's UV.
+    public ReadOnlySpan<float> GemOffsets => _gemOffsets;
+
+    // Two (u, v, du, dv) rects, one per kind: the full stone on its page, for gem-local coordinates.
+    public ReadOnlySpan<float> GemRects => _gemRects;
+
+    private void ResolveGems(UiSpriteTable table)
+    {
+        Array.Clear(_gemOffsets);
+        Array.Clear(_gemRects);
+        Array.Clear(_gemReady);
+        Array.Clear(_gemFull);
+
+        // The baked level maps ship with the gem setting; until then the masks are the old gradient.
+        _gemLegacy = !(table.Contains(UiSpriteNames.GemSettingLeft) && table.Contains(UiSpriteNames.GemSettingRight));
+        ResolveGem(table, UiGemKind.Health);
+        ResolveGem(table, UiGemKind.Mana);
+    }
+
+    // The four sprites of one gem: the full stone (what the Gem call draws) and the empty glass, level
+    // map and glints beside it. True when all four are in the table, on one page of known size, and
+    // are the same size. The panel asks this to choose between the liquid gem and its plain fallback,
+    // and SetSpriteTable asks it to decide whether the Gem mode can draw, so the two always agree.
+    public static bool TryGetGemFamily(UiSpriteTable table, UiGemKind kind, out UiSprite full, out UiSprite empty, out UiSprite mask, out UiSprite spec)
+    {
+        bool mana = kind == UiGemKind.Mana;
+        empty = mask = spec = default;
+        if (!table.TryGet(mana ? UiSpriteNames.GemMpFull : UiSpriteNames.GemHpFull, out full)
+            || !table.TryGet(mana ? UiSpriteNames.GemMpEmpty : UiSpriteNames.GemHpEmpty, out empty)
+            || !table.TryGet(mana ? UiSpriteNames.GemMpMask : UiSpriteNames.GemHpMask, out mask)
+            || !table.TryGet(mana ? UiSpriteNames.GemMpSpec : UiSpriteNames.GemHpSpec, out spec)
+            || !table.TryGetPageSize(full.Page, out int pw, out int ph)
+            || pw <= 0 || ph <= 0
+            || empty.Page != full.Page || mask.Page != full.Page || spec.Page != full.Page
+            || full.W <= 0 || full.H <= 0
+            || empty.W != full.W || empty.H != full.H
+            || mask.W != full.W || mask.H != full.H
+            || spec.W != full.W || spec.H != full.H)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void ResolveGem(UiSpriteTable table, UiGemKind kind)
+    {
+        if (!TryGetGemFamily(table, kind, out UiSprite full, out UiSprite empty, out UiSprite mask, out UiSprite spec) || !HasPage(full.Page))
+        {
+            return;
+        }
+
+        int k = (int)kind;
+        float pw = _pageWidth[(int)full.Page];
+        float ph = _pageHeight[(int)full.Page];
+        SetGemOffset(k * 3, empty, full, pw, ph);
+        SetGemOffset(k * 3 + 1, mask, full, pw, ph);
+        SetGemOffset(k * 3 + 2, spec, full, pw, ph);
+        _gemRects[k * 4] = full.X / pw;
+        _gemRects[k * 4 + 1] = full.Y / ph;
+        _gemRects[k * 4 + 2] = full.W / pw;
+        _gemRects[k * 4 + 3] = full.H / ph;
+        _gemFull[k] = full;
+        _gemReady[k] = true;
+    }
+
+    private void SetGemOffset(int slot, in UiSprite other, in UiSprite full, float pageWidth, float pageHeight)
+    {
+        _gemOffsets[slot * 2] = (other.X - full.X) / pageWidth;
+        _gemOffsets[slot * 2 + 1] = (other.Y - full.Y) / pageHeight;
     }
 
     // One frame canvas for a layout: viewport, texel scale and text scale all come from it.
@@ -363,6 +478,42 @@ public sealed class UiBatch : IUiCanvas
 
         AddQuad(s.Page, UiVertexMode.Mask, dst.X, dst.Y, dst.Right, dst.Bottom, u0, v0, u1, v1, Pack(fill), Pack(rim));
     }
+
+    // A liquid gem as one quad of the Hud page: the Gem vertex mode reads the empty glass, the level map
+    // and the glints at fixed UV offsets from the full stone. The four 0..1 values ride in the rim bytes
+    // (8 bits each: a 112 px gem moves less than half a pixel per step). When the gem's sprites are not
+    // all in the table, or the sprite is not the table's full stone, the plain sprite is drawn.
+    public void Gem(in UiSprite full, UiRect dst, UiGemKind kind, float fill, float phase, float pulse, float sweep, UiColor tint)
+    {
+        int k = (int)kind;
+        if (!IsGemReady(kind) || full != _gemFull[k])
+        {
+            Sprite(in full, dst, tint);
+            return;
+        }
+
+        if (!TryUv(in full, 0f, 0f, 1f, 1f, out float u0, out float v0, out float u1, out float v1))
+        {
+            return;
+        }
+
+        uint rim = QuantizeUnit(fill) | (QuantizeUnit(phase) << 8) | (QuantizeUnit(pulse) << 16) | (QuantizeUnit(sweep) << 24);
+        uint mode = UiVertexMode.Gem | ((uint)k << UiVertexMode.GemKindShift) | (_gemLegacy ? UiVertexMode.GemLegacyMask : 0u);
+        AddQuad(full.Page, mode, dst.X, dst.Y, dst.Right, dst.Bottom, u0, v0, u1, v1, Pack(tint), rim);
+    }
+
+    public void Additive(in UiSprite s, UiRect dst, UiColor tint)
+    {
+        if (!TryUv(in s, 0f, 0f, 1f, 1f, out float u0, out float v0, out float u1, out float v1))
+        {
+            return;
+        }
+
+        AddQuad(s.Page, UiVertexMode.Additive, dst.X, dst.Y, dst.Right, dst.Bottom, u0, v0, u1, v1, Pack(tint), 0);
+    }
+
+    // 0..1 to a byte, NaN as 0.
+    private static uint QuantizeUnit(float v) => float.IsNaN(v) ? 0u : (uint)MathF.Round(Math.Clamp(v, 0f, 1f) * 255f);
 
     // ---- text ----
 
