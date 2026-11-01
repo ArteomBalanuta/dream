@@ -384,7 +384,9 @@ public static class ItemOverlays
             c.Text(text, new Vector2(x, y + 1f), UiTextStyle.Body, ItemTierStyle.Shadow);
             c.Text(text, new Vector2(x, y), UiTextStyle.Body, color);
             y += pitch;
-            if (n == 0)
+            // The gap after the name block, which may be two lines.
+            if (kind == TooltipContent.LineKind.Name
+                && (n + 1 >= content.Lines.Count || content.Lines[n + 1].Kind != TooltipContent.LineKind.Name))
             {
                 y += pitch * 0.5f;
             }
@@ -413,7 +415,16 @@ public static class ItemOverlays
         content.WrapWidth = maxWidth;
         content.Lines.Clear();
 
-        content.Lines.Add((string.IsNullOrEmpty(item.DisplayName) ? "(unnamed)" : Clip(item.DisplayName), TooltipContent.LineKind.Name));
+        // The name wraps by width like the text under it (two lines at most); it is never cut mid-line.
+        if (string.IsNullOrEmpty(item.DisplayName))
+        {
+            content.Lines.Add(("(unnamed)", TooltipContent.LineKind.Name));
+        }
+        else
+        {
+            Wrap(c, item.DisplayName, maxWidth, content.Lines, TooltipContent.LineKind.Name, 2);
+        }
+
         Wrap(c, item.Description, maxWidth, content.Lines, TooltipContent.LineKind.Description, MaxWrappedLines);
         if (item.DetailLines is not null)
         {
@@ -442,8 +453,6 @@ public static class ItemOverlays
 
         return content;
     }
-
-    private static string Clip(string text) => text.Length > MaxTextChars ? text[..MaxTextChars] : text;
 
     // Greedy word wrap on the canvas's own measure; a word wider than the box is cut by character.
     // Hostile text is cut to MaxTextChars and a line count.

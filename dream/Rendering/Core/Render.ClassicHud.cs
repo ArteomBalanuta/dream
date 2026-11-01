@@ -18,6 +18,7 @@ public partial class Render
     private UiGlRenderer? _uiGl;
     private string? _classicHudInitError;
     private bool _classicHudStarted;
+    private bool _classicDropLogged;
 
     // Idle until the first BeginHudFrame, Loading while the PNGs decode, Ready once every page is
     // on the GPU, Failed otherwise (including a font or shader setup failure).
@@ -96,6 +97,12 @@ public partial class Render
         if (_uiBatch == null || _uiGl == null || _uiAtlas == null || _uiAtlas.State != UiAtlasState.Ready)
         {
             return;
+        }
+
+        if (_uiBatch.DroppedQuads > 0 && !_classicDropLogged)
+        {
+            _classicDropLogged = true;
+            Console.WriteLine($"[hud-classic] {_uiBatch.DroppedQuads} quads did not fit the {UiBatch.MaxQuads}-quad batch this frame (logged once).");
         }
 
         _uiGl.Submit(_uiBatch, _uiAtlas, _fontTexture);

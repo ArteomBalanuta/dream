@@ -29,6 +29,10 @@ public interface IUiCanvas
     // that never scales text leaves it at 1.
     float TextScale => 1f;
 
+    // Quads the canvas can still take this frame. Optional panels (the world labels, which draw first
+    // and so would take the room of everything above them) stop when it runs low.
+    int QuadHeadroom => int.MaxValue;
+
     void PushClip(UiRect r);
 
     void PopClip();
