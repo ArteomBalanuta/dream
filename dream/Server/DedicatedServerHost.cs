@@ -90,6 +90,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly List<PlayerCommandFrame> _tickCommands = [];
     private readonly List<QueuedPlayerAction> _tickActions = [];
     private readonly List<SessionInventoryPush> _inventoryPushScratch = [];
+    private readonly HashSet<string> _heldPushSessions = new(StringComparer.Ordinal);
     private int _connectionsChanged = 1;
     // Set under _authoritySync by Dispose. Every entry point that touches the runtime checks it
     // under the same lock, so a late ReleaseConnection (a connection loop's finally on a pool
@@ -1140,16 +1141,24 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // An inventory action's result waits for the next snapshot and carries the inventory of its own
     // tick, while a push goes out at once. The client keeps whichever it applies last, so a push that
     // overtook such a result would be overwritten by the older inventory and the looted item would
-    // vanish from the client until its next inventory change. So the push waits until no such result
-    // is queued; the snapshot is built when it is sent, so it stays the newest.
+    // vanish from the client until its next inventory change. So a session's push waits while an
+    // inventory result of that same session is queued (the order only matters on one connection); every
+    // other session's push goes out on this tick. The held push stays pending in the runtime and is
+    // sent on the first push tick after the snapshot has delivered the result, so a session is held
+    // for at most the ticks until the next snapshot (the result queue is emptied by each snapshot);
+    // the snapshot is built when the push is sent, so it stays the newest. (An earlier version held
+    // every session's push while any session had a result queued, which let one player delay
+    // everybody's loot.)
     private void ServePendingInventoryPushes(WorldSessionRuntime? runtime)
     {
-        if (runtime == null || !runtime.HasPendingInventoryPushes || HasUndeliveredInventoryResult())
+        if (runtime == null || !runtime.HasPendingInventoryPushes)
         {
             return;
         }
 
-        runtime.DrainInventoryPushesInto(_inventoryPushScratch);
+        CollectSessionsWithUndeliveredInventoryResult(_heldPushSessions);
+        runtime.DrainInventoryPushesInto(_inventoryPushScratch, _heldPushSessions);
+        _heldPushSessions.Clear();
         for (int i = 0; i < _inventoryPushScratch.Count; i++)
         {
             SessionInventoryPush push = _inventoryPushScratch[i];
@@ -1163,17 +1172,15 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     }
 
     // Runs only on a tick with a push pending, so its enumerator does not touch steady-state ticks.
-    private bool HasUndeliveredInventoryResult()
+    private void CollectSessionsWithUndeliveredInventoryResult(HashSet<string> destination)
     {
         foreach (AuthoritativeActionResult result in _pendingActionResults)
         {
             if (result.Payload is InventoryChangedResult)
             {
-                return true;
+                destination.Add(result.SessionId);
             }
         }
-
-        return false;
     }
 
     // WorldResyncRequestHandler only marks a connection; the full-world export runs here, on the

@@ -108,12 +108,22 @@ public sealed partial class WorldSessionRuntime
 
     // Moves every session's pending loot into destination as one push each (the snapshot is built once
     // per session however many items it gained) and clears the pending state. Called by the host after
-    // the tick, in an unspecified session order: each push goes to its own connection.
-    internal void DrainInventoryPushesInto(List<SessionInventoryPush> destination)
+    // the tick, in an unspecified session order: each push goes to its own connection. A session whose
+    // id is in heldSessionIds keeps its pending loot for a later drain (the host holds a push back
+    // while an older inventory result of that session is still queued); other sessions drain as usual.
+    internal void DrainInventoryPushesInto(
+        List<SessionInventoryPush> destination,
+        HashSet<string>? heldSessionIds = null)
     {
         ArgumentNullException.ThrowIfNull(destination);
+        List<PlayerSessionId>? drained = null;
         foreach ((PlayerSessionId session, PendingLoot pending) in _pendingLoot)
         {
+            if (heldSessionIds != null && heldSessionIds.Contains(session.Value))
+            {
+                continue;
+            }
+
             PlayerInventorySnapshot? snapshot = null;
             if (pending.InventoryChanged
                 && _sessions.TryGet(session, out ConnectedPlayer? player)
@@ -126,8 +136,24 @@ public sealed partial class WorldSessionRuntime
             destination.Add(new SessionInventoryPush(
                 session,
                 new InventoryPushMessage(snapshot, pending.Notices.ToArray())));
+            if (heldSessionIds != null && heldSessionIds.Count > 0)
+            {
+                (drained ??= new List<PlayerSessionId>()).Add(session);
+            }
         }
 
-        _pendingLoot.Clear();
+        if (heldSessionIds == null || heldSessionIds.Count == 0)
+        {
+            _pendingLoot.Clear();
+            return;
+        }
+
+        if (drained != null)
+        {
+            for (int i = 0; i < drained.Count; i++)
+            {
+                _pendingLoot.Remove(drained[i]);
+            }
+        }
     }
 }

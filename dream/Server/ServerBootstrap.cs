@@ -470,7 +470,7 @@ public static class ServerBootstrap
 
             try
             {
-                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, template.AttackIntervalSeconds);
+                formulas.EvaluateEnemyDerivedStats(template.Strength, template.AttackSpeed, template.Vitality, template.Level, intervalOverride: null);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {

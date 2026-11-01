@@ -379,6 +379,44 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
         Assert.Equal(wolf, Assert.Single(runtime.Enemies.ActiveActors).Combatant.Actor.Id);
     }
 
+    // Wave I fix loop 1 (N2): a Dire that is the only enemy when the night ends is replaced by the day's Wolf.
+    [Fact]
+    public void ALoneDireWolfAtDawn_IsRemoved_AndTheNextTickSpawnsTheDaysWolf()
+    {
+        using WorldSessionRuntime runtime = CreateRuntime();
+        runtime.ConfigureWorldClock(OneMinuteDay, WorldTicksAt(OneMinuteDay, dayIndex: 0, hour: 23));
+        Tick(runtime, 1);
+        Assert.Equal(["Wolf", "DireWolf"], Kinds(runtime));
+
+        // Kill the Wolf before every tick, so the first tick of the dawn finds only the Dire.
+        ulong tick = 2;
+        for (; tick < 3000; tick++)
+        {
+            foreach (EnemyActor actor in runtime.Enemies.ActiveActors.Where(a => a.IsActive && a.EnemyKind == "Wolf").ToList())
+            {
+                actor.Combatant.Health.ApplyDamage(10_000);
+            }
+
+            Tick(runtime, tick);
+            if (runtime.WorldClock.Phase != WorldDayPhase.Night)
+            {
+                break;
+            }
+
+            Assert.Contains("DireWolf", Kinds(runtime));
+        }
+
+        Assert.Equal(WorldDayPhase.Dawn, runtime.WorldClock.Phase);
+        Assert.Empty(Kinds(runtime));
+        Tick(runtime, tick + 1);
+        Assert.Equal(["Wolf"], Kinds(runtime));
+        for (ulong later = tick + 2; later < tick + 40; later++)
+        {
+            Tick(runtime, later);
+            Assert.Equal(["Wolf"], Kinds(runtime));
+        }
+    }
+
     [Fact]
     public void TwoRuns_AcrossNightfallAndDawn_SpawnTheSameKindsAtTheSameTicks()
     {

@@ -98,6 +98,36 @@ public class ClientPredictionReconcilerTests
         Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
     }
 
+    // A dead player sends idle commands that keep their sequence; the respawn teleport then arrives
+    // with an ack of one of them, and a later ack compares against the path the snap left behind.
+    [Fact]
+    public void Reconcile_DeadPeriodOfIdleCommands_ThenTheRespawnTeleport_SnapsOnceAndAcceptsALaterAck()
+    {
+        ClientPredictionReconciler reconciler = new();
+        Vector3 deathPlace = new(30f, 1.5f, 30f);
+        Vector3 spawn = new(5f, 1.5f, 5f);
+        for (ulong sequence = 1; sequence <= 6; sequence++)
+        {
+            reconciler.RecordPrediction(sequence, deathPlace, PlayerMoveIntent.None);
+        }
+
+        ClientReconciliationResult teleport = reconciler.Reconcile(4, spawn);
+
+        Assert.Equal(ClientReconciliationKind.Snap, teleport.Kind);
+        AssertVector(spawn, teleport.SnapPosition);
+        Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
+
+        for (ulong sequence = 7; sequence <= 9; sequence++)
+        {
+            reconciler.RecordPrediction(sequence, spawn, PlayerMoveIntent.None);
+        }
+
+        ClientReconciliationResult later = reconciler.Reconcile(8, spawn);
+
+        Assert.Equal(ClientReconciliationKind.None, later.Kind);
+        Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
+    }
+
     // After the snap the history describes the replayed path, so a later snapshot that agrees
     // with it is not corrected again.
     [Fact]

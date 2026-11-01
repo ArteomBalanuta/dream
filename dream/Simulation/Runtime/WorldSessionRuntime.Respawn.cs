@@ -68,7 +68,8 @@ public sealed partial class WorldSessionRuntime
         player.RespawnAtTick = 0;
     }
 
-    // The world spawn, lifted one cell at a time while its cell or the one above holds a solid cube,
+    // The world spawn, lifted one cell at a time while a cell the body overlaps, or the one above it, holds a solid cube.
+    // The body is one cell wide and centered on X/Z, so at a whole-number X/Z it overlaps two cells on each axis.
     // capped at the map's height; X and Z clamp to the map. Pure and deterministic, and run at respawn,
     // so a rebuilt map re-clamps. A column solid to the top does not throw: the player lands at the cap.
     internal static Vector3 ResolveRespawnPosition(Map map, Vector3 spawn)
@@ -76,12 +77,16 @@ public sealed partial class WorldSessionRuntime
         float x = Math.Clamp(spawn.X, 0.5f, map.Width - 0.5f);
         float z = Math.Clamp(spawn.Z, 0.5f, map.Depth - 0.5f);
         float y = Math.Clamp(spawn.Y, 0.5f, map.Height - 0.5f);
-        int cellX = (int)MathF.Floor(x);
-        int cellZ = (int)MathF.Floor(z);
+        const float halfBody = 0.5f;
+        const float epsilon = 0.001f;
+        int minX = (int)MathF.Floor(x - halfBody + epsilon);
+        int maxX = (int)MathF.Floor(x + halfBody - epsilon);
+        int minZ = (int)MathF.Floor(z - halfBody + epsilon);
+        int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
         while (y < map.Height - 0.5f)
         {
             int cellY = (int)MathF.Floor(y);
-            if (!IsSolidCell(map, cellX, cellY, cellZ) && !IsSolidCell(map, cellX, cellY + 1, cellZ))
+            if (!AnySolidCell(map, minX, maxX, cellY, minZ, maxZ) && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ))
             {
                 break;
             }
@@ -95,6 +100,22 @@ public sealed partial class WorldSessionRuntime
     // The session's live player target (the primary seat's or a secondary's); tests drive health and position through it.
     internal bool TryGetSessionPlayerTarget(PlayerSessionId sessionId, out IAuthoritativePlayerTarget? target)
         => TryResolveAuthoritativePlayerTarget(sessionId, out _, out target);
+
+    private static bool AnySolidCell(Map map, int minX, int maxX, int y, int minZ, int maxZ)
+    {
+        for (int cx = minX; cx <= maxX; cx++)
+        {
+            for (int cz = minZ; cz <= maxZ; cz++)
+            {
+                if (IsSolidCell(map, cx, y, cz))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private static bool IsSolidCell(Map map, int x, int y, int z)
         => map.TryGetCubeAtCell(x, y, z)?.IsSolid == true;

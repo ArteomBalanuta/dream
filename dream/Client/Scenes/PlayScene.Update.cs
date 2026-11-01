@@ -27,8 +27,9 @@ public partial class PlayScene
         HandleGlobalInput(keyboardState);
         // A dead local player sends no movement, look or use. Commands keep flowing (and keep their
         // sequence), because the reconciler only compares on a new ack and the respawn snap needs one.
-        bool allowGameplayInput = _settings.CurrentRuntimeState.AllowGameplayInput &&
-            _runtime.Player.Combatant.Health.IsAlive;
+        bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
+            _settings.CurrentRuntimeState.AllowGameplayInput,
+            _runtime.Player.Combatant.Health.IsAlive);
         // The frame only captures input; each prediction tick below turns it into one command
         // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(

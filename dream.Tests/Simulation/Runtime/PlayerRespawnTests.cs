@@ -227,6 +227,38 @@ public sealed class PlayerRespawnTests
         Assert.Equal(new Vector3(9f, 3.5f, 9f), overhead);
     }
 
+    // The 1x1x1 body at X/Z 5.0 overlaps cells 4 and 5 on both axes.
+    [Theory]
+    [InlineData(4, 5)]
+    [InlineData(5, 4)]
+    [InlineData(4, 4)]
+    public void ResolveRespawnPosition_LiftsPastACubeInANeighbouringCellTheBodyOverlaps(int cellX, int cellZ)
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(cellX, 1f, cellZ), withPhysics: false));
+        Assert.Equal(new Vector3(5f, 2.5f, 5f), WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, new Vector3(5f, 1.5f, 5f)));
+    }
+
+    [Theory]
+    [InlineData(4, 5)]
+    [InlineData(5, 4)]
+    [InlineData(4, 4)]
+    public void ResolveRespawnPosition_LiftsPastANeighbouringCubeOneAboveTheSpawnCell(int cellX, int cellZ)
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(cellX, 2f, cellZ), withPhysics: false));
+        Assert.Equal(new Vector3(5f, 3.5f, 5f), WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, new Vector3(5f, 1.5f, 5f)));
+    }
+
+    [Fact]
+    public void ResolveRespawnPosition_IgnoresACubeInACellTheBodyDoesNotOverlap()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(6f, 1f, 5f), withPhysics: false));
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false));
+        Assert.Equal(new Vector3(5f, 1.5f, 5f), WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, new Vector3(5f, 1.5f, 5f)));
+    }
+
     [Fact]
     public void ResolveRespawnPosition_WithAColumnSolidToTheTop_DoesNotThrow_AndStaysInTheMap()
     {

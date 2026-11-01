@@ -112,7 +112,8 @@ public sealed partial class WorldSessionRuntime
     //   a catalog with no NightExtra spawns another Primary, as before the Dire Wolf);
     // - not night and more than one active: remove the owned NightExtra with the highest actor id,
     //   else the owned enemy with the highest actor id, and queue its row delete like a kill does
-    //   (checkpoints never delete rows).
+    //   (checkpoints never delete rows). Not night with a lone owned NightExtra active: remove it,
+    //   and the spawn step above brings a Primary next tick.
     // The per-tick scan only counts; the templates are consulted on spawn and despawn ticks.
     // A restore that already holds the night's two wolves therefore spawns no third. Allocates
     // nothing except on the spawn and despawn ticks.
@@ -167,18 +168,34 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
-        if (!night && ownedWolves > DayWolfTarget)
+        if (night || ownedWolves == 0)
         {
-            int removeId = HighestOwnedNightExtraId();
+            return;
+        }
+
+        int removeId;
+        if (ownedWolves > DayWolfTarget)
+        {
+            removeId = HighestOwnedNightExtraId();
             if (removeId == 0)
             {
                 removeId = highestOwnedActorId;
             }
+        }
+        else if (activeWolves == ownedWolves)
+        {
+            // A lone NightExtra at dawn (its Primary died in the night) is removed; the next tick's
+            // spawn step brings the day's Primary, so a Dire does not stay all day.
+            removeId = HighestOwnedNightExtraId();
+        }
+        else
+        {
+            return;
+        }
 
-            if (_enemies.Remove(removeId))
-            {
-                DeletePersistedEnemy(removeId);
-            }
+        if (removeId != 0 && _enemies.Remove(removeId))
+        {
+            DeletePersistedEnemy(removeId);
         }
     }
 
