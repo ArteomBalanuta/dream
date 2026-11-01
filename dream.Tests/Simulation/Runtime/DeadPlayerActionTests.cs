@@ -145,7 +145,8 @@ public sealed class DeadPlayerActionTests
         IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, A.Value);
         target.Combatant.Health.SetAuthoritativeState(1, 100);
         ulong tick = 0;
-        // The wolf's path to the start is blocked by terrain, so it starts beside the player.
+        // The wolf starts beside the player so the kill is quick. Terrain was not the reason: before the wolf bite
+        // change a chasing wolf stopped 2.0 m away, outside its 1.35 m bite range, so it never bit a standing player.
         runtime.Enemies.ActiveActors.First().SetPosition(target.Position + new Vector3(0.8f, -0.5f, 0f));
         for (int i = 0; i < 600 && target.IsAlive; i++)
         {

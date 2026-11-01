@@ -68,7 +68,8 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
     private static EnemyActor? FindDire(WireLoopbackServer server) =>
         server.Runtime.Enemies.ActiveActors.FirstOrDefault(enemy => enemy.EnemyKind == DireKind);
 
-    // Keeps every enemy but the one given out of the way, so only it can touch the player.
+    // Keeps every enemy but the one given out of the way, so only it can touch the player. Since the wolf bite
+    // change wolves bite a standing player, so this penning is what keeps the day wolf from hurting these tests.
     private static void PenEnemies(WireLoopbackServer server, EnemyActor? except = null)
     {
         foreach (EnemyActor enemy in server.Runtime.Enemies.ActiveActors)

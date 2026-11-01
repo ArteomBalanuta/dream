@@ -816,8 +816,20 @@ public sealed class IncrementalCheckpointTests
                 Writes.TotalWrittenRows);
         }
 
+        // Since the wolf bite change a wolf chases and stands beside the player, which puts it in the ray of an
+        // attack on a cube. The wolf waits in the far corner, out of its aggro range of every scripted position,
+        // while a build or an attack on a cube runs (a kill still goes to the wolf).
+        private void ParkWolves()
+        {
+            foreach (EnemyActor enemy in Runtime.Enemies.ActiveActors)
+            {
+                enemy.SetPosition(new Vector3(15.5f, 1f, 15.5f));
+            }
+        }
+
         private bool Build(Vector3 cell)
         {
+            ParkWolves();
             Runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
             Runtime.Player.SetWorldPosition(new Vector3(cell.X - 2.5f, 1.5f, cell.Z + 0.5f));
             bool accepted = Act(new BuildUseIntent(cell)).Accepted;
@@ -831,6 +843,7 @@ public sealed class IncrementalCheckpointTests
 
         private void AttackCubeAt(Vector3 cell)
         {
+            ParkWolves();
             Runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
             Vector3 origin = new(cell.X - 2f, cell.Y + 0.5f, cell.Z + 0.5f);
             Runtime.Player.SetWorldPosition(origin);

@@ -314,7 +314,9 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
 
         runtime.Dispose();
         output.WriteLine($"snapshots: {total} B over 200 ticks");
-        Assert.Equal(58_307L, total); // 58,107 B at protocol v9 plus one digit per frame
+        // 58,107 B at protocol v9 plus one digit per frame is 58,307 B; the wolf bite change (a chasing wolf stops
+        // in bite range and bites) moves it to 58,827 B.
+        Assert.Equal(58_827L, total);
     }
 
     [Fact]

@@ -38,6 +38,12 @@ public sealed class CheckpointLeaveRaceLoopbackTests(ITestOutputHelper output)
 
         WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
         await using WireLoopbackClient b = await server.ConnectAndJoinAsync(SessionB);
+        // Since the wolf bite change the day wolf walks to the players and blocks A's walk; it waits far away.
+        foreach (Dream.Simulation.Enemies.EnemyActor enemy in host.Runtime!.Enemies.ActiveActors)
+        {
+            enemy.SetPosition(new Vector3(45f, 1f, 45f));
+        }
+
         await a.SendCommandAsync(PlayerInteractionMode.Building, PlayerMoveIntent.None, Vector3.UnitZ, attack: false);
         await TickAsync(server, 4);
 

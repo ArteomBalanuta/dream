@@ -50,10 +50,15 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // received command. Resolving secondary uses from the drained frames again, with no gate,
     // reproduces the wave-6 values (0x5497DAFE6A7BEBBC, 0x1F4BB5B39F201942, 0x3385C15304627C69,
     // 0xDFC4BD7E7472FF36, 0xD63DD1835BEC99AB).
+    // Checkpoints 2-10 were re-pinned when a chasing wolf began to stop inside its bite range (about 1.3 m
+    // instead of 2.0 m): the wolf walks farther and bites a player that stands still. Checkpoint 1 is
+    // unchanged. The previous values were 0xC73284FF379D57EA, 0x7E52DBC5EC2E6514, 0x48E4F56A857E8DC0,
+    // 0xE74ADEE40AD629DA, 0x17AF03F609BF31E8, 0x6A21C08ACFFABED0, 0x5E2E975D48F4D58A,
+    // 0xF80703360DEEA88F, 0x1DBCE7E3D7E4C392.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x154E692D35B2DD4EUL, 0xC73284FF379D57EAUL, 0x7E52DBC5EC2E6514UL, 0x48E4F56A857E8DC0UL, 0xE74ADEE40AD629DAUL,
-        0x17AF03F609BF31E8UL, 0x6A21C08ACFFABED0UL, 0x5E2E975D48F4D58AUL, 0xF80703360DEEA88FUL, 0x1DBCE7E3D7E4C392UL
+        0x154E692D35B2DD4EUL, 0x308F1C0DD0CD35B4UL, 0xB2C035E98C54CB57UL, 0x58DC81E03DE29867UL, 0x73E33D5492ADD38CUL,
+        0x8118838F28D2A8DBUL, 0x896E506A472FAAF5UL, 0x7FB267DD0A1ED1E7UL, 0xA399D97471F2108AUL, 0x626AC8A4F7C77C1EUL
     ];
 
     [Fact]
