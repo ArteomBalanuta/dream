@@ -282,3 +282,52 @@ Base 0cfab49 (tip of `integrate/classic-hud`). Simulation and server code are un
 ## Verification
 
 - `dotnet build dream/dream.csproj`: 0 errors. Full suite, 1 run at this commit: 5,328 passed, 0 failed, 46 skipped of 5,374, 3 m 41 s.
+
+# Iteration 2 integration, 2026-11-01
+
+Plan: `docs/ledger/plans/2026-11-01-classic-hud-iteration-2-plan.md`. Base 41a0bf0 on `integrate/classic-hud`.
+
+## Merges
+
+| Workstream | Branch tip | Merge | Conflicts |
+|---|---|---|---|
+| WS1 server, content, persistence, wire | 55e4170 | bf5566c | none |
+| WS2 client inventory | b1064dc | 86401a7 | `CharacterPanelModelTests.cs`: kept WS2's stricter assertions and hostile test, and WS1's comment |
+| WS4 bar and gem art | c692e36 | 3009cc6 | none |
+| WS5 window and icon art | c51e027 | 833c8e8 | none; WS4 and WS5 share no generated file |
+| WS3 gem runtime and bar panel | 3416774 | 3189155 | none |
+
+Glue: dc63a8b.
+
+## Glue
+
+- **Required sprites.** `UiSpriteNames.PendingRequired` is in `Required`. The two contract tests are renamed and now assert it. `RealArt_TheMaskOrientation_MatchesWhichArtGenerationTheBatchAssumes` passes on the real art.
+- **WS3 gem test fixture.** It added the new sprites to the old atlas, which threw on duplicate keys once the art merged. "Old art" now removes `PendingRequired` from the real table, and "new art" is the real table.
+- **Hud page pin** moved from 1692x1452 to 1898x1532.
+- **Client and server rules.** One gap: a well-to-well drop onto a taken well showed valid when the other item may not occupy the source well, and the server refused it (`EquipFromWell`). For example, a lantern in the off hand dropped on a blade in the main hand. `InventoryWindow.TryResolveDrop` now shows invalid, with tests. Bag to bag, bag to well (with the displaced item) and well to bag agree with the server.
+- **Held-back line** is singular at 1 on both surfaces (`CharacterPanelModel.HeldBackSuffix`).
+- **Parked rows (300 up).** Not in the snapshot, not in the client count, counted by the integrity check as unknown slot indexes (a soft finding), and kept in the database. No loss and no crash. They stay inert: nothing moves a parked row back when a held-back row frees up, so such an item needs a hand edit.
+- **Integrity footprints.** The default is real content (`BagGrid.FootprintOf`, the shipped catalog). `ServerBootstrap.IntegrityOptionsFor` now passes the catalog it was given, like the other predicates. `OverlappingBagItems` and `HeldBackItems` stay out of `HasSoftFindings`.
+- **Docs.** `docs/configuration.md` slot table and rules, `docs/server-persistence-ddl.md` convention. The README and `build-and-run.md` already said protocol 13.
+
+## dream/ui size
+
+Merged: 10.90 MB, over the 10 MB gate in `check_loader`. Fix: `save_png` uses level 9, and `items_enhanced.png` is gone (nothing loads it; the csproj already did not ship it). Zeroing RGB under A=0 would have saved more, but the pages are straight alpha with deliberate bleed, so it would fringe. Result: 9.67 MB. Every remaining PNG is pixel-identical to before, compared after a full `build_all.py` run (4 m 54 s). `tier_variants` still computes the enhanced look. `previews/items_tiers.png` was not regenerated and still shows its row.
+
+## Verification
+
+- `dotnet build dream/dream.csproj`: 0 errors. Full suite, 1 run at dc63a8b: 5,938 passed, 0 failed, 46 skipped of 5,984, 3 m 34 s. No flake recurred.
+- By name, all passed, and their test files have no diff from the base: `ScriptedRun_ProducesTheSameSnapshotsResultsAndTargetOrderAsBeforeMem3`, `RuntimePath_SeededRolls_MatchPreExtractionGoldenAndTheResolver`, `MapSourceGoldenTests`.
+- Art checks, once on the merged tree: sources, manifest, fx, loader, items, window and `check_hud --fast` pass. `check_art --fast --art` fails 5 gates: bar p95 .601 (at least .72), bar p99 .887 (at least .92), bar share over .85 1.5% (2 to 5%), bar 4u/0.5u band .845 (at least 1.1), slab std .135 (at least .14).
+- GL, Release, integrated loopback, throwaway database: 1920x1080 63 captures, 1280x720 73 captures, every one `dropped=0`. Rings, drag, swap, blocked, equip, unequip to a cell, right-click equip and unequip, destroy with confirm, burst, fight, loot and death all behaved, and stat rows changed as expected.
+- Draw commands: 1080p 2 in play, 10 to 12 with windows, 11 dragging, 16 at the destroy confirm. 720p 13 with windows and tooltip and **17 at the destroy confirm, over the budget of 16**; cause not looked into.
+- Real v9 database (16 items, alias at 100): backup taken, v10, all item ids kept, alias row gone, 4 items re-homed, 2 blades held back, integrity no findings. The join played, and destroying an item drained one blade: the line went from "2 items held back: make room" to "1 item held back: make room".
+
+## Open items
+
+- The 5 art gates above. The plan's human-style critique was not done here.
+- 17 commands at the 720p destroy confirm.
+- The well silhouette still draws under a worn icon, so it shows around items smaller than the well (cloak over wings, lantern over the shield shape).
+- Parked rows never come back on their own.
+- Not run in this pass: fallback (renamed `hud.png`), F3 toggle, hostile script, FPS comparison, GPU timing, 1100x700 dragon overlap, v6 database GL run, mood contact sheet.
+- `C:` ran out of space during the first 720p run. That run's output is discarded and the rerun went from `G:`.
