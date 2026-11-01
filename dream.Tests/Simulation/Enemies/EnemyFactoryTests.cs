@@ -85,9 +85,13 @@ public sealed class EnemyFactoryTests
 
         Assert.Equal(ContentCatalog.MaxEnemyLevel, restored.Level);
         Assert.Equal(1000, ContentCatalog.MaxEnemyLevel);
-        // Kill XP reads the actor's level (AuthoritativeCombatResolver), so it is the 1000 reward.
+        // Kill XP is the reward for the actor's level (AuthoritativeCombatResolver.AwardEnemyKillExperience is
+        // handed it), so the clamp must change the reward: the stored level would pay more.
         CombatFormulaService formulas = CombatFormulaService.Default;
-        Assert.Equal(formulas.EvaluateEnemyExperienceReward(1000, 1), formulas.EvaluateEnemyExperienceReward(restored.Level, 1));
+        int rewardAtStoredLevel = formulas.EvaluateEnemyExperienceReward(5000, 1);
+        int rewardAtActorLevel = formulas.EvaluateEnemyExperienceReward(restored.Level, 1);
+        Assert.True(rewardAtActorLevel > 0);
+        Assert.True(rewardAtActorLevel < rewardAtStoredLevel, $"{rewardAtActorLevel} vs {rewardAtStoredLevel}");
 
         // The wire value (WorldSessionRuntime.Replication) through the real codec, then the client's applier.
         ActorSnapshot wire = new(

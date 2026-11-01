@@ -1145,7 +1145,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // inventory result of that same session is queued (the order only matters on one connection); every
     // other session's push goes out on this tick. The held push stays pending in the runtime and is
     // sent on the first push tick after the snapshot has delivered the result, so a session is held
-    // for at most the ticks until the next snapshot (the result queue is emptied by each snapshot);
+    // until the first post-snapshot tick with no new result of that session (the result queue is
+    // emptied by each snapshot, but a session's own result on the first tick after one re-holds it);
     // the snapshot is built when the push is sent, so it stays the newest. (An earlier version held
     // every session's push while any session had a result queued, which let one player delay
     // everybody's loot.)

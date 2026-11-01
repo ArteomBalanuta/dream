@@ -64,9 +64,10 @@ internal static class EnemyFactory
         // A row is hostile on load: SetBase clamps what the sheet keeps, and the formulas see the same values.
         PersistedCreatureStats stored = row.Stats;
         StatBlock stats = Clamped(stored.Strength, stored.Agility, stored.Vitality, stored.Energy, stored.MovementSpeed, stored.AttackSpeed);
-        // The level is hostile too: a row above the content maximum is clamped here (the row itself is
-        // not rewritten), so kill XP and the wire value agree on one number.
-        int level = Math.Min(stored.Level, ContentCatalog.MaxEnemyLevel);
+        // The level is hostile too: a row outside 1..the content maximum is clamped here. Restore does not
+        // rewrite the row; the first checkpoint with a diff writes the clamped value. Kill XP and the wire
+        // value agree on one number.
+        int level = Math.Clamp(stored.Level, 1, ContentCatalog.MaxEnemyLevel);
         EnemyCombatDerivedStats derived = formulas.EvaluateEnemyDerivedStats(
             (int)stats[StatId.Strength],
             stats[StatId.AttackSpeed],

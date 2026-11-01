@@ -70,8 +70,8 @@ public sealed partial class WorldSessionRuntime
 
     // The world spawn, lifted one cell at a time while a cell the body overlaps, or the one above it, holds a solid cube.
     // The body is one cell wide and centered on X/Z, so at a whole-number X/Z it overlaps two cells on each axis.
-    // capped at the map's height; X and Z clamp to the map. Pure and deterministic, and run at respawn,
-    // so a rebuilt map re-clamps. A column solid to the top does not throw: the player lands at the cap.
+    // The lift is capped at the map's height; X and Z clamp to the map. Pure and deterministic, and run at
+    // respawn, so a rebuilt map re-clamps. A column solid to the top does not throw: the player lands at the cap.
     internal static Vector3 ResolveRespawnPosition(Map map, Vector3 spawn)
     {
         float x = Math.Clamp(spawn.X, 0.5f, map.Width - 0.5f);
