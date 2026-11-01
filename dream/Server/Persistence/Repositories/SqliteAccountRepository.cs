@@ -27,6 +27,15 @@ public sealed class SqliteAccountRepository(SqliteSchemaBootstrapper schema)
         WHERE a.token_hash = $hash;
         """;
 
+    private const string ListSql = """
+        SELECT p.display_name, p.level
+        FROM player_profiles AS p
+        JOIN accounts AS a ON a.account_id = p.account_id
+        WHERE a.token_hash = $hash
+        ORDER BY p.updated_utc DESC, p.display_name
+        LIMIT $max;
+        """;
+
     private const string UpsertAccountSql = """
         INSERT INTO accounts (token_hash, created_utc, last_seen_utc)
         VALUES ($hash, $now, $now)
@@ -74,6 +83,28 @@ public sealed class SqliteAccountRepository(SqliteSchemaBootstrapper schema)
         }
 
         return new CharacterLookup(existing, reserved, owned);
+    }
+
+    public IReadOnlyList<AccountCharacterSummary> ListCharacters(AccountKey account, int max)
+    {
+        byte[] hash = account.ToHashBytes();
+        if (hash.Length != AccountKey.TokenBytes || max <= 0)
+        {
+            return [];
+        }
+
+        using SqliteSession session = Store.OpenSession();
+        using SqliteCommand command = session.CreateCommand(ListSql);
+        command.Parameters.AddWithValue("$hash", hash);
+        command.Parameters.AddWithValue("$max", max);
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<AccountCharacterSummary> characters = [];
+        while (reader.Read())
+        {
+            characters.Add(new AccountCharacterSummary(reader.GetString(0), reader.GetInt32(1)));
+        }
+
+        return characters;
     }
 
     public bool RecordJoin(AccountKey account, CharacterKey character, bool claim, DateTime utcNow)

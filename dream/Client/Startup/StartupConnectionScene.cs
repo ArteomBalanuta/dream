@@ -87,7 +87,18 @@ public sealed class StartupConnectionScene : IDisposable
             _playerName,
             _coordinator.LocalServerStatus,
             _coordinator.StatusMessage,
-            _coordinator.IsBusy);
+            _coordinator.IsBusy,
+            _coordinator.PickerCharacters,
+            out string? pickedCharacter,
+            out bool cancelPickerPressed);
+
+        if (cancelPickerPressed
+            || !string.Equals(previousHost, request.Host, StringComparison.Ordinal)
+            || !string.Equals(previousPort, request.PortText, StringComparison.Ordinal))
+        {
+            // The list belongs to the endpoint it was asked from.
+            _coordinator.CancelPicker();
+        }
 
         _host = request.Host;
         _portText = request.PortText;
@@ -108,9 +119,16 @@ public sealed class StartupConnectionScene : IDisposable
 
         PersistConnectionOptionsIfChanged(previousHost, previousPort, previousPlayerName);
 
-        if (request.ConnectPressed)
+        if (pickedCharacter != null)
         {
-            _coordinator.BeginConnect(new ClientConnectionOptions(_host, _portText, _playerName));
+            _playerName = pickedCharacter;
+            ClientConnectionOptions picked = new(_host, _portText, _playerName);
+            _coordinator.ChooseCharacter(picked, pickedCharacter);
+            _persistConnectionOptions?.Invoke(picked);
+        }
+        else if (request.ConnectPressed)
+        {
+            _coordinator.BeginConnectWithPicker(new ClientConnectionOptions(_host, _portText, _playerName));
         }
     }
 

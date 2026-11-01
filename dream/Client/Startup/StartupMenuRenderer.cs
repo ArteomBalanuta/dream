@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Dream.Assets;
 using Dream.Client.Input;
+using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -54,9 +55,14 @@ public sealed class StartupMenuRenderer : IDisposable
         string playerName,
         string localServerStatus,
         string connectionStatus,
-        bool isBusy)
+        bool isBusy,
+        IReadOnlyList<CharacterListEntry>? characters,
+        out string? pickedCharacter,
+        out bool cancelPickerPressed)
     {
         BeginFrame(args, windowFocused, mouseState, keyboardState);
+        pickedCharacter = null;
+        cancelPickerPressed = false;
 
         string hostBuffer = host;
         string portBuffer = portText;
@@ -79,6 +85,29 @@ public sealed class StartupMenuRenderer : IDisposable
         ImGui.TextWrapped(localServerStatus);
         ImGui.TextWrapped(connectionStatus);
         ImGui.Spacing();
+
+        if (characters is { Count: > 0 })
+        {
+            // M1-C: the account's characters on this server. Pick one to join as it, or type a new
+            // name below and Connect.
+            ImGui.Text("Your characters");
+            for (int i = 0; i < characters.Count; i++)
+            {
+                CharacterListEntry entry = characters[i];
+                if (ImGui.Button($"{entry.DisplayName}  (level {entry.Level})##character{i}", new System.Numerics.Vector2(-1f, 0f)))
+                {
+                    pickedCharacter = entry.DisplayName;
+                }
+            }
+
+            if (ImGui.Button("Cancel"))
+            {
+                cancelPickerPressed = true;
+            }
+
+            ImGui.Separator();
+            ImGui.TextWrapped("Or enter a new name:");
+        }
 
         ImGui.InputText("Host", ref hostBuffer, 128);
         ImGui.InputText("Port", ref portBuffer, 16);

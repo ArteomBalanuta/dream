@@ -1,5 +1,6 @@
 using Dream.Client.Identity;
 using Dream.Client.Networking;
+using Dream.Multiplayer.Protocol;
 using Dream.Server;
 
 namespace Dream.Client.Startup;
@@ -11,6 +12,7 @@ public sealed class NetworkSessionCoordinator
     private Task? _pendingConnectionTask;
     private RemoteClientSession? _connectedSession;
 
+    private readonly ICharacterListSource? _characterList;
     private readonly string? _contentError;
     private readonly IClientIdentityStore? _identity;
 
@@ -20,8 +22,12 @@ public sealed class NetworkSessionCoordinator
         ILocalServerHandle localServer,
         IRemoteSessionConnector connector,
         string? contentError = null,
-        IClientIdentityStore? identity = null)
+        IClientIdentityStore? identity = null,
+        ICharacterListSource? characterList = null)
     {
+        // Production (a real identity store) asks the server for the account's characters; a test coordinator
+        // has no identity and no token to ask with, so it gets no source unless it passes one.
+        _characterList = characterList ?? (identity != null ? new CharacterListClient() : null);
         // A null identity store leaves the join token null, so a test coordinator never touches the
         // real token file.
         _identity = identity;
@@ -133,14 +139,108 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
-        // A remote connect never reads the game's content files (the server sends everything the
-        // client draws), so a content error does not block it. Only the local server needs them.
-        if (!options.TryCreateRemoteOptions(out RemoteClientOptions? resolved, out string? error))
+        ClearPicker();
+        if (!TryResolveRemoteOptions(options, out RemoteClientOptions? resolved))
+        {
+            return;
+        }
+
+        State = ConnectionFlowState.Connecting;
+        StatusMessage = $"Connecting to {resolved!.Host}:{resolved.Port}...";
+        _pendingConnectionTask = ConnectInternalAsync(resolved);
+    }
+
+    // The characters the picker shows (M1-C), set while the picker is open (State is ReadyToConnect); null otherwise.
+    public IReadOnlyList<CharacterListEntry>? PickerCharacters { get; private set; }
+
+    // The Connect button. With a character list source the account's characters are asked for first
+    // (a short connection of its own, before the join): none (no accounts on the server, a new account,
+    // no answer) connects with the typed name as before; some open the picker (PickerCharacters)
+    // until ChooseCharacter, CancelPicker or BeginConnect. Without a source this is BeginConnect.
+    public void BeginConnectWithPicker(ClientConnectionOptions options)
+    {
+        if (_characterList == null)
+        {
+            BeginConnect(options);
+            return;
+        }
+
+        if (IsBusy)
+        {
+            return;
+        }
+
+        ClearPicker();
+        if (!TryResolveRemoteOptions(options, out RemoteClientOptions? resolved))
+        {
+            return;
+        }
+
+        State = ConnectionFlowState.Connecting;
+        StatusMessage = "Looking up your characters...";
+        _pendingConnectionTask = ListThenConnectAsync(options, resolved!);
+    }
+
+    // Connects as the picked character (or a new name typed in the picker).
+    public void ChooseCharacter(ClientConnectionOptions options, string characterName)
+    {
+        if (IsBusy || string.IsNullOrWhiteSpace(characterName))
+        {
+            return;
+        }
+
+        BeginConnect(options with { PlayerName = characterName.Trim() });
+    }
+
+    public void CancelPicker()
+    {
+        if (PickerCharacters == null || IsBusy)
+        {
+            return;
+        }
+
+        ClearPicker();
+        State = ConnectionFlowState.ReadyToConnect;
+        StatusMessage = "Connect when ready.";
+    }
+
+    private void ClearPicker() => PickerCharacters = null;
+
+    private async Task ListThenConnectAsync(ClientConnectionOptions options, RemoteClientOptions resolved)
+    {
+        IReadOnlyList<CharacterListEntry> characters;
+        try
+        {
+            characters = await _characterList!.FetchAsync(resolved);
+        }
+        catch (Exception)
+        {
+            characters = [];
+        }
+
+        if (characters.Count == 0)
+        {
+            StatusMessage = $"Connecting to {resolved.Host}:{resolved.Port}...";
+            await ConnectInternalAsync(resolved);
+            return;
+        }
+
+        PickerCharacters = characters;
+        State = ConnectionFlowState.ReadyToConnect;
+        StatusMessage = "Choose a character, or enter a new name and connect.";
+    }
+
+    // A remote connect never reads the game's content files (the server sends everything the
+    // client draws), so a content error does not block it. Only the local server needs them. On
+    // failure the state and message say why and the pending task is completed.
+    private bool TryResolveRemoteOptions(ClientConnectionOptions options, out RemoteClientOptions? resolved)
+    {
+        if (!options.TryCreateRemoteOptions(out resolved, out string? error))
         {
             State = ConnectionFlowState.Failed;
             StatusMessage = error ?? "Connection settings are invalid.";
             _pendingConnectionTask = Task.CompletedTask;
-            return;
+            return false;
         }
 
         if (_identity != null)
@@ -154,13 +254,11 @@ public sealed class NetworkSessionCoordinator
                 State = ConnectionFlowState.Failed;
                 StatusMessage = ex.Message;
                 _pendingConnectionTask = Task.CompletedTask;
-                return;
+                return false;
             }
         }
 
-        State = ConnectionFlowState.Connecting;
-        StatusMessage = $"Connecting to {resolved!.Host}:{resolved.Port}...";
-        _pendingConnectionTask = ConnectInternalAsync(resolved);
+        return true;
     }
 
     // Shows why the previous play session ended (a lost connection, a silent server, a failed
