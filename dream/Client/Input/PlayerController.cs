@@ -59,33 +59,13 @@ public static class PlayerController
             primaryUsePressed);
     }
 
+    // Keys only: walking, looking and the primary action come from clicks (ClickMoveController).
     public static PlayerCommandFrame CaptureCommandFrame(
         PlayerSessionId sessionId,
         ulong sequence,
         KeyboardState keyboardState,
-        MouseState mouseState,
         bool allowGameplayInput)
     {
-        float forwardAxis = 0f;
-        if (keyboardState.IsKeyDown(Keys.W))
-        {
-            forwardAxis += 1f;
-        }
-        if (keyboardState.IsKeyDown(Keys.S))
-        {
-            forwardAxis -= 1f;
-        }
-
-        float strafeAxis = 0f;
-        if (keyboardState.IsKeyDown(Keys.D))
-        {
-            strafeAxis += 1f;
-        }
-        if (keyboardState.IsKeyDown(Keys.A))
-        {
-            strafeAxis -= 1f;
-        }
-
         float verticalAxis = 0f;
         if (keyboardState.IsKeyDown(Keys.Space))
         {
@@ -100,15 +80,15 @@ public static class PlayerController
             sessionId,
             sequence,
             allowGameplayInput,
-            forwardAxis,
-            strafeAxis,
+            forwardAxis: 0f,
+            strafeAxis: 0f,
             verticalAxis,
             jumpPressed: keyboardState.IsKeyDown(Keys.Space),
             freezePressed: keyboardState.IsKeyDown(Keys.F),
             toggleNoclipPressed: keyboardState.IsKeyDown(Keys.D0),
-            yawDelta: mouseState.Delta.X,
-            pitchDelta: mouseState.Delta.Y,
-            primaryUsePressed: mouseState.IsButtonDown(MouseButton.Left),
+            yawDelta: 0f,
+            pitchDelta: 0f,
+            primaryUsePressed: false,
             selectBuildingModePressed: keyboardState.IsKeyDown(Keys.D1),
             selectCombatModePressed: keyboardState.IsKeyDown(Keys.D2));
     }

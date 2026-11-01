@@ -29,11 +29,12 @@ internal enum HudCaptureVerb : byte
     Size,
     Snap,
     Log,
-    Fight
+    Fight,
+    WalkTo
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
-internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, int B)
+internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, int B, int C = 0)
 {
     public const int ConfirmDestroy = 0;
     public const int ConfirmCancel = 1;
@@ -111,6 +112,11 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 return true;
             case "fight" when parts.Length == 2 && int.TryParse(parts[1], out int fightFrames) && fightFrames is > 0 and <= 20000:
                 spec = new(HudCaptureVerb.Fight, fightFrames, 0);
+                return true;
+            case "walkto" when parts.Length == 4 && int.TryParse(parts[1], out int walkX) && int.TryParse(parts[2], out int walkZ)
+                && int.TryParse(parts[3], out int walkFrames) && walkFrames is > 0 and <= 20000:
+                // x and z are the target cell, the frame cap rides in C.
+                spec = new(HudCaptureVerb.WalkTo, walkX, walkZ, walkFrames);
                 return true;
             case "size" when parts.Length == 3 && int.TryParse(parts[1], out int width) && int.TryParse(parts[2], out int height)
                 && width is >= 640 and <= 4096 && height is >= 480 and <= 2304:

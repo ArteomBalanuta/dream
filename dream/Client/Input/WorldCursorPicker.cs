@@ -1,0 +1,138 @@
+using OpenTK.Mathematics;
+using Dream.Client.Navigation;
+using Dream.Simulation.Enemies;
+
+namespace Dream.Client.Input;
+
+// What the cursor points at in the world. Pure ray maths plus a cell march, so it is testable with
+// a fake INavWorld. Runs on presses and held repaths only.
+public static class WorldCursorPicker
+{
+    public const float EnemyMaxDistance = 90f;
+    public const float EnemyHitRadius = 1f;
+    public const float MarchStepMetres = 0.05f;
+    public const float MarchMaxMetres = 60f;
+
+    // Ray from the inverse view-projection of the camera. Row-vector matrices, as OpenTK uses them.
+    public static bool TryBuildRay(
+        Matrix4 view,
+        Matrix4 projection,
+        Vector2 pixel,
+        Vector2i viewport,
+        out Vector3 origin,
+        out Vector3 direction)
+    {
+        origin = default;
+        direction = default;
+        if (viewport.X <= 0 || viewport.Y <= 0 || !float.IsFinite(pixel.X) || !float.IsFinite(pixel.Y))
+        {
+            return false;
+        }
+
+        Matrix4 viewProjection = view * projection;
+        if (MathF.Abs(viewProjection.Determinant) < 1e-12f)
+        {
+            return false;
+        }
+
+        Matrix4 inverse = Matrix4.Invert(viewProjection);
+        float ndcX = (2f * pixel.X / viewport.X) - 1f;
+        float ndcY = 1f - (2f * pixel.Y / viewport.Y);
+        if (!TryUnproject(inverse, ndcX, ndcY, -1f, out Vector3 near) || !TryUnproject(inverse, ndcX, ndcY, 1f, out Vector3 far))
+        {
+            return false;
+        }
+
+        Vector3 delta = far - near;
+        if (delta.LengthSquared < 1e-10f)
+        {
+            return false;
+        }
+
+        origin = near;
+        direction = delta.Normalized();
+        return true;
+    }
+
+    private static bool TryUnproject(Matrix4 inverse, float x, float y, float z, out Vector3 point)
+    {
+        Vector4 p = Vector4.TransformRow(new Vector4(x, y, z, 1f), inverse);
+        if (MathF.Abs(p.W) < 1e-9f)
+        {
+            point = default;
+            return false;
+        }
+
+        point = p.Xyz / p.W;
+        return true;
+    }
+
+    // Enemy first (resolveEnemy gets the ray), then the first blocked cell along the ray: the answer
+    // is the last empty cell before it.
+    public static ClickPick Pick(
+        INavWorld world,
+        Vector3 origin,
+        Vector3 direction,
+        Func<Vector3, Vector3, IClickTarget?>? resolveEnemy)
+    {
+        if (resolveEnemy?.Invoke(origin, direction) is { } enemy)
+        {
+            return new ClickPick(ClickPickKind.Enemy, default, enemy.Anchor, enemy);
+        }
+
+        bool haveEmpty = false;
+        NavCell lastEmpty = default;
+        int steps = (int)(MarchMaxMetres / MarchStepMetres);
+        for (int i = 0; i <= steps; i++)
+        {
+            Vector3 p = origin + (direction * (i * MarchStepMetres));
+            int x = (int)MathF.Floor(p.X);
+            int y = (int)MathF.Floor(p.Y);
+            int z = (int)MathF.Floor(p.Z);
+            if (x < 0 || y < 0 || z < 0 || x >= world.Width || y >= world.Height || z >= world.Depth)
+            {
+                continue;
+            }
+
+            if (world.IsBlocked(x, y, z))
+            {
+                return haveEmpty
+                    ? new ClickPick(ClickPickKind.Ground, lastEmpty, p, null)
+                    : default;
+            }
+
+            haveEmpty = true;
+            lastEmpty = new NavCell(x, y, z);
+        }
+
+        return default;
+    }
+
+    public static ClickPick Pick(
+        INavWorld world,
+        EnemyRegistry enemies,
+        Vector3 origin,
+        Vector3 direction)
+    {
+        return Pick(world, origin, direction, (o, d) =>
+        {
+            EnemyActor? hit = enemies.TryResolveHit(o, d, EnemyMaxDistance, EnemyHitRadius);
+            return hit is null ? null : new EnemyClickTarget(hit);
+        });
+    }
+}
+
+// An enemy actor as a click target; the anchor is read live, so a moving enemy is followed.
+public sealed class EnemyClickTarget : IClickTarget
+{
+    private readonly EnemyActor _actor;
+
+    public EnemyClickTarget(EnemyActor actor)
+    {
+        _actor = actor ?? throw new ArgumentNullException(nameof(actor));
+    }
+
+    public bool IsAlive => _actor.IsActive;
+
+    public Vector3 Anchor => _actor.Combatant.GetCombatAnchorWorldPosition();
+}

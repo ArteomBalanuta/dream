@@ -11,16 +11,15 @@ public static class ClassicCursorPolicy
     public static bool WillDraw(HudSurface current, ClassicHudBackendState? backendState) =>
         current == HudSurface.Classic && backendState == ClassicHudBackendState.Ready;
 
-    // The classic cursor hides the OS one only with the inventory open, Settings closed and the window
+    // The classic sprite cursor hides the OS one whenever it is drawn: Settings closed and the window
     // focused (an unfocused window keeps an OS cursor, which also lets the user leave it). Anything
     // else keeps the state the gameplay input rules give.
     public static CursorState Decide(
         bool classicCursorActive,
-        bool inventoryVisible,
         bool settingsVisible,
         bool windowFocused,
         CursorState gameplayState) =>
-        classicCursorActive && inventoryVisible && !settingsVisible && windowFocused
+        classicCursorActive && !settingsVisible && windowFocused
             ? CursorState.Hidden
             : gameplayState;
 }
