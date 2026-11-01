@@ -2,7 +2,7 @@
 
 Plan: `docs/ledger/plans/2026-11-01-classic-hud-plan.md`. Branch: `integrate/classic-hud`, from 1d4ede8.
 
-Status: integrated on `integrate/classic-hud` through fix loop 1 (merge `2a28261`). Full suite run 2 of 2 passed; run 1 had one failure outside the HUD, not explained (see "Fix loop 1 integration"). Tester and reviewer have not re-run on this tip. Not pushed. Not merged into `master`.
+Status: merged into `master` through iteration 2 at the user's request, with the findings below parked. Not pushed.
 
 ## Merges
 
@@ -388,3 +388,56 @@ Plain `check_art.py` (full): 0 errors, and `check_hud.py` (full): 95 + 5 sprites
 ## Suite
 
 Run 1 of 2 was cut: after 77 s no test finished for 9 minutes (testhost stuck; I killed the testhost I had started), with two failures before it (`ProtocolV2SlowClientLoopbackIntegrationTests.SlowClient_GetsMergedSnapshotsEncodedForItsConnection_ThatDecode_WithMutationsInOrder` and the one below). Run 2 (with `--blame-hang`): 5,954 passed, 1 failed, 46 skipped of 6,001, 2 m 43 s. The failure, `StoredWorldJoinLoopbackTests.GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture` (`Assert.NotEmpty(client.Snapshots())` at line 164: no snapshot after 3 ticks), fails whenever its class runs together (class filter: 2 of 2 with and 2 of 2 **without** my four new files) and passes alone (4 of 4). So this pass's tests do not cause it, but it is a failure at the tip that the integrator's run did not see; cause not found (order dependence inside the class, or the loopback clock nudge).
+
+## Parked findings (iteration 2)
+
+The user judged the result good enough on 2026-11-01 and parked these for later. Both fix loops were stopped. Nothing below was fixed in `master`.
+
+**Verification state of `25c480f`.** Full suite: 5,954 passed, 1 failed, 46 skipped. An earlier run on that tip was cut after hanging for 9 minutes. Tick goldens passed by name at the merge.
+
+**Open test problems**
+
+- `StoredWorldJoinLoopbackTests.GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture` fails whenever its class runs together, and passes alone. Cause unknown.
+- One full run hung with no test finishing for 9 minutes. `ProtocolV2SlowClientLoopbackIntegrationTests.SlowClient_...` failed in that run. Not reproduced.
+
+**Code**
+
+- A silhouette draws under smaller worn items (`InventoryWindow.cs:511-516`).
+- Rows parked at 300+ can't be reached: nothing promotes them, and the player sees no count. A content footprint increase can reach this path.
+- A client and server with different content can hide an item. `ContentDigest` is logged, not enforced at join.
+- The held-back line doesn't say what size is needed, so it can show beside many free cells.
+- A health or energy change allocates 464 B, because stat rows rebuild.
+- HP numerals cover the low liquid level.
+- The legacy gem path is dead in production (`UiBatch._gemLegacy`) and should go.
+- Common items can roll +0 Vitality; tooltip display not checked.
+- `EquipFirstOccupiedSlotIfNone` frees cells without draining held-back rows.
+- A wolf nameplate behind the destroy confirm makes 17 draw commands against a budget of 16.
+- Well to bag drops and hand-edited rows at 20016+ are parked and stay unreachable.
+
+**Art (5 `check_art.py --art` gates fail)**
+
+| Gate | Measured | Target |
+|---|---|---|
+| Bar p95 | .601 | at least .72 |
+| Bar p99 | .887 | at least .92 |
+| Bar share over .85 | 1.5% | 2 to 5% |
+| Bar 4u/0.5u band | .845 | at least 1.1 |
+| Slab std | .135 | at least .14 |
+
+The slab std gate rewards mottling and should become a ceiling on blotchiness. The reviewer's critique, most important first, with the generator changes it proposed:
+
+1. Slab reads as clouded marble (`gen_window.py` `slab_tone`, `slab_author`, `SLAB_RENDER`).
+2. Dragon reads soft, banded and illustrated (`gen_hud.py:532`, `:587`, `:591`).
+3. Icons and brass read bright and toy-like (`gen_items.py` finish; bar `_rail`, `_trim`).
+4. Gems read as marbles; the second talon lies across the stone (`gemtrace.py` `CONVEX`, `talon()`, `_claw`).
+5. Bar plates read as hide (`_vmap` mottle at `gen_hud.py:406`).
+
+The composition is close to one-to-one with the user's reference screenshots, including a blue and gold cloak like theirs. All art is original, but check this before any public release.
+
+**Not verified:** the ImGui popup menus clicked in GL, GPU memory, FPS beyond "no slowdown visible", real-mouse drag feel, and the Wave I issues (stuck wolf near the spawn on old worlds, target shielding, rejoin protection), which remain open.
+
+**Stopped work, not merged**
+
+- `worktree-agent-a28112d6f8e97da78`, commit `e253306`: unverified partial code fix (silhouette, parked row promotion, drain after first equip).
+- `worktree-agent-ae7c5a6c63e801461`: unfinished Wave I fix loop 5, uncommitted.
+- `worktree-agent-af65f49bca6e13ac0`, commit `4279e89`: throwaway isometric spike. See `docs/ledger/plans/2026-11-01-isometric-feasibility.md`.
