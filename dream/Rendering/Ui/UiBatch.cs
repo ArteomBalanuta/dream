@@ -90,6 +90,8 @@ public sealed class UiBatch : IUiCanvas
 
     public int QuadCount => _quadCount;
 
+    public int QuadHeadroom => MaxQuads - _quadCount;
+
     public int CommandCount => _commandCount;
 
     // Quads, commands or tile loops that did not fit this frame.

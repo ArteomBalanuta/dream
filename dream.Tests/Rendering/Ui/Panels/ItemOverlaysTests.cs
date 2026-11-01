@@ -395,6 +395,29 @@ public sealed class ItemOverlaysTests : IDisposable
     }
 
     [Fact]
+    public void Tooltip_LongNameWrapsByWidthInsteadOfSpillingOut()
+    {
+        InventoryItemSnapshot item = InventoryScene.Item(31, "ring.ice") with
+        {
+            DisplayName = "Gilded Ring of the Frozen Northern Wastes and Beyond",
+            Description = null
+        };
+        _scene.Items[5] = item;
+        _scene.Refresh();
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(5));
+        _scene.Frame();
+
+        float maxWidth = 140f * _scene.Layout.Scale;
+        CanvasCall[] nameLines = _scene.Canvas.Texts
+            .Where(t => t.Color != ItemTierStyle.Shadow && item.DisplayName!.Contains(t.Text.Trim(), StringComparison.Ordinal) && t.Text.Length > 3)
+            .ToArray();
+        Assert.True(nameLines.Length >= 2, "the long name should take more than one line");
+        Assert.All(nameLines, t => Assert.True(t.Text.Length * _scene.Canvas.CharWidth <= maxWidth, t.Text));
+        Assert.Equal(item.DisplayName, string.Join(" ", nameLines.Select(t => t.Text)));
+    }
+
+    [Fact]
     public void Tooltip_HiddenWhileAMenuIsOpen()
     {
         _scene.Items[2] = InventoryScene.Item(11, "helm.gilded", HeadMask);

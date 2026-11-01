@@ -62,9 +62,16 @@ public static class CharacterWindow
     {
         UiRect box = l.FromUnits(win, RowX, y, RowW, RowH);
         float padX = 2f * l.Scale;
-        float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyTextPx) * 0.5f);
+        float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyHeight(c)) * 0.5f);
 
-        // "10 +2 = 12", or just "12" when there is no bonus. Built in a stack buffer.
+        string label = row.Label ?? string.Empty;
+        ReadOnlySpan<char> labelText = label.AsSpan(0, Math.Min(label.Length, 24));
+        float inner = box.W - (2f * padX);
+        float gap = MathF.Max(6f, 3f * l.Scale);
+        float labelWidth = c.MeasureText(labelText, UiTextStyle.Body);
+
+        // "10 +2 = 12", or just "12" when there is no bonus or the label would touch the long form.
+        // Built in a stack buffer.
         Span<char> mem = stackalloc char[64];
         UiTextBuilder b = new(mem);
         bool hasBonus = !string.IsNullOrEmpty(row.BonusText);
@@ -74,18 +81,26 @@ public static class CharacterWindow
             b.Append(" ");
             b.Append(row.BonusText);
             b.Append(" = ");
+            b.Append(row.EffectiveText ?? string.Empty);
+            if (labelWidth + gap + c.MeasureText(b.Text, UiTextStyle.Body) > inner)
+            {
+                // Too long beside this label: show the effective value alone.
+                hasBonus = false;
+                b = new UiTextBuilder(mem);
+                b.Append(row.EffectiveText ?? string.Empty);
+            }
+        }
+        else
+        {
+            b.Append(row.EffectiveText ?? string.Empty);
         }
 
-        b.Append(row.EffectiveText ?? string.Empty);
         ReadOnlySpan<char> value = b.Text;
-        float inner = box.W - (2f * padX);
         value = value[..PanelText.FitLength(c, value, UiTextStyle.Body, inner)];
         float width = c.MeasureText(value, UiTextStyle.Body);
 
-        // The label gets what the value leaves, with a gap of one space.
-        string label = row.Label ?? string.Empty;
-        ReadOnlySpan<char> labelText = label.AsSpan(0, Math.Min(label.Length, 24));
-        labelText = labelText[..PanelText.FitLength(c, labelText, UiTextStyle.Body, MathF.Max(0f, inner - width - 2f))];
+        // The label gets what the value leaves, with a gap between them.
+        labelText = labelText[..PanelText.FitLength(c, labelText, UiTextStyle.Body, MathF.Max(0f, inner - width - gap))];
         InventoryWindow.DrawText(c, labelText, new Vector2(box.X + padX, textY), ItemTierStyle.Body);
         InventoryWindow.DrawText(c, value, new Vector2(box.Right - padX - width, textY), hasBonus ? ItemTierStyle.Bonus : ItemTierStyle.Title);
 

@@ -14,7 +14,19 @@ public sealed class UiGlTextureUploader : IUiTextureUploader
         int previous = GL.GetInteger(GetPName.TextureBinding2D);
         try
         {
-            return TextureDecoder.UploadTexture2DClamped(texture, MaxMipLevel);
+            int handle = TextureDecoder.UploadTexture2DClamped(texture, MaxMipLevel);
+
+            // A bad upload (out of memory, an unsupported size) leaves a GL error and an unusable
+            // texture. Delete it and throw, so the atlas store ends in Failed and the HUD falls back.
+            // Out of memory is also latched Fatal by CheckGLError, which closes the window.
+            GLFaultKind fault = GLUtils.CheckGLError("UiGlTextureUploader.Upload");
+            if (fault != GLFaultKind.None)
+            {
+                GL.DeleteTexture(handle);
+                throw new InvalidOperationException($"{page} texture upload left a GL error ({fault}).");
+            }
+
+            return handle;
         }
         finally
         {

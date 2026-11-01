@@ -142,6 +142,9 @@ public partial class PlayScene
     private bool _captureFightActive;
     private bool _captureFightModeSent;
     private int _captureFightLogTick;
+    private float _captureFightLastDistance;
+    private int _captureFightStuckTicks;
+    private bool _captureFightNoclipSent;
 
     private bool CaptureRunning =>
         _hudCapture is not null && !_hudCaptureDone && _hudCaptureFrames + 1 >= HudCaptureScript.WarmupFrames
@@ -439,13 +442,24 @@ public partial class PlayScene
         float perPixel = _settings.MouseSensitivity / 60f;
         if (++_captureFightLogTick % 120 == 1)
         {
-            Console.WriteLine($"[hud-capture] fight: {nearest.DisplayName} at {distance:0.0} m, off aim yaw {dYaw:0.000} pitch {dPitch:0.000} rad, own hp {_runtime.Player.Combatant.Health.CurrentHealth}, enemy hp {nearest.Combatant.Health.CurrentHealth}");
+            Console.WriteLine($"[hud-capture] fight: {nearest.DisplayName} at {distance:0.0} m, off aim yaw {dYaw:0.000} pitch {dPitch:0.000} rad, own pos {from.X:0.0},{from.Z:0.0}, own hp {_runtime.Player.Combatant.Health.CurrentHealth}, enemy hp {nearest.Combatant.Health.CurrentHealth}");
         }
+
+        // Walking into a ledge makes no progress: jump while stuck, and sidestep when that is not enough.
+        _captureFightStuckTicks = distance > 1.8f && _captureFightLastDistance - distance < 0.002f
+            ? _captureFightStuckTicks + 1
+            : 0;
+        _captureFightLastDistance = distance;
+        bool jump = _captureFightStuckTicks > 20 && (_captureFightStuckTicks % 40) < 6;
+        // A wall that jumping does not clear (the enemies' pen): fly through it once with noclip.
+        bool noclip = _captureFightStuckTicks > 200 && !_captureFightNoclipSent;
+        _captureFightNoclipSent |= noclip;
+        float strafe = _captureFightStuckTicks > 150 && !_captureFightNoclipSent ? (((_captureFightStuckTicks / 90) % 2) == 0 ? 1f : -1f) : 0f;
 
         return frame with
         {
             RequestedMode = new PlayerModeSwitchIntent(mode),
-            MoveIntent = new PlayerMoveIntent(distance > 1.8f ? 1f : 0f, 0f),
+            MoveIntent = new PlayerMoveIntent(distance > 1.8f ? 1f : 0f, strafe, 0f, jump && !_captureFightNoclipSent, false, noclip),
             LookIntent = new PlayerLookIntent(dYaw / perPixel, -dPitch / perPixel),
             PrimaryUsePressed = true
         };

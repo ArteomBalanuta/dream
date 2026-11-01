@@ -111,7 +111,7 @@ public partial class Render
     internal ClassicHudSurface? ClassicSurfaceForCapture => _classicSurface;
 
     private bool ClassicHudWillDraw() =>
-        _hudSelector is { Current: HudSurface.Classic } && _classicSurface is { State: ClassicHudBackendState.Ready };
+        _hudSelector is not null && ClassicCursorPolicy.WillDraw(_hudSelector.Current, _classicSurface?.State);
 
     public HudSurface CurrentHudSurface(GameSettings settings) => HudSelector(settings).Current;
 
@@ -258,13 +258,9 @@ public partial class Render
             CombatText = _classicCombatText,
             Labels = _classicLabels
         };
-        bool drew = surface.Draw(in frame);
-        if (drew)
-        {
-            surface.TakeRequests(out action, out closeInventory);
-        }
-
-        return drew;
+        HudSurfaceSelector selector = HudSelector(settings);
+        return ClassicHudFrameGuard.Draw(
+            surface, in frame, out action, out closeInventory, ex => LatchClassicHud(selector, ex.Message, ex));
     }
 
     private void ProjectClassicCombatText(Camera camera, CombatFeedbackSystem combatFeedback, FloatingCombatTextTuning tuning)
@@ -276,7 +272,14 @@ public partial class Render
             // The anchor alone: the sprite panel adds its own rise and jitter in pixels, so the ImGui
             // path offsets stay out. A state that cannot be projected is dropped.
             FloatingCombatTextRenderState state = _floatingCombatTextStates[i];
-            if (TryProjectWorldToScreen(camera, state.WorldAnchor, out System.Numerics.Vector2 screen))
+            bool projected = TryProjectWorldToScreen(camera, state.WorldAnchor, out System.Numerics.Vector2 screen);
+            if (IncomingNumberAnchor.UsesScreenAnchor(state.Kind, state.WorldAnchor, camera.Position, projected))
+            {
+                // The local player's own number in first person: its anchor is at the camera.
+                Vector2i viewport = GetSafeViewportSize(_currentSize);
+                _classicCombatText.Add(state with { ScreenAnchor = IncomingNumberAnchor.ScreenAnchor(viewport.X, viewport.Y) });
+            }
+            else if (projected)
             {
                 _classicCombatText.Add(state with { ScreenAnchor = new Vector2(screen.X, screen.Y) });
             }

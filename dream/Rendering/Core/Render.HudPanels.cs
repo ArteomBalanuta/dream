@@ -200,7 +200,8 @@ public partial class Render
             }
 
             // HUD scale: 0 is auto (fit the window). Shown always; the classic HUD reads it.
-            float uiScaleValue = settings.UiScaleSetting;
+            // A configured value above what fits the window is not in use, so the slider shows the scale in use.
+            float uiScaleValue = settings.UiScaleSetting > 0f ? settings.ResolvedUiScale : 0f;
             if (ImGui.SliderFloat("UI Scale (0 = auto)", ref uiScaleValue, 0f, UiScaleSliderMax, "%.2f"))
             {
                 uiScale = uiScaleValue;

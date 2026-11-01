@@ -9,6 +9,10 @@ public static unsafe class UiFontSetup
     public const float BodyPixels = 13f;
     public const float LargePixels = 26f;
 
+    // The Dear ImGui version whose glyph struct layout Fill reads (ImGui.NET 1.91.6.1 wraps it).
+    // A different native version fails BuildGlyphTable, so the HUD falls back instead of reading junk.
+    public const string AuditedImGuiVersion = "1.91.6";
+
     // Adds the body font (atlas index 0, which is the one the ImGui windows keep using) and the
     // large bake (index 1). Call before the font atlas texture is built.
     public static void AddFonts(ImGuiIOPtr io)
@@ -31,6 +35,12 @@ public static unsafe class UiFontSetup
     // GetTexDataAsRGBA32). Throws InvalidOperationException when a font is missing or has no '?'.
     public static UiGlyphTable BuildGlyphTable(ImFontAtlasPtr atlas)
     {
+        string version = ImGui.GetVersion();
+        if (!string.Equals(version, AuditedImGuiVersion, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Dear ImGui {version} is loaded; the glyph layout was audited for {AuditedImGuiVersion}.");
+        }
+
         if (atlas.Fonts.Size < 2)
         {
             throw new InvalidOperationException("The UI font atlas does not contain the body and large fonts.");
@@ -46,8 +56,47 @@ public static unsafe class UiFontSetup
             throw new InvalidOperationException("The UI font has no '?' glyph.");
         }
 
+        // Every missing character draws '?', so a misread struct would show up everywhere: check it.
+        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large })
+        {
+            table.TryGet(style, UiGlyphTable.Fallback, out UiGlyph question);
+            if (GlyphFault(question) is { } fault)
+            {
+                throw new InvalidOperationException($"The {style} '?' glyph is not sane: {fault}.");
+            }
+        }
+
         return table;
     }
+
+    // Null when the glyph can be drawn: a positive width, texture coordinates inside 0..1 (and in
+    // order) and a positive advance. Otherwise what is wrong.
+    internal static string? GlyphFault(in UiGlyph g)
+    {
+        if (!float.IsFinite(g.X0) || !float.IsFinite(g.X1) || !(g.X1 > g.X0))
+        {
+            return "X1 is not greater than X0";
+        }
+
+        if (!float.IsFinite(g.Y0) || !float.IsFinite(g.Y1))
+        {
+            return "Y is not finite";
+        }
+
+        if (!InUnit(g.U0) || !InUnit(g.V0) || !InUnit(g.U1) || !InUnit(g.V1))
+        {
+            return "texture coordinates are outside 0..1";
+        }
+
+        if (!float.IsFinite(g.Advance) || !(g.Advance > 0f))
+        {
+            return "the advance is not positive";
+        }
+
+        return null;
+    }
+
+    private static bool InUnit(float v) => float.IsFinite(v) && v >= 0f && v <= 1f;
 
     // Reads each glyph from native memory. ImGui.NET 1.91.6.1's ImFontGlyph wrapper does not match
     // the native struct (it reads shifted fields and has a different size), so the 1.91.6 layout is

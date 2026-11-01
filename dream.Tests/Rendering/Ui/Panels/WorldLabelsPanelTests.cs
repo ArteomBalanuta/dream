@@ -1,5 +1,6 @@
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
+using Dream.Tests.Support;
 using OpenTK.Mathematics;
 using Xunit;
 
@@ -59,6 +60,51 @@ public class WorldLabelsPanelTests
             new HudWorldLabel(new Vector2(100f, 5000f), "Below", "x")));
 
         Assert.Empty(c.Calls);
+    }
+
+    [Fact]
+    public void TwoLabelsOnTheSameSpot_DoNotOverlap_TheSecondMovesBelowTheFirst()
+    {
+        StatusBarRecordingCanvas c = Run(ViewWith(
+            new HudWorldLabel(new Vector2(500f, 300f), "Wolf", "10/10"),
+            new HudWorldLabel(new Vector2(505f, 302f), "Dire Wolf", "20/20")));
+
+        StatusBarCall wolfHealth = c.Texts.Last(t => t.Text == "10/10");
+        StatusBarCall dire = c.Texts.Last(t => t.Text == "Dire Wolf");
+        Assert.True(dire.TextPos.Y >= wolfHealth.TextPos.Y + 13f, $"second label at {dire.TextPos.Y}, first ends {wolfHealth.TextPos.Y + 13f}");
+    }
+
+    [Fact]
+    public void LabelsFarApart_AreNotMoved()
+    {
+        StatusBarRecordingCanvas c = Run(ViewWith(
+            new HudWorldLabel(new Vector2(300f, 300f), "Wolf", "10/10"),
+            new HudWorldLabel(new Vector2(900f, 300f), "Dire Wolf", "20/20")));
+
+        Assert.Equal(300f, c.Texts.Last(t => t.Text == "Dire Wolf").TextPos.Y);
+    }
+
+    [Fact]
+    public void ManyLabels_AreCappedAndNeverTakeTheRoomOfTheRest()
+    {
+        HudWorldLabel[] many = Enumerable.Range(0, 100)
+            .Select(n => new HudWorldLabel(new Vector2(100f + (n * 15f), 100f + (n % 7 * 60f)), "Label " + n, "1/1"))
+            .ToArray();
+        StatusBarRecordingCanvas c = Run(ViewWith(many));
+        Assert.True(c.Texts.Select(t => t.Text).Where(t => t!.StartsWith("Label ", StringComparison.Ordinal)).Distinct().Count() <= WorldLabelsPanel.MaxLabels);
+
+        UiBatch batch = new(BlockGlyphs.Create());
+        UiLayout layout = Layout();
+        batch.BeginFrame(in layout);
+        while (batch.QuadHeadroom >= WorldLabelsPanel.ReserveQuads)
+        {
+            batch.Solid(new UiRect(0f, 0f, 1f, 1f), UiColor.White);
+        }
+
+        int before = batch.QuadCount;
+        WorldLabelsPanel.Build(batch, ViewWith(many), layout);
+
+        Assert.Equal(before, batch.QuadCount);
     }
 
     [Fact]

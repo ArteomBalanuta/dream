@@ -13,6 +13,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Ui;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -104,9 +105,15 @@ public partial class PlayScene : IDisposable
     // The classic inventory draws its own cursor, so the OS cursor hides (it can still leave the
     // window; a drop outside cancels). Settings and the ImGui surface keep the normal cursor.
     public CursorState DesiredCursorState =>
-        _render.ClassicHudCursorActive && _settings.InventoryVisible && !_settings.SettingsVisible
-            ? CursorState.Hidden
-            : _settings.CurrentRuntimeState.DesiredCursorState;
+        ClassicCursorPolicy.Decide(
+            _render.ClassicHudCursorActive,
+            _settings.InventoryVisible,
+            _settings.SettingsVisible,
+            _windowFocused,
+            _settings.CurrentRuntimeState.DesiredCursorState);
+
+    // Set by Render each frame; true until the first one.
+    private bool _windowFocused = true;
 
     public Vector3 LastReportedPlayerPosition => _runtime.Player.LastReportedPosition;
 

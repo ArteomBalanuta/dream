@@ -36,6 +36,20 @@ public class DamageEventHitWireTests
         "\"lastAcceptedCommandSequences\":{},\"actors\":[],\"interactionMode\":0,\"worldMutations\":[],\"damageEvents\":[" +
         damageEventJson + "],\"worldChecksumSequence\":0}}}";
 
+    // The tick goldens hash this text and their script lands critical hits: HitKind must stay out of it.
+    [Theory]
+    [InlineData(FloatingCombatTextKind.Regular)]
+    [InlineData(FloatingCombatTextKind.Critical)]
+    [InlineData(FloatingCombatTextKind.Incoming)]
+    public void ToString_IsPinnedAndNeverPrintsTheHitKind(FloatingCombatTextKind hit)
+    {
+        DamageEventDelta evt = new(7, CreatureKind.Enemy, 12, true, 0, 100, hit);
+
+        Assert.Equal(
+            "DamageEventDelta { ActorId = 7, Kind = Enemy, Amount = 12, ActorDied = True, CurrentHealth = 0, MaxHealth = 100 }",
+            evt.ToString());
+    }
+
     [Fact]
     public void RegularHit_IsWrittenWithoutTheHitField()
     {

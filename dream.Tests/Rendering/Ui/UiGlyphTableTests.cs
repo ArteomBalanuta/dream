@@ -100,4 +100,49 @@ public class UiGlyphTableTests
             Assert.Equal(question, accent);
         }
     }
+
+    private static readonly UiGlyph Sane = new(0f, -9f, 6f, 1f, 0.1f, 0.1f, 0.2f, 0.2f, 7f);
+
+    [Fact]
+    public void GlyphFault_AcceptsASaneGlyph()
+    {
+        Assert.Null(UiFontSetup.GlyphFault(Sane));
+    }
+
+    [Theory]
+    [InlineData("x1equalsx0")]
+    [InlineData("x1below")]
+    [InlineData("uOver")]
+    [InlineData("vNegative")]
+    [InlineData("nan")]
+    [InlineData("advanceZero")]
+    [InlineData("advanceNegative")]
+    public void GlyphFault_RejectsAnInsaneQuestionMark(string kind)
+    {
+        UiGlyph g = kind switch
+        {
+            "x1equalsx0" => Sane with { X1 = Sane.X0 },
+            "x1below" => Sane with { X1 = -1f },
+            "uOver" => Sane with { U1 = 1.5f },
+            "vNegative" => Sane with { V0 = -0.1f },
+            "nan" => Sane with { U0 = float.NaN },
+            "advanceZero" => Sane with { Advance = 0f },
+            _ => Sane with { Advance = -2f }
+        };
+
+        Assert.NotNull(UiFontSetup.GlyphFault(g));
+    }
+
+    [Fact]
+    public void TheLoadedImGuiIsTheAuditedVersion_AndTheRealFontPassesTheGuard()
+    {
+        lock (ImGuiTestGate.Gate)
+        {
+            Assert.Equal(UiFontSetup.AuditedImGuiVersion, ImGuiNET.ImGui.GetVersion());
+        }
+
+        (UiGlyphTable glyphs, _) = RealFont.Get();
+        Assert.True(glyphs.TryGet(UiTextStyle.Body, '?', out UiGlyph q));
+        Assert.Null(UiFontSetup.GlyphFault(q));
+    }
 }
