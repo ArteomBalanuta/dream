@@ -1,6 +1,7 @@
 # Classic HUD integration, 2026-11-01
 
 Plan: `docs/ledger/plans/2026-11-01-classic-hud-plan.md`. Branch: `integrate/classic-hud`, from 1d4ede8.
+
 Status: integrated on `integrate/classic-hud` through fix loop 1 (merge `2a28261`). Full suite run 2 of 2 passed; run 1 had one failure outside the HUD, not explained (see "Fix loop 1 integration"). Tester and reviewer have not re-run on this tip. Not pushed. Not merged into `master`.
 
 ## Merges
@@ -193,7 +194,7 @@ Base 0a50211 (tip of `integrate/classic-hud`), branch `worktree-agent-a60d3d1ff2
 1. **Killing blow showed no number.** `PlayScene.Replication.cs` applied the actor snapshot (which removes the dead enemy from the client registry) before `ClientSnapshotDamageApplier`, so `TryResolveCombatActor` failed for the last hit. Damage now runs first and still runs before the presenter. `CombatTextLoopbackTests.ALethalHit_PublishesExactlyOneDamageAppliedEventOnTheClient` (real loopback server, real `PlayScene`) sets the enemy to 1 HP, lands one hit and expects exactly one event. With the two lines swapped back it fails (`Assert.Single() Failure: The collection did not contain any matching items`).
 2. **`ui_scale` above the auto fit.** `UiScale.Resolve` now returns `min(snapped configured, auto fit)`; without a viewport (0 by 0) it only snaps, which `HudOptions.SanitizeUiScale` relies on. The Settings slider shows the scale in use. Auto is unchanged. `UiScaleTests.Configured_SnapsToQuarterAndIsCappedAtTheAutoFit` changed its last case (9 at 1920x1080 is now 2.25, not 4), and `HudOptionsTests.UiScalePick_IsSavedWithTheRuntimeSettings` now expects the resolved 2.0 at 1440x1024 while the saved value stays 2.25. Both are the intended change of meaning.
 3. **4K text.** `IUiCanvas.TextScale` (default 1; `UiBatch` already had it from `UiLayout.TextScale`); `PanelText.Height(c, style)` and `InventoryWindow.BodyHeight(c)` scale the baked 13 and 26 px by it, and the status bar, notices, labels, inventory, character window and item overlays use them. Previews written by `HudPreviewTests.RealPanels_HighScale_PlayAndInventory` (3840x2160 and 2560x1440) were read: at 4K the text is doubled and sits inside its rows, tooltip, bar and gem; at scale 3 (2560x1440) the HP text is Large and fits the gem, and coordinates and EXP percent are centred.
-4. **GL failure did not latch.** `UiGlTextureUploader` checks `GLUtils.CheckGLError` after the upload; on any result it deletes the texture and throws, so the atlas store ends in Failed. `UiGlRenderer` throws from its constructor on a bad result and checks once, after the first frame that actually draws (stale errors are drained first so they are not blamed on it); then it never checks again, so there is no per-frame `glGetError`. `GL_OUT_OF_MEMORY` and `GL_CONTEXT_LOST` stay latched Fatal by the existing `CheckGLError` rule and close the window instead of falling back; `docs/configuration.md` says so. Not unit-tested: it needs a GL context.
+4. **GL failure did not latch.** `UiGlTextureUploader` checks `GLUtils.CheckGLError` after the upload; on any error result it deletes the texture and throws (errors already pending from other code are drained first, see fix loop 2), so the atlas store ends in Failed. `UiGlRenderer` throws from its constructor on a bad result and checks once, after the first frame that actually draws (stale errors are drained first so they are not blamed on it); then it never checks again, so there is no per-frame `glGetError`. `GL_OUT_OF_MEMORY` and `GL_CONTEXT_LOST` stay latched Fatal by the existing `CheckGLError` rule and close the window instead of falling back; `docs/configuration.md` says so. Not unit-tested: it needs a GL context.
 5. **Glyph guard.** `UiFontSetup.BuildGlyphTable` also fails (so the HUD falls back) on a Dear ImGui version other than the audited `1.91.6`, and when the `?` glyph of either style has X1 not above X0, UVs outside 0..1 or an advance not above 0 (`UiFontSetup.GlyphFault`, tested directly; the real font and the loaded native version pass).
 6. **Test gaps.** The cursor decision is `ClassicCursorPolicy.Decide` and `WillDraw` (table test: inventory, settings, loading, failed, latched/F3/forced, unfocused). `ClassicHudFrameGuard.Draw` is the frame run `Render` now uses: on a throw it drops the pending action and close, calls the fault handler (which latches ImGui once) and reports nothing drawn; tested with a backend that throws after an action was already picked. `DamageEventHitWireTests.ToString_IsPinnedAndNeverPrintsTheHitKind` pins the `DamageEventDelta` text.
 7. **Incoming number in first person.** Reproduced in GL before the fix (see the verification pass above). Cause as suspected: the player's combat anchor is at the camera, so the projection drops it. The ImGui HUD on master projected the same anchor (plus a depth offset toward the camera) through the same `TryProjectWorldToScreen`, so by reading the code it had the same gap; it was not run on master. Fix: `IncomingNumberAnchor` puts a local-player Incoming number that cannot project, or whose anchor is within 1.5 m of the camera, at the horizontal centre and 62% down the window. In third person it still rises over the character. GL capture below.
@@ -250,8 +251,8 @@ The only recorded failure is `artifacts/suite1.log`, 7200 B at the old line 293,
 
 - `dotnet build dream/dream.csproj`: 0 errors, 17 warnings.
 - Full suite, Debug, 2 runs, output in `artifacts/verify-bin2/` (see below).
-- Run 1: 5314 passed, 1 failed, 46 skipped of 5361, 3 m 34 s.
-- Run 2: 5315 passed, 0 failed, 46 skipped of 5361, 3 m 37 s.
+- At 0cfab49. Run 1: 5,314 passed, 1 failed, 46 skipped of 5,361, 3 m 34 s.
+- Run 2: 5,315 passed, 0 failed, 46 skipped of 5,361, 3 m 37 s.
 - The run 1 failure is `WaveCTesterLockstepTwoRestartsTests.TwoServers_RestartingTwice_KeepEqualChecksumsEveryTick_AndEqualDatabasesAfterEveryPhase`: `Assert.Null` in the `PersistentScriptedServer` constructor found a Dirt cube at (6.5, 1.72, 5.5) in the build cell, after phase 1 reported equal. It passed 6 of 6 alone. `dream/Simulation` and `dream/Server` are unchanged since 0a50211. The cause is not known.
 - The suite ran with `BaseOutputPath` `artifacts/verify-bin2/`, not `verify-bin/`: a test host left hung by a throwaway probe still held `verify-bin/Debug/net10.0/dream.dll`, and stopping it was denied. It sat idle at 0 CPU during both runs.
 
@@ -259,3 +260,21 @@ The only recorded failure is `artifacts/suite1.log`, 7200 B at the old line 293,
 
 - Explain the lockstep failure above.
 - The hung probe host is still running: PIDs 23444 (testhost), 29320 and 29024 (dotnet).
+
+# Fix loop 2, 2026-11-01
+
+Base 0cfab49 (tip of `integrate/classic-hud`). Simulation and server code are untouched.
+
+1. **Uploader drain.** `UiGlTextureUploader.Upload` calls `GLUtils.CheckGLError("before UI atlas upload")` before the upload, so an unrelated pending error cannot fail the atlas and latch ImGui. A pending Fatal is still latched by that call.
+2. **Renderer drain.** `UiGlRenderer` uses `GLUtils.CheckGLError("before classic HUD first draw")` (result ignored) instead of a raw `GL.GetError` loop, which discarded a pending Fatal without latching it.
+3. **Incoming number anchor.** The 1.5 m distance rule broke because the anchor is frozen at spawn while the camera moves. `IncomingNumberAnchor.UsesScreenAnchor(kind, viewMode, projected)` is now `Incoming && (FirstPerson || !projected)`; `ProjectClassicCombatText` gets `settings.CameraViewMode`. `NearCameraMeters` is gone.
+4. **Label cap.** `WorldLabelsPanel` walks all labels and stops when 24 are placed, so off-screen labels no longer use up the cap.
+5. **Spawned and hit in one snapshot.** `RemoteEnemyStateApplier` is split into `AddOrUpdateEnemies` and `RemoveAbsentEnemies` (`ApplyActorSnapshots` runs both). `PlayScene` applies add/update, then damage, then removal, so both a new enemy and a killed one resolve their number.
+6. **Frame guard.** `ClassicHudFrameGuard.Draw` returns the fault as `out Exception?`; `Render` latches at the call site, so no closure is allocated per frame.
+7. **Label nudge hysteresis: not done.** Labels are nudged each frame from the current projection and the order of the list; a stable fix needs per-actor state across frames, which is more than a small change. Left as is.
+8. **UI scale slider** applies while dragging and writes the config once, on release (`HudInteractionRequest.UiScaleCommitted`).
+11. **Notice transfer line** uses `int.TryFormat` (as `StatusBarPanel` does). `HudText` already formats int, long, float and double through their own `TryFormat`; only other types take the generic `AppendFormatted<T>`, and none is used on the frame path today, so it is unchanged.
+
+## Lockstep failure
+
+`WaveCTesterLockstepTwoRestartsTests` failed once in a full run at `Assert.Null` in the `PersistentScriptedServer` constructor (a Dirt cube in the build cell at the start of phase 2). That assertion assumes the build cell is empty. After phase 1 the cell holds the built cube if it did not break within 600 ticks, and whether it breaks depends on the world's seed, which is random per database (`PersistentWorldSeedDeterminismIntegrationTests` says so, and handles both cases on its single restart). Both servers hold equal copies of the database, so equality still held. This points to a test race on a random seed, not nondeterminism in the simulation, but I did not reproduce the failure with a chosen seed. The constructor takes `allowOccupiedBuildCell`, which the lockstep test passes. Other tests that start a second server on the same database (`ObjectIdCrashSafetyTests`, `BuildingsOutliveBuilderTests`, `ObjectIdRestartLoopbackTests`) still use the strict constructor and could meet the same case.

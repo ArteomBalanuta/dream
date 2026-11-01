@@ -4,8 +4,8 @@ namespace Dream.Rendering.Ui;
 
 // Runs one classic frame so that a throwing panel can never leave a half-collected request behind.
 // On a fault the surface's pending action and close flag are dropped (nothing from the failed frame
-// is sent to the server), the caller's fault handler latches the ImGui surface, and the frame reports
-// that nothing was drawn.
+// is sent to the server), the caller latches the ImGui surface, and the frame reports
+// that nothing was drawn. The fault comes back as an out value so no closure is allocated per frame.
 public static class ClassicHudFrameGuard
 {
     public static bool Draw(
@@ -13,10 +13,10 @@ public static class ClassicHudFrameGuard
         in ClassicHudFrame frame,
         out InventoryHudAction? action,
         out bool closeInventory,
-        Action<Exception> onFault)
+        out Exception? fault)
     {
         ArgumentNullException.ThrowIfNull(surface);
-        ArgumentNullException.ThrowIfNull(onFault);
+        fault = null;
         action = null;
         closeInventory = false;
         try
@@ -34,7 +34,7 @@ public static class ClassicHudFrameGuard
             surface.TakeRequests(out _, out _);
             action = null;
             closeInventory = false;
-            onFault(ex);
+            fault = ex;
             return false;
         }
     }

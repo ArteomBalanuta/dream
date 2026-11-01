@@ -77,7 +77,7 @@ public partial class PlayScene
         if (request.UiScale.HasValue)
         {
             _settings.SetUiScale(request.UiScale.Value);
-            persistDesktopConfig = true;
+            persistDesktopConfig |= request.UiScaleCommitted;
         }
 
         if (request.CloseInventory && _settings.InventoryVisible)

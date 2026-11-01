@@ -301,13 +301,16 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         private int _enemyDeathTick;
         private int _firstHitTick;
 
-        public PersistentScriptedServer(ServerPersistenceBundle bundle)
-            : this(ServerBootstrap.CreateAuthoritativeHost(bundle))
+        // allowOccupiedBuildCell: a restart on a database whose earlier phase left the built cube
+        // standing. Whether that cube broke depends on the world's random seed (see the restart
+        // test above), so a later phase cannot assume the cell is empty.
+        public PersistentScriptedServer(ServerPersistenceBundle bundle, bool allowOccupiedBuildCell = false)
+            : this(ServerBootstrap.CreateAuthoritativeHost(bundle), allowOccupiedBuildCell)
         {
             Assert.Equal(bundle.SimulationSeed, Seed);
         }
 
-        public PersistentScriptedServer(DedicatedServerHost host)
+        public PersistentScriptedServer(DedicatedServerHost host, bool allowOccupiedBuildCell = false)
         {
             _host = host;
             Runtime = _host.Runtime!;
@@ -336,7 +339,10 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             // the primary builds in the free cell between itself and that terrain, on its +X ray.
             Vector3 primary = EyeOf(PrimarySession);
             BuildCell = new Vector3(MathF.Floor(primary.X) + 1f, 1f, MathF.Floor(primary.Z));
-            Assert.Null(Runtime.Map.TryGetCubeAtCell((int)BuildCell.X, 1, (int)BuildCell.Z));
+            if (!allowOccupiedBuildCell)
+            {
+                Assert.Null(Runtime.Map.TryGetCubeAtCell((int)BuildCell.X, 1, (int)BuildCell.Z));
+            }
 
             Runtime.Enemies.Clear();
             EnemyCombatant combatant = new(

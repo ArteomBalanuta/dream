@@ -309,6 +309,7 @@ public sealed class ClassicHudIntegrationTests : IDisposable
 
         Assert.Contains("TryProjectWorldToScreen(camera, state.WorldAnchor,", body);
         Assert.Contains("ScreenAnchor =", body);
+        Assert.Contains("UsesScreenAnchor(state.Kind, viewMode, projected)", body);
         Assert.DoesNotContain("HorizontalOffset", body);
         Assert.DoesNotContain("VerticalOffset", body);
         Assert.DoesNotContain("DepthOffset", body);

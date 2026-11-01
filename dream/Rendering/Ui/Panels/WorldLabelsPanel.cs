@@ -19,10 +19,9 @@ public static class WorldLabelsPanel
         IReadOnlyList<HudWorldLabel> labels = v.Labels;
         float maxWidth = MaxWidthUnits * l.Scale;
         float lineH = PanelText.Height(c, UiTextStyle.Body);
-        int shown = Math.Min(labels.Count, MaxLabels);
         Span<UiRect> placed = stackalloc UiRect[MaxLabels];
         int placedCount = 0;
-        for (int k = 0; k < shown; k++)
+        for (int k = 0; k < labels.Count && placedCount < MaxLabels; k++)
         {
             if (c.QuadHeadroom < ReserveQuads)
             {

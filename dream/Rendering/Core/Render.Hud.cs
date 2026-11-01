@@ -213,7 +213,7 @@ public partial class Render
             return false;
         }
 
-        ProjectClassicCombatText(camera, combatFeedback, settings.FloatingCombatText);
+        ProjectClassicCombatText(camera, combatFeedback, settings.FloatingCombatText, settings.CameraViewMode);
         ProjectClassicLabels(camera, remotePlayers, activeEnemies, enemyPoseSource, enemyRenderTick);
 
         // One coordinate source for the pointer: the same window position ImGui gets, in the same
@@ -259,11 +259,16 @@ public partial class Render
             Labels = _classicLabels
         };
         HudSurfaceSelector selector = HudSelector(settings);
-        return ClassicHudFrameGuard.Draw(
-            surface, in frame, out action, out closeInventory, ex => LatchClassicHud(selector, ex.Message, ex));
+        bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
+        if (fault is not null)
+        {
+            LatchClassicHud(selector, fault.Message, fault);
+        }
+
+        return drew;
     }
 
-    private void ProjectClassicCombatText(Camera camera, CombatFeedbackSystem combatFeedback, FloatingCombatTextTuning tuning)
+    private void ProjectClassicCombatText(Camera camera, CombatFeedbackSystem combatFeedback, FloatingCombatTextTuning tuning, CameraViewMode viewMode)
     {
         _classicCombatText.Clear();
         combatFeedback.CollectRenderStates(_floatingCombatTextStates, tuning);
@@ -273,7 +278,7 @@ public partial class Render
             // path offsets stay out. A state that cannot be projected is dropped.
             FloatingCombatTextRenderState state = _floatingCombatTextStates[i];
             bool projected = TryProjectWorldToScreen(camera, state.WorldAnchor, out System.Numerics.Vector2 screen);
-            if (IncomingNumberAnchor.UsesScreenAnchor(state.Kind, state.WorldAnchor, camera.Position, projected))
+            if (IncomingNumberAnchor.UsesScreenAnchor(state.Kind, viewMode, projected))
             {
                 // The local player's own number in first person: its anchor is at the camera.
                 Vector2i viewport = GetSafeViewportSize(_currentSize);

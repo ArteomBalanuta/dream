@@ -15,20 +15,26 @@ public static class RemoteEnemyStateApplier
 
     public static void ApplyActorSnapshots(EnemyRegistry registry, IReadOnlyList<ActorSnapshot> actors)
     {
+        AddOrUpdateEnemies(registry, actors);
+        RemoveAbsentEnemies(registry, actors);
+    }
+
+    // First half of a snapshot: every live enemy in it exists and has its new state. Split from the
+    // removal so damage can resolve both an enemy that is new in this snapshot and one this
+    // snapshot kills.
+    public static void AddOrUpdateEnemies(EnemyRegistry registry, IReadOnlyList<ActorSnapshot> actors)
+    {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(actors);
 
-        HashSet<int> activeEnemyActorIds = t_activeEnemyActorIds ??= [];
-        activeEnemyActorIds.Clear();
         for (int i = 0; i < actors.Count; i++)
         {
             ActorSnapshot actor = actors[i];
-            if (actor.Kind != CreatureKind.Enemy || actor.CurrentHealth <= 0 || !actor.IsAlive)
+            if (!IsLiveEnemy(actor))
             {
                 continue;
             }
 
-            activeEnemyActorIds.Add(actor.ActorId);
             EnemyBehaviorState behaviorState = actor.EnemyBehaviorState ?? EnemyBehaviorState.Idle;
             if (registry.TryGetEnemyByActorId(actor.ActorId, out EnemyActor? existing) && existing != null)
             {
@@ -39,9 +45,29 @@ public static class RemoteEnemyStateApplier
 
             registry.Add(CreateEnemy(actor, behaviorState));
         }
+    }
+
+    // Second half: enemies the snapshot no longer lists as live are dropped.
+    public static void RemoveAbsentEnemies(EnemyRegistry registry, IReadOnlyList<ActorSnapshot> actors)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(actors);
+
+        HashSet<int> activeEnemyActorIds = t_activeEnemyActorIds ??= [];
+        activeEnemyActorIds.Clear();
+        for (int i = 0; i < actors.Count; i++)
+        {
+            if (IsLiveEnemy(actors[i]))
+            {
+                activeEnemyActorIds.Add(actors[i].ActorId);
+            }
+        }
 
         registry.RemoveAllExcept(activeEnemyActorIds);
     }
+
+    private static bool IsLiveEnemy(ActorSnapshot actor) =>
+        actor.Kind == CreatureKind.Enemy && actor.CurrentHealth > 0 && actor.IsAlive;
 
     // The client never attacks for an enemy; these were always placeholders here, not the server's
     // 12 and 1.05 s, and stay so to keep client behaviour identical.
