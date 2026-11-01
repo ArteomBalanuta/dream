@@ -6,13 +6,18 @@ Run directly to also refresh tools/ui-assets/previews/hud_*.png. Layout constant
 """
 from __future__ import annotations
 
+import dataclasses
 import math
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
+import forge
+import gemtrace
 import uiart as U
 from uiart import PPU, LIGHT_TL
 
@@ -26,8 +31,67 @@ COORDS = (5, 24, 56, 22)
 GAUGE_FILL = (73, 5, 15, 35)
 GAUGE_CAP = (64, 1, 33, 46)
 GEM = (98, -2, 50, 50)
-TALON = (140, 1, 59, 46)
-DRAGON_H = 46
+TALON = (128, -3, 71, 52)
+DRAGON = (0, -52, 118, 58)
+SETTING = (92, -5, 62, 56)
+SPILL = (59, -9, 128, 64)       # centred on the gem
+DRAGON_W, DRAGON_H = DRAGON[2], DRAGON[3]
+
+def _material(name, base, **changes):
+    """A bar-only variant of a forge material (forge itself stays as the art core left it)."""
+    forge.MATERIALS[name] = dataclasses.replace(forge.MATERIALS[base], **changes)
+    forge.MATERIAL_NAMES.append(name)
+    forge.MAT_ID[name] = len(forge.MATERIAL_NAMES) - 1
+
+
+# gunmetal armour plates: bright sheen on the lit bevels, calm faces (the stock steel patina shows as a lattice)
+_material("steel.armour", "steel", f0=(0.15, 0.145, 0.14), rough=0.47, vary=0.14, grit=0.45)
+
+class BarRelief(forge.Relief):
+    """forge.Relief with the roughness field smoothed: the stock plane-wave patina shows as a lattice on
+    polished faces; here only the broad variation stays, so a plate's sheen is calm and its edges carry it."""
+
+    def surface(self, seed):
+        s = super().surface(seed)
+        soft = forge.blur(s.rough, 2.4 * PPU, self.wrap)
+        s.rough = (0.25 * s.rough + 0.75 * soft).astype(np.float32)
+        return s
+
+
+# The bar's own light: a warm key from the upper left, a low amber candle on the right, cold fill, and
+# only faint reflection panels, so black iron shows its form in edges and broken sheen, not as cloudy chrome.
+BAR_RIG = forge.Rig(
+    lights=(
+        forge.Light((-0.60, -0.60, 0.53), (1.00, 0.92, 0.80), 11.0, shadow=True),
+        forge.Light((0.75, -0.25, 0.45), (1.00, 0.60, 0.28), 1.5),
+        forge.Light((-0.15, 0.80, 0.30), (0.62, 0.74, 1.00), 0.03),
+    ),
+    panels=(
+        forge.Panel(-0.18, -0.62, 0.55, 0.22, 0.26, (1.0, 0.93, 0.85)),
+        forge.Panel(0.80, 0.05, 0.20, 0.50, 0.20, (1.0, 0.64, 0.34)),
+    ),
+    ambient=(0.017, 0.018, 0.022),
+)
+
+
+def _lit(r, seed, emit=None, rig=None, **kw):
+    """Relief.render with the bar's rig and an optional emission map (HxWx3 linear, so an eye can burn).
+    Returns float sRGB RGBA at hi-res; pass it to forge.downsample."""
+    rig = rig or BAR_RIG
+    prim = r.h
+    h = prim + r._detail(seed, kw.get("detail", 1.0))
+    m = forge.bake(h, prim, rig.lights[0].dir, r.wrap)
+    s = forge.age(r.surface(seed), m, seed, kw.get("wear", 0.3), kw.get("grime", 0.5), kw.get("rust", 0.2), kw.get("dust", 0.1),
+                  streak=r._drip_mask(), origin=(r.ox, r.oy), period=r.period, wrap=r.wrap)
+    # inlay of bone and brass catches the candle: a little emission, so it carries the bar's bright mass
+    inlay = (r.mid == forge.MAT_ID["rail"]).astype(np.float32)[..., None] * np.array((0.34, 0.25, 0.13), np.float32)
+    inlay = inlay + (r.mid == forge.MAT_ID["brass"]).astype(np.float32)[..., None] * np.array((0.07, 0.045, 0.016), np.float32)
+    inlay = forge.blur(inlay, 0.25 * PPU, r.wrap) * kw.get("inlay", 1.0)
+    s.emit = inlay if emit is None else inlay + emit
+    img = forge.finish(forge.light(s, m, rig), s.alpha, kw.get("exposure", 1.0), kw.get("value_map"))
+    if kw.get("soft"):  # a hair of focus on the big sprites, so the finest bevel lines do not alias at 2.25 px/u
+        img[..., :3] = forge.blur(img[..., :3], kw["soft"], r.wrap)
+    return img
 
 
 # helpers ------------------------------------------------------------------------------
@@ -174,60 +238,6 @@ def solid(colour, mask):
 # bar base -----------------------------------------------------------------------------
 
 
-def iron_field(w_u, h_u, seed):
-    """Black iron with low relief: cast pitting and hammered dents."""
-    r = Relief(w_u, h_u, "hud.iron.base", 1.0, 0.45)
-    h, w = r.H_px, r.W_px
-    r.h = (U.fbm(h, w, seed + ".dent", 7.0, 3) * 1.1 + U.fbm(h, w, seed + ".pit", 1.2, 2) * 0.22).astype(np.float32)
-    return r
-
-
-def groove(r, pts, depth=0.5, width=0.5):
-    m = U.stroke_mask(r.w_u, r.h_u, pts, width) > 0.5
-    r.h[m] -= depth
-
-
-def rail_strip(img, x, y, w, seed, th=0.8, wear=None):
-    """Ivory-gold rail, worn along its length; thin dark under-line."""
-    H, W = img.shape[:2]
-    h_u, w_u = H / PPU, W / PPU
-    img = U.over(img, solid("#000000", U.rect_mask(w_u, h_u, (x, y + th, w, 0.5)) * 0.9))
-    m = U.rect_mask(w_u, h_u, (x, y, w, th))
-    n = U.fbm(H, W, seed, 10.0, 3) if wear is None else wear
-    t = smooth(0.2, 0.7, n)[..., None]
-    across = np.clip(1 - np.abs((np.arange(H, dtype=np.float32) / PPU - y - th * 0.45) / (th * 0.6)), 0, 1)[:, None, None]
-    c = rgb("hud.rail") * (0.42 + 0.58 * t) + (rgb("#EDECD6") - rgb("hud.rail")) * across * t
-    return U.over(img, np.dstack((np.clip(c, 0, 1).astype(np.float32), m)))
-
-
-def recess(r, rect, radius=1.0, z=-1.2, alb="hud.iron.black"):
-    m = U.rect_mask(r.w_u, r.h_u, rect, radius) > 0.5
-    r.h[m] = z
-    r.alb[m] = rgb(alb)
-    r.gl[m] = 0.15
-
-
-IRON_LIGHT = dict(amb=0.9, dif=0.9, key=0.32, fill=0.3, ao=0.8, ao_r=2.0)
-
-
-def base_left():
-    r = iron_field(LEFT_W, BAR_H, "hud.base.left")
-    # cast plate seams, so the iron reads as assembled segments
-    for pts in ([(63, 0), (63, 48)], [(97, 2), (97, 48)], [(149, 2), (149, 48)], [(167, 2), (172, 26), (167, 48)]):
-        groove(r, pts, 0.7, 0.6)
-    recess(r, (3.0, 0.0, 60, 23.6), 1.5)
-    recess(r, (3.0, 23.4, 60, 24.2), 1.5)
-    recess(r, (66.5, 2.0, 28, 44.5), 1.0, -1.5)
-    recess(r, (96, 0, 56, 48), 6.0, -1.5)
-    for x in (66, 96, 152, 196):
-        r.sweep([(x, 45.6), (x, 45.7)], 0.9, 0.3, alb="#3A3A38", gloss=0.8)
-    img = r.render(**IRON_LIGHT)
-    img = rail_strip(img, 62, 0.8, 137, "hud.base.left.rail")
-    img = rail_strip(img, 0, 46.9, 199, "hud.base.left.rail2", 0.45)
-    img[..., 3] = 1
-    return img
-
-
 def chain_band(w_u, h_u, y, x0=0.0, x1=None, period=4.0, key=0.55):
     """Slanted-link chain as a relief on black, periodic in `period`."""
     x1 = w_u if x1 is None else x1
@@ -241,192 +251,12 @@ def chain_band(w_u, h_u, y, x0=0.0, x1=None, period=4.0, key=0.55):
     return img
 
 
-def base_centre():
-    r = iron_field(CENTRE_W, BAR_H, "hud.base.centre")
-    recess(r, (10, 16, 96, 31), 1.5, -1.0, alb="#080808")
-    recess(r, (103, 11.5, 34, 36), 1.0, -1.2)
-    recess(r, (140, 16, 100, 31), 1.5, -1.0, alb="#080808")
-    recess(r, (10, 11.6, 222, 3.8), 0.5, -1.4)
-    for x in (13.0, 229.0):
-        r.sweep([(x, 13.5), (x, 13.6)], 1.6, 0.2, alb="#6E7074", gloss=1.0)
-    img = r.render(**IRON_LIGHT)
-    img = U.over(img, chain_band(CENTRE_W, BAR_H, 13.5, 15, 227))
-    img = rail_strip(img, 0, 0.8, 242, "hud.base.centre.rail")
-    img = rail_strip(img, 0, 46.9, 242, "hud.base.centre.rail2", 0.45)
-    img[..., 3] = 1
-    return img
-
-
-def rope(r, y, period, w_u, band=7.0, rad=2.0, z=0.6, alb="#1C1C1D", slant=1.0, x0=0.0):
-    """Twisted cord: slanted S lobes side by side, periodic in x."""
-    n = int(w_u / period) + 4
-    for i in range(-2, n):
-        x = x0 + i * period
-        pts = U.bezier((x - band * 0.55 * slant, y + band / 2), (x - band * 0.1 * slant, y + band * 0.1),
-                       (x + band * 0.1 * slant, y - band * 0.1), (x + band * 0.55 * slant, y - band / 2), 14)
-        rs = [rad * (0.45 + 0.55 * math.sin(math.pi * k / 14)) for k in range(15)]
-        zs = [z + rad * 0.35 * math.sin(math.pi * k / 14) + i * 0.0 for k in range(15)]
-        r.sweep(pts, rs, zs, alb=alb, gloss=1.0, step_px=4)
-
-
-def gapfill():
-    """Three tile widths are rendered and the middle cropped, so the wrap is exact."""
-    w = 64
-    tw = w * 3
-    r = Relief(tw, BAR_H, "hud.iron.base", 1.0, 0.45)
-    h0, w0 = int(BAR_H * PPU), int(w * PPU)
-    dents = U.fbm(h0, w0, "hud.gapfill.dent", 7.0, 3) * 1.1 + U.fbm(h0, w0, "hud.gapfill.pit", 1.2, 2) * 0.22
-    r.h = np.tile(dents, (1, 3)).astype(np.float32)
-    recess(r, (0, 11.6, tw, 3.8), 0, -1.4)
-    recess(r, (0, 17.0, tw, 29.0), 0, -1.6)
-    rope(r, 24.0, 16 / 3, tw, 11.0, 2.3, 0.4)
-    rope(r, 38.0, 16 / 3, tw, 11.0, 2.3, 0.4, slant=-1.0)
-    img = r.render(amb=0.9, dif=0.9, key=0.42, fill=0.25, ao=0.8, ao_r=2.0)
-    img = U.over(img, chain_band(tw, BAR_H, 13.5, period=4.0))
-    H, W = img.shape[:2]
-    for y, th, tag in ((0.8, 0.8, "a"), (46.9, 0.45, "b")):
-        wear = np.tile(U.fbm(H, w0, "hud.gapfill.rail" + tag, 10.0, 3), (1, 3))
-        img = rail_strip(img, 0, y, tw, "", th, wear)
-    out = img[:, w0 : w0 * 2].copy()
-    out[..., 3] = 1
-    return out
-
-
 # gems ---------------------------------------------------------------------------------
 
 
 GEM_U = 50
-
-
-# Original cut: a ten-sided stone narrowing to a short keel, drawn in sprite u. Three rings of
-# vertices give the classic table, star, bezel and girdle planes.
-GIRDLE = [(14, 2.5), (34, 2.5), (45, 11), (48.5, 24), (43, 36), (30, 47), (20, 47), (7, 36), (1.5, 24), (5, 11)]
-N_SIDES = len(GIRDLE)
-TABLE_C = (24.0, 23.0)  # the table sits a touch up and left of the stone's centre
-STONE_C = (25.0, 24.0)
-TABLE = [(TABLE_C[0] + (x - STONE_C[0]) * 0.60, TABLE_C[1] + (y - STONE_C[1]) * 0.60) for x, y in GIRDLE]
-BEZEL = []
-for _i in range(N_SIDES):
-    _a, _b = GIRDLE[_i], GIRDLE[(_i + 1) % N_SIDES]
-    BEZEL.append((STONE_C[0] + ((_a[0] + _b[0]) / 2 - STONE_C[0]) * 0.80, STONE_C[1] + ((_a[1] + _b[1]) / 2 - STONE_C[1]) * 0.80))
-
-
-def gem_palette(kind):
-    if kind == "hp":
-        return dict(
-            bright="hud.hp.bright", mid="hud.hp.mid", deep="hud.hp.deep", void="hud.hp.void", rim="hud.hp.rim",
-            lit="#FF5A3A", pale="#F08A72", glow="#D45E45", wash="#98210B", core="#A61302", top="#FBE7DA",
-        )
-    return dict(
-        bright="hud.mp.bright", mid="hud.mp.mid", deep="hud.mp.deep", void="hud.mp.void", rim="hud.mp.rim",
-        lit="#2FB4F2", pale="#7FD8F4", glow="#2F7FEA", wash="#0222DF", core="#0F1771", top="#40C8F0",
-    )
-
-
-def facet_tone(pts):
-    """0..1 from which way a plane leans: upper left catches the light, the keel falls dark."""
-    x = sum(p[0] for p in pts) / len(pts) - STONE_C[0]
-    y = sum(p[1] for p in pts) / len(pts) - STONE_C[1]
-    d = math.hypot(x, y) or 1
-    return 0.5 + 0.5 * (x * -0.5 + y * -0.87) / d
-
-
-def tone_colour(c, t):
-    ramp = ("void", "deep", "wash", "mid", "bright", "lit", "pale")
-    return c[ramp[min(int(max(t, 0) * len(ramp)), len(ramp) - 1)]]
-
-
-def gem_facets(c):
-    """Painted flat: girdle planes, then bezel kites and stars, then the table's shallow star."""
-    f = [(GIRDLE, c["void"])]
-    n = N_SIDES
-    for i in range(n):
-        g0, g1 = GIRDLE[i], GIRDLE[(i + 1) % n]
-        m, m0 = BEZEL[i], BEZEL[i - 1]
-        tri = [m, g0, g1]
-        f.append((tri, tone_colour(c, facet_tone(tri) * 0.8 + (0.0 if i % 2 else 0.1))))
-        kite = [m0, TABLE[i], m, g0]
-        f.append((kite, tone_colour(c, facet_tone(kite) * 0.95 + (0.12 if i % 2 else 0.0)), tone_colour(c, facet_tone(kite) * 0.72)))
-    for i in range(n):
-        star = [TABLE[i], TABLE[(i + 1) % n], BEZEL[i]]
-        f.append((star, tone_colour(c, facet_tone(star) * 0.7 + 0.26)))
-    apex = (TABLE_C[0] + 2.5, TABLE_C[1] - 1.5)
-    for i in range(n):
-        tri = [TABLE[i], TABLE[(i + 1) % n], apex]
-        f.append((tri, c["bright"] if i % 2 else c["mid"]))
-    # three long refraction shards, off the apex
-    f.append(([TABLE[9], TABLE[0], apex], c["lit"]))
-    f.append(([TABLE[2], TABLE[3], apex], c["lit"]))
-    f.append(([apex, TABLE[6], TABLE[5]], c["bright"]))
-    return f
-
-
-def catmull(pts, n=10):
-    out = []
-    p = [pts[0]] + list(pts) + [pts[-1]]
-    for i in range(1, len(p) - 2):
-        p0, p1, p2, p3 = (np.array(q, dtype=np.float64) for q in p[i - 1 : i + 3])
-        for t in np.linspace(0, 1, n, endpoint=False):
-            out.append(tuple(0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t**3)))
-    out.append(tuple(pts[-1]))
-    return out
-
-
-def rim_path():
-    """Follows the table from top left, down the left, along the keel, up to the right; open top right."""
-    pts = [TABLE[0], TABLE[9], TABLE[8], TABLE[7], TABLE[6], TABLE[5], TABLE[4], ((TABLE[4][0] + TABLE[3][0]) / 2, (TABLE[4][1] + TABLE[3][1]) / 2)]
-    return catmull(pts, 12)
-
-
-def rim_layers(kind):
-    """Rim arc as colour and alpha: a swelling hot core in a tight falloff, tapered at both ends."""
-    c = gem_palette(kind)
-    path = rim_path()
-    n = len(path)
-    w = [0.2 + 0.8 * math.sin(math.pi * i / (n - 1)) ** 0.6 for i in range(n)]
-    r = Relief(GEM_U, GEM_U)
-    r.sweep(path, [0.5 * v for v in w])
-    core = r.a.copy()
-    r = Relief(GEM_U, GEM_U)
-    r.sweep(path, [0.85 * v for v in w])
-    a = np.clip(np.maximum(fblur(r.a, 0.3 * PPU) * 1.3, core), 0, 1)
-    # the arc dissolves as it climbs, so it never forms a bright bar along the top
-    a = a * smooth(TABLE[0][1] - 0.5, TABLE[0][1] + 7.0, r.yu)
-    return np.dstack((np.broadcast_to(rgb(c["rim"]), a.shape + (3,)), a)).astype(np.float32)
-
-
-def gem_layers(kind):
-    c = gem_palette(kind)
-    img = U.facet_gem(GEM_U, GEM_U, gem_facets(c))
-    sil = U.poly_mask(GEM_U, GEM_U, GIRDLE)
-    h, w = sil.shape
-    # thin ridge lines where planes meet, strongest on the lit side
-    for i in range(N_SIDES):
-        m0 = BEZEL[i - 1]
-        for a, b in ((m0, GIRDLE[i]), (TABLE[i], m0), (TABLE[i], BEZEL[i])):
-            k = 0.16 + 0.34 * facet_tone([a, b])
-            img = U.over(img, solid(c["pale"], U.stroke_mask(GEM_U, GEM_U, [a, b], 0.28) * k))
-    # the two soft shapes the spec allows: depth core and pink glint
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    xu, yu = (xx + 0.5) / PPU, (yy + 0.5) / PPU
-    cx, cy = TABLE_C[0] - 6.0, TABLE_C[1] + 2.0
-    core = np.exp(-(((xu - cx) / 5.2) ** 2 + ((yu - cy) / 6.2) ** 2))
-    gx, gy = TABLE_C[0] + 7.0, TABLE_C[1] - 3.0
-    glint = np.exp(-(((xu - gx) / 3.8) ** 2 + ((yu - gy) / 4.6) ** 2))
-    img[..., :3] = img[..., :3] * (1 - 0.85 * core[..., None]) + rgb(c["deep"]) * 0.85 * core[..., None]
-    img[..., :3] = img[..., :3] + (rgb(c["pale"]) - img[..., :3]) * 0.30 * glint[..., None]
-    # small pale glint on the crown's lower edge
-    g = U.ellipse_mask(GEM_U, GEM_U, 8.2, 13.0, 2.0, 0.65, -52)
-    img = U.over(img, solid(c["rim"], fblur(g, 0.2 * PPU)))
-    # girdle darkening, so the outline turns away rather than stopping
-    e = 1 - smooth(0.0, 0.9 * PPU, U.sdf(sil))
-    img[..., :3] *= (1 - 0.55 * e)[..., None]
-    img[..., 3] = sil
-    spec = rim_layers(kind)
-    spec[..., 3] *= sil
-    full = U.over(img, spec)
-    full[..., 3] = sil
-    return full, spec
+SETTING_U = (62, 56)
+SPILL_U = (128, 64)
 
 
 def desat(img, amount, dim):
@@ -437,306 +267,352 @@ def desat(img, amount, dim):
 
 
 def gem_set(kind):
-    full_f, spec_f = gem_layers(kind)
-    if kind == "mp":
-        full_f, spec_f = U.mirror_x(full_f), U.mirror_x(spec_f)
-    full = U.downsample(full_f)
-    empty = U.downsample(desat(full_f, 0.6, 0.30))
-    spec = U.downsample(spec_f)
-    a = full[..., 3]
-    empty[..., 3] = a
-    ys = np.nonzero(a.max(axis=1))[0]
-    top, bot = ys.min(), ys.max()
-    v = np.clip((np.arange(a.shape[0]) - top) / max(bot - top, 1), 0, 1)
-    g = (v * 255 + 0.5).astype(np.uint8)
-    mask = np.zeros_like(full)
-    mask[..., :3] = g[:, None, None]
-    mask[..., 3] = a
+    """The four gem layers from the ray tracer. All share the pivot at the stone's centre."""
+    layers = gemtrace.render_set(kind)
     piv = (GEM_U * 2, GEM_U * 2)
-    return [
-        U.Sprite(f"gem.{kind}.full", full, pivot=piv),
-        U.Sprite(f"gem.{kind}.empty", empty, pivot=piv),
-        U.Sprite(f"gem.{kind}.mask", mask, pivot=piv),
-        U.Sprite(f"gem.{kind}.spec", spec, pivot=piv),
-    ]
+    return [U.Sprite(f"gem.{kind}.{k}", layers[k], pivot=piv) for k in ("full", "empty", "mask", "spec")]
+
+
+def gem_spill(kind, full_alpha):
+    """Additive light the stone throws on the iron and the talons: a bright ring hugging the silhouette and
+    a long soft falloff, nothing over the stone itself. Straight alpha; the runtime scales it with the fill."""
+    w, h = SPILL_U[0] * U.SCALE, SPILL_U[1] * U.SCALE
+    a = np.zeros((h, w), np.float32)
+    g = full_alpha.astype(np.float32) / 255
+    ox, oy = (w - g.shape[1]) // 2, (h - g.shape[0]) // 2
+    a[oy : oy + g.shape[0], ox : ox + g.shape[1]] = g
+    glow = np.zeros_like(a)
+    for sigma_u, gain in ((1.6, 0.55), (4.5, 0.34), (11.0, 0.20), (24.0, 0.10)):
+        glow += forge.blur(a, sigma_u * U.SCALE) * gain
+    glow *= 1 - smooth(0.25, 0.9, forge.blur(a, 0.6 * U.SCALE))      # nothing over the stone
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    edge = np.minimum(np.minimum(xx, w - 1 - xx), np.minimum(yy, h - 1 - yy)) / (8.0 * U.SCALE)
+    glow *= smooth(0.0, 1.0, edge)                                  # and gone before the border
+    col = np.array({"hp": (1.0, 0.16, 0.07), "mp": (0.12, 0.42, 1.0)}[kind], np.float32)
+    alpha = np.clip(glow, 0, 1)
+    out = np.dstack((np.broadcast_to(col, (h, w, 3)), alpha))
+    return np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8)
+
+
+def setting():
+    """Dark forged collar the stone sits in: a heavy rolled lip, a pocket of black, and six forged
+    clasp bosses on the collar. The stone covers the pocket, the talons cover the right side."""
+    w, h = SETTING_U
+    r = BarRelief(w, h, "iron.black", 0.0)
+    cx, cy = w / 2, h / 2 + 0.6
+    r.plate(forge.Ellipse(cx, cy, 30.8, 27.6), z=0.0, bevel=3.6, profile="rolled", rise=0.55, mat="iron.warm", wobble=0.10, nick=0.02, wob_scale=9.0, seed="setting.outer")
+    r.plate(forge.Ellipse(cx, cy, 27.9, 25.6), z=1.7, bevel=2.2, profile="rolled", rise=0.6, mat="iron", wobble=0.08, nick=0.02, wob_scale=9.0, seed="setting.lip")
+    r.pocket(forge.Ellipse(cx, cy, 25.0, 24.6), depth=4.4, wall=1.3, mat="void", wobble=0.06, seed="setting.pocket")
+    # a worn brass bead rolled round the outer lip, broken in four places
+    ring = [(cx + 29.1 * math.cos(t), cy + 26.1 * math.sin(t)) for t in np.linspace(0, math.tau, 120)]
+    for i, (a0, a1) in enumerate(((0.05, 0.19), (0.31, 0.44), (0.60, 0.70), (0.84, 0.95))):
+        seg = ring[int(a0 * 120) : int(a1 * 120) + 1]
+        r.plate(forge.Capsule(seg, 0.55), z=r.h[int(seg[0][1] * U.PPU), int(seg[0][0] * U.PPU)] + 0.1, bevel=0.4, profile="rolled", rise=0.9, mat="brass", wobble=0.04, nick=0.01, seed=f"setting.bead{i}")
+    for i, t in enumerate(np.radians((-100, -45, 8, 62, 122, 190))):
+        x, y = cx + 28.3 * math.cos(t), cy + 25.4 * math.sin(t)
+        r.dome(x, y, 1.9, z=float(r.h[int(y * U.PPU), int(x * U.PPU)]), mat="iron.rivet", seed=f"setting.boss{i}")
+    return forge.downsample(_lit(r, "hud.setting", wear=0.22, grime=0.55, rust=0.16, dust=0.06, value_map=None))
+
+
+# forged bar plates ---------------------------------------------------------------------
+
+R_ = forge.Rect
+P_ = forge.Poly
+
+
+def _vmap(w_u, h_u, ends, peak, top=0.86, floor=0.58, mottle=0.0, seed="", period=None):
+    """Composition: dark at the group ends, open towards the focal point, a little darker at top and bottom,
+    and broad mottling (5 to 18 u) like old oil and soot on the plates, so the bar has big soft shapes."""
+    H, W = int(h_u * PPU), int(w_u * PPU)
+    x = (np.arange(W, dtype=np.float32)[None, :] + 0.5) / PPU
+    y = (np.arange(H, dtype=np.float32)[:, None] + 0.5) / PPU
+    vx = floor + (1 - floor) * np.exp(-(((x - peak) / ends) ** 2))
+    vy = top + (1 - top) * np.exp(-(((y - h_u * 0.5) / (h_u * 0.45)) ** 2))
+    vm = vx * vy
+    if mottle:
+        n = forge.waves(x, y, seed + ".mottle", 12, 7.0, 26.0, (1.0, 1.0), (period, None))
+        vm = vm * (1 + mottle * np.tanh(n * 0.9))
+    return vm.astype(np.float32)
+
+
+def _bolt(r, x, y, rad, seed):
+    iy, ix = min(max(int(y * PPU), 0), r.H_px - 1), min(max(int(x * PPU), 0), r.W_px - 1)
+    r.dome(x, y, rad, z=float(r.h[iy, ix]), mat="iron.rivet", seed=seed)
+
+
+def _rail(r, x0, x1, y, w, seed, notch=True):
+    """A worn brass-ivory inlay, set into a groove, ending in forged points. Never longer than 30 u."""
+    zb = float(r.h[int(y * PPU), int(x0 * PPU) + 8])
+    r.pocket(forge.Capsule([(x0, y), (x1, y)], w / 2 + 0.34), depth=0.5, wall=0.30, mat="void", wobble=0.05, seed=seed + ".g")
+    e = w * 0.9
+    shape = P_([(x0, y), (x0 + e, y - w / 2), (x1 - e, y - w / 2), (x1, y), (x1 - e, y + w / 2), (x0 + e, y + w / 2)])
+    r.plate(shape, z=zb - 0.30, bevel=0.30, profile="chamfer", rise=1.0, mat="rail", wobble=0.06, nick=0.02, seed=seed)
+    if notch:
+        rg = U.rng(seed + ".n")
+        xx = x0 + 2.5 + 3.0 * float(rg.random())
+        while xx < x1 - 2.5:
+            r.pocket(R_(xx, y - w * 0.6, 0.42, w * 1.2), depth=0.30, wall=0.20, seed=f"{seed}.n{xx:.1f}")
+            xx += 4.0 + 4.5 * float(rg.random())
+
+
+def _trim(r, rect, inset, radius, seed, width=0.62, seg=(6.0, 15.0), gap=(1.4, 4.2)):
+    """A thin worn-brass trim following the outline of a lip, inset from its edge and broken into
+    hand-laid pieces of different lengths, so a socket reads as gilt armour, not as a drawn border."""
+    x, y, w, h = rect
+    pts = forge._round_path(x + inset, y + inset, x + w - inset, y + h - inset, max(radius - inset, 0.6), 7)
+    lens = [0.0]
+    for (a, b), (c, d) in zip(pts[:-1], pts[1:]):
+        lens.append(lens[-1] + math.hypot(c - a, d - b))
+    total = lens[-1]
+    rg = U.rng(seed + ".trim")
+    pos = float(rg.random()) * gap[1]
+    k = 0
+    while pos < total - 2.0:
+        end = min(pos + seg[0] + (seg[1] - seg[0]) * float(rg.random()), total)
+        idx = [i for i, l in enumerate(lens) if pos <= l <= end]
+        if len(idx) >= 2:
+            piece = [pts[i] for i in idx]
+            zs = [float(r.h[min(max(int(py * PPU), 0), r.H_px - 1), min(max(int(px * PPU), 0), r.W_px - 1)]) for px, py in piece]
+            wd = width * (0.8 + 0.5 * float(rg.random()))
+            r.plate(forge.Capsule(piece, wd / 2), z=float(np.median(zs)) - 0.12, bevel=0.32, profile="rolled", rise=1.0, mat="brass", wobble=0.04, nick=0.02, seed=f"{seed}.t{k}")
+            k += 1
+        pos = end + gap[0] + (gap[1] - gap[0]) * float(rg.random())
+
+
+def bar_left():
+    """Left group, 199 x 48 u: three plate stacks (menu, gauge, gem seat) and the first of the arm bands,
+    each overlapping the last, on a nearly black field. Sprites sit in the recesses it leaves."""
+    w, h = LEFT_W, BAR_H
+    r = BarRelief(w, h, "iron.black", 1.0)
+    r.plate(R_(0, 0, w, h), z=0.0, bevel=0.5, rise=0.0, seed="bl.field")
+    # the arm bands carry on under the talon and out into the gap between the groups
+    r.plate(P_([(146, 29), (210, 29), (210, 52), (146, 52)]), z=0.6, bevel=2.8, profile="rolled", rise=0.5, mat="iron.cold", wobble=0.14, nick=0.015, seed="bl.band.c")
+    r.plate(P_([(146, -4), (210, -4), (210, 27), (146, 27)]), z=1.0, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.14, nick=0.015, seed="bl.band.a")
+    r.plate(P_([(146, 13), (210, 13), (210, 41), (146, 41)]), z=2.2, bevel=3.0, profile="rolled", rise=0.55, mat="iron", wobble=0.14, nick=0.015, seed="bl.band.b")
+    # gem seat: a broad plate with a deep recess for the collar
+    r.plate(R_(93, -3, 62, 54, 12), z=0.9, bevel=3.2, profile="rolled", rise=0.55, mat="iron.warm", wobble=0.16, nick=0.02, wob_scale=8.0, seed="bl.seat")
+    r.pocket(forge.Ellipse(123.0, 23.6, 32.6, 29.6), depth=2.6, wall=1.4, mat="void", wobble=0.08, seed="bl.seat.pocket")
+    # gauge pillar, standing proud of both neighbours
+    r.plate(R_(62.5, -2.5, 38, 53, 4), z=1.9, bevel=2.6, profile="rolled", rise=0.5, mat="iron.cold", wobble=0.14, nick=0.02, seed="bl.pillar")
+    r.pocket(R_(66.4, 2.2, 29.6, 43.8, 5), depth=3.2, wall=1.0, mat="void", wobble=0.06, seed="bl.pillar.pocket")
+    # menu plate with two sockets for the slabs
+    r.plate(R_(-8, -1.5, 72.5, 51.0, 4.5), z=0.8, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.14, nick=0.02, seed="bl.menu")
+    r.pocket(R_(3.4, 0.4, 59.2, 23.0, 1.4), depth=2.2, wall=0.9, mat="void", wobble=0.05, seed="bl.sock.a")
+    r.pocket(R_(3.4, 23.9, 59.2, 22.8, 1.4), depth=2.2, wall=0.9, mat="void", wobble=0.05, seed="bl.sock.b")
+    for i, (x, y, rad) in enumerate(((1.6, 3.0, 1.5), (1.6, 44.8, 1.5), (65.6, 23.6, 1.7), (97.0, 4.6, 1.7), (97.0, 42.6, 1.7), (183.0, 6.0, 1.9), (183.0, 45.0, 1.9))):
+        _bolt(r, x, y, rad, f"bl.bolt{i}")
+    _rail(r, 8.0, 36.0, 47.0, 1.5, "bl.rail.a")
+    _rail(r, 102.0, 120.0, 46.2, 1.6, "bl.rail.b")
+    return forge.downsample(_lit(r, "hud.bar.left", wear=0.26, grime=0.55, rust=0.12, dust=0.06, detail=0.5, soft=1.8, value_map=_vmap(w, h, 70, 124, mottle=0.55, seed="bl")))
+
+
+# numerals and letters ------------------------------------------------------------------
+
+NUM_U = (8, 12)
+
+
+def _arc(cx, cy, rx, ry, a0, a1, n=16):
+    return [(cx + rx * math.cos(math.radians(a0 + (a1 - a0) * k / n)), cy + ry * math.sin(math.radians(a0 + (a1 - a0) * k / n))) for k in range(n + 1)]
+
+
+def _rot180(strokes, cx=4.0, cy=6.0):
+    return [[(2 * cx - x, 2 * cy - y) for x, y in s] for s in strokes]
+
+
+# Bold monoline skeletons on an 8 x 12 u cell (y down); the stroke is 2.1 u. Our own forms, a little flared.
+_G6 = [_arc(4.0, 7.4, 2.45, 2.9, 0, 360, 22), [(1.55, 7.4), (1.9, 4.6), (3.0, 2.9), (5.7, 1.7)]]
+_GLYPHS = {
+    "0": [_arc(4.0, 6.0, 2.45, 4.1, 0, 360, 26)],
+    "1": [[(2.4, 3.6), (4.7, 1.8), (4.7, 10.4)], [(2.3, 10.4), (7.0, 10.4)]],
+    "2": [_arc(4.0, 4.5, 2.45, 2.7, -200, 20, 16) + [(1.8, 10.4), (6.8, 10.4)]],
+    "3": [_arc(3.9, 3.9, 2.3, 2.2, -160, 100, 14), _arc(3.9, 8.1, 2.7, 2.4, -100, 160, 14)],
+    "4": [[(5.3, 10.4), (5.3, 1.6), (1.3, 7.3), (7.0, 7.3)]],
+    "5": [[(6.5, 1.8), (2.4, 1.8), (2.0, 5.3)] + _arc(3.9, 7.5, 2.7, 2.9, -125, 150, 16)],
+    "6": _G6,
+    "7": [[(1.4, 1.8), (6.7, 1.8), (3.0, 10.4)]],
+    "8": [_arc(4.0, 3.9, 2.2, 2.2, 0, 360, 20), _arc(4.0, 8.1, 2.65, 2.5, 0, 360, 20)],
+    "9": _rot180(_G6),
+    "/": [[(6.5, 1.4), (1.7, 10.6)]],
+}
+_LETTERS = {
+    "q": [_arc(3.5, 4.4, 2.5, 3.2, 0, 360, 22), [(4.0, 6.6), (6.4, 9.4)]],
+    "w": [[(0.6, 1.0), (1.9, 9.0), (3.5, 3.4), (5.1, 9.0), (6.4, 1.0)]],
+    "e": [[(5.9, 1.1), (1.3, 1.1), (1.3, 9.0), (5.9, 9.0)], [(1.3, 5.0), (4.9, 5.0)]],
+}
+
+
+def _glyph(strokes, w, h, seed, half=1.05, outline=0.85, mat="ivory", wear=0.20):
+    """Bold embossed glyph: a dark rim under a lit ivory body. Straight RGBA at atlas density."""
+    r = BarRelief(w, h, "iron.black", 0.0)
+    k, cx, cy = 0.88, w / 2, h / 2          # keep the dark rim clear of the cell edge
+    strokes = [[(cx + (x - 4.0) * k, cy + (y - 6.0) * k) for x, y in s_] for s_ in strokes]
+    for i, s in enumerate(strokes):
+        r.plate(forge.Capsule(s, half + outline), z=0.0, bevel=0.2, profile="rolled", rise=0.0, mat="void", mode="max", seed=f"{seed}.o{i}")
+    for i, s in enumerate(strokes):
+        r.plate(forge.Capsule(s, half), z=0.6, bevel=0.85, profile="rolled", rise=0.8, mat=mat, mode="max", seed=f"{seed}.b{i}")
+    hi = _lit(r, seed, wear=wear, grime=0.2, rust=0.0, dust=0.0, detail=0.35, exposure=1.35)
+    return forge.downsample(hi, sharpen=0.25)
+
+
+def hudnum(ch):
+    return _glyph(_GLYPHS[ch], NUM_U[0], NUM_U[1], f"hudnum.{ch}")
+
+
+def qwe_letter(ch):
+    return _glyph(_LETTERS[ch], 7, 10, f"qwe.letter.{ch}", half=0.85, outline=0.7, mat="brass")
 
 
 # gauges -------------------------------------------------------------------------------
 
 
-def gauge_prism(seed, face, side, edge, top_dark, outer, dim=1.0, mottle=0.10):
-    """Square crystal seen at a slight angle: broad face, sharp bright stripe right of centre, narrow face."""
-    w_u, h_u = GAUGE_FILL[2], GAUGE_FILL[3]
-    H, W = int(h_u * PPU), int(w_u * PPU)
-    xu = (np.arange(W, dtype=np.float32) + 0.5) / PPU
-    yu = (np.arange(H, dtype=np.float32) + 0.5) / PPU
-    f, s, e = rgb(face), rgb(side), rgb(edge)
-    x0, x1 = 9.1, 11.2
-    stripe = smooth(x0 - 0.12, x0 + 0.12, xu) * (1 - smooth(x1 - 0.12, x1 + 0.12, xu))
-    right = smooth(x1 - 0.1, x1 + 0.1, xu)
-    img = np.zeros((H, W, 3), dtype=np.float32) + f
-    img = img * (1 - right[None, :, None]) + s * right[None, :, None]
-    # cloudy mottling inside the crystal, streaked along the prism
-    n = U.fbm(H, W, seed + ".cloud", 5.0, 4)
-    st = U.streaks(H, W, seed + ".streak", 90, 12.0)
-    tex = 1 + (n - 0.5) * mottle * 2 + (st - 0.5) * mottle * 0.7
-    img = img * tex[..., None]
-    ramp = (0.92 + 0.14 * np.interp(xu, [0, 9.2], [0.2, 1.0]))[None, :, None]
-    img = img * (1 - stripe[None, :, None]) * ramp + (e * (0.92 + 0.08 * tex[..., None])) * stripe[None, :, None]
-    # shoulder glow beside the stripe
-    glow = np.exp(-(((xu - x0) / 0.8) ** 2))[None, :, None] * 0.35
-    img = img * (1 - glow) + e * 0.8 * glow
-    # rounded outer sides fall to near black
-    ol = smooth(0.0, 1.3, xu) * smooth(0.0, 1.3, w_u - xu)
-    o = rgb(outer)
-    t = ol[None, :, None]
-    img = img * t + (o * (0.1 + 0.9 * t)) * (1 - t)
-    # dark seat where the crystal enters the cap
-    td = (1 - smooth(0.0, 1.0, yu))[:, None, None]
-    img = img * (1 - td) + rgb(top_dark) * td
-    img = np.clip(img * dim, 0, 1)
-    return np.dstack((img, np.ones((H, W), dtype=np.float32))).astype(np.float32)
-
-
-def gauge_cap():
-    """Steel-and-gold clamp, left version. The hole over the fill stays transparent."""
-    w, h = GAUGE_CAP[2], GAUGE_CAP[3]
-    r = Relief(w, h, "#000000", 0.0, 0.8)
-    fx0, fx1 = GAUGE_FILL[0] - GAUGE_CAP[0], GAUGE_FILL[0] - GAUGE_CAP[0] + GAUGE_FILL[2]
-    cx = (fx0 + fx1) / 2
-    # gold collars, top
-    for x0 in (2.5, fx1 + 0.6):
-        x1 = x0 + 6.5
-        mid = (x0 + x1) / 2
-        spike = [(mid, 3.0), (mid, 8), (mid, 13)]
-        r.sweep(spike, [2.9, 2.4, 0.15], 0.3, alb="#7E8084", gloss=1.0)
-        r.plate([(x0, 0.6), (x1, 0.6), (x1 - 0.6, 3.9), (x0 + 0.6, 3.9)], 1.2, 1.2, "round", alb="hud.gold.mid", gloss=0.55)
-        r.plate([(x0 + 0.7, 3.9), (x1 - 0.7, 3.9), (x1 - 1.1, 5.0), (x0 + 1.1, 5.0)], 0.9, 0.5, "round", alb="#8A6F36", gloss=0.5)
-    # silver half dome sitting on the prism
-    dome = [(cx + 4.4 * math.cos(a), 0.6 + 3.6 * math.sin(a)) for a in np.linspace(0, math.pi, 24)]
-    r.plate(dome, 0.8, 2.6, "round", alb="#ADAEAB", gloss=0.9)
-    # lower collars and dome, smaller
-    for x0 in (3.5, fx1 + 0.6):
-        x1 = x0 + 5.0
-        mid = (x0 + x1) / 2
-        r.sweep([(mid, 44), (mid, 38), (mid, 32.5)], [2.2, 1.8, 0.15], 0.3, alb="#6E7074", gloss=0.9)
-        r.plate([(x0, 42), (x1, 42), (x1, 44.8), (x0, 44.8)], 1.0, 0.9, "round", alb="hud.gold.mid", gloss=0.5)
-    dome = [(cx + 3.6 * math.cos(a), 44.6 - 3.2 * math.sin(a)) for a in np.linspace(0, math.pi, 24)]
-    r.plate(dome, 0.8, 2.0, "round", alb="#8A8B88", gloss=0.8)
-    img = r.render(amb=0.85, dif=0.9, key=0.9, fill=0.4, ao=0.5, ao_r=1.0)
-    img = rail_strip(img, 0, 0.0, w, "gauge.cap.rail", 0.8)
-    img = rail_strip(img, 0, 45.0, w, "gauge.cap.rail2", 0.7)
-    return img
-
-
 # dragon -------------------------------------------------------------------------------
 
-DRAGON_W = 107
-EYE_RECT_U = (56.6, 26.9, 1.8, 1.0)  # flat amber left of the pupil
-FANG_RECT_U = (84, 28, 14, 18)
-IVORY = "#C8B890"
-NECK_LINE = U.bezier((50, 33), (34, 30), (14, 33), (-14, 38), 40)
-EYE_TOP = U.bezier((55.0, 26.2), (58.4, 25.6), (62, 26.6), (65.8, 29.4), 16)
-EYE_BOT = U.bezier((65.8, 29.4), (61.5, 29.4), (58, 29.2), (55.0, 26.2), 16)
+DRAGON_U = (118, 58)
+EYE_RECT_U = (66.4, 21.2, 2.4, 1.2)    # flat amber left of the pupil, in sprite u
+FANG_RECT_U = (96, 30, 10, 16)
 
 
-def horn(r, p0, p1, p2, p3, rad, z, rings=26.0):
-    """Crescent horn: tapered sphere sweep with shallow growth rings near the root."""
-    path = U.bezier(p0, p1, p2, p3, 64)
+
+
+def _horn(r, pts, rad, z, seed, tip="ivory", tip_from=0.60):
+    path = U.bezier(*pts, 64)
     n = len(path)
-    rr, zz = [], []
-    for i in range(n):
-        t = i / (n - 1)
-        ring = 1 + 0.07 * math.sin(t * rings) * (1 - t) ** 1.5
-        rr.append(rad * (1 - t) ** 0.72 * ring + 0.03)
-        zz.append(z * (1 - 0.5 * t))
-    r.sweep(path, rr, zz, step_px=2.0)
+    rr = [rad * (1 - k / (n - 1)) ** 0.72 * (1 + 0.07 * math.sin(k * 0.62) * (1 - k / (n - 1))) + 0.05 for k in range(n)]
+    r.sweep(path, rr, z, mat="iron.warm", step_px=2.0)
+    t0 = int(n * tip_from)
+    r.sweep(path[t0:], rr[t0:], z + 0.03, mat=tip, step_px=2.0)
 
 
-def dorsal_fin(r):
-    """Serrated fin down the back of the neck: thin web between swept spines."""
-    bases = [(42, 21.0), (35, 22.2), (28, 23.2), (21, 24.0), (14, 24.8), (7, 25.4), (0, 25.9), (-7, 26.4)]
-    tips = [(34, 14.0), (26.5, 15.0), (19.0, 15.8), (11.5, 16.6), (4.0, 17.4), (-3.5, 18.0), (-10, 18.6)]
-    pts = [bases[0]]
-    for i, tip in enumerate(tips):
-        b = bases[i + 1]
-        mid = ((tip[0] + b[0]) / 2 + 2.2, (tip[1] + b[1]) / 2 + 1.6)
-        pts.append(tip)
-        pts.extend(U.bezier(tip, (tip[0] + 2, tip[1] + 3), mid, (b[0] + 1.0, b[1] - 1.5), 6)[1:])
-    pts += [(-8, 30), (42, 30)]
-    r.plate(pts, 0.0, 0.5, "chamfer", gloss=0.8)
-    for i, tip in enumerate(tips):
-        a = bases[i]
-        c = ((a[0] + tip[0]) / 2 - 0.2, (a[1] + tip[1]) / 2 + 0.8)
-        r.sweep(U.bezier(a, c, c, tip, 16), [0.95 * (1 - k / 16) ** 0.6 + 0.05 for k in range(17)], 0.6, step_px=2.0)
+def _spike(r, bx, by, lean, height, wid, z, seed, mat="iron"):
+    pts = [(bx - wid, by + 2.5), (bx + lean, by - height), (bx + wid * 0.7, by + 2.5)]
+    r.plate(forge.Poly(pts), z=z, bevel=1.6, profile="rolled", rise=0.55, mat=mat, wobble=0.10, nick=0.02, seed=seed)
 
 
-def neck_scales(r):
-    """Shingled angular plates that follow the neck; painted tail to head so nearer plates overlap."""
-    g = U.rng("hud.dragon.scales")
-    line = np.array(NECK_LINE, dtype=np.float32)
-    lens = np.concatenate(([0], np.cumsum(np.hypot(*(line[1:] - line[:-1]).T))))
-    L, Hh = 5.2, 2.5
-    offsets = np.arange(-11.5, 17, 3.25)
-    for i, s0 in enumerate(np.arange(lens[-1], 4, -4.1)):
-        cx, cy = np.interp(s0, lens, line[:, 0]), np.interp(s0, lens, line[:, 1])
-        ex, ey = np.interp(s0 - 0.5, lens, line[:, 0]), np.interp(s0 - 0.5, lens, line[:, 1])
-        tx, ty = ex - cx, ey - cy  # toward the head
-        tl = math.hypot(tx, ty)
-        tx, ty = tx / tl, ty / tl
-        nx, ny = -ty, tx
-        for o in offsets:
-            o = o + (i % 2) * 1.6
-            size = 0.86 + 0.28 * (1 - abs(o + 4) / 16)
-            x, y = cx + nx * o, cy + ny * o
-            if y < 27.6 - x * 0.09:  # keep the crest clear so the fin stays visible
-                continue
-            jit = g.random(3) - 0.5
-            le, ha = L * size, Hh * size
-            pts = [(-le, 0.0), (-le * 0.25, -ha), (le * 0.52, -ha * 0.82), (le * 0.72, ha * 0.2), (-le * 0.2, ha)]
-            q = [(x + tx * a + nx * b + jit[0] * 0.4, y + ty * a + ny * b + jit[1] * 0.4) for a, b in pts]
-            r.plate(q, 1.0 + i * 0.03, 1.1, "round", tilt=(float(tx * -0.05 + jit[2] * 0.05), float(jit[0] * 0.06)), gloss=0.8)
-
-
-def cheek_scales(r, poly):
-    """Small shingles across the cheek, clipped to it."""
-    clip = U.poly_mask(r.w_u, r.h_u, poly) > 0.5
-    g = U.rng("hud.dragon.cheek")
-    for i, x in enumerate(np.arange(36, 64, 2.7)):
-        for y in np.arange(24.5 + (i % 2) * 1.1, 42, 2.2):
-            j = g.random(2) - 0.5
-            q = [(x - 2.0, y), (x - 0.6, y - 1.25), (x + 1.3, y - 1.05), (x + 1.5, y + 0.2), (x - 0.4, y + 1.25)]
-            m = U.poly_mask(r.w_u, r.h_u, q) > 0.5
-            b = bbox(m)
-            if b is None or not (m & clip).any():
-                continue
-            r.mask_plate(m & clip, 4.3 + i * 0.02, 0.7, "round", tilt=(float(j[0] * 0.1), float(0.04 + j[1] * 0.08)), gloss=0.55)
+def _tooth(r, x, y, length, wid, z, seed, up=False):
+    s = -1 if up else 1
+    r.plate(forge.Poly([(x - wid, y), (x + wid, y), (x + wid * 0.2, y + s * length)]), z=z, bevel=0.55, profile="rolled", rise=0.9, mat="ivory", wobble=0.04, nick=0.01, seed=seed)
 
 
 def dragon_relief():
-    r = Relief(DRAGON_W, DRAGON_H, "hud.dragon.black", 0.0, 1.0)
-    # horns behind everything: two crescents swept back off the skull
-    horn(r, (57, 20), (48, 11.5), (38, 8.5), (32, 0.9), 2.8, 0.4, 22)
-    horn(r, (50, 20.5), (34, 17.5), (14, 13.5), (3.2, 0.6), 3.9, 1.6, 30)
-    dorsal_fin(r)
-    # neck mass, then scales
-    neck = [(-1, 26.5), (12, 25.2), (26, 23.6), (40, 21), (58, 30), (72, 47), (-1, 47)]
-    r.plate(neck, 0.4, 1.5, "round", gloss=0.5)
-    neck_scales(r)
-    # jaw hinge spikes, backward from the cheek
-    for (a, c, b, rad) in (((44, 30), (37, 29.5), (30, 25.5), 1.5), ((42, 36), (36, 37), (28.5, 33), 1.3), ((46, 41), (41, 43), (34.5, 41.5), 1.1)):
-        r.sweep(U.bezier(a, c, c, b, 16), [rad * (1 - k / 16) ** 0.7 + 0.03 for k in range(17)], 3.4, step_px=2.0)
-    # lower jaw: three plates stepping to the chin
-    r.plate([(44, 40), (63, 41.2), (64, 46.5), (48, 46.5)], 3.0, 2.2, "round", (0.0, 0.05))
-    r.plate([(63, 41.2), (81, 42.3), (80, 46.2), (64, 46.5)], 3.4, 2.0, "round", (0.0, 0.05))
-    r.plate([(81, 42.3), (96.5, 42.8), (99.0, 44.0), (93, 45.6), (80, 46.2)], 3.8, 1.6, "round", (0.0, 0.05))
-    # gullet: the jaw hangs slightly open behind the fang
-    r.plate([(50, 37.0), (70, 38.5), (98, 40.8), (98.5, 43.0), (82, 42.6), (64, 41.6), (52, 41.0)], 1.0, 0.2, alb="#020202", gloss=0.0)
-    # teeth: upper row hanging from the lip, shorter lower row
-    g = U.rng("hud.dragon.teeth")
-    for x in np.arange(60, 96, 3.3):
-        y = 38.6 + (x - 60) * 0.062
-        L = 1.9 + float(g.random()) * 0.9
-        r.plate([(x - 0.75, y), (x + 0.75, y + 0.1), (x + 0.75, y + L)], 2.2, 0.4, alb="#B5B1A6", gloss=0.5)
-    for x in np.arange(63.5, 88, 4.1):
-        y = 41.6 + (x - 63.5) * 0.056
-        r.plate([(x - 0.6, y + 0.2), (x + 0.6, y + 0.2), (x - 0.5, y - 1.3)], 2.2, 0.3, alb="#98958C", gloss=0.4)
-    # cheek
-    cheek = [(44, 25.5), (61, 25.5), (58, 38.2), (47, 40.5), (39, 33)]
-    r.plate(cheek, 3.4, 3.2, "round", (0.0, 0.06))
-    cheek_scales(r, cheek)
-    r.plate([(42, 33), (54, 36), (54, 39), (47, 40.8), (41, 37)], 4.6, 1.4, "round")
-    # upper lip plates, stepping toward the nose
-    r.plate([(57, 30), (74, 32), (75, 39.2), (56, 38.2)], 3.8, 2.4, "round", (0.0, 0.05))
-    r.plate([(74, 32), (88, 35), (87, 40.4), (75, 39.2)], 4.2, 2.1, "round", (0.0, 0.05))
-    r.plate([(88, 35), (97, 37), (101.5, 38.8), (99.5, 41.0), (87, 40.4)], 4.6, 1.7, "round", (0.0, 0.05))
-    # snout top, three angular plates, each ending in a raised scute
-    r.plate([(58, 23), (70, 24.5), (76, 27.5), (74.5, 32.5), (57, 30.5)], 4.4, 2.6, "round", (0.02, 0.10))
-    r.plate([(74.5, 27), (86, 30.0), (88.5, 35.5), (74.5, 32.5)], 5.0, 2.3, "round", (0.02, 0.11))
-    r.plate([(86, 29.6), (92, 31.0), (98, 35.0), (101.5, 38.8), (88, 35.5)], 5.6, 2.0, "round", (0.02, 0.12))
-    r.plate([(72.5, 27.4), (77, 25.0), (79.0, 28.4)], 6.6, 1.2, "round")
-    r.plate([(83.5, 30.2), (88.5, 27.6), (90.5, 31.4)], 6.8, 1.2, "round")
-    # nostril
-    r.plate([(92.4, 34.9), (96.2, 36.3), (96.6, 37.5), (93.2, 36.9)], 3.0, 0.3, alb="#010101", gloss=0.0)
-    # skull crown
-    r.plate([(38, 18.5), (50, 15.4), (66, 22), (62, 26), (44, 26)], 4.6, 2.8, "round", (0.0, 0.08))
-    # eye socket, narrow and slanted down toward the nose
-    r.plate([(53.5, 24.8), (63, 25.6), (67.0, 29.8), (61.5, 30.0), (54.0, 28.0)], 2.0, 0.3, alb="#030303", gloss=0.3)
-    # heavy angular brow, overhanging the eye; hard ridge sweeps carry the long highlights
-    r.plate([(40, 15.2), (53, 14.0), (72.0, 24.6), (73.0, 28.8), (64, 26.6), (54.5, 24.8), (43, 22.0)], 7.0, 2.4, "round", (0.02, 0.09))
-    r.sweep(U.bezier((41, 16.5), (52, 15.2), (62, 19), (72.2, 26), 30), [0.75 - 0.005 * k for k in range(31)], 8.6, step_px=2.0)
-    r.sweep(U.bezier((44, 21), (52, 22.6), (60, 24.4), (68, 26.3), 30), 0.42, 8.3, step_px=2.0)
-    # ivory fang from the lower jaw, curved up outside the lip
-    f = U.bezier((88.2, 44.8), (88.6, 39.5), (90.0, 34.5), (94.6, 30.4), 40)
-    r.sweep(f, [1.75 * (1 - k / 40) ** 0.6 + 0.03 for k in range(41)], 8.0, alb=IVORY, gloss=0.4, step_px=2.0)
+    w, h = DRAGON_U
+    r = BarRelief(w, h, "iron.black", 0.0)
+    P = forge.Poly
+    kw = dict(profile="rolled", wobble=0.14, nick=0.02, wob_scale=7.0)
+    # two horns first, swept back off the skull, so everything else overlaps their roots
+    _horn(r, [(56, 16), (42, 3.5), (22, 0.5), (4, 11)], 4.2, 1.2, "dragon.horn1")
+    _horn(r, [(52, 21), (38, 15), (20, 15.5), (5, 26)], 3.0, 0.6, "dragon.horn2")
+    # the neck: one heavy mass, then five great plates down it, tail to head
+    r.plate(P([(-5, 26), (10, 25), (26, 22), (42, 17), (57, 18), (63, 31), (59, 45), (46, 54), (30, 61), (-5, 61)]), z=0.4, bevel=3.2, rise=0.5, mat="iron.black", seed="dragon.neck", **kw)
+    for i, (cx, cy, ang, L, Hh) in enumerate(((7, 42, -8, 19, 13), (18, 38, -14, 19, 13.5), (29, 34, -22, 19.5, 14), (39, 30, -34, 18, 14), (46, 29, -46, 15, 13))):
+        a = math.radians(ang)
+        c, s = math.cos(a), math.sin(a)
+        local = [(-L / 2, -Hh * 0.30), (-L * 0.1, -Hh / 2), (L * 0.46, -Hh * 0.40), (L / 2, Hh * 0.08), (L * 0.30, Hh / 2), (-L * 0.42, Hh * 0.46)]
+        pts = [(cx + x * c - y * s, cy + x * s + y * c) for x, y in local]
+        r.plate(P(pts), z=1.2 + i * 0.55, bevel=2.4, rise=0.72, mat=("iron.warm", "steel.armour", "iron.cold", "steel.armour", "iron")[i], seed=f"dragon.nplate{i}", **kw)
+    # dorsal crest: five swept-back spikes along the top of the neck
+    for i, (bx, by, lean, ht, wd) in enumerate(((8, 26.5, -7, 11, 4.0), (18, 24.4, -8, 12, 4.4), (28, 22.2, -8, 12.5, 4.6), (38, 19.4, -8, 12, 4.6), (47, 17.4, -7, 10, 4.2))):
+        _spike(r, bx, by, lean, ht, wd, 2.6 + i * 0.3, f"dragon.spike{i}", mat=("iron.warm", "iron", "iron.cold", "iron.warm", "iron")[i])
+    # lower jaw, then the hinge plate
+    r.plate(P([(58, 40), (78, 41), (100, 43), (110, 46.5), (104, 50), (86, 51.5), (66, 50.5), (57, 47)]), z=3.0, bevel=2.4, rise=0.72, mat="steel.armour", seed="dragon.jaw", **kw)
+    # the dark of the mouth
+    r.plate(P([(62, 35.5), (86, 37.5), (106, 40.5), (108, 43), (86, 42.5), (64, 41.5)]), z=1.0, bevel=0.3, rise=0.1, mat="void", seed="dragon.mouth", profile="rolled", wobble=0.05)
+    # skull, brow and snout: plates stepping up and forward
+    r.plate(P([(46, 17), (60, 11.5), (80, 14), (94, 22), (92, 27), (72, 33), (54, 36), (47, 29)]), z=3.8, bevel=3.0, rise=0.72, mat="steel.armour", seed="dragon.skull", **kw)
+    r.plate(P([(76, 22), (98, 24.5), (114, 31.5), (114.6, 36.5), (102, 38.2), (84, 37.2), (74, 33)]), z=4.6, bevel=2.8, rise=0.72, mat="iron", seed="dragon.snout", **kw)
+    r.plate(P([(56, 11.5), (72, 11), (86, 19), (83, 23), (70, 19), (57, 19.5)]), z=6.2, bevel=2.2, rise=0.6, mat="steel.armour", seed="dragon.brow", **kw)
+    # cheek and hinge
+    r.plate(P([(50, 28), (66, 27.5), (74, 33), (70, 41), (56, 46), (48, 40)]), z=5.0, bevel=2.6, rise=0.72, mat="iron.warm", seed="dragon.cheek", **kw)
+    # eye socket, then nostril
+    r.pocket(P([(64.5, 20.6), (73.5, 22.8), (76.5, 26.6), (69.5, 25.8), (64, 23.5)]), depth=2.0, wall=0.7, mat="void", wobble=0.04, seed="dragon.eye")
+    r.pocket(forge.Ellipse(109.5, 32.8, 2.0, 1.1), depth=1.2, wall=0.5, mat="void", seed="dragon.nostril")
+    # teeth: a row hanging from the snout, a shorter row rising from the jaw, and the long fang outside the lip
+    rg = U.rng("dragon.teeth")
+    for i, x in enumerate(np.arange(79, 110, 6.2)):
+        _tooth(r, float(x), 37.0 + (x - 78) * 0.045, 5.2 + 2.4 * float(rg.random()), 1.6, 5.0, f"dragon.tu{i}")
+    for i, x in enumerate(np.arange(84, 104, 8.0)):
+        _tooth(r, float(x), 42.6 + (x - 82) * 0.05, 3.6 + 1.6 * float(rg.random()), 1.5, 3.6, f"dragon.tl{i}", up=True)
+    fang = U.bezier((101.0, 47.6), (103.0, 42.0), (105.4, 35.5), (110.4, 30.0), 40)
+    r.sweep(fang, [2.0 * (1 - k / 40) ** 0.65 + 0.04 for k in range(41)], 5.6, mat="ivory", step_px=2.0)
+    # bulk: the whole head and neck swell a little, so the light has something round to find
+    r.h = r.h + forge.blur(r.a, 4.0 * PPU) * 7.0
     return r
-
-
-def dragon_eye(img):
-    """Amber almond with a black slit. Colour stays flat left of the pupil, so it can be probed."""
-    w, h = DRAGON_W, DRAGON_H
-    m = U.poly_mask(w, h, EYE_TOP + EYE_BOT)
-    H, W = m.shape
-    xu = (np.arange(W, dtype=np.float32) + 0.5) / PPU
-    t = smooth(60.8, 65.0, xu)[None, :, None]
-    c = rgb("hud.dragon.eye") * (1 - t) + rgb("#DCC49F") * t
-    img = U.over(img, np.dstack((np.broadcast_to(c, (H, W, 3)), m)).astype(np.float32))
-    img = U.over(img, solid("#000000", U.ellipse_mask(w, h, 60.6, 27.8, 0.34, 1.6, 10)))
-    lid = U.stroke_mask(w, h, EYE_TOP, 0.45)
-    return U.over(img, solid("#000000", lid * m * 0.95))
 
 
 def dragon():
     r = dragon_relief()
-    alpha = r.a.copy()
-    ivory = np.abs(r.alb - rgb(IVORY)).sum(axis=2) < 0.02
-    # overall volume: a neck cylinder plus the head rounding off toward its silhouette
-    yc = 36.0 - np.clip(r.xu, 0, 50) * 0.04
-    neck = np.sqrt(np.clip(1 - ((r.yu - yc) / 17.5) ** 2, 0, 1)) * 7.0
-    fade = 1 - smooth(34, 56, r.xu)
-    head = fblur(alpha, 2.2 * PPU) * 3.5
-    r.h = r.h + neck * fade * alpha + head
-    # the underside of the neck falls into shadow
-    r.gl = r.gl * (1 - 0.72 * smooth(35, 46, r.yu) * fade) * (0.55 + 0.45 * smooth(-6, 14, r.xu))
-    img = r.render(amb=1.0, dif=0.9, key=1.25, fill=0.5, ao=0.75, ao_r=1.8, soften=0.1)
-    root = (1 - smooth(37.0, 45.0, r.yu)) * 0 + smooth(37.0, 45.0, r.yu)
-    img[..., :3] = np.where(ivory[..., None], img[..., :3] * (1 - 0.62 * root[..., None]), img[..., :3])
-    img = dragon_eye(img)
-    img[..., 3] = alpha
-    return img
+    w, h = DRAGON_U
+    ex, ey, ew, eh = EYE_RECT_U
+    yy, xx = np.mgrid[0 : r.H_px, 0 : r.W_px].astype(np.float32)
+    xu, yu = (xx + 0.5) / PPU, (yy + 0.5) / PPU
+    # eye: a slanted amber almond with a black slit, burning
+    top = np.array(U.bezier((64.4, 21.4), (68.0, 20.6), (71.6, 21.6), (74.6, 24.6), 24))
+    bot = np.array(U.bezier((74.6, 24.6), (70.0, 25.0), (66.5, 24.2), (64.4, 21.4), 24))
+    almond = U.poly_mask(w, h, [tuple(p) for p in np.vstack((top, bot))])
+    slit = U.ellipse_mask(w, h, 71.2, 23.2, 0.42, 1.6, 12)
+    fall = np.clip((xu - 66.4) / 7.0, 0, 1)
+    amber = np.array((1.0, 0.46, 0.08), np.float32) * (1.2 - 0.6 * fall[..., None])
+    emit = amber * (almond * (1 - slit))[..., None] * 1.25
+    vm = ((0.38 + 0.62 * smooth(56, 34, yu)) * (0.55 + 0.45 * smooth(0, 26, xu))).astype(np.float32)
+    img = _lit(r, "hud.dragon", emit=emit.astype(np.float32), wear=0.14, grime=0.5, rust=0.1, dust=0.05, detail=0.10, exposure=1.8, value_map=vm)
+    # the socket stays black round the eye
+    a = r.a
+    img[..., 3] = a
+    img[..., :3] = forge.blur(img[..., :3], 2.2)
+    return forge.downsample(img, sharpen=0.06)
 
 
 # talons -------------------------------------------------------------------------------
 
+TALON_U = (71, 52)
+
+
+def _claw(r, pts, rad0, z0, seed, band_at=0.20, band=True):
+    """One talon: a dark forged horn tapering to a worn steel point, with a brass collar near the knuckle."""
+    path = U.bezier(*pts, 56)
+    n = len(path)
+    rr = [rad0 * (1 - k / (n - 1)) ** 0.78 + 0.05 for k in range(n)]
+    split = int(n * 0.50)
+    r.sweep(path, rr, z0, mat="iron.black", flatten=1.0, step_px=2.0)
+    r.sweep(path[split:], rr[split:], z0 + 0.04, mat="steel", flatten=1.0, step_px=2.0)    # the point is worn to bare steel
+    r.sweep(path[: split + 4], [v * 0.97 for v in rr[: split + 4]], z0 + 0.02, mat="iron", flatten=1.0, step_px=2.0)
+    if band:
+        k = int(n * band_at)
+        (x, y), (x2, y2) = path[k], path[k + 1]
+        d = math.hypot(x2 - x, y2 - y) or 1.0
+        nx, ny = -(y2 - y) / d, (x2 - x) / d
+        e = rr[k]
+        gr = 1.05
+        r.sweep([(x - nx * e, y - ny * e), (x + nx * e, y + ny * e)], gr, z0 + e - gr + 0.5, mat="brass", flatten=1.0, step_px=2.0)
+    return path
+
 
 def talon():
-    """Left version. A scaled forearm of twisted cords grips the gem with three ringed claws."""
-    w, h = TALON[2], TALON[3]
-    r = Relief(w, h, "hud.dragon.black", 0.0, 1.0)
-    arm = [(61, 1.5), (34, 2.5), (24, 6), (21, 15), (27, 23), (24, 34), (31, 45), (61, 46)]
-    r.plate(arm, 0.0, 2.0, "round", gloss=0.4)
-    for y, band, per, sl in ((8.0, 8.5, 4.6, 1.0), (17.5, 9.5, 5.0, -1.0), (27.5, 9.5, 5.0, 1.0), (38.0, 9.0, 4.6, -1.0)):
-        for i in range(-1, 10):
-            x = 30 + i * per
-            pts = U.bezier((x - band * 0.5 * sl, y + band / 2), (x - band * 0.1 * sl, y + band * 0.1),
-                           (x + band * 0.1 * sl, y - band * 0.1), (x + band * 0.5 * sl, y - band / 2), 14)
-            r.sweep(pts, [2.1 * (0.5 + 0.5 * math.sin(math.pi * k / 14)) for k in range(15)], 1.2, gloss=0.8, step_px=3)
-    # claws: a tapered cone with a long highlight, from knuckle to tip
-    claws = (
-        ((26, 4.2), (17, 3.6), (9, 2.2), (0.6, 1.4), 2.9),
-        ((32, 13.5), (21, 13.0), (11, 15.0), (0.8, 20.6), 5.2),
-        ((34, 31.5), (24, 30.5), (16, 30.5), (5.0, 33.6), 4.2),
-    )
-    rings = ((16.0, 3.4, 2.8), (23.8, 13.2, 4.9), (26.8, 30.8, 3.9))
-    for (a, b, c, d, rad) in claws:
-        path = U.bezier(a, b, c, d, 40)
-        r.sweep(path, [rad * (1 - k / 40) ** 0.75 + 0.03 for k in range(41)], 4.5, gloss=1.0, step_px=2.0)
-    for (x, y, rr) in rings:
-        p = [(x - 0.2, y - rr), (x + 0.5, y), (x - 0.2, y + rr)]
-        r.sweep(p, [0.8, 1.15, 0.8], 12.0, alb="hud.gold.mid", gloss=0.5, step_px=2.0)
-        r.sweep([(x + 1.3, y - rr), (x + 1.8, y), (x + 1.3, y + rr)], [0.5, 0.75, 0.5], 11.8, alb="#8A6F36", gloss=0.4, step_px=2.0)
-    r.h = r.h + fblur(r.a, 2.0 * PPU) * 2.0
-    return r.render(amb=1.0, dif=0.9, key=1.15, fill=0.45, ao=0.75, ao_r=1.5, soften=0.1)
+    """Left version. A forearm of three heavy overlapping plates, and three horns that curve onto the stone."""
+    w, h = TALON_U
+    r = BarRelief(w, h, "iron.black", 0.0)
+    P = forge.Poly
+    # forearm: three big overlapping plates, so mass overlaps mass
+    r.plate(P([(72, 29), (46, 33), (36, 36), (31, 43), (35, 50.5), (50, 52.5), (72, 52.5)]), z=0.6, bevel=2.8, profile="rolled", rise=0.5, mat="iron.cold", wobble=0.16, nick=0.02, seed="talon.low")
+    r.plate(P([(72, -1), (48, -0.8), (38, 2.5), (31, 8), (31, 15), (37, 21), (48, 25), (72, 27)]), z=1.0, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.16, nick=0.02, seed="talon.up")
+    r.plate(P([(72, 13), (50, 15), (38, 19), (31, 25), (31, 32), (37, 38), (50, 40), (72, 41)]), z=2.2, bevel=3.0, profile="rolled", rise=0.55, mat="iron", wobble=0.16, nick=0.02, seed="talon.mid")
+    for i, (x, y, rad) in enumerate(((60.5, 5.0, 2.0), (60.5, 22.0, 2.1), (60.5, 46.0, 2.0), (48.5, 33.5, 1.7))):
+        r.dome(x, y, rad, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="iron.rivet", seed=f"talon.rivet{i}")
+    # knuckles where the horns root
+    for i, (x, y, rad) in enumerate(((35.0, 9.0, 5.2), (34.0, 26.0, 5.6), (35.5, 43.0, 5.2))):
+        r.dome(x, y, rad, z=float(r.h[int(y * PPU), int(x * PPU)]) + 0.2, flat=0.9, mat="iron", seed=f"talon.knuckle{i}", collar=False)
+    # the three horns: over the top of the stone, straight at its edge, under the bottom
+    _claw(r, [(36, 9), (24, 0.6), (13, 3.5), (7.2, 14.5)], 4.8, 4.6, "talon.c1")
+    _claw(r, [(35, 26), (24, 24.4), (13, 25.0), (4.8, 27.0)], 5.2, 5.0, "talon.c2")
+    _claw(r, [(36, 43), (24, 51.0), (13, 48.0), (7.6, 38.0)], 4.8, 4.6, "talon.c3")
+    hi = _lit(r, "hud.talon", wear=0.24, grime=0.55, rust=0.14, dust=0.06, detail=0.8, soft=1.4)
+    # a soft contact shadow round the horns and the arm, so they sit on the stone rather than float over it
+    a = hi[..., 3]
+    sh = np.clip(forge.blur(a, 1.7 * PPU) * 1.5, 0, 1) * 0.55
+    out = hi.copy()
+    out[..., 3] = np.maximum(a, sh)
+    a_safe = np.maximum(out[..., 3], 1e-6)
+    out[..., :3] = np.where((a > 0.01)[..., None], hi[..., :3] * (a / a_safe)[..., None], 0.0)
+    return forge.downsample(out)
 
 
 # stone slabs and buttons --------------------------------------------------------------
@@ -750,55 +626,6 @@ def stone_rgb(H, W, base, seed, amp=0.16):
 
 def flat(mask, colour):
     return solid(colour, mask)
-
-
-def raised(w, h, face, state, seed, base, top, side, surround, drop=2.2):
-    """Raised stone slab in a recess. state n|h|p; pressed swaps bevels and shifts the face."""
-    img = U.canvas(w, h, surround)
-    H, W = img.shape[:2]
-    x, y, fw, fh = face
-    press = state == "p"
-    img = U.over(img, solid("#000000", U.rect_mask(w, h, (x - 1, y - 1, fw + 2.2, fh + 1 + drop))))
-    if press:
-        x, y = x + 0.6, y + 0.6
-    tex = stone_rgb(H, W, base, seed)
-    if state == "h":
-        tex = np.clip(tex * 1.30, 0, 1)
-        top, side = "#E0DBD6", "#B4B5B0"
-    if press:
-        tex = tex * 0.7
-    m = U.rect_mask(w, h, (x, y, fw, fh))
-    img = U.over(img, np.dstack((tex, m)))
-    lip = 1.5
-    if press:
-        img = U.over(img, flat(U.rect_mask(w, h, (x, y, fw, lip)), "#000000"))
-        img = U.over(img, flat(U.rect_mask(w, h, (x, y, 1.0, fh)), "#050505"))
-        img = U.over(img, flat(U.rect_mask(w, h, (x, y + fh - 1.0, fw, 1.0)), top))
-        img = U.over(img, flat(U.rect_mask(w, h, (x + fw - 0.8, y, 0.8, fh)), side))
-    else:
-        grad = np.linspace(1.0, 0.72, H, dtype=np.float32)[:, None, None]
-        tp = np.dstack((np.broadcast_to(rgb(top), (H, W, 3)) * grad / grad[int(y * PPU)], U.rect_mask(w, h, (x, y, fw, lip))))
-        img = U.over(img, tp.astype(np.float32))
-        img = U.over(img, flat(U.poly_mask(w, h, [(x, y), (x + 1.0, y + lip), (x + 1.0, y + fh), (x, y + fh)]), side))
-        img = U.over(img, flat(U.rect_mask(w, h, (x + fw - 0.6, y + 0.4, 0.6, fh - 0.4)), "#000000"))
-    return img
-
-
-def slab(state):
-    return raised(56, 22, (3, 3, 50, 14.2), state, "hud.slab", "hud.stone.face", "hud.steel.high", "hud.steel.lip", "hud.slab")
-
-
-def coords_plate():
-    w, h = 56, 22
-    img = U.canvas(w, h, "hud.slab")
-    H, W = img.shape[:2]
-    g = U.gradient(H, W, [(0, "#000000"), (0.14, "#000000"), (0.34, "#282B2A"), (0.72, "#282B2A"), (0.80, "#878883"), (0.86, "#6A6B67"), (0.90, "#101010"), (1, "#101010")])
-    g[..., :3] *= (1 + U.grain(H, W, "hud.coords.g", 0.03))[..., None]
-    g[..., :3] = np.clip(g[..., :3], 0, 1)
-    g[..., 3] = U.rect_mask(w, h, (3, 3, 50, 16.5))
-    img = U.over(img, g)
-    img = U.over(img, flat(U.rect_mask(w, h, (3, 8, 1.0, 11)), "#61615F"))
-    return img
 
 
 def mat(img, name, mask, seed, base=None, light=LIGHT_TL):
@@ -889,159 +716,10 @@ def worn_h(w, h, rect, colour, seed, lo=0.55):
     return np.dstack((np.broadcast_to(c, (H, W, 3)), U.rect_mask(w, h, rect))).astype(np.float32)
 
 
-def exp_frame():
-    w, h = 207, 10
-    img = U.canvas(w, h)
-    img = U.over(img, worn_h(w, h, (2, 0.2, 203, 1.2), "hud.ivory.line", "exp.top", 0.8))
-    img = U.over(img, worn_h(w, h, (2, 8.2, 203, 1.3), "#D0BEA0", "exp.bot", 0.35))
-    for x in (2.2, 203.4):
-        img = U.over(img, flat(U.rect_mask(w, h, (x, 0.2, 1.4, 9.3)), "#C0B9A7"))
-    return img
-
-
-def exp_trough():
-    w, h = 199, 6
-    img = U.canvas(w, h, "#070300")
-    return img
-
-
-def exp_fill():
-    w, h = 8, 5
-    H, W = int(h * PPU), int(w * PPU)
-    img = U.gradient(H, W, [(0, "#FBE4A0"), (0.18, "#F0C870"), (0.8, "#F0C870"), (1, "#B98F42")])
-    return img
-
-
-def exp_cup():
-    w, h = 12, 12
-    pts = U.bezier((1.2, 2.5), (1.0, 12.8), (11.0, 12.8), (10.8, 2.5), 32)
-    r = Relief(w, h, "#000000", 0.0, 0.7)
-    r.sweep(pts, 0.8, 0.3, alb="hud.gold.mid", step_px=2.0)
-    r.sweep([(1.2, 2.5), (1.2, 2.6)], 1.15, 0.5, alb="hud.gold.bright", gloss=0.8)
-    r.sweep([(10.8, 2.5), (10.8, 2.6)], 1.15, 0.5, alb="hud.gold.bright", gloss=0.8)
-    return r.render(amb=1.0, dif=0.9, key=0.9, ao=0)
-
-
 # Q/W/E --------------------------------------------------------------------------------
 
 
-def ivory_lines(w, h, rects, seed):
-    """Polished cream lines with gold flecks; rects are (x, y, w, h) in u."""
-    H, W = int(h * PPU), int(w * PPU)
-    m = np.zeros((H, W), np.float32)
-    for r in rects:
-        m = np.maximum(m, U.rect_mask(w, h, r))
-    n = U.fbm(H, W, seed, 2.2, 3)
-    fleck = smooth(0.70, 0.84, n)[..., None]
-    c = rgb("#B8B2A4")[None, None, :] * (1 - fleck) + rgb("#B79A58") * fleck
-    c = np.clip(c * (0.82 + 0.18 * smooth(0.3, 0.6, n))[..., None], 0, 1)
-    shadow = U.over(U.canvas(w, h), solid("#000000", np.clip(fblur(m, 0.3 * PPU) * 1.6, 0, 0.8)))
-    return U.over(shadow, np.dstack((c, m)).astype(np.float32))
-
-
-def qwe_slot(w, state, cheek=0.0):
-    h = 28
-    img = U.canvas(w, h)
-    H, W = img.shape[:2]
-    x0 = cheek
-    fw = w - x0 - 0.2
-    if cheek:
-        stone = stone_rgb(H, W, "#4A4A47", "qwe.cheek")
-        ramp = (0.45 + 0.75 * np.linspace(0, 1, W, dtype=np.float32) / (cheek * PPU / W))[None, :, None]
-        stone = np.clip(stone * np.minimum(ramp, 1.3), 0, 1)
-        img = U.over(img, np.dstack((stone, U.rect_mask(w, h, (0, 1.6, cheek + 1, 25)))))
-    stops = [(0, "#1B1B19"), (0.45, "#222220"), (0.92, "#4C4C4A"), (1, "#4C4C4A")]
-    if state == "h":
-        stops = [(0, "#32323A"), (0.45, "#3C3C40"), (0.92, "#6E6E6A"), (1, "#6E6E6A")]
-    if state == "p":
-        stops = [(0, "#0A0A09"), (0.45, "#141413"), (0.92, "#2C2C2B"), (1, "#2C2C2B")]
-    g = U.gradient(H, W, stops)
-    g[..., 3] = U.rect_mask(w, h, (x0 + 0.8, 0.8, fw - 1, h - 1.8))
-    img = U.over(img, g)
-    t = 1.2
-    rects = [(x0, 0, fw, t), (x0, h - t - 0.4, fw, t), (x0, 0, t, h - 0.4), (w - t - 0.2, 12, t, h - 12.4)]
-    if state == "p":
-        img = U.over(img, solid("#000000", U.rect_mask(w, h, (x0 + t, t, fw - t, 1.6))))
-        img = U.over(img, solid("#000000", U.rect_mask(w, h, (x0 + t, t, 1.6, h - t))))
-    lines = ivory_lines(w, h, rects, f"qwe.frame{w}")
-    if state == "h":
-        lines[..., :3] = np.clip(lines[..., :3] * 1.2, 0, 1)
-    return U.over(img, lines)
-
-
-def qwe_notch():
-    w, h = 18, 14
-    H, W = int(h * PPU), int(w * PPU)
-    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    x = ((xx + 0.5) / PPU - w / 2) / (w / 2 - 0.2)
-    y = ((yy + 0.5) / PPU - h / 2) / (h / 2 - 0.2)
-    sup = np.abs(x) ** 3.2 + np.abs(y) ** 3.2
-    outer = (sup <= 1).astype(np.float32)
-    x2, y2 = x * 1.14, y * 1.19
-    inner = (np.abs(x2) ** 3.2 + np.abs(y2) ** 3.2 <= 1).astype(np.float32)
-    r = Relief(w, h, "#000000", 0.0, 0.6)
-    r.mask_plate(outer > 0.5, 0.0, 0.9, "round", alb="#8D7B5A")
-    img = r.render(amb=1.0, dif=0.9, key=0.7, ao=0)
-    img = U.over(img, solid("#030000", inner))
-    return img
-
-
-GLYPHS = {
-    "q": [U.bezier((3.5, 0.8), (-0.6, 0.8), (-0.6, 8.2), (3.5, 8.2), 16) + U.bezier((3.5, 8.2), (7.6, 8.2), (7.6, 0.8), (3.5, 0.8), 16), [(3.8, 6.2), (6.4, 9.4)]],
-    "w": [[(0.5, 0.8), (1.9, 9.0), (3.5, 3.0), (5.1, 9.0), (6.5, 0.8)]],
-    "e": [[(5.9, 0.9), (1.2, 0.9), (1.2, 9.0), (5.9, 9.0)], [(1.2, 4.9), (4.8, 4.9)]],
-}
-
-
-def qwe_letter(ch):
-    w, h = 7, 10
-    img = U.canvas(w, h)
-    for pts in GLYPHS[ch]:
-        img = U.over(img, solid("#000000", U.stroke_mask(w, h, pts, 2.1) * 0.85))
-    for pts in GLYPHS[ch]:
-        m = U.stroke_mask(w, h, pts, 1.35)
-        img = U.over(img, solid("#D6C69C", m))
-    for pts in GLYPHS[ch]:
-        img = U.over(img, solid("#100C04", U.stroke_mask(w, h, pts, 0.5)))
-    return img
-
-
 # skill tile ---------------------------------------------------------------------------
-
-
-def skill_bracket():
-    w, h = 32, 36
-    r = Relief(w, h, "#000000", 0.0, 0.6)
-    gold = "#786149"
-    for y in (0.6, 34.2):
-        r.plate([(2, y), (30, y), (30, y + 1.4), (2, y + 1.4)], 0.2, 0.6, "round", alb=gold)
-    for side in (0, 1):
-        # column bulging at the waist, beaded
-        path, rad = [], []
-        for t in np.linspace(0, 1, 60):
-            y = 1.0 + t * 34
-            b = math.exp(-(((t - 0.58) / 0.16) ** 2))
-            x = 1.9 + 1.0 * b * math.sin(t * 34)
-            path.append((x if side == 0 else w - x, y))
-            rad.append(1.15 + 0.5 * b * (0.5 + 0.5 * math.cos(t * 58)))
-        r.sweep(path, rad, 0.3, alb="#8E7458", gloss=0.8, step_px=2.0)
-    img = r.render(amb=1.0, dif=0.9, key=0.75, fill=0.3, ao=0.5, ao_r=0.6)
-    return img
-
-
-def skill_tile(state):
-    w, h = 19, 28
-    H, W = int(h * PPU), int(w * PPU)
-    base = "hud.stone.tile" if state != "h" else "#5A534A"
-    tex = stone_rgb(H, W, base, "skill.tile", 0.10)
-    img = np.dstack((tex, np.ones((H, W), np.float32))).astype(np.float32)
-    img = U.over(img, flat(U.rect_mask(w, h, (0, 0, w, 1.0)), "#A59D89"))
-    img = U.over(img, flat(U.rect_mask(w, h, (w - 0.7, 0, 0.7, h)), "#7D776E"))
-    img = U.over(img, flat(U.rect_mask(w, h, (0, h - 0.6, w, 0.6)), "#1A1814"))
-    img = U.over(img, flat(U.rect_mask(w, h, (0, 0, 0.5, h)), "#2E2A24"))
-    if state == "d":
-        img = desat(img, 0.5, 0.55)
-    return img
 
 
 def skill_icon():
@@ -1060,96 +738,6 @@ def skill_icon():
 
 
 # icon buttons -------------------------------------------------------------------------
-
-
-def iconbtn_plinth():
-    w, h = 101, 30
-    H, W = int(h * PPU), int(w * PPU)
-    img = U.canvas(w, h)
-    tex = stone_rgb(H, W, "#5A5A58", "iconbtn.plinth", 0.12)
-    xu = (np.arange(W, dtype=np.float32) + 0.5) / PPU
-    edge = np.minimum(xu, w - xu)
-    t = 0.45 + 0.75 * np.exp(-(((edge - 2.5) / 2.2) ** 2))
-    t = np.where(edge > 6, 0.14, t)[None, :, None]
-    yy = np.linspace(1.0, 0.75, H, dtype=np.float32)[:, None, None]
-    img = U.over(img, np.dstack((np.clip(tex * t * yy, 0, 1), U.rect_mask(w, h, (0, 0.5, w, h - 1), 1.5))).astype(np.float32))
-    return img
-
-
-def iconbtn_frame(state):
-    w, h = 28, 28
-    H, W = int(h * PPU), int(w * PPU)
-    img = U.canvas(w, h, "#000000")
-    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
-    x = (xx + 0.5) / PPU - w / 2
-    y = (yy + 0.5) / PPU - h / 2
-    # inner stone: lit centre falling off to a dark vignette
-    v = np.clip(1 - (np.maximum(np.abs(x), np.abs(y)) - 4) / 8.5, 0, 1)
-    tex = stone_rgb(H, W, "#646155", "iconbtn.face", 0.14)
-    dark = rgb("#0D0500")
-    t = (v**1.3)[..., None]
-    col = dark * (1 - t) + tex * t
-    if state == "h":
-        col = np.clip(col * 1.4, 0, 1)
-    if state == "p":
-        col = col * 0.8
-    off = 0.7 if state == "p" else 0.0
-    m = U.rect_mask(w, h, (3.2 + off, 3.2 + off, 21.6 - off, 21.6 - off))
-    img = U.over(img, np.dstack((col, m)).astype(np.float32))
-    if state == "p":
-        img = U.over(img, solid("#000000", U.rect_mask(w, h, (3.2, 3.2, 21.6, 2.2))))
-        img = U.over(img, solid("#000000", U.rect_mask(w, h, (3.2, 3.2, 2.2, 21.6))))
-    t = 1.2
-    return U.over(img, ivory_lines(w, h, [(0, 0, w, t), (0, h - t, w, t), (0, 0, t, h), (w - t, 0, t, h)], "iconbtn.frame"))
-
-
-def icon_banner():
-    w, h = 22, 22
-    img = U.canvas(w, h)
-    cloth = [(5.5, 4.4), (16.5, 4.4), (16.5, 19.5), (11, 15.8), (5.5, 19.5)]
-    img = U.over(img, U.material("parchment", poly(w, h, cloth), seed="icon.banner", base="#CFB68F"))
-    # chevron charge, stitched on
-    ch = U.stroke_mask(w, h, [(7.4, 8.0), (11, 11.2), (14.6, 8.0)], 1.2)
-    img = U.over(img, solid("#7A5B33", ch))
-    img = U.over(img, solid("#6E5A3E", U.stroke_mask(w, h, [(7.0, 5.6), (15.0, 5.6)], 0.4)))
-    r = Relief(w, h, "#000000", 0.0, 0.7)
-    r.sweep([(3.2, 4.0), (18.8, 4.0)], 0.75, 0.3, alb="#B58F4A")
-    r.sweep([(3.2, 4.0), (3.2, 4.1)], 1.0, 0.5, alb="hud.gold.bright")
-    r.sweep([(18.8, 4.0), (18.8, 4.1)], 1.0, 0.5, alb="hud.gold.bright")
-    img = U.over(img, r.render(amb=1.0, dif=0.9, key=0.9, ao=0))
-    ring = U.ellipse_mask(w, h, 11, 2.1, 1.4, 1.4) * (1 - U.ellipse_mask(w, h, 11, 2.1, 0.7, 0.7))
-    img = U.over(img, U.material("gold", ring, seed="icon.banner.ring", base="#C8A860"))
-    return U.halo(img, 0.75)
-
-
-def icon_lens():
-    w, h = 22, 22
-    r = Relief(w, h, "#000000", 0.0, 0.7)
-    r.sweep(U.bezier((13.2, 13.2), (15, 15), (17, 17), (19.2, 19.2), 12), [0.9] * 6 + [1.25] * 7, 0.5, alb="#CFB68F", gloss=0.4)
-    ring = [(9 + 6.6 * math.cos(a), 9 + 6.6 * math.sin(a)) for a in np.linspace(0, math.tau, 80)]
-    r.sweep(ring, 1.15, 0.8, alb="#C8A860", gloss=0.7, step_px=2.0)
-    img = r.render(amb=1.0, dif=0.9, key=0.95, ao=0.3, ao_r=0.5)
-    gl = U.ellipse_mask(w, h, 9, 9, 5.7, 5.7)
-    glass = U.canvas(w, h)
-    glass = U.over(glass, solid("#1A2428", gl * 0.55))
-    shine = U.stroke_mask(w, h, [(5.2, 8.0), (6.0, 6.0), (8.0, 5.0)], 0.7)
-    glass = U.over(glass, solid("#E8E4D4", shine * 0.75))
-    return U.halo(U.over(glass, img), 0.7)
-
-
-def icon_satchel():
-    w, h = 22, 22
-    img = U.canvas(w, h)
-    bag = [(3.4, 9), (18.6, 9), (19.6, 18), (17.8, 20), (4.2, 20), (2.4, 18)]
-    img = U.over(img, U.material("parchment", poly(w, h, bag), seed="icon.satchel", base="#C8A468"))
-    flap = [(3.2, 7), (18.8, 7), (18.8, 11), (13, 13.8), (9, 13.8), (3.2, 11)]
-    img = U.over(img, solid("#000000", poly(w, h, [(p[0], p[1] + 0.5) for p in flap]) * 0.5))
-    img = U.over(img, U.material("parchment", poly(w, h, flap), seed="icon.satchel.f", base="#E1CB98"))
-    strap = U.stroke_mask(w, h, U.bezier((5.5, 7.4), (6.5, 0.8), (15.5, 0.8), (16.5, 7.4), 24), 1.1)
-    img = U.over(img, U.material("parchment", strap, seed="icon.satchel.s", base="#95846F"))
-    clasp = U.ellipse_mask(w, h, 11, 12.8, 1.3, 1.3)
-    img = U.over(img, U.material("gold", clasp, seed="icon.satchel.c", base="#E0B860"))
-    return U.halo(img, 0.75)
 
 
 # chat ---------------------------------------------------------------------------------
@@ -1406,66 +994,470 @@ def cursor_forbid():
     return U.over(img, solid("#C21A0A", sign))
 
 
+# gauges -------------------------------------------------------------------------------
+
+
+def _vial(seed, liquid, glow, edge_dark=0.80, stripe=0.9, fill=True):
+    """A glass tube seen end on its side: dark rolled edges, a sharp reflection right of centre, a soft
+    one on the left, liquid that glows from inside, a dark seat under the cap. 15 x 35 u at atlas density."""
+    w_u, h_u = GAUGE_FILL[2], GAUGE_FILL[3]
+    W, H = int(w_u * U.SCALE), int(h_u * U.SCALE)
+    x = ((np.arange(W, dtype=np.float32) + 0.5) / W) * 2 - 1
+    y = ((np.arange(H, dtype=np.float32) + 0.5) / H)[:, None]
+    nz = np.sqrt(np.clip(1 - x * x, 0, 1))
+    fres = (1 - nz) ** 1.6
+    lin = lambda c: np.array(U.srgb_to_linear(np.array(c, np.float32)), np.float32)
+    body = lin(liquid)[None, None, :] * (0.22 + 0.78 * np.clip(0.55 + 0.45 * x * -0.5 + 0.5 * nz, 0, 1))[None, :, None] if fill else np.zeros((1, W, 3), np.float32) + 0.006
+    core = lin(glow)[None, None, :] * (nz ** 3 * (0.30 + 0.70 * (1 - y) ** 0.6))[..., None] if fill else 0.0
+    sharp = np.exp(-(((x - 0.30) / 0.075) ** 2)) * stripe
+    soft = np.exp(-(((x + 0.46) / 0.20) ** 2)) * 0.22
+    spec = ((sharp + soft) * (0.55 + 0.45 * np.clip((1 - np.abs(y - 0.45) * 1.2), 0, 1)))[..., None] * np.array((1.0, 0.95, 0.86), np.float32)
+    if not fill:
+        spec = spec * 0.20
+    img = (body + core) * (1 - edge_dark * fres)[None, :, None] + spec * (0.10 if not fill else 0.55)
+    # bubbles and a dark seat under the cap
+    rg = U.rng(seed)
+    for _ in range(7):
+        bx, by = int(rg.integers(5, W - 5)), int(rg.integers(8, H - 6))
+        yy, xx = np.mgrid[0:H, 0:W]
+        img = img + (np.exp(-(((xx - bx) ** 2 + (yy - by) ** 2) / 2.2)))[..., None] * (0.25 if fill else 0.012)
+    seat = (1 - _sm(0.0, 0.10, y)) * 0.8
+    img = img * (1 - seat[..., None])
+    out = np.dstack((U.linear_to_srgb(np.clip(img, 0, 1)), np.ones((H, W), np.float32)))
+    return np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8)
+
+
+def _sm(a, b, x):
+    t = np.clip((x - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def gauge_fill_left():
+    return _vial("gauge.left", (0.95, 0.46, 0.10), (1.0, 0.62, 0.14), stripe=0.85)
+
+
+def gauge_fill_right():
+    return _vial("gauge.right", (0.42, 0.16, 0.62), (0.70, 0.32, 0.95), stripe=0.80)
+
+
+def gauge_empty():
+    return _vial("gauge.empty", (0.02, 0.02, 0.02), (0.0, 0.0, 0.0), edge_dark=0.5, stripe=0.35, fill=False)
+
+
+def gauge_cap():
+    """Forged clamp for the left vial; the hole over the glass stays open. Mirrored for the right."""
+    w, h = GAUGE_CAP[2], GAUGE_CAP[3]
+    r = BarRelief(w, h, "iron.black", 0.0)
+    kw = dict(profile="rolled", wobble=0.12, nick=0.02, wob_scale=5.0)
+    # side posts, then the heavy blocks over and under the glass, each overlapping the posts
+    r.plate(R_(1.2, 2.0, 6.8, 42.0, 3.0), z=0.5, bevel=2.6, rise=0.5, mat="iron.cold", seed="cap.pl", **kw)
+    r.plate(R_(25.0, 2.0, 6.8, 42.0, 3.0), z=0.5, bevel=2.6, rise=0.5, mat="iron.cold", seed="cap.pr", **kw)
+    r.plate(P_([(0.6, 0.0), (32.4, 0.0), (32.4, 4.4), (28, 5.6), (5, 5.6), (0.6, 4.4)]), z=1.4, bevel=2.6, rise=0.55, mat="iron.warm", seed="cap.top", **kw)
+    r.plate(P_([(0.6, 46.0), (32.4, 46.0), (32.4, 41.4), (28, 40.2), (5, 40.2), (0.6, 41.4)]), z=1.4, bevel=2.6, rise=0.55, mat="iron.warm", seed="cap.bot", **kw)
+    for i, (x, y) in enumerate(((4.6, 2.4), (28.4, 2.4), (4.6, 43.6), (28.4, 43.6))):
+        r.dome(x, y, 1.3, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="iron.rivet", seed=f"cap.rv{i}", collar=False)
+    for i, y in enumerate((8.0, 36.5)):
+        for x0 in (1.0, 25.4):
+            zb = float(r.h[int(y * PPU), int((x0 + 3.4) * PPU)])
+            r.plate(R_(x0, y, 6.6, 1.6, 0.5), z=zb - 0.1, bevel=0.5, profile="rolled", rise=0.9, mat="brass", wobble=0.04, seed=f"cap.band{i}{x0}")
+    return forge.downsample(_lit(r, "gauge.cap", wear=0.25, grime=0.5, rust=0.1, dust=0.04))
+
+
+# slabs and plates ---------------------------------------------------------------------
+
+
+def slab(state):
+    """Menu slab, 56 x 22: a heavy forged plate with a raised face; hover is candle-lit, pressed is pushed in."""
+    w, h = 56, 22
+    st = _STATE[state]
+    r = BarRelief(w, h, "iron.black", 0.0)
+    r.plate(R_(0.2, 0.2, w - 0.4, h - 0.4, 2.2), z=0.4, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.16, nick=0.03, wob_scale=6.0, seed="slab.lip")
+    _trim(r, (0.2, 0.2, w - 0.4, h - 0.4), 1.4, 2.2, "slab.lip")
+    face = R_(4.2 + st["shift"], 3.8 + st["shift"], w - 8.4, h - 7.8, 1.6)
+    r.plate(face, z=0.9 - st["shift"] * 1.4, bevel=1.5, profile="rolled", rise=0.55, mat="iron.cold", wobble=0.14, nick=0.03, seed="slab.face")
+    for i, (x, y) in enumerate(((2.4, 2.4), (53.6, 2.4), (2.4, 19.6), (53.6, 19.6))):
+        r.dome(x, y, 1.15, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="iron.rivet", seed=f"slab.rv{i}", collar=False)
+    # an inlay on the face: a brass lozenge on a worn line, set into the iron, off its centre like hand work
+    zf = float(r.h[int(11.0 * PPU), int(10.0 * PPU)])
+    cx0 = 28.5 + st["shift"]
+    cy0 = 10.8 + st["shift"]
+    r.plate(P_([(cx0 - 5.4, cy0), (cx0, cy0 - 3.4), (cx0 + 5.0, cy0), (cx0, cy0 + 3.4)]), z=zf - 0.3, bevel=0.55, profile="chamfer", mat="brass", wobble=0.05, nick=0.02, seed="slab.loz")
+    r.pocket(P_([(cx0 - 2.4, cy0), (cx0, cy0 - 1.4), (cx0 + 2.2, cy0), (cx0, cy0 + 1.4)]), depth=0.5, wall=0.4, mat="void", seed="slab.loz.eye")
+    _rail(r, 9.0 + st["shift"], cx0 - 8.0, cy0, 0.9, "slab.rail.a", notch=False)
+    _rail(r, cx0 + 8.0, 47.0 + st["shift"], cy0, 0.9, "slab.rail.b", notch=False)
+    emit = _glow(r, face, 0.5, st["glow"]) if st["glow"] else None
+    return forge.downsample(_lit(r, "hud.slab", emit=emit, wear=0.28, grime=0.55, rust=0.1, dust=0.05, exposure=st["exposure"]))
+
+
+def coords_plate():
+    """Sunken plate for the coordinates: a rolled frame round a black well; the text sits in the well."""
+    w, h = 56, 22
+    r = BarRelief(w, h, "iron.black", 0.0)
+    r.plate(R_(0.2, 0.2, w - 0.4, h - 0.4, 2.2), z=0.4, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.16, nick=0.03, wob_scale=6.0, seed="coords.lip")
+    _trim(r, (0.2, 0.2, w - 0.4, h - 0.4), 1.4, 2.2, "coords.lip")
+    r.pocket(R_(3.6, 3.4, w - 7.2, h - 6.8, 1.4), depth=3.0, wall=1.1, mat="void", wobble=0.08, nick=0.02, seed="coords.well")
+    for i, (x, y) in enumerate(((2.0, 2.0), (54.0, 2.0), (2.0, 20.0), (54.0, 20.0))):
+        r.dome(x, y, 1.0, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="iron.rivet", seed=f"coords.rv{i}", collar=False)
+    return forge.downsample(_lit(r, "hud.coords", wear=0.25, grime=0.55, rust=0.1, dust=0.05))
+
+
+def skill_bracket():
+    """The frame round the skill tile: two posts, a top and a bottom bar, brass pins."""
+    w, h = 32, 36
+    r = BarRelief(w, h, "iron.black", 0.0)
+    kw = dict(profile="rolled", wobble=0.12, nick=0.02, wob_scale=5.0)
+    r.plate(R_(0.4, 0.8, 5.6, 34.6, 2.6), z=0.5, bevel=2.4, rise=0.55, mat="iron.cold", seed="sb.pl", **kw)
+    r.plate(R_(26.0, 0.8, 5.6, 34.6, 2.6), z=0.5, bevel=2.4, rise=0.55, mat="iron.cold", seed="sb.pr", **kw)
+    r.plate(R_(0.2, 0.0, 31.6, 3.6, 1.6), z=1.3, bevel=1.9, rise=0.55, mat="iron.warm", seed="sb.top", **kw)
+    r.plate(R_(0.2, 32.4, 31.6, 3.6, 1.6), z=1.3, bevel=1.9, rise=0.55, mat="iron.warm", seed="sb.bot", **kw)
+    for i, (x, y) in enumerate(((3.2, 2.0), (28.8, 2.0), (3.2, 34.0), (28.8, 34.0))):
+        r.dome(x, y, 1.0, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="brass", seed=f"sb.pin{i}", collar=False)
+    for i, y in enumerate((11.0, 24.0)):
+        for x0 in (0.7, 26.3):
+            zb = float(r.h[int(y * PPU), int((x0 + 2.5) * PPU)])
+            r.plate(R_(x0, y, 5.0, 1.2, 0.4), z=zb - 0.1, bevel=0.4, profile="rolled", rise=0.9, mat="brass", wobble=0.03, seed=f"sb.band{i}{x0}")
+    return forge.downsample(_lit(r, "skill.bracket", wear=0.25, grime=0.5, rust=0.1, dust=0.04))
+
+
+def skill_tile(state):
+    w, h = 19, 28
+    r = BarRelief(w, h, "iron.black", 1.0)
+    r.plate(R_(0, 0, w, h, 0.6), z=0.4, bevel=1.4, profile="rolled", rise=0.5, mat="iron.cold", wobble=0.08, nick=0.02, seed="tile.face")
+    face = R_(2.2, 2.2, w - 4.4, h - 4.4, 0.8)
+    r.pocket(face, depth=0.7, wall=0.6, mat="iron.black", seed="tile.inset")
+    emit = _glow(r, R_(0.6, 0.6, w - 1.2, h - 1.2, 0.6), 0.7, 0.45) if state == "h" else None
+    img = forge.downsample(_lit(r, "skill.tile", emit=emit, wear=0.2, grime=0.45, rust=0.05, dust=0.04, exposure=1.0 if state != "d" else 0.55))
+    return img
+
+
+def iconbtn_plinth():
+    w, h = 101, 30
+    r = BarRelief(w, h, "iron.black", 0.0)
+    r.plate(R_(0, 0.5, w, h - 1.0, 3.0), z=0.5, bevel=2.6, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.14, nick=0.025, seed="plinth.lip")
+    for i, x in enumerate((4.2, 35.2, 66.2)):
+        r.pocket(R_(x, 0.8, 30.0, 28.4, 2.4), depth=2.4, wall=0.9, mat="void", wobble=0.06, seed=f"plinth.well{i}")
+    return forge.downsample(_lit(r, "iconbtn.plinth", wear=0.25, grime=0.55, rust=0.1, dust=0.05))
+
+
+def iconbtn_frame(state):
+    """Square forged frame for a button, 28 u: rolled lip, four bolts, a black face for the icon."""
+    w = h = 28
+    st = _STATE[state]
+    r = BarRelief(w, h, "iron.black", 0.0)
+    r.plate(R_(0.3, 0.3, w - 0.6, h - 0.6, 2.4), z=0.4, bevel=3.0, profile="rolled", rise=0.55, mat="iron.warm", wobble=0.16, nick=0.03, wob_scale=5.0, seed="ibf.lip")
+    _trim(r, (0.3, 0.3, w - 0.6, h - 0.6), 1.5, 2.4, "ibf.lip")
+    face = R_(3.6 + st["shift"], 3.6 + st["shift"], w - 7.2 - st["shift"], h - 7.2 - st["shift"], 1.4)
+    r.pocket(face, depth=3.2 - st["shift"] * 1.4, wall=1.0, mat="void", wobble=0.07, seed="ibf.face")
+    for i, (x, y) in enumerate(((2.0, 2.0), (26.0, 2.0), (2.0, 26.0), (26.0, 26.0))):
+        r.dome(x, y, 1.0, z=float(r.h[int(y * PPU), int(x * PPU)]), mat="iron.rivet", seed=f"ibf.rv{i}", collar=False)
+    emit = _glow(r, face, 0.55, st["glow"]) if st["glow"] else None
+    return forge.downsample(_lit(r, "iconbtn.frame", emit=emit, wear=0.26, grime=0.55, rust=0.1, dust=0.05, exposure=st["exposure"]))
+
+
+# Q/W/E sockets and EXP ----------------------------------------------------------------
+
+AMBER = (1.0, 0.50, 0.14)
+
+
+def _glow(r, shape, width_u, power, tint=AMBER):
+    """Emission hugging the inside edge of a shape (linear HxWx3): a candle-lit rim for the hover states."""
+    d = shape.sdf(r.xs[None, :], r.ys[:, None])
+    ring = np.exp(-((d - width_u * 0.8) / width_u) ** 2) * (d > -0.2)
+    return (ring[..., None] * np.array(tint, np.float32) * power).astype(np.float32)
+
+
+_STATE = {"n": dict(exposure=1.0, glow=0.0, shift=0.0), "h": dict(exposure=1.18, glow=0.55, shift=0.0), "p": dict(exposure=0.72, glow=0.0, shift=0.6)}
+
+
+def qwe_slot(w, state, cheek=0.0):
+    """Empty socket with a heavy, uneven lip. cheek is the shoulder that ties the first socket to the plate."""
+    h = 28
+    st = _STATE[state]
+    r = BarRelief(w, h, "iron.black", 0.0)
+    x0 = cheek
+    r.plate(R_(x0 + 0.2, 0.3, w - x0 - 0.5, h - 0.7, 2.6), z=0.4, bevel=3.1, profile="rolled", rise=0.55, mat="iron.warm", wobble=0.26, nick=0.04, wob_scale=5.0, seed=f"qwe.lip{w}")
+    _trim(r, (x0 + 0.2, 0.3, w - x0 - 0.5, h - 0.7), 1.5, 2.6, f"qwe.lip{w}")
+    if cheek:
+        r.plate(R_(0.2, 2.2, cheek + 4.0, h - 4.6, 2.0), z=0.9, bevel=2.2, profile="rolled", rise=0.55, mat="iron", wobble=0.2, nick=0.03, seed="qwe.shoulder")
+    pocket = R_(x0 + 3.2 + st["shift"] * 0.5, 3.1 + st["shift"], w - x0 - 6.4, h - 6.6, 1.8)
+    r.pocket(pocket, depth=3.8 - st["shift"] * 1.2, wall=1.3, mat="void", wobble=0.14, nick=0.03, seed=f"qwe.pocket{w}")
+    # a broken line of worn brass along the bottom lip
+    zb = float(r.h[int((h - 1.4) * PPU), int((x0 + 6) * PPU)])
+    for i, (a, b) in enumerate(((x0 + 5.0, x0 + 13.0), (x0 + 15.5, w - 7.0))):
+        if b - a > 2.5:
+            r.plate(P_([(a, h - 1.4), (a + 0.9, h - 2.0), (b - 0.9, h - 2.0), (b, h - 1.4), (b - 0.9, h - 0.8), (a + 0.9, h - 0.8)]), z=zb - 0.2, bevel=0.3, profile="chamfer", mat="brass", wobble=0.04, seed=f"qwe.brass{w}.{i}")
+    emit = _glow(r, pocket, 0.55, st["glow"]) if st["glow"] else None
+    return forge.downsample(_lit(r, f"qwe.slot.{w}", emit=emit, wear=0.26, grime=0.55, rust=0.12, dust=0.05, exposure=st["exposure"]))
+
+
+def qwe_notch():
+    """The forged ear on top of each socket: a rolled ring with a brass bead round a black eye."""
+    w, h = 18, 14
+    r = BarRelief(w, h, "iron.black", 0.0)
+    c = (9.0, 7.0)
+    r.plate(forge.Ellipse(c[0], c[1], 8.8, 6.7), z=0.3, bevel=2.6, profile="rolled", rise=0.6, mat="iron.warm", wobble=0.16, nick=0.03, seed="notch.lip")
+    r.pocket(forge.Ellipse(c[0], c[1], 5.6, 3.7), depth=3.4, wall=1.1, mat="void", wobble=0.08, seed="notch.eye")
+    ring = [(c[0] + 6.55 * math.cos(t), c[1] + 4.55 * math.sin(t)) for t in np.linspace(math.radians(190), math.radians(350), 40)]
+    zb = float(r.h[int(c[1] * PPU), int((c[0] - 7.0) * PPU)])
+    r.plate(forge.Capsule(ring, 0.5), z=zb + 0.1, bevel=0.4, profile="rolled", rise=0.9, mat="brass", wobble=0.04, seed="notch.bead")
+    return forge.downsample(_lit(r, "qwe.notch", wear=0.25, grime=0.55, rust=0.1, dust=0.04))
+
+
+def exp_frame():
+    """Two thin forged rails and heavy end knobs round the trough; the middle is open."""
+    w, h = 207, 10
+    r = BarRelief(w, h, "iron.black", 0.0)
+    kw = dict(profile="rolled", rise=0.55, wobble=0.10, nick=0.02, wob_scale=5.0)
+    r.plate(R_(2.4, 0.0, 202.2, 2.2, 0.9), z=0.5, bevel=1.1, mat="iron.warm", seed="expf.top", **kw)
+    r.plate(R_(2.4, 7.8, 202.2, 2.2, 0.9), z=0.5, bevel=1.1, mat="iron.warm", seed="expf.bot", **kw)
+    for i, x in enumerate((0.0, 201.6)):
+        r.plate(R_(x, 0.0, 5.4, 10.0, 2.4), z=0.8, bevel=2.4, mat="iron", seed=f"expf.end{i}", **kw)
+        r.dome(x + 2.7, 5.0, 1.45, z=float(r.h[5 * PPU, int((x + 2.7) * PPU)]), mat="brass", seed=f"expf.knob{i}", collar=False)
+    for i, (a, b) in enumerate(((14.0, 38.0), (96.0, 118.0), (170.0, 190.0))):
+        _rail(r, a, b, 1.1, 0.8, f"expf.rail{i}", notch=False)
+    return forge.downsample(_lit(r, "hud.exp.frame", wear=0.24, grime=0.5, rust=0.1, dust=0.04, exposure=1.1))
+
+
+def exp_trough():
+    w, h = 199, 6
+    r = BarRelief(w, h, "iron.black", 1.0)
+    r.plate(R_(0, 0, w, h, 0.8), z=2.0, bevel=0.5, profile="rolled", rise=0.2, mat="iron.black", seed="expt.base")
+    r.pocket(R_(0.7, 0.7, w - 1.4, h - 1.4, 1.0), depth=2.6, wall=0.9, mat="void", wobble=0.04, seed="expt.pocket")
+    return forge.downsample(_lit(r, "hud.exp.trough", wear=0.05, grime=0.2, rust=0.0, dust=0.0, detail=0.4))
+
+
+def exp_fill():
+    """Molten amber, tiling in x: a bright lip, a warm body, a deep underside, one soft seam per tile."""
+    w, h = 32, 20
+    y = (np.arange(h, dtype=np.float32)[:, None] + 0.5) / h
+    x = (np.arange(w, dtype=np.float32)[None, :] + 0.5) / w
+    stops = ((0.0, (1.00, 0.93, 0.66)), (0.16, (0.96, 0.78, 0.44)), (0.62, (0.90, 0.64, 0.26)), (1.0, (0.50, 0.30, 0.10)))
+    col = np.zeros((h, w, 3), np.float32)
+    for c in range(3):
+        col[..., c] = np.interp(y[:, 0], [s[0] for s in stops], [s[1][c] for s in stops])[:, None]
+    col *= (1 + 0.035 * np.cos(2 * math.pi * x))[..., None]
+    out = np.dstack((col, np.ones((h, w), np.float32)))
+    return (np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+def exp_cup():
+    """Forged socket for the level number: a rolled ring, a worn brass bead, a black well."""
+    w = h = 12
+    r = BarRelief(w, h, "iron.black", 0.0)
+    r.plate(forge.Ellipse(6, 6, 5.9, 5.9), z=0.3, bevel=2.0, profile="rolled", rise=0.6, mat="iron.warm", wobble=0.10, nick=0.02, wob_scale=4.0, seed="cup.lip")
+    r.pocket(forge.Ellipse(6, 6, 3.7, 3.7), depth=3.0, wall=0.9, mat="void", wobble=0.05, seed="cup.well")
+    ring = [(6 + 4.2 * math.cos(t), 6 + 4.2 * math.sin(t)) for t in np.linspace(math.radians(200), math.radians(520), 40)]
+    zb = float(r.h[int(6 * PPU), int(1.6 * PPU)])
+    r.plate(forge.Capsule(ring, 0.38), z=zb + 0.1, bevel=0.35, profile="rolled", rise=0.9, mat="brass", wobble=0.03, seed="cup.bead")
+    return forge.downsample(_lit(r, "exp.cup", wear=0.22, grime=0.5, rust=0.08, dust=0.03))
+
+
+# centre group and the gap between the groups ------------------------------------------
+
+
+def bar_centre():
+    """Centre group, 242 x 48 u: a long beam with the EXP channel in it, a cluster plate for Q/W/E, a
+    stand for the skill tile and a plate for the three buttons, each overlapping its neighbour."""
+    w, h = CENTRE_W, BAR_H
+    r = BarRelief(w, h, "iron.black", 1.0)
+    r.plate(R_(0, 0, w, h), z=0.0, bevel=0.5, rise=0.0, seed="bc.field")
+    # icon plate, then the stand for the skill tile, then the Q/W/E cluster, then the beam over the top
+    r.plate(R_(137.0, 14.0, 110.0, 38.0, 4.5), z=0.8, bevel=2.8, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.14, nick=0.02, seed="bc.icons")
+    r.pocket(R_(141.6, 16.0, 101.6, 30.4, 2.2), depth=2.2, wall=0.9, mat="void", wobble=0.05, seed="bc.icons.pocket")
+    r.plate(R_(99.5, 8.0, 43.0, 44.0, 5.0), z=1.7, bevel=2.8, profile="rolled", rise=0.5, mat="iron.cold", wobble=0.14, nick=0.02, seed="bc.stand")
+    r.pocket(R_(104.5, 10.5, 33.0, 37.5, 3.0), depth=2.4, wall=1.0, mat="void", wobble=0.05, seed="bc.stand.pocket")
+    r.plate(R_(-8.0, 14.0, 108.5, 38.0, 4.5), z=1.0, bevel=2.8, profile="rolled", rise=0.5, mat="iron", wobble=0.14, nick=0.02, seed="bc.qwe")
+    for i, (x0, ww) in enumerate(((-0.9, 34.6), (35.2, 30.8), (66.2, 30.0))):
+        r.pocket(R_(x0, 17.0, ww, 30.2, 3.0), depth=2.4, wall=1.0, mat="void", wobble=0.06, seed=f"bc.qwe.pocket{i}")
+    r.plate(R_(13.5, -1.5, 223.5, 15.2, 3.2), z=1.6, bevel=2.6, profile="rolled", rise=0.5, mat="iron.warm", wobble=0.14, nick=0.02, seed="bc.beam")
+    r.pocket(R_(18.4, 2.6, 213.2, 9.8, 2.6), depth=2.4, wall=0.9, mat="void", wobble=0.05, seed="bc.beam.pocket")
+    for i, (x, y, rad) in enumerate(((16.2, 0.9, 1.5), (233.6, 0.9, 1.5), (16.2, 11.8, 1.5), (234.6, 11.8, 1.4), (101.6, 50.0, 1.6), (140.4, 50.0, 1.6), (101.6, 9.4, 1.5), (140.4, 9.4, 1.5))):
+        _bolt(r, x, y, rad, f"bc.bolt{i}")
+    _rail(r, 44.0, 70.0, 0.8 + 1.0, 1.4, "bc.rail.a")
+    _rail(r, 150.0, 176.0, 1.8, 1.4, "bc.rail.b")
+    _rail(r, 108.0, 134.0, 46.6, 1.4, "bc.rail.c")
+    return forge.downsample(_lit(r, "hud.bar.centre", wear=0.25, grime=0.55, rust=0.12, dust=0.06, detail=0.5, soft=1.8, value_map=_vmap(w, h, 95, 121, floor=0.7, mottle=0.55, seed="bc")))
+
+
+def bar_gap():
+    """Tiling filler, 64 x 48 u: the arm's three bands run straight through, with a strap at the seam."""
+    w, h = 64, BAR_H
+    r = BarRelief(w, h, "iron.black", 1.0, tile="x")
+    r.plate(R_(0, 0, w, h), z=0.0, bevel=0.5, rise=0.0, seed="bg.field")
+    kw = dict(profile="rolled", rise=0.5, wobble=0.14, nick=0.015)
+    r.plate(R_(-8, 29, 80, 23, 3), z=0.6, bevel=2.8, mat="iron.cold", seed="bg.c", **kw)
+    r.plate(R_(-8, -4, 80, 31, 3), z=1.0, bevel=2.8, mat="iron.warm", seed="bg.a", **kw)
+    r.plate(R_(-8, 13, 80, 28, 3), z=2.2, bevel=3.0, mat="iron", seed="bg.b", **kw)
+    for dx in (0.0, 64.0):
+        r.plate(R_(-2.4 + dx, -2, 4.8, 54, 1.2), z=3.2, bevel=1.5, mat="iron.cold", seed=f"bg.strap{dx}", **kw)
+        for y in (6.0, 27.0, 44.0):
+            _bolt(r, dx, y, 1.3, f"bg.sb{y}{dx}")
+    _rail(r, 7.0, 28.0, 8.0, 1.4, "bg.rail.a")
+    _rail(r, 36.0, 57.0, 44.4, 1.4, "bg.rail.b")
+    for i, (x, y) in enumerate(((20.0, 20.0), (46.0, 34.0))):
+        _bolt(r, x, y, 1.5, f"bg.bolt{i}")
+    return forge.downsample(_lit(r, "hud.gap", wear=0.25, grime=0.55, rust=0.1, dust=0.06, detail=0.5, soft=1.8, value_map=_vmap(w, h, 1e9, 0, top=0.9, floor=1.0, mottle=0.55, seed="bg", period=64.0)), wrap="x")
+
+
+# button icons -------------------------------------------------------------------------
+
+LEATHER = (3.6, 2.2, 1.3)
+CLOTH = (6.0, 0.9, 0.8)
+
+
+def _icon_render(r, seed):
+    return forge.downsample(_lit(r, seed, wear=0.2, grime=0.4, rust=0.04, dust=0.03, detail=0.5, exposure=1.15))
+
+
+def icon_banner():
+    r = BarRelief(22, 22, "iron.black", 0.0)
+    r.plate(P_([(5.2, 5.4), (16.8, 5.4), (16.8, 19.4), (11.0, 15.4), (5.2, 19.4)]), z=0.4, bevel=1.3, profile="rolled", rise=0.6, mat="iron.warm", tint=CLOTH, wobble=0.10, nick=0.03, seed="banner.cloth")
+    r.sweep([(2.8, 4.4), (19.2, 4.4)], 0.75, 1.6, mat="brass", step_px=2.0)
+    for i, x in enumerate((2.8, 19.2)):
+        r.dome(x, 4.4, 1.3, z=1.2, mat="brass", seed=f"banner.knob{i}", collar=False)
+    zb = float(r.h[int(11.0 * PPU), int(11.0 * PPU)])
+    r.sweep([(7.6, 9.0), (11.0, 12.4), (14.4, 9.0)], 0.55, zb + 0.35, mat="brass", step_px=2.0)
+    r.sweep([(10.2, 1.6), (11.0, 1.2), (11.8, 1.6)], 0.5, 1.4, mat="brass", step_px=2.0)
+    return _icon_render(r, "icon.banner")
+
+
+def icon_lens():
+    r = BarRelief(22, 22, "iron.black", 0.0)
+    c = (9.0, 9.0)
+    r.sweep([(13.7, 13.7), (19.2, 19.2)], 1.15, 0.8, mat="iron.warm", tint=LEATHER, step_px=2.0)
+    r.sweep([(13.4, 13.4), (14.2, 14.2)], 1.55, 1.0, mat="brass", step_px=2.0)
+    r.plate(forge.Ellipse(c[0], c[1], 7.4, 7.4), z=0.3, bevel=1.2, profile="rolled", rise=0.5, mat="brass", wobble=0.04, seed="lens.ring")
+    r.pocket(forge.Ellipse(c[0], c[1], 5.6, 5.6), depth=1.8, wall=0.5, mat="void", seed="lens.glass")
+    arc = [(c[0] + 4.1 * math.cos(t), c[1] + 4.1 * math.sin(t)) for t in np.linspace(math.radians(200), math.radians(262), 12)]
+    zg = float(r.h[int(c[1] * PPU), int(c[0] * PPU)])
+    r.plate(forge.Capsule(arc, 0.32), z=zg + 0.1, bevel=0.3, profile="rolled", rise=0.9, mat="ivory", seed="lens.glint")
+    return _icon_render(r, "icon.lens")
+
+
+def icon_satchel():
+    r = BarRelief(22, 22, "iron.black", 0.0)
+    r.plate(P_([(3.4, 9.6), (18.6, 9.6), (19.8, 18.0), (18.0, 20.4), (4.0, 20.4), (2.2, 18.0)]), z=0.4, bevel=1.7, profile="rolled", rise=0.6, mat="iron.warm", tint=LEATHER, wobble=0.10, nick=0.03, seed="satchel.body")
+    r.plate(P_([(3.0, 7.2), (19.0, 7.2), (19.0, 11.4), (13.0, 14.4), (9.0, 14.4), (3.0, 11.4)]), z=1.3, bevel=1.3, profile="rolled", rise=0.6, mat="iron.warm", tint=(4.2, 2.5, 1.4), wobble=0.10, nick=0.03, seed="satchel.flap")
+    strap = U.bezier((5.6, 7.6), (6.6, 0.4), (15.4, 0.4), (16.4, 7.6), 24)
+    r.sweep(strap, 0.8, 0.9, mat="iron.warm", tint=LEATHER, step_px=2.0)
+    r.dome(11.0, 12.8, 1.5, z=float(r.h[int(12.8 * PPU), int(11.0 * PPU)]), mat="brass", seed="satchel.clasp", collar=False)
+    return _icon_render(r, "icon.satchel")
+
+
 # assembly -----------------------------------------------------------------------------
+
+
+def _heavy(task):
+    name, args = task
+    return globals()[name](*args)
+
+
+def _compute(tasks):
+    """The forge renders, in parallel and in a fixed order. Each task is a pure function of its arguments,
+    so the worker count cannot change a byte."""
+    items = list(tasks.items())
+    workers = min(os.cpu_count() or 1, 10, len(items))
+    if workers <= 1:
+        return {k: _heavy(t) for k, t in items}
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        return dict(zip((k for k, _ in items), ex.map(_heavy, [t for _, t in items], chunksize=1)))
+
+
+def render_tasks():
+    """Sprite name -> (function, args). Slowest first, so the pool stays busy to the end."""
+    t = {
+        "hud.base.centre": ("bar_centre", ()),
+        "hud.base.left": ("bar_left", ()),
+        "hud.dragon.left": ("dragon", ()),
+        "hud.talon.left": ("talon", ()),
+        "gem.setting.left": ("setting", ()),
+        "hud.gapfill": ("bar_gap", ()),
+        "gauge.cap.left": ("gauge_cap", ()),
+        "gauge.left.fill": ("gauge_fill_left", ()),
+        "gauge.right.fill": ("gauge_fill_right", ()),
+        "gauge.empty": ("gauge_empty", ()),
+        "hud.coordsplate": ("coords_plate", ()),
+        "exp.frame": ("exp_frame", ()),
+        "exp.trough": ("exp_trough", ()),
+        "exp.cup": ("exp_cup", ()),
+        "exp.fill": ("exp_fill", ()),
+        "qwe.notch": ("qwe_notch", ()),
+        "skill.bracket": ("skill_bracket", ()),
+        "iconbtn.plinth": ("iconbtn_plinth", ()),
+    }
+    for st, suf in (("n", "normal"), ("h", "hover"), ("p", "pressed")):
+        t[f"hud.slab.{suf}"] = ("slab", (st,))
+        t[f"qwe.slot.q.{suf}"] = ("qwe_slot", (33, st, 5.0))
+        t[f"qwe.slot.w.{suf}"] = ("qwe_slot", (29, st, 0.0))
+        t[f"qwe.slot.e.{suf}"] = ("qwe_slot", (28, st, 0.0))
+        t[f"iconbtn.frame.{suf}"] = ("iconbtn_frame", (st,))
+    for st, suf in (("n", "normal"), ("h", "hover"), ("d", "disabled")):
+        t[f"skill.tile.{suf}"] = ("skill_tile", (st,))
+    for ch in "qwe":
+        t[f"qwe.letter.{ch}"] = ("qwe_letter", (ch,))
+    for ch in "0123456789":
+        t[f"hudnum.{ch}"] = ("hudnum", (ch,))
+    t["hudnum.slash"] = ("hudnum", ("/",))
+    return t
 
 
 def hud_sprites():
     s = []
     add = lambda name, img, **kw: s.append(U.Sprite(name, img, **kw))
-    bl = base_left()
-    add("hud.base.left", bl)
-    add("hud.base.right", U.mirror_x(bl))
-    add("hud.base.centre", base_centre())
-    add("hud.gapfill", gapfill(), tile="x")
-    s.extend(gem_set("hp"))
-    s.extend(gem_set("mp"))
-    add("gauge.left.fill", gauge_prism("gauge.left", "gauge.left.face", "gauge.left.side", "gauge.left.edge", "#924C0F", "#A84D0C"))
-    add("gauge.right.fill", gauge_prism("gauge.right", "gauge.right.face", "gauge.right.side", "gauge.right.edge", "#2A1430", "#301838", mottle=0.08))
-    add("gauge.empty", gauge_prism("gauge.empty", "#0E0D0B", "#0A0908", "#181612", "#040403", "#040403", mottle=0.04))
-    cap = gauge_cap()
-    add("gauge.cap.left", cap)
-    add("gauge.cap.right", U.mirror_x(cap))
-    d = dragon()
+    big = _compute(render_tasks())
+    add("hud.base.left", big["hud.base.left"])
+    add("hud.base.right", U.mirror_x(big["hud.base.left"]))
+    add("hud.base.centre", big["hud.base.centre"])
+    add("hud.gapfill", big["hud.gapfill"], tile="x")
+    for kind in ("hp", "mp"):
+        gs = gem_set(kind)
+        s.extend(gs)
+        add(f"gem.{kind}.spill", gem_spill(kind, gs[0].image[..., 3]))
+    add("gem.setting.left", big["gem.setting.left"])
+    add("gem.setting.right", U.mirror_x(big["gem.setting.left"]))
+    for name in ("gauge.left.fill", "gauge.right.fill", "gauge.empty"):
+        add(name, big[name])
+    add("gauge.cap.left", big["gauge.cap.left"])
+    add("gauge.cap.right", U.mirror_x(big["gauge.cap.left"]))
+    d = big["hud.dragon.left"]
     w, h = DRAGON_W * 4, DRAGON_H * 4
     eye = [int(v * 4) for v in EYE_RECT_U]
     fang = [int(v * 4) for v in FANG_RECT_U]
     add("hud.dragon.left", d, pivot=(0, h), meta={"eye": eye, "fang": fang})
     add("hud.dragon.right", U.mirror_x(d), pivot=(w, h), meta={"eye": [w - eye[0] - eye[2], *eye[1:]], "fang": [w - fang[0] - fang[2], *fang[1:]]})
-    t = talon()
-    add("hud.talon.left", t)
-    add("hud.talon.right", U.mirror_x(t))
-    for st, suf in (("n", "normal"), ("h", "hover"), ("p", "pressed")):
-        add(f"hud.slab.{suf}", slab(st))
-        add(f"qwe.slot.q.{suf}", qwe_slot(33, st, 5.0))
-        add(f"qwe.slot.w.{suf}", qwe_slot(29, st))
-        add(f"qwe.slot.e.{suf}", qwe_slot(28, st))
-        add(f"iconbtn.frame.{suf}", iconbtn_frame(st))
-        add(f"chat.btn.{suf}", chat_btn(st))
-        add(f"chat.scroll.up.{suf}", chat_scroll("up", st))
-        add(f"chat.scroll.down.{suf}", chat_scroll("down", st))
-    add("hud.coordsplate", coords_plate())
+    add("hud.talon.left", big["hud.talon.left"])
+    add("hud.talon.right", U.mirror_x(big["hud.talon.left"]))
+    for suf in ("normal", "hover", "pressed"):
+        for name in (f"hud.slab.{suf}", f"qwe.slot.q.{suf}", f"qwe.slot.w.{suf}", f"qwe.slot.e.{suf}", f"iconbtn.frame.{suf}"):
+            add(name, big[name])
+        add(f"chat.btn.{suf}", chat_btn(suf[0]))
+        add(f"chat.scroll.up.{suf}", chat_scroll("up", suf[0]))
+        add(f"chat.scroll.down.{suf}", chat_scroll("down", suf[0]))
+    add("hud.coordsplate", big["hud.coordsplate"])
     add("icon.scroll", icon_scroll())
     add("icon.party", icon_party())
     add("icon.pvp", icon_pvp())
     add("hud.ministat.off", ministat(False))
     add("hud.ministat.on", ministat(True))
-    add("exp.frame", exp_frame(), slice=(16, 0, 16, 0))
-    add("exp.trough", exp_trough(), slice=(16, 0, 16, 0))
-    add("exp.fill", exp_fill(), tile="x")
+    add("exp.frame", big["exp.frame"], slice=(16, 0, 16, 0))
+    add("exp.trough", big["exp.trough"], slice=(16, 0, 16, 0))
+    add("exp.fill", big["exp.fill"], tile="x")
     add("exp.tick", np.dstack((np.broadcast_to(rgb("#5A4A28"), (24 * 4, 4 * 4, 3)), np.ones((24 * 4, 4 * 4), np.float32))).astype(np.float32))
-    add("exp.cup", exp_cup())
-    add("qwe.notch", qwe_notch())
+    add("exp.cup", big["exp.cup"])
+    add("qwe.notch", big["qwe.notch"])
     for ch in "qwe":
-        add(f"qwe.letter.{ch}", qwe_letter(ch))
-    add("skill.bracket", skill_bracket())
-    add("skill.tile.normal", skill_tile("n"))
-    add("skill.tile.hover", skill_tile("h"))
-    add("skill.tile.disabled", skill_tile("d"))
+        add(f"qwe.letter.{ch}", big[f"qwe.letter.{ch}"])
+    add("skill.bracket", big["skill.bracket"])
+    for suf in ("normal", "hover", "disabled"):
+        add(f"skill.tile.{suf}", big[f"skill.tile.{suf}"])
     add("skill.icon.default", skill_icon())
-    add("iconbtn.plinth", iconbtn_plinth())
+    add("iconbtn.plinth", big["iconbtn.plinth"])
     add("icon.banner", icon_banner())
     add("icon.lens", icon_lens())
     add("icon.satchel", icon_satchel())
+    for ch in "0123456789":
+        add(f"hudnum.{ch}", big[f"hudnum.{ch}"])
+    add("hudnum.slash", big["hudnum.slash"])
     add("chat.rock", chat_rock(), tile="xy")
     add("chat.post.left", chat_post(True), tile="y")
     add("chat.post.right", chat_post(False), tile="y")
@@ -1483,6 +1475,7 @@ def hud_sprites():
 HUD_LAYOUT = {
     "bar": [BAR_W, BAR_H], "split": [0, LEFT_W, LEFT_W + CENTRE_W, BAR_W],
     "slab": SLAB, "coords": COORDS, "gaugeFill": GAUGE_FILL, "gaugeCap": GAUGE_CAP, "gem": GEM, "talon": TALON,
+    "dragon": DRAGON, "setting": SETTING, "spill": SPILL,
 }
 
 
@@ -1532,6 +1525,29 @@ def bar_preview(out_root, gap_u=0):
         s = S(name)
         im.alpha_composite(s, (px(x), px(y + top))) if x >= 0 and y + top >= 0 else None
 
+    def add_put(name, x, y):
+        """Additive sprite at full level, as the shader draws it: rgb times alpha, added."""
+        s = np.asarray(S(name), dtype=np.float32) / 255
+        x0, y0 = px(x), px(y + top)
+        base = np.asarray(im, dtype=np.float32) / 255
+        h, w = s.shape[:2]
+        reg = base[y0 : y0 + h, x0 : x0 + w, :3]
+        sub = s[: reg.shape[0], : reg.shape[1]]
+        reg += sub[..., :3] * sub[..., 3:4]
+        im.paste(Image.fromarray((np.clip(base, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA"))
+
+    def numerals(text, cx_u, y_u, h_u=12.0):
+        """The bar's own digits, bottom-aligned on one advance, shrunk to fit 50 u."""
+        names = {"/": "hudnum.slash", **{str(i): f"hudnum.{i}" for i in range(10)}}
+        try:
+            glyphs = [S(names[c]) for c in text]
+        except KeyError:
+            return
+        adv = glyphs[0].width
+        total_w = adv * len(glyphs)
+        for i, g_ in enumerate(glyphs):
+            im.alpha_composite(g_, (int(px(cx_u) - total_w / 2 + i * adv), px(y_u + top)))
+
     rx = total - LEFT_W
     cx = LEFT_W + gap_u
     put("hud.base.left", 0, 0)
@@ -1544,25 +1560,26 @@ def bar_preview(out_root, gap_u=0):
             wd = min(64, cx - x)
             im.alpha_composite(g.crop((0, 0, px(wd), g.height)), (px(gx), px(top)))
         x += 64
-    # left group
+    # left group, in the game's draw order: slabs, gauge, collar, stone, talon, spill, then numerals
     put("hud.slab.normal", SLAB[0], SLAB[1])
-    put("icon.scroll", SLAB[0] + 15, SLAB[1] + 3)
     put("hud.coordsplate", COORDS[0], COORDS[1])
-    put("gauge.left.fill", GAUGE_FILL[0], GAUGE_FILL[1])
+    put("gauge.empty", GAUGE_FILL[0], GAUGE_FILL[1])
     put("gauge.cap.left", GAUGE_CAP[0], GAUGE_CAP[1])
+    put("gem.setting.left", SETTING[0], SETTING[1])
     put("gem.hp.full", GEM[0], GEM[1])
     put("hud.talon.left", TALON[0], TALON[1])
+    add_put("gem.hp.spill", SPILL[0], SPILL[1])
+    numerals("812/812", GEM[0] + GEM[2] / 2, GEM[1] + GEM[3] - 14)
     # right group
     off = total - BAR_W
     put("hud.slab.normal", BAR_W - SLAB[0] - SLAB[2] + off + gap_u * 0, SLAB[1])
     put("hud.slab.normal", BAR_W - COORDS[0] - COORDS[2] + off, COORDS[1])
-    put("icon.party", BAR_W - SLAB[0] - SLAB[2] + off + 4, SLAB[1] + 3)
-    put("hud.ministat.off", BAR_W - SLAB[0] - SLAB[2] + off + 34, SLAB[1] + 5)
-    put("icon.pvp", BAR_W - SLAB[0] - SLAB[2] + off + 15, COORDS[1] + 2)
-    put("gauge.right.fill", BAR_W - GAUGE_FILL[0] - GAUGE_FILL[2] + off, GAUGE_FILL[1])
+    put("gauge.empty", BAR_W - GAUGE_FILL[0] - GAUGE_FILL[2] + off, GAUGE_FILL[1])
     put("gauge.cap.right", BAR_W - GAUGE_CAP[0] - GAUGE_CAP[2] + off, GAUGE_CAP[1])
+    put("gem.setting.right", BAR_W - SETTING[0] - SETTING[2] + off, SETTING[1])
     put("gem.mp.full", BAR_W - GEM[0] - GEM[2] + off, GEM[1])
     put("hud.talon.right", BAR_W - TALON[0] - TALON[2] + off, TALON[1])
+    add_put("gem.mp.spill", BAR_W - SPILL[0] - SPILL[2] + off, SPILL[1])
     # chat cluster, in the centre group
     c = cx - LEFT_W
     log_h, log_y = 66, -13 - 66 - 4
@@ -1625,8 +1642,8 @@ def bar_preview(out_root, gap_u=0):
         put("iconbtn.frame.normal" if i < 2 else "iconbtn.frame.pressed", x + c, 18)
         put(("icon.banner", "icon.lens", "icon.satchel")[i], x + c + 3, 21)
     # dragons last: they draw above everything else in the bar
-    put("hud.dragon.left", 0, -DRAGON_H)
-    put("hud.dragon.right", total - DRAGON_W, -DRAGON_H)
+    put("hud.dragon.left", DRAGON[0], DRAGON[1])
+    put("hud.dragon.right", total - DRAGON_W, DRAGON[1])
     return im
 
 
