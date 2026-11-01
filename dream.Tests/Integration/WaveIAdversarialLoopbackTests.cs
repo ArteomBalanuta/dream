@@ -5,6 +5,8 @@ using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Server.Hosting;
 using Dream.Server.Worlds;
+using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -82,6 +84,62 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
         await client.LeaveAsync();
     }
 
+    private static string Signature(PlayerInventorySnapshot inventory) =>
+        string.Join(",", inventory.Slots.Concat(inventory.Equipment ?? []).Append(inventory.EquippedSlot ?? default).Select(slot => $"{slot.SlotIndex}:{slot.Item?.ItemInstanceId}"));
+
+    // With a long snapshot interval an inventory result stays queued until the next snapshot. Before the
+    // leave purged it (ReleaseConnection), it reached the rejoined connection of the same session id after
+    // its JoinAccepted (join at 1, stale result at 3).
+    [Fact]
+    public async Task AnInventoryResultQueuedBeforeALeave_NeverReachesTheRejoinedSession_AndItsInventoryIsRight()
+    {
+        using MigrationTestDatabase db = new();
+        DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(
+            ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(null)));
+        await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(
+            host, Dream.Server.ServerConnectionOptions.Default with { SnapshotIntervalTicks = 40 });
+        HeadlessPlayScene first = await HeadlessPlayScene.JoinAsync(server, "adv-rejoin");
+        IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(server.Runtime, "adv-rejoin");
+        target.SetWorldPosition(new Vector3(48f, 1.5f, 48f));
+
+        // Run to just after a snapshot, so the action below stays queued for ~40 ticks.
+        long snapshots = server.Service.SnapshotsBroadcast;
+        for (int i = 0; i < 60 && server.Service.SnapshotsBroadcast == snapshots; i++)
+        {
+            await server.TickAsync();
+        }
+
+        Assert.True(await first.FlushAsync());
+        PlayerInventorySnapshot before = server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId("adv-rejoin"))!.Value;
+        InventorySlotSnapshot candidate = before.Slots.First(slot => slot.Item is not null && slot.SlotIndex != before.EquippedSlot?.SlotIndex);
+        await first.SendActionAsync(new InventoryEquipIntent(candidate.SlotIndex));
+        await server.TickAsync();
+        Assert.Equal(snapshots + 1, server.Service.SnapshotsBroadcast);
+        await first.LeaveAsync();
+        await first.DisposeAsync();
+
+        HeadlessPlayScene second = await HeadlessPlayScene.JoinAsync(server, "adv-rejoin");
+        await using (second)
+        {
+            long target2 = server.Service.SnapshotsBroadcast;
+            for (int i = 0; i < 80 && server.Service.SnapshotsBroadcast == target2; i++)
+            {
+                await server.TickAsync();
+                Assert.True(await second.FlushAsync());
+            }
+
+            await second.PumpToSnapshotAsync(server.Runtime.CurrentServerTick);
+            int joinIndex = second.Applied.ToList().FindIndex(m => m is JoinAcceptedMessage);
+            int staleIndex = second.Applied.ToList().FindIndex(m => m is ServerActionMessage { Result.Payload: InventoryChangedResult });
+            output.WriteLine($"join at {joinIndex}, stale inventory result at {staleIndex}");
+            PlayerInventorySnapshot serverNow = server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId("adv-rejoin"))!.Value;
+            output.WriteLine($"client {Signature(second.Inventory!.Value)} server {Signature(serverNow)}");
+            Assert.Equal(Signature(serverNow), Signature(second.Inventory!.Value));
+            Assert.True(staleIndex < 0, "the rejoined session received the earlier session's inventory result");
+            await second.LeaveAsync();
+        }
+    }
+
     // A push waits while an inventory result of its own session is queued (wave I fix loop 1: the hold
     // is per session, not server-wide), so another player's inventory actions, on every tick or on
     // exactly the tick of the kill, must not hold back a killer's loot.
@@ -120,8 +178,10 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
             Assert.True(await griefer.FlushAsync());
             // FlushAsync only says the server wrote its bytes; the client's reader may not have queued them
             // yet, and a bare Pump then records a push one step late. A push goes out before the tick's
-            // snapshot on the same connection, so once that snapshot is applied the step's push is too.
-            ulong tick = server.Runtime.CurrentServerTick;
+            // snapshot on the same connection, so once that snapshot is applied the step's push is too. That
+            // holds for an unheld session; a held one gets its push only on a later tick. The wait target is
+            // the newest tick that carries a snapshot, as in the neighbouring waits.
+            ulong tick = server.Runtime.CurrentServerTick + 1 - (ulong)server.Service.SnapshotIntervalTicks;
             await victim.PumpToSnapshotAsync(tick);
             await griefer.PumpToSnapshotAsync(tick);
             if (pushStep == 0 && victim.Applied.OfType<InventoryPushMessage>().Any())

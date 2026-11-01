@@ -7,6 +7,7 @@ using Dream.Server.Persistence.Worlds;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Simulation.World.Geometry;
 using Dream.Tests.Server.Persistence.Migrations;
 
 namespace Dream.Tests.Simulation.Runtime;
@@ -225,6 +226,47 @@ public sealed class PlayerRespawnTests
         Assert.NotNull(runtime.Map.TryAddCube(new Vector3(9f, 2f, 9f), withPhysics: false));
         Vector3 overhead = WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, new Vector3(9f, 1.5f, 9f));
         Assert.Equal(new Vector3(9f, 3.5f, 9f), overhead);
+    }
+
+    // A fractured cube leaves no Cube in its cell, only rubble pieces; the cube-only test saw a free cell.
+    [Theory]
+    [InlineData(5, 1, 5)]
+    [InlineData(5, 2, 5)]
+    [InlineData(4, 1, 5)]
+    public void ResolveRespawnPosition_LiftsPastRubbleThePiecesOfAFracturedCube_WhichLeftNoCubeInItsCell(int cellX, int cellY, int cellZ)
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Vector3 spawn = new(5f, 1.5f, 5f);
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(cellX, cellY, cellZ), withPhysics: false));
+        Assert.True(runtime.Map.FractureCubeIntoPieces(new GeometryCellKey(cellX, cellY, cellZ)));
+        Assert.Null(runtime.Map.TryGetCubeAtCell(cellX, cellY, cellZ));
+        Assert.NotEmpty(runtime.Map.CaptureFracturePieces());
+
+        Vector3 resolved = WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, spawn);
+
+        Assert.Equal(5f, resolved.X);
+        Assert.Equal(5f, resolved.Z);
+        Assert.True(resolved.Y > spawn.Y, $"respawned at {resolved}, inside the rubble");
+        // No piece overlaps the body box (one cell wide, two cells tall from its cell) at the result.
+        int bodyCell = (int)MathF.Floor(resolved.Y);
+        foreach ((GeometryCellKey _, int _, GeometryFracturePiece piece, GeometryMaterialId _) in runtime.Map.CaptureFracturePieces())
+        {
+            float half = piece.SideLength * 0.5f;
+            bool overlaps = MathF.Abs(piece.Center.X - resolved.X) < 0.5f + half
+                && MathF.Abs(piece.Center.Z - resolved.Z) < 0.5f + half
+                && piece.Center.Y + half > bodyCell
+                && piece.Center.Y - half < bodyCell + 2;
+            Assert.False(overlaps, $"piece {piece} overlaps the body at {resolved}");
+        }
+    }
+
+    [Fact]
+    public void ResolveRespawnPosition_IgnoresRubbleFarFromTheSpawn()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        Assert.NotNull(runtime.Map.TryAddCube(new Vector3(3f, 1f, 3f), withPhysics: false));
+        Assert.True(runtime.Map.FractureCubeIntoPieces(new GeometryCellKey(3, 1, 3)));
+        Assert.Equal(new Vector3(5f, 1.5f, 5f), WorldSessionRuntime.ResolveRespawnPosition(runtime.Map, new Vector3(5f, 1.5f, 5f)));
     }
 
     // The 1x1x1 body at X/Z 5.0 overlaps cells 4 and 5 on both axes.

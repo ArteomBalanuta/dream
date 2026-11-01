@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Characters;
@@ -259,6 +260,82 @@ public sealed class LootGrantTests
         Assert.True(runtime.HasPendingInventoryPushes);
         runtime.DetachRemoteSession(Killer);
         Assert.False(runtime.HasPendingInventoryPushes);
+    }
+
+    private static InventoryPushMessage DrainOnly(WorldSessionRuntime runtime)
+    {
+        List<SessionInventoryPush> pushes = [];
+        runtime.DrainInventoryPushesInto(pushes);
+        return Assert.Single(pushes).Message;
+    }
+
+    [Fact]
+    public void ALostNotice_PastTheCap_ReplacesTheLastOrdinaryOne_StaysInTheClientsTail_AndIsLogged()
+    {
+        using WorldSessionRuntime runtime = TwoHitters(out _);
+        for (int i = 0; i < InventoryPushMessage.MaxNotices; i++)
+        {
+            runtime.AddLootNotice(Killer, new LootDrop($"ordinary-{i}", ItemRarity.Common), lost: false, inventoryChanged: true);
+        }
+
+        // The log is rate limited by a process-wide key; let any earlier line of this key expire.
+        Thread.Sleep(300);
+        List<(string Category, string Message)> lines = [];
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            runtime.AddLootNotice(Killer, new LootDrop("overflow", ItemRarity.Common), lost: true, inventoryChanged: false);
+        }
+
+        InventoryPushMessage push = DrainOnly(runtime);
+        Assert.Equal(InventoryPushMessage.MaxNotices, push.Notices.Count);
+        int lostIndex = Assert.Single(Enumerable.Range(0, push.Notices.Count), i => push.Notices[i].Lost);
+        // LootFeedbackSystem keeps the last MaxLines lines of a push.
+        Assert.True(lostIndex >= push.Notices.Count - Dream.Rendering.Hud.LootFeedbackSystem.MaxLines, $"lost notice at {lostIndex}");
+        Assert.Equal(InventoryPushMessage.MaxNotices - 1, lostIndex);
+        Assert.Equal("overflow", push.Notices[lostIndex].ItemDisplayName);
+        Assert.Equal("ordinary-0", push.Notices[0].ItemDisplayName);
+        Assert.NotNull(push.Inventory);
+
+        (string category, string message) = Assert.Single(lines);
+        Assert.Equal("server.loot.notice-dropped", category);
+        Assert.Contains("item=overflow", message);
+        Assert.Contains("lost=True", message);
+        Assert.Contains($"replaced=ordinary-{InventoryPushMessage.MaxNotices - 1}", message);
+    }
+
+    [Fact]
+    public void SeveralLostNotices_PastTheCap_FillTheTailFromTheEnd_AndAllLostStaysAtTheCap()
+    {
+        using WorldSessionRuntime runtime = TwoHitters(out _);
+        for (int i = 0; i < InventoryPushMessage.MaxNotices; i++)
+        {
+            runtime.AddLootNotice(Killer, new LootDrop($"ordinary-{i}", ItemRarity.Common), lost: false, inventoryChanged: true);
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            runtime.AddLootNotice(Killer, new LootDrop($"lost-{i}", ItemRarity.Common), lost: true, inventoryChanged: false);
+        }
+
+        InventoryPushMessage push = DrainOnly(runtime);
+        int tail = push.Notices.Count - Dream.Rendering.Hud.LootFeedbackSystem.MaxLines;
+        for (int i = 0; i < push.Notices.Count; i++)
+        {
+            Assert.Equal(i >= push.Notices.Count - 3, push.Notices[i].Lost);
+            Assert.True(!push.Notices[i].Lost || i >= tail);
+        }
+
+        // Nothing but lost notices: the cap holds and nothing is replaced.
+        for (int i = 0; i < 20; i++)
+        {
+            runtime.AddLootNotice(Killer, new LootDrop($"gone-{i}", ItemRarity.Common), lost: true, inventoryChanged: false);
+        }
+
+        InventoryPushMessage allLost = DrainOnly(runtime);
+        Assert.Equal(InventoryPushMessage.MaxNotices, allLost.Notices.Count);
+        Assert.All(allLost.Notices, notice => Assert.True(notice.Lost));
+        Assert.Equal("gone-0", allLost.Notices[0].ItemDisplayName);
+        Assert.Null(allLost.Inventory);
     }
 
     [Fact]
