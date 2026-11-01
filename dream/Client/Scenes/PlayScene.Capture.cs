@@ -144,6 +144,7 @@ public partial class PlayScene
     private int _captureFightLogTick;
     private float _captureFightLastDistance;
     private int _captureFightStuckTicks;
+    private bool _captureFightNoclipSent;
 
     private bool CaptureRunning =>
         _hudCapture is not null && !_hudCaptureDone && _hudCaptureFrames + 1 >= HudCaptureScript.WarmupFrames
@@ -450,12 +451,15 @@ public partial class PlayScene
             : 0;
         _captureFightLastDistance = distance;
         bool jump = _captureFightStuckTicks > 20 && (_captureFightStuckTicks % 40) < 6;
-        float strafe = _captureFightStuckTicks > 150 ? (((_captureFightStuckTicks / 90) % 2) == 0 ? 1f : -1f) : 0f;
+        // A wall that jumping does not clear (the enemies' pen): fly through it once with noclip.
+        bool noclip = _captureFightStuckTicks > 200 && !_captureFightNoclipSent;
+        _captureFightNoclipSent |= noclip;
+        float strafe = _captureFightStuckTicks > 150 && !_captureFightNoclipSent ? (((_captureFightStuckTicks / 90) % 2) == 0 ? 1f : -1f) : 0f;
 
         return frame with
         {
             RequestedMode = new PlayerModeSwitchIntent(mode),
-            MoveIntent = new PlayerMoveIntent(distance > 1.8f ? 1f : 0f, strafe, 0f, jump),
+            MoveIntent = new PlayerMoveIntent(distance > 1.8f ? 1f : 0f, strafe, 0f, jump && !_captureFightNoclipSent, false, noclip),
             LookIntent = new PlayerLookIntent(dYaw / perPixel, -dPitch / perPixel),
             PrimaryUsePressed = true
         };
