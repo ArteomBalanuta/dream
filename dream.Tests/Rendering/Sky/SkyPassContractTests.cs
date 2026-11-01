@@ -144,7 +144,7 @@ public class SkyPassContractTests
 
         int evaluateAt = IndexOf(render, "SkyModel.Evaluate(_render.TimeOfDayOverride.Resolve(WorldTimeOfDay01), _skySettings)");
         int lightingAt = IndexOf(render, "_render.SetFrameLighting(in sky.Lighting);");
-        int clearColorAt = IndexOf(render, "GL.ClearColor(sky.HorizonColor.X, sky.HorizonColor.Y, sky.HorizonColor.Z, 1f);");
+        int clearColorAt = IndexOf(render, "GL.ClearColor(sky.HorizonColor.X * clearScale, sky.HorizonColor.Y * clearScale, sky.HorizonColor.Z * clearScale, 1f);");
         int clearAt = IndexOf(render, "GL.Clear(");
         int worldAt = IndexOf(render, ".DrawWorld(");
 
