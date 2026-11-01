@@ -244,7 +244,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 $"connection={accepted.ConnectionId} connections={_connections.Count} max={ConnectionOptions.MaxConnections}");
             try
             {
-                await accepted.DisposeAsync();
+                await RefuseOverCapAsync(accepted);
             }
             catch (Exception ex)
             {
@@ -263,6 +263,15 @@ public sealed class DedicatedServerService : IAsyncDisposable
             $"connection={connection.ConnectionId} connections={_connections.Count}");
         TrackConnectionLoop(connection, RunConnectionLoopAsync(connection, cancellationToken));
         return connection;
+    }
+
+    // One best-effort JoinRejected before the close, so the client can say why. Bounded, and the
+    // connection is never attached, so it holds no slot and no host context.
+    private async ValueTask RefuseOverCapAsync(ITransportConnection accepted)
+    {
+        ServerConnection refused = new(accepted, _host, _codec, _framer, ConnectionOptions);
+        await TrySendRejectionAsync(refused, ServerConnectionOptions.ServerFullRejectionReason);
+        await refused.DisposeAsync();
     }
 
     // Waits until every connection has written its queued messages (tests and shutdown).
@@ -590,7 +599,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
     {
         while (_host.TryTakeTakenOverConnection(out string takenOverId))
         {
-            await CloseTakenOverConnectionAsync(takenOverId);
+            StartClosingTakenOverConnection(takenOverId);
         }
 
         RefreshConnectionList();
@@ -598,7 +607,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         {
             ServerConnection connection = _connectionList[i];
             _host.ObserveInboundFrames(connection.ConnectionId, connection.FramesReceived);
-            if (!connection.CheckLiveness() || !TryRemoveConnection(connection))
+            if (!connection.CheckLiveness(_host.IsConnectionJoined(connection.ConnectionId)) || !TryRemoveConnection(connection))
             {
                 continue;
             }
@@ -618,7 +627,9 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // service already removed (its loop ended, or a liveness fault) is left to that path.
     private static readonly TimeSpan TakeoverNoticeFlushTimeout = TimeSpan.FromMilliseconds(250);
 
-    private async ValueTask CloseTakenOverConnectionAsync(string connectionId)
+    // The removal runs on the tick; the notice, flush, close, release and dispose run on a tracked
+    // background task, so a dead peer's flush cannot hold the tick and shutdown still waits for it.
+    private void StartClosingTakenOverConnection(string connectionId)
     {
         if (!_connections.TryGetValue(connectionId, out ServerConnection? connection)
             || !TryRemoveConnection(connection))
@@ -627,9 +638,15 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
 
         _takenOverConnections[connection] = 0;
+        TrackConnectionLoop(connection, Task.Run(() => CloseTakenOverConnectionAsync(connection)));
+    }
+
+    private async Task CloseTakenOverConnectionAsync(ServerConnection connection)
+    {
+        string connectionId = connection.ConnectionId;
         try
         {
-            // The old client hears why before its socket closes. Bounded, so a dead peer cannot hold the tick.
+            // The old client hears why before its socket closes. Bounded, so a dead peer cannot hold this task.
             connection.Enqueue(new JoinRejectedMessage(DedicatedServerHost.OpenedElsewhereRejectionReason));
             await connection.FlushOutboundAsync(TakeoverNoticeFlushTimeout);
             await connection.CloseTransportAsync();
@@ -641,11 +658,18 @@ public sealed class DedicatedServerService : IAsyncDisposable
                 $"connection={connectionId} error={ex.GetType().Name}: {ex.Message}");
         }
 
-        _host.ReleaseConnection(connectionId);
-        NetworkDiagnosticsLog.Write(
-            "server.disconnect",
-            $"connection={connectionId} reason=session-taken-over connections={_connections.Count}");
-        await connection.DisposeAsync();
+        try
+        {
+            _host.ReleaseConnection(connectionId);
+            NetworkDiagnosticsLog.Write(
+                "server.disconnect",
+                $"connection={connectionId} reason=session-taken-over connections={_connections.Count}");
+            await connection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            ReportConnectionError(connection, "cleanup-error", $"{ex.GetType().Name}: {ex.Message}", ex);
+        }
     }
 
     // Same caps as a lagging connection's merge (ServerConnection.AppendCoalesced). Allocation-free.

@@ -634,6 +634,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
                 _joinReplies.Writer.TryWrite(serverMessage);
             }
+            else if (serverMessage is JoinRejectedMessage rejected)
+            {
+                // A rejection after the join settled (a takeover by another connection): the
+                // server closes next, so its reason is the player-facing one. Here, not in
+                // DeliverInbound, as the message can be held behind a world transfer.
+                DisconnectReason ??= rejected.Reason;
+            }
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
             WorldTransferReceiver? completed = _worldTransfers.Accept(serverMessage, _deliverInbound);
@@ -991,7 +998,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             // A malformed frame or a transport error; previously this faulted the loop task and
             // resurfaced from DisposeAsync.
-            DisconnectReason = $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
         }
         finally
         {

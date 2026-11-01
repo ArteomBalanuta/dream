@@ -605,6 +605,13 @@ public sealed class StaleSessionTakeoverTests
             host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName));
             await AdvanceUntilAsync(service, () => service.ConnectionCount == 1);
 
+            // The old connection leaves the tick's list at once; its transport closes on a background task.
+            DateTime closeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (!oldTransport.IsDisposed && DateTime.UtcNow < closeDeadline)
+            {
+                await Task.Delay(5);
+            }
+
             Assert.True(oldTransport.IsDisposed);
             Assert.False(newTransport.IsDisposed);
             Assert.True(host.IsConnectionJoined(NewConnection));

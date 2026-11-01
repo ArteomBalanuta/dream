@@ -198,6 +198,25 @@ public class RemoteClientSessionWatchdogTests
         Assert.Null(session.DisconnectReason);
     }
 
+    // A takeover: the server sends JoinRejected after the join settled, then closes. The player-facing
+    // reason is the takeover text, not the generic "server closed the connection" line.
+    [Fact]
+    public async Task JoinRejectedAfterTheJoin_IsTheDisconnectReason_EvenAfterTheServerCloses()
+    {
+        ManualTimerTimeProvider clock = new();
+        SilentServerConnection server = new();
+        await using RemoteClientSession session = CreateSession(server, clock);
+        await JoinAsync(session, server, clock);
+
+        server.Queue(new JoinRejectedMessage(TakeoverReason));
+        await server.DisposeAsync();
+        await WaitUntilAsync(() => !session.IsConnected, "the session to end");
+
+        Assert.Equal(TakeoverReason, session.DisconnectReason);
+    }
+
+    private const string TakeoverReason = "This character was opened somewhere else.";
+
     private static async Task JoinAsync(RemoteClientSession session, SilentServerConnection server, ManualTimerTimeProvider clock)
     {
         server.Queue(new ServerHelloMessage("test-server", TransportEnvelope.CurrentProtocolVersion, 0));
@@ -264,6 +283,7 @@ public class RemoteClientSessionWatchdogTests
             {
                 ServerHelloMessage hello => _codec.Encode(envelope, hello),
                 JoinAcceptedMessage accepted => _codec.Encode(envelope, accepted),
+                JoinRejectedMessage rejected => _codec.Encode(envelope, rejected),
                 ServerSnapshotMessage snapshot => _codec.Encode(envelope, snapshot),
                 _ => throw new InvalidOperationException()
             };

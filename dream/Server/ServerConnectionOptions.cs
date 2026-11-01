@@ -39,6 +39,14 @@ public sealed record ServerConnectionOptions
     // turns the cap off. Overridden by DREAM_MAX_CONNECTIONS.
     public int MaxConnections { get; init; } = DefaultMaxConnections;
 
+    // Closes a connection that has not joined within this long of being accepted, whatever it
+    // sends meanwhile (keepalives and garbage frames keep the idle timeout satisfied), so unjoined
+    // connections cannot hold MaxConnections slots forever. Zero or less turns it off.
+    public TimeSpan JoinDeadline { get; init; } = TimeSpan.FromSeconds(15);
+
+    // Sent once, best effort, to a client refused at the connection cap before its socket closes.
+    public const string ServerFullRejectionReason = "Server is full.";
+
     // Clock for the liveness checks; tests pass a fake one.
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
@@ -122,5 +130,7 @@ public enum ServerConnectionCloseReason
     // More than ServerConnection.MaxPendingOutboundMessages unmerged messages queued.
     BacklogOverflow,
     IdleTimeout,
-    SendStall
+    SendStall,
+    // Accepted but not joined within ServerConnectionOptions.JoinDeadline.
+    JoinTimeout
 }
