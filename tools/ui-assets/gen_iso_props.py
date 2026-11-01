@@ -29,12 +29,16 @@ BROKEN = 8                      # splintered stave at the rim, front left
 DENTED = 11                     # dented stave, on the shadow side
 BUNG_PHI = math.radians(188.0)  # before YAW
 STRAP_PHI = math.radians(282.0)
-HOOPS = ((2.1, 3.0, 0.62), (6.9, 2.8, 0.58), (13.1, 2.8, 0.58), (17.6, 3.0, 0.62))   # z, height, thickness
+HOOPS = ((2.2, 3.0, 1.0), (7.0, 2.8, 0.95), (13.0, 2.8, 0.95), (17.4, 3.0, 1.0))   # z, height, thickness: heavy
 
-PLATE = IsoMat((0.021, 0.018, 0.016), (0.034, 0.030, 0.027), 0.82, (0.020, 0.019, 0.019), (0.085, 0.080, 0.076), 0.8, sat_cap=0.35,
+# Albedo is a near-neutral dark; the vertex tint (see _rust_tint) makes it blue-black iron or deep orange-brown rust.
+# bare_f0 stays low (.05): worn edges catch a dull highlight, never chrome. sat_cap .41 lands the rust at p99 .50 after the downsample and 8-bit rounding.
+PLATE = IsoMat((0.012, 0.012, 0.012), (0.034, 0.030, 0.027), 0.84, (0.012, 0.012, 0.013), (0.050, 0.047, 0.045), 0.7, sat_cap=0.41,
                detail=(Waves3("plate.dent", 6, 7.0, 12.0, 0.18), Waves3("plate.ding", 6, 2.5, 5.5, 0.03), Waves3("plate.pit", 8, 0.35, 0.9, 0.005)))
-HOOP = IsoMat((0.018, 0.015, 0.0135), (0.034, 0.030, 0.027), 0.80, (0.020, 0.019, 0.019), (0.09, 0.085, 0.08), 0.9, sat_cap=0.35,
+HOOP = IsoMat((0.011, 0.011, 0.011), (0.034, 0.030, 0.027), 0.82, (0.012, 0.012, 0.013), (0.055, 0.052, 0.050), 0.8, sat_cap=0.41,
               detail=(Waves3("hoop.hammer", 6, 2.0, 4.0, 0.03), Waves3("hoop.warp", 6, 8.0, 12.0, 0.14), Waves3("hoop.pit", 8, 0.35, 0.9, 0.006)))
+HEAD = IsoMat((0.010, 0.010, 0.011), (0.034, 0.030, 0.027), 0.86, (0.011, 0.011, 0.012), (0.045, 0.043, 0.042), 0.6, sat_cap=0.41,
+              detail=(Waves3("head.dish", 6, 8.0, 12.0, 0.10), Waves3("head.ding", 6, 2.5, 5.5, 0.03), Waves3("head.pit", 8, 0.35, 0.9, 0.005)))
 
 
 def radius(z):
@@ -47,20 +51,20 @@ def _smooth(lo, hi, x):
     return t * t * (3 - 2 * t)
 
 
-def _rust_tint(m: Mesh, gain: float = 1.0) -> Mesh:
-    """Rust on the vertex tint: patches 8 u and wider, long vertical runs, and a darker bare iron between."""
+def _rust_tint(m: Mesh, gain: float = 1.0, cover: float = 0.0) -> Mesh:
+    """Rust on the vertex tint: patches 8 u and wider, long vertical runs, over blue-black iron. Rust is a deep
+    orange-brown (linear albedo about .07 .024 .007), the iron between it a cold near-black. cover shifts the
+    rust threshold: positive means more rust."""
     P = m.v.astype(np.float64)
     big = waves3(P, "barrel.rust.patch", 8, 8.0, 15.0)[0]
     mid = waves3(P, "barrel.rust.edge", 6, 3.0, 6.0)[0]
     run = waves3(P, "barrel.rust.run", 8, 2.0, 4.0, (1.0, 1.0, 0.10))[0]
-    w = _smooth(0.65, 1.3, 0.85 * big + 0.30 * mid + 0.55 * run)
+    w = _smooth(0.55 - cover, 1.15 - cover, 0.85 * big + 0.30 * mid + 0.80 * run)
     w = w * (1 - 0.8 * _smooth(17.0, 19.0, P[:, 2]))
-    k = 0.30 + 1.3 * _smooth(-0.7, 0.7, big + 0.2 * mid)
-    rust = np.array((3.3, 1.35, 0.55))
-    base = np.array((2.0, 2.2, 2.4))
+    k = 0.40 + 0.95 * _smooth(-0.7, 0.7, big + 0.2 * mid)
+    rust = np.array((8.0, 2.9, 0.85))
+    base = np.array((0.62, 1.0, 2.0))
     tint = (base[None, :] * (1 - w[:, None]) + rust[None, :] * w[:, None]) * (k * gain)[:, None]
-    top = _smooth(15.0, 17.2, P[:, 2])[:, None]
-    tint = tint * (1 - top) + tint * np.array((0.50, 0.62, 0.95)) * top
     return Mesh(m.v, m.f, m.n, m.uv, tint.astype(np.float32))
 
 
@@ -113,20 +117,25 @@ def _staves() -> Mesh:
 
 
 def _head() -> Mesh:
-    """Recessed iron head: five plates with sunk joints and a shallow dish, mapped square to disc."""
-    n = 36
+    """Recessed iron head: a dished plate with one lap joint and a ring of rivets round the rim, mapped square to
+    disc. A bolted lid, not planks."""
+    n = 40
     u = np.linspace(-1, 1, n)
     uu, vv = np.meshgrid(u, u)
     rin = float(radius(HEAD_Z)) - RIM - 0.25
     x = rin * uu * np.sqrt(1 - vv * vv / 2)
     y = rin * vv * np.sqrt(1 - uu * uu / 2)
-    pw = 2 * rin / 5
-    d = np.abs(((x + rin) % pw) - pw / 2)
-    groove = np.exp(-(((pw / 2 - d) / 0.16) ** 2))
-    z = HEAD_Z - 0.26 * groove - 0.06 * (uu ** 2 + vv ** 2)
-    plank_h = U.rng("iso.barrel.head").random(5) * 0.16
-    z = z + plank_h[np.clip(((x + rin) // pw).astype(int), 0, 4)]
-    return grid(np.stack((x, y, z), -1), None, smooth_normals=False)
+    seam = np.exp(-((((x * 0.94 + y * 0.34) - 0.9) / 0.20) ** 2))
+    step = 0.20 * (1 / (1 + np.exp(-((x * 0.94 + y * 0.34) - 0.9) / 0.12)))        # the second plate lies proud
+    z = HEAD_Z - 0.30 * seam - 0.16 * (uu ** 2 + vv ** 2) + step
+    out = grid(np.stack((x, y, z), -1), None, smooth_normals=False)
+    prof = [(0.50, 0.0), (0.46, 0.14), (0.26, 0.30), (0.0, 0.36)]
+    ring = rin * 0.80
+    for i in range(14):
+        a = math.tau * (i + 0.5) / 14
+        rv = lathe(prof, sides=10).xform((0, 0, 0), (ring * math.cos(a), ring * math.sin(a), HEAD_Z - 0.16 * 0.64 + 0.02))
+        out = out.merge(rv)
+    return out
 
 
 def _hoop(z0: float, h: float, t: float, name: str) -> Mesh:
@@ -192,18 +201,19 @@ def _bung() -> Mesh:
 
 def barrel_scene() -> Scene:
     sc = Scene("rust_barrel", SIZE[0], SIZE[1], PIVOT)
-    plate = _staves().merge(_head()).merge(_strap()).merge(_bung())
-    sc.add(_rust_tint(plate.xform((0, 0, YAW)), 1.15), PLATE, "barrel.plate")
+    plate = _staves().merge(_strap()).merge(_bung())
+    sc.add(_rust_tint(plate.xform((0, 0, YAW)), 1.1, 0.85), PLATE, "barrel.plate")
+    sc.add(_rust_tint(_head().xform((0, 0, YAW)), 0.6, -3.0), HEAD, "barrel.head")
     iron = None
     for i, (z0, h, t) in enumerate(HOOPS):
         m = _hoop(z0, h, t, f"iso.barrel.hoop{i}").merge(_rivets(z0, h, t, f"iso.barrel.rivets{i}"))
         iron = m if iron is None else iron.merge(m)
-    sc.add(_rust_tint(iron.xform((0, 0, YAW)), 1.5), HOOP, "barrel.iron")
+    sc.add(_rust_tint(iron.xform((0, 0, YAW)), 1.15, 0.4), HOOP, "barrel.iron")
     return sc
 
 
 def render_barrel():
-    return barrel_scene().render(wear=0.38, grime=0.6, rust=0.0, dust=0.05, exposure=1.2)
+    return barrel_scene().render(wear=0.38, grime=0.6, rust=0.3, dust=0.0, exposure=1.2)
 
 
 OBJECTS = {"rust_barrel": ObjectSpec(SIZE, PIVOT, (render_barrel,))}

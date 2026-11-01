@@ -19,7 +19,6 @@ IsoMat.detail wavelengths inside those bands and leave the 1..2 u gap empty.
 from __future__ import annotations
 
 import math
-import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -68,12 +67,12 @@ KEY_WORLD = _unit(view_to_world(np.array(KEY_DIR, dtype=np.float64)))
 
 ISO_RIG = forge.Rig(
     lights=(
-        forge.Light(KEY_DIR, (1.00, 0.70, 0.40), 18.0, shadow=True),   # torch key, same direction as the gothic key
-        forge.Light((0.75, 0.40, 0.52), (0.40, 0.58, 1.00), 2.7),     # cold fill from the lower right
-        forge.Light((-0.15, 0.80, 0.30), (0.50, 0.65, 1.00), 0.35),    # cold rim from below
+        forge.Light(KEY_DIR, (1.00, 0.76, 0.52), 18.0, shadow=True),   # torch key, same direction as the gothic key
+        forge.Light((0.75, 0.40, 0.52), (0.22, 0.46, 1.00), 6.0),    # cold fill from the lower right
+        forge.Light((-0.15, 0.80, 0.30), (0.30, 0.52, 1.00), 1.2),    # cold rim from below
     ),
     panels=(forge.Panel(-0.18, -0.62, 0.60, 0.26, 0.16, (0.88, 0.94, 1.0)),),
-    ambient=(0.0075, 0.0135, 0.0290),                                  # cold, about 4 percent of the key
+    ambient=(0.0050, 0.0130, 0.0460),                                 # cold, under 15 percent of the key
 )
 
 # materials ------------------------------------------------------------------------------
@@ -106,30 +105,12 @@ class IsoMat:
     detail: tuple = ()
 
 
-RUST_CAP = 0.47  # rust is the one accent the barrel may saturate: p99 <= .50
+RUST_CAP = 0.44  # rust is the one accent the barrel may saturate: p99 <= .50 after the soft knee
 
+# Only "moss" is looked up by name (the moss pass, and the tombstone). Every object brings its own IsoMat.
 ISO_MATERIALS: dict[str, IsoMat] = {
-    "bark": IsoMat((0.042, 0.030, 0.021), (0.030, 0.028, 0.026), 0.86, wear=0.3, sat_cap=0.30,
-                   detail=(Waves3("bark.ridge", 8, 0.9, 3.2, 0.10, (1.0, 1.0, 0.14)), Waves3("bark.roll", 6, 3.5, 6.0, 0.22, (1.0, 1.0, 0.4)))),
-    "bark.black": IsoMat((0.010, 0.0085, 0.0075), (0.030, 0.028, 0.026), 0.80, wear=0.2, sat_cap=0.25,
-                         detail=(Waves3("bbark.ridge", 6, 0.6, 2.4, 0.06, (1.0, 1.0, 0.2)),)),
-    "wood.old": IsoMat((0.058, 0.044, 0.034), (0.028, 0.026, 0.024), 0.88, wear=0.35, sat_cap=0.30,
-                       detail=(Waves3("wood.grain", 8, 0.55, 1.6, 0.030, (1.0, 1.0, 0.08)), Waves3("wood.warp", 6, 3.0, 6.0, 0.10, (1.0, 1.0, 0.25)))),
-    "granite": IsoMat((0.072, 0.070, 0.066), (0.045, 0.045, 0.044), 0.78, (0.12, 0.115, 0.108), (0.05, 0.05, 0.05), 0.7, sat_cap=0.28,
-                      detail=(Waves3("granite.chip", 8, 2.0, 5.0, 0.16), Waves3("granite.grit", 8, 0.35, 0.9, 0.012))),
-    "slate": IsoMat((0.030, 0.034, 0.040), (0.050, 0.052, 0.056), 0.70, (0.055, 0.060, 0.068), (0.07, 0.07, 0.075), 0.8, sat_cap=0.30,
-                    detail=(Waves3("slate.layer", 7, 0.9, 3.0, 0.05, (1.0, 1.0, 0.25)), Waves3("slate.grit", 6, 0.35, 0.9, 0.010))),
-    "iron.rust": IsoMat((0.0145, 0.0125, 0.0115), (0.032, 0.028, 0.024), 0.80, (0.020, 0.019, 0.019), (0.11, 0.105, 0.10), 0.7, sat_cap=0.32,
-                        detail=(Waves3("irust.pit", 8, 0.35, 0.9, 0.012), Waves3("irust.dent", 6, 2.5, 6.0, 0.030))),
-    "iron.chain": IsoMat((0.012, 0.011, 0.0100), (0.050, 0.047, 0.044), 0.72, (0.020, 0.020, 0.020), (0.14, 0.135, 0.13), 0.9, sat_cap=0.30,
-                         detail=(Waves3("ichain.pit", 6, 0.35, 0.9, 0.012),)),
-    "bone": IsoMat((0.165, 0.140, 0.100), (0.040, 0.040, 0.038), 0.82, wear=0.3, sat_cap=0.30,
-                   detail=(Waves3("bone.grain", 6, 0.5, 1.0, 0.012, (1.0, 1.0, 0.3)), Waves3("bone.dent", 6, 2.5, 5.0, 0.05))),
     "moss": IsoMat((0.020, 0.034, 0.012), (0.020, 0.020, 0.020), 0.95, sat_cap=0.35,
                    detail=(Waves3("moss.tuft", 8, 0.4, 0.9, 0.03), Waves3("moss.mound", 6, 2.5, 5.0, 0.12))),
-    "leaf.crimson": IsoMat((0.105, 0.010, 0.012), (0.040, 0.030, 0.030), 0.62, wear=0.0, sat_cap=0.72),
-    "glass": IsoMat((0.004, 0.008, 0.010), (0.060, 0.065, 0.070), 0.22, wear=0.0, sat_cap=0.60),
-    "emissive": IsoMat((0.010, 0.120, 0.130), (0.030, 0.030, 0.030), 0.40, wear=0.0, emit=(0.18, 1.60, 1.90), sat_cap=1.0),
 }
 
 # waves3 ---------------------------------------------------------------------------------
@@ -625,10 +606,13 @@ def _masked_blur(a, m, sigma):
     return num / (den[..., None] if a.ndim == 3 else den)
 
 
+CRUSH = 0.008  # sRGB luma at or under this goes to black; the cold fill keeps everything above it readable
+
+
 def _grade(rgb: np.ndarray, cap: np.ndarray) -> np.ndarray:
     """Crush the blacks, then a per-material soft-knee cap on HSV saturation that keeps hue and max."""
     y = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
-    y2 = np.clip((y - 0.018) / 0.982, 0, 1) ** 1.12
+    y2 = np.clip((y - CRUSH) / (1 - CRUSH), 0, 1) ** 1.08
     rgb = np.clip(rgb * (y2 / np.maximum(y, 1e-5))[..., None], 0, 1)
     mx, mn = rgb.max(-1), rgb.min(-1)
     S = (mx - mn) / np.maximum(mx, 1e-5)
@@ -744,8 +728,6 @@ class Scene:
         Nb /= np.linalg.norm(Nb, axis=1, keepdims=True)
 
         # shadow and ambient occlusion
-        ground = _s  # silences linters on unused names kept for readability
-        del ground
         key = _Occluder(V, F, KEY_WORLD, PPU, 0.0)
         lit = 1 - key.occluded(Pw + Nw * 0.07, 0.035)
         dirs = _dome_dirs(20)
@@ -769,7 +751,7 @@ class Scene:
             return o
 
         cov = tid >= 0
-        zimg = plane(vz_pix := lerp(vz[:, None])[:, 0], 0.0)
+        zimg = plane(lerp(vz[:, None])[:, 0], 0.0)
         ao_fine = _depth_ao(zimg, cov)
         aod = plane(ao_dome, 1.0)
         aod = _masked_blur(aod, cov, 1.2)
@@ -830,7 +812,7 @@ class Scene:
                     emit_p[sel] += np.asarray(efn(uv[sel]), dtype=F32)
         # object-space patina: broad mottling and a finer break-up, so surfaces are never one flat value
         mott = 0.5 + 0.5 * np.tanh(waves3(Pw, self.name + ".mott", 10, 3.0, 14.0)[0] * 0.8)
-        pat = 0.5 + 0.5 * np.tanh(waves3(Pw, self.name + ".pat", 8, 1.6, 6.0, (1.0, 1.0, 0.5))[0] * 1.1)
+        pat = 0.5 + 0.5 * np.tanh(waves3(Pw, self.name + ".pat", 8, 2.0, 6.0, (1.0, 1.0, 0.5))[0] * 1.1)
         k = 0.80 + 0.40 * (0.55 * mott + 0.45 * pat)
         albedo_p = albedo_p * k[:, None] * tint
         f0_p = f0_p * (0.6 + 0.4 * k)[:, None]
@@ -883,14 +865,13 @@ class Scene:
         H, W = cov.shape
         src = (edge > 0.35) & cov
         acc = np.zeros((H, W), dtype=F32)
-        cur = src.astype(F32)
         for step in (3, 6, 10, 16, 24, 34, 46):
-            sh = np.zeros_like(cur)
+            sh = np.zeros((H, W), dtype=F32)
             sh[step:] = src[:-step].astype(F32)
             acc = np.maximum(acc, sh * (1 - step / 60.0))
         ys, xs = np.nonzero(cov)
         # stripes keyed to screen x in u: runs fall straight down the sprite
-        stripe = 0.5 + 0.5 * np.tanh(forge.waves(xs[None, :] / PPU, np.zeros((1, len(xs))), self.name + ".runoff", 8, 0.5, 2.2, (1.0, 0.0))[0] * 1.4)
+        stripe = 0.5 + 0.5 * np.tanh(forge.waves(xs[None, :] / PPU, np.zeros((1, len(xs))), self.name + ".runoff", 8, 2.0, 5.0, (1.0, 0.0))[0] * 1.4)
         m = np.zeros((H, W), dtype=F32)
         m[ys, xs] = stripe
         return (acc * smooth(0.45, 0.8, m) * cov).astype(F32)
@@ -899,7 +880,7 @@ class Scene:
         """Object-space rust: dark, rich, matte. It pools in cavities and seams (maps.cavity), runs down from
         convex edges (streak) and breaks up through world-space noise, so it never lies as a flat coat."""
         n1 = waves3(Pw, self.name + ".rust1", 8, 2.5, 9.0)[0] * 0.5 + 0.5
-        n2 = waves3(Pw, self.name + ".rust2", 6, 0.5, 1.6)[0] * 0.5 + 0.5
+        n2 = waves3(Pw, self.name + ".rust2", 6, 0.5, 0.95)[0] * 0.5 + 0.5
         cav = smooth(0.55, 0.95, maps.cavity[ys, xs])
         drip = streak[ys, xs]
         worn = s.worn[ys, xs]
@@ -907,7 +888,7 @@ class Scene:
         src = np.maximum(cav * metal, drip * 0.9)
         thr = 0.78 - 0.55 * min(amount, 1.0)
         m = smooth(thr, thr + 0.20, n1 * 0.7 + n2 * 0.3 + 0.35 * src) * np.clip(src * 1.6, 0, 1) * (1 - worn)
-        col = np.array((0.036, 0.0145, 0.0062), dtype=F32) * (0.45 + 0.9 * n2)[:, None]
+        col = np.array((0.052, 0.0185, 0.0065), dtype=F32) * (0.45 + 0.9 * n2)[:, None]
         s.albedo[ys, xs] = s.albedo[ys, xs] * (1 - m)[:, None] + col * m[:, None]
         s.f0[ys, xs] = s.f0[ys, xs] * (1 - m)[:, None] + 0.025 * m[:, None]
         s.rough[ys, xs] = s.rough[ys, xs] * (1 - m) + 0.88 * m
@@ -919,10 +900,10 @@ class Scene:
         up = smooth(0.15, 0.75, Nw[:, 2])
         low = 1 - 0.55 * smooth(2.0, 14.0, Pw[:, 2])
         n1 = waves3(Pw, self.name + ".moss", 8, 2.5, 9.0)[0] * 0.5 + 0.5
-        n2 = waves3(Pw, self.name + ".moss2", 6, 0.8, 2.2)[0] * 0.5 + 0.5
+        n2 = waves3(Pw, self.name + ".moss2", 6, 2.0, 4.0)[0] * 0.5 + 0.5
         thr = 1.05 - 0.8 * amount
         mask = smooth(thr - 0.08, thr + 0.18, n1 * (0.45 + 0.55 * up) * low * (0.65 + 0.35 * ao_dome) + 0.2 * n2 * up)
-        lich = smooth(0.78, 0.88, waves3(Pw, self.name + ".lichen", 6, 0.5, 1.4)[0] * 0.5 + 0.5) * amount * (1 - mask) * up
+        lich = smooth(0.78, 0.88, waves3(Pw, self.name + ".lichen", 6, 0.5, 0.95)[0] * 0.5 + 0.5) * amount * (1 - mask) * up
         alb = s.albedo[ys, xs]
         f0 = s.f0[ys, xs]
         rough = s.rough[ys, xs]

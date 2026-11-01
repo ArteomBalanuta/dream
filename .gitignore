@@ -408,3 +408,4 @@ imgui.ini
 dream-run*.log
 .superpowers/
 .bug-hunter/
+.iso_tmp/

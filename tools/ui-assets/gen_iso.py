@@ -156,7 +156,7 @@ def main(out_root: Path = HERE, only: list[str] | None = None) -> None:
         return
     doc = {"version": 1, "pitchDeg": 50, "yawDeg": 45, "pxPerUnit": 4, "yDown": True, "straightAlpha": True,
            "sheet": "iso_sheet.png", "objects": manifest}
-    (out / "iso_manifest.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+    (out / "iso_manifest.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
     sheet = compose_sheet(entries, groups)
     U.save_png(np.dstack((sheet, np.full(sheet.shape[:2], 255, dtype=np.uint8))), out / "iso_sheet.png")
     print("gen_iso: wrote", len(names), "objects,", len(entries), "frames")

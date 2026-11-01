@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
@@ -43,22 +43,25 @@ STATIC = {
     "p5_v_max": 0.06,             # the shadows are crushed
     "p99_v_min": 0.35,            # something catches the light
     "contrast_min": 0.012,        # mean 5x5 window std of luma, rejects flat fills
-    "form_ratio_min": 0.35,       # band energy 4 u over .5 u: big shapes read before texture
+    "form_ratio_min": 0.35,       # interior band energy 4 u over .5 u, alpha-normalised: big shapes read before texture
+    "form_interior_min": 150,     # eroded interior pixels needed to measure form at all
     "warm_lit_min": 3.0,          # mean R - B (0..255) over the brightest 30 percent: warm
-    "cold_shadow_max": 6.0,       # mean R - B over the darkest 30 percent: cold or neutral
+    "cold_band_max": 1.0,         # mean R - B over opaque pixels of luma 12..60 (0..255): the shadow band reads cold
+    "cold_band_share_min": 0.10,  # the band needs this share of opaque pixels (and 150 px), or the shadows are crushed or absent
     "median_s_min": 0.10,         # not neutral grey
     "chrome_max": 0.012,          # share of pixels over V .85
     "foot_min": 0.5,              # opaque share in the 9x9 window around the pivot
 }
+# Add an entry here to hold one object to its own numbers. Anything not listed uses STATIC. An override is a claim that
+# the art needs it: say why in a comment, with the measured value, and keep it as tight as the measurement allows.
 OVERRIDES = {
-    # measured 2026-11: p99 .490, over .35 .180, p5 V 0, p99 V .62, contrast .057, form .54, warm +32, cold -0.6, median S .31
-    # form_ratio_min .38: the second pass's rivets and hoops are real secondary form; measured .3885
-    "rust_barrel": {"sat_p95_max": None, "sat_p99_max": 0.50, "sat_over35_max": 0.22, "partial_ratio_max": 0.10, "p99_v_min": 0.50,
-                    "contrast_min": 0.04, "form_ratio_min": 0.38, "warm_lit_min": 20.0, "cold_shadow_max": 3.0, "median_s_min": 0.20},
-    # crimson leaves are the object's body, not an accent, so the share is high and p99 holds the ceiling; measured p95 .655, p99 .690, over .35 .872
-    "bramble": {"sat_p95_max": 0.68, "sat_p99_max": 0.70, "sat_over35_max": 0.90},
-    # saturation here is a small accent (under 7 percent of pixels), gated at p99 and by share instead of p95; measured p95 .384, p99 .475, over .35 .067
-    "bone_pile": {"sat_p95_max": None, "sat_p99_max": 0.50, "sat_over35_max": 0.08},
+    # rust is the barrel's one accent (p99 holds the ceiling, the share of rust pixels is high), and the sprite is nearly
+    # all dark iron, so its p99 V and contrast floors differ. Measured 2026-11, see the barrel commit.
+    "rust_barrel": {"sat_p95_max": None, "sat_p99_max": 0.50, "sat_over35_max": 0.35, "partial_ratio_max": 0.10},
+    # plan allowance: crimson leaves may reach p99 .70 and cover at most 30 percent of the sprite over S .35.
+    # The art pass must meet this or justify a different number here with its measured value.
+    "bramble": {"sat_p95_max": None, "sat_p99_max": 0.70, "sat_over35_max": 0.30},
+    # bone_pile: plan default p95 <= .35, no override. The art pass must meet it or justify an entry here.
 }
 POTION_GATES = {
     "magic_px_min": 40,           # pixels with S >= .8 and V >= .5 in every frame
@@ -67,7 +70,12 @@ POTION_GATES = {
     "diff_min": 2.0,              # mean absolute difference between consecutive frames, 0..255
     "ring_peak_max": 0.45,        # peak alpha of the faint impact ring in the last frame
     "partial_ratio_max": 0.60,
+    "crisp_min": 0.95,            # soft pixels with S >= .5 (glow, aura, ring, sparks) are exempt, everything else is crisp
+    "peak_v_min": 0.90,           # the potion glow is the brightest mass in the set
+    "chrome_max": 0.012,          # share of pixels over V .85 that are not glow (S < .5): glints, not emission
 }
+GLOW_S = 0.5     # soft pixels at or above this saturation are emission, not edge
+GLOW_COLD = 30   # B - R (0..255) at or above this on a bright pixel is cyan emission, not chrome
 EDGE_ALPHA = 16  # sprite and shadow alpha allowed on any canvas edge row or column
 SHEET = {"bg_share_min": 0.60, "line_max": 0.90, "band_px": 12}
 
@@ -101,13 +109,46 @@ def neighbours(mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def band_energy(rgba: np.ndarray, cover: np.ndarray) -> dict:
-    g = Image.fromarray(np.ascontiguousarray(rgba[..., :3]), "RGB").convert("L")
-    a = np.asarray(g, dtype=np.float32) / 255
-    prev, out = a, {}
+def erode(mask: np.ndarray, times: int = 1) -> np.ndarray:
+    """Mask pixels whose 8 neighbours are all set; the canvas border counts as empty."""
+    for _ in range(times):
+        p = np.pad(mask, 1)
+        out = mask.copy()
+        for dy in (0, 1, 2):
+            for dx in (0, 1, 2):
+                out &= p[dy : dy + mask.shape[0], dx : dx + mask.shape[1]]
+        mask = out
+    return mask
+
+
+def _blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable Gaussian, zero outside the canvas (so only meaningful through an alpha-normalised ratio)."""
+    r = int(np.ceil(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (r, r)
+        p = np.pad(a, pad)
+        n = a.shape[axis]
+        out = np.zeros_like(a)
+        for i, w in enumerate(k):
+            out += w * (p[i : i + n] if axis == 0 else p[:, i : i + n])
+        a = out
+    return a
+
+
+def band_energy(rgba: np.ndarray, cover: np.ndarray, interior: np.ndarray) -> dict:
+    """Mean |difference| between successive blurs of luma at .5, 1, 2 and 4 u, over `interior` only. The blurs are
+    alpha-normalised (blur(y * cover) / blur(cover)), so the silhouette and the empty canvas contribute nothing: a flat
+    interior with grain has no energy at 4 u and fails, a shape with real shading has."""
+    y = luma(rgba) * cover
+    m = cover.astype(np.float32)
+    prev, out = luma(rgba), {}
     for u in (0.5, 1, 2, 4):
-        b = np.asarray(g.filter(ImageFilter.GaussianBlur(u * PPU)), dtype=np.float32) / 255
-        out[u] = float(np.abs(prev - b)[cover].mean())
+        s = u * PPU
+        b = _blur(y, s) / np.maximum(_blur(m, s), 1e-3)
+        out[u] = float(np.abs(prev - b)[interior].mean()) if interior.any() else 0.0
         prev = b
     return out
 
@@ -120,32 +161,82 @@ def local_contrast(rgba: np.ndarray) -> float:
     return float(win[ok].mean()) if ok.any() else 0.0
 
 
+def components(mask: np.ndarray) -> list[np.ndarray]:
+    """8-connected components of a boolean mask as (n, 2) arrays of (y, x), largest first."""
+    H, W = mask.shape
+    seen = np.zeros_like(mask)
+    out = []
+    for y0, x0 in zip(*np.nonzero(mask)):
+        if seen[y0, x0]:
+            continue
+        seen[y0, x0] = True
+        stack, pts = [(y0, x0)], []
+        while stack:
+            y, x = stack.pop()
+            pts.append((y, x))
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < H and 0 <= nx < W and mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        stack.append((ny, nx))
+        out.append(np.array(pts))
+    return sorted(out, key=len, reverse=True)
+
+
+def main_body(opaque: np.ndarray, keep: float = 0.25) -> np.ndarray:
+    """The object itself: the largest 8-connected opaque component plus any other at least `keep` of its size
+    (a stopper that does not touch the neck). A spark, a speck or a ring fragment is not part of it."""
+    comps = components(opaque)
+    out = np.zeros_like(opaque)
+    for c in comps:
+        if len(c) >= keep * len(comps[0]):
+            out[c[:, 0], c[:, 1]] = True
+    return out
+
+
 def measure(name: str, rgba: np.ndarray) -> dict:
     a = rgba[..., 3]
     op = a >= 240
     part = (a > 16) & (a < 240)
     clear = a <= 16
+    h = hsv(rgba[..., :3])
+    if name == POTION:
+        part_e = part & (h[..., 1] < GLOW_S)   # glow, aura, ring and sparks are exempt from edge crispness
+    else:
+        part_e = part
     near_op, near_cl = neighbours(op), neighbours(clear)
     m = {"opaque": int(op.sum()), "partial": int(part.sum())}
     # no partial-alpha pixels at all is as crisp as it gets (hard-alpha foliage was 0/0)
-    m["crisp"] = float((part & near_op & near_cl).sum() / part.sum()) if part.any() else 1.0
+    m["crisp"] = float((part_e & near_op & near_cl).sum() / part_e.sum()) if part_e.any() else 1.0
     m["partial_ratio"] = float(part.sum() / max(op.sum(), 1))
-    h = hsv(rgba[..., :3])
     sel = op & (h[..., 2] >= 0.15)
-    s = h[..., 1][sel]
+    s = h[..., 1][sel] if sel.any() else np.zeros(1, np.float32)
     v = h[..., 2][op]
     m["sat_p95"], m["sat_p99"] = float(np.percentile(s, 95)), float(np.percentile(s, 99))
     m["sat_over35"] = float((s > 0.35).mean())
     m["median_s"] = float(np.median(s))
     m["p5_v"], m["p99_v"], m["peak_v"] = float(np.percentile(v, 5)), float(np.percentile(v, 99)), float(np.percentile(v, 99.9))
-    m["chrome"] = float((v > 0.85).mean())
+    bright = v > 0.85
+    if name == POTION:
+        # the glow is emission, and its hot core goes pale but stays cyan; only a neutral or warm bright pixel is chrome
+        cold = (rgba[..., 2].astype(np.int32) - rgba[..., 0].astype(np.int32))[op] >= GLOW_COLD
+        bright = bright & ~cold
+    m["chrome"] = float(bright.mean())
     m["contrast"] = local_contrast(rgba)
-    be = band_energy(rgba, a > 127)
+    interior = erode(op, 2)
+    m["form_n"] = int(interior.sum())
+    be = band_energy(rgba, op, interior)
     m["form_ratio"] = be[4] / max(be[0.5], 1e-9)
     y = luma(rgba)[op]
-    lo, hi = np.percentile(y, 30), np.percentile(y, 70)
+    hi = np.percentile(y, 70)
     rb = rgba[..., 0].astype(np.float32)[op] - rgba[..., 2].astype(np.float32)[op]
-    m["warm_lit"], m["cold_shadow"] = float(rb[y >= hi].mean()), float(rb[y <= lo].mean())
+    m["warm_lit"] = float(rb[y >= hi].mean())
+    # the shadow band sits above the crush: dark enough to be shadow, bright enough to carry hue
+    band = (y * 255 >= 12) & (y * 255 <= 60)
+    m["band_n"] = int(band.sum())
+    m["band_share"] = float(band.mean())
+    m["cold_band"] = float(rb[band].mean()) if band.any() else 0.0
     m["magic_px"] = int(((h[..., 1] >= 0.8) & (h[..., 2] >= 0.5) & op).sum())
     return m
 
@@ -171,9 +262,16 @@ def static_errors(name: str, rgba: np.ndarray, pivot: tuple, m: dict) -> list[st
     need("p5", m["p5_v"] <= c["p5_v_max"], f"p5 V {m['p5_v']:.3f} > {c['p5_v_max']}: shadows not crushed")
     need("p99", m["p99_v"] >= c["p99_v_min"], f"p99 V {m['p99_v']:.3f} < {c['p99_v_min']}: nothing catches the light")
     need("con", m["contrast"] >= c["contrast_min"], f"5x5 contrast {m['contrast']:.4f} < {c['contrast_min']}: flat")
-    need("form", m["form_ratio"] >= c["form_ratio_min"], f"band 4u/.5u {m['form_ratio']:.2f} < {c['form_ratio_min']}: noise before form")
+    if m["form_n"] < c["form_interior_min"]:
+        errs.append(f"{name}: only {m['form_n']} interior px, need {c['form_interior_min']} to measure form")
+    else:
+        need("form", m["form_ratio"] >= c["form_ratio_min"], f"interior band 4u/.5u {m['form_ratio']:.2f} < {c['form_ratio_min']}: noise before form")
     need("warm", m["warm_lit"] >= c["warm_lit_min"], f"lit R-B {m['warm_lit']:.1f} < {c['warm_lit_min']}: lights not warm")
-    need("cold", m["cold_shadow"] <= c["cold_shadow_max"], f"shadow R-B {m['cold_shadow']:.1f} > {c['cold_shadow_max']}: shadows not cold")
+    if m["band_n"] < 150 or m["band_share"] < c["cold_band_share_min"]:
+        errs.append(f"{name}: shadow band (luma 12..60) holds {m['band_n']} px, {m['band_share']:.2f} of the object, "
+                    f"need {c['cold_band_share_min']}: shadows crushed or absent")
+    else:
+        need("cold", m["cold_band"] <= c["cold_band_max"], f"shadow band R-B {m['cold_band']:.1f} > {c['cold_band_max']}: shadows not cold")
     need("ms", m["median_s"] >= c["median_s_min"], f"median S {m['median_s']:.3f} < {c['median_s_min']}: neutral grey")
     need("chr", m["chrome"] <= c["chrome_max"], f"{m['chrome']:.4f} of pixels over V .85: chrome")
     px, py = pivot
@@ -193,7 +291,14 @@ def potion_errors(frames: list[np.ndarray], pivot: tuple) -> list[str]:
             errs.append(f"{POTION}_{i}: only {m['magic_px']} magic pixels (S >= .8, V >= .5), need {g['magic_px_min']}")
         if m["partial_ratio"] > g["partial_ratio_max"]:
             errs.append(f"{POTION}_{i}: partial/opaque {m['partial_ratio']:.2f} > {g['partial_ratio_max']}")
-        ys, xs = np.nonzero(f[..., 3] >= 240)
+        if m["crisp"] < g["crisp_min"]:
+            errs.append(f"{POTION}_{i}: crispness {m['crisp']:.3f} < {g['crisp_min']} outside the glow (soft pixels with S < {GLOW_S})")
+        if m["peak_v"] < g["peak_v_min"]:
+            errs.append(f"{POTION}_{i}: peak V {m['peak_v']:.3f} < {g['peak_v_min']}: the glow is not the brightest mass")
+        if m["chrome"] > g["chrome_max"]:
+            errs.append(f"{POTION}_{i}: {m['chrome']:.4f} of pixels over V .85 are not glow (B - R < {GLOW_COLD}): chrome")
+        body = main_body(f[..., 3] >= 240)
+        ys, xs = np.nonzero(body)
         if not len(ys):
             errs.append(f"{POTION}_{i}: no opaque pixels")
             lows.append(0)
@@ -212,8 +317,10 @@ def potion_errors(frames: list[np.ndarray], pivot: tuple) -> list[str]:
             errs.append(f"{POTION}: frames {i - 1} and {i} differ by {d:.2f} < {g['diff_min']}")
     if len(frames) >= 4:
         last = frames[3]
-        # only soft pixels over 2 px from alpha >= 240, so the bottle's antialiased outline is not read as the ring
-        soft = (last[..., 3] > 16) & (last[..., 3] < 240) & ~neighbours(neighbours(last[..., 3] >= 240))
+        # everything visible that is not the bottle (its connected component, dilated 2 px for the antialiased outline)
+        # is the ring, so a ring drawn at alpha 255 cannot hide above the soft-pixel range
+        bottle = main_body(last[..., 3] >= 240)
+        soft = (last[..., 3] > 16) & ~neighbours(neighbours(bottle) | bottle)
         peak = float(last[..., 3][soft].max() / 255) if soft.any() else 0.0
         if peak > g["ring_peak_max"] + 1e-6:
             errs.append(f"{POTION}_3: ring peak alpha {peak:.2f} > {g['ring_peak_max']}")
@@ -281,6 +388,61 @@ def determinism(partial: bool) -> list[str]:
     return errs
 
 
+def _disc(size: int, r: float, fn) -> np.ndarray:
+    """RGBA disc of radius r px on a size x size canvas; fn(dx, dy, rng) gives the RGB array of the disc pixels."""
+    yy, xx = np.mgrid[:size, :size].astype(np.float32)
+    dx, dy = xx - size / 2 + 0.5, yy - size / 2 + 0.5
+    inside = dx * dx + dy * dy <= r * r
+    img = np.zeros((size, size, 4), np.uint8)
+    img[..., :3] = np.clip(fn(dx, dy, np.random.default_rng(7)), 0, 255).astype(np.uint8)
+    img[..., 3] = np.where(inside, 255, 0)
+    return img
+
+
+def _self_test_form_cold() -> list[str]:
+    errs = []
+    grain = lambda rng, s: rng.integers(-8, 9, size=(s, s, 1)).astype(np.float32)
+    flat = _disc(96, 40, lambda dx, dy, rng: 90 + grain(rng, 96) + 0 * dx[..., None])
+    if not any("interior band" in e for e in static_errors("flat_grain", flat, (48, 48), measure("flat_grain", flat))):
+        errs.append("self-test: a flat interior with grain passed the form gate")
+    shaded = _disc(96, 40, lambda dx, dy, rng: 40 + 90 * np.clip(0.5 + (-dx - dy) / 70.0, 0, 1)[..., None] + grain(rng, 96) * 0.4)
+    if any("interior band" in e for e in static_errors("shaded", shaded, (48, 48), measure("shaded", shaded))):
+        errs.append("self-test: a disc with a broad shading ramp failed the form gate")
+    warm = _disc(64, 28, lambda dx, dy, rng: np.broadcast_to(np.array((44.0, 32.0, 18.0)), dx.shape + (3,)) + 8 * np.sin(dx / 3)[..., None])
+    if not any("shadows not cold" in e for e in static_errors("warm", warm, (32, 32), measure("warm", warm))):
+        errs.append("self-test: a warm shadow band passed the cold gate")
+    cold = _disc(64, 28, lambda dx, dy, rng: np.broadcast_to(np.array((16.0, 30.0, 52.0)), dx.shape + (3,)) + 8 * np.sin(dx / 3)[..., None])
+    if any("shadows not cold" in e or "shadows crushed" in e for e in static_errors("cold", cold, (32, 32), measure("cold", cold))):
+        errs.append("self-test: a cold shadow band tripped the cold gate")
+    black = _disc(64, 28, lambda dx, dy, rng: 3 + 0 * dx[..., None] + 0 * dy[..., None])
+    if not any("shadows crushed" in e for e in static_errors("black", black, (32, 32), measure("black", black))):
+        errs.append("self-test: a crushed sprite with no shadow band passed")
+    return errs
+
+
+def manifest_spec_errors(doc: dict, objs: dict) -> list[str]:
+    """The committed manifest against the registry: size, pivot, frame count, durations and loop must all agree."""
+    errs = []
+    for o in doc.get("objects", []):
+        spec = objs.get(o["name"])
+        if spec is None:
+            errs.append(f"manifest: {o['name']} is not in any generator (stale committed object)")
+            continue
+        if tuple(o["size"]) != tuple(spec.size):
+            errs.append(f"manifest: {o['name']} size {o['size']}, spec {list(spec.size)}")
+        if tuple(o["pivot"]) != tuple(spec.pivot):
+            errs.append(f"manifest: {o['name']} pivot {o['pivot']}, spec {list(spec.pivot)}")
+        if len(o["frames"]) != len(spec.frames):
+            errs.append(f"manifest: {o['name']} has {len(o['frames'])} frames, spec {len(spec.frames)}")
+        want = [int(d) for d in spec.duration_ms] if spec.duration_ms else [0] * len(spec.frames)
+        got = [int(fr["durationMs"]) for fr in o["frames"]]
+        if got != want:
+            errs.append(f"manifest: {o['name']} durations {got}, spec {want}")
+        if o.get("loop") is not False:
+            errs.append(f"manifest: {o['name']} loop {o.get('loop')}")
+    return errs
+
+
 def self_test() -> list[str]:
     """The metrics and gates on images with known answers: a flat fill, a white chrome blob and a neutral grey one must fail."""
     errs = []
@@ -289,8 +451,9 @@ def self_test() -> list[str]:
     errs += ["self-test: a flat neutral fill passed" for _ in [0] if not static_errors("flat", flat, (24, 24), measure("flat", flat))]
     chrome = flat.copy()
     chrome[8:40, 8:40] = (250, 250, 250, 255)
-    if not any("chrome" in e for e in static_errors("chrome", chrome, (24, 24), measure("chrome", chrome))):
+    if not any("over V .85" in e for e in static_errors("blob", chrome, (24, 24), measure("blob", chrome))):
         errs.append("self-test: a white blob did not trip the chrome gate")
+    errs += _self_test_form_cold()
     m = measure("flat", flat)
     if m["crisp"] != 1.0 or m["contrast"] > 1e-4 or m["sat_p95"] > 1e-3:
         errs.append(f"self-test: metrics wrong on a flat fill {m['crisp']} {m['contrast']} {m['sat_p95']}")
@@ -312,6 +475,47 @@ def self_test() -> list[str]:
     off[2][5:25, 20:44] = (200, 40, 220, 255)  # base far above the pivot
     if not any("base at row" in e for e in potion_errors(off, (32, 60))):
         errs.append("self-test: a frame with its base off the pivot did not trip the pivot gate")
+    hole = frames[3].copy()
+    hole[3:9, 3:9] = (200, 40, 220, 255)  # an opaque ring fragment: alpha >= 240 must not slip past the ring gate
+    if not any("ring peak" in e for e in potion_errors(frames[:3] + [hole], (32, 60))):
+        errs.append("self-test: an opaque patch away from the bottle did not trip the ring peak gate")
+    spark = [f.copy() for f in frames]
+    spark[2][40:60, 20:44] = 0
+    spark[2][22:40, 20:44] = (200, 40, 220, 255)  # bottle base 20 px above the pivot ...
+    spark[2][59, 4:6] = (255, 255, 255, 255)      # ... and a spark on the pivot row, which must not count as the base
+    if not any("base at row" in e for e in potion_errors(spark, (32, 60))):
+        errs.append("self-test: a spark on the pivot row hid a bottle that is off the pivot")
+    chromey = [f.copy() for f in frames]
+    chromey[1][40:60, 20:44] = (250, 250, 250, 255)  # a white bottle is chrome, not glow
+    if not any("not glow" in e for e in potion_errors(chromey, (32, 60))):
+        errs.append("self-test: a white potion bottle did not trip the potion chrome gate")
+    dull = [f.copy() for f in frames]
+    dull[0][40:60, 20:44] = (40, 60, 70, 255)
+    if not any("brightest mass" in e for e in potion_errors(dull, (32, 60))):
+        errs.append("self-test: a dull potion frame did not trip the potion value gate")
+    ragged = [f.copy() for f in frames]
+    ragged[0][38, 20:44] = (200, 200, 190, 128)  # soft edge pixels that are not glow
+    ragged[0][36, 5:20] = (200, 200, 190, 128)   # and soft pixels away from the body
+    if not any("crispness" in e for e in potion_errors(ragged, (32, 60))):
+        errs.append("self-test: soft non-glow pixels did not trip the potion crispness gate")
+    glowy = [f.copy() for f in frames]
+    glowy[0][36:39, 5:20] = (20, 200, 230, 128)   # cyan soft pixels are exempt
+    if any("crispness" in e for e in potion_errors(glowy, (32, 60))):
+        errs.append("self-test: soft glow pixels tripped the potion crispness gate")
+    spec = type("Spec", (), {"size": (64, 64), "pivot": (32, 60), "frames": (0,), "duration_ms": ()})
+    good = {"objects": [{"name": "a", "size": [64, 64], "pivot": [32, 60], "loop": False,
+                         "frames": [{"image": "sprites/a.png", "shadow": "shadows/a.png", "durationMs": 0}]}]}
+    if manifest_spec_errors(good, {"a": spec}):
+        errs.append("self-test: a manifest equal to its spec failed")
+    for key, val in (("pivot", [31, 60]), ("size", [64, 65])):
+        stale = json.loads(json.dumps(good))
+        stale["objects"][0][key] = val
+        if not manifest_spec_errors(stale, {"a": spec}):
+            errs.append(f"self-test: a stale manifest {key} was not flagged")
+    stale = json.loads(json.dumps(good))
+    stale["objects"][0]["frames"][0]["durationMs"] = 90
+    if not manifest_spec_errors(stale, {"a": spec}):
+        errs.append("self-test: a stale manifest duration was not flagged")
     bad = np.full((200, 200, 4), 255, np.uint8)
     bad[..., :3] = BG
     if sheet_errors(bad):
@@ -360,6 +564,11 @@ def main() -> int:
             errs += edge_errors(f, "sprite", im[..., 3])
             if sh is not None:
                 errs += edge_errors(f, "shadow", sh[..., 3])
+    wanted = {f"{f}.png" for n in objs for f in gen_iso.frame_names(n, objs[n])}
+    for sub in ("sprites", "shadows"):
+        folder = ISO / sub
+        if folder.exists():
+            errs += [f"stale committed file {sub}/{p.name}: no generator frame produces it" for p in sorted(folder.iterdir()) if p.name not in wanted]
     statics = [n for n in names if n != POTION]
     stats = {}
     for n in names:
@@ -381,6 +590,7 @@ def main() -> int:
     manifest = ISO / "iso_manifest.json"
     if manifest.exists():
         doc = json.loads(manifest.read_text(encoding="utf-8"))
+        errs += manifest_spec_errors(doc, objs)
         listed = [o["name"] for o in doc["objects"]]
         if not partial and listed != [n for n in NAMES if n in listed]:
             errs.append(f"manifest: objects {listed}")
@@ -416,7 +626,7 @@ def main() -> int:
     for (n, i), m in stats.items():
         if i == 0:
             print(f"{n}: crisp {m['crisp']:.3f} sat p95 {m['sat_p95']:.3f} p99 {m['sat_p99']:.3f} p5V {m['p5_v']:.3f} p99V {m['p99_v']:.3f} "
-                  f"contrast {m['contrast']:.4f} form {m['form_ratio']:.2f} warm {m['warm_lit']:.1f} cold {m['cold_shadow']:.1f} "
+                  f"contrast {m['contrast']:.4f} form {m['form_ratio']:.2f} warm {m['warm_lit']:.1f} cold {m['cold_band']:.1f} (band {m['band_share']:.2f}) "
                   f"medS {m['median_s']:.3f} chrome {m['chrome']:.4f} peakV {m['peak_v']:.3f}")
     print(f"check_iso: {len(names)} objects, {len(errs)} errors")
     return 1 if errs else 0

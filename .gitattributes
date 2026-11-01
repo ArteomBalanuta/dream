@@ -1,0 +1,5 @@
+# The iso sprite set is hashed byte for byte (check_iso determinism): keep LF and never touch the PNGs
+tools/ui-assets/iso/**/*.json text eol=lf
+tools/ui-assets/iso/*.json text eol=lf
+tools/ui-assets/iso/**/*.png binary
+tools/ui-assets/iso/*.png binary
