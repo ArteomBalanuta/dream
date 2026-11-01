@@ -61,9 +61,6 @@ Perf at 1440x1024, `DREAM_MAX_FPS=0`, an empty starter scene, only 1 or 2 usable
 - **Draw gate missed.** Inventory is 25 HUD commands against a budget of 16 with windows and tooltip. Text, window art and item pages alternate in draw order. Play is 5 against 12.
 - Plan gates not measured: the 1080p FPS baseline on a real scene, allocation in the real frame, atlas load time, GPU memory.
 - Mouse hover, drag, right-click and the modals were not exercised in the GL build. The real router and panels cover them in tests only. The capture script drives state, not the mouse. The sprite cursor did follow the real pointer in the captures.
-- Combat numbers, crit colours, death and tier icons were not seen in GL: the captured scene had no fight and common items only. They are seen in the compositor only.
-- The mode label ("Building", "Combat") sits on the EXP trough.
-- Text is 13 px at 1080p and small against the art, as the plan accepted. `BodyTextPx` centring is off by a few pixels at scale 4.
 - `NetworkDiagnosticsRateLimiterTests.ShouldLog_OnAnExistingKey_DoesNotAllocate` failed 3 of 3 under the filter `FullyQualifiedName~Allocat`, and passes alone and in both full runs. It uses a single measuring window. This work did not touch it or its code.
 - Hiding the developer sliders will surprise a user until `admin_hud=1` is set.
 - A new `DREAM_IDENTITY_FILE` on an existing database with the same client name is refused as "That character belongs to someone else", and the window stays on the connection screen. That is correct behaviour, but it stops a capture run.
@@ -122,7 +119,6 @@ Draw commands in the GL build (`[hud-capture]` lines): play 2 (was 5), inventory
 ## Left for a human hand
 
 - Real mouse feel: the 4 px drag threshold, the cursor leaving the window while dragging (Hidden mode lets it), and the mouse-look jump after V or Esc on the user's driver (the hold-off is three frames; it was reasoned from GLFW behaviour, not measured).
-- A configured `ui_scale` above the auto fit for the window (3 at 1440x1024) pushes the lower windows under the bar. The pointer is still right; the layout was left alone.
 - Death with the inventory open was not seen in GL; the headless panels and the server rule cover it.
 
 # Verification pass, 2026-11-01
@@ -150,7 +146,7 @@ FPS is the window title's own FPS counter, sampled once a second after the first
 
 Atlas note: the time from the first HUD frame to Ready includes one scene stall of 700 to 740 ms that the HUD does not cause (the first `Update` ran at 2 ms, the next at 704 to 760 ms, with a frame delta capped at 100 ms). The pages were already decoded when that second update ran (it uploaded one), so the decode finished inside the stall, but the decode time alone was not separated. 7 updates, 7 pages, one per frame, as designed.
 
-Over 1.19 MB of the build growth is `items_enhanced.png` and `items_mask.png`, which `UiAtlasStore.FilePages` does not load.
+Over 1.19 MB of the build growth is `items_enhanced.png` and `items_mask.png`, which `UiAtlasStore.FilePages` does not load. (Fixed in fix loop 1: no longer copied.)
 
 ## Goldens and byte pins
 
@@ -162,13 +158,13 @@ This needed a new script step, `fight:<frames>` (see `docs/configuration.md`): t
 
 - Regular damage: orange numbers rising above the wolf, fill and dark rim as specified.
 - Critical: a blue 87 above the Dire Wolf.
-- Incoming: red numbers appear in third person (an 18 over the player). In first person the player went from 100 to 0 over a dozen captures and no red number was drawn. The cause was not instrumented: the player's combat anchor is at the camera, and `TryProjectWorldToScreen` drops a point at or behind the near plane. Whether the ImGui HUD showed them in first person was not established.
+- Incoming: red numbers appear in third person (an 18 over the player). In first person the player went from 100 to 0 over a dozen captures and no red number was drawn. The cause was not instrumented: the player's combat anchor is at the camera, and `TryProjectWorldToScreen` drops a point at or behind the near plane. Whether the ImGui HUD showed them in first person was not established. (Fixed in fix loop 1.)
 - Death: dimmed screen, red "You died" and "Respawning in N s" at 38% height, empty gem, `0/100`. With the inventory open: no dim, the text centred in the strip left of the windows (the cursor can sit on it), windows live. Respawn with the inventory open: 100/100 and the windows unchanged.
 - Rare and uncommon icons and tooltips: pink uncommon and mint rare names with the tier label, correct rolled stat lines (`+8 Strength`, `+1.85 Attack Speed`, `+7 Strength`, `+1.4 Attack Speed`), item icons per tier.
 - Loot notice: a real drop, pink "Looted: Ward Lantern (Uncommon)" over the red cooldown rejection line.
-- Dire Wolf label at night: present ("Dire Wolf", "Lv 3  200/200"). When a Wolf and a Dire Wolf stand together their labels overlap into unreadable text, since each is centred on its own anchor with no avoidance.
+- Dire Wolf label at night: present ("Dire Wolf", "Lv 3  200/200"). When a Wolf and a Dire Wolf stand together their labels overlap into unreadable text, since each is centred on its own anchor with no avoidance. (Fixed in fix loop 1.)
 - Drag while the server rejects: ghost icon, dimmed source slot, the drop well tinted invalid, the red "too many inventory actions" line in the left strip, view unchanged afterwards.
-- Window 1100x700: the layout adapts; the "Attack Speed" label touches its value ("Attack Speed2 +0.25 = 2.25").
+- Window 1100x700: the layout adapts; the "Attack Speed" label touches its value ("Attack Speed2 +0.25 = 2.25"). (Fixed in fix loop 1.)
 
 ## Adversarial
 
@@ -185,3 +181,49 @@ This needed a new script step, `fight:<frames>` (see `docs/configuration.md`): t
 Production code changed, capture script only: `HudCapturePointerPlan.cs` (the `Fight` verb), `PlayScene.Capture.cs` (`ApplyCaptureFight`), and one call in `PlayScene.Update.cs`, which returns the frame untouched unless a fight step is running.
 
 Full suite: run 1 of 2, 5257 passed, 0 failed, 46 skipped of 5303, 2 m 39 s.
+
+
+# Fix loop 1, 2026-11-01
+
+Base 0a50211 (tip of `integrate/classic-hud`), branch `worktree-agent-a60d3d1ff2cc18264`. Simulation and server code are untouched; the tick goldens and byte pins did not move (the full suite passes them unchanged).
+
+## What was wrong and what changed
+
+1. **Killing blow showed no number.** `PlayScene.Replication.cs` applied the actor snapshot (which removes the dead enemy from the client registry) before `ClientSnapshotDamageApplier`, so `TryResolveCombatActor` failed for the last hit. Damage now runs first and still runs before the presenter. `CombatTextLoopbackTests.ALethalHit_PublishesExactlyOneDamageAppliedEventOnTheClient` (real loopback server, real `PlayScene`) sets the enemy to 1 HP, lands one hit and expects exactly one event. With the two lines swapped back it fails (`Assert.Single() Failure: The collection did not contain any matching items`).
+2. **`ui_scale` above the auto fit.** `UiScale.Resolve` now returns `min(snapped configured, auto fit)`; without a viewport (0 by 0) it only snaps, which `HudOptions.SanitizeUiScale` relies on. The Settings slider shows the scale in use. Auto is unchanged. `UiScaleTests.Configured_SnapsToQuarterAndIsCappedAtTheAutoFit` changed its last case (9 at 1920x1080 is now 2.25, not 4), and `HudOptionsTests.UiScalePick_IsSavedWithTheRuntimeSettings` now expects the resolved 2.0 at 1440x1024 while the saved value stays 2.25. Both are the intended change of meaning.
+3. **4K text.** `IUiCanvas.TextScale` (default 1; `UiBatch` already had it from `UiLayout.TextScale`); `PanelText.Height(c, style)` and `InventoryWindow.BodyHeight(c)` scale the baked 13 and 26 px by it, and the status bar, notices, labels, inventory, character window and item overlays use them. Previews written by `HudPreviewTests.RealPanels_HighScale_PlayAndInventory` (3840x2160 and 2560x1440) were read: at 4K the text is doubled and sits inside its rows, tooltip, bar and gem; at scale 3 (2560x1440) the HP text is Large and fits the gem, and coordinates and EXP percent are centred.
+4. **GL failure did not latch.** `UiGlTextureUploader` checks `GLUtils.CheckGLError` after the upload; on any result it deletes the texture and throws, so the atlas store ends in Failed. `UiGlRenderer` throws from its constructor on a bad result and checks once, after the first frame that actually draws (stale errors are drained first so they are not blamed on it); then it never checks again, so there is no per-frame `glGetError`. `GL_OUT_OF_MEMORY` and `GL_CONTEXT_LOST` stay latched Fatal by the existing `CheckGLError` rule and close the window instead of falling back; `docs/configuration.md` says so. Not unit-tested: it needs a GL context.
+5. **Glyph guard.** `UiFontSetup.BuildGlyphTable` also fails (so the HUD falls back) on a Dear ImGui version other than the audited `1.91.6`, and when the `?` glyph of either style has X1 not above X0, UVs outside 0..1 or an advance not above 0 (`UiFontSetup.GlyphFault`, tested directly; the real font and the loaded native version pass).
+6. **Test gaps.** The cursor decision is `ClassicCursorPolicy.Decide` and `WillDraw` (table test: inventory, settings, loading, failed, latched/F3/forced, unfocused). `ClassicHudFrameGuard.Draw` is the frame run `Render` now uses: on a throw it drops the pending action and close, calls the fault handler (which latches ImGui once) and reports nothing drawn; tested with a backend that throws after an action was already picked. `DamageEventHitWireTests.ToString_IsPinnedAndNeverPrintsTheHitKind` pins the `DamageEventDelta` text.
+7. **Incoming number in first person.** Reproduced in GL before the fix (see the verification pass above). Cause as suspected: the player's combat anchor is at the camera, so the projection drops it. The ImGui HUD on master projected the same anchor (plus a depth offset toward the camera) through the same `TryProjectWorldToScreen`, so by reading the code it had the same gap; it was not run on master. Fix: `IncomingNumberAnchor` puts a local-player Incoming number that cannot project, or whose anchor is within 1.5 m of the camera, at the horizontal centre and 62% down the window. In third person it still rises over the character. GL capture below.
+8. **`InventoryUiState` reset** in `DisposeClassicHud` (only when a classic surface existed, so headless scenes do not touch the static state) and in `Game` when a play scene starts and when a session ends.
+9. **Unfocused window keeps an OS cursor**: focus is part of `ClassicCursorPolicy.Decide` (`PlayScene` records it each render).
+10. **Tooltip name** wraps by width (two lines at most) instead of being cut by character count; the gap after the name moves to the end of the name block.
+11. **Batch drops**: `Render.SubmitClassicHud` logs once per run (`[hud-classic] N quads did not fit ...`). World labels draw first and could starve the bar, so they are capped at 24 and stop once less than 4096 of the 8192 quads remain (`IUiCanvas.QuadHeadroom`).
+12. **Row rebuilds split**: `HudViewBuilder` rebuilds stat rows only on a status change and item rows only on an inventory change.
+13. **Overlapping enemy labels** move down below the earlier one (stack buffer, no allocation, one pass per placed label).
+14. **Stat rows**: a gap of `max(6 px, 3 u)` between label and value; when the `base +bonus = total` form would not leave that gap the row shows the total alone.
+15. **Unused PNGs**: `items_enhanced.png` and `items_mask.png` are `CopyToOutputDirectory=Never` in `dream.csproj`; both stay in the repo and in `items.json`. No test expected them in the output.
+16. **Docs**: Esc note in `configuration.md` (the inventory closes first, on both surfaces; this was the mouse pass's behaviour change and it is kept), the `GetRarity` comment (an out-of-range index throws), protocol version 12 in `README.md` and `build-and-run.md`, the `ui_scale` cap, the first-person number and the label rules.
+
+## Capture tool
+
+`fight:` could not reach the enemies in a fresh world: they stand behind a wall at about (45, 45) and the player stopped at (11.5, 10.5). The step now jumps and sidesteps when it makes no progress, and after 200 ticks of that it toggles noclip once through the real command path. It logs the position. This is verification-tool code only.
+
+## Verification
+
+GL capture, Release, 1920x1080, `DREAM_TIME_OF_DAY=midnight`, integrated loopback route (`DREAM_AUTO_CONNECT=1`, no `DREAM_SERVER_HOST`), throwaway database and `DREAM_IDENTITY_FILE` in a copied build folder, `DREAM_MAX_FPS=60`, sixteen `fight:400` steps, ended by the timeout after the 16 captures:
+
+- `artifacts/gl-capture/14-fight-400.png`: red `12` and `10` (incoming) in first person, "You died", the Wolf and Dire Wolf labels on separate rows, orange `39` and `46` hits above.
+- `artifacts/gl-capture/04-fight-400.png`: death with the loot notice and the two enemy labels one above the other.
+- Every capture reported `dropped=0`.
+- `artifacts/` is git-ignored; the full capture folder of the run is in the session scratchpad (`cap5`).
+
+Not exercised in GL: the GL error paths (they need a driver that fails), a killing blow's number (covered by the loopback test; the run shows loot notices after kills), the minimised and unfocused window.
+
+## Open items
+
+- The GL failure paths have no automated test.
+- Incoming numbers rise from 62% height into the same area as the death title and enemy labels; readable, not pretty.
+- The ImGui HUD's first-person behaviour for incoming numbers was inferred from code.
+- Draw-command gate, the unmeasured plan gates and the real-mouse feel items from the earlier sections stand.

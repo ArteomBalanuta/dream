@@ -146,7 +146,8 @@ public class HudOptionsTests
 
         Assert.Equal(2.25f, settings.UiScaleSetting);
         Assert.Equal(2.25f, config.UiScale);
-        Assert.Equal(2.25f, settings.ResolvedUiScale);
+        // 2.25 is saved as picked, but 1440x1024 only fits 2.0, so that is the scale in use.
+        Assert.Equal(2.0f, settings.ResolvedUiScale);
     }
 
     [Fact]
