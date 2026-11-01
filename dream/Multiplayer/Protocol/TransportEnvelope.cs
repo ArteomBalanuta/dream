@@ -30,8 +30,12 @@ public readonly record struct TransportEnvelope(
     // digit. Version 11 (persistence wave I) adds the server.inventory-push message (loot notices and
     // a fresh inventory snapshot) and the optional EnemyPresentation actor group (enemy level and
     // visual key); a v10 client would fail on the group mask, so both sides refuse it. A wolf-only
-    // world's actor bytes are unchanged apart from the version digit. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 11;
+    // world's actor bytes are unchanged apart from the version digit. Version 12 (classic HUD) adds the
+    // optional trailing "hit" field of a damage event (DamageEventDelta.HitKind, written only for a
+    // critical or incoming hit); a v11 client would show every number as a regular hit, so both sides
+    // refuse it. Snapshots without a critical hit are unchanged apart from the version digit. Decode
+    // rejects any other version.
+    public const int CurrentProtocolVersion = 12;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

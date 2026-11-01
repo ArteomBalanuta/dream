@@ -102,6 +102,31 @@ public sealed class CombatTextLoopbackTests(ITestOutputHelper output)
         Assert.Equal(hits, numbers);
     }
 
+    // The server's hit kind crosses the wire (protocol v12 "hit") to the client's DamageAppliedEvent.
+    [Fact]
+    public async Task ACriticalHitOnTheServer_ArrivesAsACriticalEventOnTheClient_AndARegularOneDoesNot()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(server, Session);
+        List<DamageAppliedEvent> seen = [];
+        using IDisposable subscription = ClientEvents(client).Subscribe<DamageAppliedEvent>(seen.Add);
+        await StepAsync(server, client, except: null, attack: false);
+        EnemyActor enemy = server.Runtime.Enemies.ActiveActors.First();
+        int enemyId = enemy.Combatant.Actor.Id;
+        SceneEventHub serverEvents = (SceneEventHub)typeof(Dream.Simulation.Runtime.WorldSessionRuntime)
+            .GetField("_events", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(server.Runtime)!;
+
+        serverEvents.Publish(new DamageAppliedEvent(enemy.Combatant.Actor, 41, FloatingCombatTextKind.Critical));
+        await StepAsync(server, client, enemy, attack: false);
+        serverEvents.Publish(new DamageAppliedEvent(enemy.Combatant.Actor, 17, FloatingCombatTextKind.Regular));
+        await StepAsync(server, client, enemy, attack: false);
+
+        Assert.Equal(FloatingCombatTextKind.Critical, Assert.Single(seen, e => e.Actor.Id == enemyId && e.Amount == 41).Kind);
+        Assert.Equal(FloatingCombatTextKind.Regular, Assert.Single(seen, e => e.Actor.Id == enemyId && e.Amount == 17).Kind);
+    }
+
     private static IAuthoritativePlayerTarget WaveIRuntimeKitTarget(WireLoopbackServer server) =>
         Dream.Tests.Simulation.Runtime.WaveIRuntimeKit.Target(server.Runtime, Session);
 }
