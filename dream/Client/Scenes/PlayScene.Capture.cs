@@ -472,6 +472,7 @@ public partial class PlayScene
             _capturePointerIndex = 0;
             HudCapturePointerPlan.Click(_capturePointerFrames, at);
             _captureWalkClicks++;
+
             _captureWalkRest = 0;
         }
     }

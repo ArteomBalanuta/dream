@@ -73,7 +73,7 @@ public class PathFollowerPhysicsTests(ITestOutputHelper output)
                 new PlayerSessionId("walker"),
                 (ulong)tick + 1,
                 PlayerModeSwitchIntent.None,
-                new PlayerMoveIntent(1f, 0f, JumpPressed: step.Jump),
+                new PlayerMoveIntent(step.Direction == Vector3.Zero ? 0f : 1f, 0f, JumpPressed: step.Jump),
                 new PlayerLookIntent(0f, 0f, step.Direction),
                 PrimaryUsePressed: false);
             session.AdvancePredictionTick((ulong)tick + 1, SimulationClock.FixedDeltaSeconds, frame, Tuning);

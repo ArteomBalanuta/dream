@@ -49,9 +49,12 @@ public class PathFollowerTests
         follower.SetPath([new NavCell(3, 1, 2), new NavCell(4, 2, 2)], viaStartCentre: false);
         Vector3 body = new(3.6f, 1.5f, 2.5f);
 
+        // The body keeps moving: a pinned body hops instead.
         Assert.True(follower.Step(body, world).Jump);
         for (int i = 0; i < PathFollower.JumpCooldownTicks; i++)
         {
+            body.Z += 0.001f;
+            body.X -= 0.05f;
             Assert.False(follower.Step(body, world).Jump);
         }
 

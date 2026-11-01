@@ -369,10 +369,12 @@ public sealed class ClickMoveController
             _host.SetFacing(direction.Normalized());
         }
 
+        // No direction means the follower is holding still for a hop.
         PlayerMoveIntent move = command.MoveIntent;
+        float forward = direction.LengthSquared > 0.000001f ? 1f : 0f;
         return command with
         {
-            MoveIntent = move with { ForwardAxis = 1f, StrafeAxis = 0f, JumpPressed = move.JumpPressed || step.Jump }
+            MoveIntent = move with { ForwardAxis = forward, StrafeAxis = 0f, JumpPressed = move.JumpPressed || step.Jump }
         };
     }
 

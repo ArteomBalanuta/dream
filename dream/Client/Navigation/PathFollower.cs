@@ -20,6 +20,21 @@ public sealed class PathFollower
     public const float StuckProgressMetres = 0.05f;
     public const int MaxFailedReplans = 3;
 
+    // Pressed against a step, wall friction eats the whole jump. So stop pushing, hop straight up
+    // and only walk on once the feet clear the step.
+    public const int HopTicks = 40;
+    public const float HopClearanceMetres = 0.03f;
+    public const float HopNeedMetres = 0.1f;
+    public const int DropTicks = 12;
+    public const int BackOffTicks = 6;
+    private const float PinnedStepLimit = LineGain * 0.094f;
+    public const float DropNeedMetres = 0.15f;
+    private const float BodyHalfHeight = 0.5f;
+
+    // Waypoints stand this far off a wall on one side: a body flush with a wall face catches on
+    // the next cube of that wall and cannot slide along it.
+    public const float WallGapMetres = 0.06f;
+
     // A stuck replan heads back through the start cell, so only real distance from the last replan
     // counts as getting anywhere; a short walk back must not clear the failures.
     public const float ReplanProgressMetres = 2f;
@@ -35,6 +50,9 @@ public sealed class PathFollower
     private int _pinnedTicks;
     private Vector3 _lastBody;
     private bool _hasLastBody;
+    private int _hopTicks;
+    private int _dropTicks;
+    private int _backOffTicks;
 
     public bool HasPath => _index < _path.Count;
 
@@ -50,6 +68,9 @@ public sealed class PathFollower
         _index = viaStartCentre ? 0 : Math.Min(1, _path.Count);
         _windowTicks = 0;
         _jumpTried = false;
+        _hopTicks = 0;
+        _dropTicks = 0;
+        _backOffTicks = 0;
         if (!viaStartCentre)
         {
             _failedReplans = 0;
@@ -65,13 +86,16 @@ public sealed class PathFollower
         _windowTicks = 0;
         _jumpTried = false;
         _failedReplans = 0;
+        _hopTicks = 0;
+        _dropTicks = 0;
+        _backOffTicks = 0;
         GaveUp = false;
     }
 
     // Once per 64 Hz tick.
     public NavStep Step(Vector3 bodyCentre, INavWorld world)
     {
-        while (HasPath && ReachedWaypoint(bodyCentre))
+        while (HasPath && ReachedWaypoint(bodyCentre, world))
         {
             _index++;
             _windowTicks = 0;
@@ -94,7 +118,43 @@ public sealed class PathFollower
         _lastBody = bodyCentre;
         _hasLastBody = true;
 
-        Vector3 toTarget = target.Centre - bodyCentre;
+        float feet = bodyCentre.Y - BodyHalfHeight;
+        if (_hopTicks > 0 && feet >= target.Level + HopClearanceMetres)
+        {
+            _hopTicks = 0;
+        }
+
+        // Pushing on a face in mid-air hangs the body there on friction, so let it fall first.
+        if (_dropTicks > 0)
+        {
+            _dropTicks--;
+            _pinnedTicks = 0;
+            return new NavStep(Vector3.Zero, false, false, false);
+        }
+
+        // Feet at a whole height are on a ledge, about to walk off it, not hanging.
+        if (_pinnedTicks >= PinnedTicksBeforeNudge && feet > target.Level + DropNeedMetres && MathF.Abs(feet - MathF.Round(feet)) > 0.03f)
+        {
+            _dropTicks = DropTicks;
+        }
+
+        // Also taken in the air: a body pushing on a face hangs there on friction.
+        if (_hopTicks == 0 && feet < target.Level - HopNeedMetres && _pinnedTicks >= PinnedTicksBeforeNudge)
+        {
+            _hopTicks = HopTicks;
+        }
+
+        if (_hopTicks > 0)
+        {
+            // One tick with the button up first, because the motor edge-detects the jump.
+            bool hop = _hopTicks == HopTicks - 1;
+            _hopTicks--;
+            _windowTicks = 0;
+            return new NavStep(Vector3.Zero, hop, false, false);
+        }
+
+        bool pinned = _pinnedTicks >= PinnedTicksBeforeNudge;
+        Vector3 toTarget = WaypointAt(_index, world) - bodyCentre;
         Vector3 direction = new Vector3(toTarget.X, 0f, toTarget.Z).Normalized();
         if (_index > 0)
         {
@@ -106,8 +166,11 @@ public sealed class PathFollower
         {
             _jumpCooldown--;
         }
-        else if (ClimbAhead(bodyCentre))
+        else if (ClimbAhead(bodyCentre) || pinned)
         {
+            // Also when pinned: at rest and exactly on a cell boundary, the body catches on the
+            // seam between two raised cubes, and leaving the ground frees it.
+
             jump = true;
             _jumpCooldown = JumpCooldownTicks;
         }
@@ -158,18 +221,26 @@ public sealed class PathFollower
     // A waypoint where the path turns must be reached from the far side (at or past the centre
     // along the incoming direction): arriving short leaves the body overlapping the corner it is
     // about to hug, and it pins there. Straight waypoints only need to be close.
-    private bool ReachedWaypoint(Vector3 bodyCentre)
+    private bool ReachedWaypoint(Vector3 bodyCentre, INavWorld world)
     {
         NavCell target = _path[_index];
-        float distance = HorizontalDistance(bodyCentre, target.Centre);
+        Vector3 point = WaypointAt(_index, world);
+        float distance = HorizontalDistance(bodyCentre, point);
         if (distance < AdvanceDistance)
         {
             return true;
         }
 
-        if (_index == 0 || _index + 1 >= _path.Count || distance >= TurnAdvanceDistance)
+        if (distance >= TurnAdvanceDistance || _index == 0)
         {
             return false;
+        }
+
+        // The last waypoint and straight ones need only be close: a tick step is wider than the
+        // tighter radius, so the body could step over it and turn back forever.
+        if (_index + 1 >= _path.Count)
+        {
+            return true;
         }
 
         NavCell previous = _path[_index - 1];
@@ -178,11 +249,44 @@ public sealed class PathFollower
         int inZ = Math.Sign(target.Z - previous.Z);
         if (inX == Math.Sign(next.X - target.X) && inZ == Math.Sign(next.Z - target.Z))
         {
-            return false;
+            return true;
         }
 
-        return ((bodyCentre.X - target.Centre.X) * inX) + ((bodyCentre.Z - target.Centre.Z) * inZ) >= -0.005f;
+        return ((bodyCentre.X - point.X) * inX) + ((bodyCentre.Z - point.Z) * inZ) >= -0.005f;
     }
+
+    // The cell centre, moved off a wall that stands on one side only. Beside a one-wide gap or a
+    // wall on the other side the gap stays at zero, so the body enters the next cell centred.
+    private Vector3 WaypointAt(int index, INavWorld world)
+    {
+        NavCell cell = _path[index];
+        Vector3 point = cell.Centre;
+        point.X += WallGapMetres * SharedPush(index, world, (-1, 0), (1, 0));
+        point.Z += WallGapMetres * SharedPush(index, world, (0, -1), (0, 1));
+        return point;
+    }
+
+    private int SharedPush(int index, INavWorld world, (int X, int Z) low, (int X, int Z) high)
+    {
+        int push = Push(_path[index], world, low, high);
+        for (int i = Math.Max(index - 1, 0); push != 0 && i <= Math.Min(index + 1, _path.Count - 1); i++)
+        {
+            NavCell cell = _path[i];
+            bool bothSides = Blocked(world, cell, low.X, low.Z) + Blocked(world, cell, high.X, high.Z) == 2;
+            if (bothSides || Push(cell, world, low, high) == -push)
+            {
+                push = 0;
+            }
+        }
+
+        return push;
+    }
+
+    private static int Push(NavCell cell, INavWorld world, (int X, int Z) low, (int X, int Z) high)
+        => Blocked(world, cell, low.X, low.Z) - Blocked(world, cell, high.X, high.Z);
+
+    private static int Blocked(INavWorld world, NavCell cell, int dx, int dz)
+        => world.IsBlocked(cell.X + dx, cell.Level, cell.Z + dz) || world.IsBlocked(cell.X + dx, cell.Level + 1, cell.Z + dz) ? 1 : 0;
 
     // On an axis-aligned segment, steer back onto the line through the cell centres. The body has
     // no clearance, so a few centimetres of sideways error pins it against a jamb or corner.
@@ -198,11 +302,25 @@ public sealed class PathFollower
         Vector3 along = new(dx, 0f, dz);
         Vector3 side = new(-dz, 0f, dx);
         float correction = Math.Clamp(Vector3.Dot(toTarget, side) * LineGain, -MaxLineCorrection, MaxLineCorrection);
+        if (_backOffTicks > 0)
+        {
+            _backOffTicks--;
+            return (-along + (side * correction)).Normalized();
+        }
+
         if (_pinnedTicks >= PinnedTicksBeforeNudge && MathF.Abs(correction) > MinNudgeCorrection)
         {
             // Pressed into a face or corner, friction eats any sideways speed that comes with a
-            // forward push. One tick of pure sideways motion frees it.
+            // forward push. One tick of pure sideways motion frees it, unless the error is under
+            // one tick of travel: then it would swing past the line forever, so back off and let
+            // the line correction settle before the next try.
             _pinnedTicks = 0;
+            if (MathF.Abs(correction) < PinnedStepLimit)
+            {
+                _backOffTicks = BackOffTicks;
+                return (-along + (side * correction)).Normalized();
+            }
+
             return side * MathF.Sign(correction);
         }
 

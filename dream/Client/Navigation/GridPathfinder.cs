@@ -8,6 +8,9 @@ public sealed class GridPathfinder
     private const int DiagonalCost = 14;
     private const int JumpCost = 10;
 
+    // The body is as wide as a cell, so a cell beside a wall has no clearance. Worth a short detour.
+    private const int WallCost = 6;
+
     private static readonly (int Dx, int Dz)[] Orthogonal = [(1, 0), (-1, 0), (0, 1), (0, -1)];
     private static readonly (int Dx, int Dz)[] Diagonal = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
 
@@ -21,6 +24,11 @@ public sealed class GridPathfinder
             && level >= 1 && level < world.Height
             && !world.IsBlocked(x, level, z)
             && world.IsSupport(x, level - 1, z);
+
+    // Where a path may go: the body is exactly one cell tall, so a one-high slot has no clearance
+    // and catches it. Only the start may be such a cell, so a body under an overhang can still leave.
+    public static bool IsWalkable(INavWorld world, int x, int level, int z)
+        => IsStandable(world, x, level, z) && !world.IsBlocked(x, level + 1, z);
 
     // path is filled start..end inclusive. False only if no standable start exists.
     // When the goal cannot be reached the path ends at the expanded cell nearest to it:
@@ -69,17 +77,17 @@ public sealed class GridPathfinder
             {
                 if (TryOrthogonal(world, node, dx, dz, out NavCell next, out int stepCost))
                 {
-                    Relax(node, next, cost + stepCost, goal);
+                    Relax(node, next, cost + stepCost, goal, world);
                 }
             }
 
             foreach ((int dx, int dz) in Diagonal)
             {
-                if (IsStandable(world, node.X + dx, node.Level, node.Z)
-                    && IsStandable(world, node.X, node.Level, node.Z + dz)
-                    && IsStandable(world, node.X + dx, node.Level, node.Z + dz))
+                if (IsWalkable(world, node.X + dx, node.Level, node.Z)
+                    && IsWalkable(world, node.X, node.Level, node.Z + dz)
+                    && IsWalkable(world, node.X + dx, node.Level, node.Z + dz))
                 {
-                    Relax(node, new NavCell(node.X + dx, node.Level, node.Z + dz), cost + DiagonalCost, goal);
+                    Relax(node, new NavCell(node.X + dx, node.Level, node.Z + dz), cost + DiagonalCost, goal, world);
                 }
             }
         }
@@ -114,23 +122,29 @@ public sealed class GridPathfinder
             cost = StraightCost + JumpCost;
             next = new NavCell(x, from.Level + 1, z);
             return !world.IsBlocked(from.X, from.Level + 1, from.Z)
-                && IsStandable(world, x, from.Level + 1, z);
+                && IsWalkable(world, x, from.Level + 1, z);
         }
 
         for (int level = from.Level; level >= 1 && !world.IsBlocked(x, level, z); level--)
         {
             if (world.IsSupport(x, level - 1, z))
             {
+                // The walk off the ledge passes under whatever is above this column too.
                 next = new NavCell(x, level, z);
-                return true;
+                return !world.IsBlocked(x, level + 1, z) && !world.IsBlocked(x, from.Level + 1, z);
             }
         }
 
         return false;
     }
 
-    private void Relax(NavCell from, NavCell to, int cost, NavCell goal)
+    private void Relax(NavCell from, NavCell to, int cost, NavCell goal, INavWorld world)
     {
+        if (HugsWall(world, to))
+        {
+            cost += WallCost;
+        }
+
         if (_closed.Contains(to) || (_cost.TryGetValue(to, out int known) && known <= cost))
         {
             return;
@@ -142,6 +156,19 @@ public sealed class GridPathfinder
         int dz = Math.Abs(to.Z - goal.Z);
         int heuristic = StraightCost * (dx + dz) - (2 * StraightCost - DiagonalCost) * Math.Min(dx, dz);
         _open.Enqueue(to, cost + heuristic);
+    }
+
+    private static bool HugsWall(INavWorld world, NavCell cell)
+    {
+        foreach ((int dx, int dz) in Orthogonal)
+        {
+            if (world.IsBlocked(cell.X + dx, cell.Level, cell.Z + dz))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static (int Horizontal, int Level) Score(NavCell cell, NavCell goal)

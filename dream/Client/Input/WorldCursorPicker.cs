@@ -12,6 +12,7 @@ public static class WorldCursorPicker
     public const float EnemyHitRadius = 1f;
     public const float MarchStepMetres = 0.05f;
     public const float MarchMaxMetres = 60f;
+    private const float FloorTop = 1f;
 
     // Ray from the inverse view-projection of the camera. Row-vector matrices, as OpenTK uses them.
     public static bool TryBuildRay(
@@ -105,7 +106,22 @@ public static class WorldCursorPicker
             lastEmpty = new NavCell(x, y, z);
         }
 
-        return default;
+        return EdgePick(world, origin, direction);
+    }
+
+    // Past the edge of the map nothing stops the ray, so aim for the ground cell nearest to where
+    // it crosses the floor: the character walks to the edge rather than ignoring the click.
+    private static ClickPick EdgePick(INavWorld world, Vector3 origin, Vector3 direction)
+    {
+        if (direction.Y >= 0f)
+        {
+            return default;
+        }
+
+        Vector3 p = origin + (direction * ((FloorTop - origin.Y) / direction.Y));
+        int x = Math.Clamp((int)MathF.Floor(p.X), 0, world.Width - 1);
+        int z = Math.Clamp((int)MathF.Floor(p.Z), 0, world.Depth - 1);
+        return new ClickPick(ClickPickKind.Ground, new NavCell(x, (int)FloorTop, z), p, null);
     }
 
     public static ClickPick Pick(
