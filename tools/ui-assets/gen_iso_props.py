@@ -1,9 +1,10 @@
 """Isometric props: the rusted iron barrel, the calibration object for isoforge.
 
-A heavy old barrel: sixteen flat staves in a bulge, each with its own height at the rim and a V seam
-between neighbours, a recessed plank head, and four rolled iron hoops that shed rust down the wood.
-Primary forms are the body, the hoops and the head (8 u and up), secondary the staves, seams and dents
-(2..6 u), tertiary only grain and pitting (under 1 u).
+A heavy rusted iron drum: sixteen lap-jointed iron staves in a bulge, a riveted seam strap, an iron head with
+a bung, and four thick hammered hoops with two rows of rivets each. One stave is broken and splintered at the
+rim, another is dented. Rust sits in big patches (8 u and up) with vertical runs, carried on the vertex tint.
+Primary forms are the body, the hoops, the rust patches and the head (8 u and up), secondary the staves,
+rivets, seams and dents (2..6 u), tertiary only pitting (under 1 u).
 """
 from __future__ import annotations
 
@@ -12,18 +13,28 @@ import math
 import numpy as np
 
 import uiart as U
-from isoforge import Mesh, ObjectSpec, Scene, grid, lathe
+from isoforge import IsoMat, Mesh, ObjectSpec, Scene, Waves3, grid, lathe, waves3
 
 HEIGHT = 20.0
 R_END = 6.0
 R_MID = 7.5
 STAVES = 16
-SEAM_DEPTH = 0.17
-RIM = 0.95
+SEAM_DEPTH = 0.26
+RIM = 1.05
 HEAD_Z = HEIGHT - 2.6
 SIZE = (128, 160)
 PIVOT = (40, 118)
 YAW = 14.0
+BROKEN = 8                      # splintered stave at the rim, front left
+DENTED = 11                     # dented stave, on the shadow side
+BUNG_PHI = math.radians(188.0)  # before YAW
+STRAP_PHI = math.radians(282.0)
+HOOPS = ((2.1, 3.0, 0.62), (6.9, 2.8, 0.58), (13.1, 2.8, 0.58), (17.6, 3.0, 0.62))   # z, height, thickness
+
+PLATE = IsoMat((0.021, 0.018, 0.016), (0.034, 0.030, 0.027), 0.82, (0.020, 0.019, 0.019), (0.085, 0.080, 0.076), 0.8, sat_cap=0.35,
+               detail=(Waves3("plate.dent", 6, 7.0, 12.0, 0.18), Waves3("plate.ding", 6, 2.5, 5.5, 0.03), Waves3("plate.pit", 8, 0.35, 0.9, 0.005)))
+HOOP = IsoMat((0.018, 0.015, 0.0135), (0.034, 0.030, 0.027), 0.80, (0.020, 0.019, 0.019), (0.09, 0.085, 0.08), 0.9, sat_cap=0.35,
+              detail=(Waves3("hoop.hammer", 6, 2.0, 4.0, 0.03), Waves3("hoop.warp", 6, 8.0, 12.0, 0.14), Waves3("hoop.pit", 8, 0.35, 0.9, 0.006)))
 
 
 def radius(z):
@@ -31,15 +42,39 @@ def radius(z):
     return R_END + (R_MID - R_END) * (1 - t * t)
 
 
+def _smooth(lo, hi, x):
+    t = np.clip((x - lo) / (hi - lo), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def _rust_tint(m: Mesh, gain: float = 1.0) -> Mesh:
+    """Rust on the vertex tint: patches 8 u and wider, long vertical runs, and a darker bare iron between."""
+    P = m.v.astype(np.float64)
+    big = waves3(P, "barrel.rust.patch", 8, 8.0, 15.0)[0]
+    mid = waves3(P, "barrel.rust.edge", 6, 3.0, 6.0)[0]
+    run = waves3(P, "barrel.rust.run", 8, 2.0, 4.0, (1.0, 1.0, 0.10))[0]
+    w = _smooth(0.65, 1.3, 0.85 * big + 0.30 * mid + 0.55 * run)
+    w = w * (1 - 0.8 * _smooth(17.0, 19.0, P[:, 2]))
+    k = 0.30 + 1.3 * _smooth(-0.7, 0.7, big + 0.2 * mid)
+    rust = np.array((3.3, 1.35, 0.55))
+    base = np.array((2.0, 2.2, 2.4))
+    tint = (base[None, :] * (1 - w[:, None]) + rust[None, :] * w[:, None]) * (k * gain)[:, None]
+    top = _smooth(15.0, 17.2, P[:, 2])[:, None]
+    tint = tint * (1 - top) + tint * np.array((0.50, 0.62, 0.95)) * top
+    return Mesh(m.v, m.f, m.n, m.uv, tint.astype(np.float32))
+
+
 def _staves() -> Mesh:
     """One lattice around the barrel: per stave the columns are seam, chamfer, middle, chamfer; the seam column
-    is shared with the next stave and sunk into a V groove. Faceted (flat normals)."""
+    is shared with the next stave and sunk into a lap groove. Plates differ in thickness so every seam steps.
+    One stave is broken and splintered at the rim, another dented. Faceted (flat normals)."""
     r = U.rng("iso.barrel.staves")
     per = 4
     ncol = STAVES * per + 1
-    top = HEIGHT - 0.7 * r.random(STAVES)                  # each stave stops at its own height
-    top[r.integers(0, STAVES)] -= 1.6                      # one short, broken stave
-    rows = 26
+    top = HEIGHT - 0.6 * r.random(STAVES)                  # each stave stops at its own height
+    top[BROKEN] -= 3.4
+    top[(BROKEN + 1) % STAVES] -= 1.3                      # the neighbour is cracked down too
+    rows = 44
     cols = np.arange(ncol)
     s = cols // per
     k = cols % per
@@ -47,16 +82,21 @@ def _staves() -> Mesh:
     phi = (s + frac + 0.5) * math.tau / STAVES
     sm = s % STAVES
     seam = k == 0
-    ztop = np.where(seam, np.minimum(top[(sm - 1) % STAVES], top[sm]), top[sm])
-    thick = 0.05 * (r.random(STAVES) - 0.5)
+    jag = np.array((0.0, 1.5, 3.0, 0.7))[k] * (sm == BROKEN)   # splintered edge across the broken stave
+    ztop = np.where(seam, np.minimum(top[(sm - 1) % STAVES], top[sm]), top[sm]) - jag
+    ztop = np.where(seam & ((sm == BROKEN) | (sm == (BROKEN + 1) % STAVES)), ztop - 0.8, ztop)
+    thick = 0.30 * (r.random(STAVES) - 0.5)
     half = math.pi / STAVES
     P = np.zeros((rows, ncol, 3))
     t_row = np.linspace(0, 1, rows)
+    dent_phi = (DENTED + 0.5) * math.tau / STAVES
     for ri, tr in enumerate(t_row):
         z = tr * ztop
         R = radius(z)
         plank = R * math.cos(half) / np.cos(frac * 2 * half) + thick[sm]
         rad = np.where(seam, R - SEAM_DEPTH, plank)
+        dphi = np.angle(np.exp(1j * (phi - dent_phi))) * R
+        rad = rad - 0.75 * np.exp(-(dphi ** 2 + (z - 9.5) ** 2 * 1.3) / (2 * 2.3 ** 2))   # dent, 5 u across
         P[ri, :, 0] = rad * np.cos(phi)
         P[ri, :, 1] = rad * np.sin(phi)
         P[ri, :, 2] = z
@@ -73,7 +113,7 @@ def _staves() -> Mesh:
 
 
 def _head() -> Mesh:
-    """Recessed head: five planks with sunk joints and a shallow dish, mapped square to disc."""
+    """Recessed iron head: five plates with sunk joints and a shallow dish, mapped square to disc."""
     n = 36
     u = np.linspace(-1, 1, n)
     uu, vv = np.meshgrid(u, u)
@@ -83,8 +123,8 @@ def _head() -> Mesh:
     pw = 2 * rin / 5
     d = np.abs(((x + rin) % pw) - pw / 2)
     groove = np.exp(-(((pw / 2 - d) / 0.16) ** 2))
-    z = HEAD_Z - 0.22 * groove - 0.04 * (uu ** 2 + vv ** 2)
-    plank_h = U.rng("iso.barrel.head").random(5) * 0.10
+    z = HEAD_Z - 0.26 * groove - 0.06 * (uu ** 2 + vv ** 2)
+    plank_h = U.rng("iso.barrel.head").random(5) * 0.16
     z = z + plank_h[np.clip(((x + rin) // pw).astype(int), 0, 4)]
     return grid(np.stack((x, y, z), -1), None, smooth_normals=False)
 
@@ -97,38 +137,73 @@ def _hoop(z0: float, h: float, t: float, name: str) -> Mesh:
         return float(radius(z)) + 0.05
 
     zb, zt = z0 - h / 2, z0 + h / 2
-    prof = [(ri(zb), zb), (ro(zb) - 0.12, zb), (ro(zb), zb + 0.12), (ro(z0) + 0.06, z0), (ro(zt), zt - 0.12), (ro(zt) - 0.12, zt), (ri(zt), zt)]
-    return lathe(prof, sides=112).displace(name + ".dent", 0.035, 3.0, 7.0)
+    b = 0.34   # hammered bevel on both edges
+    prof = [(ri(zb), zb), (ro(zb) - b, zb), (ro(zb), zb + b), (ro(z0) - 0.05, z0 - h / 4), (ro(z0) + 0.08, z0),
+            (ro(z0) - 0.05, z0 + h / 4), (ro(zt), zt - b), (ro(zt) - b, zt), (ri(zt), zt)]
+    return lathe(prof, sides=96).displace(name + ".hammer", 0.04, 2.0, 4.0).displace(name + ".warp", 0.10, 8.0, 12.0)
 
 
-def _rivets(z0: float, count: int, seed: str) -> Mesh:
+def _rivets(z0: float, h: float, t: float, seed: str) -> Mesh:
+    """Two staggered rows of domed rivets on a hoop."""
     r = U.rng(seed)
     out = None
-    for i in range(count):
-        a = math.tau * (i + 0.5 * r.random()) / count
-        rr = float(radius(z0)) + 0.10 + 0.55
-        prof = [(0.40, 0.0), (0.36, 0.14), (0.20, 0.30), (0.0, 0.34)]
-        m = lathe(prof, sides=10).xform((0, 90, 0), (rr, 0, z0)).xform((0, 0, math.degrees(a)))
-        out = m if out is None else out.merge(m)
+    count = 11
+    for row, dz in enumerate((-h / 4, h / 4)):
+        for i in range(count):
+            a = math.tau * (i + 0.5 * row + 0.25 * r.random()) / count
+            rr = float(radius(z0 + dz)) + 0.10 + t - 0.02
+            prof = [(0.46, 0.0), (0.42, 0.16), (0.24, 0.34), (0.0, 0.40)]
+            m = lathe(prof, sides=10).xform((0, 90, 0), (rr, 0, z0 + dz)).xform((0, 0, math.degrees(a)))
+            out = m if out is None else out.merge(m)
     return out
+
+
+def _strap() -> Mesh:
+    """A riveted lap strap down the shadow side, over the staves and under the hoops."""
+    rows = 24
+    zs = np.linspace(0.6, 19.2, rows)
+    w = 0.115
+    cols = np.array((-w - 0.02, -w, -w + 0.02, w - 0.02, w, w + 0.02))
+    lift = np.array((0.02, 0.34, 0.46, 0.46, 0.34, 0.02))
+    P = np.zeros((rows, len(cols), 3))
+    for i, z in enumerate(zs):
+        rad = float(radius(z)) + lift - 0.05
+        ph = STRAP_PHI + cols
+        P[i, :, 0] = rad * np.cos(ph)
+        P[i, :, 1] = rad * np.sin(ph)
+        P[i, :, 2] = z
+    strap = grid(P, None, smooth_normals=False)
+    for z in (4.6, 8.6, 10.6, 11.4, 15.6):
+        rr = float(radius(z)) + 0.46
+        prof = [(0.40, 0.0), (0.36, 0.14), (0.20, 0.30), (0.0, 0.34)]
+        m = lathe(prof, sides=10).xform((0, 90, 0), (rr - 0.02, 0, z)).xform((0, 0, math.degrees(STRAP_PHI)))
+        strap = strap.merge(m)
+    return strap
+
+
+def _bung() -> Mesh:
+    """Iron collar with a sunk plug, set on the wall between the two middle hoops."""
+    z = 10.0
+    rr = float(radius(z)) + 0.05
+    prof = [(1.50, -0.5), (1.50, 0.30), (1.25, 0.46), (0.98, 0.40), (0.98, 0.06), (0.88, 0.04), (0.82, 0.20), (0.0, 0.20)]
+    m = lathe(prof, sides=24).displace("iso.barrel.bung", 0.04, 2.0, 4.0)
+    return m.xform((0, 90, 0), (rr, 0, z)).xform((0, 0, math.degrees(BUNG_PHI)))
 
 
 def barrel_scene() -> Scene:
     sc = Scene("rust_barrel", SIZE[0], SIZE[1], PIVOT)
-    wood = _staves().merge(_head())
-    sc.add(wood.xform((0, 0, YAW)), "wood.old", "barrel.wood")
+    plate = _staves().merge(_head()).merge(_strap()).merge(_bung())
+    sc.add(_rust_tint(plate.xform((0, 0, YAW)), 1.15), PLATE, "barrel.plate")
     iron = None
-    for i, (z0, h, t) in enumerate(((1.9, 2.4, 0.60), (5.8, 2.2, 0.55), (14.3, 2.2, 0.55), (18.2, 2.6, 0.60))):
-        m = _hoop(z0, h, t, f"iso.barrel.hoop{i}")
+    for i, (z0, h, t) in enumerate(HOOPS):
+        m = _hoop(z0, h, t, f"iso.barrel.hoop{i}").merge(_rivets(z0, h, t, f"iso.barrel.rivets{i}"))
         iron = m if iron is None else iron.merge(m)
-    for z0 in (5.8, 14.3):
-        iron = iron.merge(_rivets(z0, 7, f"iso.barrel.rivets{z0}"))
-    sc.add(iron.xform((0, 0, YAW)), "iron.rust", "barrel.iron")
+    sc.add(_rust_tint(iron.xform((0, 0, YAW)), 1.5), HOOP, "barrel.iron")
     return sc
 
 
 def render_barrel():
-    return barrel_scene().render(wear=0.32, grime=0.65, rust=0.45, dust=0.06, exposure=0.95)
+    return barrel_scene().render(wear=0.38, grime=0.6, rust=0.0, dust=0.05, exposure=1.2)
 
 
 OBJECTS = {"rust_barrel": ObjectSpec(SIZE, PIVOT, (render_barrel,))}
