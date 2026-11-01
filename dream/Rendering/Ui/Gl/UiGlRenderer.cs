@@ -20,6 +20,7 @@ public sealed class UiGlRenderer : IDisposable
     private int _vbo;
     private int _ebo;
     private bool _disposed;
+    private bool _firstDrawChecked;
 
     public UiGlRenderer()
     {
@@ -53,7 +54,10 @@ public sealed class UiGlRenderer : IDisposable
             GL.VertexAttribIPointer(4, 1, VertexAttribIntegerType.UnsignedInt, VertexSize, 24);
             GL.BindVertexArray(0);
             GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
-            GLUtils.CheckGLError("UiGlRenderer creation");
+            if (GLUtils.CheckGLError("UiGlRenderer creation") != GLFaultKind.None)
+            {
+                throw new InvalidOperationException("OpenGL reported an error while creating the classic HUD renderer.");
+            }
         }
         catch
         {
@@ -80,6 +84,18 @@ public sealed class UiGlRenderer : IDisposable
             return;
         }
 
+        // Checked once, on the first frame that draws, and then latched: the first draw is where a
+        // broken shader or buffer shows, and one glGetError per frame is not free. Errors already
+        // pending from other code are drained first so they are not blamed on this renderer.
+        bool checkThisFrame = !_firstDrawChecked;
+        if (checkThisFrame)
+        {
+            for (int n = 0; n < GLUtils.MaxErrorsDrainedPerCheck && GL.GetError() != ErrorCode.NoError; n++)
+            {
+            }
+        }
+
+        bool drew = false;
         ImGuiGlStateSnapshot previous = ImGuiGlStateSnapshot.Capture();
         try
         {
@@ -123,6 +139,16 @@ public sealed class UiGlRenderer : IDisposable
                 GL.Scissor(clip.X0, batch.ViewportHeight - clip.Y1, clip.X1 - clip.X0, clip.Y1 - clip.Y0);
                 GL.DrawElements(PrimitiveType.Triangles, cmd.IndexCount, DrawElementsType.UnsignedShort, cmd.FirstIndex * sizeof(ushort));
                 RenderCounters.CountDraw();
+                drew = true;
+            }
+
+            if (checkThisFrame && drew)
+            {
+                _firstDrawChecked = true;
+                if (GLUtils.CheckGLError("UiGlRenderer first draw") != GLFaultKind.None)
+                {
+                    throw new InvalidOperationException("OpenGL reported an error on the first classic HUD draw.");
+                }
             }
         }
         finally
