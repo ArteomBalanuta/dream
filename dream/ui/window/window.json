@@ -1,0 +1,780 @@
+{
+ "alpha": "straight",
+ "extrude": 4,
+ "image": "window.png",
+ "kind": "color",
+ "meta": {
+  "source": "tools/ui-assets/gen_window.py"
+ },
+ "origin": "top-left",
+ "scale": 4,
+ "size": [
+  2140,
+  2076
+ ],
+ "sprites": {
+  "btn.plate24.disabled": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 96,
+   "x": 1572,
+   "y": 1736
+  },
+  "btn.plate24.hover": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 96,
+   "x": 1676,
+   "y": 1736
+  },
+  "btn.plate24.normal": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 96,
+   "x": 1780,
+   "y": 1736
+  },
+  "btn.plate24.pressed": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 96,
+   "x": 1884,
+   "y": 1736
+  },
+  "btn.plate44x32.hover": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 176,
+   "x": 1020,
+   "y": 1736
+  },
+  "btn.plate44x32.normal": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 176,
+   "x": 1204,
+   "y": 1736
+  },
+  "btn.plate44x32.pressed": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 176,
+   "x": 1388,
+   "y": 1736
+  },
+  "cell.empty": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 80,
+   "x": 124,
+   "y": 1904
+  },
+  "cell.hover": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 212,
+   "y": 1904
+  },
+  "cell.invalid": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 300,
+   "y": 1904
+  },
+  "cell.occupied": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 388,
+   "y": 1904
+  },
+  "cell.overlay.hover": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 476,
+   "y": 1904
+  },
+  "cell.overlay.invalid": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 564,
+   "y": 1904
+  },
+  "currency.field": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    12,
+    12,
+    12,
+    12
+   ],
+   "tile": "none",
+   "w": 452,
+   "x": 916,
+   "y": 1904
+  },
+  "currency.plate": {
+   "h": 32,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 48,
+   "x": 1468,
+   "y": 2008
+  },
+  "glyph.close.hover": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1376,
+   "y": 1904
+  },
+  "glyph.close.normal": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1456,
+   "y": 1904
+  },
+  "glyph.combine.hover": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 112,
+   "x": 1988,
+   "y": 1736
+  },
+  "glyph.combine.normal": {
+   "h": 96,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 112,
+   "x": 4,
+   "y": 1904
+  },
+  "glyph.repair.hover": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1536,
+   "y": 1904
+  },
+  "glyph.repair.normal": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1616,
+   "y": 1904
+  },
+  "glyph.store.hover": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1696,
+   "y": 1904
+  },
+  "glyph.store.normal": {
+   "h": 72,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 72,
+   "x": 1776,
+   "y": 1904
+  },
+  "sil.armor": {
+   "h": 240,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1340,
+   "y": 4
+  },
+  "sil.boots": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 772,
+   "y": 1564
+  },
+  "sil.gloves": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 940,
+   "y": 1564
+  },
+  "sil.helm": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1108,
+   "y": 1564
+  },
+  "sil.pants": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1276,
+   "y": 1564
+  },
+  "sil.pendant": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 80,
+   "x": 652,
+   "y": 1904
+  },
+  "sil.pet": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1444,
+   "y": 1564
+  },
+  "sil.ring": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 80,
+   "x": 740,
+   "y": 1904
+  },
+  "sil.weapon.left": {
+   "h": 240,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1508,
+   "y": 4
+  },
+  "sil.weapon.right": {
+   "h": 240,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 160,
+   "x": 1676,
+   "y": 4
+  },
+  "sil.wings": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 240,
+   "x": 1612,
+   "y": 1564
+  },
+  "tip.band": {
+   "h": 32,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    16,
+    0,
+    16,
+    0
+   ],
+   "tile": "none",
+   "w": 48,
+   "x": 1524,
+   "y": 2008
+  },
+  "tip.panel": {
+   "h": 48,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    16,
+    16,
+    16,
+    16
+   ],
+   "tile": "none",
+   "w": 48,
+   "x": 772,
+   "y": 2008
+  },
+  "well.1x1": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    12,
+    12,
+    12,
+    12
+   ],
+   "tile": "none",
+   "w": 80,
+   "x": 828,
+   "y": 1904
+  },
+  "well.2x2": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    12,
+    12,
+    12,
+    12
+   ],
+   "tile": "none",
+   "w": 160,
+   "x": 1860,
+   "y": 1564
+  },
+  "well.2x3": {
+   "h": 240,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    12,
+    12,
+    12,
+    12
+   ],
+   "tile": "none",
+   "w": 160,
+   "x": 1844,
+   "y": 4
+  },
+  "well.3x2": {
+   "h": 160,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    12,
+    12,
+    12,
+    12
+   ],
+   "tile": "none",
+   "w": 240,
+   "x": 4,
+   "y": 1736
+  },
+  "win.arrow.down.hover": {
+   "h": 28,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 52,
+   "x": 1660,
+   "y": 2008
+  },
+  "win.arrow.down.normal": {
+   "h": 28,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 52,
+   "x": 1720,
+   "y": 2008
+  },
+  "win.bottom": {
+   "h": 64,
+   "meta": {
+    "tileAnchorY": 164
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 760,
+   "x": 4,
+   "y": 2008
+  },
+  "win.crown.combine": {
+   "h": 160,
+   "meta": {
+    "tileAnchorY": 164
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 760,
+   "x": 252,
+   "y": 1736
+  },
+  "win.crown.inventory": {
+   "h": 164,
+   "meta": {
+    "tileAnchorY": 164
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 760,
+   "x": 4,
+   "y": 1564
+  },
+  "win.linebox": {
+   "h": 32,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    8,
+    8,
+    8,
+    8
+   ],
+   "tile": "none",
+   "w": 32,
+   "x": 1580,
+   "y": 2008
+  },
+  "win.scroll.rod": {
+   "h": 40,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 632,
+   "x": 828,
+   "y": 2008
+  },
+  "win.setoption.tab.hover": {
+   "h": 24,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 132,
+   "x": 1780,
+   "y": 2008
+  },
+  "win.setoption.tab.normal": {
+   "h": 24,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 132,
+   "x": 1920,
+   "y": 2008
+  },
+  "win.side.left": {
+   "h": 176,
+   "meta": {
+    "tileAnchorY": 164
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "y",
+   "w": 48,
+   "x": 2012,
+   "y": 4
+  },
+  "win.side.right": {
+   "h": 176,
+   "meta": {
+    "tileAnchorY": 164
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "y",
+   "w": 52,
+   "x": 2068,
+   "y": 4
+  },
+  "win.slab.combine": {
+   "h": 1552,
+   "meta": {
+    "radius": 24
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 660,
+   "x": 4,
+   "y": 4
+  },
+  "win.slab.inventory": {
+   "h": 1548,
+   "meta": {
+    "radius": 24
+   },
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 660,
+   "x": 672,
+   "y": 4
+  },
+  "win.strip": {
+   "h": 32,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    8,
+    8,
+    8,
+    8
+   ],
+   "tile": "none",
+   "w": 32,
+   "x": 1620,
+   "y": 2008
+  }
+ },
+ "version": 1,
+ "yDown": true
+}

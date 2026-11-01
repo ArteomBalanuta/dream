@@ -1,0 +1,176 @@
+{
+ "alpha": "straight",
+ "extrude": 1,
+ "image": "dmg_digits.png",
+ "kind": "mask",
+ "meta": {
+  "advance": 11,
+  "channels": "R fill, G rim and shadow, B 0, A R+G"
+ },
+ "origin": "top-left",
+ "scale": 1,
+ "size": [
+  65,
+  54
+ ],
+ "sprites": {
+  "dmg.0": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 1,
+   "y": 1
+  },
+  "dmg.1": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 15,
+   "y": 1
+  },
+  "dmg.2": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 29,
+   "y": 1
+  },
+  "dmg.3": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 43,
+   "y": 1
+  },
+  "dmg.4": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 1,
+   "y": 19
+  },
+  "dmg.5": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 15,
+   "y": 19
+  },
+  "dmg.6": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 29,
+   "y": 19
+  },
+  "dmg.7": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 43,
+   "y": 19
+  },
+  "dmg.8": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 1,
+   "y": 37
+  },
+  "dmg.9": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 15,
+   "y": 37
+  },
+  "dmg.comma": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 29,
+   "y": 37
+  },
+  "dmg.plus": {
+   "h": 16,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 12,
+   "x": 43,
+   "y": 37
+  }
+ },
+ "version": 1,
+ "yDown": true
+}

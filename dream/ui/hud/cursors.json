@@ -1,0 +1,82 @@
+{
+ "alpha": "straight",
+ "extrude": 4,
+ "image": "cursors.png",
+ "kind": "color",
+ "meta": {},
+ "origin": "top-left",
+ "scale": 4,
+ "size": [
+  364,
+  408
+ ],
+ "sprites": {
+  "cursor.attack": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    10,
+    10
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 4,
+   "y": 4
+  },
+  "cursor.forbid": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    10,
+    10
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 140,
+   "y": 4
+  },
+  "cursor.grab": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    44,
+    44
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 4,
+   "y": 140
+  },
+  "cursor.pointer": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    10,
+    10
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 140,
+   "y": 140
+  },
+  "cursor.pressed": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    30,
+    28
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 4,
+   "y": 276
+  }
+ },
+ "version": 1,
+ "yDown": true
+}

@@ -1,0 +1,544 @@
+{
+ "alpha": "straight",
+ "extrude": 4,
+ "image": "items.png",
+ "kind": "color",
+ "meta": {
+  "channels": {
+   "mask": "R metal, G reflect, B rim, A emissive"
+  },
+  "variants": [
+   {
+    "image": "items_uncommon.png",
+    "kind": "color",
+    "name": "uncommon"
+   },
+   {
+    "image": "items_rare.png",
+    "kind": "color",
+    "name": "rare"
+   },
+   {
+    "image": "items_enhanced.png",
+    "kind": "color",
+    "name": "enhanced"
+   },
+   {
+    "image": "items_mask.png",
+    "kind": "mask",
+    "name": "mask"
+   }
+  ]
+ },
+ "origin": "top-left",
+ "scale": 4,
+ "size": [
+  1369,
+  1240
+ ],
+ "sprites": {
+  "fx.aura.blob": {
+   "h": 120,
+   "meta": {
+    "blend": "additive"
+   },
+   "pivot": [
+    60,
+    60
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 120,
+   "x": 412,
+   "y": 1108
+  },
+  "item.armor.bone": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 436,
+   "y": 380
+  },
+  "item.armor.gilded": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 652,
+   "y": 380
+  },
+  "item.axe.twinbit": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 436,
+   "y": 4
+  },
+  "item.boots.plate": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 868,
+   "y": 380
+  },
+  "item.bow.verdant": {
+   "h": 368,
+   "meta": {
+    "footprint": [
+     2,
+     4
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 4,
+   "y": 4
+  },
+  "item.cape.navy": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     3,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 288,
+   "x": 4,
+   "y": 676
+  },
+  "item.feather.azure": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 300,
+   "y": 676
+  },
+  "item.gear.iron-blade": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 652,
+   "y": 4
+  },
+  "item.gear.leather-cap": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 436,
+   "y": 676
+  },
+  "item.gear.leather-vest": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 652,
+   "y": 676
+  },
+  "item.gear.ward-lantern": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 868,
+   "y": 676
+  },
+  "item.gem.amber": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 1220,
+   "y": 892
+  },
+  "item.gloves.plate": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 1004,
+   "y": 676
+  },
+  "item.helm.gilded": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 4,
+   "y": 892
+  },
+  "item.legs.verdant": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 220,
+   "y": 892
+  },
+  "item.pendant.ward": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 4,
+   "y": 1108
+  },
+  "item.pet.wisp": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     2,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 436,
+   "y": 892
+  },
+  "item.relic.disc": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 140,
+   "y": 1108
+  },
+  "item.ring.ice": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 276,
+   "y": 1108
+  },
+  "item.shield.kite": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 868,
+   "y": 4
+  },
+  "item.spear.crimson": {
+   "h": 368,
+   "meta": {
+    "footprint": [
+     2,
+     4
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 220,
+   "y": 4
+  },
+  "item.tool.builder-hammer": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 1084,
+   "y": 4
+  },
+  "item.tool.field-blade": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 4,
+   "y": 380
+  },
+  "item.tool.stone-maul": {
+   "h": 288,
+   "meta": {
+    "footprint": [
+     2,
+     3
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 208,
+   "x": 220,
+   "y": 380
+  },
+  "item.tool.survey-lantern": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 652,
+   "y": 892
+  },
+  "item.tool.torch": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     1,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 788,
+   "y": 892
+  },
+  "item.wings.gossamer": {
+   "h": 208,
+   "meta": {
+    "footprint": [
+     3,
+     2
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 288,
+   "x": 924,
+   "y": 892
+  }
+ },
+ "version": 1,
+ "yDown": true
+}
