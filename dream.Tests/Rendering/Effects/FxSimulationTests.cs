@@ -502,7 +502,7 @@ public class FxSimulationTests
         Assert.Equal(FxSimulation.DepthBiasHeld, halo.DepthBias);
         Assert.InRange(halo.HalfSize, 0.55f, 0.85f);
         Assert.Equal(at.Y - FxSimulation.HeldFxDrop + 0.1f, flame.Position.Y, 1e-4f);
-        Assert.Equal(0.15f, flame.HalfSize);
+        Assert.Equal(0.20f, flame.HalfSize);
         Assert.Equal(0.55f, flame.DepthBias);
         Assert.Equal(0u, flame.Color >> 24);
         Assert.InRange(flame.Frame, (float)FxFrame.Flame0, (float)FxFrame.Flame0 + 3f);
@@ -700,7 +700,7 @@ public class FxSimulationTests
         Assert.Equal(160, sparks.Length);
         float meanZ = sparks.Average(i => i.Position.Z) - anchor.Z;
         Assert.True(meanZ < -0.03f, $"{meanZ}");
-        Assert.All(sparks, i => Assert.InRange(i.HalfSize, 0.025f, 0.07f));
+        Assert.All(sparks, i => Assert.InRange(i.HalfSize, FxSimulation.SparkEndHalfSize, FxSimulation.SparkStartHalfSize));
     }
 
     [Fact]
@@ -858,5 +858,54 @@ public class FxSimulationTests
 
         FxRandom zero = new(0u);
         Assert.NotEqual(0u, zero.NextUInt());
+    }
+
+    [Fact]
+    public void A_Torch_Flame_At_Noon_Occludes_With_Alpha_And_Never_Reads_Dark()
+    {
+        Vector3 at = Camera + Front * 5f;
+        PointLight torch = new(at, HeldLightCatalog.TorchRadius, HeldLightCatalog.TorchColor);
+        FxSimulation noon = new(1u);
+        noon.Advance(Inputs(dt: 0f, night: 0f), [torch]);
+        FxSimulation night = new(1u);
+        night.Advance(Inputs(dt: 0f, night: 1f), [torch]);
+
+        FxInstance day = Assert.Single(WriteAll(noon), i => IsFlame(i));
+        FxInstance dark = Assert.Single(WriteAll(night), i => IsFlame(i));
+
+        // Not scaled by the 0.12 halo strength: a clearly visible flame with coverage alpha 0.8.
+        uint alpha = day.Color >> 24;
+        Assert.InRange(alpha, 203u, 205u);
+        Assert.True((day.Color & 0xFFu) >= alpha && ((day.Color >> 8) & 0xFFu) >= alpha && ((day.Color >> 16) & 0xFFu) >= alpha);
+        // Night is pure additive, as before.
+        Assert.Equal(0u, dark.Color >> 24);
+        Assert.True((dark.Color & 0xFFu) >= 190u);
+    }
+
+    [Fact]
+    public void Ash_Is_Written_Before_The_Particles_Of_The_Same_Death_Whatever_The_Pool_Order()
+    {
+        FxSimulation simulation = new(11u);
+        simulation.Advance(Inputs(dt: 0f), []);
+        simulation.SpawnDeath(new Vector3(10f, 1f, 4f));
+        simulation.Advance(Inputs(dt: 0.05f), []);
+        FxInstance[] all = WriteAll(simulation);
+
+        bool IsAsh(in FxInstance i) => i.Frame >= (float)FxFrame.Ash0 && i.Frame < (float)FxFrame.Halo;
+        int lastAsh = Array.FindLastIndex(all, i => IsAsh(i));
+        int firstOther = Array.FindIndex(all, i => !IsAsh(i));
+        Assert.True(lastAsh >= 0 && firstOther > lastAsh, $"ash ends at {lastAsh}, others start at {firstOther}");
+        Assert.Equal(14, all.Count(i => IsAsh(i)));
+
+        // Removing the first-spawned particles (swap-removal) and writing again keeps the order.
+        for (int i = 0; i < 40; i++)
+        {
+            simulation.Advance(Inputs(dt: 0.05f), []);
+        }
+
+        FxInstance[] later = WriteAll(simulation);
+        int lastAshLater = Array.FindLastIndex(later, i => IsAsh(i));
+        int firstOtherLater = Array.FindIndex(later, i => !IsAsh(i));
+        Assert.True(lastAshLater < 0 || firstOtherLater > lastAshLater);
     }
 }

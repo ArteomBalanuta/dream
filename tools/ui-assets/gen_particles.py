@@ -2,7 +2,8 @@
 
 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip.
 Every cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful
-where A=0 (A=0 draws purely additive); A is coverage (ash, blob). Frames 23-31 are reserved and empty.
+where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame; the flame's is scaled by the
+instance alpha, so it is additive at night and occludes the sky by day). Frames 23-31 are reserved and empty.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ GROUPS = (
     ("ash", 12, 4, "coverage"),
     ("halo", 16, 1, "zero"),
     ("halo.core", 17, 1, "zero"),
-    ("flame", 18, 4, "zero"),
+    ("flame", 18, 4, "coverage"),
     ("blob", 22, 1, "coverage"),
 )
 
@@ -187,7 +188,11 @@ def flame_frame(i: int) -> np.ndarray:
     k = e[..., None]
     ramp = np.where(k < 0.55, edge + (mid - edge) * (k / 0.55), mid + (core - mid) * np.clip((k - 0.55) / 0.45, 0, 1))
     rgb = ramp * (e ** 0.9)[..., None] * 0.96
-    return np.dstack((np.clip(rgb, 0, 0.96), np.zeros_like(e)))
+    # Coverage follows the tongue and peaks at 0.8 in the core. The instance alpha scales it: 0 at
+    # night (pure additive, as before), up to 0.8 by day so the flame occludes the bright sky. RGB
+    # stays at or above A times the baked colour, so the occluding flame never reads dark.
+    cover = 0.8 * (e / max(float(e.max()), 1e-6)) ** 0.9
+    return np.dstack((np.clip(rgb, 0, 0.96), cover))
 
 
 # blob ---------------------------------------------------------------------------------------------

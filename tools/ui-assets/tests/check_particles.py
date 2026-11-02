@@ -20,7 +20,7 @@ BANNED = ("ImageFont", "urllib", "requests", "reference/", ".webp", "dream/fonts
 COLUMNS, ROWS, CELL, MARGIN = 8, 4, 64, 4
 SPARK, EMBER, DUST, ASH, HALO, HALO_CORE = range(0, 4), range(4, 8), range(8, 12), range(12, 16), 16, 17
 FLAME, BLOB = range(18, 22), 22
-ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE, *FLAME)
+ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE)
 RESERVED = range(23, 32)
 
 
@@ -52,6 +52,17 @@ def check_frames(sheet: np.ndarray) -> list[str]:
             errs.append(f"frame {index}: A must be 0 (additive)")
         if index in FLAME and rgb.max() > 245:
             errs.append(f"frame {index}: flame peak {rgb.max()} too hot")
+        if index in FLAME:
+            # coverage, not additive: peaks about 0.8 (204) in the core and RGB stays meaningful under it
+            if not 190 <= a.max() <= 215:
+                errs.append(f"frame {index}: flame A peak {a.max()} outside 190-215")
+            if rgb.max() < 100:
+                errs.append(f"frame {index}: flame emission peaks at {rgb.max()}")
+            covered = a > 8
+            if (rgb.max(axis=2)[covered] * 2 < a[covered]).any():
+                errs.append(f"frame {index}: flame RGB under half its A (would read dark)")
+            if (rgb.max(axis=2)[a == 0] > 8).any():
+                errs.append(f"frame {index}: flame emission outside its coverage")
         if index in DUST and not 190 <= rgb.max() <= 240:
             errs.append(f"frame {index}: dust RGB peak {rgb.max()} off target")
         if index == BLOB and (rgb.any() or a.max() < 200):

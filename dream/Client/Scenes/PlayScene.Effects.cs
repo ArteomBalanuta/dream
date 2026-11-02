@@ -81,7 +81,7 @@ public partial class PlayScene
         for (int i = 0; remotePlayers != null && i < remotePlayers.Count; i++)
         {
             RemotePlayerPresentationState remote = remotePlayers[i];
-            if (remote.IsAlive)
+            if (FxShadowRules.RemotePlayerCastsShadow(remote.IsAlive))
             {
                 AddPlayerShadow(shadows, remote.Pose.Position);
             }
@@ -92,14 +92,15 @@ public partial class PlayScene
         {
             EnemyActor actor = enemies[i];
             Vector3 position = EnemyRenderer.ResolveRenderPose(actor, _scenePresenter, RemotePlayerRenderTick).Position;
-            shadows.Add(position, position.Y, actor.CollisionRadius * FxShadowList.EnemyRadiusScale);
+            float scale = EnemyVisualCatalog.Resolve(actor.VisualKey).ScaleMultiplier;
+            shadows.Add(position, position.Y, FxShadowRules.EnemyRadius(actor.CollisionRadius, scale));
         }
     }
 
     private void AddPlayerShadow(FxShadowList shadows, Vector3 pose)
     {
-        Vector3 feet = pose - Vector3.UnitY * 0.5f;
-        if (FxGroundProbe.TryFindGroundY(_runtime.Map, feet, out float groundY))
+        Vector3 feet = FxShadowRules.PlayerFeet(pose);
+        if (FxGroundProbe.TryFindGroundY(_runtime.Map, feet, FxShadowList.PlayerRadius, out float groundY))
         {
             shadows.Add(feet, groundY, FxShadowList.PlayerRadius);
         }

@@ -11,7 +11,7 @@ public sealed class FxShadowList
     public const float Lift = 0.03f;
     public const float PlayerRadius = 0.5f;
     public const float EnemyRadiusScale = 1.9f;
-    public const float Alpha = 0.5f;
+    public const float Alpha = 0.7f;
     public const float MaxAirHeight = 2.5f;
     public const float MaxViewDistance = 30f;
     public const float MinCameraDistance = 1.6f;

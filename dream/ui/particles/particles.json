@@ -94,22 +94,22 @@
    "name": "halo.core"
   },
   {
-   "alpha": "zero",
+   "alpha": "coverage",
    "index": 18,
    "name": "flame.0"
   },
   {
-   "alpha": "zero",
+   "alpha": "coverage",
    "index": 19,
    "name": "flame.1"
   },
   {
-   "alpha": "zero",
+   "alpha": "coverage",
    "index": 20,
    "name": "flame.2"
   },
   {
-   "alpha": "zero",
+   "alpha": "coverage",
    "index": 21,
    "name": "flame.3"
   },

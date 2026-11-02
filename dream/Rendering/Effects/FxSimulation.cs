@@ -42,7 +42,7 @@ public sealed class FxSimulation
     public const float HeldFxDrop = 1f;
     // Hit and death effects start this far below the anchor (the text anchor floats above the target).
     public const float AnchorDrop = 0.2f;
-    public const float DustLightGain = 0.45f;
+    public const float DustLightGain = 0.9f;
     public const int DustLightCount = 6;
 
     private const int DustSpawnsPerFrame = 12;
@@ -59,7 +59,20 @@ public sealed class FxSimulation
     private const float LampHaloHalfSize = 1.25f;
     private const float HeldHaloLift = 0.12f;
     private const float FlameLift = 0.1f;
-    private const float FlameHalfSize = 0.15f;
+    private const float FlameHalfSize = 0.20f;
+    // The flame's instance alpha at noon: with the atlas coverage it occludes a bright sky, and
+    // falls to 0 (pure additive) at night.
+    private const float FlameDayAlpha = 0.8f;
+    public const float SparkStartHalfSize = 0.10f;
+    public const float SparkEndHalfSize = 0.04f;
+    // Embers read tiny at isometric range, so every ember row is this much larger than the plan.
+    private const float EmberSizeGain = 1.3f;
+    private const float BurstEmberMinHalfSize = 0.028f * EmberSizeGain;
+    private const float BurstEmberMaxHalfSize = 0.05f * EmberSizeGain;
+    private const float BurstEmberEndHalfSize = 0.01f * EmberSizeGain;
+    private const float PlumeEmberMinHalfSize = 0.02f * EmberSizeGain;
+    private const float PlumeEmberMaxHalfSize = 0.034f * EmberSizeGain;
+    private const float PlumeEmberEndHalfSize = 0.008f * EmberSizeGain;
     private const float SparkStretchPerSpeed = 0.03f;
     private const float MaxSparkStretch = 6f;
     private static readonly Vector3 SparkCoolTint = new(1f, 0.55f, 0.25f);
@@ -159,7 +172,7 @@ public sealed class FxSimulation
         ScanLights(lights, dt);
     }
 
-    // Particles first (ordered by pool slot, which swap-removal shuffles), then at most
+    // Particles first (ash, then the rest, each ordered by pool slot, which swap-removal shuffles), then at most
     // HaloBudget halos, written from index `start`. Returns the end index and never writes past
     // the destination.
     public int WriteInstances(FxInstance[] destination, int start = 0)
@@ -168,11 +181,26 @@ public sealed class FxSimulation
         ArgumentOutOfRangeException.ThrowIfNegative(start);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(start, destination.Length);
         int written = start;
-        int particleCount = Math.Min(_pool.Count, destination.Length - start);
-        for (int i = 0; i < particleCount; i++)
+        int room = destination.Length - start;
+        int particleCount = Math.Min(_pool.Count, room);
+        // Ash first, so the sparks, embers and flash of the same death draw over it; the pool's
+        // swap-removal shuffles slots, and a single pass would let particles pop across the ash.
+        for (int i = 0; i < _pool.Count && written - start < particleCount; i++)
         {
-            WriteParticle(ref _pool[i], ref destination[written]);
-            written++;
+            if (_pool[i].Kind == FxParticleKind.Ash)
+            {
+                WriteParticle(ref _pool[i], ref destination[written]);
+                written++;
+            }
+        }
+
+        for (int i = 0; i < _pool.Count && written - start < particleCount; i++)
+        {
+            if (_pool[i].Kind != FxParticleKind.Ash)
+            {
+                WriteParticle(ref _pool[i], ref destination[written]);
+                written++;
+            }
         }
 
         int haloCount = Math.Min(_haloCount, destination.Length - written);
@@ -318,7 +346,8 @@ public sealed class FxSimulation
             }
 
             float distance = MathF.Sqrt(viewSquared);
-            float fade = strength * Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
+            float cull = Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
+            float fade = strength * cull;
             float phi = i * 2.4f;
             float flicker;
             float halfSize;
@@ -356,12 +385,16 @@ public sealed class FxSimulation
 
             if (emberTorch && _haloCount < FxLimits.HaloBudget)
             {
-                float white = fade * flicker * flameNight;
+                // The flame ignores the halo strength (0.12 at noon): additive light cannot show on a
+                // bright sky, so by day it gets coverage alpha instead and stays opaque enough to read.
+                // RGB never drops below the alpha, so the occluding flame is not dark.
+                float alpha = (1f - _nightFactor) * FlameDayAlpha * cull;
+                float white = MathF.Max(cull * flicker * flameNight, alpha);
                 _halos[_haloCount++] = new FxInstance
                 {
                     Position = fxPosition + Vector3.UnitY * FlameLift,
                     HalfSize = FlameHalfSize,
-                    Color = FxInstance.PackColor(white, white, white, 0f),
+                    Color = FxInstance.PackColor(white, white, white, alpha),
                     Rotation = 0f,
                     Frame = (float)FxFrame.Flame0 + (((int)(_clock * 12f + i)) & 3),
                     DepthBias = FlameDepthBias
@@ -546,8 +579,8 @@ public sealed class FxSimulation
             Position = anchor,
             Velocity = direction * _random.Range(speedMin, speedMax),
             Life = _random.Range(0.3f, 0.6f),
-            StartHalfSize = 0.07f * sizeScale,
-            EndHalfSize = 0.025f,
+            StartHalfSize = SparkStartHalfSize * sizeScale,
+            EndHalfSize = SparkEndHalfSize,
             Frame = (float)FxFrame.Spark0 + _random.Range(0, 4),
             Gravity = -7f,
             Drag = 0.9f,
@@ -575,8 +608,8 @@ public sealed class FxSimulation
             Position = anchor,
             Velocity = direction * _random.Range(speedMin, speedMax),
             Life = _random.Range(0.8f, 1.6f),
-            StartHalfSize = _random.Range(0.028f, 0.05f),
-            EndHalfSize = 0.01f,
+            StartHalfSize = _random.Range(BurstEmberMinHalfSize, BurstEmberMaxHalfSize),
+            EndHalfSize = BurstEmberEndHalfSize,
             Rotation = _random.Range(0f, MathHelper.TwoPi),
             AngularVelocity = _random.Range(-2f, 2f),
             Frame = (float)FxFrame.Ember0 + _random.Range(0, 4),
@@ -597,8 +630,8 @@ public sealed class FxSimulation
             Position = origin + new Vector3(_random.Range(-0.04f, 0.04f), _random.Range(-0.04f, 0.04f), _random.Range(-0.04f, 0.04f)),
             Velocity = new Vector3(_random.Range(-0.1f, 0.1f), _random.Range(0.7f, 1.3f), _random.Range(-0.1f, 0.1f)),
             Life = _random.Range(0.9f, 1.6f),
-            StartHalfSize = _random.Range(0.02f, 0.034f) * sizeScale,
-            EndHalfSize = 0.008f * sizeScale,
+            StartHalfSize = _random.Range(PlumeEmberMinHalfSize, PlumeEmberMaxHalfSize) * sizeScale,
+            EndHalfSize = PlumeEmberEndHalfSize * sizeScale,
             Rotation = _random.Range(0f, MathHelper.TwoPi),
             AngularVelocity = _random.Range(-1.5f, 1.5f),
             Frame = (float)FxFrame.Ember0 + _random.Range(0, 4),
