@@ -168,6 +168,10 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         {
             remote.SetHealth(currentHealth, maxHealth);
         }
+
+        // Mana is per world like health (player_world_state.current_energy). SetMana clamps, which is
+        // what lets migration 0013's backfill value leave a returning character at full mana.
+        playerTarget.Combatant.SetMana(worldState?.CurrentEnergy ?? playerTarget.Combatant.MaxMana);
     }
 
     private void RestorePersistedWorldState() => _persistence.RestoreWorld();
@@ -252,6 +256,11 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         maxHealth = target.Combatant.Health.MaxHealth;
         return true;
     }
+
+    int IRuntimePersistenceHost.GetSessionMana(PlayerSessionId sessionId) =>
+        TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? target) && target != null
+            ? target.Combatant.CurrentMana
+            : 0;
 
     Vector3 IRuntimePersistenceHost.WorldSpawn => _worldSpawn;
 

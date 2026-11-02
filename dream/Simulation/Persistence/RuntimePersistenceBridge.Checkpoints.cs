@@ -377,7 +377,7 @@ internal sealed partial class RuntimePersistenceBridge
                 position,
                 facing,
                 CurrentHealth: currentHealth,
-                CurrentEnergy: 0,
+                CurrentEnergy: _host.GetSessionMana(player.SessionId),
                 UpdatedUtc: now));
         }
 

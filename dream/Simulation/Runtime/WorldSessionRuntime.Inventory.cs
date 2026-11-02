@@ -136,6 +136,8 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.WalletFull => "the wallet is full",
             InventoryEquipOutcome.NotSellable => "the item cannot be sold",
             InventoryEquipOutcome.NotInStock => "the vendor does not sell that",
+            InventoryEquipOutcome.OnCooldown => "the item is on cooldown",
+            InventoryEquipOutcome.NothingToRestore => "there is nothing to restore",
             InventoryEquipOutcome.WriteFailed => "an earlier inventory save failed, so trading is paused",
             _ => "the request was not valid",
         };
