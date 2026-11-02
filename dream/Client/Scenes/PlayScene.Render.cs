@@ -76,6 +76,7 @@ public partial class PlayScene
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             RemotePlayerRenderTick);
 
+        UpdateAudioFrame(presentation, remotePlayerStates, sky.StarVisibility, (float)args.Time);
         CollectFrameLights(in presentation, remotePlayerStates);
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);

@@ -1,4 +1,5 @@
 using Vector3 = OpenTK.Mathematics.Vector3;
+using Dream.Client.Audio;
 using Dream.Client.Networking;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
@@ -71,6 +72,7 @@ public partial class PlayScene
                     static state => $"local={state.SessionId} {NetworkDiagnosticsLog.DescribeSnapshot(state.Snapshot)}");
             }
 
+            PlayWorldMutationSounds(snapshotMessage.Snapshot);
             // A resync the client cannot host (for example a stored world of other dimensions) ends the
             // session with a readable reason instead of the exception escaping the frame.
             if (!RemoteWorldMutationApplier.TryApplySnapshotToRuntime(
@@ -167,6 +169,10 @@ public partial class PlayScene
         }
 
         _lootFeedback.AddNotices(push.Notices);
+        if (push.Notices.Count > 0)
+        {
+            CurrentGameAudio.Instance.Play(SoundId.LootPickup);
+        }
     }
 
     private void UpdateLoopbackRemotePlayerDebugState()
@@ -350,6 +356,7 @@ public partial class PlayScene
         _inventory = inventory;
         _inventoryApplyCount++;
         EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
+        ObserveEquipmentForAudio(presentation);
 
         _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);
         _viewModelController.SetHeldItem(presentation.MainHandVisualId);
