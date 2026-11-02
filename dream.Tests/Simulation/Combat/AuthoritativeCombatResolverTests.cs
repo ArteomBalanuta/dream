@@ -233,8 +233,11 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Equal(
             CubeFracturePattern.CreateFirstPassRubble(cell).Where(GeometryFracturePiece.IsValid),
             fracture.Pieces);
+        // The record is repaired twice: once for the build-protection gate, once on entering the hit. The
+        // second call finds the identity matching and returns the record unchanged, so it is harmless.
         Assert.Equal(
             [
+                $"RepairCubeRecord {record.Actor.Id}",
                 $"RepairCubeRecord {record.Actor.Id}",
                 $"DeletePersistedPlacedCube {record.Actor.Id}",
                 $"PersistFracturePieces {record.Actor.Id} {cell}"

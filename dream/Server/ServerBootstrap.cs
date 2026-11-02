@@ -303,8 +303,18 @@ public static class ServerBootstrap
         }
     }
 
+    // The dedicated server's exit code when DREAM_PORT or DREAM_BIND_ADDRESS is set to something invalid.
+    public const int InvalidConfigExitCode = 9;
+
     private static async Task<int> RunServerModeAsync(ServerStartOptions options)
     {
+        // Before the database is touched: a server that was asked to listen somewhere it cannot is not started.
+        ServerRuntimeConfig? config = ServerRuntimeConfig.FromEnvironment(ConsoleLog);
+        if (config == null)
+        {
+            return InvalidConfigExitCode;
+        }
+
         using DedicatedServerHost? host = TryCreateServerModeHost(
             () => CreateAuthoritativeHost(options),
             ConsoleLog,
@@ -317,7 +327,9 @@ public static class ServerBootstrap
             return startupExitCode;
         }
 
-        await using IServerTransport transport = new TcpServerTransport(IPAddress.Any, DefaultPort);
+        host.MaxPlayers = config.MaxPlayers;
+        host.Motd = config.Motd;
+        await using IServerTransport transport = new TcpServerTransport(config.BindAddress, config.Port);
         Action<string> log = ConsoleLog;
         await using DedicatedServerService service = new(
             host,
@@ -336,9 +348,11 @@ public static class ServerBootstrap
         Console.CancelKeyPress += cancelHandler;
         try
         {
+            bool allInterfaces = config.BindAddress.Equals(IPAddress.Any) || config.BindAddress.Equals(IPAddress.IPv6Any);
             Console.Error.WriteLine(
-                $"Server listening on 0.0.0.0:{DefaultPort} (all network interfaces: the dedicated server default) " +
-                $"with protocol version {TransportEnvelope.CurrentProtocolVersion}. " +
+                $"Server listening on {FormatEndpoint(config.BindAddress, service.Port)}" +
+                (allInterfaces ? " (all network interfaces: the dedicated server default; set DREAM_BIND_ADDRESS to narrow it)" : string.Empty) +
+                $" with protocol version {TransportEnvelope.CurrentProtocolVersion}, up to {config.MaxPlayers} players. " +
                 "Single-session authoritative runtime is active; press Ctrl+C to stop.");
             await service.RunAsync(cancellation.Token);
             return 0;
@@ -352,6 +366,12 @@ public static class ServerBootstrap
             Console.CancelKeyPress -= cancelHandler;
         }
     }
+
+    // host:port, with an IPv6 address in brackets.
+    internal static string FormatEndpoint(IPAddress address, int port) =>
+        address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+            ? $"[{address}]:{port}"
+            : $"{address}:{port}";
 
     private static ServerPersistenceBundle CreatePersistenceBundle(ServerStartOptions? start = null)
     {

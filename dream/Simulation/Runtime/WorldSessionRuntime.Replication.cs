@@ -28,7 +28,7 @@ public sealed partial class WorldSessionRuntime
 
     public ServerSnapshotEnvelope ExportServerSnapshotEnvelope(bool includeWorldSnapshot = false)
     {
-        IReadOnlyList<ActorSnapshot> actors = CaptureActorSnapshots();
+        IReadOnlyList<ActorSnapshot> actors = CaptureWireActorSnapshots();
         WorldSnapshot? worldSnapshot = includeWorldSnapshot
             ? ExportWorldSnapshot()
             : null;
@@ -71,7 +71,7 @@ public sealed partial class WorldSessionRuntime
         return new ServerSnapshotEnvelope(
             CurrentServerTick,
             CaptureAcceptedCommandSequences(),
-            CaptureActorSnapshots(),
+            CaptureWireActorSnapshots(),
             GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             ExportWorldSnapshot(),
             Array.Empty<WorldMutationDelta>(),

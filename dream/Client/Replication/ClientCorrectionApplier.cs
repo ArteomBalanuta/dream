@@ -67,7 +67,9 @@ public static class ClientCorrectionApplier
             runtime.Player.Combatant.ApplyBaseStats(actor.Value.CombatStats.Value.ToCombatStats());
         }
 
-        if (actor.Value.Progression.HasValue)
+        // M8: a progression with hidden experience is the public level only; the owner's real values come
+        // as ServerPlayerProgress (ApplyOwnerProgress), so applying this would overwrite them.
+        if (actor.Value.Progression is { Experience: >= 0 })
         {
             PlayerProgressionSnapshot progression = actor.Value.Progression.Value;
             runtime.Player.Combatant.ApplyProgression(progression.Level, progression.Experience);
@@ -95,6 +97,17 @@ public static class ClientCorrectionApplier
         }
 
         runtime.Player.SetHealth(actor.Value.CurrentHealth, actor.Value.MaxHealth);
+    }
+
+    // M8: the owner's level, experience and base stats, which actor snapshots no longer carry.
+    public static void ApplyOwnerProgress(IClientWorldState runtime, ServerPlayerProgress progress)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentNullException.ThrowIfNull(progress);
+
+        runtime.Player.Combatant.ApplyBaseStats(progress.BaseStats.ToCombatStats());
+        runtime.Player.Combatant.ApplyProgression(progress.Level, progress.Experience);
+        runtime.SetServerExperienceToNextLevel(progress.ExperienceToNextLevel);
     }
 
     public static void ApplyCorrectionDeltaToRuntimePlayer(

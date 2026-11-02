@@ -76,6 +76,7 @@ public sealed class NetworkSessionCoordinator
     // player entered alone, and nothing is persisted.
     public bool TryUseLocalServer(string playerName, out ClientConnectionOptions? options)
     {
+        StopReconnect();
         // A connect is in flight: refreshing the idle state would flip Connecting to ReadyToConnect and
         // let a second BeginConnect run beside it (one session would leak).
         if (IsBusy)
@@ -132,8 +133,144 @@ public sealed class NetworkSessionCoordinator
             : configuredOptions;
     }
 
+    // ---- Reconnect after a lost connection (M8) ----
+    //
+    // A session that ended with "Connection lost: ..." is retried from the connection screen, as a full
+    // rejoin (the scene was torn down, so nothing carries over, a party included). The waits are 1, 2, 4, 8
+    // and 16 s, five attempts. A join rejection (a kick, a ban, a full server) ends it at once, and so do a
+    // new Connect, Use Local Server and Esc.
+
+    public const int MaxReconnectAttempts = 5;
+
+    // Test seam: the wait before each attempt.
+    internal static IReadOnlyList<TimeSpan> ReconnectDelays { get; set; } =
+        [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(16)];
+
+    private CancellationTokenSource? _reconnect;
+
+    public bool IsReconnecting => Volatile.Read(ref _reconnect) != null;
+
+    // A session that ended on the integrated server relaunches it on connect instead; a retry there would
+    // only start a second server. The connector tells (Game wires it; the scene cannot see Game's choice).
+    public bool CanAutoReconnect => _connector.GetType().Name != "LocalServerRelaunchConnector";
+
+    // Starts the retries for the endpoint the ended session used. Does nothing while a connect is in
+    // flight, while retrying already, or when the connector relaunches a local server.
+    public void BeginReconnect(ClientConnectionOptions options)
+    {
+        if (IsBusy || IsReconnecting || !CanAutoReconnect)
+        {
+            return;
+        }
+
+        ClearPicker();
+        CancellationTokenSource cancellation = new();
+        _reconnect = cancellation;
+        _pendingConnectionTask = ReconnectAsync(options, cancellation);
+    }
+
+    // Ends the retries: no further attempt starts. An attempt already in flight finishes on its own.
+    public void StopReconnect()
+    {
+        CancellationTokenSource? cancellation = Interlocked.Exchange(ref _reconnect, null);
+        if (cancellation == null)
+        {
+            return;
+        }
+
+        cancellation.Cancel();
+        if (!IsBusy)
+        {
+            State = ConnectionFlowState.ReadyToConnect;
+            StatusMessage = "Reconnect cancelled.";
+        }
+    }
+
+    private async Task ReconnectAsync(ClientConnectionOptions options, CancellationTokenSource cancellation)
+    {
+        string lastReason = "the server did not answer";
+        try
+        {
+            IReadOnlyList<TimeSpan> delays = ReconnectDelays;
+            int attempts = Math.Min(MaxReconnectAttempts, delays.Count);
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                State = ConnectionFlowState.ReadyToConnect;
+                StatusMessage = $"Reconnecting ({attempt}/{attempts})...";
+                try
+                {
+                    await Task.Delay(delays[attempt - 1], cancellation.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                if (cancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                if (!TryResolveRemoteOptions(options, out RemoteClientOptions? resolved))
+                {
+                    return;
+                }
+
+                State = ConnectionFlowState.Connecting;
+                StatusMessage = $"Reconnecting ({attempt}/{attempts})...";
+                try
+                {
+                    RemoteClientSession session = await _connector.ConnectAsync(resolved!);
+                    if (session.IsConnected || session.DisconnectReason is not string reason)
+                    {
+                        _connectedSession = session;
+                        State = ConnectionFlowState.Connected;
+                        StatusMessage = $"Connected to {resolved!.Host}:{resolved.Port}.";
+                        return;
+                    }
+
+                    await session.DisposeAsync();
+                    if (!RemoteClientSession.IsRetryableEnd(reason))
+                    {
+                        // The server answered and said no: kicked, banned, full, a name taken.
+                        State = ConnectionFlowState.Failed;
+                        StatusMessage = reason;
+                        return;
+                    }
+
+                    lastReason = reason;
+                }
+                catch (ProtocolVersionMismatchException ex)
+                {
+                    State = ConnectionFlowState.Failed;
+                    StatusMessage = ex.Message;
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastReason = ex.Message;
+                }
+
+                if (cancellation.IsCancellationRequested)
+                {
+                    State = ConnectionFlowState.Failed;
+                    StatusMessage = lastReason;
+                    return;
+                }
+            }
+
+            State = ConnectionFlowState.Failed;
+            StatusMessage = $"Could not reconnect: {lastReason}";
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _reconnect, null, cancellation);
+        }
+    }
+
     public void BeginConnect(ClientConnectionOptions options)
     {
+        StopReconnect();
         if (IsBusy)
         {
             return;
@@ -159,6 +296,7 @@ public sealed class NetworkSessionCoordinator
     // until ChooseCharacter, CancelPicker or BeginConnect. Without a source this is BeginConnect.
     public void BeginConnectWithPicker(ClientConnectionOptions options)
     {
+        StopReconnect();
         if (_characterList == null)
         {
             BeginConnect(options);
@@ -192,6 +330,7 @@ public sealed class NetworkSessionCoordinator
     // Connects as the picked character (or a new name typed in the picker).
     public void ChooseCharacter(ClientConnectionOptions options, string characterName)
     {
+        StopReconnect();
         if (IsBusy || string.IsNullOrWhiteSpace(characterName))
         {
             return;

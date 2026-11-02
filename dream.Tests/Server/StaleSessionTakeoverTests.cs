@@ -681,7 +681,9 @@ public sealed class StaleSessionTakeoverTests
                     throttled++;
                     if (deferJoins)
                     {
-                        Assert.Empty(TickAndDrain(host));
+                        // The victim's own pushes (vitals, owner progress) may come with the tick; the
+                        // throttled join must produce nothing for its connection.
+                        Assert.DoesNotContain(TickAndDrain(host), reply => reply.ConnectionId == spammer);
                     }
 
                     host.ReleaseConnection(spammer);
@@ -694,8 +696,7 @@ public sealed class StaleSessionTakeoverTests
             else
             {
                 Assert.True(deferJoins);
-                PendingConnectionReply reply = Assert.Single(TickAndDrain(host));
-                Assert.Equal(spammer, reply.ConnectionId);
+                PendingConnectionReply reply = Assert.Single(TickAndDrain(host), r => r.ConnectionId == spammer);
                 JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(reply.Message);
                 Assert.False(rejected.Reason.StartsWith(DedicatedServerHost.JoinThrottledRejectionReason, StringComparison.Ordinal));
                 processed++;

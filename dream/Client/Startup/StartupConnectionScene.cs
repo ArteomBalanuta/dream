@@ -53,6 +53,13 @@ public sealed class StartupConnectionScene : IDisposable
         if (sessionEndReason != null)
         {
             _coordinator.ReportSessionEnded(sessionEndReason);
+            // A lost connection (not a kick, a ban or a refused join) is retried. When the ended session was
+            // on this game's integrated server the coordinator's connector relaunches it instead, and
+            // CanAutoReconnect is false.
+            if (RemoteClientSession.IsRetryableEnd(sessionEndReason) && _coordinator.CanAutoReconnect)
+            {
+                _coordinator.BeginReconnect(new ClientConnectionOptions(_host, _portText, _playerName));
+            }
         }
     }
 
@@ -73,6 +80,12 @@ public sealed class StartupConnectionScene : IDisposable
         string previousHost = _host;
         string previousPort = _portText;
         string previousPlayerName = _playerName;
+
+        // Esc ends the automatic reconnect.
+        if (_coordinator.IsReconnecting && keyboardState.IsKeyPressed(Keys.Escape))
+        {
+            _coordinator.StopReconnect();
+        }
 
         GL.ClearColor(0.08f, 0.09f, 0.12f, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);

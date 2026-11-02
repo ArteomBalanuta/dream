@@ -124,6 +124,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
     public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
+    // The prefix of every reason a session ends with when the link broke, as opposed to the server
+    // refusing or removing the player (a join rejection, a kick, a ban, a protocol mismatch).
+    public const string ConnectionLostPrefix = "Connection lost:";
+
+    // Whether a session that ended with this reason is worth reconnecting: only a lost connection is.
+    public static bool IsRetryableEnd(string? reason) =>
+        reason != null && reason.StartsWith(ConnectionLostPrefix, StringComparison.Ordinal);
+
     // The bounds this session receives world transfers under.
     public WorldTransferLimits WorldTransferLimits => _worldTransfers.Limits;
 

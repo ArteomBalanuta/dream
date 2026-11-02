@@ -34,6 +34,12 @@ public sealed class ServerRoutingContext
     // The character and account this connection joined as; null until a checked join is applied.
     public Dream.Simulation.Characters.JoinHolderIdentity? JoinedIdentity { get; set; }
 
+    // M8. The role and sanctions of the account behind this connection, read at join (the access decision
+    // carries them from the prefetch). Admin state comes only from here, never from the client.
+    public Dream.Simulation.Characters.AccountStanding Standing { get; set; }
+
+    public bool IsAdmin => Standing.Role == 1;
+
     public PlayerCommandMessage? LastCommandMessage { get; set; }
 
     public PlayerActionMessage? LastActionMessage { get; set; }
