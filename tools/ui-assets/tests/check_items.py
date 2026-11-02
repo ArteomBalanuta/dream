@@ -33,6 +33,22 @@ EXPECTED = {
     (2, 4): "item.bow.verdant item.gear.hunting-spear",
     (3, 2): "item.gear.gossamer-wings item.gear.travel-cloak",
 }
+
+NEW_KINDS = {
+    (1, 1): "gear.bone-amulet gear.iron-torc gear.hollow-locket gear.silver-ring gear.bone-ring gear.blood-ring "
+            "consumable.weak-heal consumable.minor-heal consumable.greater-heal consumable.minor-mana consumable.greater-mana",
+    (1, 2): "gear.iron-dagger",
+    (1, 3): "gear.short-sword",
+    (1, 4): "gear.long-sword gear.ash-staff gear.bone-staff",
+    (2, 2): "gear.hand-axe gear.wooden-buckler gear.iron-helm gear.greathelm gear.chain-hauberk gear.plate-cuirass gear.leather-gloves "
+            "gear.plate-gauntlets gear.leather-boots gear.plate-sabatons gear.leather-leggings gear.chain-chausses gear.plate-greaves",
+    (2, 3): "gear.battle-axe gear.flanged-mace gear.war-hammer gear.short-bow gear.kite-shield",
+    (2, 4): "gear.greatsword gear.long-bow gear.tower-shield",
+    (3, 2): "gear.hooded-cloak gear.grave-mantle",
+}
+for _fp, _names in NEW_KINDS.items():
+    for _n in _names.split():
+        EXPECTED[_fp] = EXPECTED.get(_fp, "") + " item." + _n
 FOOTPRINT = {n: fp for fp, names in EXPECTED.items() for n in names.split()}
 
 

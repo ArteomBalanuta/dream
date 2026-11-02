@@ -70,7 +70,9 @@ public sealed class LootRollerTests(ITestOutputHelper output)
         Assert.Equal(dire.NothingWeight / (double)total, nothing / (double)Seeds, 2);
         foreach (LootEntry entry in dire.Items)
         {
-            Assert.Equal(entry.Weight / (double)total, items.GetValueOrDefault(entry.ItemKind) / (double)Seeds, 2);
+            Assert.True(
+                Math.Abs((entry.Weight / (double)total) - (items.GetValueOrDefault(entry.ItemKind) / (double)Seeds)) < 0.005,
+                $"{entry.ItemKind} drifted from its weight");
         }
 
         int drops = Seeds - nothing;
@@ -123,8 +125,8 @@ public sealed class LootRollerTests(ITestOutputHelper output)
         string picks = string.Join(" ", Enumerable.Range(0, 10).Select(n => Describe(dire, new ItemRollSeed(20261101UL, 500UL + (ulong)n, 0xFEEDUL, 42UL, n % 2))));
 
         output.WriteLine(picks);
-        // Classic HUD iteration 2 added nine kinds to the table with the same nothing weight and total, so
-        // the "nothing" positions and the rarities are those of wave I; only the kinds picked moved.
-        Assert.Equal("nothing nothing nothing nothing nothing gear.leather-vest/Rare nothing gear.ward-lantern/Uncommon gear.ward-lantern/Uncommon gear.leather-vest/Common", picks);
+        // The item catalogue added kinds to the table (same nothing weight, bigger total), so the picks moved;
+        // rolls are still pure functions of the seed.
+        Assert.Equal("gear.travel-cloak/Rare nothing nothing gear.plated-leggings/Common consumable.weak-heal/Uncommon gear.iron-blade/Rare gear.long-sword/Common nothing nothing gear.leather-cap/Common", picks);
     }
 }

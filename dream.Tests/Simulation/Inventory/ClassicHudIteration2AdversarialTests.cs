@@ -34,7 +34,7 @@ public sealed class ClassicHudIteration2AdversarialTests
     // Destroys the four spare kit items so there is room, keeping the worn hammer.
     private static void ClearKit(PlayerInventoryService inventory)
     {
-        foreach (string kind in new[] { "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch" })
+        foreach (string kind in new[] { "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal" })
         {
             PlayerInventorySnapshot s = inventory.BuildSnapshot(Player);
             int anchor = s.AnchorOf(kind);

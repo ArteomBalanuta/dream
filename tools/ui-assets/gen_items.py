@@ -1181,6 +1181,418 @@ def icon_cape_navy(s):
 icon_cape_navy.top = 3.0
 
 
+# catalogue gear ------------------------------------------------------------------------
+# Compact painters for the gear family: every kind is a few shared parts in its own proportions and metal.
+
+ASH_STEEL = M(STEEL, c="#8E949C")
+BLACK_IRON = M(IRON, c="#34363A", gloss=60, spec=0.9)
+OLD_WOOD = M(DARK_WOOD, c="#4B3322")
+BLOOD_LEATHER = M(LEATHER, c="#4F1D1B")
+GREY_LEATHER = M(LEATHER, c="#4A3B2E")
+MAIL = M(DARK_STEEL, c="#5C626B", gloss=70, mott=0.3)
+
+
+def _hilt(s, cx, y, guard, mat=BRASS, grip=(0.0, 0.0), grip_len=9.0, wrap=DARK_LEATHER, pommel=2.4):
+    s.poly([(cx - guard / 2, y), (cx + guard / 2, y), (cx + guard / 2 - 0.8, y + 2.6), (cx - guard / 2 + 0.8, y + 2.6)],
+           mat, bevel=1.0, thick=(0.4, 0.6))
+    haft(s, (cx, y + 2.2), (cx, y + 2.2 + grip_len), 3.0, wrap, wraps=(0.0, 1.0, 5), wrap_mat=GREY_LEATHER)
+    s.ellipse(cx, y + 3.2 + grip_len, pommel, pommel, mat, bevel=pommel)
+
+
+def _sword(s, blade_len, half_w, guard, tilt, mat=ASH_STEEL, grip_len=9.0, pommel=2.4, hilt_mat=BRASS, fuller=True, point=0.0):
+    s.place(tilt, 1.0)
+    total = blade_len + 3 + grip_len + 2 * pommel
+    top = (s.fh - total) / 2
+    cx = s.fw / 2
+    prof = [(top, 0.2), (top + half_w * 1.6 + point, half_w), (top + blade_len, half_w)]
+    blade(s, cx, prof, mat, slope=0.5)
+    if fuller:
+        s.groove([(cx, top + blade_len * 0.12 + half_w), (cx, top + blade_len - 2)], w=max(0.8, half_w * 0.35), depth=0.8, dark=0.62)
+    _hilt(s, cx, top + blade_len, guard, hilt_mat, grip_len=grip_len, pommel=pommel)
+
+
+def icon_iron_dagger(s):
+    _sword(s, 20, 2.5, 11, -10, grip_len=6.5, pommel=1.9, hilt_mat=BLACK_IRON)
+
+
+def icon_short_sword(s):
+    _sword(s, 28, 3.0, 13, -9, grip_len=7.5, pommel=2.0)
+
+
+def icon_long_sword(s):
+    _sword(s, 44, 3.2, 15, -7, mat=M(STEEL, c="#9AA0AA"), grip_len=9.0, hilt_mat=BLACK_IRON, point=3)
+
+
+def icon_greatsword(s):
+    _sword(s, 52, 5.2, 28, -12, mat=M(DARK_STEEL, c="#767C86"), grip_len=13, pommel=3.0, hilt_mat=BLACK_IRON, point=4)
+
+
+def _axe(s, haft_len, head_w, head_h, double, tilt, mat=ASH_STEEL):
+    s.place(tilt, 1.0)
+    cx = s.fw / 2
+    top = (s.fh - haft_len) / 2
+    haft(s, (cx, top), (cx, top + haft_len), 3.0, OLD_WOOD, wraps=(0.72, 0.96, 6), wrap_mat=BLOOD_LEATHER)
+    s.ellipse(cx, top + haft_len, 2.2, 1.6, BLACK_IRON, bevel=1.2)
+    y0 = top + 3
+    sides = (1, -1) if double else (1,)
+    for side in sides:
+        bit = cr([(cx + side * 1.2, y0), (cx + side * head_w * 0.55, y0 - 1.8), (cx + side * head_w, y0 - 3.4),
+                  (cx + side * (head_w + 1.2), y0 + head_h * 0.5), (cx + side * head_w, y0 + head_h + 3.4),
+                  (cx + side * head_w * 0.5, y0 + head_h + 1.4), (cx + side * 1.2, y0 + head_h)], 5)
+        s.poly(bit, mat, bevel=3.2, prof="chamfer", slope=0.5, thick=(0.6, 0.7))
+        s.groove(cr([(cx + side * 3, y0 + head_h * 0.5), (cx + side * head_w * 0.8, y0 + head_h * 0.5)], 3), w=0.5, depth=0.6)
+    if not double:
+        s.poly([(cx - 1.8, y0 - 1), (cx - 4.5, y0 + head_h * 0.5), (cx - 1.8, y0 + head_h + 1)], BLACK_IRON, bevel=1.0, thick=(0.4, 0.5))
+    s.rivets([(cx, y0 + 1.2), (cx, y0 + head_h - 0.6)], 0.8, BRASS)
+
+
+def icon_hand_axe(s):
+    _axe(s, 38, 9.0, 11.0, False, -42)
+
+
+def icon_battle_axe(s):
+    _axe(s, 50, 11.0, 15.0, True, -20, mat=M(DARK_STEEL, c="#80868F"))
+
+
+def icon_flanged_mace(s):
+    s.place(-14, 1.0)
+    cx, top = s.fw / 2, 4
+    haft(s, (cx, top + 12), (cx, s.fh - 4), 3.4, OLD_WOOD, wraps=(0.55, 0.95, 6), wrap_mat=GREY_LEATHER)
+    s.ellipse(cx, s.fh - 3.5, 2.4, 2.4, BLACK_IRON, bevel=2.0)
+    s.ellipse(cx, top + 8, 6.2, 8.0, M(DARK_STEEL, c="#6A7079"), bevel=5, thick=(0.7, 0.8))
+    for ang in range(0, 360, 60):
+        a = math.radians(ang)
+        fx, fy = cx + 7.4 * math.cos(a), top + 8 + 8.8 * math.sin(a)
+        s.poly(rot([(cx + 3, top + 6), (cx + 9.8, top + 8), (cx + 3, top + 10)], ang, (cx, top + 8)), ASH_STEEL, bevel=1.0, prof="chamfer", slope=0.9)
+    s.ellipse(cx, top + 8, 2.2, 2.6, BRASS, bevel=1.8)
+
+
+def icon_war_hammer(s):
+    s.place(-16, 1.0)
+    cx, top = s.fw / 2, 4
+    haft(s, (cx, top + 4), (cx, s.fh - 4), 3.6, OLD_WOOD, wraps=(0.6, 0.97, 7), wrap_mat=BLOOD_LEATHER)
+    s.ellipse(cx, s.fh - 3.5, 2.6, 2.0, BLACK_IRON, bevel=1.5)
+    s.poly([(cx - 11, top), (cx + 8, top), (cx + 8, top + 11), (cx - 11, top + 11)], M(DARK_STEEL, c="#6B717A"), bevel=2.4, prof="chamfer", slope=0.7, thick=(1.0, 1.2))
+    s.poly([(cx + 8, top + 1.5), (cx + 15, top + 5.5), (cx + 8, top + 9.5)], ASH_STEEL, bevel=1.2, prof="chamfer", slope=0.9, thick=(0.6, 0.8))
+    s.poly([(cx - 13, top - 0.5), (cx - 10, top - 0.5), (cx - 10, top + 11.5), (cx - 13, top + 11.5)], BLACK_IRON, bevel=0.8)
+    s.rivets([(cx - 3, top + 2.4), (cx + 3, top + 2.4), (cx - 3, top + 8.6), (cx + 3, top + 8.6)], 0.8, BRASS)
+
+
+def _bow(s, span, bend, width, tilt, mat):
+    s.place(tilt, 1.0)
+    cx, cy = s.fw * 0.42, s.fh / 2
+    h = span / 2
+    upper = cr([(cx, cy - 3), (cx - bend * 0.7, cy - h * 0.45), (cx - bend * 0.5, cy - h * 0.8), (cx + bend * 0.25, cy - h)], 7)
+    lower = cr([(cx, cy + 3), (cx - bend * 0.7, cy + h * 0.45), (cx - bend * 0.5, cy + h * 0.8), (cx + bend * 0.25, cy + h)], 7)
+    s.stroke([upper[-1], lower[-1]], 0.55, M(CORD, c="#C9C1AE"), cast=0, blur=0.5)
+    for limb in (upper, lower):
+        s.stroke(limb, width, mat, width_end=width * 0.4)
+    s.stroke([(cx, cy - 6), (cx, cy + 6)], width * 0.95, GREY_LEATHER, cast=0.7)
+    for y in (cy - 5.4, cy + 5.4):
+        s.stroke([(cx - 2.4, y), (cx + 2.4, y)], 1.0, BRASS, cast=0.5)
+
+
+def icon_short_bow(s):
+    _bow(s, 50, 11, 3.6, -12, M(DARK_WOOD, c="#5A3B24"))
+
+
+def icon_long_bow(s):
+    _bow(s, 72, 10, 3.8, -14, M(WOOD, c="#6B4A2C"))
+
+
+def _staff(s, head, tilt):
+    s.place(tilt, 1.0)
+    cx = s.fw / 2
+    haft(s, (cx, 14), (cx, s.fh - 3), 3.2, OLD_WOOD, wraps=(0.25, 0.5, 4), wrap_mat=GREY_LEATHER)
+    s.ellipse(cx, s.fh - 2.5, 2.0, 1.6, BLACK_IRON, bevel=1.2)
+    if head == "crystal":
+        for side in (1, -1):
+            s.stroke(cr([(cx, 16), (cx + side * 4.6, 10), (cx + side * 4, 4.5)], 5), 1.6, BLACK_IRON, cast=0.5)
+        s.cut(cx, 8, 3.0, 5.2, gemstone("#3C6EA8", 0.35), n=6, glow=lambda x, y: 0.5 * np.exp(-(np.hypot(x - cx, y - 8) / 4.4) ** 2))
+    else:
+        s.stroke([(cx, 15), (cx, 6)], 3.6, BONE, width_end=2.6)
+        s.ellipse(cx, 6, 4.4, 4.0, BONE, bevel=3.4)
+        s.ellipse(cx - 1.6, 5.4, 1.1, 1.4, M(BLACK, c="#1A1410"), prof="flat", cast=0.2)
+        s.ellipse(cx + 1.6, 5.4, 1.1, 1.4, M(BLACK, c="#1A1410"), prof="flat", cast=0.2)
+        for side in (1, -1):
+            s.stroke([(cx + side * 1.4, 12.5), (cx + side * 5.5, 9.5)], 1.6, BONE, cast=0.5)
+        s.cut(cx, 14.5, 1.5, 1.8, gemstone("#7A1818", 0.3), n=6)
+
+
+def icon_ash_staff(s):
+    _staff(s, "crystal", -8)
+
+
+def icon_bone_staff(s):
+    _staff(s, "skull", -8)
+
+
+def _shield(s, shape, face, rim):
+    s.place(0, 1.0)
+    cx, cy = s.fw / 2, s.fh / 2
+    w, h = s.fw, s.fh
+    if shape == "round":
+        outline = ell(cx, cy, w * 0.43, h * 0.43)
+        inner = ell(cx, cy, w * 0.43 - 2.4, h * 0.43 - 2.4)
+    elif shape == "kite":
+        half = cr([(cx, 2), (cx + w * 0.4, 5), (cx + w * 0.4, h * 0.36), (cx + w * 0.26, h * 0.7), (cx, h - 2)], 5)
+        outline = sym(half, cx)
+        inner = [(cx + (x - cx) * 0.82, cy + (y - cy) * 0.86) for x, y in outline]
+    else:
+        outline = [(cx - w * 0.42, 3), (cx + w * 0.42, 3), (cx + w * 0.44, h - 8), (cx + w * 0.3, h - 2), (cx - w * 0.3, h - 2), (cx - w * 0.44, h - 8)]
+        inner = [(cx + (x - cx) * 0.84, cy + (y - cy) * 0.9) for x, y in outline]
+    s.poly(outline, rim, bevel=2.4, thick=(1.1, 1.3))
+    s.poly(inner, face, bevel=min(w, h) * 0.3, prof="pillow", slope=0.4, thick=(0.3, 0.4))
+    s.stroke([(cx, cy - h * 0.34), (cx, cy + h * 0.34)], 2.4, rim, cast=0.5)
+    s.stroke([(cx - w * 0.3, cy), (cx + w * 0.3, cy)], 2.4, rim, cast=0.5)
+    s.ellipse(cx, cy, 4.0, 4.0, M(BRASS, c="#9A7A3A"), bevel=3.4)
+    s.rivets([(cx - w * 0.3, cy - h * 0.2), (cx + w * 0.3, cy - h * 0.2), (cx - w * 0.3, cy + h * 0.2), (cx + w * 0.3, cy + h * 0.2)], 0.9, BRASS)
+
+
+def icon_wooden_buckler(s):
+    _shield(s, "round", M(WOOD, c="#5B3A22", mott=0.4), BLACK_IRON)
+
+
+def icon_kite_shield(s):
+    _shield(s, "kite", M(CLOTH, c="#3A1416", metal=0.2, gloss=40, mott=0.15), M(DARK_STEEL, c="#71767E"))
+
+
+def icon_tower_shield(s):
+    _shield(s, "tower", M(DARK_WOOD, c="#3E2A1D", mott=0.4), M(IRON, c="#454850"))
+
+
+def _helm(s, style, mat):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    if style == "open":
+        dome = cr([(cx - 12, 30), (cx - 12.5, 16), (cx - 6, 7), (cx, 5), (cx + 6, 7), (cx + 12.5, 16), (cx + 12, 30), (cx + 7, 33), (cx - 7, 33)], 6, True)
+    else:
+        dome = cr([(cx - 12.5, 34), (cx - 13, 16), (cx - 7, 6), (cx, 3.5), (cx + 7, 6), (cx + 13, 16), (cx + 12.5, 34), (cx + 6, 37), (cx - 6, 37)], 6, True)
+    s.poly(dome, mat, bevel=11, prof="round", slope=0.7, thick=(0.6, 0.8))
+    if style == "open":
+        s.poly([(cx - 1.5, 6), (cx + 1.5, 6), (cx + 2.6, 28), (cx - 2.6, 28)], BLACK_IRON, bevel=1.2, thick=(0.3, 0.4))
+        s.groove([(cx - 11.5, 21), (cx + 11.5, 21)], w=0.6, depth=0.5)
+        s.rivets([(cx - 9, 20), (cx - 4.5, 20.4), (cx + 4.5, 20.4), (cx + 9, 20)], 0.7, BRASS)
+    else:
+        s.poly([(cx - 9, 17), (cx + 9, 17), (cx + 8, 21), (cx - 8, 21)], M(BLACK, c="#07080A"), prof="flat", cast=0.6)
+        s.groove([(cx, 21), (cx, 36)], w=0.6, depth=0.5)
+        for dy in (24, 28, 32):
+            s.stroke([(cx + 2.5, dy), (cx + 5.5, dy)], 0.8, M(BLACK, c="#07080A"), cast=0.2)
+        s.poly([(cx - 1.6, 3.5), (cx + 1.6, 3.5), (cx + 1.2, 17), (cx - 1.2, 17)], BLACK_IRON, bevel=0.9, thick=(0.4, 0.5))
+        s.rivets([(cx - 10, 24), (cx + 10, 24), (cx - 10, 31), (cx + 10, 31)], 0.7, BRASS)
+
+
+def icon_iron_helm(s):
+    _helm(s, "open", M(DARK_STEEL, c="#6C727B"))
+
+
+def icon_greathelm(s):
+    _helm(s, "closed", M(IRON, c="#454850", metal=1.0))
+
+
+def _body(s, mat, style):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    half = cr(torso(cx=cx, top=3.4, bottom=36.6, sh=15 if style == "plate" else 13.4, waist=10.5), 4)
+    outline = half + mirror(half, cx)[::-1]
+    s.poly(outline, mat, bevel=9.5, prof="pillow", slope=0.58, thick=(0.6, 0.7), bump=(0.8, 0.3))
+    if style == "plate":
+        s.groove([(cx, 8), (cx, 36)], w=0.8, depth=0.7)
+        for y in (20, 25, 30):
+            s.groove([(cx - 10, y), (cx + 10, y)], w=0.5, depth=0.5)
+        for side in (1, -1):
+            s.ellipse(cx + side * 14.6, 7.4, 6.0, 4.4, M(DARK_STEEL, c="#6C727B"), bevel=3.6, thick=(0.5, 0.6))
+        s.rivets([(cx - 6, 12), (cx + 6, 12), (cx - 6, 18), (cx + 6, 18)], 0.8, BRASS)
+    else:
+        for y in np.arange(8, 36, 3.6):
+            s.groove([(cx - 10, y), (cx + 10, y)], w=0.4, depth=0.35, dark=0.7, dash=(0.7, 0.5))
+        s.stroke([(cx - 11, 26), (cx + 11, 26)], 2.0, BLACK_IRON, cast=0.4)
+        s.ellipse(cx, 26, 2.0, 2.0, BRASS, bevel=1.6)
+        s.poly([(cx - 5, 3.2), (cx + 5, 3.2), (cx + 3, 9), (cx - 3, 9)], M(BLACK, c="#1B1C1F"), prof="flat", cast=0.4)
+
+
+def icon_chain_hauberk(s):
+    _body(s, MAIL, "mail")
+
+
+def icon_plate_cuirass(s):
+    _body(s, M(IRON, c="#3E4148", metal=1.0, gloss=80), "plate")
+
+
+def _glove(s, mat, cuff, spiked):
+    s.place(14, 0.95, (20, 20))
+    for i, (x, tip) in enumerate(((12.4, 9), (16.8, 6.4), (21.2, 6.8), (25.4, 10.2))):
+        s.stroke([(x, 22), (x, tip)], 3.6, mat, cast=0.7)
+    s.stroke(cr([(10.6, 27), (7, 22), (6.6, 16.6)], 4), 4.0, mat, width_end=2.8, cast=0.7)
+    s.poly([(10.4, 20), (28.4, 20), (28, 32), (11, 32)], mat, bevel=6, prof="pillow", slope=0.5, thick=(0.4, 0.5), cast=0.7)
+    s.poly([(9.2, 31), (29.6, 31), (31.4, 40), (8, 40)], cuff, bevel=2.0, thick=(0.4, 0.5), cast=0.7)
+    if spiked:
+        for x in (13.6, 18.6, 23.6):
+            s.poly([(x - 1.4, 19.6), (x + 1.4, 19.6), (x, 16.6)], ASH_STEEL, bevel=0.8, prof="chamfer", slope=0.9)
+    s.groove([(13, 36), (27, 36)], w=0.4, depth=0.4, dash=(0.8, 0.5))
+
+
+def icon_leather_gloves(s):
+    _glove(s, M(LEATHER, c="#5B3A25"), M(GREY_LEATHER, c="#3B2C21"), False)
+
+
+def icon_plate_gauntlets(s):
+    _glove(s, M(IRON, c="#454850", metal=1.0, gloss=80), BLACK_IRON, True)
+
+
+def _boot(s, mat, cuff, plate):
+    s.place(0, 0.95, (20, 20))
+    shaft = cr([(14, 3), (26, 3), (27, 20), (26, 30), (14, 30), (13, 18)], 5, True)
+    s.poly(shaft, mat, bevel=5.5, slope=0.55, thick=(0.4, 0.5))
+    foot = cr([(13, 24), (27, 24), (34, 30), (35, 36), (8, 36), (6, 31)], 5, True)
+    s.poly(foot, mat, bevel=4.6, slope=0.6, thick=(0.3, 0.4), cast=0.75)
+    s.poly([(5.5, 35.6), (35.6, 35.6), (35.6, 39), (5.5, 39)], M(BLACK, c="#1C1815", metal=0.2), bevel=0.8, thick=(0.2, 0.4))
+    s.poly([(12, 1.8), (28, 1.8), (28, 8), (12, 8)], cuff, bevel=1.4, thick=(0.3, 0.4), cast=0.7)
+    if plate:
+        for y in (14, 19, 24):
+            s.groove([(13.6, y), (26.4, y)], w=0.5, depth=0.55, dark=0.45)
+        s.groove(cr([(11, 31), (20, 28), (30, 31)], 4), w=0.5, depth=0.55, dark=0.45)
+    else:
+        s.stroke([(16, 12), (24, 12)], 0.8, CORD, cast=0.4)
+        s.stroke([(16, 16), (24, 16)], 0.8, CORD, cast=0.4)
+        s.rivets([(15, 12), (25, 12), (15, 16), (25, 16)], 0.55, BRASS)
+
+
+def icon_leather_boots(s):
+    _boot(s, M(LEATHER, c="#4F3321"), M(GREY_LEATHER, c="#6A5238"), False)
+
+
+def icon_plate_sabatons(s):
+    _boot(s, M(IRON, c="#454850", metal=1.0, gloss=80), BLACK_IRON, True)
+
+
+def _legs(s, mat, style):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    for side in (-1, 1):
+        x = cx + side * 6.6
+        leg = [(x - 5.4, 3), (x + 5.4, 3), (x + 4.6, 36), (x - 4.6, 36)]
+        s.poly(leg, mat, bevel=4.8, prof="round", slope=0.6, thick=(0.4, 0.5))
+        if style == "plate":
+            s.ellipse(x, 14, 5.4, 4.0, M(DARK_STEEL, c="#6C727B"), bevel=3.4, thick=(0.4, 0.5))
+            for y in (22, 27, 32):
+                s.groove([(x - 4.4, y), (x + 4.4, y)], w=0.5, depth=0.5)
+        elif style == "mail":
+            for y in np.arange(7, 35, 3.4):
+                s.groove([(x - 4.2, y), (x + 4.2, y)], w=0.4, depth=0.35, dark=0.7, dash=(0.7, 0.5))
+        else:
+            s.groove([(x, 6), (x, 34)], w=0.5, depth=0.5, dash=(0.8, 0.55))
+    s.poly([(cx - 13, 1.4), (cx + 13, 1.4), (cx + 12.4, 6.6), (cx - 12.4, 6.6)], BLACK_IRON if style != "leather" else GREY_LEATHER, bevel=1.2, thick=(0.3, 0.4))
+    s.ellipse(cx, 4, 2.0, 2.0, BRASS, bevel=1.6)
+
+
+def icon_leather_leggings(s):
+    _legs(s, M(LEATHER, c="#4D3322"), "leather")
+
+
+def icon_chain_chausses(s):
+    _legs(s, MAIL, "mail")
+
+
+def icon_plate_greaves(s):
+    _legs(s, M(IRON, c="#454850", metal=1.0, gloss=80), "plate")
+
+
+def icon_bone_amulet(s):
+    s.stroke(cr([(2.5, -0.5), (5.2, 3.6), (10, 7.4), (14.8, 3.6), (17.5, -0.5)], 8), 0.9, CORD, cast=0.4)
+    s.poly(cr([(10, 8), (13.2, 9.4), (14.4, 13.6), (12.2, 18.4), (10, 20), (7.8, 18.4), (5.6, 13.6), (6.8, 9.4)], 5, True), BONE, bevel=2.4, thick=(0.4, 0.5))
+    s.cut(10, 13.6, 1.8, 2.4, gemstone("#7A1818", 0.25), n=6)
+
+
+def icon_iron_torc(s):
+    s.ring(10, 10, 7.8, 7.2, 2.2, BLACK_IRON, bevel=1.1, thick=(0.4, 0.5))
+    for x in (2.8, 17.2):
+        s.ellipse(x, 14.5, 1.8, 1.8, ASH_STEEL, bevel=1.6)
+    s.groove(ell(10, 10, 6.4, 5.8), w=0.4, depth=0.4, closed=True, dash=(0.7, 0.5))
+
+
+def icon_hollow_locket(s):
+    s.stroke(cr([(2.5, -0.5), (5.2, 3.6), (10, 7.4), (14.8, 3.6), (17.5, -0.5)], 8), 0.9, PALE_GOLD, dash=(0.8, 0.45), cast=0.4)
+    s.ellipse(10, 13.4, 5.6, 6.4, M(PALE_GOLD, c="#9A9AA2", tint=0.2), bevel=2.6, thick=(0.4, 0.5))
+    s.ring(10, 13.4, 3.6, 4.4, 0.8, M(BLACK, c="#2A2A30"), bevel=0.4, cast=0.2)
+
+
+def _ring(s, mat, stone):
+    s.ring(10, 12.2, 6.4, 5.8, 1.9, mat, bevel=1.0, thick=(0.3, 0.4))
+    s.poly([(5.8, 7.6), (14.2, 7.6), (12.3, 10.4), (7.7, 10.4)], mat, bevel=1.0, prof="chamfer", slope=0.9, thick=(0.3, 0.4))
+    if stone is not None:
+        s.cut(10, 5.4, 3.8, 3.4, stone, n=6)
+
+
+def icon_silver_ring(s):
+    _ring(s, M(PALE_GOLD, c="#A9ADB6", tint=0.2), None)
+
+
+def icon_bone_ring(s):
+    _ring(s, BONE, gemstone("#3C6EA8", 0.25))
+
+
+def icon_blood_ring(s):
+    _ring(s, BLACK_IRON, gemstone("#8A1414", 0.35))
+
+
+def _cloak(s, mat, trim, hooded):
+    s.place(0, 1.0)
+    cx, cy = s.fw / 2, s.fh / 2
+    half = cr([(cx + 7, 4), (cx + 17, 8), (cx + 24, 20), (cx + 26, 36), (cx + 14, 33), (cx, 38)], 5)
+    outline = sym(half, cx)
+    s.poly(outline, mat, bevel=7, prof="pillow", slope=0.55, thick=(0.6, 0.8), bump=(0.8, 0.3))
+    for dx in (-14, -7, 7, 14):
+        s.groove(cr([(cx + dx * 0.5, 10), (cx + dx, 22), (cx + dx * 1.1, 34)], 4), w=0.9, depth=0.7, dark=0.65)
+    s.poly(cr([(cx - 9, 3), (cx, 0.4), (cx + 9, 3), (cx + 7, 10), (cx, 12), (cx - 7, 10)], 5, True), trim, bevel=3.2, thick=(0.4, 0.5))
+    if hooded:
+        s.poly([(cx - 5, 4), (cx, 1), (cx + 5, 4), (cx + 3.4, 9), (cx - 3.4, 9)], M(BLACK, c="#0B0C0E"), prof="flat", cast=0.4)
+    s.ellipse(cx, 12, 2.0, 2.0, BRASS, bevel=1.6)
+
+
+def icon_hooded_cloak(s):
+    _cloak(s, M(CLOTH, c="#232A33", gloss=10), M(CLOTH, c="#171B21"), True)
+
+
+def icon_grave_mantle(s):
+    _cloak(s, M(CLOTH, c="#2A1A1E", gloss=10), M(BONE, c="#8A8070", metal=0.2), False)
+
+
+def _flask(s, liquid, glow_c):
+    cx = s.fw / 2
+    glass_m = M(BONE, c="#9AA4AA", metal=0.2, gloss=160, spec=1.6, mott=0.04, tint=0.1)
+    body = ell(cx, 13.2, 5.8, 5.4)
+    s.poly(body, glass_m, bevel=4.4, prof="round", slope=0.9, thick=(0.3, 0.4))
+    s.poly(cr([(cx - 1.9, 3.4), (cx + 1.9, 3.4), (cx + 2.4, 8.4), (cx - 2.4, 8.4)], 3, True), glass_m, bevel=1.4, thick=(0.2, 0.3))
+
+    def fill(x, y):
+        return 0.5 + 0.5 * np.clip((y - 8.0) / 10.0, 0, 1)
+
+    s.ellipse(cx, 14.2, 4.4, 4.2, M(BONE, c=liquid, metal=0.5, gloss=120, spec=1.4, mott=0.05, tint=0.2, emis=0.35), bevel=3.2, prof="round", slope=0.9, cast=0.1, emis=lambda x, y: 0.35 * fill(x, y))
+    s.stroke([(cx - 2.4, 4.4), (cx + 2.4, 4.4)], 2.4, CORD, cast=0.5)
+    s.ellipse(cx, 2.8, 2.0, 1.7, M(OLD_WOOD, c="#5A4030"), bevel=1.6)
+
+
+def icon_potion_weak_heal(s):
+    _flask(s, "#7A3A30", None)
+
+
+def icon_potion_minor_heal(s):
+    _flask(s, "#9A1218", None)
+
+
+def icon_potion_greater_heal(s):
+    _flask(s, "#C21822", None)
+
+
+def icon_potion_minor_mana(s):
+    _flask(s, "#2A4FA0", None)
+
+
+def icon_potion_greater_mana(s):
+    _flask(s, "#3C7AE0", None)
+
+
 # registry -----------------------------------------------------------------------------
 
 
@@ -1227,6 +1639,49 @@ ICONS: dict = {
     "item.axe.twinbit": (2, 3, icon_axe_twinbit),
     "item.shield.kite": (2, 3, icon_shield_kite),
 }
+
+CATALOGUE_ICONS = {
+    "gear.iron-dagger": (1, 2, icon_iron_dagger),
+    "gear.short-sword": (1, 3, icon_short_sword),
+    "gear.long-sword": (1, 4, icon_long_sword),
+    "gear.greatsword": (2, 4, icon_greatsword),
+    "gear.hand-axe": (2, 2, icon_hand_axe),
+    "gear.battle-axe": (2, 3, icon_battle_axe),
+    "gear.flanged-mace": (2, 3, icon_flanged_mace),
+    "gear.war-hammer": (2, 3, icon_war_hammer),
+    "gear.short-bow": (2, 3, icon_short_bow),
+    "gear.long-bow": (2, 4, icon_long_bow),
+    "gear.ash-staff": (1, 4, icon_ash_staff),
+    "gear.bone-staff": (1, 4, icon_bone_staff),
+    "gear.wooden-buckler": (2, 2, icon_wooden_buckler),
+    "gear.kite-shield": (2, 3, icon_kite_shield),
+    "gear.tower-shield": (2, 4, icon_tower_shield),
+    "gear.iron-helm": (2, 2, icon_iron_helm),
+    "gear.greathelm": (2, 2, icon_greathelm),
+    "gear.chain-hauberk": (2, 2, icon_chain_hauberk),
+    "gear.plate-cuirass": (2, 2, icon_plate_cuirass),
+    "gear.leather-gloves": (2, 2, icon_leather_gloves),
+    "gear.plate-gauntlets": (2, 2, icon_plate_gauntlets),
+    "gear.leather-boots": (2, 2, icon_leather_boots),
+    "gear.plate-sabatons": (2, 2, icon_plate_sabatons),
+    "gear.leather-leggings": (2, 2, icon_leather_leggings),
+    "gear.chain-chausses": (2, 2, icon_chain_chausses),
+    "gear.plate-greaves": (2, 2, icon_plate_greaves),
+    "gear.bone-amulet": (1, 1, icon_bone_amulet),
+    "gear.iron-torc": (1, 1, icon_iron_torc),
+    "gear.hollow-locket": (1, 1, icon_hollow_locket),
+    "gear.silver-ring": (1, 1, icon_silver_ring),
+    "gear.bone-ring": (1, 1, icon_bone_ring),
+    "gear.blood-ring": (1, 1, icon_blood_ring),
+    "gear.hooded-cloak": (3, 2, icon_hooded_cloak),
+    "gear.grave-mantle": (3, 2, icon_grave_mantle),
+    "consumable.weak-heal": (1, 1, icon_potion_weak_heal),
+    "consumable.minor-heal": (1, 1, icon_potion_minor_heal),
+    "consumable.greater-heal": (1, 1, icon_potion_greater_heal),
+    "consumable.minor-mana": (1, 1, icon_potion_minor_mana),
+    "consumable.greater-mana": (1, 1, icon_potion_greater_mana),
+}
+ICONS.update({f"item.{k}": v for k, v in CATALOGUE_ICONS.items()})
 
 
 # tiers, ramps, aura -------------------------------------------------------------------
@@ -1443,7 +1898,7 @@ def preview(out_root: Path, previews: Path) -> None:
 
     previews = Path(previews)
     previews.mkdir(parents=True, exist_ok=True)
-    sheet_for("items.png", names, 17, 17).convert("RGB").save(previews / "items_icons.png", compress_level=6)
+    sheet_for("items.png", names, 17, 40).convert("RGB").save(previews / "items_icons.png", compress_level=6)
     wanted = {"item.axe.twinbit", "item.armor.gilded", "item.helm.gilded", "item.gear.iron-blade", "item.shield.kite", "item.gem.amber", "item.gear.iron-band"}
     picks = [n for n in names if n in wanted]
     boards = [sheet_for(f"items{suf}.png", picks, cols=15, rows=5) for suf in ("", "_uncommon", "_rare")]

@@ -32,6 +32,7 @@ public partial class PlayScene
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
             _settings.CurrentRuntimeState.AllowGameplayInput,
             _runtime.Player.Combatant.Health.IsAlive);
+        HandleConsumableHotkeys(keyboardState, allowGameplayInput);
         // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
         _clickMove.OnFrame(_render.SampleWorldPointer(mouseState, _settings, _windowFocused), allowGameplayInput);
         // The frame only captures input; each prediction tick below turns it into one command

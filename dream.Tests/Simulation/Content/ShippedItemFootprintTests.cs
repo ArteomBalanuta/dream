@@ -120,9 +120,9 @@ public sealed class ShippedItemFootprintTests
     }
 
     [Fact]
-    public void TheNewKinds_AreInBothLootTables_WithTheSameNothingWeightAndTotalAsBefore()
+    public void TheCatalogue_IsInBothLootTables_KeepingTheNothingWeights_AndTheOriginalKindsInOrder()
     {
-        string[] shared =
+        string[] original =
         [
             "gear.leather-cap", "gear.leather-vest", "gear.iron-blade", "gear.ward-lantern", "gear.iron-gauntlets", "gear.iron-boots",
             "gear.plated-leggings", "gear.ward-pendant", "gear.iron-band", "gear.travel-cloak", "gear.ember-wisp",
@@ -130,15 +130,16 @@ public sealed class ShippedItemFootprintTests
         Assert.True(ContentCatalog.Shipped.TryGetLootTable("wolf", out LootTable? wolf));
         Assert.True(ContentCatalog.Shipped.TryGetLootTable("dire-wolf", out LootTable? dire));
 
-        Assert.Equal(shared, wolf.Items.Select(entry => entry.ItemKind));
-        // The dire wolf adds the wings and the spear, and lists the wisp after the wings.
+        Assert.Equal(original, wolf.Items.Take(original.Length).Select(entry => entry.ItemKind));
         Assert.Equal(
-            [.. shared.Take(10), "gear.gossamer-wings", "gear.ember-wisp", "gear.hunting-spear"],
-            dire.Items.Select(entry => entry.ItemKind));
-        Assert.Equal(100, wolf.NothingWeight + wolf.Items.Sum(entry => entry.Weight));
-        Assert.Equal(100, dire.NothingWeight + dire.Items.Sum(entry => entry.Weight));
+            [.. original.Take(10), "gear.gossamer-wings", "gear.ember-wisp", "gear.hunting-spear"],
+            dire.Items.Take(13).Select(entry => entry.ItemKind));
         Assert.Equal(75, wolf.NothingWeight);
         Assert.Equal(50, dire.NothingWeight);
         Assert.All(wolf.Items.Concat(dire.Items), entry => Assert.True(ContentCatalog.Shipped.TryGetItem(entry.ItemKind, out ItemDefinition? def) && def.Rolls != null));
+        // Every item that can be rolled drops from both tables, potions included.
+        string[] rollable = [.. ContentCatalog.Shipped.Items.Where(item => item.Rolls != null).Select(item => item.Key).Order()];
+        Assert.Equal(rollable.AsEnumerable(), wolf.Items.Select(entry => entry.ItemKind).Order());
+        Assert.Equal(rollable.AsEnumerable(), dire.Items.Select(entry => entry.ItemKind).Order());
     }
 }
