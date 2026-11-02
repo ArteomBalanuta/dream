@@ -27,7 +27,7 @@ ORDER = ("rust_barrel", "dead_oak", "bramble", "slate_rocks", "tombstone", "bone
 BG = (200, 200, 200)  # #C8C8C8
 PAD = 20
 GAP = 28
-SHEET_COL_W = 1040  # the column beside the tallest object
+SHEET_COL_W = 1100  # the widest a row of stills may be beside the tallest object
 
 
 def load_objects() -> dict:
@@ -67,17 +67,19 @@ def render_all(names: list[str]) -> dict:
     return dict(zip(jobs, res))
 
 
-def _wrap(items: list, max_w: int) -> list:
-    """Greedy rows of (rgba, shadow) items no wider than max_w, GAP between neighbours."""
-    rows, cur, curw = [], [], 0
-    for it in items:
-        w = it[0].shape[1]
-        if cur and curw + GAP + w > max_w:
-            rows.append(cur)
-            cur, curw = [], 0
-        curw += w + (GAP if cur else 0)
-        cur.append(it)
-    return rows + [cur] if cur else rows
+def _wrap(items: list, max_w: int | None) -> list:
+    """Rows of (rgba, shadow) items in order: the fewest rows that each fit max_w (None = one row), with the items
+    spread evenly so the row counts differ by at most one."""
+    for n in range(1, len(items) + 1):
+        base, extra = divmod(len(items), n)
+        rows, i = [], 0
+        for r in range(n):
+            k = base + (r < extra)
+            rows.append(items[i : i + k])
+            i += k
+        if max_w is None or all(sum(e[0].shape[1] for e in r) + GAP * (len(r) - 1) <= max_w for r in rows):
+            return rows
+    return []
 
 
 def compose_sheet(entries: list[tuple], groups: list | None = None) -> np.ndarray:
@@ -98,7 +100,7 @@ def compose_sheet(entries: list[tuple], groups: list | None = None) -> np.ndarra
     frames = [f for v in items.values() if len(v) > 1 for f in v]
     hero = max(stills, key=lambda e: e[0].shape[0]) if stills else None
     stills = [e for e in stills if e is not hero]
-    rows = _wrap(stills, SHEET_COL_W) + _wrap(frames, SHEET_COL_W)
+    rows = _wrap(stills, SHEET_COL_W) + _wrap(frames, None)  # an animation is always one even row
     col_w = max((sum(e[0].shape[1] for e in r) + GAP * (len(r) - 1) for r in rows), default=0)
     row_h = [max(e[0].shape[0] for e in r) for r in rows]
     col_h = sum(row_h) + GAP * max(len(rows) - 1, 0)

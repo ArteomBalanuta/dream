@@ -45,6 +45,22 @@ def _fit_shadow(rd, margin):
     return rd
 
 
+def _end_shadow(rd, pivot, reach, fade):
+    """A long cast shadow keeps its crisp edges and simply ends: alpha only scales down linearly along the key direction
+    (a pure opacity ramp, the shape is never blurred), reaching zero `reach` px from the pivot, clear of the canvas."""
+    import isoforge as I
+    g = -I.KEY_WORLD[:2]
+    d = np.array((I._a * (g[0] - g[1]), -I._s * I._a * (g[0] + g[1])))
+    d /= np.linalg.norm(d)
+    sh = rd.shadow.copy()
+    h, w = sh.shape[:2]
+    s = (np.arange(w)[None, :] - pivot[0]) * d[0] + (np.arange(h)[:, None] - pivot[1]) * d[1]
+    k = np.clip((reach - s) / float(fade), 0.0, 1.0)
+    sh[..., 3] = np.floor(sh[..., 3] * k + 0.5).astype(np.uint8)
+    rd.shadow = sh
+    return rd
+
+
 def _poly(path, step):
     """A polyline with its corners cut once (a kink about 2 u across), resampled linearly about `step` apart."""
     p = np.asarray(path, dtype=np.float64)
@@ -163,7 +179,7 @@ def limb(path, r0, r1, name, ridges=0, amp=0.35, knot=0.0, flare=0.0, flare_len=
 # dead oak
 # ---------------------------------------------------------------------------------------------------
 
-OAK_SIZE = (448, 416)
+OAK_SIZE = (448, 448)
 OAK_PIVOT = (166, 311)
 SC = 1.15
 
@@ -281,7 +297,7 @@ def oak_scene() -> Scene:
 
 
 def render_oak():
-    return _fit_shadow(oak_scene().render(wear=0.35, grime=0.6, rust=0.0, dust=0.08, exposure=0.95, hard_alpha=False), 72)
+    return _end_shadow(oak_scene().render(wear=0.35, grime=0.6, rust=0.0, dust=0.08, exposure=0.95, hard_alpha=False), OAK_PIVOT, 256.0, 160.0)
 
 
 OBJECTS = {"dead_oak": ObjectSpec(OAK_SIZE, OAK_PIVOT, (render_oak,))}
@@ -459,9 +475,9 @@ OBJECTS["bramble"] = ObjectSpec(BR_SIZE, BR_PIVOT, (render_bramble,))
 SL_SIZE = (240, 192)
 SL_PIVOT = (115, 105)
 
-# grey-blue shale: a cool body, warm bare rock where the edges wear through, so the lit tops read warm
-SLATE = IsoMat((0.034, 0.040, 0.054), (0.020, 0.022, 0.026), 0.74, (0.062, 0.060, 0.060), (0.040, 0.040, 0.044), 0.8, sat_cap=0.30,
-               detail=(Waves3("slate.step", 7, 2.4, 5.0, 0.035), Waves3("slate.layer", 6, 0.4, 0.9, 0.012, (1.0, 1.0, 0.3))))
+# wet dark blue-grey slate: a cool damp body, only the worn edges show a slightly warmer bare rock
+SLATE = IsoMat((0.0090, 0.0118, 0.0180), (0.020, 0.022, 0.026), 0.70, (0.0200, 0.0185, 0.0160), (0.040, 0.040, 0.044), 0.7, sat_cap=0.30,
+               detail=(Waves3("slate.step", 7, 2.4, 5.0, 0.045), Waves3("slate.layer", 6, 0.4, 0.9, 0.016, (1.0, 1.0, 0.3))))
 
 
 def slate_scene() -> Scene:
@@ -482,6 +498,8 @@ def slate_scene() -> Scene:
             sl = convex(f"{name}{k}", rad * (1.0 - 0.17 * k) * (0.9 + 0.2 * rr.random()), 8, (1.25 * flat, 1.0, h / rad * 1.9))
             sl = sl.xform((0, 0, (rr.random() - 0.5) * 50), ((rr.random() - 0.5) * rad * 0.35, (rr.random() - 0.5) * rad * 0.3, z + h * 0.5))
             z += h * 1.15
+            # each plate its own darkness, lower plates darker: the dark seams and cleavage shadow between layers
+            sl.tint = np.full((len(sl.v), 3), (0.62 + 0.38 * rr.random()) * (1.0 - 0.14 * k))
             m = sl if m is None else m.merge(sl)
         m = m.xform((tilt[0], tilt[1], yaw))
         lo = float(m.v[:, 2].min())
@@ -509,7 +527,7 @@ def slate_scene() -> Scene:
 
 
 def render_slate():
-    return _fit_shadow(slate_scene().render(wear=0.25, grime=0.4, rust=0.0, dust=0.12, exposure=0.95, hard_alpha=False), 40)
+    return _fit_shadow(slate_scene().render(wear=0.25, grime=0.4, rust=0.0, dust=0.04, exposure=0.95, hard_alpha=False), 40)
 
 
 OBJECTS["slate_rocks"] = ObjectSpec(SL_SIZE, SL_PIVOT, (render_slate,))
