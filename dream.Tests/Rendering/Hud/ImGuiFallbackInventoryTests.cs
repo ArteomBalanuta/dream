@@ -175,6 +175,8 @@ public sealed class ImGuiFallbackInventoryTests
                         InventoryEquipIntent e => service.TryEquip(Player, e.SlotIndex, e.TargetSlotIndex),
                         InventoryDestroyIntent d => service.TryDestroy(Player, d.SlotIndex, d.ItemInstanceId),
                         InventoryUnequipIntent u => service.TryUnequip(Player, u.SlotIndex, u.TargetCell),
+                        // A potion's "Use" entry: the item.use path consumes it (the cooldown and the pool check are the runtime's).
+                        ItemUseIntent use => service.TryConsume(Player, use.SlotIndex, use.ItemInstanceId),
                         _ => throw new InvalidOperationException("unexpected intent")
                     };
                     Assert.True(
