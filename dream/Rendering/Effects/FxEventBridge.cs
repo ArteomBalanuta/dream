@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Runtime;
 
@@ -8,13 +9,15 @@ namespace Dream.Rendering.Effects;
 public sealed class FxEventBridge : IDisposable
 {
     private readonly FxSimulation _simulation;
+    private readonly FxFlashList _flashes;
     private readonly IDisposable _damageSubscription;
     private readonly IDisposable _deathSubscription;
 
-    public FxEventBridge(SceneEventHub events, FxSimulation simulation)
+    public FxEventBridge(SceneEventHub events, FxSimulation simulation, FxFlashList flashes)
     {
         ArgumentNullException.ThrowIfNull(events);
         _simulation = simulation ?? throw new ArgumentNullException(nameof(simulation));
+        _flashes = flashes ?? throw new ArgumentNullException(nameof(flashes));
         _damageSubscription = events.Subscribe<DamageAppliedEvent>(OnDamageApplied);
         _deathSubscription = events.Subscribe<ActorDiedEvent>(OnActorDied);
     }
@@ -32,11 +35,21 @@ public sealed class FxEventBridge : IDisposable
             return;
         }
 
-        _simulation.SpawnHit(evt.Actor.GetWorldAnchor(), evt.Kind);
+        Vector3 anchor = evt.Actor.GetWorldAnchor();
+        _simulation.SpawnHit(anchor, evt.Kind);
+        FxFlashKind flash = evt.Kind switch
+        {
+            FloatingCombatTextKind.Critical => FxFlashKind.Critical,
+            FloatingCombatTextKind.Incoming => FxFlashKind.Incoming,
+            _ => FxFlashKind.Hit
+        };
+        _flashes.Trigger(anchor, flash);
     }
 
     private void OnActorDied(ActorDiedEvent evt)
     {
-        _simulation.SpawnDeath(evt.Actor.GetWorldAnchor());
+        Vector3 anchor = evt.Actor.GetWorldAnchor();
+        _simulation.SpawnDeath(anchor);
+        _flashes.Trigger(anchor, FxFlashKind.Death);
     }
 }
