@@ -48,9 +48,11 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
             session.Player.SyncCameraFromBody(Tuning);
             float lead = SimulationClock.FixedDeltaSeconds * (frame % 4) * 0.25f;
 
-            // The pre-change path: two fresh cameras.
+            // The pre-change path: two fresh cameras. Third person no longer applies the velocity
+            // lead (the model and camera follow the interpolated body instead), so with no ticks
+            // recorded here it matches the lead-free camera; first person keeps the lead.
             Camera expected = ResolveWithClone(
-                session.Player.CreatePresentationCamera(lead),
+                session.Player.CreatePresentationCamera(mode == CameraViewMode.FirstPerson ? lead : 0f),
                 session.Player.GetWorldPosition(),
                 mode);
             WorldSessionPresentationState state = session.CapturePresentationState(
