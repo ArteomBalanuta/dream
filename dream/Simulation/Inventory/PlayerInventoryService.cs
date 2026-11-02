@@ -858,6 +858,9 @@ internal sealed class PlayerInventoryService
 
     // The light the equipped items cast (EquipmentSlots.ResolveHeldLight); read from the cache.
     // Allocates nothing.
+    public string? ResolveEquippedVisualKey(string playerName)
+        => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.VisualKey : null;
+
     public HeldLightKind ResolveEquippedHeldLight(string playerName)
         => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.Light : HeldLightKind.None;
 
@@ -873,6 +876,8 @@ internal sealed class PlayerInventoryService
 
         HeldLightKind mainLight = HeldLightKind.None;
         HeldLightKind offLight = HeldLightKind.None;
+        string mainVisual = string.Empty;
+        string offVisual = string.Empty;
         ulong digest = ModifierDigestSalt;
         bool anyRolled = false;
         Span<long> seen = stackalloc long[EquipmentSlots.Count];
@@ -889,10 +894,12 @@ internal sealed class PlayerInventoryService
             if (slot == EquipmentSlot.MainHand)
             {
                 mainLight = definition.HeldLight;
+                mainVisual = definition.VisualId ?? string.Empty;
             }
             else if (slot == EquipmentSlot.OffHand)
             {
                 offLight = definition.HeldLight;
+                offVisual = definition.VisualId ?? string.Empty;
             }
 
             if (item.Roll == null)
@@ -927,8 +934,24 @@ internal sealed class PlayerInventoryService
 
         _equippedSummaryByPlayer[playerName] = new EquippedSummary(
             EquipmentSlots.ResolveHeldLight(mainLight, offLight),
-            anyRolled ? digest : 0UL);
+            anyRolled ? digest : 0UL,
+            BuildVisualKey(mainVisual, offVisual));
     }
+
+    // The player VisualKey: "<mainHandVisualId>|<offHandVisualId>", an empty side for an empty hand,
+    // and null (off the wire) when both hands are empty. The cached string is reused every snapshot.
+    private static string? BuildVisualKey(string mainVisual, string offVisual)
+    {
+        if (mainVisual.Length == 0 && offVisual.Length == 0)
+        {
+            return null;
+        }
+
+        string key = string.Concat(mainVisual, "|", offVisual);
+        return key.Length <= MaxPlayerVisualKeyLength ? key : null;
+    }
+
+    public const int MaxPlayerVisualKeyLength = 129;
 
     private static bool IsApplicable(StatModifier modifier)
         => (uint)modifier.Stat < (uint)StatId.Count
@@ -1601,7 +1624,7 @@ internal sealed class PlayerInventoryService
     }
 
     // The held light and rolled-modifier digest an inventory's equipment gives its actor.
-    private readonly record struct EquippedSummary(HeldLightKind Light, ulong Digest);
+    private readonly record struct EquippedSummary(HeldLightKind Light, ulong Digest, string? VisualKey);
 
     private enum InventoryWriteVerdict
     {

@@ -72,13 +72,13 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // Build and combat use intents are created only by the server, from command-frame primary use,
     // which applies the use cadence and targeting. Over the wire a client may send only these. The
     // build material selection places nothing by itself; it only picks what later uses place.
-    // PlayerStatsUpdateIntent is the development stat sliders (decision U4): any client can set its own
-    // base stats within the validated range, and they persist and travel between worlds with the
-    // character. It goes away when levels give stat points.
+    // PlayerAttributeSpendIntent raises one attribute with the character's unspent points; the server
+    // checks the budget and the caps. The old development stat sliders (PlayerStatsUpdateIntent) are
+    // no longer client-sendable.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
         return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
-            or PlayerStatsUpdateIntent or BuildMaterialSelectIntent;
+            or PlayerAttributeSpendIntent or BuildMaterialSelectIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

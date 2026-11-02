@@ -1,3 +1,4 @@
+using Dream.Simulation.Combat;
 using OpenTK.Mathematics;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -124,21 +125,36 @@ public static class SimulationStateChecksum
                 BitConverter.SingleToUInt32Bits(stats.AttackSpeed),
                 Seed.FromInt(stats.Vitality))
             : Seed.Combine(mode, 0UL);
+        // Agility, Energy, the points and the mana pool (protocol 14) only when any is set, so a stats block
+        // without them hashes as it did before.
+        if (actor.CombatStats is { } extra
+            && (extra.Agility | extra.Energy | extra.StatPoints | extra.Mana | extra.MaxMana) != 0)
+        {
+            combat = Seed.Combine(
+                combat,
+                CombatAttributesSalt,
+                Seed.Combine(Seed.FromInt(extra.Agility), Seed.FromInt(extra.Energy), Seed.FromInt(extra.StatPoints)),
+                Seed.Combine(Seed.FromInt(extra.Mana), Seed.FromInt(extra.MaxMana)));
+        }
+
         ulong hash = actor.EnemyBehaviorState is { } behavior
             ? Seed.Combine(combat, 1UL, (ulong)behavior)
             : Seed.Combine(combat, 0UL);
         // Enemy level and visual only when non-default, so a wolf-only world hashes as it did before wave I.
-        hash = (actor.EnemyLevel == 0 && actor.VisualKey is null)
+        // A player's VisualKey (the worn weapon and shield) is derived from the inventory, like the held light, so it is excluded.
+        string? presentationKey = actor.Kind == CreatureKind.Player ? null : actor.VisualKey;
+        hash = (actor.EnemyLevel == 0 && presentationKey is null)
             ? hash
             : Seed.Combine(
                 hash,
                 EnemyPresentationSalt,
                 Seed.FromInt(actor.EnemyLevel),
-                actor.VisualKey is null ? 0UL : StableHash.Of(actor.VisualKey));
+                presentationKey is null ? 0UL : StableHash.Of(presentationKey));
         // Rolled equipment only; zero (nothing rolled equipped) leaves the hash as it was before wave H.
         return actor.ModifierDigest == 0UL ? hash : Seed.Combine(hash, ModifierDigestSalt, actor.ModifierDigest);
     }
 
+    private const ulong CombatAttributesSalt = 0x61747472696275UL; // "attribu"
     private const ulong EnemyPresentationSalt = 0x656E656D792D7072UL; // "enemy-pr"
     private const ulong ModifierDigestSalt = 0x6D6F642D64696765UL; // "mod-dige"
 

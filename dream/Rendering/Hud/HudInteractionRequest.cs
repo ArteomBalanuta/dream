@@ -26,7 +26,9 @@ public readonly record struct HudInteractionRequest(
     // A UI scale picked in Settings: 0 is auto, other values snap to quarter steps (GameSettings.SetUiScale).
     float? UiScale = null,
     // The slider was released: only then is the scale written to the config file.
-    bool UiScaleCommitted = false)
+    bool UiScaleCommitted = false,
+    // The attribute whose "+" was pressed in the character window; sent as a PlayerAttributeSpendIntent.
+    Dream.Simulation.Stats.StatId? SpendAttribute = null)
 {
     public static HudInteractionRequest None => new(
         null,

@@ -1,20 +1,31 @@
 using Dream.Rendering.Hud;
+using Dream.Simulation.Stats;
 using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui.Panels;
 
 // The character window: the second stone window, left of the inventory (the art has no stat
-// panel, so this is the combine window's frame with stat rows in its line boxes and no combine
-// UI). Rows come from the view's StatRows: label on the left, "base +bonus = effective" on the
-// right. Nothing here is interactive except the close button.
+// panel, so this is the combine window's frame with the sheet in its line boxes and no combine UI).
+// The sheet comes from the view's Sheet rows: a header block (class, level, experience, points), then
+// each attribute on a plaque with a "+" plate that spends one point, and under it what the attribute
+// derives. Art first (frame, plaques, plates), then every line of text, so the window is two draw
+// commands. The "+" plates and the close button are the only things that take input.
 public static class CharacterWindow
 {
     private const float RowX = 19f;
-    private const float RowY = 50f;
-    private const float RowPitch = 24f;
     private const float RowW = 152f;
-    private const float RowH = 10f;
-    private const int MaxRows = 6;
+    private const float HeaderY = 38f;
+    private const float HeaderPitch = 16f;
+    private const float RowH = 12f;
+    private const float AttributePitch = 20f;
+    private const float DerivedPitch = 16f;
+    private const float GroupGap = 7f;
+    private const float PlateSize = 14f;
+    private const float PlateGap = 2f;
+    private const int MaxRows = 20;
+
+    // Widget ids of the "+" plates, in sheet order. Clear of the inventory's ids.
+    internal const int IdSpendBase = InventoryWindow.IdBase + 0x310;
 
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
@@ -24,20 +35,57 @@ public static class CharacterWindow
         }
 
         UiRect win = l.Character;
-        // Art first (frame, line boxes, close button), then every line of text, so the window is two
-        // draw commands. The text is cut to fit instead of clipped, which would split the command.
         InventoryWindow.DrawFrame(c, s, l, win, inventoryKind: false);
-        CharacterStatRow[] rows = v.StatRows ?? [];
+        CharacterSheetRow[] rows = v.Sheet ?? [];
         int count = Math.Min(rows.Length, MaxRows);
-        for (int n = 0; n < count; n++)
-        {
-            if (s.TryGet(UiSpriteNames.WinLineBox, out UiSprite lineBox))
-            {
-                c.NineSlice(lineBox, l.FromUnits(win, RowX, RowY + (n * RowPitch), RowW, RowH), UiColor.White);
-            }
-        }
+        Span<float> ys = stackalloc float[MaxRows];
+        LayoutRows(rows, count, ys);
 
         bool live = !InventoryUiState.Current.ModalOpen;
+        bool haveBox = s.TryGet(UiSpriteNames.WinLineBox, out UiSprite lineBox);
+        for (int n = 0; n < count; n++)
+        {
+            CharacterSheetRow row = rows[n];
+            if (row.Kind == CharacterSheetRowKind.Derived || !haveBox)
+            {
+                continue;
+            }
+
+            float w = row.Kind == CharacterSheetRowKind.Attribute ? RowW - PlateSize - PlateGap : RowW;
+            c.NineSlice(lineBox, l.FromUnits(win, RowX, ys[n], w, RowH), UiColor.White);
+        }
+
+        // The "+" plates are art now; their "+" glyph goes in the text pass below.
+        int spendSlot = 0;
+        Span<UiRect> plateRects = stackalloc UiRect[MaxRows];
+        for (int n = 0; n < count; n++)
+        {
+            if (rows[n].Kind != CharacterSheetRowKind.Attribute)
+            {
+                continue;
+            }
+
+            UiRect plate = l.FromUnits(win, RowX + RowW - PlateSize, ys[n] - ((PlateSize - RowH) * 0.5f), PlateSize, PlateSize);
+            plateRects[n] = plate;
+            int id = IdSpendBase + spendSlot;
+            bool enabled = live && rows[n].CanSpend;
+            bool hovered = enabled && i.Hovered(id, plate);
+            string sprite = !rows[n].CanSpend
+                ? UiSpriteNames.ButtonDisabled
+                : hovered ? UiSpriteNames.ButtonHover : UiSpriteNames.ButtonNormal;
+            if (s.TryGet(sprite, out UiSprite art) || s.TryGet(UiSpriteNames.ButtonNormal, out art))
+            {
+                c.Sprite(art, plate, rows[n].CanSpend ? UiColor.White : new UiColor(150, 150, 150, 255));
+            }
+
+            if (enabled && i.Button(id, plate) && rows[n].Attribute is StatId stat)
+            {
+                a.SpendAttribute(stat);
+            }
+
+            spendSlot++;
+        }
+
         InventoryWindow.DrawCloseButton(c, i, l, s, a, win, InventoryWindow.IdCloseCharacter, live);
 
         InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), "Character", ItemTierStyle.Title);
@@ -49,69 +97,75 @@ public static class CharacterWindow
 
         if (rows.Length == 0)
         {
-            InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, RowY, RowW, RowH), "No data", ItemTierStyle.Dim);
+            InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, HeaderY, RowW, RowH), "No data", ItemTierStyle.Dim);
         }
 
         for (int n = 0; n < count; n++)
         {
-            DrawRow(c, l, win, rows[n], RowY + (n * RowPitch));
+            CharacterSheetRow row = rows[n];
+            if (row.Kind == CharacterSheetRowKind.Attribute)
+            {
+                InventoryWindow.DrawTextCentered(c, plateRects[n], "+", row.CanSpend ? ItemTierStyle.Title : ItemTierStyle.Dim);
+            }
+
+            DrawRow(c, l, win, row, ys[n]);
         }
     }
 
-    private static void DrawRow(IUiCanvas c, in UiLayout l, UiRect win, in CharacterStatRow row, float y)
+    // The y of each row, in window units: header rows tight, then a gap before each attribute group.
+    internal static void LayoutRows(CharacterSheetRow[] rows, int count, Span<float> ys)
     {
-        UiRect box = l.FromUnits(win, RowX, y, RowW, RowH);
+        float y = HeaderY;
+        for (int n = 0; n < count; n++)
+        {
+            CharacterSheetRowKind kind = rows[n].Kind;
+            CharacterSheetRowKind previous = n > 0 ? rows[n - 1].Kind : kind;
+            if (kind == CharacterSheetRowKind.Attribute)
+            {
+                y += previous == CharacterSheetRowKind.Header ? GroupGap : GroupGap - 2f;
+            }
+
+            ys[n] = y;
+            y += kind switch
+            {
+                CharacterSheetRowKind.Attribute => AttributePitch,
+                CharacterSheetRowKind.Derived => DerivedPitch,
+                _ => HeaderPitch
+            };
+        }
+    }
+
+    private static void DrawRow(IUiCanvas c, in UiLayout l, UiRect win, in CharacterSheetRow row, float y)
+    {
+        bool attribute = row.Kind == CharacterSheetRowKind.Attribute;
+        bool derived = row.Kind == CharacterSheetRowKind.Derived;
+        float indent = derived ? 6f : 0f;
+        float width = attribute ? RowW - PlateSize - PlateGap : RowW;
+        UiRect box = l.FromUnits(win, RowX + indent, y, width - indent, RowH);
         float padX = 2f * l.Scale;
         float textY = box.Y + MathF.Floor((box.H - InventoryWindow.BodyHeight(c)) * 0.5f);
+        float inner = box.W - (2f * padX);
+        float gap = MathF.Max(6f, 3f * l.Scale);
+
+        string value = row.Value ?? string.Empty;
+        ReadOnlySpan<char> valueText = value.AsSpan(0, Math.Min(value.Length, 40));
+        valueText = valueText[..PanelText.FitLength(c, valueText, UiTextStyle.Body, inner)];
+        float valueWidth = c.MeasureText(valueText, UiTextStyle.Body);
 
         string label = row.Label ?? string.Empty;
         ReadOnlySpan<char> labelText = label.AsSpan(0, Math.Min(label.Length, 24));
-        float inner = box.W - (2f * padX);
-        float gap = MathF.Max(6f, 3f * l.Scale);
-        float labelWidth = c.MeasureText(labelText, UiTextStyle.Body);
+        labelText = labelText[..PanelText.FitLength(c, labelText, UiTextStyle.Body, MathF.Max(0f, inner - valueWidth - gap))];
 
-        // "10 +2 = 12", or just "12" when there is no bonus or the label would touch the long form.
-        // Built in a stack buffer.
-        Span<char> mem = stackalloc char[64];
-        UiTextBuilder b = new(mem);
-        bool hasBonus = !string.IsNullOrEmpty(row.BonusText);
-        if (hasBonus)
+        UiColor labelColor = attribute ? ItemTierStyle.Title : derived ? ItemTierStyle.Dim : ItemTierStyle.Body;
+        UiColor valueColor = attribute
+            ? (value.Contains('=') ? ItemTierStyle.Bonus : ItemTierStyle.Title)
+            : derived ? ItemTierStyle.Body : ItemTierStyle.Title;
+        if (row.Kind == CharacterSheetRowKind.Header && row.Label == "Points" && value != "0")
         {
-            b.Append(row.BaseText ?? string.Empty);
-            b.Append(" ");
-            b.Append(row.BonusText);
-            b.Append(" = ");
-            b.Append(row.EffectiveText ?? string.Empty);
-            if (labelWidth + gap + c.MeasureText(b.Text, UiTextStyle.Body) > inner)
-            {
-                // Too long beside this label: show the effective value alone.
-                hasBonus = false;
-                b = new UiTextBuilder(mem);
-                b.Append(row.EffectiveText ?? string.Empty);
-            }
-        }
-        else
-        {
-            b.Append(row.EffectiveText ?? string.Empty);
+            valueColor = ItemTierStyle.Rare;
         }
 
-        ReadOnlySpan<char> value = b.Text;
-        value = value[..PanelText.FitLength(c, value, UiTextStyle.Body, inner)];
-        float width = c.MeasureText(value, UiTextStyle.Body);
-
-        // The label gets what the value leaves, with a gap between them.
-        labelText = labelText[..PanelText.FitLength(c, labelText, UiTextStyle.Body, MathF.Max(0f, inner - width - gap))];
-        InventoryWindow.DrawText(c, labelText, new Vector2(box.X + padX, textY), ItemTierStyle.Body);
-        InventoryWindow.DrawText(c, value, new Vector2(box.Right - padX - width, textY), hasBonus ? ItemTierStyle.Bonus : ItemTierStyle.Title);
-
-        if (!string.IsNullOrEmpty(row.Note))
-        {
-            string note = row.Note;
-            InventoryWindow.DrawText(
-                c,
-                note.AsSpan(0, Math.Min(note.Length, 40)),
-                new Vector2(box.X + padX, box.Bottom + l.Scale),
-                ItemTierStyle.Dim);
-        }
+        InventoryWindow.DrawText(c, labelText, new Vector2(box.X + padX, textY), labelColor);
+        InventoryWindow.DrawText(c, valueText, new Vector2(box.Right - padX - valueWidth, textY), valueColor);
     }
 }

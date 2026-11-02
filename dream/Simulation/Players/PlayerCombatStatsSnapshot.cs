@@ -1,9 +1,15 @@
 namespace Dream.Simulation.Players;
 
+// Wire group order: [strength, attackSpeed, vitality, agility, energy, statPoints, mana, maxMana].
 public readonly record struct PlayerCombatStatsSnapshot(
     int Strength,
     float AttackSpeed,
-    int Vitality)
+    int Vitality,
+    int Agility = 0,
+    int Energy = 0,
+    int StatPoints = 0,
+    int Mana = 0,
+    int MaxMana = 0)
 {
     public static PlayerCombatStatsSnapshot From(PlayerCombatStats stats)
     {
@@ -11,7 +17,12 @@ public readonly record struct PlayerCombatStatsSnapshot(
         return new PlayerCombatStatsSnapshot(
             stats.Strength,
             stats.AttackSpeed,
-            stats.Vitality);
+            stats.Vitality,
+            stats.Agility,
+            stats.Energy,
+            stats.StatPoints,
+            stats.Mana,
+            stats.MaxMana);
     }
 
     public PlayerCombatStats ToCombatStats()
@@ -20,7 +31,12 @@ public readonly record struct PlayerCombatStatsSnapshot(
         {
             Strength = Strength,
             AttackSpeed = AttackSpeed,
-            Vitality = Vitality
+            Vitality = Vitality,
+            Agility = Agility,
+            Energy = Energy,
+            StatPoints = StatPoints,
+            Mana = Mana,
+            MaxMana = MaxMana
         };
     }
 }

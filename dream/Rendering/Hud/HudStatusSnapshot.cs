@@ -20,7 +20,19 @@ public readonly record struct HudStatusSnapshot(
     int BaseVitality = 0,
     int Armor = 0,
     bool IsDead = false,
-    int RespawnSeconds = 0)
+    int RespawnSeconds = 0,
+    // Character sheet (stats window): Agility and Energy effective and base, the unspent points, the
+    // mana pool, and what the attributes derive (Defense from Agility, magic damage from Energy).
+    int Agility = 0,
+    int Energy = 0,
+    int BaseAgility = 0,
+    int BaseEnergy = 0,
+    int StatPoints = 0,
+    int Mana = 0,
+    int MaxMana = 0,
+    int Defense = 0,
+    int MagicMinDamage = 0,
+    int MagicMaxDamage = 0)
 {
     public const string DeathTitle = "You died";
     public const string RespawningNow = "Respawning";

@@ -13,7 +13,7 @@ public sealed class CharacterWindowTests : IDisposable
 
     public void Dispose() => _scene.Dispose();
 
-    private static HudStatusSnapshot Status(int baseStrength, int strength, float baseSpeed, float speed, int armor) =>
+    private static HudStatusSnapshot Status(int baseStrength, int strength, float baseSpeed, float speed, int armor, int statPoints = 0) =>
         new(
             CurrentHealth: 50,
             MaxHealth: 100,
@@ -29,12 +29,18 @@ public sealed class CharacterWindowTests : IDisposable
             BaseStrength: baseStrength,
             BaseAttackSpeed: baseSpeed,
             BaseVitality: 7,
-            Armor: armor);
+            Armor: armor,
+            StatPoints: statPoints,
+            Mana: 30,
+            MaxMana: 70,
+            MagicMinDamage: 10,
+            MagicMaxDamage: 20);
 
     private void Fill(HudStatusSnapshot status)
     {
         _scene.View.Status = status;
         _scene.View.StatRows = CharacterPanelModel.BuildStatRows(status);
+        _scene.View.Sheet = CharacterSheetModel.Build(status);
     }
 
     [Fact]
@@ -63,10 +69,17 @@ public sealed class CharacterWindowTests : IDisposable
 
         Assert.True(_scene.Canvas.HasText("Strength"));
         Assert.True(_scene.Canvas.HasText("10 +2 = 12"));
+        Assert.True(_scene.Canvas.HasText("Damage"));
+        Assert.True(_scene.Canvas.HasText("1-2"));
         Assert.True(_scene.Canvas.HasText("Attack Speed"));
-        Assert.True(_scene.Canvas.HasText("1 +0.25 = 1.25"));
+        Assert.True(_scene.Canvas.HasText("1.25/s"));
         Assert.True(_scene.Canvas.HasText("Vitality"));
-        Assert.True(_scene.Canvas.HasText("7"));
+        Assert.True(_scene.Canvas.HasText("Health"));
+        Assert.True(_scene.Canvas.HasText("50/100"));
+        Assert.True(_scene.Canvas.HasText("Mana"));
+        Assert.True(_scene.Canvas.HasText("30/70"));
+        Assert.True(_scene.Canvas.HasText("Magic Damage"));
+        Assert.True(_scene.Canvas.HasText("10-20"));
     }
 
     [Theory]
@@ -83,7 +96,7 @@ public sealed class CharacterWindowTests : IDisposable
         CharacterWindow.Build(canvas, _scene.Input, _scene.View, layout, _scene.Table, _scene.Actions);
 
         CanvasCall label = canvas.Texts.Last(t => t.Text == "Attack Speed");
-        CanvasCall value = canvas.Texts.Last(t => t.Text.EndsWith("1.25", StringComparison.Ordinal));
+        CanvasCall value = canvas.Texts.Last(t => t.Text == "1.25/s");
         float gap = value.TextPos.X - (label.TextPos.X + (label.Text.Length * charWidth));
         Assert.True(gap >= 6f, $"gap {gap} between label and value at char width {charWidth}");
     }
@@ -100,15 +113,14 @@ public sealed class CharacterWindowTests : IDisposable
     }
 
     [Fact]
-    public void Armor_ShowsItsNote()
+    public void Defense_IncludesTheArmorOfTheGear()
     {
         Fill(Status(10, 10, 1f, 1f, 30));
 
         _scene.Frame();
 
-        Assert.True(_scene.Canvas.HasText("Armor"));
-        Assert.True(_scene.Canvas.HasText("0 +30 = 30"));
-        Assert.True(_scene.Canvas.HasText(CharacterPanelModel.ArmorNote));
+        Assert.True(_scene.Canvas.HasText("Defense"));
+        Assert.True(_scene.Canvas.HasText("30"));
     }
 
     [Fact]
@@ -125,6 +137,7 @@ public sealed class CharacterWindowTests : IDisposable
     public void NoStatRows_ShowsNoData()
     {
         _scene.View.StatRows = [];
+        _scene.View.Sheet = [];
 
         _scene.Frame();
 
@@ -134,16 +147,68 @@ public sealed class CharacterWindowTests : IDisposable
     [Fact]
     public void ServerStrings_StayLiteralAndShort()
     {
-        _scene.View.StatRows =
+        _scene.View.Sheet =
         [
-            new CharacterStatRow(CharacterStat.Strength, "100% %s {0} " + new string('x', 200), 1, 0, 1, "%d", "%n", "%s", "100% note")
+            new CharacterSheetRow(CharacterSheetRowKind.Attribute, null, "100% %s {0} " + new string('x', 200), "%d %n = %s", false)
         ];
 
         _scene.Frame();
 
         Assert.True(_scene.Canvas.Texts.Any(t => t.Text.StartsWith("100% %s {0} ", StringComparison.Ordinal) && t.Text.Length <= 24));
         Assert.True(_scene.Canvas.HasText("%d %n = %s"));
-        Assert.True(_scene.Canvas.HasText("100% note"));
+    }
+
+    [Fact]
+    public void Header_ShowsClassLevelExperienceAndPoints()
+    {
+        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 5));
+
+        _scene.Frame();
+
+        Assert.True(_scene.Canvas.HasText("Class"));
+        Assert.True(_scene.Canvas.HasText("Wanderer"));
+        Assert.True(_scene.Canvas.HasText("Level"));
+        Assert.True(_scene.Canvas.HasText("3"));
+        Assert.True(_scene.Canvas.HasText("Experience"));
+        Assert.True(_scene.Canvas.HasText("10/100"));
+        Assert.True(_scene.Canvas.HasText("Points"));
+        Assert.True(_scene.Canvas.HasText("5"));
+    }
+
+    private UiRect PlateOf(int attributeIndex)
+    {
+        // Header rows are 16 u apart from y 38; the first attribute sits 7 u below them, and each
+        // group (an attribute plus its derived rows) follows at a fixed pitch.
+        float[] y = [109f, 109f + 20f + 16f + 5f, 109f + 20f + 16f + 5f + 20f + 32f + 5f, 109f + 20f + 16f + 5f + 20f + 32f + 5f + 20f + 16f + 5f];
+        return _scene.Layout.FromUnits(_scene.Layout.Character, 157f, y[attributeIndex] - 1f, 14f, 14f);
+    }
+
+    [Theory]
+    [InlineData(0, Dream.Simulation.Stats.StatId.Strength)]
+    [InlineData(1, Dream.Simulation.Stats.StatId.Agility)]
+    [InlineData(2, Dream.Simulation.Stats.StatId.Vitality)]
+    [InlineData(3, Dream.Simulation.Stats.StatId.Energy)]
+    public void PlusButton_WithPoints_SpendsOnItsAttribute(int index, Dream.Simulation.Stats.StatId expected)
+    {
+        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 5));
+        _scene.Input.Pointer = InventoryScene.Centre(PlateOf(index));
+        _scene.Input.LeftClick = true;
+
+        _scene.Frame();
+
+        Assert.Equal([expected], _scene.Actions.Spent);
+    }
+
+    [Fact]
+    public void PlusButton_WithoutPoints_DoesNothing()
+    {
+        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 0));
+        _scene.Input.Pointer = InventoryScene.Centre(PlateOf(0));
+        _scene.Input.LeftClick = true;
+
+        _scene.Frame();
+
+        Assert.Empty(_scene.Actions.Spent);
     }
 
     [Fact]

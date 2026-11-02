@@ -545,7 +545,7 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
         // The keyframe of the same frame carries every actor whole.
         ServerSnapshotMessage key = new(Envelope(2, new Dictionary<string, ulong>(), first) with { ActorDelta = keyframe }) { SharedBody = true };
         string keyJson = Encoding.UTF8.GetString(EncodePayload(new TransportJsonCodec(), key));
-        Assert.Contains("[17,255,0,\"session-17\",\"name-17\",40960,8192,122880,0,0,-4096,100,100,1,0,null,[10,2,10],[1,0,1000],0]", keyJson, StringComparison.Ordinal);
+        Assert.Contains("[17,255,0,\"session-17\",\"name-17\",40960,8192,122880,0,0,-4096,100,100,1,0,null,[10,2,10,0,0,0,0,0],[1,0,1000],0]", keyJson, StringComparison.Ordinal);
         output.WriteLine(keyJson);
     }
 
@@ -727,7 +727,7 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
     // ActorSnapshot, so those four arrays grew by about 2.6 KB (measured 25.0 KB) and the budget went
     // from 24 KB to 26 KB. Nothing is allocated per actor beyond the arrays. The delta alone (about
     // 9.5 KB) costs about what a 40-actor snapshot cost to decode as the full list.
-    private const long DeltaDecodeBudgetBytes = 26 * 1024;
+    private const long DeltaDecodeBudgetBytes = 29 * 1024; // protocol 14 widened the combat group
 
     // A mangled frame is a JsonException, never a half-built actor.
     [Theory]
