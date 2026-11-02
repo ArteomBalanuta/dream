@@ -66,6 +66,9 @@ public class FxAtlasAssetTests
         Assert.Equal(Margin, root.GetProperty("margin").GetInt32());
         Assert.True(root.GetProperty("yDown").GetBoolean());
         Assert.Equal("premultiplied", root.GetProperty("alpha").GetString());
+        Assert.Equal(23, root.GetProperty("frames").GetArrayLength());
+        Assert.Equal(23, root.GetProperty("reserved")[0].GetInt32());
+        Assert.Equal(31, root.GetProperty("reserved")[1].GetInt32());
     }
 
     [Fact]
@@ -92,8 +95,16 @@ public class FxAtlasAssetTests
     [InlineData(5)]
     [InlineData(6)]
     [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
+    [InlineData(11)]
     [InlineData(16)]
     [InlineData(17)]
+    [InlineData(18)]
+    [InlineData(19)]
+    [InlineData(20)]
+    [InlineData(21)]
     public void Additive_Frames_Have_Zero_Alpha_And_Visible_Emission(int frame)
     {
         Assert.Equal(0, MaxAlpha(frame));
@@ -101,14 +112,64 @@ public class FxAtlasAssetTests
     }
 
     [Theory]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public void Ember_Frames_Are_Near_Neutral_And_Bright(int frame)
+    {
+        Assert.True(MaxRgb(frame) >= 200, $"frame {frame} peaks at {MaxRgb(frame)}");
+        foreach ((int px, int py) in Pixels(marginOnly: false))
+        {
+            int r = Channel(frame, px, py, 0), g = Channel(frame, px, py, 1), b = Channel(frame, px, py, 2);
+            Assert.True(Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) <= 26, $"frame {frame} ({px},{py}) is tinted");
+        }
+    }
+
+    [Theory]
     [InlineData(8)]
     [InlineData(9)]
     [InlineData(10)]
     [InlineData(11)]
-    public void Dust_Frames_Have_Low_Positive_Alpha(int frame)
+    public void Dust_Frames_Peak_Near_215(int frame)
     {
-        int alpha = MaxAlpha(frame);
-        Assert.InRange(alpha, 1, 128);
+        Assert.InRange(MaxRgb(frame), 190, 240);
+    }
+
+    [Theory]
+    [InlineData(18)]
+    [InlineData(19)]
+    [InlineData(20)]
+    [InlineData(21)]
+    public void Flame_Frames_Stay_Under_245(int frame)
+    {
+        Assert.True(MaxRgb(frame) <= 245, $"frame {frame} peaks at {MaxRgb(frame)}");
+    }
+
+    [Fact]
+    public void Blob_Is_Black_With_Soft_Coverage()
+    {
+        foreach ((int px, int py) in Pixels(marginOnly: false))
+        {
+            for (int channel = 0; channel < 3; channel++)
+            {
+                Assert.Equal(0, Channel(22, px, py, channel));
+            }
+        }
+
+        Assert.True(MaxAlpha(22) >= 200, $"blob alpha peaks at {MaxAlpha(22)}");
+        Assert.Equal(0, Channel(22, Margin, Cell / 2, 3));
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(17)]
+    public void Halo_Frames_Have_No_Clipped_Plateau(int frame)
+    {
+        int max = Pixels(false).Max(p => (int)Channel(frame, p.Px, p.Py, 0));
+        Assert.True(max < 255, $"frame {frame} reaches 255");
+        int near = Pixels(false).Count(p => Channel(frame, p.Px, p.Py, 0) >= max - 3);
+        Assert.True(near <= 16, $"frame {frame} has {near} texels within 3 of its peak {max}");
     }
 
     [Theory]
@@ -120,12 +181,28 @@ public class FxAtlasAssetTests
     {
         Assert.True(MaxAlpha(frame) >= 90, $"frame {frame} alpha peaks at {MaxAlpha(frame)}");
         Assert.True(MaxRgb(frame) <= 90, $"frame {frame} RGB peaks at {MaxRgb(frame)}");
+
+        long rgb = 0, alpha = 0;
+        foreach ((int px, int py) in Pixels(marginOnly: false))
+        {
+            int a = Channel(frame, px, py, 3);
+            if (a == 0)
+            {
+                continue;
+            }
+
+            alpha += a;
+            rgb += Channel(frame, px, py, 0) + Channel(frame, px, py, 1) + Channel(frame, px, py, 2);
+        }
+
+        double lum = rgb / (3.0 * alpha);
+        Assert.InRange(lum, 0.2, 0.4);
     }
 
     [Fact]
     public void Premultiplied_Frames_Never_Exceed_Their_Alpha()
     {
-        for (int frame = 8; frame < 16; frame++)
+        for (int frame = 12; frame < 16; frame++)
         {
             foreach ((int px, int py) in Pixels(marginOnly: false))
             {
@@ -157,7 +234,7 @@ public class FxAtlasAssetTests
     [Fact]
     public void Reserved_Cells_Are_Empty()
     {
-        for (int frame = 18; frame < Columns * Rows; frame++)
+        for (int frame = 23; frame < Columns * Rows; frame++)
         {
             for (int py = 0; py < Cell; py++)
             {

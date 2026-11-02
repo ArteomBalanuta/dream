@@ -19,7 +19,9 @@ PARTICLES = TOOLS.parents[1] / "dream" / "ui" / "particles"
 BANNED = ("ImageFont", "urllib", "requests", "reference/", ".webp", "dream/fonts")
 COLUMNS, ROWS, CELL, MARGIN = 8, 4, 64, 4
 SPARK, EMBER, DUST, ASH, HALO, HALO_CORE = range(0, 4), range(4, 8), range(8, 12), range(12, 16), 16, 17
-RESERVED = range(18, 32)
+FLAME, BLOB = range(18, 22), 22
+ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE, *FLAME)
+RESERVED = range(23, 32)
 
 
 def cell(sheet: np.ndarray, index: int) -> np.ndarray:
@@ -42,30 +44,33 @@ def check_frames(sheet: np.ndarray) -> list[str]:
                 errs.append(f"frame {index}: reserved cell not empty")
             continue
         rgb, a = c[..., :3].astype(int), c[..., 3].astype(int)
-        if not rgb.any():
+        if index != BLOB and not rgb.any():
             errs.append(f"frame {index}: no emission")
         if c[ring].max() > 2:  # no quad edge can show
             errs.append(f"frame {index}: not faded out at the cell edge")
-        if index in (*SPARK, *EMBER, HALO, HALO_CORE) and a.any():
+        if index in ADDITIVE and a.any():
             errs.append(f"frame {index}: A must be 0 (additive)")
-        if index in DUST and not 30 <= a.max() <= 128:
-            errs.append(f"frame {index}: dust A max {a.max()} not low")
+        if index in FLAME and rgb.max() > 245:
+            errs.append(f"frame {index}: flame peak {rgb.max()} too hot")
+        if index in DUST and not 190 <= rgb.max() <= 240:
+            errs.append(f"frame {index}: dust RGB peak {rgb.max()} off target")
+        if index == BLOB and (rgb.any() or a.max() < 200):
+            errs.append(f"frame {index}: blob must be black with A peak >= 200")
         if index in ASH:
             if a.max() < 90:
                 errs.append(f"frame {index}: ash A max {a.max()} too faint")
             lum = rgb.sum(axis=2)[a > 0].mean() / (3 * a[a > 0].mean())
-            if lum > 0.2:
-                errs.append(f"frame {index}: ash RGB not dark ({lum:.2f})")
-        if index in (*DUST, *ASH) and (rgb > a[..., None]).any():
+            if not 0.2 <= lum <= 0.4:
+                errs.append(f"frame {index}: ash RGB luminance {lum:.2f} outside 0.2-0.4")
+        if index in ASH and (rgb > a[..., None]).any():
             errs.append(f"frame {index}: RGB exceeds A (not premultiplied)")
         if index in SPARK and (rgb.max(axis=2) - rgb.min(axis=2)).max() > 26:
             errs.append(f"frame {index}: spark not near-neutral")
         if index in EMBER:
-            tot = rgb.sum(axis=(0, 1))
-            if not (tot[0] > 2 * tot[1] and tot[1] > tot[2]):
-                errs.append(f"frame {index}: ember not dull red {tot}")
-            if rgb[..., 0].max() > 235 or rgb[..., 2].max() > 100:
-                errs.append(f"frame {index}: ember too hot or too white")
+            if (rgb.max(axis=2) - rgb.min(axis=2)).max() > 26:
+                errs.append(f"frame {index}: ember not near-neutral")
+            if rgb.max() < 200:
+                errs.append(f"frame {index}: ember peak {rgb.max()} below 200")
         if index in DUST:
             tot = rgb.sum(axis=(0, 1))
             if abs(int(tot[0]) - int(tot[2])) > 0.2 * tot.max():
@@ -78,13 +83,16 @@ def check_frames(sheet: np.ndarray) -> list[str]:
                     errs.append(f"group starting {group[0]}: duplicate frames")
     halo, core = cell(sheet, HALO)[..., :3].astype(int), cell(sheet, HALO_CORE)[..., :3].astype(int)
     centre = slice(CELL // 2 - 2, CELL // 2 + 2)
-    if halo[centre, centre].max() < 100 or core[centre, centre].max() < 230:
+    if halo[centre, centre].max() < 180 or core[centre, centre].max() < 230:
         errs.append("halo centres too dim")
     if not (core[..., 0] > 20).sum() < (halo[..., 0] > 20).sum():
         errs.append("halo core is not tighter than the halo")
     for name, h in (("halo", halo), ("halo.core", core)):
         if not (h[..., 0] == h[..., 1]).all() or not (h[..., 1] == h[..., 2]).all():
             errs.append(f"{name}: not neutral")
+        peak = int(h.max())
+        if peak >= 255 or (h[..., 0] >= peak - 3).sum() > 16:
+            errs.append(f"{name}: plateau or clipped (peak {peak}, {(h[..., 0] >= peak - 3).sum()} texels near it)")
         row = h[CELL // 2, CELL // 2 :, 0]  # falloff to the right of the centre
         if (np.diff(row) > 1).any():
             errs.append(f"{name}: falloff not monotone")
@@ -113,8 +121,12 @@ def main() -> int:
     expect = {"size": [512, 256], "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "yDown": True, "alpha": "premultiplied", "image": "particles.png"}
     errs += [f"json {k}: {doc.get(k)!r}" for k, v in expect.items() if doc.get(k) != v]
     indices = [f["index"] for f in doc.get("frames", [])]
-    if indices != list(range(18)):
+    if indices != list(range(23)):
         errs.append(f"json frames {indices}")
+    if doc.get("reserved") != [23, 31]:
+        errs.append(f"json reserved {doc.get('reserved')}")
+    if png.stat().st_size > 32 * 1024:
+        errs.append(f"png is {png.stat().st_size} bytes, over 32 KB")
     errs += generator_errors(TOOLS / "gen_particles.py")
     if not (TOOLS / "previews" / "particles.png").exists():
         errs.append("missing preview particles.png")
