@@ -2,6 +2,14 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui;
 
+// What a menu button did, for sound. Rendering never references the audio code: whoever plays sound
+// (GameAudio.EnsureStarted) sets UiInputRouter.Feedback once.
+public enum UiFeedback
+{
+    Hover,
+    Click
+}
+
 // Immediate-mode input for the classic HUD. Panels call Button, Hovered, RightClicked and BeginDrag
 // while they build; the answer comes from this frame's pointer and the hot id the previous frame
 // left (the last widget under the pointer, so a widget built later sits on top). One instance is
@@ -9,6 +17,9 @@ namespace Dream.Rendering.Ui;
 public sealed class UiInputRouter : IUiInput
 {
     public const int NoId = int.MinValue;
+
+    // Called on the render thread when a Button is clicked, and once when the pointer enters a Button.
+    public static Action<UiFeedback>? Feedback { get; set; }
 
     // How far the pointer moves with the button down before a press becomes a drag.
     public const float DragThresholdPixels = 4f;
@@ -30,6 +41,12 @@ public sealed class UiInputRouter : IUiInput
     private int _dragPayload = -1;
     private bool _dragReleased;
     private Vector2 _dropPosition;
+    private int _hoverFeedbackId = NoId;
+
+    // Per-instance override of the static Feedback (tests, a second UI that wants its own sound).
+    public Action<UiFeedback>? LocalFeedback { get; set; }
+
+    private void Notify(UiFeedback feedback) => (LocalFeedback ?? Feedback)?.Invoke(feedback);
 
     public UiPointer Pointer => _pointer;
 
@@ -145,7 +162,23 @@ public sealed class UiInputRouter : IUiInput
     public bool Button(int id, UiRect r)
     {
         Register(id, r);
-        return _leftReleased && !_dragReleased && _pressId == id && _hot == id && !IsSuppressed(id);
+        if (_hot == id && !IsSuppressed(id) && _hoverFeedbackId != id)
+        {
+            _hoverFeedbackId = id;
+            Notify(UiFeedback.Hover);
+        }
+        else if (_hot != id && _hoverFeedbackId == id)
+        {
+            _hoverFeedbackId = NoId;
+        }
+
+        bool clicked = _leftReleased && !_dragReleased && _pressId == id && _hot == id && !IsSuppressed(id);
+        if (clicked)
+        {
+            Notify(UiFeedback.Click);
+        }
+
+        return clicked;
     }
 
     public bool RightClicked(int id, UiRect r)

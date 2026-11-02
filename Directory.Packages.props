@@ -8,6 +8,8 @@
     <PackageVersion Include="ImGui.NET" Version="1.91.6.1" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="9.0.7" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageVersion Include="NAudio.Core" Version="2.2.1" />
+    <PackageVersion Include="NAudio.WinMM" Version="2.2.1" />
     <PackageVersion Include="OpenTK" Version="4.9.4" />
     <PackageVersion Include="OpenTK.Windowing.Desktop" Version="4.9.4" />
     <!-- Pinned above the Microsoft.Data.Sqlite default (2.1.10) to clear GHSA-2m69-gcr7-jv3q in SQLitePCLRaw.lib.e_sqlite3. -->

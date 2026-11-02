@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Client.Audio;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
@@ -57,6 +58,7 @@ public partial class PlayScene
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
                 new PlayerAttributeSpendIntent(attribute)));
+            CurrentGameAudio.Instance.Play(SoundId.StatSpend);
         }
 
         if (request.FloatingCombatText.HasValue)

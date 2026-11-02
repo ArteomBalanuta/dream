@@ -56,6 +56,7 @@ public partial class PlayScene
             && _remoteClient.Options.Port == localServer.BoundPort;
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
+        PlayJumpSoundIfPressed(commandFrame.MoveIntent.JumpPressed);
         _commandTicks.CaptureInput(commandFrame);
         ApplyImmediateLocalLook(commandFrame, allowGameplayInput);
         // Predict with the server's movement values; a local NoclipSpeed the server does not use
@@ -70,6 +71,7 @@ public partial class PlayScene
         if (_tickPrimaryUseTriggered)
         {
             _viewModelController.TriggerPrimaryUse();
+            PlaySwingSound();
         }
 
         ViewModelUpdateResult viewModelUpdateResult =

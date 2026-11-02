@@ -33,6 +33,17 @@ public sealed class DesktopClientConfig
     // HUD scale; 0 is auto (fit the window), other values snap to quarter steps in 1..4.
     public float UiScale { get; set; }
 
+    // Sound on or off, and the 0..1 volume sliders (Dream.Client.Audio.AudioVolumes reads these).
+    public bool AudioEnabled { get; set; } = true;
+
+    public float VolumeMaster { get; set; } = 0.8f;
+
+    public float VolumeSfx { get; set; } = 0.8f;
+
+    public float VolumeMusic { get; set; } = 0.5f;
+
+    public float VolumeUi { get; set; } = 0.7f;
+
     public ClientConnectionOptions ToConnectionOptions()
     {
         Sanitize();
@@ -78,5 +89,14 @@ public sealed class DesktopClientConfig
         FloatingCombatText = FloatingCombatText.Clamp();
         MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
         UiScale = HudOptions.SanitizeUiScale(UiScale);
+        VolumeMaster = SanitizeVolume(VolumeMaster, 0.8f);
+        VolumeSfx = SanitizeVolume(VolumeSfx, 0.8f);
+        VolumeMusic = SanitizeVolume(VolumeMusic, 0.5f);
+        VolumeUi = SanitizeVolume(VolumeUi, 0.7f);
+    }
+
+    private static float SanitizeVolume(float value, float fallback)
+    {
+        return float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : fallback;
     }
 }
