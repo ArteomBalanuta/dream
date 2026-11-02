@@ -5,6 +5,8 @@ using Dream.Rendering.Hud;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
 using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Tests.Support;
 using Dream.Server;
@@ -170,5 +172,42 @@ public sealed class ConsumableUseTests
             Assert.Equal(1, persisted);
             await restarted.DisconnectAsync(client);
         }
+    }
+
+    [Fact]
+    public async Task AManaPotion_RestoresMana_IsConsumed_AndIsRefusedAtFullMana()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
+        string key = WorldSessionRuntime.ResolveJoinPlayerName(Session, "Name " + Session);
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            server.Runtime.InventoryService.TryGrantRolled(key, "consumable.minor-mana", ItemRarity.Common, new ItemRollSeed(1, 2, 3, 4, 5)));
+        PlayerInventorySnapshot inventory = server.Runtime.InventoryService.BuildSnapshot(key);
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ItemUseEffect.RestoreMana, out int anchor, out string kind, out int count));
+        Assert.Equal(1, count);
+        ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition);
+        int amount = definition!.Use!.Amount;
+
+        PlayerCombatant combatant = server.Runtime.Player.Combatant;
+        Assert.True(combatant.MaxMana > 0);
+        Assert.Equal(combatant.MaxMana, combatant.Mana);
+
+        // Full mana: refused, nothing consumed.
+        ServerActionMessage refused = await SendAsync(server, client, new InventoryEquipIntent(anchor));
+        Assert.False(refused.Result.Accepted);
+        Assert.NotNull(server.Runtime.InventoryService.BuildSnapshot(key).ItemAt(anchor));
+
+        // Drain the pool (a wire block carries the current mana), then drink.
+        combatant.ApplyBaseStats((combatant.CaptureStatsSnapshot() with { Mana = 0 }).ToCombatStats());
+        Assert.Equal(0, combatant.Mana);
+        ServerActionMessage accepted = await SendAsync(server, client, new InventoryEquipIntent(anchor, CharacterPanelModel.FirstFitCell));
+        Assert.True(accepted.Result.Accepted, accepted.Result.Rejection?.ToString());
+        PlayerInventorySnapshot after = Assert.IsType<InventoryChangedResult>(accepted.Result.Payload).Inventory;
+        Assert.Null(after.ItemAt(anchor));
+        // Regen may add a point or two across the ticks the action took.
+        Assert.InRange(combatant.Mana, Math.Min(combatant.MaxMana, amount), Math.Min(combatant.MaxMana, amount + 5));
+        await server.DisconnectAsync(client);
     }
 }

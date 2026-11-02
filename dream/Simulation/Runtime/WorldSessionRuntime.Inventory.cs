@@ -126,8 +126,12 @@ public sealed partial class WorldSessionRuntime
 
                 break;
             case ItemUseEffect.RestoreMana:
-                // Glue G1: the integrator replaces this with combatant.RestoreMana(use.Amount) once mana exists.
-                return CreateRejectedActionResult(message, "Inventory use rejected because mana potions are not wired yet.");
+                if (combatant.Mana >= combatant.MaxMana)
+                {
+                    return CreateRejectedActionResult(message, "Inventory use rejected because mana is already full.");
+                }
+
+                break;
             default:
                 return CreateRejectedActionResult(message, "Inventory use rejected because the item has no known effect.");
         }
@@ -138,7 +142,16 @@ public sealed partial class WorldSessionRuntime
             new InventoryDestroyIntent(slotIndex, item.ItemInstanceId));
         if (outcome == InventoryEquipOutcome.Equipped)
         {
-            combatant.Health.Restore(use.Amount);
+            // The pool checks above ran on this thread with nothing in between, so the restore below
+            // lands on a pool that is still alive and not full.
+            if (use.Effect == ItemUseEffect.RestoreMana)
+            {
+                combatant.RestoreMana(use.Amount);
+            }
+            else
+            {
+                combatant.Health.Restore(use.Amount);
+            }
         }
 
         return CompleteInventoryAction(message, player, outcome, "use");
