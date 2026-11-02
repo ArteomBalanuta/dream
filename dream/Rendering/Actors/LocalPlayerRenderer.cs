@@ -7,18 +7,38 @@ using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
 
+// What the local player's animation needs besides its pose: the held items, and the events and
+// movement the play scene knows. The scene sets it once per frame before the actors draw
+// (LocalPlayerRenderer.SetFrameInputs); the Draw signature stays the pose alone.
+public readonly record struct LocalPlayerFrameInputs(
+    PlayerEquipmentVisuals Equipment,
+    bool IsAlive,
+    float HorizontalSpeed,
+    bool Airborne,
+    int AttackSerial,
+    int HitSerial);
+
 public sealed class LocalPlayerRenderer : IDisposable
 {
     private const int LocalActorId = 0;
 
     private readonly Render _render;
     private readonly PlayerAnimationClipTracker _clipTracker = new();
+    private readonly PlayerAnimationStateMachine _machine = new();
+    private readonly PlayerPoseLayers _layers = new();
+    private readonly HeldWeaponRenderer _heldWeapons = new();
+    private LocalPlayerFrameInputs _inputs = new(default, true, 0f, false, 0, 0);
     private AnimatedModelInstanceHandle? _model;
     private bool _disposed;
 
     public LocalPlayerRenderer(Render render)
     {
         _render = render;
+    }
+
+    public void SetFrameInputs(in LocalPlayerFrameInputs inputs)
+    {
+        _inputs = inputs;
     }
 
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime, bool silhouette = false)
@@ -42,8 +62,28 @@ public sealed class LocalPlayerRenderer : IDisposable
             localPlayer.Position,
             localPlayer.Facing,
             localPlayer.IsMoving);
-        _clipTracker.TryApplyClip(LocalActorId, renderState.ClipName, instance);
+
+        // Moving is the command's word (the walk cycle plays in place against a wall); how fast is
+        // the body's, when it reports any.
+        float speed = !localPlayer.IsMoving
+            ? 0f
+            : _inputs.HorizontalSpeed > PlayerAnimationStateMachine.MovingSpeedThreshold
+                ? _inputs.HorizontalSpeed
+                : PlayerAnimationStateMachine.ReferenceWalkSpeed;
+        PlayerEquipmentVisuals equipment = _inputs.Equipment;
+        PlayerAnimationInputs animationInputs = new(
+            _inputs.IsAlive,
+            speed,
+            _inputs.Airborne,
+            _inputs.AttackSerial,
+            _inputs.HitSerial,
+            equipment.MainHand is not null,
+            equipment.OffHand is not null,
+            WeaponMeshCatalog.IsRanged(equipment.MainHand));
+        PlayerAnimationFrame frame = _machine.Update(in animationInputs, deltaTime);
+        _clipTracker.ApplyFrame(LocalActorId, in frame, instance);
         instance.Update(deltaTime);
+        _layers.Update(instance, in frame);
 
         Shader shader = _render.GetShader(renderState.ShaderName);
         if (silhouette)
@@ -55,17 +95,31 @@ public sealed class LocalPlayerRenderer : IDisposable
             shader.Use();
             shader.SetVector3("uActorTintOffset", new Vector3(0.5f, 2f, 6f));
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: true);
-            model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
+            model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
             model.EndRender();
+            _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
             GL.DepthMask(true);
             GL.DepthFunc(DepthFunction.Less);
         }
 
+        bool flashing = frame.HitFlinch > 0.01f;
+        if (flashing)
+        {
+            shader.Use();
+            shader.SetVector3("uActorTintOffset", PlayerPoseLayers.HitFlashOffset(frame.HitFlinch));
+        }
+
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-        model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
+        model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
         model.EndRender();
+        _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
+        if (flashing)
+        {
+            shader.Use();
+            shader.SetVector3("uActorTintOffset", Vector3.Zero);
+        }
     }
 
     // The player's instance handle is a per-instance request, so this renderer owns it: disposing
@@ -76,6 +130,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         _disposed = true;
         AnimatedModelInstanceHandle? model = _model;
         _model = null;
+        _heldWeapons.Dispose();
         model?.Dispose();
     }
 }
