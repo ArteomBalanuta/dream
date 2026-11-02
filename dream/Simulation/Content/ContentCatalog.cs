@@ -23,9 +23,15 @@ public sealed class ContentCatalog
     public const string ItemsFileName = "items.json";
     public const string EnemiesFileName = "enemies.json";
     public const string LootFileName = "loot.json";
+    public const string SpawnsFileName = "spawns.json";
 
     // The visual an enemy without an explicit key draws (the wolf). The wire leaves it out.
     public const string DefaultEnemyVisualKey = "enemy.wolf";
+
+    public const int MaxCamps = 64;
+    public const int MaxCampCount = 8;
+    public const float MaxCampCoordinate = 100_000f;
+    public const float MaxCampRespawnSeconds = 86_400f;
 
     public const int MaxLootDrops = 4;
     public const int MaxEnemyLevel = 1000;
@@ -50,6 +56,7 @@ public sealed class ContentCatalog
         IReadOnlyList<EnemyTemplate> enemyList,
         Dictionary<string, LootTable> lootTables,
         IReadOnlyList<LootTable> lootList,
+        IReadOnlyList<SpawnCamp> camps,
         string digest)
     {
         _items = items;
@@ -61,6 +68,7 @@ public sealed class ContentCatalog
         Enemies = enemyList;
         _lootTables = lootTables;
         LootTables = lootList;
+        Camps = camps;
         ContentDigest = digest;
     }
 
@@ -74,6 +82,10 @@ public sealed class ContentCatalog
     public IReadOnlyList<EnemyTemplate> Enemies { get; }
 
     public IReadOnlyList<LootTable> LootTables { get; }
+
+    // The spawn camps in file order (spawns.json). Empty when the content has none, and the runtime
+    // then falls back to the world-wide wolf population step.
+    public IReadOnlyList<SpawnCamp> Camps { get; }
 
     // The starter kit in seeding order, with the kit version that introduced each kind.
     public IReadOnlyList<StarterKitEntry> StarterKit { get; }
@@ -133,7 +145,10 @@ public sealed class ContentCatalog
         string itemsJson = ReadFile(itemsPath);
         string enemiesJson = ReadFile(enemiesPath);
         string lootJson = ReadFile(Path.Combine(directory, LootFileName));
-        return Load(itemsJson, enemiesJson, lootJson);
+        // spawns.json is optional: a content directory without it has no camps.
+        string spawnsPath = Path.Combine(directory, SpawnsFileName);
+        string spawnsJson = File.Exists(spawnsPath) ? ReadFile(spawnsPath) : EmptySpawnsJson;
+        return Load(itemsJson, enemiesJson, lootJson, spawnsJson);
     }
 
     // A catalog with no loot tables (fixtures that predate loot.json).
@@ -142,8 +157,14 @@ public sealed class ContentCatalog
 
     private const string EmptyLootJson = "{\"version\":1,\"tables\":[]}";
 
-    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson)
+    private const string EmptySpawnsJson = "{\"version\":1,\"camps\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson) =>
+        Load(itemsJson, enemiesJson, lootJson, EmptySpawnsJson);
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson)
     {
+        ArgumentNullException.ThrowIfNull(spawnsJson);
         ArgumentNullException.ThrowIfNull(itemsJson);
         ArgumentNullException.ThrowIfNull(enemiesJson);
         ArgumentNullException.ThrowIfNull(lootJson);
@@ -151,7 +172,8 @@ public sealed class ContentCatalog
         ParsedItems items = ParseItems(itemsJson);
         ParsedLoot loot = ParseLoot(lootJson, items);
         ParsedEnemies enemies = ParseEnemies(enemiesJson, loot);
-        string digest = ComputeDigest(items, enemies, loot);
+        List<SpawnCamp> camps = ParseSpawns(spawnsJson, enemies);
+        string digest = ComputeDigest(items, enemies, loot, camps);
         return new ContentCatalog(
             items.ByKey,
             items.List,
@@ -162,6 +184,7 @@ public sealed class ContentCatalog
             enemies.List,
             loot.ByKey,
             loot.List,
+            camps,
             digest);
     }
 
@@ -600,6 +623,74 @@ public sealed class ContentCatalog
         };
     }
 
+    // ---- spawn camps ----
+
+    private static List<SpawnCamp> ParseSpawns(string json, ParsedEnemies enemies)
+    {
+        using JsonDocument document = ParseDocument(SpawnsFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(SpawnsFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(SpawnsFileName, "$", root, ["version", "camps"]);
+        _ = ReadInt(SpawnsFileName, "$.version", properties["version"], 1, 1);
+
+        List<SpawnCamp> list = [];
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        JsonElement campsElement = properties["camps"];
+        ExpectArray(SpawnsFileName, "$.camps", campsElement);
+        int index = 0;
+        foreach (JsonElement campElement in campsElement.EnumerateArray())
+        {
+            string path = $"$.camps[{index}]";
+            if (index >= MaxCamps)
+            {
+                throw Fail(SpawnsFileName, "$.camps", $"more than {MaxCamps} camps");
+            }
+
+            ExpectObject(SpawnsFileName, path, campElement);
+            Dictionary<string, JsonElement> camp = ReadProperties(
+                SpawnsFileName,
+                path,
+                campElement,
+                ["key", "template", "x", "z", "count", "respawnSeconds"],
+                optional: ["night"]);
+            string key = ReadKey(SpawnsFileName, $"{path}.key", camp["key"]);
+            string template = ReadKey(SpawnsFileName, $"{path}.template", camp["template"]);
+            if (!enemies.ByKey.TryGetValue(template, out EnemyTemplate? known))
+            {
+                throw Fail(SpawnsFileName, $"{path}.template", $"references missing enemy '{Truncate(template)}'");
+            }
+
+            bool night = false;
+            if (camp.TryGetValue("night", out JsonElement nightElement))
+            {
+                if (nightElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                {
+                    throw Fail(SpawnsFileName, $"{path}.night", "expected true or false");
+                }
+
+                night = nightElement.GetBoolean();
+            }
+
+            SpawnCamp parsed = new(
+                key,
+                known.Key,
+                ReadFloat(SpawnsFileName, $"{path}.x", camp["x"], 0f, MaxCampCoordinate),
+                ReadFloat(SpawnsFileName, $"{path}.z", camp["z"], 0f, MaxCampCoordinate),
+                ReadInt(SpawnsFileName, $"{path}.count", camp["count"], 1, MaxCampCount),
+                ReadFloat(SpawnsFileName, $"{path}.respawnSeconds", camp["respawnSeconds"], 0.1f, MaxCampRespawnSeconds),
+                night);
+            if (!keys.Add(parsed.Key))
+            {
+                throw Fail(SpawnsFileName, $"{path}.key", $"duplicate camp key '{parsed.Key}'");
+            }
+
+            list.Add(parsed);
+            index++;
+        }
+
+        return list;
+    }
+
     // ---- loot ----
 
     private sealed record ParsedLoot(Dictionary<string, LootTable> ByKey, List<LootTable> List);
@@ -706,7 +797,7 @@ public sealed class ContentCatalog
 
     // ---- digest ----
 
-    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot)
+    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
@@ -782,6 +873,21 @@ public sealed class ContentCatalog
             {
                 text.Append("loot|");
                 AppendField(text, entry.ItemKind).Append('|').Append(entry.Weight.ToString(c)).Append('\n');
+            }
+        }
+
+        // Only a catalog with camps adds a section, so content without camps keeps its digest.
+        if (camps.Count > 0)
+        {
+            text.Append("spawns.v1\n");
+            foreach (SpawnCamp camp in camps)
+            {
+                text.Append("camp|");
+                AppendField(text, camp.Key).Append('|');
+                AppendField(text, camp.Template).Append('|')
+                    .Append(camp.X.ToString("R", c)).Append('|').Append(camp.Z.ToString("R", c)).Append('|')
+                    .Append(camp.Count.ToString(c)).Append('|').Append(camp.RespawnSeconds.ToString("R", c)).Append('|')
+                    .Append(camp.Night ? "night" : "any").Append('\n');
             }
         }
 

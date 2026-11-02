@@ -27,6 +27,33 @@ public static class WolfSpawnPolicy
         new(0f, -2f)
     ];
 
+    // The members of a camp with more than one enemy stand on a ring around its centre, one slot each
+    // (slot modulo the table). A single-member camp stands on its centre.
+    private static readonly Vector2[] CampSlotOffsets =
+    [
+        new(1.5f, 0f),
+        new(-1.5f, 0f),
+        new(0f, 1.5f),
+        new(0f, -1.5f),
+        new(1.1f, 1.1f),
+        new(-1.1f, 1.1f),
+        new(1.1f, -1.1f),
+        new(-1.1f, -1.1f)
+    ];
+
+    // Where member slot of a camp stands: its centre (x, z) plus the slot's ring offset, on the floor,
+    // clamped inside the map like the wolf spawns. Pure, so every server picks the same position.
+    public static Vector3 ResolveCampSpawn(float x, float z, int slot, int campCount, int width, int depth)
+    {
+        Vector2 offset = campCount > 1
+            ? CampSlotOffsets[((slot % CampSlotOffsets.Length) + CampSlotOffsets.Length) % CampSlotOffsets.Length]
+            : Vector2.Zero;
+        return new Vector3(
+            ClampAxis(x + offset.X, width),
+            FloorSurfaceY,
+            ClampAxis(z + offset.Y, depth));
+    }
+
     public static Vector3 ResolveInitialSpawn(int width, int depth)
     {
         return new Vector3(

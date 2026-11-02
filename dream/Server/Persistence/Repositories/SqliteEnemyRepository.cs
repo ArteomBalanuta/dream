@@ -35,7 +35,8 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             attack_speed,
             level,
             created_utc,
-            updated_utc
+            updated_utc,
+            camp_key
         FROM enemy_instances
         WHERE world_id = $worldId
         ORDER BY object_id;
@@ -63,7 +64,8 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             attack_speed,
             level,
             created_utc,
-            updated_utc
+            updated_utc,
+            camp_key
         )
         VALUES (
             $worldId,
@@ -86,7 +88,8 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             $attackSpeed,
             $level,
             $createdUtc,
-            $updatedUtc
+            $updatedUtc,
+            $campKey
         )
         ON CONFLICT(world_id, object_id) DO UPDATE SET
             enemy_kind = excluded.enemy_kind,
@@ -106,6 +109,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             movement_speed = excluded.movement_speed,
             attack_speed = excluded.attack_speed,
             level = excluded.level,
+            camp_key = excluded.camp_key,
             updated_utc = excluded.updated_utc;
         """;
 
@@ -130,7 +134,8 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
                 AttackSpeed: reader.GetFloat(16),
                 Level: reader.GetInt32(17)),
             reader.GetUtc(18),
-            reader.GetUtc(19)));
+            reader.GetUtc(19),
+            reader.IsDBNull(20) ? null : reader.GetString(20)));
 
     // created_utc keeps enemy.CreatedUtc (UtcNow when unset); updated_utc is the write time.
     public void SaveEnemyInstance(PersistedEnemyInstance enemy) =>
@@ -152,6 +157,7 @@ public sealed partial class SqliteEnemyRepository(IWorldStore store, WorldId wor
             command.BindInt64("$level", e.Stats.Level);
             command.BindUtc("$createdUtc", e.CreatedUtc == default ? DateTime.UtcNow : e.CreatedUtc);
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
+            command.BindNullableText("$campKey", e.CampKey);
         });
 
     public void DeleteEnemyInstance(ObjectId objectId) =>

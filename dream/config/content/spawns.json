@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "camps": [
+    { "key": "north-east-wolves", "template": "Wolf", "x": 42.5, "z": 8.5, "count": 2, "respawnSeconds": 90 },
+    { "key": "south-west-wolves", "template": "Wolf", "x": 8.5, "z": 40.5, "count": 2, "respawnSeconds": 90 },
+    { "key": "south-east-dire-wolf", "template": "DireWolf", "x": 44.5, "z": 44.5, "count": 1, "respawnSeconds": 180 },
+    { "key": "moonlit-dire-wolves", "template": "DireWolf", "x": 40.5, "z": 30.5, "count": 2, "respawnSeconds": 120, "night": true }
+  ]
+}

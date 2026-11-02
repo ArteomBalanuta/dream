@@ -64,7 +64,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         command.CommandText = "PRAGMA foreign_key_check;";
         using SqliteDataReader reader = command.ExecuteReader();
         Assert.False(reader.Read(), "foreign_key_check must be clean");
-        Assert.Equal(10L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
         string backup = Assert.Single(database.Backups());
-        Assert.Contains("v0009-to-v0010", backup, StringComparison.Ordinal);
+        Assert.Contains("v0009-to-v0011", backup, StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -194,7 +194,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
 
-        Assert.Contains("v0006-to-v0010", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Contains("v0006-to-v0011", Assert.Single(database.Backups()), StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -214,7 +214,8 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         }
 
         SqliteConnection.ClearAllPools();
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        // Stops at 0010: the schema is compared with the v9 one (0011 adds a column).
+        SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(10));
 
         Assert.Equal(new SchemaMigrationResult(9, 10, result.BackupPath), result);
         SqliteConnection.ClearAllPools();
@@ -252,6 +253,6 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Empty(database.Backups());
-        Assert.Equal(10L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 }
