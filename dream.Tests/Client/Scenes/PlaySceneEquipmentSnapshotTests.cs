@@ -221,7 +221,7 @@ public sealed class PlaySceneEquipmentSnapshotTests
     {
         TransportJsonCodec codec = new();
         InventoryItemSnapshot item = new(
-            1, "gear.iron-blade", "Iron Blade", "held.tool.blade", 1, "d", [],
+            1, "gear.iron-blade", "Iron Blade", "held.weapon.sword", 1, "d", [],
             Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.Armor, StatOp.Flat, 4f)],
             EquipSlots: 1, Rarity: ItemRarity.Rare, IsRolled: true);
         ServerActionMessage message = new(new AuthoritativeActionResult(
