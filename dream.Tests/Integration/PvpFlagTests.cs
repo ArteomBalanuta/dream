@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
 using Dream.Simulation.Players;
+using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Tests.Support;
 
@@ -110,6 +111,40 @@ public sealed class PvpFlagTests
 
         Assert.Equal(gold, rig.Gold(rig.A));
         Assert.Equal(experience, attacker.Experience);
+    }
+
+    [Fact]
+    public async Task PvpOn_AWallBetweenTheAttackerAndThePlayer_BlocksThePrimaryAttack()
+    {
+        using MigrationTestDatabase db = new();
+        await using M4BRig rig = await FaceOffAsync(db, pvp: true);
+        PlayerCombatant victim = rig.Combatant(rig.B);
+        victim.Health.SetAuthoritativeState(10_000, 10_000);
+        int full = victim.Health.CurrentHealth;
+        int y = (int)MathF.Floor(rig.Target(rig.A).EyePosition.Y);
+
+        // Control: with nothing in between, the victim two metres ahead is hit.
+        Assert.Equal(victim.Actor.Id, Assert.IsType<CombatResolutionResult>((await StrikeAsync(rig)).Payload).TargetActorId);
+        int afterControl = victim.Health.CurrentHealth;
+        Assert.True(afterControl < full);
+
+        // The victim steps back to 3.4 m; a static wall, three cells high, stands on the ray 2.5 m ahead of A.
+        // The ray runs from the eye (about 1.85) to the body centre (about 2.7), so it crosses the wall at
+        // the cell above eye height; the cells at and below it keep the test independent of the exact heights.
+        await rig.PlaceAsync(rig.B, new Vector3(20.5f, 1.5f, 23.4f));
+        rig.Player(rig.B).ProtectedThroughTick = 0;
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            // A cell below the eye may already be solid terrain, so only the eye-height cell must be added.
+            Cube? placed = rig.Runtime.Map.TryAddCube(new Vector3(20.5f, y + dy + 0.5f, 22.5f), isStatic: true, withPhysics: false);
+            Assert.True(placed != null || dy != 0);
+        }
+        await rig.StepAsync(100);
+
+        AuthoritativeActionResult strike = await StrikeAsync(rig);
+
+        Assert.Equal(afterControl, victim.Health.CurrentHealth);
+        Assert.NotEqual(victim.Actor.Id, (strike.Payload as CombatResolutionResult)?.TargetActorId);
     }
 
     [Fact]

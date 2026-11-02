@@ -185,6 +185,13 @@ internal sealed partial class PlayerInventoryService
             return InventoryEquipOutcome.StillLoading;
         }
 
+        // A failed write leaves the rows unreliable: refuse before anything is applied, so the use
+        // neither restores, starts the cooldown nor removes the potion.
+        if (HasSeenFailedWrite(playerName))
+        {
+            return InventoryEquipOutcome.WriteFailed;
+        }
+
         if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
             || !TryGetItem(slots, slotIndex, out PersistedItemInstance item))
         {
@@ -226,7 +233,7 @@ internal sealed partial class PlayerInventoryService
             return InventoryEquipOutcome.Throttled;
         }
 
-        RemoveItem(playerName, _slotsByPlayer[playerName], itemInstanceId);
+        RemoveItem(playerName, _slotsByPlayer[playerName], itemInstanceId, held: true);
         return InventoryEquipOutcome.Equipped;
     }
 }

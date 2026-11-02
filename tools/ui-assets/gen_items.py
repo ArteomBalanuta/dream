@@ -1181,6 +1181,34 @@ def icon_cape_navy(s):
 icon_cape_navy.top = 3.0
 
 
+def potion_flask(s, deep: str, mid: str, glow: str):
+    """Round-bellied vial of dark glass and tinted liquid, held by black-iron straps, a seated cork under a wax seal."""
+    liquid = lambda x, y: col(deep) + (col(mid) - col(deep)) * np.clip(1 - np.hypot(x - 8.6, (y - 12.6) * 0.9) / 6.5, 0, 1)[..., None]  # noqa: E731
+    vessel = dict(c=deep, metal=0.15, gloss=170, spec=1.8, mott=0.03, tint=0.25, emis=0.22)
+    # neck and lip first, the bulb overlaps the neck's foot
+    s.poly([(8.1, 3.6), (11.9, 3.6), (12.2, 9.0), (7.8, 9.0)], vessel, bevel=1.7, prof="round", slope=0.6, paint=liquid, thick=(0.3, 0.4))
+    s.ellipse(10, 13.6, 6.8, 6.4, vessel, bevel=5.6, prof="round", slope=0.75, paint=liquid, thick=(0.4, 0.5))
+    # a cold glint on the upper left shoulder of the glass
+    s.poly(ell(7.2, 11.4, 1.0, 2.1, 28), dict(c=glow, metal=0, gloss=20, spec=0, mott=0, tint=0, emis=0.9), prof="flat", cast=0, alpha=0.8)
+    # iron straps round the belly, riveted
+    s.stroke(cr([(3.5, 14.6), (10, 16.6), (16.5, 14.6)], 6), 1.2, IRON, cast=0.6)
+    s.rivets([(4.6, 14.9), (10, 16.4), (15.4, 14.9)], 0.45, DARK_STEEL)
+    # collar
+    s.poly([(7.2, 3.4), (12.8, 3.4), (13.0, 5.4), (7.0, 5.4)], IRON, bevel=0.8, prof="chamfer", slope=0.9, thick=(0.25, 0.3))
+    s.groove([(7.2, 4.4), (12.8, 4.4)], w=0.3, depth=0.4)
+    # cork and wax seal
+    s.poly([(8.0, 0.8), (12.0, 0.8), (12.3, 3.6), (7.7, 3.6)], M(DARK_WOOD, c="#5A3A22", mott=0.5), bevel=1.2, prof="pillow", slope=0.7, thick=(0.25, 0.3))
+    s.ellipse(10, 2.1, 1.5, 1.2, M(BLACK, c="#4A0C0C", metal=0.2, gloss=120, spec=1.0), bevel=0.6, cast=0.3)
+
+
+def icon_potion_health(s):
+    potion_flask(s, "#40080E", "#8E1C28", "#E0B8B8")
+
+
+def icon_potion_mana(s):
+    potion_flask(s, "#081640", "#224A94", "#B8CCE8")
+
+
 # registry -----------------------------------------------------------------------------
 
 
@@ -1207,6 +1235,8 @@ ICONS: dict = {
     "item.tool.survey-lantern": (1, 2, icon_survey_lantern),
     "item.gear.ward-lantern": (1, 2, icon_ward_lantern),
     "item.tool.torch": (1, 2, icon_torch),
+    "item.potion.health": (1, 1, icon_potion_health),
+    "item.potion.mana": (1, 1, icon_potion_mana),
     "item.gear.leather-cap": (2, 2, icon_leather_cap),
     "item.gear.leather-vest": (2, 2, icon_leather_vest),
     "item.armor.bone": (2, 2, icon_armor_bone),

@@ -669,8 +669,9 @@ internal sealed partial class PlayerInventoryService
 
     // Removes every row of the player that holds the item (the repository's destroy deletes them all),
     // and the item row itself unless another loaded inventory still references it, then drains the
-    // held-back rows into the freed cells. Shared by TryDestroy and TryConsume.
-    private void RemoveItem(string playerName, Dictionary<int, long> slots, long itemInstanceId)
+    // held-back rows into the freed cells. Shared by TryDestroy and TryConsume (held: the consume closure,
+    // which throws on a phantom item like the vendor sale does).
+    private void RemoveItem(string playerName, Dictionary<int, long> slots, long itemInstanceId, bool held = false)
     {
         // Every row of the player that holds the item goes (the repository's destroy deletes them all).
         List<int> rows = [];
@@ -694,7 +695,12 @@ internal sealed partial class PlayerInventoryService
 
         SlotChanges changes = new();
         DrainHeldBack(slots, changes);
-        QueueChanges(playerName, changes, world => world.DestroyInventoryItem(playerName, itemInstanceId));
+        QueueChanges(
+            playerName,
+            changes,
+            held
+                ? world => world.DestroyHeldInventoryItem(playerName, itemInstanceId)
+                : world => world.DestroyInventoryItem(playerName, itemInstanceId));
         RefreshEquippedSummary(playerName);
     }
 

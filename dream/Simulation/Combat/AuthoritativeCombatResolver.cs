@@ -187,7 +187,8 @@ internal sealed class AuthoritativeCombatResolver
                 intent.RayOrigin,
                 intent.RayDirection,
                 CombatUseResolver.DefaultHitRange);
-            if (player.HasValue)
+            // A wall between the ray origin and the player's body centre blocks the hit, as for bolts.
+            if (player.HasValue && !IsBlockedByWall(_map(), intent.RayOrigin, player.Value.GetWorldAnchor()))
             {
                 return ResolvePlayerHit(message, combatant, tick, player.Value, 100);
             }
@@ -217,6 +218,7 @@ internal sealed class AuthoritativeCombatResolver
         }
 
         // Build protection: nothing is damaged, repaired or written for a cube that is someone else's.
+        record = _host.RepairCubeRecord(record);
         if (!_host.CanDamageCube(message.SessionId, record))
         {
             return CreateRejectedResult(message, tick, "That belongs to someone else.");

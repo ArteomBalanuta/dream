@@ -208,6 +208,39 @@ public sealed class ConsumableLoopbackTests
     }
 
     [Fact]
+    public async Task AfterAFailedWrite_APotionIsRefused_AndRestoresNothing_StartsNoCooldown_AndIsNotRemoved()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        await M4AKit.BuyAsync(server, a, HealthPotion, a);
+        InventorySlotSnapshot potion = M4AKit.BagKind(a, HealthPotion).Single();
+        M4AKit.Flush(server);
+
+        PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
+        int max = combatant.Health.MaxHealth;
+        combatant.Health.SetAuthoritativeState(max - 80, max);
+
+        // Any wallet write now aborts: the next gold change is a failed write for this player.
+        db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
+        long failedBefore = server.Runtime.PersistenceWrites!.FailedWrites;
+        Assert.True(server.Runtime.InventoryService.TryAddGold(M4AKit.KeyOf(SessionA), 5));
+        Assert.True(server.Runtime.PersistenceWrites.Flush(TimeSpan.FromSeconds(30)));
+        Assert.Equal(failedBefore + 1, server.Runtime.PersistenceWrites.FailedWrites);
+
+        ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(potion.SlotIndex, potion.Item!.Value.ItemInstanceId), a);
+
+        Assert.False(used.Result.Accepted);
+        Assert.Contains("save failed", used.Result.Rejection!.Reason, StringComparison.Ordinal);
+        Assert.Equal(max - 80, combatant.Health.CurrentHealth);
+        Assert.Single(M4AKit.BagKind(a, HealthPotion));
+        Assert.True(server.Runtime.Sessions.TryGet(new PlayerSessionId(SessionA), out ConnectedPlayer? player));
+        Assert.True(player!.Cooldowns.IsReady(HealthPotion, server.Runtime.CurrentServerTick));
+        db.ExecuteScript("DROP TRIGGER fail_wallet;");
+    }
+
+    [Fact]
     public async Task APotionAtFullVitals_IsRefused_AndSpendsNothing_AndAManaPotionRestoresManaAndReachesTheOwnerAsVitals()
     {
         using MigrationTestDatabase db = new();

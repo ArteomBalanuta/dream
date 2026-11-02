@@ -93,6 +93,29 @@ public sealed class BuildProtectionTests
     }
 
     [Fact]
+    public async Task AStranger_IsRefused_EvenWhenTheRegistryLostTheOwner_BecauseTheRecordIsRepairedBeforeTheGate()
+    {
+        using MigrationTestDatabase db = new();
+        await using M4BRig rig = await M4BRig.StartAsync(db);
+        (int X, int Y, int Z) cell = await PlaceCubeAsync(rig);
+        WorldObjectRecord record = RecordAt(rig, cell);
+        int full = record.Health.MaxHealth;
+        rig.Flush();
+
+        // The registry link is lost: a fresh record with a new identity and no owner replaces the real one.
+        Cube cube = rig.Runtime.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z)!;
+        WorldObjectRecord stripped = Registry(rig.Runtime).ReplaceCubeRecordIdentity(
+            cube, rig.Runtime.Map, record.Actor.Id + 1000, full, full, ownerPlayerName: null);
+        Assert.Null(stripped.OwnerPlayerName);
+        await StandBeforeTheCubeAsync(rig);
+
+        M4BRig.AssertRejected(await HitAsync(rig, rig.B), StrangerRefusal);
+
+        Assert.Equal(full, RecordAt(rig, cell).Health.CurrentHealth);
+        Assert.Equal(full, StoredHealth(rig, db));
+    }
+
+    [Fact]
     public async Task ACubeWithNoOwner_CanBeDamagedByAnyone()
     {
         using MigrationTestDatabase db = new();

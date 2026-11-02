@@ -25,7 +25,7 @@ THIRD_PARTY_OK = {"numpy", "PIL", "uiart", "forge"}
 STDLIB_OK = {"__future__", "json", "math", "pathlib", "sys"}
 
 EXPECTED = {
-    (1, 1): "item.relic.disc item.gear.iron-band item.gem.amber item.gear.ward-pendant",
+    (1, 1): "item.relic.disc item.gear.iron-band item.gem.amber item.gear.ward-pendant item.potion.health item.potion.mana",
     (1, 2): "item.feather.azure item.tool.survey-lantern item.gear.ward-lantern item.tool.torch",
     (2, 2): "item.gear.leather-cap item.gear.leather-vest item.armor.bone item.helm.gilded item.armor.gilded "
             "item.gear.plated-leggings item.gear.iron-gauntlets item.gear.iron-boots item.gear.ember-wisp",
