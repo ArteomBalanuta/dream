@@ -41,7 +41,7 @@ public static class ServerBootstrap
 
     // "1" lets clients use noclip, freeze and the stat sliders on the dedicated server. Off by default;
     // the integrated server turns it on itself.
-    public const string DevCommandsEnvironmentVariable = "DREAM_DEV_COMMANDS";
+    public const string DevCommandsEnvironmentVariable = DevCommandsOptions.EnvironmentVariable;
 
     // "1" lets players damage each other (M4). Off by default: with it off no player is ever a target.
     // One server process hosts one world, so this is per world in practice.

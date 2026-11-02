@@ -38,38 +38,8 @@ internal static class M4AKit
         return server;
     }
 
-    // Joins a scene. Until workstream C routes ServerPlayerVitals in PlayScene.ApplyReplicatedMessage, the
-    // scene's protocol router has no handler for it and throws; the scene gets a router that keeps the
-    // message (HeadlessPlayScene.Applied records it either way). Harmless once C handles it early.
-    public static async Task<HeadlessPlayScene> JoinAsync(WireLoopbackServer server, string sessionId)
-    {
-        HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(server, sessionId, pumpJoin: false);
-        System.Reflection.FieldInfo field = typeof(Dream.Client.Scenes.PlayScene).GetField(
-            "_clientProtocol",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        field.SetValue(client.Scene, new ClientProtocolSession(new ProtocolRouter(
-            Array.Empty<IServerMessageHandler>(),
-            [
-                new ServerHelloMessageHandler(),
-                new JoinAcceptedMessageHandler(),
-                new JoinRejectedMessageHandler(),
-                new ServerSnapshotMessageHandler(),
-                new ServerActionMessageHandler(),
-                new InventoryPushMessageHandler(),
-                new KeepVitalsHandler(),
-            ])));
-        await client.PumpUntilAsync(c => c.Applied.Any(message => message is JoinAcceptedMessage), "the join");
-        return client;
-    }
-
-    private sealed class KeepVitalsHandler : IClientMessageHandler
-    {
-        public string MessageKind => ServerPlayerVitals.Kind;
-
-        public void Handle(ClientRoutingContext context, IServerToClientMessage message)
-        {
-        }
-    }
+    public static Task<HeadlessPlayScene> JoinAsync(WireLoopbackServer server, string sessionId) =>
+        HeadlessPlayScene.JoinAsync(server, sessionId);
 
     public static IAuthoritativePlayerTarget Target(WireLoopbackServer server, string session) =>
         WaveIRuntimeKit.Target(server.Runtime, session);

@@ -39,7 +39,7 @@ public partial class PlayScene
             && LoopbackHost.IsLoopback(remoteClient.Options.Host)
             && remoteClient.Options.Port == localServer.BoundPort;
         _commandInputFilter.AllowDevToggles = onIntegrated
-            || Environment.GetEnvironmentVariable(Dream.Server.ServerBootstrap.DevCommandsEnvironmentVariable) == "1";
+            || Environment.GetEnvironmentVariable(DevCommandsOptions.EnvironmentVariable) == "1";
         // A send stalled past the server's repeat window makes the prediction ticks idle, as the
         // server does (ClientCommandTickStream); so does an ack lag past the round trip (a network stall).
         _commandTicks.ObserveSendBacklog(() => _remoteClient.IsConnected ? _remoteClient.PendingCommandCount : 0);
