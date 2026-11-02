@@ -94,6 +94,9 @@ public sealed class HudView
     // The vendor window's state (M3); null or closed means no vendor window.
     public VendorHudState? Vendor { get; set; }
 
+    // The quickbar's state (M4); null draws the status bar exactly as before the quickbar.
+    public QuickbarHudState? Quickbar { get; set; }
+
     public bool InventoryOpen { get; set; }
 
     // Gem animation, set once a frame by ClassicHudSurface.Draw (from a frame time capped at 0.1 s) and

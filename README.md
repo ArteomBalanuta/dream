@@ -53,8 +53,9 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - Mouse movement: look around
 - `Space`: jump
 - `C`: toggle first-person / third-person camera
-- `1`: select building mode
-- `2`: select combat mode
+- `B`: select building mode
+- `G`: select combat mode
+- `1` to `6`: use the quickbar slot (a skill or a consumable); while the inventory is open, click a quickbar tile to cycle what it holds
 - Left mouse button: perform the active mode's primary action
 - `V`: toggle the inventory and character windows (drag items between bag and slots, right-click for the item menu, hover for stats)
 - `0`: toggle noclip/fly mode

@@ -111,6 +111,11 @@ public partial class PlayScene
         // M3: a clicked ground or NPC label, and the vendor window's picks (PlayScene.Economy.cs).
         ApplyEconomyRequest(in request);
 
+        if (request.QuickbarCycleSlot is int quickbarSlot)
+        {
+            ApplyQuickbarCycle(quickbarSlot);
+        }
+
         if (request.BuildMaterial is BuildMaterialChoice buildMaterial)
         {
             // The server keeps the pick per session and places it from the next build on; the HUD

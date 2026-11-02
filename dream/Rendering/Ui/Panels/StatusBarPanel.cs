@@ -8,10 +8,12 @@ namespace Dream.Rendering.Ui.Panels;
 // The bottom bar: left, centre and right groups on the three base sprites, the tiled filler between
 // them, then the dragons last. Positions are the art's own layout in units (u), read from the
 // generator: a rect given in bar units x is group-relative x minus the group's start (0, 199, 441).
-// Real data only: HP gem fill, EXP trough and level, mode, coordinates, satchel. Everything the game
-// has no system for (the two gauges, the stone slabs, Q/W/E, banner and lens) is drawn as an
-// empty art socket with no number, no key letter and no input. The one exception is the MP gem, see
-// ManaGemFill.
+// Real data only: HP gem fill, EXP trough and level, mode, coordinates, satchel. The six sockets of the
+// centre group (Q, W, E, the skill tile, banner and lens) are the quickbar's tiles: QuickbarPanel draws
+// a bound entry over each and reports a click while the inventory is open. An empty slot, and a bar that
+// was never given a state, leave the socket as art. What the game has no system for (the two gauges, the
+// stone slabs) is drawn as an empty art socket with no number, no key letter and no input. The MP gem
+// follows the server's mana once it has sent any, and ManaGemFill until then.
 //
 // The gems are liquid: the panel hands the canvas the eased level the surface computed (HudView
 // HealthLevel and ManaLevel) and the canvas draws the stone in its Gem mode, one quad on the Hud page.
@@ -22,9 +24,10 @@ public static class StatusBarPanel
 {
     public const int SatchelButtonId = 0x5B01;
 
-    // How full the MP gem is drawn. A visual choice, not data: the game has no mana system, so there is
-    // no value to show and no number is ever drawn on this gem. The stone is drawn full and lit so it
-    // does not read as a dead black socket next to the HP gem. 0 draws it empty again.
+    // How full the MP gem is drawn while no mana is known (HudStatusSnapshot.MaxMana is 0: the menus, and
+    // the first moments of a session before the server's first vitals). A visual choice, not data. The
+    // stone is drawn full and lit so it does not read as a dead black socket next to the HP gem. 0 draws
+    // it empty again.
     public const float ManaGemFill = 1f;
 
     private const float CentreStart = UiLayout.LeftGroupUnits;
@@ -93,11 +96,13 @@ public static class StatusBarPanel
         // gem and dragons are under them. A number the art has no glyph for falls back to text.
         bool hpNumerals = TryDrawHealthNumerals(c, v, l, s);
         bool levelNumerals = TryDrawLevelNumerals(c, v, l, s);
+        bool manaNumerals = TryDrawManaNumerals(c, v, l, s);
 
         // All the bar's text last, in one draw command: no text overlaps the dragons, and the talons
         // and gem must never cover it.
         BuildLeftText(c, v, l, hpNumerals);
-        BuildCentreText(c, v, l, levelNumerals);
+        BuildCentreText(c, v, l, s, levelNumerals);
+        BuildRightText(c, v, l, manaNumerals);
     }
 
     private static void BuildLeft(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
@@ -235,10 +240,13 @@ public static class StatusBarPanel
 
         Sprite(c, s, satchelFrame, satchel, white);
         Sprite(c, s, UiSpriteNames.IconSatchel, l.FromUnits(g, 411f - CentreStart, 21f, 22f, 22f), white);
+
+        // The quickbar's tiles over the six sockets above.
+        QuickbarPanel.Build(c, i, v, l, s, a);
     }
 
     // Level in the cup, EXP percent when the trough is tall enough, and the mode label.
-    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l, bool levelNumeralsDrawn)
+    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s, bool levelNumeralsDrawn)
     {
         UiRect g = l.CentreGroup;
         HudStatusSnapshot st = v.Status;
@@ -261,7 +269,30 @@ public static class StatusBarPanel
         // The mode label stands on top of the bar, centred over the skill tile: the EXP trough runs
         // across the space just above the tile, and the label used to sit on it.
         PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, ModeLabelY(c, g, l), UiTextStyle.Body, NumberColor);
+
+        QuickbarPanel.BuildText(c, v, l, s);
     }
+
+    // Mana as text on the MP gem when the bar art has no numerals; nothing until the server has sent any.
+    private static void BuildRightText(IUiCanvas c, HudView v, in UiLayout l, bool manaNumeralsDrawn)
+    {
+        HudStatusSnapshot st = v.Status;
+        if (manaNumeralsDrawn || st.MaxMana <= 0)
+        {
+            return;
+        }
+
+        UiRect gem = ManaGemRect(l);
+        UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
+        Span<char> buf = stackalloc char[48];
+        if (PanelText.TryWritePair(buf, st.CurrentMana, '/', st.MaxMana, out int n))
+        {
+            PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
+        }
+    }
+
+    private static UiRect ManaGemRect(in UiLayout l) =>
+        l.FromUnits(l.RightGroup, UiLayout.BarWidthUnits - GemX - GemSize - RightStart, GemY, GemSize, GemSize);
 
     // Top of the mode label: its bottom edge two scaled units above the bar group.
     internal static float ModeLabelY(IUiCanvas c, UiRect centreGroup, in UiLayout l) =>
@@ -325,6 +356,25 @@ public static class StatusBarPanel
         }
 
         UiRect gem = l.FromUnits(l.LeftGroup, GemX, GemY, GemSize, GemSize);
+        return TryDrawNumerals(c, s, l, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - 4f * l.Scale, false, gem.W, 14f * l.Scale);
+    }
+
+    // Mana as bar numerals on the MP gem, as the health ones sit on the HP gem. Nothing is drawn, and false
+    // is returned, until the server has sent a maximum.
+    private static bool TryDrawManaNumerals(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
+    {
+        if (v.Status.MaxMana <= 0)
+        {
+            return false;
+        }
+
+        Span<char> buf = stackalloc char[48];
+        if (!PanelText.TryWritePair(buf, v.Status.CurrentMana, '/', v.Status.MaxMana, out int n))
+        {
+            return false;
+        }
+
+        UiRect gem = ManaGemRect(in l);
         return TryDrawNumerals(c, s, l, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - 4f * l.Scale, false, gem.W, 14f * l.Scale);
     }
 

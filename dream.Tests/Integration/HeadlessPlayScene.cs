@@ -66,6 +66,8 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
 
     public VendorHudState Vendor => Get<VendorHudState>("_vendorHud");
 
+    public QuickbarHudState Quickbar => Get<QuickbarHudState>("_quickbarHud");
+
     public PlayerInventorySnapshot? Inventory =>
         (PlayerInventorySnapshot?)typeof(PlayScene).GetField("_inventory", Fields)!.GetValue(Scene);
 
@@ -136,7 +138,7 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         // M3: these live in a partial and have field initialisers, which an uninitialized object skips.
         // The fill loop above builds them by their parameterless constructors; a type that loses one
         // would be null here and fail every economy test far from the cause.
-        foreach (string economyField in new[] { "_groundItems", "_npcs", "_vendorHud" })
+        foreach (string economyField in new[] { "_groundItems", "_npcs", "_vendorHud", "_quickbarHud" })
         {
             Assert.NotNull(typeof(PlayScene).GetField(economyField, Fields)!.GetValue(scene));
         }

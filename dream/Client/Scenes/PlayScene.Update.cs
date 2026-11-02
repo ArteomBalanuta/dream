@@ -38,6 +38,7 @@ public partial class PlayScene
             keyboardState,
             mouseState,
             allowGameplayInput);
+        rawCommandFrame = QuickbarInput.RemapModeKeys(rawCommandFrame, keyboardState, allowGameplayInput);
         if (allowGameplayInput)
         {
             rawCommandFrame = ApplyCaptureFight(rawCommandFrame);
