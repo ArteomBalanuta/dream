@@ -103,9 +103,9 @@ public partial class PlayScene
             long localPlayerDrawStart = Stopwatch.GetTimestamp();
             _render.LocalPlayers.Draw(
                 new LocalPlayerPresentationState(
-                    _runtime.Player.GetWorldPosition(),
-                    _runtime.Player.Camera.HorizontalForward,
-                    _localPlayerWasMoving),
+                    _runtime.LocalRenderPose.Position,
+                    _runtime.LocalRenderPose.Facing,
+                    _runtime.LocalRenderPose.IsMoving),
                 presentation.Camera,
                 (float)args.Time,
                 silhouette: isometric);
