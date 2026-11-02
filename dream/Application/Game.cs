@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using Dream.Assets;
+using Dream.Client.Audio;
 using Dream.Client.Identity;
 using Dream.Client.Menu;
 using Dream.Client.Networking;
@@ -98,6 +99,9 @@ public class Game : GameWindow
         int frameCap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
+        // Silent (never throws) with no device, DREAM_AUDIO=0, the capture harness or Sound off. It also
+        // routes the classic UI router's click/hover feedback, so the menus sound too.
+        GameAudio.EnsureStarted(AudioVolumes.FromConfig(_desktopClientConfig));
         _localServer = CreateLocalServerHandle();
         _optionRows = BuildOptionRows();
         bool remoteClient = RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions);
@@ -155,7 +159,47 @@ public class Game : GameWindow
     // Hook for features that add their own Options rows (the audio sliders).
     private void AddExtraOptionRows(List<MenuOptionRow> rows)
     {
+        DesktopClientConfig cfg = _desktopClientConfig;
+        rows.Add(MenuOptionRow.Header("Sound"));
+        rows.Add(MenuOptionRow.Toggle(
+            "Sound",
+            () => cfg.AudioEnabled,
+            value =>
+            {
+                cfg.AudioEnabled = value;
+                if (value)
+                {
+                    // Sound that was off at launch starts its device now; a fresh mixer has no music yet
+                    // (SetMusic is a no-op when the track is already playing).
+                    GameAudio.EnsureStarted(AudioVolumes.FromConfig(cfg));
+                    GameAudio.Current.SetMusic(_playScene != null ? MusicTrack.World : MusicTrack.Menu);
+                }
+                else
+                {
+                    GameAudio.Current.SetVolumes(AudioVolumes.FromConfig(cfg));
+                }
+            },
+            PersistDesktopClientConfig));
+        rows.Add(VolumeRow("Master", () => cfg.VolumeMaster, value => cfg.VolumeMaster = value));
+        rows.Add(VolumeRow("Effects", () => cfg.VolumeSfx, value => cfg.VolumeSfx = value));
+        rows.Add(VolumeRow("Music", () => cfg.VolumeMusic, value => cfg.VolumeMusic = value));
+        rows.Add(VolumeRow("Interface", () => cfg.VolumeUi, value => cfg.VolumeUi = value));
     }
+
+    private MenuOptionRow VolumeRow(string label, Func<float> get, Action<float> write) =>
+        MenuOptionRow.Slider(
+            label,
+            0f,
+            1f,
+            0.05f,
+            get,
+            value =>
+            {
+                write(value);
+                GameAudio.Current.SetVolumes(AudioVolumes.FromConfig(_desktopClientConfig));
+            },
+            value => $"{MathF.Round(value * 100f):0}%",
+            PersistDesktopClientConfig);
 
     private void ApplyFrameCap()
     {
@@ -176,6 +220,8 @@ public class Game : GameWindow
         SinglePlayerLauncher launcher = new(coordinator, _localServer, _contentError, () => _desktopClientConfig.PlayerName);
         _mainMenu = new MainMenuScene(launcher, _optionRows, sessionEndReason);
         CursorState = _mainMenu.DesiredCursorState;
+        // After any ended play scene's teardown (which set None), so the title screen keeps its music.
+        GameAudio.Current.SetMusic(MusicTrack.Menu);
     }
 
     // Join Server: the existing connection screen, with a Back button to the title screen.
@@ -353,6 +399,9 @@ public class Game : GameWindow
             PersistDesktopClientConfig,
             PlayScene.ResolveLoopbackRemotePlayersEnabled(),
             _localServer);
+        // Esc inside a pause-menu sub-screen (Options, Key Bindings) goes back one screen instead of
+        // closing the whole menu; on the pause root it closes the menu as before.
+        _playScene.TryEscapeBack = () => _settings.PauseMenuVisible && _pauseScreen.Apply(MenuAction.Back);
         // The classic inventory's static panel state belongs to one scene.
         Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
     }
@@ -662,8 +711,17 @@ public class Game : GameWindow
                 }
                 finally
                 {
-                    _menuRenderer?.Dispose();
-                    _menuRenderer = null;
+                    try
+                    {
+                        _menuRenderer?.Dispose();
+                        _menuRenderer = null;
+                    }
+                    finally
+                    {
+                        // Last of the client teardown: the scenes have released their sounds and loops.
+                        // Never throws; also clears the UI router's click/hover feedback.
+                        GameAudio.Shutdown();
+                    }
                 }
             }
         }

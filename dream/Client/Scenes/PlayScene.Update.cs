@@ -149,10 +149,20 @@ public partial class PlayScene
         _wasAdminHudTogglePressed = adminHudTogglePressed;
     }
 
+    // Set by the host: steps an open pause-menu sub-screen back one screen and returns true, or returns
+    // false when there is none (Esc then closes the pause menu as usual).
+    internal Func<bool>? TryEscapeBack { get; set; }
+
     // Esc closes an open inventory first (a second Esc opens Settings); from play it opens Settings, and
-    // in Settings it closes them. The capture script calls these same methods.
+    // in Settings it closes them (a pause-menu sub-screen goes back one screen first). The capture
+    // script calls these same methods.
     internal void PressEscape()
     {
+        if (TryEscapeBack?.Invoke() == true)
+        {
+            return;
+        }
+
         if (_settings.InventoryVisible && !_settings.SettingsVisible)
         {
             _settings.ToggleInventory();
