@@ -21,6 +21,8 @@ public sealed class StartupConnectionScene : IDisposable
     private bool _appliedLocalDefaults;
     private bool _autoConnectAttempted;
     private bool _disposed;
+    private readonly bool _allowBack;
+    private bool _backRequested;
 
     public StartupConnectionScene(
         Vector2i initialSize,
@@ -28,8 +30,10 @@ public sealed class StartupConnectionScene : IDisposable
         ClientConnectionOptions? initialOptions = null,
         Action<ClientConnectionOptions>? persistConnectionOptions = null,
         bool autoConnectUsesInitialOptions = false,
-        string? sessionEndReason = null)
+        string? sessionEndReason = null,
+        bool allowBack = false)
     {
+        _allowBack = allowBack;
         _renderer = new StartupMenuRenderer(initialSize);
         _coordinator = coordinator;
         _persistConnectionOptions = persistConnectionOptions;
@@ -87,8 +91,10 @@ public sealed class StartupConnectionScene : IDisposable
             _playerName,
             _coordinator.LocalServerStatus,
             _coordinator.StatusMessage,
-            _coordinator.IsBusy);
+            _coordinator.IsBusy,
+            _allowBack);
 
+        _backRequested |= request.BackPressed;
         _host = request.Host;
         _portText = request.PortText;
         _playerName = request.PlayerName;
@@ -112,6 +118,14 @@ public sealed class StartupConnectionScene : IDisposable
         {
             _coordinator.BeginConnect(new ClientConnectionOptions(_host, _portText, _playerName));
         }
+    }
+
+    // True once, after the player pressed Back (only offered when the scene was created with allowBack).
+    public bool TryTakeBackRequest()
+    {
+        bool requested = _backRequested;
+        _backRequested = false;
+        return requested;
     }
 
     public void Resize(Vector2i size)

@@ -99,7 +99,7 @@ public partial class Render
             ImGui.End();
         }
 
-        if (settings.SettingsVisible)
+        if (settings.DeveloperSettingsVisible)
         {
             ImGui.SetNextWindowPos(new System.Numerics.Vector2(20, 70), ImGuiCond.FirstUseEver);
             ImGui.Begin("Settings", ImGuiWindowFlags.AlwaysAutoResize);

@@ -21,6 +21,9 @@ public sealed class UiSpriteTable
         (UiPage.Digits, "fx/dmg_digits_x4.json", "fx/dmg_digits_x4.png"),
     ];
 
+    // The front-end page. TryLoad (the HUD table) does not read it; TryLoadPages does.
+    private const string MenuJson = "menu/menu.json";
+
     private readonly Dictionary<string, UiSprite> _sprites = new(StringComparer.Ordinal);
     private readonly Dictionary<UiPage, (int Width, int Height)> _pageSizes = [];
 
@@ -55,6 +58,7 @@ public sealed class UiSpriteTable
         UiPage.ItemsUncommon => "items/items_uncommon.png",
         UiPage.ItemsRare => "items/items_rare.png",
         UiPage.Digits => "fx/dmg_digits_x4.png",
+        UiPage.Menu => "menu/menu.png",
         _ => null
     };
 
@@ -90,6 +94,37 @@ public sealed class UiSpriteTable
             }
 
             result.Validate();
+            table = result;
+            return true;
+        }
+        catch (Exception ex) when (ex is UiSpriteTableException or IOException or UnauthorizedAccessException
+            or JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    // Reads only the listed pages (the front end needs Window and Menu, not the whole HUD) and does not
+    // check UiSpriteNames.Required. Never throws: any failure returns false with a one-line reason.
+    public static bool TryLoadPages(string uiDirectory, IReadOnlyList<UiPage> pages, out UiSpriteTable? table, out string error)
+    {
+        table = null;
+        error = string.Empty;
+        try
+        {
+            UiSpriteTable result = new();
+            foreach (UiPage page in pages)
+            {
+                string png = PagePngPath(page) ?? throw new UiSpriteTableException($"{page} has no image file.");
+                string jsonRel = page == UiPage.Menu
+                    ? MenuJson
+                    : PageFiles.First(f => f.Page == page).Json;
+                string json = File.ReadAllText(Path.Combine(uiDirectory, jsonRel));
+                (int w, int h) = ReadPngSize(Path.Combine(uiDirectory, png));
+                result.AddPage(page, json, w, h);
+            }
+
             table = result;
             return true;
         }
