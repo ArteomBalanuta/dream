@@ -53,15 +53,6 @@ public partial class PlayScene
             _settings.SetShowPerformanceCounters(request.ShowPerformanceCounters.Value);
         }
 
-        if (request.SpendAttribute is Dream.Simulation.Stats.StatId attribute)
-        {
-            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
-                new PlayerSessionId(_remoteClient.SessionId),
-                _actionSequences.NextActionSequence(),
-                new PlayerStatSpendIntent(attribute, 1)));
-            CurrentGameAudio.Instance.Play(SoundId.StatSpend);
-        }
-
         if (request.FloatingCombatText.HasValue)
         {
             _settings.ApplyFloatingCombatTextTuning(request.FloatingCombatText.Value);
@@ -102,6 +93,10 @@ public partial class PlayScene
             if (inventoryAction.Kind == InventoryHudActionKind.Use)
             {
                 CurrentGameAudio.Instance.Play(SoundId.PotionDrink);
+            }
+            else if (inventoryAction.Kind == InventoryHudActionKind.SpendStat)
+            {
+                CurrentGameAudio.Instance.Play(SoundId.StatSpend);
             }
         }
 

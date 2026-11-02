@@ -21,13 +21,13 @@ public readonly record struct HudStatusSnapshot(
     int Armor = 0,
     bool IsDead = false,
     int RespawnSeconds = 0,
-    // Character sheet (stats window): Agility and Energy effective and base, the unspent points, and
-    // what the attributes derive (Defense from Agility, magic damage from Energy).
+    // Character sheet (stats window): Agility and Energy effective and base, and what the attributes
+    // derive (Defense from Agility, magic damage from Energy). The unspent points are derived from the
+    // level and base stats (CharacterPanelModel.PointsAvailable).
     int Agility = 0,
     int Energy = 0,
     int BaseAgility = 0,
     int BaseEnergy = 0,
-    int StatPoints = 0,
     int Defense = 0,
     int MagicMinDamage = 0,
     int MagicMaxDamage = 0,

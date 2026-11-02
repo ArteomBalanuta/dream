@@ -9,12 +9,6 @@ public interface IHudActions
 
     void CloseInventory();
 
-    // Spend one attribute point on Strength, Agility, Vitality or Energy. A default method so the
-    // fakes that predate the character sheet keep compiling.
-    void SpendAttribute(Dream.Simulation.Stats.StatId attribute)
-    {
-    }
-
     // M3. Default members so a panel test's own actions fake keeps compiling; the surface implements them.
 
     // A ground-item label was clicked.

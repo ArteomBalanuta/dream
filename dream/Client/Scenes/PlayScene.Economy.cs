@@ -42,15 +42,11 @@ public partial class PlayScene
             _actionSequences.NextActionSequence(),
             payload));
 
-    // Once a frame, outside chat: closes the vendor window on Esc or when it no longer fits (left the
-    // range, died, lost the session, closed the inventory), ends a dead session's lists, and fires E.
+    // Once a frame, outside chat: closes the vendor window when it no longer fits (left the range, died,
+    // lost the session, closed the inventory), ends a dead session's lists, and fires E. Esc closes it
+    // through PressEscape (TryCloseNpcWindows), before the pause menu.
     private void HandleInteractKey(KeyboardState keyboardState)
     {
-        if (keyboardState.IsKeyDown(Keys.Escape) && !_wasSettingsTogglePressed)
-        {
-            _vendorHud.Close();
-        }
-
         UpdateEconomyState();
         bool pressed = keyboardState.IsKeyDown(Keys.E);
         bool edge = pressed && !_wasInteractKeyPressed;
@@ -59,6 +55,30 @@ public partial class PlayScene
         {
             TryInteractWithNearest();
         }
+    }
+
+    // The vendor window, an NPC dialogue or a trade, whichever is open, closes; true when one did.
+    private bool TryCloseNpcWindows()
+    {
+        if (_vendorHud.IsOpen)
+        {
+            _vendorHud.Close();
+            return true;
+        }
+
+        if (_questHud.DialogueOpen)
+        {
+            _questHud.CloseDialogue();
+            return true;
+        }
+
+        if (_tradeHud.IsOpen)
+        {
+            CancelTradeFromHere();
+            return true;
+        }
+
+        return false;
     }
 
     internal void UpdateEconomyState()

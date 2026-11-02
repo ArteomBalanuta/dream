@@ -68,7 +68,6 @@ public sealed record WorldSessionPresentationState(
                 playerStats.Energy,
                 baseStats?.Agility ?? playerStats.Agility,
                 baseStats?.Energy ?? playerStats.Energy,
-                PlayerStatRules.PointsAvailable(level, baseStats ?? playerStats),
                 // Mana comes from ServerPlayerVitals (ClassicHudSurface.WithMana), not from the stats.
                 PlayerStatRules.Defense(playerStats.Agility),
                 PlayerStatRules.MagicMinDamage(playerStats.Energy),

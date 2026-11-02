@@ -575,10 +575,10 @@ public partial class PlayScene
         Keys.Space => _captureKeys.HasFlag(HudCaptureKeys.Space),
         Keys.LeftControl => _captureKeys.HasFlag(HudCaptureKeys.Ctrl),
         Keys.D0 => _captureKeys.HasFlag(HudCaptureKeys.Noclip),
-        Keys.D1 => _captureKeys.HasFlag(HudCaptureKeys.Building),
-        Keys.D2 => _captureKeys.HasFlag(HudCaptureKeys.Combat),
+        Keys.B => _captureKeys.HasFlag(HudCaptureKeys.Building),
+        Keys.G => _captureKeys.HasFlag(HudCaptureKeys.Combat),
         Keys.Q => _captureKeys.HasFlag(HudCaptureKeys.Q),
-        Keys.E => _captureKeys.HasFlag(HudCaptureKeys.E),
+        Keys.R => _captureKeys.HasFlag(HudCaptureKeys.R),
         _ => false
     };
 

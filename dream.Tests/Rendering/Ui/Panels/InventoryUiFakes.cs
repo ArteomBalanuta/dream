@@ -160,10 +160,6 @@ public sealed class RecordingActions : IHudActions
     public void Inventory(InventoryHudAction action) => Picked.Add(action);
 
     public void CloseInventory() => Closes++;
-
-    public List<Dream.Simulation.Stats.StatId> Spent { get; } = new();
-
-    public void SpendAttribute(Dream.Simulation.Stats.StatId attribute) => Spent.Add(attribute);
 }
 
 // A view plus everything a frame needs. Bag item n is anchored on cell n (0..63) and covers the footprint

@@ -35,9 +35,7 @@ public readonly record struct HudInteractionRequest(
     bool CloseVendor = false,
     // M4: a quickbar tile clicked while the inventory is open (0..5). The scene sends the next entry in
     // the cycle as one QuickbarBindIntent.
-    int? QuickbarCycleSlot = null,
-    // The attribute whose "+" was pressed in the character window; sent as a PlayerAttributeSpendIntent.
-    Dream.Simulation.Stats.StatId? SpendAttribute = null)
+    int? QuickbarCycleSlot = null)
 {
     public static HudInteractionRequest None => new(
         null,

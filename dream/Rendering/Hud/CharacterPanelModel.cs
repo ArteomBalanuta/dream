@@ -112,39 +112,40 @@ public static class CharacterPanelModel
     public static int PointsAvailable(in HudStatusSnapshot status) =>
         PlayerStatRules.PointsAvailable(status.Level, status.BaseStrength, status.BaseAttackSpeed, status.BaseVitality, status.BaseAgility, status.BaseEnergy);
 
-    // True when the stat can take a point now: one is free and the stat is below its cap. Armor has
-    // no base value and never takes one.
-    public static bool CanSpend(in HudStatusSnapshot status, CharacterStat stat)
+    // True when the attribute can take a point now: the player is alive, a point is free and the
+    // attribute (Strength, Agility, Vitality or Energy; PlayerStatRules.IsSpendable) is below its cap.
+    public static bool CanSpend(in HudStatusSnapshot status, StatId stat)
     {
-        if (PointsAvailable(status) <= 0)
+        if (status.IsDead || !PlayerStatRules.IsSpendable(stat) || PointsAvailable(status) <= 0)
         {
             return false;
         }
 
         return stat switch
         {
-            CharacterStat.Strength => status.BaseStrength < PlayerCombatStats.MaxStrength,
-            CharacterStat.Vitality => status.BaseVitality < PlayerCombatStats.MaxVitality,
-            CharacterStat.AttackSpeed => status.BaseAttackSpeed + PlayerStatRules.AttackSpeedPerPoint
-                <= PlayerCombatStats.MaxAttackSpeed + 0.0001f,
-            _ => false
+            StatId.Strength => status.BaseStrength < PlayerCombatStats.MaxStrength,
+            StatId.Agility => status.BaseAgility < PlayerCombatStats.MaxAgility,
+            StatId.Vitality => status.BaseVitality < PlayerCombatStats.MaxVitality,
+            _ => status.BaseEnergy < PlayerCombatStats.MaxEnergy
         };
     }
 
-    // The action a spend button sends: one point on the stat. Null for a stat that takes none.
-    public static InventoryHudAction? SpendAction(CharacterStat stat)
+    // The action a "+" plate sends: one point on the attribute, as PlayerStatSpendIntent. Null for a
+    // stat that takes none.
+    public static InventoryHudAction? SpendAction(StatId stat)
     {
-        StatId? id = stat switch
-        {
-            CharacterStat.Strength => StatId.Strength,
-            CharacterStat.AttackSpeed => StatId.AttackSpeed,
-            CharacterStat.Vitality => StatId.Vitality,
-            _ => null
-        };
-        return id is StatId spendable
-            ? new InventoryHudAction(InventoryHudActionKind.SpendStat, (int)spendable, 1)
+        return PlayerStatRules.IsSpendable(stat)
+            ? new InventoryHudAction(InventoryHudActionKind.SpendStat, (int)stat, 1)
             : null;
     }
+
+    // The panel table's stats: Strength and Vitality take points (Attack Speed comes from Agility).
+    public static InventoryHudAction? SpendAction(CharacterStat stat) => stat switch
+    {
+        CharacterStat.Strength => SpendAction(StatId.Strength),
+        CharacterStat.Vitality => SpendAction(StatId.Vitality),
+        _ => null
+    };
 
     // Always the twelve slots in slot order. A slot the snapshot does not fill, or fills with a bad
     // index, is empty. EquippedSlot is the main hand; Equipment holds 101..111, and an entry

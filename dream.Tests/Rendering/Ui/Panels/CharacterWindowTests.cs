@@ -13,7 +13,7 @@ public sealed class CharacterWindowTests : IDisposable
 
     public void Dispose() => _scene.Dispose();
 
-    private static HudStatusSnapshot Status(int baseStrength, int strength, float baseSpeed, float speed, int armor, int statPoints = 0) =>
+    private static HudStatusSnapshot Status(int baseStrength, int strength, float baseSpeed, float speed, int armor, int level = 3) =>
         new(
             CurrentHealth: 50,
             MaxHealth: 100,
@@ -23,14 +23,13 @@ public sealed class CharacterWindowTests : IDisposable
             Strength: strength,
             AttackSpeed: speed,
             Vitality: 7,
-            Level: 3,
+            Level: level,
             Experience: 10,
             ExperienceToNextLevel: 100,
             BaseStrength: baseStrength,
             BaseAttackSpeed: baseSpeed,
             BaseVitality: 7,
             Armor: armor,
-            StatPoints: statPoints,
             CurrentMana: 30,
             MaxMana: 70,
             MagicMinDamage: 10,
@@ -161,14 +160,15 @@ public sealed class CharacterWindowTests : IDisposable
     [Fact]
     public void Header_ShowsClassLevelExperienceAndPoints()
     {
-        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 5));
+        // Level 2 has earned 5 points and the base stats sit at their start: all 5 are free.
+        Fill(Status(10, 10, 1f, 1f, 0, level: 2));
 
         _scene.Frame();
 
         Assert.True(_scene.Canvas.HasText("Class"));
         Assert.True(_scene.Canvas.HasText("Wanderer"));
         Assert.True(_scene.Canvas.HasText("Level"));
-        Assert.True(_scene.Canvas.HasText("3"));
+        Assert.True(_scene.Canvas.HasText("2"));
         Assert.True(_scene.Canvas.HasText("Experience"));
         Assert.True(_scene.Canvas.HasText("10/100"));
         Assert.True(_scene.Canvas.HasText("Points"));
@@ -190,25 +190,29 @@ public sealed class CharacterWindowTests : IDisposable
     [InlineData(3, Dream.Simulation.Stats.StatId.Energy)]
     public void PlusButton_WithPoints_SpendsOnItsAttribute(int index, Dream.Simulation.Stats.StatId expected)
     {
-        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 5));
+        Fill(Status(10, 10, 1f, 1f, 0, level: 2));
         _scene.Input.Pointer = InventoryScene.Centre(PlateOf(index));
         _scene.Input.LeftClick = true;
 
         _scene.Frame();
 
-        Assert.Equal([expected], _scene.Actions.Spent);
+        // One point, sent as a SpendStat action (PlayerStatSpendIntent).
+        InventoryHudAction action = Assert.Single(_scene.Actions.Picked);
+        Assert.Equal(InventoryHudActionKind.SpendStat, action.Kind);
+        Assert.Equal((int)expected, action.SlotIndex);
+        Assert.Equal(1, action.Target);
     }
 
     [Fact]
     public void PlusButton_WithoutPoints_DoesNothing()
     {
-        Fill(Status(10, 10, 1f, 1f, 0, statPoints: 0));
+        Fill(Status(10, 10, 1f, 1f, 0, level: 1));
         _scene.Input.Pointer = InventoryScene.Centre(PlateOf(0));
         _scene.Input.LeftClick = true;
 
         _scene.Frame();
 
-        Assert.Empty(_scene.Actions.Spent);
+        Assert.Empty(_scene.Actions.Picked);
     }
 
     [Fact]
@@ -238,22 +242,27 @@ public sealed class CharacterWindowTests : IDisposable
     private static HudStatusSnapshot PointsStatus(int level, int strength = 10, float speed = 2f, int vitality = 10) =>
         Status(strength, strength, speed, speed, 0) with { Level = level, BaseVitality = vitality, Vitality = vitality };
 
-    // Each label is drawn twice (shadow and text), so halve the calls.
-    private int PlusCount() => _scene.Canvas.Texts.Count(t => t.Text == "+") / 2;
-
-    [Fact]
-    public void WithNoFreePoints_ThereIsNoPointsRow_AndNoSpendControl()
+    private void ClickPlate(int index)
     {
-        Fill(PointsStatus(level: 1));
-
+        _scene.Input.Pointer = InventoryScene.Centre(PlateOf(index));
+        _scene.Input.LeftClick = true;
         _scene.Frame();
-
-        Assert.False(_scene.Canvas.HasText("Points"));
-        Assert.False(_scene.Canvas.HasText("+"));
     }
 
     [Fact]
-    public void WithFreePoints_TheWindowShowsThemAndASpendControlPerStat()
+    public void WithNoFreePoints_ThePointsReadZero_AndNoPlateSpends()
+    {
+        Fill(PointsStatus(level: 1));
+
+        ClickPlate(0);
+
+        Assert.True(_scene.Canvas.HasText("Points"));
+        Assert.True(_scene.Canvas.HasText("0"));
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void WithFreePoints_TheHeaderShowsThem()
     {
         Fill(PointsStatus(level: 3));
 
@@ -261,40 +270,21 @@ public sealed class CharacterWindowTests : IDisposable
 
         Assert.True(_scene.Canvas.HasText("Points"));
         Assert.True(_scene.Canvas.HasText("10"));
-        Assert.Equal(3, PlusCount());
-    }
-
-    [Theory]
-    [InlineData(0, Dream.Simulation.Stats.StatId.Strength)]
-    [InlineData(1, Dream.Simulation.Stats.StatId.AttackSpeed)]
-    [InlineData(2, Dream.Simulation.Stats.StatId.Vitality)]
-    public void ClickingASpendControl_SendsOnePointOnThatStat(int row, Dream.Simulation.Stats.StatId stat)
-    {
-        Fill(PointsStatus(level: 3));
-        UiRect button = _scene.Layout.FromUnits(_scene.Layout.Character, 19f + 152f - 14f, 50f + (row * 24f), 14f, 10f);
-        _scene.Input.Pointer = InventoryScene.Centre(button);
-        _scene.Input.LeftClick = true;
-
-        _scene.Frame();
-
-        InventoryHudAction action = Assert.Single(_scene.Actions.Picked);
-        Assert.Equal(InventoryHudActionKind.SpendStat, action.Kind);
-        Assert.Equal((int)stat, action.SlotIndex);
-        Assert.Equal(1, action.Target);
     }
 
     [Fact]
-    public void ACappedStat_OffersNoSpendControl_AndAnOverBudgetCharacterOffersNone()
+    public void ACappedAttribute_DoesNotSpend_TheOthersDo_AndAnOverBudgetCharacterSpendsNothing()
     {
-        Fill(PointsStatus(level: 20, strength: Dream.Simulation.Players.PlayerCombatStats.MaxStrength));
-        _scene.Frame();
-        Assert.Equal(2, PlusCount());
+        Fill(PointsStatus(level: 400, strength: Dream.Simulation.Players.PlayerCombatStats.MaxStrength));
+        ClickPlate(0);
+        Assert.Empty(_scene.Actions.Picked);
+        ClickPlate(1);
+        Assert.Equal((int)Dream.Simulation.Stats.StatId.Agility, Assert.Single(_scene.Actions.Picked).SlotIndex);
 
-        _scene.Canvas.Calls.Clear();
+        _scene.Actions.Picked.Clear();
         Fill(PointsStatus(level: 2, strength: 30, speed: 3f, vitality: 20));
-        _scene.Frame();
-        Assert.False(_scene.Canvas.HasText("Points"));
-        Assert.False(_scene.Canvas.HasText("+"));
+        ClickPlate(2);
+        Assert.Empty(_scene.Actions.Picked);
     }
 
     [Fact]

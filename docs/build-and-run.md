@@ -58,13 +58,15 @@ On startup, the game currently:
 - `W`, `A`, `S`, `D`: move
 - Mouse movement: look around
 - `Space`: jump
-- `C`: toggle first-person / third-person camera
 - `B` / `G`: select building / combat mode
 - `1` to `6`: use the quickbar slot (a skill, or the first matching consumable in the bag); open the inventory (`V`) and click a quickbar tile to change what it holds. Skills need combat mode, except Mend
-- Left mouse button: the active mode's primary action (place a cube, or attack)
+- `Q` / `R`: drink the first healing / mana potion in the bag
+- `E`: pick up the nearest ground item or talk to the nearest NPC (vendor, quest giver)
+- `Enter`: open the chat line (`Esc` closes it); hold `Tab` for the online list
+- Left mouse button: walk to the clicked ground cell (isometric click-to-move), or the active mode's primary action (place a cube, or attack)
 - `F`: toggle frozen movement
 - `V`: open or close the inventory and character windows; the cursor is released and shown as a sprite
-- `Esc`: close the inventory if it is open, otherwise open or close the settings menu
+- `Esc`: close the chat line, else an open vendor, dialogue or trade window, else the inventory, else open or close the pause menu
 
 When the settings menu is open, the cursor is released and gameplay input is paused.
 

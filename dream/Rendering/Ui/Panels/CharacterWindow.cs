@@ -83,9 +83,11 @@ public static class CharacterWindow
                 c.Sprite(art, plate, rows[n].CanSpend ? UiColor.White : new UiColor(150, 150, 150, 255));
             }
 
-            if (enabled && i.Button(id, plate) && rows[n].Attribute is StatId stat)
+            if (enabled && i.Button(id, plate) && rows[n].Attribute is StatId stat
+                && CharacterPanelModel.SpendAction(stat) is InventoryHudAction spend)
             {
-                a.SpendAttribute(stat);
+                // One point, as PlayerStatSpendIntent; the server checks the budget and the cap.
+                a.Inventory(spend);
             }
 
             spendSlot++;

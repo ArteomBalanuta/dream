@@ -77,7 +77,7 @@ public partial class PlayScene
             return;
         }
 
-        // Before the global keys: it reads the Esc edge they consume.
+        // E (interact) and 1..6 (quickbar) before the global keys; Esc goes through PressEscape.
         HandleInteractKey(keyboardState);
         HandleQuickbarKeys(keyboardState);
         HandleGlobalInput(keyboardState);

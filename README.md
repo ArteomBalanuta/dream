@@ -52,15 +52,17 @@ The HUD crosshair is now viewport-driven, so it is rebuilt from the live window 
 - `W`, `A`, `S`, `D`: move the player
 - Mouse movement: look around
 - `Space`: jump
-- `C`: toggle first-person / third-person camera
 - `B`: select building mode
 - `G`: select combat mode
 - `1` to `6`: use the quickbar slot (a skill or a consumable); while the inventory is open, click a quickbar tile to cycle what it holds
+- `Q` / `R`: drink the first healing / mana potion in the bag
+- `E`: pick up the nearest ground item or talk to the nearest NPC
+- `Enter`: chat; hold `Tab` for the online list
 - Left mouse button: perform the active mode's primary action
 - `V`: toggle the inventory and character windows (drag items between bag and slots, right-click for the item menu, hover for stats)
 - `0`: toggle noclip/fly mode
 - `F`: toggle the frozen movement state
-- `Esc`: close the inventory if it is open, otherwise toggle the settings menu and release or re-grab the cursor
+- `Esc`: close the chat line, an open vendor/dialogue/trade window or the inventory, otherwise toggle the pause menu
 
 ## Settings Menu
 

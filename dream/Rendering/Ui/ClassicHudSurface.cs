@@ -144,7 +144,6 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
     private HudViewBuilder? _builder;
     private InventoryHudAction? _action;
     private bool _closeInventory;
-    private Dream.Simulation.Stats.StatId? _spendAttribute;
     private long? _pickUpGround;
     private int? _interactNpc;
     private VendorHudAction? _vendorAction;
@@ -261,16 +260,6 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _action = null;
         _closeInventory = false;
     }
-
-    // The attribute "+" pressed this frame, cleared by the read.
-    public Dream.Simulation.Stats.StatId? TakeAttributeSpend()
-    {
-        Dream.Simulation.Stats.StatId? spend = _spendAttribute;
-        _spendAttribute = null;
-        return spend;
-    }
-
-    void IHudActions.SpendAttribute(Dream.Simulation.Stats.StatId attribute) => _spendAttribute = attribute;
 
     // The economy picks of the last drawn frame (a clicked label, the vendor window), cleared by the read.
     public HudEconomyRequest TakeEconomyRequests()
