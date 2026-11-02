@@ -77,6 +77,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ServerTickRunner _tickRunner = new();
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
+    private readonly List<SessionVitals> _vitalsScratch = [];
+    private readonly Func<PlayerSessionId, bool> _isSessionClaimed;
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly ConcurrentQueue<PendingConnectionReply> _pendingConnectionReplies = new();
@@ -135,6 +137,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         bool deferJoinsToTick)
     {
         _authority = authority;
+        _isSessionClaimed = id => _sessionClaims.ContainsKey(id.Value);
         _deferJoinsToTick = deferJoinsToTick;
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
@@ -1263,6 +1266,29 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ServePendingWorldResyncs();
         ServePendingInventoryPushes(runtime);
         ServePendingGroundItems(runtime);
+        ServePendingVitals(runtime);
+    }
+
+    // M4: mana, max mana and running cooldowns, to the owning session only, outside the action results.
+    // The runtime decides on a 16-tick cadence which sessions changed; a steady tick reads a modulus.
+    private void ServePendingVitals(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.IsVitalsDrainTick)
+        {
+            return;
+        }
+
+        runtime.DrainVitalsInto(_vitalsScratch, _isSessionClaimed);
+        for (int i = 0; i < _vitalsScratch.Count; i++)
+        {
+            SessionVitals vitals = _vitalsScratch[i];
+            if (_sessionClaims.TryGetValue(vitals.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, vitals.Message));
+            }
+        }
+
+        _vitalsScratch.Clear();
     }
 
     // M3: ground items that appeared, changed or went since the last tick, to every claimed session. Delta

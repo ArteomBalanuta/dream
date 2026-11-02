@@ -42,6 +42,11 @@ public sealed partial class WorldSessionRuntime
         if (!alreadyAttached)
         {
             attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
+            // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
+            attached.Cooldowns.Clear();
+            attached.VitalsDirty = true;
+            attached.LastSentMana = -1;
+            attached.LastSentMaxMana = -1;
         }
 
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
@@ -195,6 +200,8 @@ public sealed partial class WorldSessionRuntime
             // Without an occupant the primary body would stay as an invisible collider.
             Physics.SetPlayerBodyParked(true);
             Player.ResetSeatState();
+            // The seat's combatant is reused: nothing of this occupant's mana carries to the next.
+            Player.Combatant.SetMana(Player.Combatant.MaxMana);
         }
         else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
         {

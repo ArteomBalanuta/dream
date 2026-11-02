@@ -35,6 +35,10 @@ public enum InventoryEquipOutcome
     NotInStock = 17,
     // A write of this player's inventory failed, so the rows cannot be trusted; trading is refused.
     WriteFailed = 18,
+    // M4 consumables: the item's kind is on its use cooldown, or it would restore nothing (the vitals
+    // it restores are already full).
+    OnCooldown = 19,
+    NothingToRestore = 20,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id
@@ -168,6 +172,8 @@ internal sealed partial class PlayerInventoryService
         {
             _goldByPlayer[playerName] = Math.Min(inventory.Gold, InventoryConstants.MaxGold);
         }
+
+        LoadQuickbar(playerName, inventory.Quickbar);
 
         // A hand-edited row can hold an id of 0 or below, which is not a valid ObjectId: the row still
         // loads, it just has nothing to reserve (the allocator never hands such an id out).
@@ -657,6 +663,15 @@ internal sealed partial class PlayerInventoryService
             return InventoryEquipOutcome.Throttled;
         }
 
+        RemoveItem(playerName, slots, itemInstanceId);
+        return InventoryEquipOutcome.Equipped;
+    }
+
+    // Removes every row of the player that holds the item (the repository's destroy deletes them all),
+    // and the item row itself unless another loaded inventory still references it, then drains the
+    // held-back rows into the freed cells. Shared by TryDestroy and TryConsume.
+    private void RemoveItem(string playerName, Dictionary<int, long> slots, long itemInstanceId)
+    {
         // Every row of the player that holds the item goes (the repository's destroy deletes them all).
         List<int> rows = [];
         foreach (KeyValuePair<int, long> row in slots)
@@ -681,7 +696,6 @@ internal sealed partial class PlayerInventoryService
         DrainHeldBack(slots, changes);
         QueueChanges(playerName, changes, world => world.DestroyInventoryItem(playerName, itemInstanceId));
         RefreshEquippedSummary(playerName);
-        return InventoryEquipOutcome.Equipped;
     }
 
     // Creates a rolled item of the kind at the first fit of the bag. Not a client action and not
@@ -770,6 +784,9 @@ internal sealed partial class PlayerInventoryService
                 ? starterKitVersion
                 : null;
             tracker.EvictedGold = _goldByPlayer.Remove(playerName, out long evictedGold) ? evictedGold : 0;
+            tracker.EvictedQuickbar = _quickbarByPlayer.Remove(playerName, out QuickbarSlotSnapshot[]? evictedQuickbar)
+                ? evictedQuickbar
+                : null;
             if (!writes.EnqueueRead(() => tracker.Settle(failed: writes.FailedWrites > baseline)))
             {
                 tracker.Settle(failed: true);
@@ -789,6 +806,7 @@ internal sealed partial class PlayerInventoryService
         _equippedSummaryByPlayer.Remove(playerName);
         _starterKitByPlayer.Remove(playerName);
         _goldByPlayer.Remove(playerName);
+        _quickbarByPlayer.Remove(playerName);
         foreach (long itemInstanceId in slots.Values)
         {
             _itemInstances.Remove(itemInstanceId);
@@ -835,7 +853,8 @@ internal sealed partial class PlayerInventoryService
             backpack,
             new InventorySlotSnapshot(EquipmentSlots.FirstSlotIndex, mainHand, mainHand.HasValue),
             equipment,
-            GoldOf(playerName));
+            GoldOf(playerName),
+            BuildQuickbarSnapshot(playerName));
     }
 
     // The gold in a loaded player's wallet; 0 for a player that is not loaded or has none.
@@ -1129,6 +1148,12 @@ internal sealed partial class PlayerInventoryService
         }
 
         tracker.EvictedGold = 0;
+        if (tracker.EvictedQuickbar != null)
+        {
+            _quickbarByPlayer[playerName] = tracker.EvictedQuickbar;
+        }
+
+        tracker.EvictedQuickbar = null;
         tracker.EvictedSlots = null;
         tracker.EvictedItems = null;
         tracker.EvictedStarterKitVersion = null;
@@ -1688,6 +1713,9 @@ internal sealed partial class PlayerInventoryService
 
         // The moved-out inventory's wallet.
         public long EvictedGold { get; set; }
+
+        // The moved-out inventory's quickbar rows, if it had any.
+        public QuickbarSlotSnapshot[]? EvictedQuickbar { get; set; }
 
         public InventoryWriteVerdict Verdict => (InventoryWriteVerdict)Volatile.Read(ref _verdict);
 

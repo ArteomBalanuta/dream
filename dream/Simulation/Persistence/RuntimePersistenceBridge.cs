@@ -661,7 +661,7 @@ internal sealed partial class RuntimePersistenceBridge
             position,
             facing,
             CurrentHealth: currentHealth,
-            CurrentEnergy: 0,
+            CurrentEnergy: _host.GetSessionMana(sessionId),
             UpdatedUtc: DateTime.UtcNow);
         if (_profileCache.ContainsKey(player.CharacterKey.Value))
         {
