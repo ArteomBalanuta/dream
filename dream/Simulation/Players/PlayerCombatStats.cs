@@ -20,8 +20,6 @@ public sealed class PlayerCombatStats
     private int _vitality = 10;
     private int _agility;
     private int _energy;
-    private int _mana;
-    private int _maxMana;
 
     public int Strength
     {
@@ -51,20 +49,6 @@ public sealed class PlayerCombatStats
     {
         get => _energy;
         set => _energy = Math.Clamp(value, MinEnergy, MaxEnergy);
-    }
-
-    // Mana pool, mirrored from the combatant onto the effective block. On a block handed to
-    // ApplyBaseStats from the wire it carries the server's current mana (0 max = not carried).
-    public int Mana
-    {
-        get => _mana;
-        set => _mana = Math.Max(0, value);
-    }
-
-    public int MaxMana
-    {
-        get => _maxMana;
-        set => _maxMana = Math.Max(0, value);
     }
 
     // The rules the client stat editor enforces (the Strength / Attack Speed / Vitality sliders in

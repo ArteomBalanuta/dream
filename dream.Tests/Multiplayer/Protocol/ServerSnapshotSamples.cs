@@ -226,7 +226,7 @@ internal static class ServerSnapshotSamples
                 RandomInt(random),
                 random.Next(2) == 0,
                 (mask & 2) != 0 ? (PlayerInteractionMode)random.Next(0, 3) : null,
-                (mask & 4) != 0 ? new PlayerCombatStatsSnapshot(RandomInt(random), RandomFloat(random), RandomInt(random), RandomInt(random), RandomInt(random), RandomInt(random), RandomInt(random), RandomInt(random)) : null,
+                (mask & 4) != 0 ? new PlayerCombatStatsSnapshot(RandomInt(random), RandomFloat(random), RandomInt(random), RandomInt(random), RandomInt(random)) : null,
                 (mask & 8) != 0 ? RandomString(random, roundTrippable) : null,
                 (mask & 16) != 0 ? new PlayerProgressionSnapshot(RandomInt(random), RandomInt(random), RandomInt(random)) : null,
                 (mask & 32) != 0 ? (EnemyBehaviorState)random.Next(0, 5) : null,
@@ -257,7 +257,7 @@ internal static class ServerSnapshotSamples
                 100,
                 true,
                 isPlayer ? PlayerInteractionMode.Combat : null,
-                isPlayer ? new PlayerCombatStatsSnapshot(16, 3f, 11, 7, 9, 5, 40, 65) : null,
+                isPlayer ? new PlayerCombatStatsSnapshot(16, 3f, 11, 7, 9) : null,
                 isPlayer ? $"Player {index}" : "Wolf",
                 isPlayer ? new PlayerProgressionSnapshot(2, 14, 1023) : null,
                 isPlayer ? null : EnemyBehaviorState.Attacking);

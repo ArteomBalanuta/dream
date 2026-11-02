@@ -58,7 +58,8 @@ public sealed class PlayerRespawnTests
         ulong tick = 0;
         WaveIRuntimeKit.Tick(runtime, ref tick, 15);
         PlayerCombatant combatant = WaveIRuntimeKit.Target(runtime, A.Value).Combatant;
-        combatant.ApplyBaseStats(new PlayerCombatStats { Energy = 10, Mana = 5, MaxMana = 70 });
+        combatant.ApplyBaseStats(new PlayerCombatStats { Energy = 10 });
+        combatant.SetMana(5);
         Assert.Equal(5, combatant.CurrentMana);
         WaveIRuntimeKit.Kill(runtime, A.Value);
 

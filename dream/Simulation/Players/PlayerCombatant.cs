@@ -160,7 +160,7 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     // The base block with the pool values of this moment, as it goes on the wire.
     public PlayerCombatStatsSnapshot CaptureStatsSnapshot()
     {
-        return PlayerCombatStatsSnapshot.From(BaseStats) with { Mana = CurrentMana, MaxMana = MaxMana };
+        return PlayerCombatStatsSnapshot.From(BaseStats);
     }
 
     public void ApplyBaseStats(PlayerCombatStats updatedStats)
@@ -172,11 +172,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         BaseStats.Energy = updatedStats.Energy;
 
         RecalculateEffectiveStats();
-        // A block from the wire carries the server's current mana; a stored profile does not.
-        if (updatedStats.MaxMana > 0)
-        {
-            SetMana(updatedStats.Mana);
-        }
     }
 
     public void ApplyStats(PlayerCombatStats updatedStats)

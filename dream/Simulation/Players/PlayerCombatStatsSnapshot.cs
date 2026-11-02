@@ -1,15 +1,13 @@
 namespace Dream.Simulation.Players;
 
-// Wire group order: [strength, attackSpeed, vitality, agility, energy, statPoints, mana, maxMana].
+// Wire group order (protocol 19): [strength, attackSpeed, vitality, agility, energy]. Stat points are
+// derived (PlayerStatRules) and mana travels in ServerPlayerVitals, so neither is here.
 public readonly record struct PlayerCombatStatsSnapshot(
     int Strength,
     float AttackSpeed,
     int Vitality,
     int Agility = 0,
-    int Energy = 0,
-    int StatPoints = 0,
-    int Mana = 0,
-    int MaxMana = 0)
+    int Energy = 0)
 {
     public static PlayerCombatStatsSnapshot From(PlayerCombatStats stats)
     {
@@ -19,10 +17,7 @@ public readonly record struct PlayerCombatStatsSnapshot(
             stats.AttackSpeed,
             stats.Vitality,
             stats.Agility,
-            stats.Energy,
-            0,
-            stats.Mana,
-            stats.MaxMana);
+            stats.Energy);
     }
 
     public PlayerCombatStats ToCombatStats()
@@ -33,9 +28,7 @@ public readonly record struct PlayerCombatStatsSnapshot(
             AttackSpeed = AttackSpeed,
             Vitality = Vitality,
             Agility = Agility,
-            Energy = Energy,
-            Mana = Mana,
-            MaxMana = MaxMana
+            Energy = Energy
         };
     }
 }

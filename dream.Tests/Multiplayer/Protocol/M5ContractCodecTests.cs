@@ -42,7 +42,7 @@ public sealed class M5ContractCodecTests
     [Fact]
     public void TheProtocolVersion_IsEighteen()
     {
-        Assert.Equal(18, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(19, TransportEnvelope.CurrentProtocolVersion);
     }
 
     [Theory]
