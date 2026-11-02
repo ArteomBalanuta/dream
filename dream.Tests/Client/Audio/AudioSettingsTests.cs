@@ -121,7 +121,7 @@ public class AudioSettingsTests
     [Fact]
     public void Router_Reports_Hover_Once_And_Click_On_Release()
     {
-        UiInputRouter router = new();
+        UiInputRouter router = new() { HoverMinSeconds = 0 };
         List<UiFeedback> heard = [];
         router.LocalFeedback = heard.Add;
         UiRect box = new(10, 10, 40, 40);
@@ -150,6 +150,43 @@ public class AudioSettingsTests
         Frame(20, 20, false);
         Assert.Equal(3, heard.Count);
         Assert.Equal(UiFeedback.Hover, heard[2]);
+    }
+
+    [Fact]
+    public void Router_Rate_Limits_Hover_And_Mutes_Disabled_Buttons()
+    {
+        UiInputRouter router = new();
+        List<UiFeedback> heard = [];
+        router.LocalFeedback = heard.Add;
+        UiRect box = new(10, 10, 40, 40);
+
+        void Frame(float x, float y, bool enabled)
+        {
+            router.BeginFrame(new UiPointer(new Vector2(x, y), false, false, true));
+            router.Button(1, box, enabled);
+            router.EndFrame();
+        }
+
+        // A pointer flickering across the edge every frame sounds once, not every frame.
+        for (int i = 0; i < 20; i++)
+        {
+            Frame(20, 20, true);
+            Frame(300, 300, true);
+        }
+
+        Assert.Single(heard);
+
+        // A disabled button is silent.
+        UiInputRouter quiet = new() { HoverMinSeconds = 0 };
+        List<UiFeedback> quietHeard = [];
+        quiet.LocalFeedback = quietHeard.Add;
+        quiet.BeginFrame(new UiPointer(new Vector2(20, 20), false, false, true));
+        quiet.Button(1, box, false);
+        quiet.EndFrame();
+        quiet.BeginFrame(new UiPointer(new Vector2(20, 20), false, false, true));
+        quiet.Button(1, box, false);
+        quiet.EndFrame();
+        Assert.Empty(quietHeard);
     }
 
     [Fact]

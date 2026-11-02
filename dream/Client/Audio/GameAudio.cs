@@ -67,7 +67,10 @@ public static class GameAudio
 
             AudioClipBank bank = AudioClipBank.Load(directory, Console.Error.WriteLine);
             AudioMixer mixer = new(volumes);
-            IAudioOutput output = new NAudioOutput(mixer);
+            // DREAM_AUDIO_DUMP replaces the device with a timer-driven pull into a WAV file (no sound).
+            IAudioOutput output = AudioDiagnostics.DumpPath is { } dumpPath
+                ? new OfflineDumpOutput(mixer, dumpPath)
+                : new NAudioOutput(mixer);
             s_current = new MixerGameAudio(mixer, bank, output, volumes);
         }
         catch (Exception ex)
@@ -103,9 +106,9 @@ public static class GameAudio
 
         // DREAM_AUDIO=1 set explicitly lets a scripted capture run sound (audio diagnostics).
         bool forced = flag is not null && AudioDiagnostics.IsOn(flag);
-        if (!forced && !string.IsNullOrWhiteSpace(environment("DREAM_HUD_CAPTURE")))
+        if (!forced && (!string.IsNullOrWhiteSpace(environment("DREAM_HUD_CAPTURE")) || !string.IsNullOrWhiteSpace(environment("DREAM_MENU_CAPTURE"))))
         {
-            return "DREAM_HUD_CAPTURE is set";
+            return "a capture harness (DREAM_HUD_CAPTURE or DREAM_MENU_CAPTURE) is set";
         }
 
         return volumes.Enabled ? null : SettingOffReason;

@@ -11,6 +11,9 @@ public interface IUiInput
     // Click on release.
     bool Button(int id, UiRect r);
 
+    // As Button, but a disabled widget (enabled false) makes no hover or click sound.
+    bool Button(int id, UiRect r, bool enabled) => Button(id, r);
+
     bool Hovered(int id, UiRect r);
 
     bool RightClicked(int id, UiRect r);

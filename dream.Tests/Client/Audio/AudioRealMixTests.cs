@@ -1,12 +1,17 @@
+using NAudio.Wave;
 using Xunit;
-using Xunit.Abstractions;
 using Dream.Client.Audio;
 
 namespace Dream.Tests.Client.Audio;
 
-// The shipped clips through the real mixer, offline: the level of a held-up bed must be steady.
-public class AudioRealMixTests(ITestOutputHelper output)
+// The shipped clips through the real mixer and NAudio's own byte-buffer adapter, offline (no device).
+// Regression for "sound is repeating and stuck": WaveOutEvent reads through SampleToWaveProvider, whose
+// float[] aliases a byte[]; clearing it with Array.Clear cleared a quarter of the block, so each pass
+// added onto the last and the level climbed to the limiter.
+public class AudioRealMixTests
 {
+    private const int DeviceBlockBytes = 17640; // WaveOutEvent: 200 ms / 4 buffers at 44.1 kHz stereo float
+
     private static string AudioDir()
     {
         DirectoryInfo? current = new(AppContext.BaseDirectory);
@@ -24,34 +29,24 @@ public class AudioRealMixTests(ITestOutputHelper output)
         throw new InvalidOperationException("repo root not found");
     }
 
-    [Fact]
-    public void World_Music_And_Wind_Hold_A_Steady_Level()
+    private static List<double> SecondRms(IWaveProvider wave, int seconds)
     {
-        AudioClipBank bank = AudioClipBank.Load(AudioDir());
-        AudioVolumes volumes = new(true, 1f, 1f, 1f, 1f);
-        AudioMixer mixer = new(volumes);
-        foreach (AudioLoopId id in Enum.GetValues<AudioLoopId>())
-        {
-            Assert.True(bank.TryGetLoop(id, out WavClip clip));
-            mixer.AttachLoop(id, clip);
-        }
-
-        mixer.SetLoopTarget(AudioLoopId.MusicWorld, 1f, 0.01f);
-        mixer.SetLoopTarget(AudioLoopId.Wind, 0.6f, 0.01f);
-        float[] block = new float[735 * 2];
+        byte[] bytes = new byte[DeviceBlockBytes];
+        float[] floats = new float[DeviceBlockBytes / 4];
         List<double> rms = [];
         double sum = 0;
         long n = 0;
-        for (int b = 0; b < 44100 * 30 / 735; b++)
+        while (rms.Count < seconds)
         {
-            mixer.Read(block, 0, block.Length);
-            for (int i = 0; i < block.Length; i += 2)
+            int got = wave.Read(bytes, 0, bytes.Length);
+            Buffer.BlockCopy(bytes, 0, floats, 0, got);
+            for (int i = 0; i < got / 4; i += 2)
             {
-                sum += block[i] * block[i];
+                sum += floats[i] * floats[i];
                 n++;
             }
 
-            if (n >= 44100)
+            if (n >= AudioMixer.SampleRate)
             {
                 rms.Add(Math.Sqrt(sum / n));
                 sum = 0;
@@ -59,7 +54,56 @@ public class AudioRealMixTests(ITestOutputHelper output)
             }
         }
 
-        output.WriteLine(string.Join(" ", rms.Select(r => r.ToString("F3"))));
-        Assert.True(rms.Max() < rms.Min() * 2.5, "level wanders: " + string.Join(" ", rms));
+        return rms;
+    }
+
+    [Fact]
+    public void Device_Path_Holds_A_Steady_Level_For_The_World_Music()
+    {
+        AudioClipBank bank = AudioClipBank.Load(AudioDir());
+        Assert.True(bank.TryGetLoop(AudioLoopId.MusicWorld, out WavClip clip));
+        AudioMixer mixer = new(new AudioVolumes(true, 0.1f, 0.8f, 0.5f, 0.7f));
+        mixer.AttachLoop(AudioLoopId.MusicWorld, clip);
+        mixer.SetLoopTarget(AudioLoopId.MusicWorld, 1f, 2.5f);
+        IWaveProvider wave = NAudioOutput.CreateProvider(mixer).ToWaveProvider();
+
+        List<double> rms = SecondRms(wave, 20);
+
+        // The clip alone at master 0.1 x music 0.5 sits near 240/32768; the broken path reached 4x that.
+        double ceiling = 400.0 / 32768.0;
+        for (int i = 4; i < rms.Count; i++)
+        {
+            Assert.True(rms[i] < ceiling, $"second {i} level {rms[i] * 32768:F0} wanders above {ceiling * 32768:F0}");
+        }
+    }
+
+    [Fact]
+    public void Device_Path_Output_Equals_Direct_Mixer_Output()
+    {
+        AudioClipBank bank = AudioClipBank.Load(AudioDir());
+        Assert.True(bank.TryGetLoop(AudioLoopId.MusicWorld, out WavClip clip));
+        AudioVolumes volumes = new(true, 0.5f, 0.8f, 0.5f, 0.7f);
+        AudioMixer direct = new(volumes);
+        AudioMixer viaDevice = new(volumes);
+        foreach (AudioMixer mixer in new[] { direct, viaDevice })
+        {
+            mixer.AttachLoop(AudioLoopId.MusicWorld, clip);
+            mixer.SetLoopTarget(AudioLoopId.MusicWorld, 1f, 0.05f);
+        }
+
+        IWaveProvider wave = NAudioOutput.CreateProvider(viaDevice).ToWaveProvider();
+        byte[] bytes = new byte[DeviceBlockBytes];
+        float[] got = new float[DeviceBlockBytes / 4];
+        float[] expected = new float[DeviceBlockBytes / 4];
+        for (int block = 0; block < 60; block++)
+        {
+            int read = wave.Read(bytes, 0, bytes.Length);
+            Buffer.BlockCopy(bytes, 0, got, 0, read);
+            direct.Read(expected, 0, read / 4);
+            for (int i = 0; i < read / 4; i++)
+            {
+                Assert.Equal(expected[i], got[i]);
+            }
+        }
     }
 }

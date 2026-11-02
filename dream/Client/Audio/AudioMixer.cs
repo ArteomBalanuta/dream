@@ -19,6 +19,7 @@ public sealed class AudioMixer
 {
     public const int SampleRate = 44100;
     public const int MaxVoices = 32;
+    public const int MaxQueuedCommands = 256;
     public const double RetriggerGuardSeconds = 0.04;
     public const float HearingRadius = 3f;
     public const float HearingRange = 40f;
@@ -52,6 +53,7 @@ public sealed class AudioMixer
     private long _clock;
     private AudioVolumes _volumes;
     private int _activeVoices;
+    private int _queued;
 
     public AudioMixer(AudioVolumes volumes)
     {
@@ -73,25 +75,37 @@ public sealed class AudioMixer
     public float LoopGain(AudioLoopId loop) => _loops[(int)loop].Gain;
 
     public string DescribeLoops() =>
-        $"music={LoopGain(AudioLoopId.MusicMenu):F2}/{LoopGain(AudioLoopId.MusicWorld):F2} wind={LoopGain(AudioLoopId.Wind):F2} night={LoopGain(AudioLoopId.Night):F2} voices={ActiveVoiceCount}";
+        $"music={LoopGain(AudioLoopId.MusicMenu):F2}/{LoopGain(AudioLoopId.MusicWorld):F2} wind={LoopGain(AudioLoopId.Wind):F2} night={LoopGain(AudioLoopId.Night):F2} voices={ActiveVoiceCount} vol={_volumes.Master:F2}/{_volumes.Sfx:F2}/{_volumes.Music:F2}";
 
     public void SetVolumes(AudioVolumes volumes)
     {
         _volumes = volumes;
     }
 
+    // Commands waiting for the audio thread.
+    public int QueuedCommands => Volatile.Read(ref _queued);
+
     public void PlayOneShot(SoundId id, WavClip clip, float gainLeft, float gainRight, float pitch)
     {
+        // A device that stopped pulling must not let the queue grow without bound: drop new sounds.
+        if (Volatile.Read(ref _queued) >= MaxQueuedCommands)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _queued);
         _commands.Enqueue(new Command(CommandKind.Play, id, clip, SoundIds.BusOf(id), gainLeft, gainRight, pitch, default, 0f, 0f));
     }
 
     public void AttachLoop(AudioLoopId loop, WavClip? clip)
     {
+        Interlocked.Increment(ref _queued);
         _commands.Enqueue(new Command(CommandKind.LoopClip, default, clip, AudioBus.Sfx, 0f, 0f, 1f, loop, 0f, 0f));
     }
 
     public void SetLoopTarget(AudioLoopId loop, float target, float fadeSeconds)
     {
+        Interlocked.Increment(ref _queued);
         _commands.Enqueue(new Command(CommandKind.LoopTarget, default, null, AudioBus.Sfx, 0f, 0f, 1f, loop, target, fadeSeconds));
     }
 
@@ -99,7 +113,7 @@ public sealed class AudioMixer
     public int Read(float[] buffer, int offset, int count)
     {
         int frames = count / 2;
-        Array.Clear(buffer, offset, frames * 2);
+        new Span<float>(buffer, offset, frames * 2).Clear();
         DrainCommands();
         AudioVolumes volumes = _volumes;
         float sfx = volumes.BusGain(AudioBus.Sfx);
@@ -196,6 +210,7 @@ public sealed class AudioMixer
     {
         while (_commands.TryDequeue(out Command command))
         {
+            Interlocked.Decrement(ref _queued);
             switch (command.Kind)
             {
                 case CommandKind.Play:

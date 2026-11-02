@@ -16,7 +16,8 @@ public sealed class NAudioOutput : IAudioOutput
     public NAudioOutput(AudioMixer mixer)
     {
         ArgumentNullException.ThrowIfNull(mixer);
-        _device = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
+        _device = new WaveOutEvent { DesiredLatency = 200, NumberOfBuffers = 4 };
+        AudioDiagnostics.Log($"device opened (latency={_device.DesiredLatency} buffers={_device.NumberOfBuffers})");
         _provider = new MixerProvider(mixer);
         try
         {
@@ -45,16 +46,24 @@ public sealed class NAudioOutput : IAudioOutput
         _provider.Dispose();
     }
 
+    // The provider the device pulls. Public for tests, which drive it through NAudio's own
+    // SampleToWaveProvider exactly as the device does.
+    public static ISampleProvider CreateProvider(AudioMixer mixer) => new MixerProvider(mixer);
+
+    // NAudio's SampleToWaveProvider hands over a float[] that aliases a byte[] (WaveBuffer). Array.Clear
+    // on such an array clears `count` bytes, not floats, so a mixer that clears the buffer it is given
+    // leaves three quarters of it holding the previous block, and every pass adds to it: an echo that
+    // builds until the soft limiter pins it ("repeating and stuck"). The mixer therefore works in its
+    // own scratch array and the result is copied out with a Span, which honours the element size.
     private sealed class MixerProvider(AudioMixer mixer) : ISampleProvider, IDisposable
     {
         private readonly AudioMixer _mixer = mixer;
         private readonly AudioReadStats _stats = new(mixer);
-        private readonly AudioDumpWriter? _dump = AudioDiagnostics.DumpPath is { } path ? new AudioDumpWriter(path) : null;
+        private float[] _scratch = new float[8192];
 
         public void Dispose()
         {
             _stats.Dispose();
-            _dump?.Dispose();
         }
 
         public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(AudioMixer.SampleRate, 2);
@@ -63,16 +72,23 @@ public sealed class NAudioOutput : IAudioOutput
         {
             _stats.Begin(count / 2);
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            Span<float> destination = new(buffer, offset, count);
             try
             {
-                int read = _mixer.Read(buffer, offset, count);
-                _dump?.Add(buffer, offset, read);
+                if (_scratch.Length < count)
+                {
+                    _scratch = new float[count];
+                }
+
+                int read = _mixer.Read(_scratch, 0, count);
+                _stats.Level(_scratch, 0, read);
+                _scratch.AsSpan(0, read).CopyTo(destination);
                 return read;
             }
             catch (Exception)
             {
                 // Audio must never take the game down: a failed block is a block of silence.
-                Array.Clear(buffer, offset, count);
+                destination.Clear();
                 return count;
             }
             finally

@@ -15,6 +15,7 @@ public sealed class MixerGameAudio : IGameAudio
     private MusicTrack _music = MusicTrack.None;
     private AudioVolumes _volumes;
     private bool _disposed;
+    private float _nightTarget = -1f;
 
     public MixerGameAudio(AudioMixer mixer, AudioClipBank bank, IAudioOutput? output, AudioVolumes volumes)
     {
@@ -84,7 +85,15 @@ public sealed class MixerGameAudio : IGameAudio
         }
 
         float night = float.IsFinite(night01) ? Math.Clamp(night01, 0f, 1f) : 0f;
-        _mixer.SetLoopTarget(AudioLoopId.Night, night * 0.7f, AudioMixer.AmbienceFadeSeconds);
+        // Called every frame: only a changed (1/64 step) target is sent, so the queue stays empty.
+        float target = MathF.Round(night * 64f) / 64f * 0.7f;
+        if (target == _nightTarget)
+        {
+            return;
+        }
+
+        _nightTarget = target;
+        _mixer.SetLoopTarget(AudioLoopId.Night, target, AudioMixer.AmbienceFadeSeconds);
     }
 
     public void SetVolumes(AudioVolumes volumes)
@@ -120,7 +129,6 @@ public sealed class MixerGameAudio : IGameAudio
 
         if (_bank.TryGet(id, _random, out WavClip clip))
         {
-            AudioDiagnostics.Log($"play {id} gain={left:F2}/{right:F2} pitch={pitch:F2}");
             _mixer.PlayOneShot(id, clip, Math.Max(0f, left), Math.Max(0f, right), pitch);
         }
     }

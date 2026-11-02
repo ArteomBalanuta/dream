@@ -22,6 +22,7 @@ using System.Diagnostics.CodeAnalysis;
 namespace Dream.Application;
 
 ﻿// Game.cs
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
@@ -404,6 +405,8 @@ public class Game : GameWindow
         // Esc inside a pause-menu sub-screen (Options, Key Bindings) goes back one screen instead of
         // closing the whole menu; on the pause root it closes the menu as before.
         _playScene.TryEscapeBack = () => _settings.PauseMenuVisible && _pauseScreen.Apply(MenuAction.Back);
+        // The viewport and settings resolution follow a window that was resized while a menu was up.
+        _playScene.Resize(ClientSize);
         // The classic inventory's static panel state belongs to one scene.
         Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
     }
@@ -583,6 +586,8 @@ public class Game : GameWindow
 
     private void RenderMainMenu()
     {
+        // Only the play scene sets the viewport, so a resized window must be followed here.
+        GL.Viewport(0, 0, ClientSize.X, ClientSize.Y);
         MenuUiRenderer? renderer = EnsureMenuRenderer();
         if (renderer == null || _mainMenu == null)
         {

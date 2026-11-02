@@ -44,6 +44,28 @@ internal sealed class AudioReadStats : IDisposable
     private double _maxInterval;
     private double _maxDuration;
     private double _lastCoveredSeconds;
+    private double _sumSquares;
+    private long _sampleCount;
+
+    public void Level(float[] buffer, int offset, int count)
+    {
+        if (_timer is null)
+        {
+            return;
+        }
+
+        double sum = 0;
+        for (int i = 0; i < count; i += 2)
+        {
+            sum += buffer[offset + i] * buffer[offset + i];
+        }
+
+        lock (_gate)
+        {
+            _sumSquares += sum;
+            _sampleCount += count / 2;
+        }
+    }
 
     private readonly AudioMixer? _mixer;
 
@@ -109,6 +131,7 @@ internal sealed class AudioReadStats : IDisposable
         double mean;
         double max;
         double maxDuration;
+        double rmsOut;
         lock (_gate)
         {
             reads = _reads;
@@ -121,9 +144,12 @@ internal sealed class AudioReadStats : IDisposable
             _sumInterval = 0;
             _maxInterval = 0;
             _maxDuration = 0;
+            rmsOut = _sampleCount > 0 ? Math.Sqrt(_sumSquares / _sampleCount) * 32768 : 0;
+            _sumSquares = 0;
+            _sampleCount = 0;
         }
 
-        AudioDiagnostics.Log($"reads={reads} meanGap={mean * 1000:F1}ms maxGap={max * 1000:F1}ms maxReadMs={maxDuration * 1000:F2} underruns={underruns} gc0={GC.CollectionCount(0)} gc2={GC.CollectionCount(2)} {_mixer?.DescribeLoops()}");
+        AudioDiagnostics.Log($"reads={reads} meanGap={mean * 1000:F1}ms maxGap={max * 1000:F1}ms maxReadMs={maxDuration * 1000:F2} rmsL={rmsOut:F0} underruns={underruns} gc0={GC.CollectionCount(0)} gc2={GC.CollectionCount(2)} {_mixer?.DescribeLoops()}");
     }
 }
 
@@ -197,6 +223,60 @@ internal sealed class AudioDumpWriter : IDisposable
             Buffer.BlockCopy(block, 0, bytes, 0, bytes.Length);
             _file.Write(bytes);
             _dataBytes += bytes.Length;
+        }
+    }
+}
+
+// DREAM_AUDIO_DUMP=<path>: no device is opened. A thread pulls the mixer in the same blocks and at the
+// same cadence as the WaveOutEvent (about 33 ms) and writes the stream to the WAV file.
+internal sealed class OfflineDumpOutput : IAudioOutput
+{
+    private const int BlockFrames = 1470;
+    private readonly AudioMixer _mixer;
+    private readonly AudioDumpWriter _writer;
+    private readonly AudioReadStats _stats;
+    private readonly Thread _thread;
+    private volatile bool _stop;
+
+    public OfflineDumpOutput(AudioMixer mixer, string path)
+    {
+        _mixer = mixer;
+        _writer = new AudioDumpWriter(path);
+        _stats = new AudioReadStats(mixer);
+        _thread = new Thread(Run) { IsBackground = true, Name = "audio-offline" };
+        AudioDiagnostics.Log($"offline dump to {path} (no device)");
+        _thread.Start();
+    }
+
+    public void Dispose()
+    {
+        _stop = true;
+        _thread.Join(2000);
+        _stats.Dispose();
+        _writer.Dispose();
+    }
+
+    private void Run()
+    {
+        float[] block = new float[BlockFrames * 2];
+        long start = Stopwatch.GetTimestamp();
+        long produced = 0;
+        while (!_stop)
+        {
+            double elapsed = (Stopwatch.GetTimestamp() - start) / (double)Stopwatch.Frequency;
+            if (produced > elapsed * AudioMixer.SampleRate)
+            {
+                Thread.Sleep(2);
+                continue;
+            }
+
+            _stats.Begin(BlockFrames);
+            long began = Stopwatch.GetTimestamp();
+            int read = _mixer.Read(block, 0, block.Length);
+            _stats.Level(block, 0, read);
+            _writer.Add(block, 0, read);
+            _stats.End(began);
+            produced += BlockFrames;
         }
     }
 }

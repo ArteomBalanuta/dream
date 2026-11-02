@@ -220,7 +220,7 @@ public sealed class MenuWidgets
     public bool Button(int id, UiRect r, string label, bool enabled = true)
     {
         bool hovered = Input.Hovered(id, r) && enabled;
-        bool clicked = Input.Button(id, r) && enabled;
+        bool clicked = Input.Button(id, r, enabled) && enabled;
         bool down = hovered && Input.Pointer.LeftDown;
 
         UiSprite? plate = !enabled ? Skin.ButtonDisabledSprite

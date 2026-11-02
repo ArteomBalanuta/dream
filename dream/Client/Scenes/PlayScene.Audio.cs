@@ -19,6 +19,7 @@ public partial class PlayScene
     private const float EnemyStepHearingRange = 30f;
     private const float EnemyGrowlRange = 8f;
     private const int MaxMutationSoundsPerSnapshot = 6;
+    private const int LevelUpArmFrames = 180;
 
     private AudioEventBridge? _audioBridge;
     private readonly FootstepCadence _localFootsteps = new();
@@ -98,7 +99,9 @@ public partial class PlayScene
 
         _audioWasDead = dead;
         int level = presentation.HudStatus.Level;
-        if (_audioLastLevel > 0 && level > _audioLastLevel)
+        // The level starts at 1 until the first progression snapshot lands, so a join above level 1 must
+        // not sound: arm after a settle period, and only a rise by exactly one is a level-up.
+        if (_audioFrame > LevelUpArmFrames && _audioLastLevel > 0 && level == _audioLastLevel + 1)
         {
             audio.Play(SoundId.LevelUp);
         }

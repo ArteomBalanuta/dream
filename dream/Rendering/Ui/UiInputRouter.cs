@@ -41,7 +41,13 @@ public sealed class UiInputRouter : IUiInput
     private int _dragPayload = -1;
     private bool _dragReleased;
     private Vector2 _dropPosition;
+    public const double HoverFeedbackMinSeconds = 0.08;
+
+    // Minimum time between hover sounds (settable so tests can step frames faster than real time).
+    public double HoverMinSeconds { get; set; } = HoverFeedbackMinSeconds;
+
     private int _hoverFeedbackId = NoId;
+    private long _lastHoverTicks = long.MinValue / 2;
 
     // Per-instance override of the static Feedback (tests, a second UI that wants its own sound).
     public Action<UiFeedback>? LocalFeedback { get; set; }
@@ -159,13 +165,23 @@ public sealed class UiInputRouter : IUiInput
 
     // A click on release over the widget that took the press. A press that turned into a drag is
     // not a click.
-    public bool Button(int id, UiRect r)
+    public bool Button(int id, UiRect r) => Button(id, r, true);
+
+    // Hover sounds only for an enabled widget, only on entering it, and at most once per
+    // HoverFeedbackMinSeconds, so a pointer that flickers across an edge cannot machine-gun the sound.
+    public bool Button(int id, UiRect r, bool enabled)
     {
         Register(id, r);
         if (_hot == id && !IsSuppressed(id) && _hoverFeedbackId != id)
         {
             _hoverFeedbackId = id;
-            Notify(UiFeedback.Hover);
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            double since = (now - _lastHoverTicks) / (double)System.Diagnostics.Stopwatch.Frequency;
+            if (enabled && since >= HoverMinSeconds)
+            {
+                _lastHoverTicks = now;
+                Notify(UiFeedback.Hover);
+            }
         }
         else if (_hot != id && _hoverFeedbackId == id)
         {
@@ -173,7 +189,7 @@ public sealed class UiInputRouter : IUiInput
         }
 
         bool clicked = _leftReleased && !_dragReleased && _pressId == id && _hot == id && !IsSuppressed(id);
-        if (clicked)
+        if (clicked && enabled)
         {
             Notify(UiFeedback.Click);
         }
