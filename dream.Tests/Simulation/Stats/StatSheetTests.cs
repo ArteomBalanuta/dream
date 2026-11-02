@@ -120,7 +120,8 @@ public class StatSheetTests
     {
         foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
-            PlayerCombatStats baseStats = new() { Strength = 48, AttackSpeed = 4.5f, Vitality = 3 };
+            // Agility 0: the legacy tool combine knows no Agility attack-speed bonus (a fresh character now starts at 10).
+            PlayerCombatStats baseStats = new() { Strength = 48, AttackSpeed = 4.5f, Vitality = 3, Agility = 0 };
             PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
             EquipInMainHand(combatant, definition);
 
@@ -145,7 +146,7 @@ public class StatSheetTests
                 {
                     foreach (float attackSpeed in attackSpeeds)
                     {
-                        PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
+                        PlayerCombatStats baseStats = new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality, Agility = 0 };
                         PlayerCombatant combatant = new(() => OpenTK.Mathematics.Vector3.Zero, stats: baseStats);
                         EquipInMainHand(combatant, definition);
 

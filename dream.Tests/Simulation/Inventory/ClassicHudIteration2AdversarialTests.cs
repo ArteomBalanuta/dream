@@ -31,10 +31,10 @@ public sealed class ClassicHudIteration2AdversarialTests
     private static List<long> AllIds(PlayerInventorySnapshot s)
         => [.. s.AllItems().Select(i => i.ItemInstanceId).Order()];
 
-    // Destroys the four spare kit items so there is room, keeping the worn hammer.
+    // Destroys the spare kit items (tools and potions) so there is room, keeping the worn hammer.
     private static void ClearKit(PlayerInventoryService inventory)
     {
-        foreach (string kind in new[] { "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal" })
+        foreach (string kind in new[] { "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal", "potion.health", "potion.mana" })
         {
             PlayerInventorySnapshot s = inventory.BuildSnapshot(Player);
             int anchor = s.AnchorOf(kind);

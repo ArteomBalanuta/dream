@@ -298,7 +298,8 @@ public sealed class InventoryWriteFailureTests
         run.Flush();
 
         Assert.Equal(0, run.FailedWrites);
-        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind <> 'tool.torch';"));
+        // The maul only (no old tool kinds), apart from the torch and the potions of kits v3 and v4 that arrive newer than the unrecorded kit.
+        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind <> 'tool.torch' AND item_kind NOT LIKE 'consumable.%' AND item_kind NOT LIKE 'potion.%';"));
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
     }
@@ -356,7 +357,8 @@ public sealed class InventoryWriteFailureTests
         Assert.True(run.Inventory.Ensure(Player));
         run.Flush();
 
-        // Version 1 still receives the version-2 torch; version 2 receives nothing.
-        Assert.Equal(grantedVersion == 1 ? 2L : 1L, db.Scalar("SELECT COUNT(*) FROM item_instances;"));
+        // Only entries newer than the recorded version arrive (version 1: the torch and the potions; version 2: the
+        // potions), beside the one item the player already holds.
+        Assert.Equal(1L + ToolCatalog.StarterKit.Count(entry => entry.IntroducedVersion > grantedVersion), db.Scalar("SELECT COUNT(*) FROM item_instances;"));
     }
 }
