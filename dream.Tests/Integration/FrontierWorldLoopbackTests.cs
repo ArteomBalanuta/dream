@@ -102,10 +102,12 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         Assert.Equal(100, options.NewWorldSize);
         Assert.Equal(WorldDefaults.ServerNewWorldSize, options.NewWorldSize);
 
+        // The default path: a fresh database (migration 0003 seeds world 1 at 56 m) and the bare --server options.
         using MigrationTestDatabase db = new();
-        await using WireLoopbackServer server = await StartAsync(db, Frontier);
+        await using WireLoopbackServer server = await StartAsync(db, options);
         Assert.Equal(100, server.Runtime.Map.Width);
         Assert.Equal(100, server.Runtime.Map.Depth);
+        Assert.Equal(100, Convert.ToInt64(db.Scalar("SELECT width FROM worlds WHERE world_id = 1")));
 
         await using WireLoopbackClient client = await server.ConnectAndJoinAsync("frontier-join", awaitPrefetchBeforeTicking: true);
         for (int i = 0; i < 3; i++)
@@ -236,10 +238,21 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         Assert.Equal(4, ContentCatalog.Shipped.Quests.Count(q => q.ExistsOn(56)));
         Assert.All(ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(56)), camp => Assert.False(camp.IsAbsolute, camp.Key));
 
+        // A stored 56 m world (it ran once and saved its seed) opened by the bare --server options stays 56.
         using MigrationTestDatabase db = new();
-        await using WireLoopbackServer server = await StartAsync(db, new ServerStartOptions(null), npcs: true);
+        await using (WireLoopbackServer first = await StartAsync(db, new ServerStartOptions(null)))
+        {
+            Assert.Equal(56, first.Runtime.Map.Width);
+            M6EndToEndLoopbackTests.Flush(first);
+        }
+
+        SqliteConnection.ClearAllPools();
+        Assert.True(Program.TrySelectProcessMode(["--server"], out _, out ServerStartOptions bare, out _));
+        Assert.Equal(100, bare.NewWorldSize);
+        await using WireLoopbackServer server = await StartAsync(db, bare, npcs: true);
         await using HeadlessPlayScene a = await HeadlessPlayScene.JoinAsync(server, Session);
         Assert.Equal(56, server.Runtime.Map.Width);
+        Assert.Equal(56, Convert.ToInt64(db.Scalar("SELECT width FROM worlds WHERE world_id = 1")));
         await PlainStepAsync(server, a, 12);
 
         List<SpawnCamp> expected = [.. CampsNow(server.Runtime)];
@@ -253,6 +266,15 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         await M6EndToEndLoopbackTests.PlaceAsync(server, [a], a, M6EndToEndLoopbackTests.BesideTheWarden(a));
         await M6EndToEndLoopbackTests.OpenDialogueAsync(server, [a], a);
         Assert.Equal(4, M6EndToEndLoopbackTests.Hud(a).Offers.Count);
+
+        // A crafted accept or turn-in for a 100 m tier quest, next to the warden, is refused on this world.
+        HeadlessPlayScene[] clients = [a];
+        M6EndToEndLoopbackTests.AssertRejected(await M6EndToEndLoopbackTests.ResultAsync(
+            server, clients, a, M6EndToEndLoopbackTests.Click(a, new QuestAcceptIntent(M6EndToEndLoopbackTests.WardenActorId, TierQuest))), "quest is not available");
+        M6EndToEndLoopbackTests.AssertRejected(await M6EndToEndLoopbackTests.ResultAsync(
+            server, clients, a, M6EndToEndLoopbackTests.Click(a, new QuestTurnInIntent(M6EndToEndLoopbackTests.WardenActorId, TierQuest))), "quest is not available");
+        M6EndToEndLoopbackTests.Flush(server);
+        Assert.Equal(0, Convert.ToInt64(db.Scalar($"SELECT COUNT(*) FROM player_quests WHERE quest_key = '{TierQuest}'")));
         await a.LeaveAsync();
     }
 }

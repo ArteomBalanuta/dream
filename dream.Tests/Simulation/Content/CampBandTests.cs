@@ -1,6 +1,9 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Sessions;
+using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
+using Dream.Tests.Server.Persistence;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -192,5 +195,62 @@ public sealed class CampBandTests
         using WorldSessionRuntime day = CreateRuntime(100, content);
         Tick(day, 12);
         Assert.Empty(day.Enemies.ActiveActors.Where(enemy => enemy.IsActive));
+    }
+
+    [Fact]
+    public void RestoredLegacyCampRows_OnA100MeterWorld_AreRemovedOnePerTickWhenIdle_FightersAreSpared_AndTheirRowsGoAway()
+    {
+        // The legacy camp stops at 99 m, so on a 100 m world its restored members have no camp to belong to.
+        ContentCatalog content = LoadCamps(Camps(Camp("north-east-wolves", "40.5", "40.5", ",\"maxWorldSize\":99", count: "3")));
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        DateTime now = DateTime.UtcNow;
+        for (int i = 0; i < 3; i++)
+        {
+            world.SaveEnemyInstance(new PersistedEnemyInstance(
+                new ObjectId(9001 + i), "Wolf", "Wolf", new Vector3(40.5f + i, 1f, 40.5f), Vector3.UnitZ,
+                new PersistedCreatureStats(100, 100, 10, 10, 10, 0, 2.8f, 0.952381f, 1), now, now, CampKey: "north-east-wolves"));
+        }
+
+        Assert.Equal(3, world.LoadActiveEnemies().Count(row => row.CampKey == "north-east-wolves"));
+
+        using WorldSessionRuntime runtime = new(
+            100,
+            new Vector3(5f, 1.5f, 5f),
+            new SceneEventHub(),
+            playerProfiles: new SqlitePlayerProfileRepository(database.Schema),
+            worldPersistence: world,
+            persistenceWrites: PersistenceWriteQueue.Background());
+        runtime.WriteCheckpointOnDispose = false;
+        runtime.EnemyContent = content;
+        WorldClockSettings clock = WorldClockSettings.Default;
+        runtime.ConfigureWorldClock(clock, clock.TicksPerDay + (long)Math.Round(12 / 24d * clock.TicksPerDay) - clock.StartOffsetTicks);
+
+        Assert.Equal(3, runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
+        // A restored member walks home from its saved spot (and counts as chasing on the way): start them at home, idle.
+        foreach (EnemyActor member in runtime.Enemies.ActiveActors)
+        {
+            member.SetAuthoritativeState(member.HomePosition, member.Forward, EnemyBehaviorState.Idle);
+        }
+
+        EnemyActor fighter = runtime.Enemies.ActiveActors.OrderBy(enemy => enemy.Combatant.Actor.Id).First();
+        PlayerSessionId attacker = new("attacker");
+        fighter.RecordDamage(attacker, 5);
+
+        Tick(runtime, 1);
+        Assert.Equal(2, runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
+        Tick(runtime, 1);
+        Assert.Equal(1, runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
+        Tick(runtime, 10);
+        EnemyActor spared = Assert.Single(runtime.Enemies.ActiveActors, enemy => enemy.IsActive);
+        Assert.Same(fighter, spared);
+        Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        Assert.Single(world.LoadActiveEnemies());
+
+        fighter.ClearContributor(attacker);
+        Tick(runtime, 2);
+        Assert.Empty(runtime.Enemies.ActiveActors.Where(enemy => enemy.IsActive));
+        Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        Assert.Empty(world.LoadActiveEnemies());
     }
 }

@@ -320,7 +320,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
     [InlineData("\"moveSpeed\": 2.8,", "\"moveSpeed\": 2.8, \"attackIntervalSeconds\": 0,", "outside the range")]
     [InlineData("\"level\": 1,", "\"level\": 0,", "outside the range")]
-    [InlineData("\"level\": 1,", "\"level\": 1, \"maxHealth\": 100,", "unknown property")]
+    [InlineData("\"level\": 1,", "\"level\": 1, \"maxHp\": 100,", "unknown property")]
     [InlineData("\"visualKey\": \"enemy.wolf\"", "\"visualKey\": \"Enemy Wolf\"", "is not a visual id")]
     [InlineData("\"spawnRole\": \"Primary\"", "\"spawnRole\": \"Boss\"", "unknown spawn role")]
     [InlineData("\"spawnRole\": \"Primary\"", "\"spawnRole\": \"NightExtra\"", "needs at least one enemy with spawnRole 'Primary'")]
@@ -489,6 +489,30 @@ public sealed class ContentCatalogTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AnEnemyMaxHealth_IsOptional_Validated_AndInTheDigestOnlyWhenSet()
+    {
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
+        Assert.Equal(400, prowler.MaxHealth);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
+        Assert.Equal(700, howler.MaxHealth);
+        Assert.Null(ContentCatalog.Shipped.Wolf.MaxHealth);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("DireWolf", out EnemyTemplate? dire));
+        Assert.Null(dire.MaxHealth);
+
+        string plain = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, @",\s*""maxHealth"":\s*\d+", string.Empty);
+        Assert.DoesNotContain("maxHealth", plain, StringComparison.Ordinal);
+        ContentCatalog without = ContentCatalog.Load(ShippedItemsJson, plain, ShippedLootJson);
+        ContentCatalog with = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
+        Assert.NotEqual(without.ContentDigest, with.ContentDigest);
+
+        foreach (string bad in new[] { "0", "-5", "100001", "\"400\"", "1.5" })
+        {
+            string changed = ShippedEnemiesJson.Replace("\"maxHealth\": 400", $"\"maxHealth\": {bad}");
+            Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, changed, ShippedLootJson));
         }
     }
 }

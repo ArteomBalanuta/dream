@@ -32,7 +32,7 @@ Other gaps: `ix_player_inventory_slots_item_instance_id` is not unique, which mu
 
 ## Milestones
 
-Status: M0-M8 done, with M5, M6, M7 and M8 on `integrate/mp-m5` at protocol v18, schema v14. M9 open.
+Status: M0-M8 done, with M5, M6, M7 and M8 on `integrate/mp-m5` at protocol v18, schema v14. M9: first step done on `integrate/mp-m9`, at protocol v18, schema v14 (100 m default for new server worlds, tiered camps and quests, Ashen Prowler and Grave Howler). Follow-ups after isometric merges: the integrated server defaults to 100 (touches `Game.cs` and `GameSettings.cs`), the `docs/configuration.md` line 363 `--worlds create` default becomes 100 (it is 100 in the code now), visuals for the new tiers, depth read from `world.txt`, and stored authored terrain.
 
 | # | Milestone | Size | Depends on |
 |---|---|---|---|

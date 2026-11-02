@@ -16,6 +16,8 @@ public enum EnemySpawnRole : byte
 // stats are instance stats, like a rolled item's); damage, maximum health and the attack interval
 // come from the enemy.* formulas. AttackIntervalSeconds, when set, replaces the interval formula
 // for new spawns. VisualKey names the client's model and tint; LootTable names a loot.json table.
+// MaxHealth (the optional "maxHealth") replaces the enemy.max_health formula for new spawns: vitality is capped, so it is how
+// a high tier gets more health. A restored row keeps the health it was saved with.
 // GoldMin..GoldMax (the optional "goldMin" and "goldMax") is the gold a kill pays, inclusive; 0 and 0 pays none.
 public sealed record EnemyTemplate(
     string Key,
@@ -32,7 +34,8 @@ public sealed record EnemyTemplate(
     string? LootTable,
     EnemySpawnRole SpawnRole,
     int GoldMin = 0,
-    int GoldMax = 0);
+    int GoldMax = 0,
+    int? MaxHealth = null);
 
 // A spawn camp as authored in spawns.json (M2-B): Count enemies of Template stand around (X, Z) on the
 // floor; a dead one is replaced RespawnSeconds later (counted in simulation ticks). A Night camp only

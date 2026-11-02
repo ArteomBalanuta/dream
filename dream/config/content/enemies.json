@@ -47,7 +47,8 @@
       "spawnRole": "Primary",
       "lootTable": "ashen-prowler",
       "goldMin": 15,
-      "goldMax": 35
+      "goldMax": 35,
+      "maxHealth": 400
     },
     {
       "key": "GraveHowler",
@@ -63,7 +64,8 @@
       "spawnRole": "Primary",
       "lootTable": "grave-howler",
       "goldMin": 40,
-      "goldMax": 90
+      "goldMax": 90,
+      "maxHealth": 700
     }
   ]
 }

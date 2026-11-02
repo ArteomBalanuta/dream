@@ -55,6 +55,9 @@ public sealed partial class ContentCatalog
 
     public const int MaxLootDrops = 4;
     public const int MaxEnemyLevel = 1000;
+
+    // The largest authored maxHealth of an enemy template.
+    public const int MaxEnemyMaxHealth = 100_000;
     public const int MaxLootWeight = 1_000_000;
     public const int MaxLootEntries = 64;
 
@@ -657,7 +660,7 @@ public sealed partial class ContentCatalog
                 path,
                 enemyElement,
                 ["key", "displayName", "level", "strength", "vitality", "attackSpeed", "aggroRange", "attackRange", "moveSpeed", "visualKey", "spawnRole"],
-                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax"]);
+                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax", "maxHealth"]);
             float? interval = enemy.TryGetValue("attackIntervalSeconds", out JsonElement intervalElement)
                 ? ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", intervalElement, 0.05f, 3600f)
                 : null;
@@ -681,6 +684,10 @@ public sealed partial class ContentCatalog
             {
                 throw Fail(EnemiesFileName, $"{path}.goldMax", $"{goldMax} is below goldMin {goldMin}");
             }
+
+            int? maxHealth = enemy.TryGetValue("maxHealth", out JsonElement maxHealthElement)
+                ? ReadInt(EnemiesFileName, $"{path}.maxHealth", maxHealthElement, 1, MaxEnemyMaxHealth)
+                : null;
 
             // The wolf stops at 90% of its attack range at most. A range at or below the separation distance
             // (0.95 m) over that fraction would stop it inside the separation, where it shoves the player and
@@ -710,7 +717,8 @@ public sealed partial class ContentCatalog
                 lootTable,
                 ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]),
                 goldMin,
-                goldMax);
+                goldMax,
+                maxHealth);
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -1270,6 +1278,12 @@ public sealed partial class ContentCatalog
             if (enemy.GoldMax > 0)
             {
                 text.Append("gold|").Append(enemy.GoldMin.ToString(c)).Append('|').Append(enemy.GoldMax.ToString(c)).Append('\n');
+            }
+
+            // Only when authored, so content without it keeps its digest.
+            if (enemy.MaxHealth.HasValue)
+            {
+                text.Append("maxhealth|").Append(enemy.MaxHealth.Value.ToString(c)).Append('\n');
             }
         }
 

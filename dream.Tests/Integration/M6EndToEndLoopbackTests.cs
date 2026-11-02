@@ -198,7 +198,7 @@ public sealed class M6EndToEndLoopbackTests
         throw new Xunit.Sdk.XunitException($"no result for {who.SessionId}'s action {sequence}");
     }
 
-    private static void AssertRejected(ServerActionMessage result, string reason)
+    internal static void AssertRejected(ServerActionMessage result, string reason)
     {
         Assert.False(result.Result.Accepted, "the action was accepted");
         Assert.Contains(reason, result.Result.Rejection!.Reason, StringComparison.Ordinal);
