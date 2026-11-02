@@ -5,6 +5,7 @@ using Dream.Application;
 using Dream.Client.Input;
 using Dream.Client.Networking;
 using Dream.Client.Replication;
+using Dream.Client.Startup;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
@@ -32,6 +33,7 @@ public partial class PlayScene
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
             _settings.CurrentRuntimeState.AllowGameplayInput,
             _runtime.Player.Combatant.Health.IsAlive);
+        HandleConsumableHotkeys(keyboardState, allowGameplayInput);
         // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
         _clickMove.OnFrame(_render.SampleWorldPointer(mouseState, _settings, _windowFocused), allowGameplayInput);
         // The frame only captures input; each prediction tick below turns it into one command
@@ -48,6 +50,10 @@ public partial class PlayScene
         }
 
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
+        // Only the integrated host (Game.CreateLocalServerHandle) lets noclip and freeze through.
+        _commandInputFilter.AllowDevToggles = _localServer is { IsReady: true } localServer
+            && LoopbackHost.IsLoopback(_remoteClient.Options.Host)
+            && _remoteClient.Options.Port == localServer.BoundPort;
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _commandTicks.CaptureInput(commandFrame);

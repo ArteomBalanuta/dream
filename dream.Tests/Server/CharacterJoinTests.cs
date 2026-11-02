@@ -300,7 +300,7 @@ public sealed class CharacterJoinTests
             PersistedPlayerProfile profile = profiles.TryGet(Hero)!.Value;
             world.Runtime.ApplyPersistedPlayerState(
                 session,
-                profile with { Stats = profile.Stats with { Level = 7, Experience = 321, Strength = 25, Vitality = 18, AttackSpeed = 1.75f } },
+                profile with { Stats = profile.Stats with { Level = 7, Experience = 321, Strength = 25, Vitality = 18, AttackSpeed = 1.75f, Energy = 10 } },
                 new PersistedPlayerWorldState(Hero, worldOneSpot, Vector3.UnitZ, 23, 0, DateTime.UtcNow));
             world.Leave("c1");
             Assert.Equal(JoinRejectionReasons.CharacterOwned, world.JoinRejectionOf("c2", "s2", Hero, TokenOf("stranger")));
@@ -329,6 +329,9 @@ public sealed class CharacterJoinTests
             Assert.Equal(18, combatant.BaseStats.Vitality);
             Assert.Equal(1.75f, combatant.BaseStats.AttackSpeed);
             Assert.Equal(combatant.Health.MaxHealth, combatant.Health.CurrentHealth);
+            // A joining player starts with a full mana pool, not the pool of a fresh combatant (Energy 0).
+            Assert.Equal(70, combatant.MaxMana);
+            Assert.Equal(combatant.MaxMana, combatant.Mana);
             Assert.NotEqual(worldOneSpot, PositionOf(world, session));
 
             PersistedPlayerProfile current = profiles.TryGet(Hero)!.Value;

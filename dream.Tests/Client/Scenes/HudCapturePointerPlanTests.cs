@@ -496,6 +496,9 @@ public sealed class HudCapturePointerPlanTests : IDisposable
         Assert.Equal((int)(HudCaptureKeys.W | HudCaptureKeys.Space), keys.A);
         Assert.Equal(30, keys.B);
 
+        Assert.True(HudCaptureStepSpec.TryParse("keys:q+e:3", out HudCaptureStepSpec potions));
+        Assert.Equal((int)(HudCaptureKeys.Q | HudCaptureKeys.E), potions.A);
+
         Assert.True(HudCaptureStepSpec.TryParse("status", out HudCaptureStepSpec status));
         Assert.Equal(HudCaptureVerb.Status, status.Verb);
         Assert.True(HudCaptureStepSpec.TryParse("waitidle:600", out HudCaptureStepSpec idle));
@@ -509,7 +512,7 @@ public sealed class HudCapturePointerPlanTests : IDisposable
     [InlineData("holdmove:1:2:3:4")]
     [InlineData("holdmove:1:2:3:4:0")]
     [InlineData("holdmove:-1:2:3:4:10")]
-    [InlineData("keys:q:10")]
+    [InlineData("keys:z:10")]
     [InlineData("keys:w:0")]
     [InlineData("keys::10")]
     [InlineData("waitidle:0")]

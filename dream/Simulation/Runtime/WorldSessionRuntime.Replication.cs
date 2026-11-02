@@ -204,7 +204,7 @@ public sealed partial class WorldSessionRuntime
                 playerTarget.Combatant.Health.MaxHealth,
                 playerTarget.IsAlive,
                 playerTarget.InteractionMode,
-                PlayerCombatStatsSnapshot.From(playerTarget.Combatant.BaseStats),
+                playerTarget.Combatant.CaptureStatsSnapshot(),
                 displayName,
                 new PlayerProgressionSnapshot(
                     playerTarget.Combatant.Level,
@@ -213,6 +213,9 @@ public sealed partial class WorldSessionRuntime
                 StarvedTicks: CaptureStarvedTicks(playerTarget.SessionId),
                 // T2f: derived from the inventory (cached, allocation-free), so not in the checksum.
                 HeldLight: _inventory.ResolveEquippedHeldLight(characterKey),
+                // C3: "<main>|<off>" visual ids; like HeldLight it is derived from the inventory, so
+                // not in the checksum.
+                VisualKey: _inventory.ResolveEquippedVisualKey(characterKey),
                 ModifierDigest: _inventory.ResolveModifierDigest(characterKey)));
         }
 

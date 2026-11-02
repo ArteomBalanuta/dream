@@ -538,9 +538,9 @@ public sealed class BagActionRulesTests
         using (writes)
         {
             Assert.All(kinds, kind => Assert.Equal(1, Count(world, kind)));
-            // Only the torch, which came after the kit this player is taken to hold, is granted.
+            // Only the torch and the two potions, which came after the kit this player is taken to hold, are granted.
             Assert.Equal(1, Count(world, "tool.torch"));
-            Assert.Equal(5, world.LoadItemInstances().Count);
+            Assert.Equal(7, world.LoadItemInstances().Count);
             Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.LoadPlayerInventory(Player).StarterKitVersion);
         }
     }
@@ -558,7 +558,8 @@ public sealed class BagActionRulesTests
         using (writes)
         {
             Assert.Equal(1, Count(world, "tool.torch"));
-            Assert.Equal(2, world.LoadItemInstances().Count);
+            // The hammer and the worn torch, plus the two potions of kit v3.
+            Assert.Equal(4, world.LoadItemInstances().Count);
         }
     }
 
@@ -617,7 +618,8 @@ public sealed class BagActionRulesTests
         {
             Dictionary<int, long> rows = world.SlotsOf(Player);
             Assert.Equal(30, rows[100]);
-            Assert.False(rows.ContainsKey(2));
+            // The blade left anchor 2 (a starter potion may take the cell afterwards).
+            Assert.False(rows.TryGetValue(2, out long atTwo) && atTwo == 30);
             Assert.Equal(1, rows.Values.Count(id => id == 30));
         }
     }

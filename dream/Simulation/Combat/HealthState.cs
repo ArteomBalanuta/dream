@@ -31,6 +31,19 @@ public sealed class HealthState : IDamageable
             WasFatal: previousHealth > 0 && CurrentHealth == 0);
     }
 
+    // Heals a living actor up to MaxHealth and returns the amount actually restored. The dead stay dead.
+    public int Restore(int amount)
+    {
+        if (CurrentHealth <= 0 || amount <= 0)
+        {
+            return 0;
+        }
+
+        int previous = CurrentHealth;
+        CurrentHealth = (int)Math.Min((long)CurrentHealth + amount, MaxHealth);
+        return CurrentHealth - previous;
+    }
+
     public void SetMaxHealthPreservingRatio(int maxHealth)
     {
         int clampedMaxHealth = Math.Max(1, maxHealth);

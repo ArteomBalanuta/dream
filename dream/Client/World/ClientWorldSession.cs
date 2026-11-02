@@ -35,6 +35,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     // ThirdPersonCameraRig.Resolve copies it into the camera the presentation state carries.
     private readonly Camera _firstPersonCameraScratch = new(Vector3.Zero);
     private readonly IsometricFocus _isometricFocus = new();
+    private readonly LocalPlayerRenderSmoother _renderSmoother = new();
     private bool _disposed;
 
     public ClientWorldSession(
@@ -55,6 +56,10 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
 
     // The point the isometric camera looked at in the last capture; fog is measured from it.
     public Vector3 LastCameraFocus { get; private set; }
+
+    // The local player's interpolated pose from the last capture; the model is drawn from it so it
+    // moves with the camera. In first person it is the raw body pose.
+    public LocalPlayerRenderPose LocalRenderPose { get; private set; }
 
     public Map Map { get; private set; }
 
@@ -108,6 +113,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         bool primaryUseHeld = false)
     {
         CurrentServerTick = tick;
+        Vector3 bodyBeforeTick = Player.GetWorldPosition();
         bool playPrimaryUse = Player.ConsumePrimaryUsePressed(
             new PlayerInteractionCommand(primaryUseHeld, false, false),
             Player.Combatant.DerivedStats.AttackIntervalSeconds,
@@ -135,6 +141,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         Physics.StepSimulationFixed(deltaTime);
         _lastPhysicsStepMilliseconds = Stopwatch.GetElapsedTime(physicsStart).TotalMilliseconds;
         Player.SyncCameraFromBody(tuning);
+        _renderSmoother.RecordTick(bodyBeforeTick, Player.GetWorldPosition(), deltaTime);
         _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
         return playPrimaryUse;
     }
@@ -149,7 +156,28 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     {
         // The returned state's camera stays a new instance per capture: callers (and tests) may keep
         // a state across captures and compare cameras, so only the intermediate camera is reused.
-        Player.CopyPresentationCameraTo(_firstPersonCameraScratch, presentationLeadSeconds);
+        Vector3 bodyNow = Player.GetWorldPosition();
+        Vector3 renderBody = bodyNow;
+        if (cameraViewMode == CameraViewMode.FirstPerson)
+        {
+            // First person keeps the velocity lead: the camera is the view and there is no model.
+            Player.CopyPresentationCameraTo(_firstPersonCameraScratch, presentationLeadSeconds);
+            LocalRenderPose = new LocalPlayerRenderPose(bodyNow, Player.Camera.HorizontalForward, false);
+        }
+        else
+        {
+            // Model and camera both follow the body interpolated between ticks, so they cannot
+            // drift apart and a constant-speed walk advances evenly every frame.
+            LocalRenderPose = _renderSmoother.Resolve(
+                bodyNow,
+                presentationLeadSeconds / SimulationClock.FixedDeltaSeconds,
+                Player.Camera.HorizontalForward,
+                frameSeconds);
+            renderBody = LocalRenderPose.Position;
+            Player.CopyPresentationCameraTo(_firstPersonCameraScratch, 0f);
+            _firstPersonCameraScratch.Position += renderBody - bodyNow;
+        }
+
         Camera presentationCamera;
         if (cameraViewMode == CameraViewMode.Isometric)
         {
@@ -161,7 +189,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         {
             presentationCamera = ThirdPersonCameraRig.Resolve(
                 _firstPersonCameraScratch,
-                Player.GetWorldPosition(),
+                renderBody,
                 cameraViewMode);
         }
 

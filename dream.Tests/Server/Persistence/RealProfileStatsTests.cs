@@ -82,6 +82,32 @@ public sealed class RealProfileStatsTests
         Assert.Equal(120, stats.Experience);
     }
 
+    [Fact]
+    public void SpentAttributePoints_AreSaved_AndSurviveARestart()
+    {
+        using PersistenceTestDatabase database = new();
+        SqlitePlayerProfileRepository profiles = new(database.Schema);
+
+        using (DedicatedServerHost first = CreateHost(database))
+        {
+            Join(first, "conn-1", "stat-1");
+            Dream.Simulation.Players.PlayerCombatant combatant = first.Runtime!.Player.Combatant;
+            combatant.GrantStatPoints(5);
+            Assert.True(combatant.TrySpendPoint(Dream.Simulation.Stats.StatId.Energy, 2, out _));
+            Leave(first, "conn-1");
+        }
+
+        PersistedCreatureStats stored = profiles.TryGet(Player)!.Value.Stats;
+        Assert.Equal((12, 3), (stored.Energy, stored.StatPoints));
+
+        using DedicatedServerHost second = CreateHost(database);
+        Join(second, "conn-2", "stat-2");
+        Dream.Simulation.Players.PlayerCombatant restored = second.Runtime!.Player.Combatant;
+        Assert.Equal(12, restored.BaseStats.Energy);
+        Assert.Equal(3, restored.StatPoints);
+        Assert.Equal(80, restored.MaxMana);
+    }
+
     private static void AssertStoredStats(SqlitePlayerProfileRepository profiles)
     {
         PersistedCreatureStats stats = profiles.TryGet(Player)!.Value.Stats;

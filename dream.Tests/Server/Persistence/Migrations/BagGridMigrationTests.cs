@@ -64,7 +64,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         command.CommandText = "PRAGMA foreign_key_check;";
         using SqliteDataReader reader = command.ExecuteReader();
         Assert.False(reader.Read(), "foreign_key_check must be clean");
-        Assert.Equal(10L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
         string backup = Assert.Single(database.Backups());
-        Assert.Contains("v0009-to-v0010", backup, StringComparison.Ordinal);
+        Assert.Contains("v0009-to-v0011", backup, StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -104,12 +104,15 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         Assert.Equal(0, writes.FailedWrites);
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
-        Assert.Equal([0, 2, 4, 6, 32, 34, 36, 38], snapshot.BagItems().Select(slot => slot.SlotIndex));
+        // The starter kit top-up (kit v3: two heal potions) also lands in the bag; the gear is what moved.
+        Assert.Equal([0, 2, 4, 6, 32, 34, 36, 38], snapshot.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
+        int kitPotions = snapshot.BagItems().Count(IsConsumable);
+        Assert.Equal(2, kitPotions);
         Assert.Equal(8, snapshot.HeldBackItems().Count());
         // Every item id survived into the rows, once.
         List<SlotRow> repaired = BagGridMigrationAsserts.ReadSlots(database);
-        Assert.Equal(Enumerable.Range(100, 16).Select(id => (long)id), repaired.Select(row => row.ItemId).Order());
-        Assert.Equal(16, repaired.Count);
+        Assert.Equal(Enumerable.Range(100, 16).Select(id => (long)id), repaired.Select(row => row.ItemId).Where(id => id is >= 100 and < 116).Order());
+        Assert.Equal(16 + kitPotions, repaired.Count);
         Assert.Equal(snapshot.Layout(), BuildFresh(bundle).Layout());
 
         using (SqliteConnection connection = database.Open())
@@ -123,6 +126,9 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         output.WriteLine("16 x 2x3: 8 placed, 8 held back, all 16 ids kept; held back drain as room appears (BagLayoutRepairTests)");
     }
+
+    private static bool IsConsumable(InventorySlotSnapshot slot) =>
+        slot.Item is { } item && item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal);
 
     private static PlayerInventorySnapshot BuildFresh(ServerPersistenceBundle bundle)
     {
@@ -151,9 +157,11 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
         PlayerInventoryService inventory = OpenService(bundle, writes);
         Assert.True(inventory.Ensure(Player));
-        Assert.Equal([6], inventory.BuildSnapshot(Player).BagItems().Select(slot => slot.SlotIndex));
+        PlayerInventorySnapshot loaded = inventory.BuildSnapshot(Player);
+        Assert.Equal([6], loaded.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(4, BagGridMigrationAsserts.ReadSlots(database).Count);
+        // Plus the starter kit top-up (kit v3 potions).
+        Assert.Equal(4 + loaded.BagItems().Count(IsConsumable), BagGridMigrationAsserts.ReadSlots(database).Count);
         using SqliteConnection connection = database.Open();
         Assert.Equal(3, WorldIntegrityCheck.Run(connection, WorldDescriptor.Default).UnknownSlotIndexes);
     }
@@ -194,7 +202,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
 
-        Assert.Contains("v0006-to-v0010", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Contains("v0006-to-v0011", Assert.Single(database.Backups()), StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -216,10 +224,15 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         SqliteConnection.ClearAllPools();
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(9, 10, result.BackupPath), result);
+        Assert.Equal(new SchemaMigrationResult(9, 11, result.BackupPath), result);
         SqliteConnection.ClearAllPools();
         using SqliteConnection after = database.Open();
-        Assert.Equal(v9, SqliteSchemaSnapshot.Capture(after));
+        // Migration 0011 then appends player_profiles.stat_points; every other table is the v9 one.
+        static bool NotProfiles(string line) =>
+            !line.StartsWith("master table player_profiles on ", StringComparison.Ordinal)
+            && !line.StartsWith("column player_profiles ", StringComparison.Ordinal);
+        Assert.Equal(v9.Where(NotProfiles), SqliteSchemaSnapshot.Capture(after).Where(NotProfiles));
+        Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('player_profiles') WHERE name = 'stat_points';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances;"));
         Assert.Equal(5L, database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id';"));
     }
@@ -252,6 +265,6 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Empty(database.Backups());
-        Assert.Equal(10L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 }

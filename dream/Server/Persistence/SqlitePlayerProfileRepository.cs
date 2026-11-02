@@ -24,7 +24,8 @@ public sealed partial class SqlitePlayerProfileRepository
             current_hp,
             max_hp,
             created_utc,
-            updated_utc
+            updated_utc,
+            stat_points
         FROM player_profiles
         WHERE player_name = $playerName;
         """;
@@ -45,7 +46,8 @@ public sealed partial class SqlitePlayerProfileRepository
             current_hp,
             max_hp,
             created_utc,
-            updated_utc
+            updated_utc,
+            stat_points
         )
         VALUES (
             $playerName,
@@ -62,7 +64,8 @@ public sealed partial class SqlitePlayerProfileRepository
             $currentHealth,
             $maxHealth,
             $createdUtc,
-            $updatedUtc
+            $updatedUtc,
+            $statPoints
         )
         ON CONFLICT(player_name) DO UPDATE SET
             display_name = excluded.display_name,
@@ -77,7 +80,8 @@ public sealed partial class SqlitePlayerProfileRepository
             experience = excluded.experience,
             current_hp = excluded.current_hp,
             max_hp = excluded.max_hp,
-            updated_utc = excluded.updated_utc;
+            updated_utc = excluded.updated_utc,
+            stat_points = excluded.stat_points;
         """;
 
     public SqlitePlayerProfileRepository(SqliteSchemaBootstrapper schema)
@@ -141,6 +145,7 @@ public sealed partial class SqlitePlayerProfileRepository
         command.BindInt64("$maxHealth", profile.Stats.MaxHealth);
         command.BindUtc("$createdUtc", profile.CreatedUtc == default ? now : profile.CreatedUtc);
         command.BindUtc("$updatedUtc", now);
+        command.BindInt64("$statPoints", Math.Max(0, profile.Stats.StatPoints));
     }
 
     private static PersistedPlayerProfile ReadProfile(SqliteDataReader reader)
@@ -159,7 +164,8 @@ public sealed partial class SqlitePlayerProfileRepository
                 MovementSpeed: reader.GetFloat(7),
                 AttackSpeed: reader.GetFloat(8),
                 Level: reader.GetInt32(9),
-                Experience: reader.GetInt32(10)),
+                Experience: reader.GetInt32(10),
+                StatPoints: reader.GetInt32(15)),
             reader.GetUtc(13),
             reader.GetUtc(14));
     }

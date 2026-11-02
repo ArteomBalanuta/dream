@@ -7,6 +7,7 @@ public sealed class PlayerAnimationClipTracker
 {
     private readonly Dictionary<int, string> _activeClipNamesByActorId = [];
     private readonly List<int> _staleActorIds = [];
+    private readonly Dictionary<int, (string Clip, PlayerClipMode Mode, int Serial)> _framesByActorId = [];
 
     public bool TryApplyClip(int actorId, string clipName, Action<string> playClip)
     {
@@ -46,7 +47,61 @@ public sealed class PlayerAnimationClipTracker
     // another player (the server reuses player actor ids): the new player starts from its own clip.
     public bool Remove(int actorId)
     {
+        _framesByActorId.Remove(actorId);
         return _activeClipNamesByActorId.Remove(actorId);
+    }
+
+    // Applies one frame of a player's PlayerAnimationStateMachine to its instance: loops start
+    // when the clip changes, a one-shot starts when its serial changes (and returns to the loop
+    // that was playing), and a held clip (death) starts once and stays on its last pose. Playback
+    // speed follows the frame. Allocates nothing once the actor is tracked.
+    public void ApplyFrame(int actorId, in PlayerAnimationFrame frame, AnimatedModelInstance instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+
+        instance.AnimationSpeed = frame.PlaybackSpeed;
+        bool tracked = _framesByActorId.TryGetValue(actorId, out (string Clip, PlayerClipMode Mode, int Serial) last);
+        if (tracked && last.Mode == PlayerClipMode.Hold && frame.Mode != PlayerClipMode.Hold)
+        {
+            // Respawn: Pose.Apply only writes the nodes the playing clip animates, so the nodes
+            // that the death clip moved (and idle/walk do not) would keep the lying pose.
+            instance.Pose.ResetToRest();
+        }
+
+        switch (frame.Mode)
+        {
+            case PlayerClipMode.Loop:
+                if (!instance.IsPlayingLoop(frame.Clip))
+                {
+                    instance.PlayLoop(frame.Clip);
+                }
+
+                break;
+            case PlayerClipMode.OneShot:
+                if (!(tracked && last.Mode == PlayerClipMode.OneShot && last.Serial == frame.OneShotSerial))
+                {
+                    if (!instance.Playback.IsPlaying)
+                    {
+                        instance.PlayLoop(PlayerAnimationStateMachine.IdleClip);
+                    }
+
+                    instance.PlayOneShot(frame.Clip);
+                }
+
+                break;
+            default:
+                if (!(tracked && last.Mode == PlayerClipMode.Hold && last.Serial == frame.OneShotSerial &&
+                    string.Equals(instance.CurrentClipName, frame.Clip, StringComparison.Ordinal)))
+                {
+                    instance.StopAnimation();
+                    instance.PlayOneShot(frame.Clip);
+                }
+
+                break;
+        }
+
+        _framesByActorId[actorId] = (frame.Clip, frame.Mode, frame.OneShotSerial);
+        _activeClipNamesByActorId[actorId] = frame.Clip;
     }
 
     public void RemoveExcept(IReadOnlySet<int> activeActorIds)
@@ -65,6 +120,7 @@ public sealed class PlayerAnimationClipTracker
         for (int i = 0; i < _staleActorIds.Count; i++)
         {
             _activeClipNamesByActorId.Remove(_staleActorIds[i]);
+            _framesByActorId.Remove(_staleActorIds[i]);
         }
 
         _staleActorIds.Clear();

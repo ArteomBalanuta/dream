@@ -32,9 +32,6 @@ public partial class Render
         int? requestedFloorSize = null;
         bool? showCollisionGeometry = null;
         bool? showPerformanceCounters = null;
-        int? strength = null;
-        float? attackSpeed = null;
-        int? vitality = null;
         FloatingCombatTextTuning? floatingCombatText = null;
         int? equipInventorySlotIndex = null;
         BuildMaterialChoice? buildMaterial = null;
@@ -126,25 +123,6 @@ public partial class Render
                 if (ImGui.SliderFloat("Fly Speed", ref currentNoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed))
                 {
                     noclipSpeed = currentNoclipSpeed;
-                }
-
-                // The sliders edit the base stats; the effective ones (gear included) are only shown.
-                int currentStrength = status.BaseStrength;
-                if (ImGui.SliderInt("Strength", ref currentStrength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength))
-                {
-                    strength = currentStrength;
-                }
-
-                float currentAttackSpeed = status.BaseAttackSpeed;
-                if (ImGui.SliderFloat("Attack Speed", ref currentAttackSpeed, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed))
-                {
-                    attackSpeed = currentAttackSpeed;
-                }
-
-                int currentVitality = status.BaseVitality;
-                if (ImGui.SliderInt("Vitality", ref currentVitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality))
-                {
-                    vitality = currentVitality;
                 }
             }
 
@@ -274,9 +252,9 @@ public partial class Render
             requestedFloorSize,
             showCollisionGeometry,
             showPerformanceCounters,
-            strength,
-            attackSpeed,
-            vitality,
+            null,
+            null,
+            null,
             floatingCombatText,
             equipInventorySlotIndex,
             buildMaterial,

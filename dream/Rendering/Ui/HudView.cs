@@ -35,6 +35,32 @@ public sealed class HudView
 
     public CharacterStatRow[] StatRows { get; set; } = [];
 
+    // The character window's rows (header, attributes, derived values); built from Status.
+    // Built on first read after the status changes (so a frame that never opens the window, or a health
+    // tick with it closed, allocates nothing); a caller that sets it keeps its rows.
+    public CharacterSheetRow[] Sheet
+    {
+        get
+        {
+            if (!_sheetExplicit && (_sheet is null || !_sheetStatus.Equals(Status)))
+            {
+                _sheet = CharacterSheetModel.Build(Status);
+                _sheetStatus = Status;
+            }
+
+            return _sheet ?? [];
+        }
+        set
+        {
+            _sheet = value;
+            _sheetExplicit = true;
+        }
+    }
+
+    private CharacterSheetRow[]? _sheet;
+    private HudStatusSnapshot _sheetStatus;
+    private bool _sheetExplicit;
+
     // The bag items, indexed by anchor cell (0..63, row * 8 + col). A cell with no item anchored on it
     // has Item.ItemInstanceId == 0 and HasIcon false; the other cells an item covers are empty here and
     // are found through BagCells.

@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Dream.Rendering.Actors;
+using Dream.Simulation.Runtime;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
@@ -25,6 +28,13 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
 
     // Wire levels are hostile; a level shown beside health is clamped to 1..9999.
     public const int MaxDisplayLevel = 9999;
+
+    // A remote swing is inferred, not sent: a player in combat mode with a struck enemy this close,
+    // in front of it, is swinging. Vertical movement between snapshots above this speed (m/s) is a
+    // jump or a fall.
+    public const float InferredAttackReach = 3.5f;
+    public const float InferredAttackMinForwardDot = 0.25f;
+    public const float AirborneVerticalSpeed = 0.8f;
 
     private string? _localSessionId;
     private string _applyLogKey = null!;
@@ -55,6 +65,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
     private readonly List<string> _staleRosterSessions = [];
     private readonly HashSet<int> _observedEnemyActorIds = [];
     private readonly List<int> _staleEnemyActorIds = [];
+    private readonly List<Vector3> _struckEnemyPositions = [];
 
     public ClientScenePresenter(string? localSessionId = null)
     {
@@ -69,6 +80,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         _observedEnemyActorIds.Clear();
         _currentSnapshotPlayerSessions.Clear();
         IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
+        CollectStruckEnemyPositions(snapshot, actors);
         for (int i = 0; i < actors.Count; i++)
         {
             ActorSnapshot actor = actors[i];
@@ -98,6 +110,11 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             _observedRemoteActorIds.Add(actor.ActorId);
             RemotePlayerEntry entry = GetOrCreateEntry(actor.ActorId, actor.SessionId);
             entry.DisplayName = displayName;
+            if (entry.Seen && actor.IsAlive && actor.CurrentHealth < entry.CurrentHealth)
+            {
+                entry.HitSerial++;
+            }
+
             entry.CurrentHealth = actor.CurrentHealth;
             entry.MaxHealth = actor.MaxHealth;
             if (actor.IsAlive && !entry.IsAlive)
@@ -107,7 +124,20 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.Buffer.Clear();
             }
 
+            if (!actor.IsAlive && (entry.IsAlive || !entry.Seen))
+            {
+                // Seen dying: the death animation plays. First seen already dead: the death is old
+                // news, so the avatar stays hidden.
+                entry.DiedAtTimestamp = entry.Seen ? Stopwatch.GetTimestamp() : 0L;
+            }
+            else if (actor.IsAlive)
+            {
+                entry.DiedAtTimestamp = 0L;
+            }
+
             entry.IsAlive = actor.IsAlive;
+            ApplyEquipmentAndMotion(entry, actor, snapshot.ServerTick);
+            entry.Seen = true;
             entry.Level = actor.Progression is { } progression
                 ? Math.Clamp(progression.Level, 1, MaxDisplayLevel)
                 : entry.Level;
@@ -115,6 +145,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             entry.IsMoving = entry.LastSnapshotPosition.HasValue &&
                 (actor.Position - entry.LastSnapshotPosition.Value).LengthSquared > 0.0001f;
             entry.LastSnapshotPosition = actor.Position;
+            entry.LastSnapshotTick = snapshot.ServerTick;
             entry.Buffer.AddSample(new RemotePlayerSnapshotSample(
                 actor.ActorId,
                 actor.SessionId,
@@ -269,7 +300,16 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.IsAlive,
                 entry.IsMoving,
                 entry.HeldLight,
-                entry.Level));
+                entry.Level,
+                entry.MainHandVisual,
+                entry.OffHandVisual,
+                entry.AttackSerial,
+                entry.HitSerial,
+                entry.Airborne,
+                entry.IsMoving ? entry.HorizontalSpeed : 0f,
+                entry.DiedAtTimestamp == 0L
+                    ? float.PositiveInfinity
+                    : (float)Stopwatch.GetElapsedTime(entry.DiedAtTimestamp).TotalSeconds));
         }
 
         return _remotePlayerStates;
@@ -318,6 +358,88 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             _remotePlayers.Count,
             remoteSessions.OrderBy(entry => entry, StringComparer.Ordinal).ToArray(),
             sampledRemoteCount);
+    }
+
+    // The held items from the player VisualKey, how fast and how vertically it moved since the
+    // previous snapshot, and whether it swung at a struck enemy. The held visuals stay as they were
+    // when a delta leaves the key out.
+    private void ApplyEquipmentAndMotion(RemotePlayerEntry entry, ActorSnapshot actor, ulong serverTick)
+    {
+        if (actor.VisualKey is not null)
+        {
+            PlayerEquipmentVisuals visuals = PlayerEquipmentVisuals.Parse(actor.VisualKey);
+            entry.MainHandVisual = visuals.MainHand;
+            entry.OffHandVisual = visuals.OffHand;
+        }
+
+        if (entry.LastSnapshotPosition.HasValue && serverTick > entry.LastSnapshotTick)
+        {
+            float seconds = (serverTick - entry.LastSnapshotTick) / (float)SimulationClock.AuthoritativeTicksPerSecond;
+            Vector3 delta = actor.Position - entry.LastSnapshotPosition.Value;
+            float horizontal = new Vector2(delta.X, delta.Z).Length / seconds;
+            // Smoothed, so a late snapshot (a long gap, then a long step) does not jerk the playback speed.
+            entry.HorizontalSpeed += (horizontal - entry.HorizontalSpeed) * 0.5f;
+            entry.Airborne = MathF.Abs(delta.Y / seconds) > AirborneVerticalSpeed;
+        }
+
+        if (actor.IsAlive &&
+            actor.InteractionMode == PlayerInteractionMode.Combat &&
+            _struckEnemyPositions.Count > 0 &&
+            IsSwingingAtStruckEnemy(actor.Position, actor.Facing))
+        {
+            entry.AttackSerial++;
+        }
+    }
+
+    private bool IsSwingingAtStruckEnemy(Vector3 position, Vector3 facing)
+    {
+        Vector2 forward = new(facing.X, facing.Z);
+        if (forward.LengthSquared < 0.0001f)
+        {
+            return false;
+        }
+
+        forward.Normalize();
+        for (int i = 0; i < _struckEnemyPositions.Count; i++)
+        {
+            Vector2 toEnemy = new(_struckEnemyPositions[i].X - position.X, _struckEnemyPositions[i].Z - position.Z);
+            float distance = toEnemy.Length;
+            if (distance > InferredAttackReach)
+            {
+                continue;
+            }
+
+            if (distance < 0.5f || Vector2.Dot(forward, toEnemy / distance) >= InferredAttackMinForwardDot)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The positions of the enemies this snapshot damage events struck.
+    private void CollectStruckEnemyPositions(ServerSnapshotEnvelope snapshot, IReadOnlyList<ActorSnapshot> actors)
+    {
+        _struckEnemyPositions.Clear();
+        IReadOnlyList<DamageEventDelta> damage = snapshot.DamageEvents;
+        for (int i = 0; i < damage.Count; i++)
+        {
+            DamageEventDelta evt = damage[i];
+            if (evt.Kind != CreatureKind.Enemy || (evt.Amount <= 0 && !evt.ActorDied))
+            {
+                continue;
+            }
+
+            for (int a = 0; a < actors.Count; a++)
+            {
+                if (actors[a].ActorId == evt.ActorId && actors[a].Kind == CreatureKind.Enemy)
+                {
+                    _struckEnemyPositions.Add(actors[a].Position);
+                    break;
+                }
+            }
+        }
     }
 
     private void SetLocalSessionId(string? localSessionId)
@@ -490,6 +612,27 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         public HeldLightKind HeldLight { get; set; }
 
         public Vector3? LastSnapshotPosition { get; set; }
+
+        public ulong LastSnapshotTick { get; set; }
+
+        // False until the first snapshot of this entry has been applied.
+        public bool Seen { get; set; }
+
+        public string? MainHandVisual { get; set; }
+
+        public string? OffHandVisual { get; set; }
+
+        // Event counters for the animation: a new value is a new swing or a new hit taken.
+        public int AttackSerial { get; set; }
+
+        public int HitSerial { get; set; }
+
+        public bool Airborne { get; set; }
+
+        public float HorizontalSpeed { get; set; }
+
+        // Stopwatch timestamp of the death seen; 0 when alive or already dead when first seen.
+        public long DiedAtTimestamp { get; set; }
     }
 }
 

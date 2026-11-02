@@ -560,7 +560,7 @@ internal sealed partial class RuntimePersistenceBridge
             return;
         }
 
-        // Agility, Energy and MovementSpeed are not simulated: they keep the values the row was loaded with.
+        // MovementSpeed is not simulated: they keep the values the row was loaded with.
         string key = player.CharacterKey.Value;
         PersistedPlayerProfile existing = GetCachedProfile(key);
         SaveProfile(key, existing with
@@ -573,6 +573,9 @@ internal sealed partial class RuntimePersistenceBridge
                 MaxHealth = combatant.Health.MaxHealth,
                 Strength = combatant.BaseStats.Strength,
                 Vitality = combatant.BaseStats.Vitality,
+                Agility = combatant.BaseStats.Agility,
+                Energy = combatant.BaseStats.Energy,
+                StatPoints = combatant.BaseStats.StatPoints,
                 AttackSpeed = combatant.BaseStats.AttackSpeed,
                 Level = combatant.Level,
                 Experience = combatant.Experience

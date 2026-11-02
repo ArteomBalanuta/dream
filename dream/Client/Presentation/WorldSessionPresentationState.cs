@@ -63,7 +63,17 @@ public sealed record WorldSessionPresentationState(
                 baseStats?.Vitality ?? playerStats.Vitality,
                 armor,
                 isDead,
-                respawnSeconds),
+                respawnSeconds,
+                playerStats.Agility,
+                playerStats.Energy,
+                baseStats?.Agility ?? playerStats.Agility,
+                baseStats?.Energy ?? playerStats.Energy,
+                baseStats?.StatPoints ?? 0,
+                playerStats.Mana,
+                playerStats.MaxMana,
+                PlayerAttributeRules.Defense(playerStats.Agility),
+                PlayerAttributeRules.MagicMinDamage(playerStats.Energy),
+                PlayerAttributeRules.MagicMaxDamage(playerStats.Energy)),
             performance);
     }
 

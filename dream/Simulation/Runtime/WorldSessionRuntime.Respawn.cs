@@ -65,6 +65,7 @@ public sealed partial class WorldSessionRuntime
         // The maximum at this moment: gear equipped while dead counts. Facing stays.
         int maxHealth = seat.Combatant.Health.MaxHealth;
         seat.Combatant.Health.SetAuthoritativeState(maxHealth, maxHealth);
+        seat.Combatant.RefillMana();
         seat.SetWorldPosition(ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch));
         player.RespawnAtTick = 0;
         // Enemy steps of ticks tick+1 .. tick+SpawnProtectionTicks skip this player.

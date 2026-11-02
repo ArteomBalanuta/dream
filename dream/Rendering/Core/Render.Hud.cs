@@ -381,6 +381,7 @@ public partial class Render
 
         InventoryHudAction? classicAction = null;
         bool classicClose = false;
+        Dream.Simulation.Stats.StatId? classicSpend = null;
         if (selector.Current == HudSurface.Classic)
         {
             // CPU build, then one submit. A failure latches ImGui and this same frame falls through
@@ -392,6 +393,7 @@ public partial class Render
                     combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
                     out classicAction, out classicClose);
                 _classicCursorActive = drew && !settings.SettingsVisible;
+                classicSpend = drew ? _classicSurface?.TakeAttributeSpend() : null;
             }
             catch (Exception ex)
             {
@@ -429,6 +431,11 @@ public partial class Render
                 InventoryAction = classicAction ?? request.InventoryAction,
                 CloseInventory = classicClose || request.CloseInventory
             };
+        }
+
+        if (classicSpend is not null)
+        {
+            request = request with { SpendAttribute = classicSpend };
         }
 
         ImGui.Render();

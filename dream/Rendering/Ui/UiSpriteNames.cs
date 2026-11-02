@@ -69,6 +69,7 @@ public static class UiSpriteNames
     public const string ButtonNormal = "btn.plate24.normal";
     public const string ButtonHover = "btn.plate24.hover";
     public const string ButtonPressed = "btn.plate24.pressed";
+    public const string ButtonDisabled = "btn.plate24.disabled";
     public const string Plate44Normal = "btn.plate44x32.normal";
     public const string Plate44Hover = "btn.plate44x32.hover";
     public const string Plate44Pressed = "btn.plate44x32.pressed";

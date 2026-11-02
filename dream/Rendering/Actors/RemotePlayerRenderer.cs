@@ -35,6 +35,19 @@ public sealed class RemotePlayerRenderer : IDisposable
     private readonly List<int> _staleActorIds = [];
     private readonly List<int> _modelActorIds = [];
     private readonly List<RemotePlayerPresentationState> _visiblePlayers = [];
+    private readonly Dictionary<int, RemoteAnimationState> _animations = [];
+    private readonly List<int> _staleAnimationIds = [];
+    private readonly HeldWeaponRenderer _heldWeapons = new();
+
+    // A player that died stays drawn this long, so its death animation plays out.
+    public const float DeathLingerSeconds = 3f;
+
+    private sealed class RemoteAnimationState
+    {
+        public PlayerAnimationStateMachine Machine { get; } = new();
+
+        public PlayerPoseLayers Layers { get; } = new();
+    }
 
     public RemotePlayerRenderer(Render render)
     {
@@ -66,13 +79,46 @@ public sealed class RemotePlayerRenderer : IDisposable
                 continue;
             }
 
-            _clipTracker.TryApplyClip(remotePlayer.ActorId, renderState.ClipName, instance);
+            if (!_animations.TryGetValue(remotePlayer.ActorId, out RemoteAnimationState? animation))
+            {
+                animation = new RemoteAnimationState();
+                _animations[remotePlayer.ActorId] = animation;
+            }
+
+            PlayerEquipmentVisuals equipment = new(
+                PlayerEquipmentVisuals.Normalize(remotePlayer.MainHandVisual),
+                PlayerEquipmentVisuals.Normalize(remotePlayer.OffHandVisual));
+            PlayerAnimationInputs inputs = new(
+                remotePlayer.IsAlive,
+                ResolveSpeed(remotePlayer),
+                remotePlayer.Airborne,
+                remotePlayer.AttackSerial,
+                remotePlayer.HitSerial,
+                equipment.MainHand is not null,
+                equipment.OffHand is not null,
+                WeaponMeshCatalog.IsRanged(equipment.MainHand));
+            PlayerAnimationFrame frame = animation.Machine.Update(in inputs, deltaTime);
+            _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);
+            animation.Layers.Update(instance, in frame);
 
             Shader shader = _render.GetShader(renderState.ShaderName);
+            bool flashing = frame.HitFlinch > 0.01f;
+            if (flashing)
+            {
+                shader.Use();
+                shader.SetVector3("uActorTintOffset", PlayerPoseLayers.HitFlashOffset(frame.HitFlinch));
+            }
+
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-            model.RenderPrepared(shader, instance, renderState.ModelMatrix, renderState.NodeOverrides);
+            model.RenderPrepared(shader, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             model.EndRender();
+            _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
+            if (flashing)
+            {
+                shader.Use();
+                shader.SetVector3("uActorTintOffset", OpenTK.Mathematics.Vector3.Zero);
+            }
         }
 
         // ModelCount reports uploaded models only; requests still loading are PendingModelCount.
@@ -104,9 +150,9 @@ public sealed class RemotePlayerRenderer : IDisposable
         for (int i = 0; i < remotePlayers.Count; i++)
         {
             RemotePlayerPresentationState remotePlayer = remotePlayers[i];
-            if (!remotePlayer.IsAlive)
+            if (!remotePlayer.IsAlive && remotePlayer.DeathAgeSeconds >= DeathLingerSeconds)
             {
-                // Dead remote players are hidden until they respawn.
+                // Dead remote players are hidden, once their death animation has played, until they respawn.
                 continue;
             }
 
@@ -118,6 +164,20 @@ public sealed class RemotePlayerRenderer : IDisposable
 
             visible.Add(remotePlayer);
         }
+    }
+
+    // The speed the walk cycle follows: the measured one, or the authored pace when the player moves
+    // but no speed is known yet.
+    public static float ResolveSpeed(in RemotePlayerPresentationState player)
+    {
+        if (!player.IsMoving)
+        {
+            return 0f;
+        }
+
+        return player.HorizontalSpeed > PlayerAnimationStateMachine.MovingSpeedThreshold
+            ? player.HorizontalSpeed
+            : PlayerAnimationStateMachine.ReferenceWalkSpeed;
     }
 
     public static int CountAlive(IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
@@ -338,6 +398,7 @@ public sealed class RemotePlayerRenderer : IDisposable
         ReleaseReassignedEntries(_reassignedActorIds, _playerModels, _clipTracker);
         for (int i = 0; i < _reassignedActorIds.Count; i++)
         {
+            _animations.Remove(_reassignedActorIds[i]);
             NetworkDiagnosticsLog.Write("client.render.remote.model", $"reassigned actor={_reassignedActorIds[i]} cached={_playerModels.Count}");
         }
     }
@@ -398,6 +459,8 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
 
         _playerModels.Clear();
+        _animations.Clear();
+        _heldWeapons.Dispose();
         try
         {
             _clipTracker.RemoveExcept(_activeActorIds);
@@ -424,6 +487,12 @@ public sealed class RemotePlayerRenderer : IDisposable
     {
         CollectActiveActorIds(remotePlayers, _activeActorIds);
         _clipTracker.RemoveExcept(_activeActorIds);
+        CollectStaleActorIds(_animations, _activeActorIds, _staleAnimationIds);
+        for (int i = 0; i < _staleAnimationIds.Count; i++)
+        {
+            _animations.Remove(_staleAnimationIds[i]);
+        }
+
         PruneStaleSessions(_actorSessionIds, _activeActorIds, _staleActorIds);
 
         PruneStaleEntries(_playerModels, _activeActorIds, _staleActorIds);

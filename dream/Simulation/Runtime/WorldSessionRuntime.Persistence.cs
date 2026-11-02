@@ -94,9 +94,13 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         {
             Strength = profile.Stats.Strength,
             AttackSpeed = profile.Stats.AttackSpeed,
-            Vitality = profile.Stats.Vitality
+            Vitality = profile.Stats.Vitality,
+            Agility = profile.Stats.Agility,
+            Energy = profile.Stats.Energy,
+            StatPoints = profile.Stats.StatPoints
         });
         playerTarget.Combatant.ApplyProgression(profile.Stats.Level, profile.Stats.Experience);
+        playerTarget.Combatant.RefillMana();
 
         Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;

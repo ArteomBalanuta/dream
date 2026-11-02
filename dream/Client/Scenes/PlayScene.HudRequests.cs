@@ -51,21 +51,12 @@ public partial class PlayScene
             _settings.SetShowPerformanceCounters(request.ShowPerformanceCounters.Value);
         }
 
-        if (request.Strength.HasValue || request.AttackSpeed.HasValue || request.Vitality.HasValue)
+        if (request.SpendAttribute is Dream.Simulation.Stats.StatId attribute)
         {
-            PlayerCombatStats updatedStats = new()
-            {
-                Strength = request.Strength ?? _runtime.Player.Combatant.BaseStats.Strength,
-                AttackSpeed = request.AttackSpeed ?? _runtime.Player.Combatant.BaseStats.AttackSpeed,
-                Vitality = request.Vitality ?? _runtime.Player.Combatant.BaseStats.Vitality
-            };
-
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
-                new PlayerStatsUpdateIntent(PlayerCombatStatsSnapshot.From(updatedStats))));
-
-            persistDesktopConfig = true;
+                new PlayerAttributeSpendIntent(attribute)));
         }
 
         if (request.FloatingCombatText.HasValue)

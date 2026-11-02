@@ -65,7 +65,7 @@ public static class ServerBootstrap
     public static DedicatedServerHost CreateAuthoritativeHost(ServerStartOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return CreateAuthoritativeHost(CreatePersistenceBundle(options));
+        return CreateAuthoritativeHost(CreatePersistenceBundle(options), options.AllowDevMovement);
     }
 
     // The host the dedicated and integrated servers run. Joins are applied at the next tick in
@@ -73,7 +73,13 @@ public static class ServerBootstrap
     // order their requests arrived in; DedicatedServerService delivers the replies.
     public static DedicatedServerHost CreateAuthoritativeHost(ServerPersistenceBundle? persistence)
     {
-        return DedicatedServerHost.CreateRuntimeAttached(persistence, deferJoinsToTick: true);
+        return CreateAuthoritativeHost(persistence, allowDevMovement: false);
+    }
+
+    // As above; allowDevMovement passes client noclip/freeze toggles through (integrated host only).
+    public static DedicatedServerHost CreateAuthoritativeHost(ServerPersistenceBundle? persistence, bool allowDevMovement)
+    {
+        return DedicatedServerHost.CreateRuntimeAttached(persistence, deferJoinsToTick: true, allowDevMovement);
     }
 
     // The authoritative runtime host over the server's SQLite persistence. The bundle's repositories

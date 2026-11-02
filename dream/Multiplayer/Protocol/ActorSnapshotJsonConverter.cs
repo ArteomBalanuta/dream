@@ -324,6 +324,11 @@ internal sealed class PlayerCombatStatsSnapshotJsonConverter : JsonConverter<Pla
     private static readonly JsonEncodedText Strength = JsonEncodedText.Encode("strength");
     private static readonly JsonEncodedText AttackSpeed = JsonEncodedText.Encode("attackSpeed");
     private static readonly JsonEncodedText Vitality = JsonEncodedText.Encode("vitality");
+    private static readonly JsonEncodedText Agility = JsonEncodedText.Encode("agility");
+    private static readonly JsonEncodedText Energy = JsonEncodedText.Encode("energy");
+    private static readonly JsonEncodedText StatPoints = JsonEncodedText.Encode("statPoints");
+    private static readonly JsonEncodedText Mana = JsonEncodedText.Encode("mana");
+    private static readonly JsonEncodedText MaxMana = JsonEncodedText.Encode("maxMana");
 
     public override PlayerCombatStatsSnapshot Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -341,6 +346,11 @@ internal sealed class PlayerCombatStatsSnapshotJsonConverter : JsonConverter<Pla
         int strength = 0;
         float attackSpeed = 0f;
         int vitality = 0;
+        int agility = 0;
+        int energy = 0;
+        int statPoints = 0;
+        int mana = 0;
+        int maxMana = 0;
         while (HotPathJson.NextProperty(ref reader, nameof(PlayerCombatStatsSnapshot)))
         {
             if (reader.ValueTextEquals(Strength.EncodedUtf8Bytes))
@@ -355,13 +365,33 @@ internal sealed class PlayerCombatStatsSnapshotJsonConverter : JsonConverter<Pla
             {
                 vitality = HotPathJson.ReadInt32(ref reader);
             }
+            else if (reader.ValueTextEquals(Agility.EncodedUtf8Bytes))
+            {
+                agility = HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(Energy.EncodedUtf8Bytes))
+            {
+                energy = HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(StatPoints.EncodedUtf8Bytes))
+            {
+                statPoints = HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(Mana.EncodedUtf8Bytes))
+            {
+                mana = HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(MaxMana.EncodedUtf8Bytes))
+            {
+                maxMana = HotPathJson.ReadInt32(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
             }
         }
 
-        return new PlayerCombatStatsSnapshot(strength, attackSpeed, vitality);
+        return new PlayerCombatStatsSnapshot(strength, attackSpeed, vitality, agility, energy, statPoints, mana, maxMana);
     }
 
     internal static void WriteStats(Utf8JsonWriter writer, PlayerCombatStatsSnapshot value)
@@ -370,6 +400,11 @@ internal sealed class PlayerCombatStatsSnapshotJsonConverter : JsonConverter<Pla
         writer.WriteNumber(Strength, value.Strength);
         writer.WriteNumber(AttackSpeed, value.AttackSpeed);
         writer.WriteNumber(Vitality, value.Vitality);
+        writer.WriteNumber(Agility, value.Agility);
+        writer.WriteNumber(Energy, value.Energy);
+        writer.WriteNumber(StatPoints, value.StatPoints);
+        writer.WriteNumber(Mana, value.Mana);
+        writer.WriteNumber(MaxMana, value.MaxMana);
         writer.WriteEndObject();
     }
 }

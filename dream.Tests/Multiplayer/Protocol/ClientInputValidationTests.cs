@@ -22,7 +22,8 @@ public class ClientInputValidationTests
     public static TheoryData<IPlayerActionPayload> ServerOnlyPayloads => new()
     {
         new BuildUseIntent(new Vector3(6f, 1f, 5f)),
-        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ)
+        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ),
+        new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))
     };
 
     [Theory]
@@ -48,7 +49,7 @@ public class ClientInputValidationTests
     }
 
     [Fact]
-    public void WireEquipAndStatsUpdates_AreStillQueued()
+    public void WireEquipAndAttributeSpend_AreStillQueued()
     {
         PlayerActionQueue queue = new();
         ServerRoutingContext context = new("connection-1", new FakeAuthority(), actionQueue: queue)
@@ -61,13 +62,13 @@ public class ClientInputValidationTests
         handler.Handle(context, new PlayerActionMessage(
             new PlayerSessionId(SessionA),
             2,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))));
+            new PlayerAttributeSpendIntent(Dream.Simulation.Stats.StatId.Strength, 1)));
 
         Assert.Empty(context.OutboundMessages);
         Assert.Collection(
             queue.Drain([new PlayerSessionId(SessionA)]),
             first => Assert.IsType<InventoryEquipIntent>(first.Message.Payload),
-            second => Assert.IsType<PlayerStatsUpdateIntent>(second.Message.Payload));
+            second => Assert.IsType<PlayerAttributeSpendIntent>(second.Message.Payload));
     }
 
     [Fact]
@@ -113,7 +114,7 @@ public class ClientInputValidationTests
         Assert.Equal(0f, sanitized.LookIntent.YawDelta);
         Assert.Equal(0f, sanitized.LookIntent.PitchDelta);
         Assert.Null(sanitized.LookIntent.Facing);
-        // NETR-6 adds no noclip or freeze gate: the flags pass through untouched.
+        // The one-argument overload adds no noclip or freeze gate (the handler applies it).
         Assert.True(sanitized.MoveIntent.JumpPressed);
         Assert.True(sanitized.MoveIntent.FreezePressed);
         Assert.True(sanitized.MoveIntent.ToggleNoclipPressed);
@@ -177,6 +178,37 @@ public class ClientInputValidationTests
         Assert.Equal(0f, frame.MoveIntent.StrafeAxis);
         Assert.Equal(0f, frame.LookIntent.YawDelta);
         Assert.Null(frame.LookIntent.Facing);
+    }
+
+    // Noclip and freeze are dev movement: a dedicated server (the default) clears them, the
+    // integrated single-player host (allowDevMovement) passes them through.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CommandHandler_ClearsNoclipAndFreeze_UnlessDevMovementIsAllowed(bool allowDevMovement)
+    {
+        LatestPlayerCommandInbox inbox = new();
+        ServerRoutingContext context = new("connection-1", new FakeAuthority(), commandInbox: inbox)
+        {
+            LastJoinRequest = new ClientJoinRequestMessage(SessionA, "player-a")
+        };
+
+        new PlayerCommandHandler(allowDevMovement).Handle(context, new PlayerCommandMessage(new PlayerCommandFrame(
+            new PlayerSessionId(SessionA),
+            4,
+            PlayerModeSwitchIntent.None,
+            new PlayerMoveIntent(0.5f, 0f, 0f, JumpPressed: true, FreezePressed: true, ToggleNoclipPressed: true),
+            new PlayerLookIntent(0f, 0f, null),
+            PrimaryUsePressed: false)));
+
+        List<PlayerCommandFrame> drained = [];
+        inbox.DrainInto([new PlayerSessionId(SessionA)], drained);
+        PlayerCommandFrame frame = Assert.Single(drained);
+        Assert.Equal(allowDevMovement, frame.MoveIntent.FreezePressed);
+        Assert.Equal(allowDevMovement, frame.MoveIntent.ToggleNoclipPressed);
+        Assert.True(frame.MoveIntent.JumpPressed);
+        Assert.Equal(0.5f, frame.MoveIntent.ForwardAxis);
+        Assert.False(new ServerStartOptions().AllowDevMovement);
     }
 
     [Fact]

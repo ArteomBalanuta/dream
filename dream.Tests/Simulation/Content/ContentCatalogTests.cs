@@ -21,7 +21,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(18, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(57, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -137,14 +137,16 @@ public sealed class ContentCatalogTests
             new("tool.field-blade", 1),
             new("tool.stone-maul", 1),
             new("tool.survey-lantern", 1),
-            new("tool.torch", 2)
+            new("tool.torch", 2),
+            new("consumable.weak-heal", 3),
+            new("consumable.minor-heal", 3)
         ];
 
         Assert.Equal(expected, ContentCatalog.Shipped.StarterKit);
         Assert.Equal(expected, ToolCatalog.StarterKit);
         Assert.Equal(expected.Select(entry => entry.ItemKind), ToolCatalog.StarterItemKinds);
-        Assert.Equal(2, ContentCatalog.Shipped.StarterKitVersion);
-        Assert.Equal(2, ToolCatalog.CurrentStarterKitVersion);
+        Assert.Equal(3, ContentCatalog.Shipped.StarterKitVersion);
+        Assert.Equal(3, ToolCatalog.CurrentStarterKitVersion);
         Assert.Equal(1, ContentCatalog.Shipped.UnrecordedStarterKitVersion);
         Assert.Equal(1, ToolCatalog.UnrecordedStarterKitVersion);
     }
@@ -206,7 +208,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"TOOL.FIELD-BLADE\"", "duplicate item key")]
     [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
     [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
-    [InlineData("\"starterKitVersion\": 2", "\"starterKitVersion\": 3", "must equal the highest starter kit entry version")]
+    [InlineData("\"starterKitVersion\": 3", "\"starterKitVersion\": 4", "must equal the highest starter kit entry version")]
     [InlineData("\"heldLight\": \"Torch\"", "\"heldLight\": \"Sun\"", "unknown held light")]
     [InlineData("\"visualId\": \"held.tool.torch\"", "\"visualId\": \"held.tool.torch\", \"extra\": 1", "unknown property")]
     [InlineData("\"displayName\": \"Torch\"", "\"displayName\": \" \"", "must not be blank")]
@@ -222,8 +224,8 @@ public sealed class ContentCatalogTests
     }
 
     [Theory]
-    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Agility\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
-    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Energy\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Agility\", \"op\": \"Flat\", \"value\": 51", "outside the range")]
+    [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Energy\", \"op\": \"Flat\", \"value\": 1.5", "expected an integer")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"MovementSpeed\", \"op\": \"Flat\", \"value\": 8", "cannot be modified")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": 101", "outside the range")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Armor\", \"op\": \"Flat\", \"value\": -1", "outside the range")]
@@ -233,7 +235,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"equipSlots\": [\"OffHand\"],", "", "missing required property")]
     [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 3, \"max\": 2 }", "is above max")]
     [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }, { \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "rolls Armor twice")]
-    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Agility\", \"min\": 1, \"max\": 2 }", "cannot be modified")]
+    [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"MovementSpeed\", \"min\": 1, \"max\": 2 }", "cannot be modified")]
     [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1.5, \"max\": 2 }", "expected an integer")]
     [InlineData("{ \"stat\": \"Armor\", \"min\": 1, \"max\": 2 }", "{ \"stat\": \"Armor\", \"min\": 1, \"max\": 101 }", "outside the range")]
     [InlineData("\"uncommon\": [ { \"stat\": \"Armor\", \"min\": 2, \"max\": 4 } ],", "", "missing required property")]
@@ -305,9 +307,9 @@ public sealed class ContentCatalogTests
 
     [Theory]
     [InlineData("\"strength\": 10", "\"strength\": 0", "outside the range")]
-    [InlineData("\"strength\": 10", "\"strength\": 51", "outside the range")]
+    [InlineData("\"strength\": 10", "\"strength\": 1001", "outside the range")]
     [InlineData("\"vitality\": 10", "\"vitality\": 0", "outside the range")]
-    [InlineData("\"vitality\": 10", "\"vitality\": 51", "outside the range")]
+    [InlineData("\"vitality\": 10", "\"vitality\": 1001", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 0.49", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
     [InlineData("\"moveSpeed\": 2.8,", "\"moveSpeed\": 2.8, \"attackIntervalSeconds\": 0,", "outside the range")]
@@ -375,15 +377,17 @@ public sealed class ContentCatalogTests
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
-        Assert.Equal(11, wolf.Items.Count);
+        Assert.Equal(52, wolf.Items.Count);
         Assert.Equal((85, 13, 2), (wolf.CommonWeight, wolf.UncommonWeight, wolf.RareWeight));
         Assert.True(catalog.TryGetLootTable("dire-wolf", out LootTable dire));
         Assert.Equal(2, dire.Drops);
-        Assert.Equal(13, dire.Items.Count);
-        // Classic HUD iteration 2 (D8): nine kinds joined the tables with the same "nothing" weight and the
-        // same total as before (100), so whether a roll drops anything is unchanged.
-        Assert.Equal((75, 25), (wolf.NothingWeight, wolf.Items.Sum(item => item.Weight)));
-        Assert.Equal((50, 50), (dire.NothingWeight, dire.Items.Sum(item => item.Weight)));
+        Assert.Equal(52, dire.Items.Count);
+        // The item catalogue joined the tables with the same "nothing" weights as before, so the chance of
+        // a drop is only diluted across more kinds (potions carry the most weight).
+        Assert.Equal(75, wolf.NothingWeight);
+        Assert.Equal(50, dire.NothingWeight);
+        Assert.True(wolf.Items.Sum(item => item.Weight) > 25);
+        Assert.True(dire.Items.Sum(item => item.Weight) > 50);
         Assert.False(catalog.TryGetLootTable("missing", out _));
         Assert.False(catalog.TryGetLootTable(null!, out _));
     }

@@ -33,6 +33,20 @@ public class PlayerCommandOneShotInputFilterTests
     }
 
     [Fact]
+    public void Filter_DropsNoclipAndFreezeToggles_WhenDevTogglesAreNotAllowed()
+    {
+        PlayerCommandOneShotInputFilter filter = new() { AllowDevToggles = false };
+        PlayerCommandFrame frame = CreateFrame(sequence: 1, toggleNoclipPressed: true);
+        frame = frame with { MoveIntent = frame.MoveIntent with { FreezePressed = true, JumpPressed = true } };
+
+        PlayerCommandFrame filtered = filter.Filter(frame);
+
+        Assert.False(filtered.MoveIntent.ToggleNoclipPressed);
+        Assert.False(filtered.MoveIntent.FreezePressed);
+        Assert.True(filtered.MoveIntent.JumpPressed);
+    }
+
+    [Fact]
     public void Filter_PreservesContinuousMovementLookAndPrimaryUse()
     {
         PlayerCommandOneShotInputFilter filter = new();
