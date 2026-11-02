@@ -150,6 +150,23 @@ public sealed class ServerRoutingContext
 
     public List<ClientChatMessage> PendingChats { get; } = [];
 
+    // The host's chat limiter, keyed by account or session so a reconnect keeps its bucket. Without
+    // one (a context outside a host) the connection's own bucket below is used.
+    public ChatRateLimiter? ChatLimiter { get; set; }
+
+    public bool TryConsumeChat(long nowTimestamp, long timestampFrequency)
+    {
+        if (ChatLimiter == null)
+        {
+            return TryConsumeChatToken(nowTimestamp, timestampFrequency);
+        }
+
+        string key = JoinedIdentity is { } identity
+            ? "a:" + identity.Account.HashHex
+            : "s:" + (LastJoinRequest?.RequestedSessionId ?? ConnectionId);
+        return ChatLimiter.TryConsume(key, nowTimestamp, timestampFrequency);
+    }
+
     public const int ChatBurst = 5;
     public const double ChatRefillPerSecond = 1.0;
 

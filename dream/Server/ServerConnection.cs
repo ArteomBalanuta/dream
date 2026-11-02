@@ -1000,6 +1000,12 @@ public sealed class ServerConnection : IAsyncDisposable
                 case InventoryPushMessage push:
                     _codec.Encode(envelope, push, _frameWriter);
                     break;
+                case ServerChatMessage chat:
+                    _codec.Encode(envelope, chat, _frameWriter);
+                    break;
+                case ServerCharacterList characterList:
+                    _codec.Encode(envelope, characterList, _frameWriter);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");

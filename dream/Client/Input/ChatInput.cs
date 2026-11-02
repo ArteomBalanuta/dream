@@ -157,9 +157,22 @@ public sealed class ChatInput
 
         if (command.Equals("/w", StringComparison.OrdinalIgnoreCase))
         {
-            int split = rest.IndexOf(' ');
-            string name = split < 0 ? rest : rest[..split];
-            string body = split < 0 ? string.Empty : rest[(split + 1)..].Trim();
+            // Names may hold spaces: /w "two words" text. Unquoted, the name ends at the first space.
+            string name;
+            string body;
+            int closing = rest.Length > 0 && rest[0] == '"' ? rest.IndexOf('"', 1) : -1;
+            if (closing > 0)
+            {
+                name = rest[1..closing].Trim();
+                body = rest[(closing + 1)..].Trim();
+            }
+            else
+            {
+                int split = rest.IndexOf(' ');
+                name = split < 0 ? rest : rest[..split];
+                body = split < 0 ? string.Empty : rest[(split + 1)..].Trim();
+            }
+
             if (name.Length == 0 || body.Length == 0)
             {
                 error = "Whisper to whom? /w <name> <text>";

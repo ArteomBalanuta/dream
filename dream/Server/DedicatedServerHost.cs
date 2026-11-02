@@ -185,6 +185,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // contested session id or player name, touched only under _authoritySync.
     private readonly JoinThrottleTable _joinThrottle = new();
 
+    // Chat token buckets per account, so a reconnect keeps its bucket (bounded, outlives ReleaseConnection).
+    private readonly ChatRateLimiter _chatLimiter = new();
+
     // Per-source limit on new accounts (NewAccountLimiter), touched only under _authoritySync.
     internal NewAccountLimiter NewAccountLimits { get; set; } = NewAccountLimiter.FromEnvironment();
 
@@ -411,6 +414,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             context.ClearOutboundMessages();
             context.ClearJoinConflict();
             context.Clock = TimeProvider;
+            context.ChatLimiter = _chatLimiter;
             _router.RouteServerInbound(context, message);
             if (context.PendingChats.Count > 0)
             {

@@ -170,6 +170,14 @@ public sealed class NetworkSessionCoordinator
             return;
         }
 
+        // Connect with the picker open connects as the typed name (a new character); it does not
+        // fetch the list again. Cancel closes the picker, so the next Connect fetches afresh.
+        if (PickerCharacters != null && !string.IsNullOrWhiteSpace(options.PlayerName))
+        {
+            ChooseCharacter(options, options.PlayerName);
+            return;
+        }
+
         ClearPicker();
         if (!TryResolveRemoteOptions(options, out RemoteClientOptions? resolved))
         {
@@ -221,7 +229,7 @@ public sealed class NetworkSessionCoordinator
         if (characters.Count == 0)
         {
             StatusMessage = $"Connecting to {resolved.Host}:{resolved.Port}...";
-            await ConnectInternalAsync(resolved);
+            await ConnectInternalAsync(resolved, afterProbe: true);
             return;
         }
 
@@ -288,7 +296,29 @@ public sealed class NetworkSessionCoordinator
         return session != null;
     }
 
-    private async Task ConnectInternalAsync(RemoteClientOptions options)
+    // The list probe's connection may still hold its server slot when the real connect starts, so a
+    // "Server is full." right after a probe is retried once after a short wait.
+    internal static TimeSpan ProbeSlotRetryDelay { get; set; } = TimeSpan.FromMilliseconds(750);
+
+    private async Task ConnectInternalAsync(RemoteClientOptions options, bool afterProbe = false)
+    {
+        bool retried = !afterProbe;
+        while (true)
+        {
+            string? serverFullReason = await TryConnectOnceAsync(options, retryOnServerFull: !retried);
+            if (serverFullReason == null)
+            {
+                return;
+            }
+
+            retried = true;
+            StatusMessage = $"Connecting to {options.Host}:{options.Port}...";
+            await Task.Delay(ProbeSlotRetryDelay);
+        }
+    }
+
+    // Returns the server-full reason when the caller should retry; null when the attempt is settled.
+    private async Task<string?> TryConnectOnceAsync(RemoteClientOptions options, bool retryOnServerFull)
     {
         try
         {
@@ -298,9 +328,14 @@ public sealed class NetworkSessionCoordinator
                 // Ended before the play scene could take it, e.g. a join rejected during the
                 // connect: stay on the connection screen with the reason.
                 await session.DisposeAsync();
+                if (retryOnServerFull && IsServerFull(reason))
+                {
+                    return reason;
+                }
+
                 State = ConnectionFlowState.Failed;
                 StatusMessage = reason;
-                return;
+                return null;
             }
 
             _connectedSession = session;
@@ -309,10 +344,20 @@ public sealed class NetworkSessionCoordinator
         }
         catch (Exception ex)
         {
+            if (retryOnServerFull && IsServerFull(ex.Message))
+            {
+                return ex.Message;
+            }
+
             State = ConnectionFlowState.Failed;
             StatusMessage = ex.Message;
         }
+
+        return null;
     }
+
+    private static bool IsServerFull(string reason) =>
+        reason.Contains(ServerConnectionOptions.ServerFullRejectionReason, StringComparison.Ordinal);
 
     private void RefreshIdleState()
     {

@@ -44,7 +44,7 @@ public sealed class ChatMessageHandler : IServerMessageHandler
         }
 
         TimeProvider clock = context.Clock ?? TimeProvider.System;
-        if (!context.TryConsumeChatToken(clock.GetTimestamp(), clock.TimestampFrequency))
+        if (!context.TryConsumeChat(clock.GetTimestamp(), clock.TimestampFrequency))
         {
             return;
         }

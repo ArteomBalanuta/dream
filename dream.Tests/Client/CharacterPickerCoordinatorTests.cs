@@ -59,20 +59,91 @@ public sealed class CharacterPickerCoordinatorTests
         Assert.Equal(["Typed"], connector.Names);
     }
 
+    [Fact]
+    public async Task ConnectWithThePickerOpen_ConnectsAsTheTypedNewName_WithoutFetchingAgain()
+    {
+        Connector connector = new();
+        Source source = new([new CharacterListEntry("Alice", 4)]);
+        NetworkSessionCoordinator coordinator = new(new Server(), connector, characterList: source);
+
+        coordinator.BeginConnectWithPicker(new ClientConnectionOptions("10.0.0.2", "5057", "Typed"));
+        await coordinator.WaitForPendingConnectionAsync();
+        Assert.NotNull(coordinator.PickerCharacters);
+
+        coordinator.BeginConnectWithPicker(new ClientConnectionOptions("10.0.0.2", "5057", "  Brand New "));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(1, source.Fetches);
+        Assert.Equal(["Brand New"], connector.Names);
+    }
+
+    [Fact]
+    public async Task CancelClosesThePicker_AndTheNextConnectFetchesAgain()
+    {
+        Connector connector = new();
+        Source source = new([new CharacterListEntry("Alice", 4)]);
+        NetworkSessionCoordinator coordinator = new(new Server(), connector, characterList: source);
+        ClientConnectionOptions options = new("10.0.0.2", "5057", "Typed");
+
+        coordinator.BeginConnectWithPicker(options);
+        await coordinator.WaitForPendingConnectionAsync();
+        coordinator.CancelPicker();
+        Assert.Null(coordinator.PickerCharacters);
+        coordinator.BeginConnectWithPicker(options);
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(2, source.Fetches);
+        Assert.NotNull(coordinator.PickerCharacters);
+        Assert.Empty(connector.Names);
+    }
+
+    [Fact]
+    public async Task ServerFullRightAfterAnEmptyProbe_IsRetriedOnce()
+    {
+        NetworkSessionCoordinator.ProbeSlotRetryDelay = TimeSpan.FromMilliseconds(1);
+        Connector connector = new() { FailFirstWith = ServerConnectionOptions.ServerFullRejectionReason };
+        NetworkSessionCoordinator coordinator = new(new Server(), connector, characterList: new Source([]));
+
+        coordinator.BeginConnectWithPicker(new ClientConnectionOptions("10.0.0.2", "5057", "Typed"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(["Typed", "Typed"], connector.Names);
+    }
+
+    [Fact]
+    public async Task ServerFullWithoutAProbe_IsNotRetried()
+    {
+        Connector connector = new() { FailFirstWith = ServerConnectionOptions.ServerFullRejectionReason };
+        NetworkSessionCoordinator coordinator = new(new Server(), connector);
+
+        coordinator.BeginConnectWithPicker(new ClientConnectionOptions("10.0.0.2", "5057", "Typed"));
+        await coordinator.WaitForPendingConnectionAsync();
+
+        Assert.Equal(["Typed"], connector.Names);
+    }
+
     private sealed class Source(IReadOnlyList<CharacterListEntry> characters) : ICharacterListSource
     {
-        public Task<IReadOnlyList<CharacterListEntry>> FetchAsync(RemoteClientOptions options, CancellationToken cancellationToken = default) =>
-            Task.FromResult(characters);
+        public int Fetches { get; private set; }
+
+        public Task<IReadOnlyList<CharacterListEntry>> FetchAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
+        {
+            Fetches++;
+            return Task.FromResult(characters);
+        }
     }
 
     private sealed class Connector : IRemoteSessionConnector
     {
         public List<string> Names { get; } = [];
 
+        public string? FailFirstWith { get; set; }
+
         public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
         {
             Names.Add(options.DisplayName);
-            return ValueTask.FromException<RemoteClientSession>(new InvalidOperationException("no server in this test"));
+            return ValueTask.FromException<RemoteClientSession>(new InvalidOperationException(
+                FailFirstWith != null && Names.Count == 1 ? FailFirstWith : "no server in this test"));
         }
     }
 

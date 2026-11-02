@@ -12,7 +12,7 @@ public sealed class ChatHudState
     public const int VisibleLines = 8;
     public const int MaxStoredLines = 64;
     public const int MaxTextChars = 256;
-    public const int MaxNameChars = 24;
+    public const int MaxNameChars = Dream.Simulation.Characters.CharacterNames.MaxNewNameLength;
     public const int MaxInputChars = 256;
     public const int MaxOnlineNames = 40;
 

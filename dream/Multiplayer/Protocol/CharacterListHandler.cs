@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Characters;
+using Dream.Server;
 using Dream.Simulation.Persistence;
 
 namespace Dream.Multiplayer.Protocol;
@@ -18,6 +19,16 @@ public sealed class CharacterListHandler : IServerMessageHandler
     // are dropped unanswered.
     public static readonly TimeSpan RequestInterval = TimeSpan.FromSeconds(2);
 
+    // Per source address (the remote IP, as for the join throttle): a burst of SourceBurst lists, then one
+    // per RequestInterval, so reconnecting does not get a fresh allowance. At most MaxPendingReads reads
+    // are queued or running at once across all sources; the source table holds at most MaxSources entries.
+    public const int SourceBurst = 3;
+    public const int MaxPendingReads = 16;
+    public const int MaxSources = 1024;
+
+    private readonly object _sourceSync = new();
+    private readonly Dictionary<string, SourceBucket> _sources = new(StringComparer.Ordinal);
+    private int _pendingReads;
     private readonly TimeProvider _timeProvider;
     private readonly ConditionalWeakTable<ServerRoutingContext, ConnectionState> _states = new();
     private IAccountRepository? _accounts;
@@ -72,6 +83,17 @@ public sealed class CharacterListHandler : IServerMessageHandler
                 return;
             }
 
+            if (!TryTakeSource(JoinThrottleTable.ResolveSource(context.ConnectionId), now))
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref _pendingReads) > MaxPendingReads)
+            {
+                Interlocked.Decrement(ref _pendingReads);
+                return;
+            }
+
             state.HasRequested = true;
             state.LastRequest = now;
             state.Busy = true;
@@ -105,6 +127,8 @@ public sealed class CharacterListHandler : IServerMessageHandler
                 {
                     state.Busy = false;
                 }
+
+                Interlocked.Decrement(ref _pendingReads);
             }
 
             deliver?.Invoke(connectionId, reply);
@@ -122,8 +146,65 @@ public sealed class CharacterListHandler : IServerMessageHandler
                 state.Busy = false;
             }
 
+            Interlocked.Decrement(ref _pendingReads);
             deliver?.Invoke(connectionId, Empty());
         }
+    }
+
+    private bool TryTakeSource(string source, long now)
+    {
+        long frequency = _timeProvider.TimestampFrequency;
+        double refillSeconds = RequestInterval.TotalSeconds;
+        lock (_sourceSync)
+        {
+            if (!_sources.TryGetValue(source, out SourceBucket? bucket))
+            {
+                if (_sources.Count >= MaxSources)
+                {
+                    List<string> full = [];
+                    foreach (KeyValuePair<string, SourceBucket> pair in _sources)
+                    {
+                        if (pair.Value.Tokens + Math.Max(0, now - pair.Value.Last) / (double)frequency / refillSeconds >= SourceBurst)
+                        {
+                            full.Add(pair.Key);
+                        }
+                    }
+
+                    foreach (string key in full)
+                    {
+                        _sources.Remove(key);
+                    }
+
+                    if (_sources.Count >= MaxSources)
+                    {
+                        // Every source is busy: drop the request rather than grow the table.
+                        return false;
+                    }
+                }
+
+                bucket = new SourceBucket { Tokens = SourceBurst, Last = now };
+                _sources[source] = bucket;
+            }
+            else
+            {
+                bucket.Tokens = Math.Min(SourceBurst, bucket.Tokens + Math.Max(0, now - bucket.Last) / (double)frequency / refillSeconds);
+                bucket.Last = now;
+            }
+
+            if (bucket.Tokens < 1.0)
+            {
+                return false;
+            }
+
+            bucket.Tokens -= 1.0;
+            return true;
+        }
+    }
+
+    private sealed class SourceBucket
+    {
+        public double Tokens;
+        public long Last;
     }
 
     private static ServerCharacterList Empty() => new([]);
