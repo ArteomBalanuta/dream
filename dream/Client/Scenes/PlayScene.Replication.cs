@@ -67,9 +67,12 @@ public partial class PlayScene
             _wasInventoryTogglePressed = keyboardState.IsKeyDown(Keys.V);
             _wasCameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
             _wasAdminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);
+            _wasInteractKeyPressed = keyboardState.IsKeyDown(Keys.E);
             return;
         }
 
+        // Before the global keys: it reads the Esc edge they consume.
+        HandleInteractKey(keyboardState);
         HandleGlobalInput(keyboardState);
     }
 
@@ -79,6 +82,13 @@ public partial class PlayScene
         {
             // Not a routed kind: it only feeds the chat log, as plain clamped text.
             _chatInput.State.AddServerMessage(chat.Channel, chat.From, chat.Text);
+            return;
+        }
+
+        if (message is ServerGroundItems groundItems)
+        {
+            // Not a routed kind either: it only feeds the ground list, which validates every entry.
+            _groundItems.Apply(groundItems);
             return;
         }
 
@@ -124,6 +134,10 @@ public partial class PlayScene
             // the overlay at once instead of at the first snapshot.
             _deathTracker.Reset();
             _lootFeedback.Clear();
+            // A new session shows no vendor from the one before. The ground list is not reset here:
+            // its own Reset message does that, and deltas may already have arrived.
+            _vendorHud.Close();
+            _npcs.ApplyActors(joinAcceptedMessage.EffectiveInitialActors);
             ObserveLocalDeath(joinAcceptedMessage.EffectiveInitialActors, joinAcceptedMessage.CurrentServerTick);
             LogPresenterDiagnostics("join");
         }
@@ -166,6 +180,7 @@ public partial class PlayScene
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
+            _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
             ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
         }
@@ -204,6 +219,10 @@ public partial class PlayScene
             if (resultTargetsLocalSession && actionMessage.Result.Payload is InventoryChangedResult inventoryChanged)
             {
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
+            }
+            else if (resultTargetsLocalSession && actionMessage.Result.Payload is VendorOpenedResult vendorOpened)
+            {
+                ApplyVendorOpened(vendorOpened);
             }
         }
     }

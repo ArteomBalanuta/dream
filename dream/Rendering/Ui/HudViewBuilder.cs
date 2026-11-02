@@ -38,7 +38,15 @@ public sealed class HudViewBuilder
         // A snapshot that reads the same as the last one is the old object as far as the panels go:
         // the server pushes a fresh copy for events that changed nothing in the bag, and a drag in
         // progress must survive that.
-        view.Inventory = sameInventory && _haveRows ? _inventory : inventory;
+        // The wallet is not part of the item rows: a gold-only change shows the new snapshot but does
+        // not count as an inventory change (it would cancel a drag).
+        bool sameGold = (_inventory?.Gold ?? 0) == (inventory?.Gold ?? 0);
+        if (sameInventory && !sameGold && _haveRows)
+        {
+            _inventory = inventory;
+        }
+
+        view.Inventory = sameInventory && _haveRows && sameGold ? _inventory : inventory;
         InventoryChanged = _haveRows && !sameInventory;
         bool statusChanged = !_haveRows || !_status.Equals(status);
         bool itemsChanged = !_haveRows || !sameInventory;

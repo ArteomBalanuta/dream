@@ -10,9 +10,18 @@ public static class ClassicHud
 
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
-        WorldLabelsPanel.Build(c, v, l);
+        WorldLabelsPanel.Build(c, i, v, l, a);
         CombatTextPanel.Build(c, v, l, s);
-        CharacterWindow.Build(c, i, v, l, s, a);
+        // The vendor window takes the character window's place while it is open (M3).
+        if (v.Vendor is { IsOpen: true })
+        {
+            VendorWindow.Build(c, i, v, l, s, a);
+        }
+        else
+        {
+            CharacterWindow.Build(c, i, v, l, s, a);
+        }
+
         InventoryWindow.Build(c, i, v, l, s, a);
         StatusBarPanel.Build(c, i, v, l, s, a);
         NoticePanel.Build(c, v, l);
