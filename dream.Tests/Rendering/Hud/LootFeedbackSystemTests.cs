@@ -21,7 +21,17 @@ public sealed class LootFeedbackSystemTests
 
         Assert.Equal(2, feed.Count);
         Assert.Equal("Looted: Leather Cap (Rare)", feed.GetLine(0));
-        Assert.Equal("Backpack full: Leather Cap was lost", feed.GetLine(1));
+        Assert.Equal("Backpack full: Leather Cap dropped on the ground", feed.GetLine(1));
+    }
+
+    [Fact]
+    public void ATrulyLostNotice_SaysWasLost_NotDroppedOnTheGround()
+    {
+        LootFeedbackSystem feed = new();
+
+        feed.AddNotices([new LootNotice("Leather Cap", ItemRarity.Common, Lost: true, Gone: true)]);
+
+        Assert.Equal("Backpack full: Leather Cap was lost", feed.GetLine(0));
     }
 
     [Fact]
@@ -48,7 +58,7 @@ public sealed class LootFeedbackSystemTests
         // newest line is notice 7.
         feed.AddNotices(Enumerable.Range(0, 40).Select(i => new LootNotice($"N{i}", ItemRarity.Common, true)).ToArray());
 
-        Assert.Equal("Backpack full: N7 was lost", feed.GetLine(feed.Count - 1));
+        Assert.Equal("Backpack full: N7 dropped on the ground", feed.GetLine(feed.Count - 1));
     }
 
     [Fact]

@@ -31,6 +31,9 @@ public readonly record struct WorldPointerState(Vector2 Position, bool LeftDown,
 
 public partial class Render
 {
+    // The quickbar's state, shared by the scene every frame before the HUD pass (M4); null draws none.
+    public QuickbarHudState? Quickbar { get; set; }
+
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
     private void InitializeHUD()
     {
@@ -297,7 +300,9 @@ public partial class Render
             WorldTransfer = WorldTransferHud,
             Loot = LootFeed,
             CombatText = _classicCombatText,
-            Labels = _classicLabels
+            Labels = _classicLabels,
+            Vendor = Vendor,
+            Quickbar = Quickbar
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
@@ -352,6 +357,8 @@ public partial class Render
                 _classicLabels.Add(new HudWorldLabel(new Vector2(screen.X, screen.Y), label.DisplayName, label.HealthLabel));
             }
         }
+
+        AppendEconomyLabels(camera);
     }
 
     public HudFrameResult DrawHUD(
@@ -436,6 +443,15 @@ public partial class Render
         if (classicSpend is not null)
         {
             request = request with { SpendAttribute = classicSpend };
+        }
+
+        if (_classicSurfaceActive)
+        {
+            request = MergeEconomyRequest(request);
+            if (_classicSurface?.TakeQuickbarCycle() is int quickbarSlot and >= 0)
+            {
+                request = request with { QuickbarCycleSlot = quickbarSlot };
+            }
         }
 
         ImGui.Render();

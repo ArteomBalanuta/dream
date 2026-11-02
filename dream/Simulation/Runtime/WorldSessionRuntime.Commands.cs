@@ -134,6 +134,8 @@ public sealed partial class WorldSessionRuntime
             // Do not keep a detached (disposed) secondary referenced until the next tick.
             _tickPlayerTargets.Clear();
             AdvanceRespawns();
+            AdvanceMana();
+            StepMultiplayerSystems(CurrentServerTick);
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
@@ -211,7 +213,13 @@ public sealed partial class WorldSessionRuntime
         // Wave I: a dead player neither builds nor fights (inventory, stats, material and mode stay
         // allowed). After the sequence step, so the rejected action is spent like any other; nothing
         // else changes and no write is queued.
-        if (!context.Combatant.Health.IsAlive && message.Payload is BuildUseIntent or CombatUseIntent)
+        // M3: a dead player does not pick up, talk or trade either.
+        if (!context.Combatant.Health.IsAlive
+            && message.Payload is BuildUseIntent or CombatUseIntent
+                or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
+                or SkillUseIntent or ItemUseIntent
+                or TradeRequestIntent or TradeRespondIntent or TradeOfferIntent or TradeLockIntent
+                or TradeConfirmIntent or QuestAcceptIntent or QuestTurnInIntent)
         {
             return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
         }
@@ -255,6 +263,46 @@ public sealed partial class WorldSessionRuntime
             // Not client-sendable any more (PlayerActionHandler); kept for in-process callers and tests.
             PlayerStatsUpdateIntent statsIntent
                 => ProcessPlayerStatsUpdateAction(message, context.Combatant, statsIntent),
+            PlayerStatSpendIntent spendIntent
+                => ProcessPlayerStatSpendAction(message, context.Combatant, spendIntent),
+            GroundPickupIntent pickupIntent
+                => ProcessGroundPickupAction(message, context.Player, pickupIntent),
+            NpcInteractIntent interactIntent
+                => ProcessNpcInteractAction(message, context.Player, interactIntent),
+            VendorBuyIntent buyIntent
+                => ProcessVendorBuyAction(message, context.Player, buyIntent),
+            VendorSellIntent sellIntent
+                => ProcessVendorSellAction(message, context.Player, sellIntent),
+            SkillUseIntent skillIntent
+                => ProcessSkillUseAction(message, context, skillIntent),
+            ItemUseIntent itemUseIntent
+                => ProcessItemUseAction(message, context, itemUseIntent),
+            QuickbarBindIntent quickbarIntent
+                => ProcessQuickbarBindAction(message, context.Player, quickbarIntent),
+            PartyInviteIntent partyInvite
+                => ProcessPartyInviteAction(message, context.Player, partyInvite),
+            PartyRespondIntent partyRespond
+                => ProcessPartyRespondAction(message, context.Player, partyRespond),
+            PartyLeaveIntent partyLeave
+                => ProcessPartyLeaveAction(message, context.Player, partyLeave),
+            TradeRequestIntent tradeRequest
+                => ProcessTradeRequestAction(message, context.Player, tradeRequest),
+            TradeRespondIntent tradeRespond
+                => ProcessTradeRespondAction(message, context.Player, tradeRespond),
+            TradeOfferIntent tradeOffer
+                => ProcessTradeOfferAction(message, context.Player, tradeOffer),
+            TradeLockIntent tradeLock
+                => ProcessTradeLockAction(message, context.Player, tradeLock),
+            TradeConfirmIntent tradeConfirm
+                => ProcessTradeConfirmAction(message, context.Player, tradeConfirm),
+            TradeCancelIntent tradeCancel
+                => ProcessTradeCancelAction(message, context.Player, tradeCancel),
+            QuestAcceptIntent questAccept
+                => ProcessQuestAcceptAction(message, context.Player, questAccept),
+            QuestTurnInIntent questTurnIn
+                => ProcessQuestTurnInAction(message, context.Player, questTurnIn),
+            QuestAbandonIntent questAbandon
+                => ProcessQuestAbandonAction(message, context.Player, questAbandon),
             CombatUseIntent
                 => CreateRejectedActionResult(
                     message,
@@ -371,6 +419,35 @@ public sealed partial class WorldSessionRuntime
             CurrentServerTick,
             Accepted: true,
             Payload: new PlayerStatsUpdateResult(combatant.CaptureStatsSnapshot()));
+    }
+
+    // Stat points. The context's combatant is the sending session's own character, so a client can only
+    // spend for itself. The budget comes from the level and the current base stats (PlayerStatRules).
+    private AuthoritativeActionResult ProcessPlayerStatSpendAction(
+        PlayerActionMessage message,
+        PlayerCombatant combatant,
+        PlayerStatSpendIntent intent)
+    {
+        if (!PlayerStatRules.TryValidateSpend(
+                combatant.Level,
+                PlayerCombatStatsSnapshot.From(combatant.BaseStats),
+                intent.Stat,
+                intent.Points,
+                out PlayerCombatStatsSnapshot newStats,
+                out string? invalidReason))
+        {
+            return CreateRejectedActionResult(message, $"Stat spend rejected: {invalidReason}");
+        }
+
+        combatant.ApplyBaseStats(newStats.ToCombatStats());
+        PersistPlayerProfile(message.SessionId, combatant);
+
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            CurrentServerTick,
+            Accepted: true,
+            Payload: new PlayerStatsUpdateResult(PlayerCombatStatsSnapshot.From(combatant.BaseStats)));
     }
 
     private AuthoritativeActionResult CreateRejectedActionResult(PlayerActionMessage message, string reason)

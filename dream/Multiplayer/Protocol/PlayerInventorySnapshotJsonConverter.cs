@@ -15,7 +15,11 @@ namespace Dream.Multiplayer.Protocol;
 // Wire shape:
 //   {"playerName":s,"columns":n,"rows":n,
 //    "bag":[[anchor,id,kind,flags,[stat,value,...],stack?,name?,visual?],...],
-//    "worn":[[slot,id,kind,flags,[stat,value,...],stack?,name?,visual?],...]}
+//    "worn":[[slot,id,kind,flags,[stat,value,...],stack?,name?,visual?],...],"gold":n?}
+// - gold (protocol v16) is written only when above 0, so a snapshot of a player without gold is
+//   byte-identical to v15's; a reader clamps a negative value to 0.
+// - quick (protocol v17) is [[slot,kind,key],...], the character's quickbar, written only when the
+//   snapshot has one (Quickbar not null), so a snapshot without is byte-identical to v16's.
 // - bag lists the items on the board by anchor (0..63), then the held-back items (200..215); an empty
 //   cell has no entry. worn lists the equipment slots (100..111) that hold an item, main hand
 //   included. A reader makes the main hand an empty slot when it is not listed.
@@ -51,6 +55,8 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
     private static readonly JsonEncodedText Rows = JsonEncodedText.Encode("rows");
     private static readonly JsonEncodedText Bag = JsonEncodedText.Encode("bag");
     private static readonly JsonEncodedText Worn = JsonEncodedText.Encode("worn");
+    private static readonly JsonEncodedText Gold = JsonEncodedText.Encode("gold");
+    private static readonly JsonEncodedText Quick = JsonEncodedText.Encode("quick");
 
     public override PlayerInventorySnapshot Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -58,6 +64,8 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         string playerName = string.Empty;
         int columns = 0;
         int rows = 0;
+        long gold = 0;
+        List<QuickbarSlotSnapshot>? quickbar = null;
         List<InventorySlotSnapshot> bag = [];
         List<InventorySlotSnapshot> worn = [];
         int entries = 0;
@@ -83,6 +91,20 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
             {
                 ReadEntries(ref reader, worn, ref entries, equipment: true);
             }
+            else if (reader.ValueTextEquals(Gold.EncodedUtf8Bytes))
+            {
+                HotPathJson.ReadValue(ref reader);
+                if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt64(out gold))
+                {
+                    throw new JsonException($"Expected a 64-bit integer for gold, found {reader.TokenType}.");
+                }
+
+                gold = Math.Max(gold, 0L);
+            }
+            else if (reader.ValueTextEquals(Quick.EncodedUtf8Bytes))
+            {
+                quickbar = ReadQuickbar(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
@@ -104,7 +126,7 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         }
 
         equipment?.Sort(static (a, b) => a.SlotIndex.CompareTo(b.SlotIndex));
-        return new PlayerInventorySnapshot(playerName, columns, rows, bag, mainHand, equipment);
+        return new PlayerInventorySnapshot(playerName, columns, rows, bag, mainHand, equipment, gold, quickbar);
     }
 
     public override void Write(Utf8JsonWriter writer, PlayerInventorySnapshot value, JsonSerializerOptions options)
@@ -148,7 +170,101 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         }
 
         writer.WriteEndArray();
+        if (value.Gold > 0)
+        {
+            writer.WriteNumber(Gold, value.Gold);
+        }
+
+        if (value.Quickbar != null)
+        {
+            writer.WritePropertyName(Quick);
+            writer.WriteStartArray();
+            for (int i = 0; i < value.Quickbar.Count && i < InventoryConstants.QuickbarSlots; i++)
+            {
+                QuickbarSlotSnapshot slot = value.Quickbar[i];
+                writer.WriteStartArray();
+                writer.WriteNumberValue(slot.Slot);
+                writer.WriteNumberValue((int)slot.Kind);
+                writer.WriteStringValue(slot.Key ?? string.Empty);
+                writer.WriteEndArray();
+            }
+
+            writer.WriteEndArray();
+        }
+
         writer.WriteEndObject();
+    }
+
+    // [[slot,kind,key],...]: at most QuickbarSlots entries are kept; an entry with a slot outside
+    // 0..QuickbarSlots-1, an unknown kind or a key over MaxTextLength is skipped, as is a repeated slot.
+    private static List<QuickbarSlotSnapshot>? ReadQuickbar(ref Utf8JsonReader reader)
+    {
+        HotPathJson.ReadValue(ref reader);
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+
+        if (reader.TokenType != JsonTokenType.StartArray)
+        {
+            throw new JsonException($"Expected an array of quickbar entries, found {reader.TokenType}.");
+        }
+
+        List<QuickbarSlotSnapshot> result = [];
+        int seen = 0;
+        while (true)
+        {
+            if (!reader.Read())
+            {
+                throw new JsonException("Unexpected end of JSON while reading quickbar entries.");
+            }
+
+            if (reader.TokenType == JsonTokenType.EndArray)
+            {
+                return result;
+            }
+
+            if (reader.TokenType != JsonTokenType.StartArray)
+            {
+                throw new JsonException($"Expected a quickbar entry array, found {reader.TokenType}.");
+            }
+
+            int slot = ReadInt32Element(ref reader, "quickbar slot");
+            int kind = ReadInt32Element(ref reader, "quickbar kind");
+            string? key = ReadTextElement(ref reader, "quickbar key");
+            while (true)
+            {
+                if (!reader.Read())
+                {
+                    throw new JsonException("Unexpected end of JSON while reading a quickbar entry.");
+                }
+
+                if (reader.TokenType == JsonTokenType.EndArray)
+                {
+                    break;
+                }
+
+                reader.Skip();
+            }
+
+            if (++seen > InventoryConstants.QuickbarSlots
+                || (uint)slot >= (uint)InventoryConstants.QuickbarSlots
+                || !Enum.IsDefined((QuickbarEntryKind)kind))
+            {
+                continue;
+            }
+
+            bool repeated = false;
+            for (int i = 0; i < result.Count; i++)
+            {
+                repeated |= result[i].Slot == slot;
+            }
+
+            if (!repeated)
+            {
+                result.Add(new QuickbarSlotSnapshot(slot, (QuickbarEntryKind)kind, key ?? string.Empty));
+            }
+        }
     }
 
     private static void WriteEntry(Utf8JsonWriter writer, int slotIndex, in InventoryItemSnapshot item)

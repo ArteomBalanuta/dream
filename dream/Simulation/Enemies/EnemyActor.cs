@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -7,8 +8,15 @@ using Dream.Simulation.World;
 namespace Dream.Simulation.Enemies;
 
 
+// One player's damage to one enemy, as kept for the kill's reward split.
+public readonly record struct EnemyDamageContribution(PlayerSessionId SessionId, int Damage);
+
 public sealed class EnemyActor
 {
+    // Most players tracked per enemy. When full, a newcomer replaces the lowest contributor only if it
+    // has dealt more than that one.
+    public const int MaxContributors = 8;
+
     public const float StandOffRangeFraction = 0.9f;
 
     // Half the player's body height (a 1 m box centred on its position). The wolf bites when the gap between
@@ -87,6 +95,67 @@ public sealed class EnemyActor
     public string? VisualKey { get; }
 
     public EnemyBehaviorState BehaviorState { get; private set; }
+
+    private readonly EnemyDamageContribution[] _contributors = new EnemyDamageContribution[MaxContributors];
+    private int _contributorCount;
+
+    // Who has hurt this enemy and by how much, in first-hit order. Fixed storage: recording a hit
+    // allocates nothing. Not persisted; a restored enemy starts with none.
+    public ReadOnlySpan<EnemyDamageContribution> Contributors => new(_contributors, 0, _contributorCount);
+
+    public void RecordDamage(PlayerSessionId sessionId, int amount)
+    {
+        if (amount <= 0)
+        {
+            return;
+        }
+
+        int lowest = 0;
+        for (int i = 0; i < _contributorCount; i++)
+        {
+            if (_contributors[i].SessionId == sessionId)
+            {
+                long total = (long)_contributors[i].Damage + amount;
+                _contributors[i] = new EnemyDamageContribution(sessionId, (int)Math.Min(total, int.MaxValue));
+                return;
+            }
+
+            if (_contributors[i].Damage < _contributors[lowest].Damage)
+            {
+                lowest = i;
+            }
+        }
+
+        if (_contributorCount < MaxContributors)
+        {
+            _contributors[_contributorCount++] = new EnemyDamageContribution(sessionId, amount);
+        }
+        else if (amount > _contributors[lowest].Damage)
+        {
+            _contributors[lowest] = new EnemyDamageContribution(sessionId, amount);
+        }
+    }
+
+    // Drops a session's entry (it detached; a later session reusing the id must not inherit its credit).
+    public void ClearContributor(PlayerSessionId sessionId)
+    {
+        for (int i = 0; i < _contributorCount; i++)
+        {
+            if (_contributors[i].SessionId != sessionId)
+            {
+                continue;
+            }
+
+            _contributorCount--;
+            for (int j = i; j < _contributorCount; j++)
+            {
+                _contributors[j] = _contributors[j + 1];
+            }
+
+            _contributors[_contributorCount] = default;
+            return;
+        }
+    }
 
     public bool IsActive => Combatant.Health.IsAlive;
 

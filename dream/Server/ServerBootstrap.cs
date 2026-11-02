@@ -39,6 +39,17 @@ public static class ServerBootstrap
     // (see WorldTimeOfDay.TryParse for the accepted formats). Unset changes nothing.
     public const string TimeOfDayEnvironmentVariable = "DREAM_TIME_OF_DAY";
 
+    // "1" lets clients use noclip, freeze and the stat sliders on the dedicated server. Off by default;
+    // the integrated server turns it on itself.
+    public const string DevCommandsEnvironmentVariable = DevCommandsOptions.EnvironmentVariable;
+
+    // "1" lets players damage each other (M4). Off by default: with it off no player is ever a target.
+    // One server process hosts one world, so this is per world in practice.
+    public const string PvpEnvironmentVariable = "DREAM_PVP";
+
+    // "1" lets an online party mate damage the owner's cubes (M5). Off by default.
+    public const string PartyCubesEnvironmentVariable = "DREAM_PARTY_CUBES";
+
     // Selects the world a dedicated server opens when no --world argument is given: a world id or
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
@@ -101,6 +112,15 @@ public static class ServerBootstrap
         try
         {
             host = RuntimeAuthoritativeSessionHost.CreateDefault(ports);
+            host.DevCommandsAllowed = string.Equals(
+                Environment.GetEnvironmentVariable(DevCommandsEnvironmentVariable), "1", StringComparison.Ordinal);
+            host.Runtime.PvpEnabled = string.Equals(
+                Environment.GetEnvironmentVariable(PvpEnvironmentVariable), "1", StringComparison.Ordinal);
+            host.Runtime.PartyCubeAccess = string.Equals(
+                Environment.GetEnvironmentVariable(PartyCubesEnvironmentVariable), "1", StringComparison.Ordinal);
+            // M8: other players' experience and stats stay out of actor snapshots; the owner gets them
+            // as ServerPlayerProgress.
+            host.Runtime.OwnerOnlyProgress = true;
             double dayLengthMinutes = ResolveDayLengthMinutes(
                 Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
                 log);
@@ -111,6 +131,9 @@ public static class ServerBootstrap
                 Environment.GetEnvironmentVariable(TimeOfDayEnvironmentVariable),
                 log);
             host.Runtime.ConfigureWorldClock(clockSettings, worldTicks);
+            // The content's vendors (M3). Only the server host spawns them: a runtime built any other way
+            // has none, so its snapshots and goldens do not change.
+            host.Runtime.SpawnContentNpcs();
             return host;
         }
         catch
@@ -286,8 +309,18 @@ public static class ServerBootstrap
         }
     }
 
+    // The dedicated server's exit code when DREAM_PORT or DREAM_BIND_ADDRESS is set to something invalid.
+    public const int InvalidConfigExitCode = 9;
+
     private static async Task<int> RunServerModeAsync(ServerStartOptions options)
     {
+        // Before the database is touched: a server that was asked to listen somewhere it cannot is not started.
+        ServerRuntimeConfig? config = ServerRuntimeConfig.FromEnvironment(ConsoleLog);
+        if (config == null)
+        {
+            return InvalidConfigExitCode;
+        }
+
         using DedicatedServerHost? host = TryCreateServerModeHost(
             () => CreateAuthoritativeHost(options),
             ConsoleLog,
@@ -300,14 +333,19 @@ public static class ServerBootstrap
             return startupExitCode;
         }
 
-        await using IServerTransport transport = new TcpServerTransport(IPAddress.Any, DefaultPort);
+        host.MaxPlayers = config.MaxPlayers;
+        host.Motd = config.Motd;
+        await using IServerTransport transport = new TcpServerTransport(config.BindAddress, config.Port);
         Action<string> log = ConsoleLog;
         await using DedicatedServerService service = new(
             host,
             transport,
             new TransportJsonCodec(),
             FrameLimitOptions.FromEnvironment(log).CreateServerFramer(),
-            ServerConnectionOptions.Default.WithEnvironmentOverrides(log));
+            ServerConnectionOptions.Default.WithEnvironmentOverrides(log).WithPlayerCapHeadroom(
+                config.MaxPlayers,
+                Environment.GetEnvironmentVariable(ServerConnectionOptions.MaxConnectionsEnvironmentVariable),
+                log));
 
         using CancellationTokenSource cancellation = new();
         ConsoleCancelEventHandler? cancelHandler = (_, args) =>
@@ -319,8 +357,11 @@ public static class ServerBootstrap
         Console.CancelKeyPress += cancelHandler;
         try
         {
+            bool allInterfaces = config.BindAddress.Equals(IPAddress.Any) || config.BindAddress.Equals(IPAddress.IPv6Any);
             Console.Error.WriteLine(
-                $"Server listening on 0.0.0.0:{DefaultPort} with protocol version {TransportEnvelope.CurrentProtocolVersion}. " +
+                $"Server listening on {FormatEndpoint(config.BindAddress, service.Port)}" +
+                (allInterfaces ? " (all network interfaces: the dedicated server default; set DREAM_BIND_ADDRESS to narrow it)" : string.Empty) +
+                $" with protocol version {TransportEnvelope.CurrentProtocolVersion}, up to {config.MaxPlayers} players. " +
                 "Single-session authoritative runtime is active; press Ctrl+C to stop.");
             await service.RunAsync(cancellation.Token);
             return 0;
@@ -334,6 +375,12 @@ public static class ServerBootstrap
             Console.CancelKeyPress -= cancelHandler;
         }
     }
+
+    // host:port, with an IPv6 address in brackets.
+    internal static string FormatEndpoint(IPAddress address, int port) =>
+        address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+            ? $"[{address}]:{port}"
+            : $"{address}:{port}";
 
     private static ServerPersistenceBundle CreatePersistenceBundle(ServerStartOptions? start = null)
     {
@@ -450,7 +497,12 @@ public static class ServerBootstrap
         ContentCatalog content = read();
         log?.Invoke(
             $"server.content.digest digest={content.ContentDigest} " +
-            $"items={content.Items.Count} enemies={content.Enemies.Count}");
+            $"items={content.Items.Count} enemies={content.Enemies.Count} camps={content.Camps.Count}");
+        if (content.Camps.Count == 0)
+        {
+            log?.Invoke("server.content.no-camps warning=spawns.json is missing or has no camps; the world keeps its single day wolf");
+        }
+
         return content;
     }
 

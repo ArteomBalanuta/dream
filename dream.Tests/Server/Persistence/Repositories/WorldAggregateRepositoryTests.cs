@@ -142,6 +142,14 @@ public sealed class WorldAggregateRepositoryTests
     public void Inventory_CreateReadUpdateDelete_AndLoadsOnePlayersItemsOnce()
     {
         using PersistenceTestDatabase database = NewDatabaseWithOwner();
+        // This test gives one item several rows, which the unique index of migration 0012 refuses.
+        using (SqliteConnection connection = database.Schema.CreateOpenConnection())
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.CommandText = "DROP INDEX ux_player_inventory_slots_item;";
+            command.ExecuteNonQuery();
+        }
+
         SqliteWorldStore store = new(database.Schema);
         SqliteItemRepository items = new(store);
         SqliteInventoryRepository inventory = new(store);
@@ -152,6 +160,8 @@ public sealed class WorldAggregateRepositoryTests
         inventory.SaveInventorySlot(new PersistedInventorySlot($" {Owner} ", 0, 2, Created));
         // The same item in a second slot.
         inventory.SaveInventorySlot(new PersistedInventorySlot(Owner, 1, 2, Created));
+        // A slot upsert never overwrites a different item (M3), so the occupant moves out first.
+        inventory.DeleteInventorySlot(Owner, 2, 1);
         inventory.SaveInventorySlot(new PersistedInventorySlot(Owner, 2, 2, Created));
 
         IReadOnlyList<PersistedInventorySlot> slots = inventory.LoadInventorySlots();

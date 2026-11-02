@@ -203,4 +203,22 @@ public sealed class EnemyFactoryTests
         Assert.Null(snapshot.VisualKey);
         Assert.Equal(ActorFieldGroups.All, ActorWireRecord.Full(snapshot).Groups);
     }
+
+    [Fact]
+    public void ATemplateMaxHealth_ReplacesTheFormulaOnSpawn_AndARestoredRowKeepsItsOwn()
+    {
+        EnemyTemplate tough = Dire() with { MaxHealth = 700 };
+        EnemyActor spawned = EnemyFactory.Spawn(tough, Vector3.Zero, 2100, Events, CombatFormulaService.Default);
+        Assert.Equal(700, spawned.Combatant.Health.MaxHealth);
+        Assert.Equal(700, spawned.Combatant.Health.CurrentHealth);
+        Assert.Equal(200, EnemyFactory.Spawn(Dire(), Vector3.Zero, 2101, Events, CombatFormulaService.Default).Combatant.Health.MaxHealth);
+
+        PersistedEnemyInstance row = WolfIntervalBitsTest.Row(strength: 16, vitality: 30, attackSpeed: 1.0f, currentHealth: 90, maxHealth: 700, "DireWolf", level: 3);
+        EnemyActor restored = EnemyFactory.Restore(row, tough, 2102, Events, CombatFormulaService.Default);
+        Assert.Equal(700, restored.Combatant.Health.MaxHealth);
+        Assert.Equal(90, restored.Combatant.Health.CurrentHealth);
+
+        PersistedEnemyInstance older = WolfIntervalBitsTest.Row(strength: 16, vitality: 30, attackSpeed: 1.0f, currentHealth: 150, maxHealth: 300, "DireWolf", level: 3);
+        Assert.Equal(300, EnemyFactory.Restore(older, tough, 2103, Events, CombatFormulaService.Default).Combatant.Health.MaxHealth);
+    }
 }

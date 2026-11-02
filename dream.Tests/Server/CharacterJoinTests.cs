@@ -329,9 +329,9 @@ public sealed class CharacterJoinTests
             Assert.Equal(18, combatant.BaseStats.Vitality);
             Assert.Equal(1.75f, combatant.BaseStats.AttackSpeed);
             Assert.Equal(combatant.Health.MaxHealth, combatant.Health.CurrentHealth);
-            // A joining player starts with a full mana pool, not the pool of a fresh combatant (Energy 0).
-            Assert.Equal(70, combatant.MaxMana);
-            Assert.Equal(combatant.MaxMana, combatant.Mana);
+            // A joining player with no row in this world starts with a full mana pool for its level.
+            Assert.Equal(PlayerManaRules.MaxMana(7, combatant.Stats.Energy), combatant.MaxMana);
+            Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
             Assert.NotEqual(worldOneSpot, PositionOf(world, session));
 
             PersistedPlayerProfile current = profiles.TryGet(Hero)!.Value;

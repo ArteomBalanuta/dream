@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Dream.Assets;
+using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
@@ -15,7 +16,9 @@ namespace Dream.Tests.Rendering.Ui;
 
 // Classic HUD iteration 2, WS3: the liquid gem runtime. The Gem and Additive vertex modes in UiBatch, their
 // mirror in the software compositor, the eased levels and timing in ClassicHudSurface, and the bar panel's
-// use of them (bezel, gem, talons, spill, numerals, ManaGemFill). Everything here works with today's art
+// use of them (bezel, gem, talons, spill, numerals, ManaGemFill). M4: the MP gem follows the server's mana
+// once a maximum is known (Surface_MpGem_* below); without one it keeps the ManaGemFill constant, which
+// is what the earlier tests pin. Everything here works with today's art
 // (the old top-down gradient masks, no setting, spill or numerals) and with a table that adds the new art.
 public sealed class ClassicHudGemTests
 {
@@ -1098,6 +1101,79 @@ foreach ((int w, int h) in new[] { (1280, 720), (1920, 1080), (2560, 1080) })
         Assert.Equal(StatusBarPanel.ManaGemFill, surface.View.ManaLevel);
         Assert.Equal(0f, surface.View.AnimationSeconds);
         Assert.Equal(0f, surface.View.GemPulse);
+    }
+
+    [Fact]
+    public void Surface_MpGem_KeepsTheConstantUntilAMaximumIsKnown_ThenFollowsTheQuickbarMana()
+    {
+        double now = 50;
+        using ClassicHudSurface surface = new(new BatchBackend(RealTable()), () => now);
+        QuickbarHudState bar = new();
+
+        // A quickbar that has heard nothing (menus, the first 250 ms of a session) leaves the gem as it was.
+        surface.Draw(FrameWith(60, 120) with { Quickbar = bar });
+        Assert.Equal(StatusBarPanel.ManaGemFill, surface.View.ManaLevel);
+        Assert.Equal(0, surface.View.Status.MaxMana);
+
+        bar.ApplyVitals(new ServerPlayerVitals(10, 40, []));
+        now += 0.05;
+        surface.Draw(FrameWith(60, 120) with { Quickbar = bar });
+        Assert.Equal((10, 40), (surface.View.Status.CurrentMana, surface.View.Status.MaxMana));
+        Assert.InRange(surface.View.ManaLevel, 0.25f, 1f);
+
+        for (int frame = 0; frame < 60; frame++)
+        {
+            now += 0.1;
+            surface.Draw(FrameWith(60, 120) with { Quickbar = bar });
+        }
+
+        Assert.Equal(0.25f, surface.View.ManaLevel);
+
+        // And back to the constant when the session ends and the state is cleared.
+        bar.Clear();
+        for (int frame = 0; frame < 60; frame++)
+        {
+            now += 0.1;
+            surface.Draw(FrameWith(60, 120) with { Quickbar = bar });
+        }
+
+        Assert.Equal(StatusBarPanel.ManaGemFill, surface.View.ManaLevel);
+    }
+
+    [Fact]
+    public void Surface_MpGem_FirstFrameWithKnownMana_ShowsItAsItIs_AndASnapshotWithManaWins()
+    {
+        double now = 50;
+        using ClassicHudSurface surface = new(new BatchBackend(RealTable()), () => now);
+        QuickbarHudState bar = new();
+        bar.ApplyVitals(new ServerPlayerVitals(10, 40, []));
+
+        surface.Draw(FrameWith(60, 120) with { Quickbar = bar });
+        Assert.Equal(0.25f, surface.View.ManaLevel);
+
+        // A caller that fills the snapshot's own mana fields is not overridden by the quickbar's.
+        ClassicHudFrame own = FrameWith(60, 120) with { Quickbar = bar };
+        own = own with { Status = own.Status with { CurrentMana = 30, MaxMana = 40 } };
+        for (int frame = 0; frame < 60; frame++)
+        {
+            now += 0.1;
+            surface.Draw(own);
+        }
+
+        Assert.Equal(0.75f, surface.View.ManaLevel);
+    }
+
+    [Fact]
+    public void Surface_TakeQuickbarCycle_ReturnsTheClickedSlotOnce()
+    {
+        double now = 50;
+        using ClassicHudSurface surface = new(new BatchBackend(RealTable()), () => now);
+        Assert.Equal(-1, surface.TakeQuickbarCycle());
+
+        ((IHudActions)surface).Quickbar(4);
+
+        Assert.Equal(4, surface.TakeQuickbarCycle());
+        Assert.Equal(-1, surface.TakeQuickbarCycle());
     }
 
     [Fact]

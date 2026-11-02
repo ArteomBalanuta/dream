@@ -357,7 +357,7 @@ public static class WorldCli
     {
         usageError = null;
         string? name = null;
-        int size = WorldDefaults.StartupFloorSize;
+        int size = WorldDefaults.ServerNewWorldSize;
         for (int i = 0; i < rest.Length; i++)
         {
             if (rest[i] == "--size")

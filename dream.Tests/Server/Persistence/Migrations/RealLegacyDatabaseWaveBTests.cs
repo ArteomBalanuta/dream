@@ -246,8 +246,14 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 while (reader.Read())
                 {
                     string name = reader.GetString(1);
+                    // Migration 0013 sets every current_energy high (QuickbarManaMigrationTests pins it).
+                    if (name == "current_energy")
+                    {
+                        continue;
+                    }
+
                     // Migration 0005 renumbers the ids of cubes, rubble and enemies, so they are not compared.
-                    if (name != "world_id" && name != "account_id" && name != "stat_points" && name != "rolled_modifiers" && !RenumberedColumns.Contains(name))
+                    if (name != "world_id" && name != "account_id" && name != "rolled_modifiers" && name != "camp_key" && !RenumberedColumns.Contains(name))
                     {
                         columns.Add(name);
                     }
@@ -261,9 +267,10 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
 
             StringBuilder tableText = new();
             using SqliteCommand command = connection.CreateCommand();
-            // Migration 0009 seeds four enemy and armor formulas; the legacy rows themselves must not change.
+            // Migration 0009 seeds four enemy and armor formulas and 0011 lowers the default experience
+            // curve; the other legacy rows must not change.
             string filter = table == "combat_formulas"
-                ? " WHERE formula_key NOT IN ('enemy.attack_damage', 'enemy.max_health', 'enemy.attack_interval_seconds', 'player.damage_taken_factor')"
+                ? " WHERE formula_key NOT IN ('enemy.attack_damage', 'enemy.max_health', 'enemy.attack_interval_seconds', 'player.damage_taken_factor', 'player.experience_to_next_level')"
                 : string.Empty;
             command.CommandText = $"SELECT {string.Join(", ", columns)} FROM {table}{filter} ORDER BY {string.Join(", ", columns)};";
             using SqliteDataReader rows = command.ExecuteReader();

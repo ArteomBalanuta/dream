@@ -351,15 +351,16 @@ public sealed class PerPlayerInventoryPersistenceTests
         profiles.GetOrCreate("player-two");
         world.SaveItemInstance(Item(101, "player-one"));
         world.SaveItemInstance(Item(102, "player-one"));
+        world.SaveItemInstance(Item(103, "player-one"));
         world.SaveItemInstance(Item(205, "player-two"));
         world.SaveInventorySlot(new PersistedInventorySlot("player-one", 0, 101, DateTime.UtcNow));
         world.SaveInventorySlot(new PersistedInventorySlot("player-one", 1, 102, DateTime.UtcNow));
-        world.SaveInventorySlot(new PersistedInventorySlot("player-one", InventoryConstants.EquippedSlotIndex, 101, DateTime.UtcNow));
+        world.SaveInventorySlot(new PersistedInventorySlot("player-one", InventoryConstants.EquippedSlotIndex, 103, DateTime.UtcNow));
         world.SaveInventorySlot(new PersistedInventorySlot("player-two", 0, 205, DateTime.UtcNow));
 
         PersistedPlayerInventory one = world.LoadPlayerInventory(" player-one ");
         Assert.Equal(new[] { 0, 1, InventoryConstants.EquippedSlotIndex }, one.Slots.Select(slot => slot.SlotIndex));
-        Assert.Equal(new[] { 101L, 102L }, one.Items.Select(item => item.ItemInstanceId).Order());
+        Assert.Equal(new[] { 101L, 102L, 103L }, one.Items.Select(item => item.ItemInstanceId).Order());
         Assert.All(one.Items, item => Assert.Equal("player-one", item.OwnerPlayerName));
         Assert.Empty(world.LoadPlayerInventory("nobody").Slots);
     }
@@ -505,7 +506,9 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         public int ItemCount => _items.Count;
 
-        // Makes SaveInventorySlot throw (on the write worker), like a write the queue drops.
+        // Makes the slot writes throw (on the write worker), like a write the queue drops. The real
+        // queue rolls a failed closure back to its savepoint, and a closure runs its guarded deletes
+        // first, so the deletes throw too: this fake has no rollback, and no row may change.
         public bool FailSlotWrites
         {
             get => Volatile.Read(ref _failSlotWrites);
@@ -644,6 +647,11 @@ public sealed class PerPlayerInventoryPersistenceTests
         public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
         {
             Count(nameof(DeleteInventorySlot));
+            if (Volatile.Read(ref _failSlotWrites))
+            {
+                throw new InvalidOperationException("Simulated inventory slot write failure.");
+            }
+
             (string, int) key = (playerName.Trim(), slotIndex);
             if (_slots.TryGetValue(key, out PersistedInventorySlot row) && row.ItemInstanceId == expectedItemInstanceId)
             {

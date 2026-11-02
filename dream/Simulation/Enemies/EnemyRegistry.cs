@@ -155,6 +155,99 @@ public sealed class EnemyRegistry
         return best;
     }
 
+    // M4: whether anchor lies within range of origin (3D) and inside the cone around horizontalDir (a unit
+    // vector with Y = 0). The cone test uses the horizontal offset only, so height does not narrow an arc; a
+    // target straight above or below the origin counts as inside. Also used for players in a PvP arc.
+    public static bool TryMeasureArc(
+        Vector3 origin,
+        Vector3 horizontalDir,
+        float range,
+        float minDot,
+        Vector3 anchor,
+        out float distanceSquared)
+    {
+        Vector3 offset = anchor - origin;
+        distanceSquared = offset.LengthSquared;
+        if (distanceSquared > range * range)
+        {
+            return false;
+        }
+
+        float horizontalLength = MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z));
+        if (horizontalLength <= 0.0001f)
+        {
+            return true;
+        }
+
+        float dot = ((offset.X * horizontalDir.X) + (offset.Z * horizontalDir.Z)) / horizontalLength;
+        return dot >= minDot;
+    }
+
+    // M4: appends up to maxTargets active enemies inside the arc, nearest first, actor id breaking ties.
+    // Allocation-free given a list with capacity. The caller damages after this returns, because a kill
+    // prunes the registry.
+    public void CollectInArc(
+        Vector3 origin,
+        Vector3 horizontalDir,
+        float range,
+        float minDot,
+        int maxTargets,
+        List<EnemyActor> into)
+    {
+        ArgumentNullException.ThrowIfNull(into);
+        if (maxTargets <= 0)
+        {
+            return;
+        }
+
+        int start = into.Count;
+        for (int i = 0; i < _actors.Count; i++)
+        {
+            EnemyActor actor = _actors[i];
+            if (!actor.IsActive
+                || !TryMeasureArc(origin, horizontalDir, range, minDot, actor.Combatant.GetCombatAnchorWorldPosition(), out float distanceSquared))
+            {
+                continue;
+            }
+
+            int at = into.Count;
+            if (at - start >= maxTargets)
+            {
+                // Full: only an enemy ahead of the farthest kept one gets in.
+                EnemyActor last = into[at - 1];
+                float lastDistance = (last.Combatant.GetCombatAnchorWorldPosition() - origin).LengthSquared;
+                if (!IsBefore(distanceSquared, actor, lastDistance, last))
+                {
+                    continue;
+                }
+
+                into.RemoveAt(at - 1);
+                at--;
+            }
+
+            into.Add(actor);
+            while (at > start)
+            {
+                EnemyActor previous = into[at - 1];
+                float previousDistance = (previous.Combatant.GetCombatAnchorWorldPosition() - origin).LengthSquared;
+                if (!IsBefore(distanceSquared, actor, previousDistance, previous))
+                {
+                    break;
+                }
+
+                into[at] = previous;
+                into[at - 1] = actor;
+                at--;
+            }
+        }
+    }
+
+    private static bool IsBefore(float distanceA, EnemyActor a, float distanceB, EnemyActor b)
+    {
+        return distanceA < distanceB
+            || (distanceA == distanceB && a.Combatant.Actor.Id < b.Combatant.Actor.Id);
+    }
+
     public void PruneInactive()
     {
         _actors.RemoveAll(static actor => !actor.IsActive);

@@ -419,7 +419,7 @@ public sealed class PlayerInventorySnapshotConverterTests
 
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(Encoding.UTF8.GetBytes(json)));
 
-        Assert.Equal("Unsupported protocol version 12. Supported version: 14.", error.Message);
+        Assert.Equal("Unsupported protocol version 12. Supported version: 18.", error.Message);
     }
 
     [Fact]

@@ -5,7 +5,12 @@ using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Actors;
+using Dream.Client.Input;
+using Dream.Multiplayer.Sessions;
+using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
@@ -14,8 +19,118 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // M1-B chat. Each scene binds a fresh state to the classic HUD, so a new scene starts empty.
+    private readonly ChatInput _chatInput = BindNewChat();
+
+    private static ChatInput BindNewChat()
+    {
+        ChatHudState state = new();
+        ClassicHud.Chat = state;
+        return new ChatInput(state);
+    }
+
+    // The window's text event (Game.OnTextInput); dropped unless the chat line is open.
+    public void QueueTextInput(uint unicode) => _chatInput.QueueTextInput(unicode);
+
+    // Called once a frame before the global keys. True when chat used the frame's keys.
+    private bool HandleChatInput(KeyboardState keyboardState)
+    {
+        // The party and trade slash commands send player actions (M5).
+        _chatInput.SendAction = SendEconomyIntent;
+        bool connected = _remoteClient.IsConnected;
+        bool canOpen = connected && _settings.CurrentRuntimeState.AllowGameplayInput;
+        bool used = _chatInput.Update(keyboardState, canOpen, _remoteClient.QueueChat);
+        if (_chatInput.State.OnlineVisible)
+        {
+            FillOnlineList();
+        }
+
+        return used;
+    }
+
+    // Only for the frames Tab is held; reads the roster built from the snapshot actor cache.
+    private void FillOnlineList()
+    {
+        List<string> online = _chatInput.State.Online;
+        online.Clear();
+        IReadOnlyList<PlayerRosterEntry> roster = _scenePresenter.BuildPlayerRoster();
+        for (int i = 0; i < roster.Count && online.Count < ChatHudState.MaxOnlineNames; i++)
+        {
+            string name = ChatHudState.Sanitize(roster[i].DisplayName, ChatHudState.MaxNameChars);
+            online.Add(name.Length == 0 ? "?" : name);
+        }
+    }
+
+    // While chat has the keys the global toggles (Esc, V, F3) must not fire, and must not fire
+    // late from a key still held when the line closes.
+    private void HandleGlobalInputUnlessTyping(KeyboardState keyboardState)
+    {
+        UpdateMultiplayerHud();
+        if (HandleChatInput(keyboardState))
+        {
+            _wasSettingsTogglePressed = keyboardState.IsKeyDown(Keys.Escape);
+            _wasInventoryTogglePressed = keyboardState.IsKeyDown(Keys.V);
+            _wasAdminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);
+            _wasInteractKeyPressed = keyboardState.IsKeyDown(Keys.E);
+            // A digit still held when the line closes is not a press.
+            _quickbarKeysDown = QuickbarInput.ReadMask(keyboardState);
+            return;
+        }
+
+        // Before the global keys: it reads the Esc edge they consume.
+        HandleInteractKey(keyboardState);
+        HandleQuickbarKeys(keyboardState);
+        HandleGlobalInput(keyboardState);
+    }
+
     public void ApplyReplicatedMessage(IServerToClientMessage message)
     {
+        // M5, M6 and M8: owner-only pushes. None is a routed kind; each only feeds its own HUD state.
+        if (message is ServerPartyState party)
+        {
+            ApplyPartyState(party);
+            return;
+        }
+
+        if (message is ServerTradeState trade)
+        {
+            ApplyTradeState(trade);
+            return;
+        }
+
+        if (message is ServerQuestLog questLog)
+        {
+            ApplyQuestLog(questLog);
+            return;
+        }
+
+        if (message is ServerPlayerProgress progress)
+        {
+            ApplyOwnerProgress(progress);
+            return;
+        }
+
+        if (message is ServerChatMessage chat)
+        {
+            // Not a routed kind: it only feeds the chat log, as plain clamped text.
+            _chatInput.State.AddServerMessage(chat.Channel, chat.From, chat.Text);
+            return;
+        }
+
+        if (message is ServerGroundItems groundItems)
+        {
+            // Not a routed kind either: it only feeds the ground list, which validates every entry.
+            _groundItems.Apply(groundItems);
+            return;
+        }
+
+        if (message is ServerPlayerVitals vitals)
+        {
+            // Not a routed kind either: mana and cooldowns for the quickbar, clamped by the state.
+            _quickbarHud.ApplyVitals(vitals);
+            return;
+        }
+
         _clientProtocol.ApplyServerMessage(message);
         if (message is JoinAcceptedMessage joinAcceptedMessage)
         {
@@ -39,6 +154,8 @@ public partial class PlayScene
                 return;
             }
 
+            // A join starts a new session: no chat lines or half-typed text from the one before.
+            _chatInput.State.Clear();
             _predictionReconciler.Reset();
             _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
             if (joinAcceptedMessage.WorldClock is { } worldClockAnchor)
@@ -51,11 +168,18 @@ public partial class PlayScene
             }
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+            // A new session shows no mana, cooldowns or bar from the one before; the join's inventory
+            // brings the bar, and the first vitals message the mana.
+            _quickbarHud.Clear();
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
             // A join starts a new timeline; its own actor list counts, so a join while dead shows
             // the overlay at once instead of at the first snapshot.
             _deathTracker.Reset();
             _lootFeedback.Clear();
+            // A new session shows no vendor from the one before. The ground list is not reset here:
+            // its own Reset message does that, and deltas may already have arrived.
+            _vendorHud.Close();
+            _npcs.ApplyActors(joinAcceptedMessage.EffectiveInitialActors);
             ObserveLocalDeath(joinAcceptedMessage.EffectiveInitialActors, joinAcceptedMessage.CurrentServerTick);
             LogPresenterDiagnostics("join");
         }
@@ -99,6 +223,7 @@ public partial class PlayScene
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
+            _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
             ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
         }
@@ -138,6 +263,14 @@ public partial class PlayScene
             {
                 ApplyInventorySnapshot(inventoryChanged.Inventory);
             }
+            else if (resultTargetsLocalSession && actionMessage.Result.Payload is VendorOpenedResult vendorOpened)
+            {
+                ApplyVendorOpened(vendorOpened);
+            }
+            else if (resultTargetsLocalSession && actionMessage.Result.Payload is NpcDialogueResult dialogue)
+            {
+                ApplyNpcDialogue(dialogue);
+            }
         }
     }
 
@@ -152,6 +285,7 @@ public partial class PlayScene
             if (actor.Kind == CreatureKind.Player &&
                 string.Equals(actor.SessionId, localSessionId, StringComparison.Ordinal))
             {
+                _serverLocalActorId = actor.ActorId;
                 _deathTracker.Observe(actor.IsAlive && actor.CurrentHealth > 0, serverTick);
                 return;
             }
@@ -355,6 +489,7 @@ public partial class PlayScene
     {
         _inventory = inventory;
         _inventoryApplyCount++;
+        _quickbarHud.ApplyInventory(inventory);
         EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
         ObserveEquipmentForAudio(presentation);
 

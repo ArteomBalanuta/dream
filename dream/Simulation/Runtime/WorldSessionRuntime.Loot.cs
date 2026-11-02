@@ -4,6 +4,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Inventory;
+using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Runtime;
 
@@ -37,8 +38,9 @@ public sealed partial class WorldSessionRuntime
     // synchronously, which can flush the write queue), and the grant uses the character key, never the
     // display name. A kill by a dead player or after leaving cannot get here: the action is rejected or
     // the session purged first. A roll happens even when the backpack is full, so nothing downstream
-    // depends on free space.
-    internal void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+    // depends on free space. deathPosition is where the enemy died, for the ground items an overflowing
+    // backpack drops (M3).
+    internal void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, Vector3 deathPosition)
     {
         if (!_sessions.TryGet(killer, out ConnectedPlayer? player) || player == null || !player.IsSpawned)
         {
@@ -51,6 +53,9 @@ public sealed partial class WorldSessionRuntime
             NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason=inventory-not-loaded kind={enemyKind}");
             return;
         }
+
+        // Gold does not depend on the loot table; a kind without one still pays (M3).
+        GrantKillGold(killer, enemyKind, enemyActorId, tick, StableHash.Of(killer.Value));
 
         ContentCatalog content = LootContent ?? ContentCatalog.Shipped;
         if (!content.TryGetEnemy(enemyKind, out EnemyTemplate? template)
@@ -77,7 +82,22 @@ public sealed partial class WorldSessionRuntime
                     AddLootNotice(killer, drop, lost: false, inventoryChanged: true);
                     break;
                 case InventoryEquipOutcome.BackpackFull:
-                    AddLootNotice(killer, drop, lost: true, inventoryChanged: false);
+                    // M3: the overflow lands on the ground near the kill, claimed by the winner for a
+                    // while. The notice stays a "lost" one either way, so its priority is unchanged.
+                    bool landed = _inventory.TryDropRolled(
+                            drop.ItemKind,
+                            drop.Rarity,
+                            in seed,
+                            RingPosition(deathPosition, dropIndex),
+                            characterKey,
+                            player.ActorId,
+                            tick);
+                    if (!landed)
+                    {
+                        NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason=ground-drop-failed kind={enemyKind}");
+                    }
+
+                    AddLootNotice(killer, drop, lost: true, inventoryChanged: false, gone: !landed);
                     break;
                 default:
                     NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason={outcome} kind={enemyKind}");
@@ -86,7 +106,29 @@ public sealed partial class WorldSessionRuntime
         }
     }
 
-    internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged)
+    // Drops of one kill spread on a small ring around the death position (golden angle, so any count
+    // stays apart), so they can be told apart and clicked.
+    private static Vector3 RingPosition(Vector3 center, int dropIndex)
+    {
+        const float radius = 0.7f;
+        float angle = dropIndex * 2.3999632f;
+        return new Vector3(center.X + (MathF.Cos(angle) * radius), center.Y, center.Z + (MathF.Sin(angle) * radius));
+    }
+
+    // Marks the session's inventory as changed so the next drain sends a fresh snapshot, with no notice
+    // (a trade or a quest turn-in changed the bag).
+    internal void MarkInventoryPush(PlayerSessionId session)
+    {
+        if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))
+        {
+            pending = new PendingLoot();
+            _pendingLoot[session] = pending;
+        }
+
+        pending.InventoryChanged = true;
+    }
+
+    internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged, bool gone = false)
     {
         if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))
         {
@@ -98,7 +140,7 @@ public sealed partial class WorldSessionRuntime
         string name = ContentCatalog.Shipped.TryGetItem(drop.ItemKind, out ItemDefinition? definition)
             ? definition.DisplayName
             : drop.ItemKind;
-        LootNotice notice = new(name, drop.Rarity, lost);
+        LootNotice notice = new(name, drop.Rarity, lost, gone);
         if (pending.Notices.Count < InventoryPushMessage.MaxNotices)
         {
             pending.Notices.Add(notice);

@@ -27,11 +27,11 @@ public partial class PlayScene
 
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
-        HandleGlobalInput(keyboardState);
+        HandleGlobalInputUnlessTyping(keyboardState);
         // A dead local player sends no movement, look or use. Commands keep flowing (and keep their
         // sequence), because the reconciler only compares on a new ack and the respawn snap needs one.
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
-            _settings.CurrentRuntimeState.AllowGameplayInput,
+            _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping,
             _runtime.Player.Combatant.Health.IsAlive);
         HandleConsumableHotkeys(keyboardState, allowGameplayInput);
         // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
@@ -43,6 +43,7 @@ public partial class PlayScene
             0,
             key => keyboardState.IsKeyDown(key) || CaptureKeyHeld(key),
             allowGameplayInput);
+        rawCommandFrame = QuickbarInput.RemapModeKeys(rawCommandFrame, keyboardState, allowGameplayInput);
         if (allowGameplayInput)
         {
             rawCommandFrame = ApplyCaptureFight(rawCommandFrame);

@@ -40,12 +40,23 @@ public readonly record struct TransportEnvelope(
     // "targetCell" of the unequip intent, and widens the equip, move and destroy intents' slot indexes
     // (bag anchors 0..63, worn slots 100..111); a v12 client would misread the inventory, so both sides
     // refuse it. Actor and world snapshots are unchanged apart from the version digit. Version 14
-    // (character stats sheet) widens the Combat actor group (and the stats object) to [strength,
-    // attackSpeed, vitality, agility, energy, statPoints, mana, maxMana], adds the
-    // player.attribute.spend intent (and stops accepting player.stats.update from clients), and a
-    // player actor's VisualKey carries "<mainHandVisual>|<offHandVisual>"; a v13 client would misread
-    // the combat group, so both sides refuse it. Decode rejects any other version.
-    public const int CurrentProtocolVersion = 14;
+    // (multiplayer M1) adds the chat messages (client.chat, server.chat) and the character list
+    // (client.character-list, server.character-list); a v13 peer would fail on the unknown kinds, so
+    // both sides refuse it. Existing payloads are unchanged apart from the version digit. Version 15
+    // (stat points, M2-A) adds the "player.stats.spend" action (PlayerStatSpendIntent). Version
+    // 16 (ground items, gold and vendors, M3) adds the server.ground-items message, the "ground.pickup",
+    // "npc.interact", "vendor.buy" and "vendor.sell" actions, the "vendor.opened" action result, the
+    // optional "gold" field of the inventory snapshot (written only above 0) and the Npc creature kind
+    // of an actor snapshot; a v15 peer would fail on the unknown kinds, so both sides refuse it.
+    // Version 17 (quickbar and mana, M4) adds the "skill.use", "item.use" and "quickbar.bind" actions,
+    // the "ability.used" action result, the server.vitals message and the optional "quick" field of the
+    // inventory snapshot (written only when the character has a bar); a v16 peer would fail on the
+    // unknown kinds, so both sides refuse it. Version 18 (party, trade, quests and admin, M5, M6 and M8) adds twelve
+    // player actions, the "npc.dialogue" action result, the Party and Command chat channels and the
+    // server.party, server.trade, server.quest-log and server.progress messages, and stops sending other
+    // players' experience and stats in actor snapshots; a v17 peer would fail on the unknown kinds, so both sides refuse it.
+    // Decode rejects any other version.
+    public const int CurrentProtocolVersion = 18;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

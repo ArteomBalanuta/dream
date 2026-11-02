@@ -22,6 +22,10 @@ public interface IAuthoritativeSessionHost
         in Dream.Simulation.Characters.CharacterAccessDecision access)
         => JoinSession(requestedSessionId, displayName);
 
+    // Whether clients may use the development commands: noclip, freeze and the stat sliders. Off by
+    // default; the handlers clear or reject them while it is off.
+    bool DevCommandsAllowed => false;
+
     AuthoritativeActionResult ProcessAction(PlayerActionMessage message);
 
     ServerSnapshotEnvelope ExportSnapshot(bool includeWorldSnapshot = false);

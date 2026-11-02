@@ -77,43 +77,43 @@ public class PlayerCombatAttributeTests
     {
         PlayerCombatant combatant = Combatant(energy: 10);
 
-        Assert.Equal(70, combatant.MaxMana);
-        Assert.Equal(70, combatant.Mana);
+        // 50 at level 1 plus 5 per Energy.
+        Assert.Equal(100, combatant.MaxMana);
+        Assert.Equal(100, combatant.CurrentMana);
         Assert.Equal(10, combatant.MagicMinDamage);
         Assert.Equal(20, combatant.MagicMaxDamage);
-        Assert.Equal(70, combatant.Stats.MaxMana);
-        Assert.Equal(70, combatant.Stats.Mana);
     }
 
     [Fact]
     public void SpendingOnEnergy_RaisesTheCap_ButNotTheCurrentMana()
     {
         PlayerCombatant combatant = Combatant(points: 2);
-        Assert.Equal(20, combatant.MaxMana);
+        Assert.Equal(50, combatant.MaxMana);
 
         Assert.True(combatant.TrySpendPoint(StatId.Energy, 2, out _));
 
-        Assert.Equal(30, combatant.MaxMana);
-        Assert.Equal(20, combatant.Mana);
+        Assert.Equal(60, combatant.MaxMana);
+        Assert.Equal(50, combatant.CurrentMana);
     }
 
     [Fact]
-    public void ManaRegenerates_OnePerSecond_AndRestoreManaFillsTheGap()
+    public void AdvanceCombat_DoesNotRegenerate_AndRestoreManaFillsTheGap()
     {
+        // Regeneration belongs to the session runtime (PlayerManaRules), not to AdvanceCombat.
         PlayerCombatant combatant = Combatant(energy: 10);
-        combatant.ApplyBaseStats(new PlayerCombatStats { Energy = 10, Mana = 10, MaxMana = 70 });
-        Assert.Equal(10, combatant.Mana);
+        combatant.SetMana(10);
+        Assert.Equal(10, combatant.CurrentMana);
 
         for (int i = 0; i < (64 * 3) + 1; i++)
         {
             combatant.AdvanceCombat(1f / 64f);
         }
 
-        Assert.Equal(13, combatant.Mana);
+        Assert.Equal(10, combatant.CurrentMana);
         Assert.Equal(30, combatant.RestoreMana(30));
-        Assert.Equal(43, combatant.Mana);
-        Assert.Equal(27, combatant.RestoreMana(100));
-        Assert.Equal(70, combatant.Mana);
+        Assert.Equal(40, combatant.CurrentMana);
+        Assert.Equal(60, combatant.RestoreMana(100));
+        Assert.Equal(100, combatant.CurrentMana);
         Assert.Equal(0, combatant.RestoreMana(1));
         Assert.Equal(0, combatant.RestoreMana(-5));
     }
@@ -138,6 +138,6 @@ public class PlayerCombatAttributeTests
 
         PlayerCombatStatsSnapshot snapshot = combatant.CaptureStatsSnapshot();
 
-        Assert.Equal(new PlayerCombatStatsSnapshot(10, 2f, 10, 8, 6, 4, 50, 50), snapshot);
+        Assert.Equal(new PlayerCombatStatsSnapshot(10, 2f, 10, 8, 6, 4, 80, 80), snapshot);
     }
 }

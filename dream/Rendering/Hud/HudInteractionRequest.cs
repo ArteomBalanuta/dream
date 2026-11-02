@@ -27,6 +27,15 @@ public readonly record struct HudInteractionRequest(
     float? UiScale = null,
     // The slider was released: only then is the scale written to the config file.
     bool UiScaleCommitted = false,
+    // M3: a ground item to pick up (a clicked label), an NPC to talk to, a vendor window pick, and the
+    // vendor window's close button. The scene turns each into one intent.
+    long? GroundPickupId = null,
+    int? InteractActorId = null,
+    VendorHudAction? Vendor = null,
+    bool CloseVendor = false,
+    // M4: a quickbar tile clicked while the inventory is open (0..5). The scene sends the next entry in
+    // the cycle as one QuickbarBindIntent.
+    int? QuickbarCycleSlot = null,
     // The attribute whose "+" was pressed in the character window; sent as a PlayerAttributeSpendIntent.
     Dream.Simulation.Stats.StatId? SpendAttribute = null)
 {
@@ -63,7 +72,13 @@ public enum InventoryHudActionKind : byte
     // anchor of an item is refused.
     Move,
     // Destroy the item ItemInstanceId anchored at SlotIndex (0..63). The HUD asks for a confirm first.
-    Destroy
+    Destroy,
+    // Spend Target stat points on the stat whose StatId is SlotIndex (Strength, Vitality or Attack
+    // Speed). It travels as PlayerStatSpendIntent; the server checks the budget and the caps.
+    SpendStat,
+    // Use (drink) the consumable ItemInstanceId anchored at SlotIndex (0..63). It travels as
+    // ItemUseIntent; the server checks the item, the cooldown and that something would be restored.
+    Use
 }
 
 // One inventory action picked in the character panel. Only slot numbers and the id of an item the
@@ -73,6 +88,33 @@ public readonly record struct InventoryHudAction(
     int SlotIndex,
     int Target = 0,
     long ItemInstanceId = 0);
+
+public enum VendorHudActionKind : byte
+{
+    // Buy one of ItemKind (a kind the open vendor sells).
+    Buy,
+    // Sell the bag item ItemInstanceId anchored at SlotIndex (0..63).
+    Sell
+}
+
+// One pick in the vendor window. Names only what the window showed; the scene adds the NPC it is open
+// for, and the server checks the NPC, the range, the stock, the slot and the gold.
+public readonly record struct VendorHudAction(
+    VendorHudActionKind Kind,
+    string? ItemKind = null,
+    int SlotIndex = 0,
+    long ItemInstanceId = 0);
+
+// The economy picks of one classic frame (M3): a ground label or the vendor window. All empty is the
+// common case.
+public readonly record struct HudEconomyRequest(
+    long? GroundPickupId = null,
+    int? InteractActorId = null,
+    VendorHudAction? Vendor = null,
+    bool CloseVendor = false)
+{
+    public bool IsEmpty => GroundPickupId is null && InteractActorId is null && Vendor is null && !CloseVendor;
+}
 
 // A building menu pick. MaterialId null is Auto, so the request wraps it to tell "Auto picked"
 // from "nothing picked".

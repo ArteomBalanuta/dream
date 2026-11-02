@@ -14,7 +14,7 @@ public sealed class SchemaMigrationTests
     {
         IReadOnlyList<ISchemaMigration> migrations = SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);
 
-        Assert.Equal(11, migrations.Count);
+        Assert.Equal(14, migrations.Count);
         ISchemaMigration baseline = migrations[0];
         Assert.IsType<BaselineMigration>(baseline);
         Assert.Equal(1, baseline.Version);
@@ -48,8 +48,17 @@ public sealed class SchemaMigrationTests
         Assert.Equal("bag_grid", migrations[9].Name);
         Assert.IsType<SqlScriptMigration>(migrations[10]);
         Assert.Equal(11, migrations[10].Version);
-        Assert.Equal("character_stat_points", migrations[10].Name);
-        Assert.Equal(11, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal("spawn_camps", migrations[10].Name);
+        Assert.IsType<SqlScriptMigration>(migrations[11]);
+        Assert.Equal(12, migrations[11].Version);
+        Assert.Equal("ground_items_wallets", migrations[11].Name);
+        Assert.IsType<SqlScriptMigration>(migrations[12]);
+        Assert.Equal(13, migrations[12].Version);
+        Assert.Equal("quickbar_mana", migrations[12].Name);
+        Assert.IsType<SqlScriptMigration>(migrations[13]);
+        Assert.Equal(14, migrations[13].Version);
+        Assert.Equal("party_quests_admin", migrations[13].Name);
+        Assert.Equal(14, MigrationTestDatabase.ShippedLatestVersion);
     }
 
     [Fact]
@@ -107,7 +116,10 @@ public sealed class SchemaMigrationTests
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0008_item_rolls.sql")));
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0009_enemy_formulas.sql")));
         reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0010_bag_grid.sql")));
-        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0011_character_stat_points.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0011_spawn_camps.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0012_ground_items_wallets.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0013_quickbar_mana.sql")));
+        reference.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0014_party_quests_admin.sql")));
         using MigrationTestDatabase database = new();
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
@@ -117,7 +129,7 @@ public sealed class SchemaMigrationTests
         using SqliteConnection expected = reference.Open();
         using SqliteConnection actual = database.Open();
         Assert.Equal(SqliteSchemaSnapshot.Capture(expected), SqliteSchemaSnapshot.Capture(actual));
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "character_stat_points")], VersionRows(actual));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps"), (12L, "ground_items_wallets"), (13L, "quickbar_mana"), (14L, "party_quests_admin")], VersionRows(actual));
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_starter_grants;"));
     }
 
@@ -178,7 +190,7 @@ public sealed class SchemaMigrationTests
         Assert.Empty(log);
         Assert.Empty(database.Backups());
         using SqliteConnection connection = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "character_stat_points")], VersionRows(connection));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps"), (12L, "ground_items_wallets"), (13L, "quickbar_mana"), (14L, "party_quests_admin")], VersionRows(connection));
         Assert.Equal("yes", database.Scalar("SELECT value FROM world_metadata WHERE key = 'kept';"));
         // The accepted behaviour change: the baseline runs once, so a deleted seed row stays deleted.
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM combat_formulas WHERE formula_key = 'player.critical_chance';"));

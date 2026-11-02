@@ -28,7 +28,7 @@ public sealed partial class WorldSessionRuntime
 
     public ServerSnapshotEnvelope ExportServerSnapshotEnvelope(bool includeWorldSnapshot = false)
     {
-        IReadOnlyList<ActorSnapshot> actors = CaptureActorSnapshots();
+        IReadOnlyList<ActorSnapshot> actors = CaptureWireActorSnapshots();
         WorldSnapshot? worldSnapshot = includeWorldSnapshot
             ? ExportWorldSnapshot()
             : null;
@@ -71,7 +71,7 @@ public sealed partial class WorldSessionRuntime
         return new ServerSnapshotEnvelope(
             CurrentServerTick,
             CaptureAcceptedCommandSequences(),
-            CaptureActorSnapshots(),
+            CaptureWireActorSnapshots(),
             GetSessionInteractionMode(ResolvePrimaryControlledSessionId()),
             ExportWorldSnapshot(),
             Array.Empty<WorldMutationDelta>(),
@@ -186,7 +186,7 @@ public sealed partial class WorldSessionRuntime
         FillAuthoritativePlayerTargets(_snapshotPlayerTargets, spawnedAndAliveOnly: false);
         IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
         // The list is the snapshot's wire payload, so it is new each time, sized exactly.
-        List<ActorSnapshot> actors = new(_snapshotPlayerTargets.Count + enemies.Count);
+        List<ActorSnapshot> actors = new(_snapshotPlayerTargets.Count + enemies.Count + _npcs.Count);
 
         foreach (IAuthoritativePlayerTarget playerTarget in _snapshotPlayerTargets)
         {
@@ -243,6 +243,8 @@ public sealed partial class WorldSessionRuntime
                 VisualKey: actor.VisualKey));
         }
 
+        // Content NPCs (M3) come after the enemies, so a world without any keeps its actor order.
+        AppendNpcSnapshots(actors);
         return actors;
     }
 

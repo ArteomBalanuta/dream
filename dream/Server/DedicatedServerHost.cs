@@ -3,9 +3,11 @@ using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Characters;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Server;
 
@@ -13,7 +15,7 @@ namespace Dream.Server;
 // JoinAccepted or JoinRejected, or a world resync served after a tick.
 public readonly record struct PendingConnectionReply(string ConnectionId, IServerToClientMessage Message);
 
-public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
+public sealed partial class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
 {
     private static readonly PlayerSimulationTuning DefaultServerTuning = PlayerSimulationTuning.AuthoritativeDefault;
 
@@ -58,6 +60,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     public const string SessionInUseRejectionReason =
         "Session already in use: another connection is still active for it.";
 
+    // Sent to a connection whose seat a same-account join took over, just before its socket closes.
+    public const string OpenedElsewhereRejectionReason = "This character was opened somewhere else.";
+
     public const string JoinThrottledRejectionReason =
         "Too many join attempts for this name.";
 
@@ -72,6 +77,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ServerTickRunner _tickRunner = new();
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
+    private readonly List<SessionVitals> _vitalsScratch = [];
+    private readonly List<SessionServerMessage> _sessionMessageScratch = [];
+    private readonly Func<PlayerSessionId, bool> _isSessionClaimed;
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
     private readonly ConcurrentQueue<PendingConnectionReply> _pendingConnectionReplies = new();
@@ -104,6 +112,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // the service's own release for it runs. A mark stays until a new connection with the same id
     // attaches (ForgetTakenOverConnection); ids are remote endpoints, so that is a new socket.
     private readonly ConcurrentQueue<string> _takenOverConnectionQueue = new();
+    // Minimum gap between joins from one already-joined connection.
+    public static readonly TimeSpan RepeatJoinInterval = TimeSpan.FromSeconds(5);
+    private readonly ConcurrentDictionary<string, long> _lastRepeatJoin = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _takenOverConnections = new(StringComparer.Ordinal);
 
     public DedicatedServerHost(
@@ -127,6 +138,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         bool deferJoinsToTick)
     {
         _authority = authority;
+        _isSessionClaimed = id => _sessionClaims.ContainsKey(id.Value);
         _deferJoinsToTick = deferJoinsToTick;
         _tickDrivenAuthority = authority as ITickDrivenAuthoritativeSessionHost;
         _router = router;
@@ -134,6 +146,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         {
             // Snapshots count the inbox's carried repeat debt in StarvedTicks (W9-2).
             runtime.CarriedRepeatDebtTicks = _commandInbox.GetCarriedRepeatDebtTicks;
+            runtime.IsSessionMuted = IsSessionMuted;
         }
 
         _checkpointWrites =Runtime?.CheckpointWriter is { } checkpointWriter
@@ -176,6 +189,9 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     // Join throttle (ServerRoutingContext.JoinThrottleInitialInterval): per source address and
     // contested session id or player name, touched only under _authoritySync.
     private readonly JoinThrottleTable _joinThrottle = new();
+
+    // Chat token buckets per account, so a reconnect keeps its bucket (bounded, outlives ReleaseConnection).
+    private readonly ChatRateLimiter _chatLimiter = new();
 
     // Per-source limit on new accounts (NewAccountLimiter), touched only under _authoritySync.
     internal NewAccountLimiter NewAccountLimits { get; set; } = NewAccountLimiter.FromEnvironment();
@@ -229,17 +245,37 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
     }
 
+    // The integrated server turns the development commands on; the dedicated server leaves them to
+    // DREAM_DEV_COMMANDS (ServerBootstrap).
+    public bool DevCommandsAllowed
+    {
+        get => _authority?.DevCommandsAllowed ?? false;
+        set
+        {
+            if (_authority is RuntimeAuthoritativeSessionHost runtimeAuthority)
+            {
+                runtimeAuthority.DevCommandsAllowed = value;
+            }
+        }
+    }
+
     public WorldSessionRuntime? Runtime => (_authority as RuntimeAuthoritativeSessionHost)?.Runtime;
+
+    // M1-C: queues the answer to a character-list read as a reply for the connection (sent after the next tick).
+    internal void EnqueueConnectionReply(string connectionId, IServerToClientMessage message) =>
+        _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, message));
 
     public static DedicatedServerHost CreateDefault()
     {
         ProtocolRouter router = new(
             [
                 new ClientHelloHandler(),
+                new CharacterListHandler(),
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(),
                 new PlayerActionHandler(),
-                new WorldResyncRequestHandler()
+                new WorldResyncRequestHandler(),
+                new ChatMessageHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
@@ -251,20 +287,26 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         bool deferJoinsToTick = false,
         bool allowDevMovement = false)
     {
+        CharacterListHandler characterLists = new();
         ProtocolRouter router = new(
             [
                 new ClientHelloHandler(),
+                characterLists,
                 new JoinRequestHandler(),
                 new PlayerCommandHandler(allowDevMovement),
                 new PlayerActionHandler(),
-                new WorldResyncRequestHandler()
+                new WorldResyncRequestHandler(),
+                new ChatMessageHandler()
             ],
             Array.Empty<IClientMessageHandler>());
 
         RuntimeAuthoritativeSessionHost runtimeHost = ServerBootstrap.CreateRuntimeHost(persistence);
         try
         {
-            return new DedicatedServerHost(runtimeHost, router, deferJoinsToTick);
+            DedicatedServerHost host = new(runtimeHost, router, deferJoinsToTick);
+            characterLists.Attach(persistence?.Accounts, runtimeHost.Runtime.PersistenceWrites);
+            characterLists.Deliver = host.EnqueueConnectionReply;
+            return host;
         }
         catch
         {
@@ -313,6 +355,20 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             if (message is ClientJoinRequestMessage rawJoinRequest)
             {
+                // A joined connection may repeat a join (a name change is refused, a same-seat repeat
+                // re-exports the world) at most once per RepeatJoinInterval; extras are dropped unanswered.
+                if (context.LastJoinRequest != null)
+                {
+                    long joinNow = TimeProvider.GetTimestamp();
+                    if (_lastRepeatJoin.TryGetValue(connectionId, out long lastRepeat)
+                        && joinNow - lastRepeat < (long)(RepeatJoinInterval.TotalSeconds * TimeProvider.TimestampFrequency))
+                    {
+                        return Array.Empty<IServerToClientMessage>();
+                    }
+
+                    _lastRepeatJoin[connectionId] = joinNow;
+                }
+
                 // On a host with accounts the token is checked and replaced by its hash before anything
                 // throttles, queues, routes or stores the message, so no later code (PendingJoin,
                 // LastJoinRequest, logs) can see it. A bad or missing token starts no prefetch.
@@ -341,6 +397,12 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     }
 
                     joinRequest = rawJoinRequest with { AccountToken = null, ResolvedAccount = account };
+
+                    // A ban set here moments ago may not be in the join's persisted-state load yet.
+                    if (RecentBanText(account) is { } recentBan)
+                    {
+                        return RejectJoinBeforeQueue(context, recentBan);
+                    }
                 }
                 else if (rawJoinRequest.AccountToken != null || rawJoinRequest.ResolvedAccount != null)
                 {
@@ -349,6 +411,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 }
 
                 message = joinRequest;
+
+                // The player cap: a connection with no seat is refused while every seat is taken. A joined
+                // connection repeating its join keeps its seat.
+                if (IsServerFullFor(connectionId, joinRequest))
+                {
+                    return RejectJoinBeforeQueue(context, ServerConnectionOptions.ServerFullRejectionReason);
+                }
+
                 if (TryThrottleJoin(context, joinRequest, out IServerToClientMessage? throttleReply))
                 {
                     return throttleReply == null ? Array.Empty<IServerToClientMessage>() : [throttleReply];
@@ -363,14 +433,133 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
             context.ClearOutboundMessages();
             context.ClearJoinConflict();
+            context.Clock = TimeProvider;
+            context.ChatLimiter = _chatLimiter;
             _router.RouteServerInbound(context, message);
+            if (context.PendingChats.Count > 0)
+            {
+                DeliverPendingChats(context);
+            }
+
+            ServerChatMessage? motd = null;
             if (message is ClientJoinRequestMessage routedJoin)
             {
                 CompleteJoinAttempt(context, routedJoin);
+                if (_connectionClaims.ContainsKey(context.ConnectionId))
+                {
+                    EnqueueGroundReset(context.ConnectionId, Runtime);
+                    if (HasJoinAccepted(context.OutboundMessages))
+                    {
+                        motd = CompleteAcceptedJoin(context);
+                    }
+                }
             }
 
-            return context.OutboundMessages.ToArray();
+            return motd == null
+                ? context.OutboundMessages.ToArray()
+                : [.. context.OutboundMessages, motd];
         }
+    }
+
+    // Hands the lines ChatMessageHandler queued on the context to ChatRouter and queues the results
+    // as pending connection replies, so the simulation never sees chat. Under the tick lock.
+    private void DeliverPendingChats(ServerRoutingContext context)
+    {
+        List<ClientChatMessage> lines = [.. context.PendingChats];
+        context.PendingChats.Clear();
+        if (Runtime is not { } runtime
+            || !_connectionClaims.TryGetValue(context.ConnectionId, out string? senderSession))
+        {
+            return;
+        }
+
+        List<ChatParticipant> participants = [];
+        ChatParticipant? sender = null;
+        foreach (ActorSnapshot actor in runtime.CaptureActorSnapshots())
+        {
+            if (actor.Kind != CreatureKind.Player
+                || actor.SessionId == null
+                || !_sessionClaims.TryGetValue(actor.SessionId, out string? connectionId))
+            {
+                continue;
+            }
+
+            ChatParticipant participant = new(connectionId, actor.DisplayName ?? actor.SessionId, actor.Position);
+            participants.Add(participant);
+            if (string.Equals(actor.SessionId, senderSession, StringComparison.Ordinal))
+            {
+                sender = participant;
+            }
+        }
+
+        if (sender is not { } found)
+        {
+            return;
+        }
+
+        List<PendingConnectionReply> replies = [];
+        for (int i = 0; i < lines.Count; i++)
+        {
+            // M8: slash commands are decided by the server alone, and a muted account is not heard.
+            if (lines[i].Channel == ChatChannel.Command)
+            {
+                HandleAdminCommand(context, found, lines[i], replies);
+                continue;
+            }
+
+            if (IsMuted(context))
+            {
+                replies.Add(new PendingConnectionReply(
+                    found.ConnectionId,
+                    new ServerChatMessage(ChatChannel.System, "", MutedText, runtime.CurrentServerTick)));
+                continue;
+            }
+
+            // M5: the party chat goes to the sender's party members only.
+            List<ChatParticipant>? party = lines[i].Channel == ChatChannel.Party
+                ? BuildPartyParticipants(runtime, senderSession, participants)
+                : null;
+            ChatRouter.Route(found, lines[i], participants, runtime.CurrentServerTick, replies, party);
+        }
+
+        for (int i = 0; i < replies.Count; i++)
+        {
+            _pendingConnectionReplies.Enqueue(replies[i]);
+        }
+    }
+
+    // The chat participants that share the sender's party (the sender included); null when the sender is
+    // in none.
+    private List<ChatParticipant>? BuildPartyParticipants(
+        WorldSessionRuntime runtime,
+        string senderSession,
+        List<ChatParticipant> participants)
+    {
+        List<PlayerSessionId> members = [];
+        if (!runtime.CopyPartyMemberSessions(new PlayerSessionId(senderSession), members))
+        {
+            return null;
+        }
+
+        List<ChatParticipant> party = [];
+        for (int m = 0; m < members.Count; m++)
+        {
+            if (!_sessionClaims.TryGetValue(members[m].Value, out string? connectionId))
+            {
+                continue;
+            }
+
+            for (int p = 0; p < participants.Count; p++)
+            {
+                if (string.Equals(participants[p].ConnectionId, connectionId, StringComparison.Ordinal))
+                {
+                    party.Add(participants[p]);
+                    break;
+                }
+            }
+        }
+
+        return party;
     }
 
     // A join refused before it is throttled, queued or prefetched (missing or malformed token, blank
@@ -380,7 +569,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         context.JoinRejectionSent = true;
         NetworkDiagnosticsLog.Write(
             "server.join.rejected",
-            $"connection={context.ConnectionId} reason={(reason == JoinRejectionReasons.NameInvalid ? "name-invalid" : reason == JoinRejectionReasons.TokenRequired ? "token-required" : "token-invalid")}");
+            $"connection={context.ConnectionId} reason={(reason == JoinRejectionReasons.NameInvalid ? "name-invalid" : reason == JoinRejectionReasons.TokenRequired ? "token-required" : reason == ServerConnectionOptions.ServerFullRejectionReason ? "server-full" : reason.StartsWith(JoinRejectionReasons.Banned, StringComparison.Ordinal) ? "banned" : reason == JoinRejectionReasons.TokenInvalid ? "token-invalid" : "refused")}");
         return [new JoinRejectedMessage(reason)];
     }
 
@@ -1003,6 +1192,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     {
         lock (_authoritySync)
         {
+            _lastRepeatJoin.TryRemove(connectionId, out _);
             if (_disposed)
             {
                 _pendingJoins.RemoveAll(join => string.Equals(join.ConnectionId, connectionId, StringComparison.Ordinal));
@@ -1082,6 +1272,8 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             Volatile.Write(ref _disposed, true);
         }
 
+        // The leases of the players still here go before the write queue drains.
+        Runtime?.ReleaseAllPresence();
         // Finish pending checkpoint writes before the authority disposes its persistence.
         _checkpointWrites?.Dispose();
         switch (_authority)
@@ -1117,6 +1309,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
+        StepAccountStandings(Runtime, tick);
         ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);
@@ -1152,7 +1345,132 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
         ServePendingWorldResyncs();
         ServePendingInventoryPushes(runtime);
+        ServePendingGroundItems(runtime);
+        ServePendingVitals(runtime);
+        ServePendingSessionMessages(runtime);
     }
+
+    // M4: mana, max mana and running cooldowns, to the owning session only, outside the action results.
+    // The runtime decides on a 16-tick cadence which sessions changed; a steady tick reads a modulus.
+    private void ServePendingVitals(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.IsVitalsDrainTick)
+        {
+            return;
+        }
+
+        runtime.DrainVitalsInto(_vitalsScratch, _isSessionClaimed);
+        for (int i = 0; i < _vitalsScratch.Count; i++)
+        {
+            SessionVitals vitals = _vitalsScratch[i];
+            if (_sessionClaims.TryGetValue(vitals.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, vitals.Message));
+            }
+        }
+
+        _vitalsScratch.Clear();
+    }
+
+    // M5, M6 and M8: the generic server pushes (party, trade, quest log, owner progress), each to its own
+    // session's connection, outside the action results. A message of a session with no connection yet
+    // stays queued in the runtime. A steady tick reads a count.
+    private void ServePendingSessionMessages(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingSessionMessages)
+        {
+            return;
+        }
+
+        runtime.DrainSessionMessagesInto(_sessionMessageScratch, _isSessionClaimed);
+        for (int i = 0; i < _sessionMessageScratch.Count; i++)
+        {
+            SessionServerMessage entry = _sessionMessageScratch[i];
+            if (_sessionClaims.TryGetValue(entry.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, entry.Message));
+            }
+        }
+
+        _sessionMessageScratch.Clear();
+    }
+
+    // M3: ground items that appeared, changed or went since the last tick, to every claimed session. Delta
+    // only (a steady tick reads a flag), outside the action results because kills sit inside the tick
+    // golden. Upserts and removals are idempotent, so a joiner that also gets a Reset sees no conflict.
+    private void ServePendingGroundItems(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingGroundDeltas)
+        {
+            return;
+        }
+
+        runtime.DrainGroundDeltas(_groundUpsertScratch, _groundRemovedScratch);
+        if (_groundUpsertScratch.Count > 0 || _groundRemovedScratch.Count > 0)
+        {
+            List<ServerGroundItems> messages = BuildGroundItemMessages(reset: false, _groundUpsertScratch, _groundRemovedScratch);
+            foreach (string connectionId in _sessionClaims.Values)
+            {
+                for (int i = 0; i < messages.Count; i++)
+                {
+                    _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, messages[i]));
+                }
+            }
+        }
+
+        _groundUpsertScratch.Clear();
+        _groundRemovedScratch.Clear();
+    }
+
+    // The full ground list for a connection that just joined: a Reset first, then more messages when the
+    // list is larger than one message holds. Nothing when the ground is empty (a joiner starts empty).
+    private void EnqueueGroundReset(string connectionId, WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || runtime.GroundItemCount == 0)
+        {
+            return;
+        }
+
+        List<GroundItemSnapshot> all = new(runtime.GroundItemCount);
+        runtime.CaptureGroundItems(all);
+        List<ServerGroundItems> messages = BuildGroundItemMessages(reset: true, all, []);
+        for (int i = 0; i < messages.Count; i++)
+        {
+            _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, messages[i]));
+        }
+    }
+
+    // Splits into messages of at most MaxEntries entries (upserts and removals together); Reset only on
+    // the first.
+    private static List<ServerGroundItems> BuildGroundItemMessages(
+        bool reset,
+        List<GroundItemSnapshot> upserts,
+        List<long> removedIds)
+    {
+        List<ServerGroundItems> messages = [];
+        int upsertIndex = 0;
+        int removedIndex = 0;
+        bool first = true;
+        while (first || upsertIndex < upserts.Count || removedIndex < removedIds.Count)
+        {
+            int room = ServerGroundItems.MaxEntries;
+            int upsertCount = Math.Min(room, upserts.Count - upsertIndex);
+            room -= upsertCount;
+            int removedCount = Math.Min(room, removedIds.Count - removedIndex);
+            messages.Add(new ServerGroundItems(
+                reset && first,
+                upserts.GetRange(upsertIndex, upsertCount),
+                removedIds.GetRange(removedIndex, removedCount)));
+            upsertIndex += upsertCount;
+            removedIndex += removedCount;
+            first = false;
+        }
+
+        return messages;
+    }
+
+    private readonly List<GroundItemSnapshot> _groundUpsertScratch = [];
+    private readonly List<long> _groundRemovedScratch = [];
 
     // Wave I: loot gained or lost this tick, one push per killer. It travels the pending-connection-reply
     // route (delivered before the tick's snapshot), not the action results, because kills happen inside
@@ -1317,6 +1635,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                     continue;
             }
 
+            // A ban set here since this join's load started: refused without routing it.
+            if (RecentBanText(join.Request.ResolvedAccount) is { } recentBan)
+            {
+                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, new JoinRejectedMessage(recentBan)));
+                continue;
+            }
+
             context.ClearOutboundMessages();
             context.ClearJoinConflict();
             _router.RouteServerInbound(context, join.Request);
@@ -1326,7 +1652,27 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
                 _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
             }
 
+            bool accepted = _connectionClaims.ContainsKey(join.ConnectionId) && HasJoinAccepted(context.OutboundMessages);
             context.ClearOutboundMessages();
+            if (_connectionClaims.ContainsKey(join.ConnectionId))
+            {
+                EnqueueGroundReset(join.ConnectionId, runtime);
+            }
+
+            if (accepted)
+            {
+                // The message of the day follows the join reply.
+                if (CompleteAcceptedJoin(context) is { } motd)
+                {
+                    _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, motd));
+                }
+            }
+            else if (!_connectionClaims.ContainsKey(join.ConnectionId))
+            {
+                // Refused after the load took the character's lease: let it go.
+                runtime?.ReleasePresenceOfRejectedJoin(join.PlayerName, join.Request.ResolvedAccount);
+            }
+
             // An accepted join consumed its load; a rejected one (or one that restored nothing)
             // drops it, so a later join of this player reads fresh rows.
             runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);

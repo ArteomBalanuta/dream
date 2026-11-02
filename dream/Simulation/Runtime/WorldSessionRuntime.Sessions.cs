@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -41,6 +42,11 @@ public sealed partial class WorldSessionRuntime
         if (!alreadyAttached)
         {
             attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
+            // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
+            attached.Cooldowns.Clear();
+            attached.VitalsDirty = true;
+            attached.LastSentMana = -1;
+            attached.LastSentMaxMana = -1;
         }
 
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
@@ -157,15 +163,17 @@ public sealed partial class WorldSessionRuntime
         // the world state (its vitals are skipped). Profile first, a checkpoint between the two
         // would overwrite the leave's HP with its stale vitals. Checkpoints skip detached players.
         _persistence.PersistPlayerWorldState(sessionId);
-        PersistPlayerProfile(sessionId, TryResolveAuthoritativePlayerTarget(
-            sessionId,
-            out _,
-            out IAuthoritativePlayerTarget? target)
-                ? target!.Combatant
-                : Player.Combatant);
+        // An unresolved target is skipped: the primary Combatant must never stand in for it.
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? target)
+            && target != null)
+        {
+            PersistPlayerProfile(sessionId, target.Combatant);
+        }
+
         _persistence.ForgetUnrestoredSession(sessionId);
         // The build material is per connection: a rejoin starts from Auto, as its HUD does.
         _buildMaterialSelections.Remove(sessionId);
+        OnSessionDetachedMultiplayer(sessionId, player.CharacterKey.Value);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
         // Wave I: a rejoin that finds the character dead waits a fresh 5 s, and an undrained push for
@@ -173,6 +181,13 @@ public sealed partial class WorldSessionRuntime
         player.RespawnAtTick = 0;
         player.ProtectedThroughTick = 0;
         _pendingLoot.Remove(sessionId);
+        // A session id can be reused by a later join: it must not inherit this one's kill credit.
+        IReadOnlyList<EnemyActor> creditedEnemies = _enemies.ActiveActors;
+        for (int i = 0; i < creditedEnemies.Count; i++)
+        {
+            creditedEnemies[i].ClearContributor(sessionId);
+        }
+
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.
         MarkProfileDeparted(player.CharacterKey.Value);
@@ -185,6 +200,9 @@ public sealed partial class WorldSessionRuntime
             _primaryTicksSinceCommand = 0;
             // Without an occupant the primary body would stay as an invisible collider.
             Physics.SetPlayerBodyParked(true);
+            Player.ResetSeatState();
+            // The seat's combatant is reused: nothing of this occupant's mana carries to the next.
+            Player.Combatant.SetMana(Player.Combatant.MaxMana);
         }
         else if (_secondaryRemotePlayers.Remove(sessionId, out RemoteSessionPlayerState? secondary))
         {
@@ -322,7 +340,7 @@ public sealed partial class WorldSessionRuntime
     private Vector3 ResolveSecondaryRemoteSpawnPosition(int remoteIndex)
     {
         float laneOffset = 2f + remoteIndex;
-        Vector3 basePosition = Player.GetWorldPosition();
+        Vector3 basePosition = _worldSpawn;
         return new Vector3(
             Math.Clamp(basePosition.X + laneOffset, 0.5f, Map.Width - 0.5f),
             1.5f,

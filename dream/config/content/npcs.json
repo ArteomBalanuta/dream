@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "npcs": [
+    {
+      "key": "spawn-quartermaster",
+      "displayName": "Quartermaster",
+      "visualKey": "npc.vendor",
+      "offsetX": 4,
+      "offsetZ": 2,
+      "stock": [
+        { "item": "tool.torch", "price": 6 },
+        { "item": "tool.survey-lantern", "price": 25 },
+        { "item": "tool.field-blade", "price": 30 },
+        { "item": "tool.builder-hammer", "price": 20 },
+        { "item": "potion.health", "price": 12 },
+        { "item": "potion.mana", "price": 12 }
+      ]
+    },
+    {
+      "key": "gate-warden",
+      "displayName": "Gate Warden",
+      "visualKey": "npc.vendor",
+      "offsetX": -4,
+      "offsetZ": -5,
+      "greeting": "Keep your voice low, stranger. The wolves have grown bold since the last snow, and the lamps burn thin. If you mean to stay past dusk, you can make yourself useful.",
+      "stock": []
+    }
+  ]
+}

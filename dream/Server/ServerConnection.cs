@@ -54,6 +54,8 @@ public sealed class ServerConnection : IAsyncDisposable
     private readonly TimeProvider _timeProvider;
     private readonly long _idleTimeoutTimestampTicks;
     private readonly long _sendStallTimestampTicks;
+    private readonly long _joinDeadlineTimestampTicks;
+    private readonly long _createdTimestamp;
     private long _lastInboundTimestamp;
     private long _sendStartedTimestamp;
     // The current write's extra stall allowance for its size (frame bytes over
@@ -156,7 +158,9 @@ public sealed class ServerConnection : IAsyncDisposable
         _timeProvider = options.TimeProvider;
         _idleTimeoutTimestampTicks = ToTimestampTicks(options.IdleTimeout, _timeProvider);
         _sendStallTimestampTicks = ToTimestampTicks(options.SendStallTimeout, _timeProvider);
+        _joinDeadlineTimestampTicks = ToTimestampTicks(options.JoinDeadline, _timeProvider);
         _lastInboundTimestamp = _timeProvider.GetTimestamp();
+        _createdTimestamp = _lastInboundTimestamp;
         _snapshotTxLogKey = $"server.tx.snapshot.{transport.ConnectionId}";
         _commandRxLogKey = $"server.rx.command.{transport.ConnectionId}";
     }
@@ -240,7 +244,10 @@ public sealed class ServerConnection : IAsyncDisposable
     // Called by the service once per advance, on its tick thread. Faults the connection when no
     // complete frame arrived within IdleTimeout, or the current socket write has been running for
     // longer than SendStallTimeout. Returns IsFaulted. Allocation-free while the connection is live.
-    public bool CheckLiveness()
+    public bool CheckLiveness() => CheckLiveness(joined: true);
+
+    // joined false also faults a connection that is still unjoined JoinDeadline after it was created.
+    public bool CheckLiveness(bool joined)
     {
         if (IsFaulted)
         {
@@ -254,6 +261,10 @@ public sealed class ServerConnection : IAsyncDisposable
             now - Volatile.Read(ref _lastInboundTimestamp) > _idleTimeoutTimestampTicks)
         {
             reason = ServerConnectionCloseReason.IdleTimeout;
+        }
+        else if (!joined && _joinDeadlineTimestampTicks > 0 && now - _createdTimestamp > _joinDeadlineTimestampTicks)
+        {
+            reason = ServerConnectionCloseReason.JoinTimeout;
         }
         else if (_sendStallTimestampTicks > 0 && Volatile.Read(ref _sendInFlight) != 0)
         {
@@ -276,6 +287,8 @@ public sealed class ServerConnection : IAsyncDisposable
             Fault(
                 reason == ServerConnectionCloseReason.IdleTimeout
                     ? $"no inbound frame for {_options.IdleTimeout.TotalSeconds:0.###} s"
+                    : reason == ServerConnectionCloseReason.JoinTimeout
+                    ? $"not joined within {_options.JoinDeadline.TotalSeconds:0.###} s"
                     : $"socket write stalled for {sendStallLimitTicks / (double)_timeProvider.TimestampFrequency:0.###} s",
                 reason);
         }
@@ -987,6 +1000,30 @@ public sealed class ServerConnection : IAsyncDisposable
                 case InventoryPushMessage push:
                     _codec.Encode(envelope, push, _frameWriter);
                     break;
+                case ServerChatMessage chat:
+                    _codec.Encode(envelope, chat, _frameWriter);
+                    break;
+                case ServerCharacterList characterList:
+                    _codec.Encode(envelope, characterList, _frameWriter);
+                    break;
+                case ServerPlayerVitals vitals:
+                    _codec.Encode(envelope, vitals, _frameWriter);
+                    break;
+                case ServerGroundItems groundItems:
+                    _codec.Encode(envelope, groundItems, _frameWriter);
+                    break;
+                case ServerPartyState partyState:
+                    _codec.Encode(envelope, partyState, _frameWriter);
+                    break;
+                case ServerTradeState tradeState:
+                    _codec.Encode(envelope, tradeState, _frameWriter);
+                    break;
+                case ServerQuestLog questLog:
+                    _codec.Encode(envelope, questLog, _frameWriter);
+                    break;
+                case ServerPlayerProgress progress:
+                    _codec.Encode(envelope, progress, _frameWriter);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");
@@ -1151,6 +1188,12 @@ public sealed class ServerConnection : IAsyncDisposable
             ServerActionMessage action => $"session={action.Result.SessionId} actionSeq={action.Result.ActionSequence} accepted={action.Result.Accepted} payload={action.Result.Payload?.GetType().Name ?? "none"}",
             ServerHelloMessage hello => $"server={hello.ServerName}",
             InventoryPushMessage push => $"notices={push.Notices.Count} inventory={(push.Inventory.HasValue ? 1 : 0)}",
+            ServerGroundItems ground => $"reset={ground.Reset} upserts={ground.Upserts.Count} removed={ground.RemovedIds.Count}",
+            ServerPlayerVitals vitals => $"mana={vitals.CurrentMana}/{vitals.MaxMana} cooldowns={vitals.Cooldowns.Count}",
+            ServerPartyState party => $"members={party.Members.Count} invite={(party.PendingInviteFrom != null ? 1 : 0)}",
+            ServerTradeState trade => $"stage={trade.Stage} mine={trade.MyItems.Count} theirs={trade.TheirItems.Count}",
+            ServerQuestLog quests => $"entries={quests.Entries.Count}",
+            ServerPlayerProgress progress => $"level={progress.Level} xp={progress.Experience}",
             _ => string.Empty
         };
 

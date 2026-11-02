@@ -59,13 +59,13 @@ public sealed class PlayerRespawnTests
         WaveIRuntimeKit.Tick(runtime, ref tick, 15);
         PlayerCombatant combatant = WaveIRuntimeKit.Target(runtime, A.Value).Combatant;
         combatant.ApplyBaseStats(new PlayerCombatStats { Energy = 10, Mana = 5, MaxMana = 70 });
-        Assert.Equal(5, combatant.Mana);
+        Assert.Equal(5, combatant.CurrentMana);
         WaveIRuntimeKit.Kill(runtime, A.Value);
 
         WaveIRuntimeKit.Tick(runtime, ref tick, Delay + 2);
 
         Assert.True(combatant.Health.IsAlive);
-        Assert.Equal(combatant.MaxMana, combatant.Mana);
+        Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
     }
 
     [Fact]

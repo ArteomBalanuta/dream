@@ -45,7 +45,7 @@ public static class CharacterSheetModel
             Attribute(StatId.Vitality, "Vitality", s.BaseVitality, s.Vitality, canSpend),
             Derived("Health", $"{Int(s.CurrentHealth)}/{Int(s.MaxHealth)}"),
             Attribute(StatId.Energy, "Energy", s.BaseEnergy, s.Energy, canSpend),
-            Derived("Mana", $"{Int(s.Mana)}/{Int(s.MaxMana)}"),
+            Derived("Mana", $"{Int(s.CurrentMana)}/{Int(s.MaxMana)}"),
             Derived("Magic Damage", $"{Int(s.MagicMinDamage)}-{Int(s.MagicMaxDamage)}")
         ];
     }

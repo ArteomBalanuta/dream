@@ -52,7 +52,7 @@ public class ClientInputValidationTests
     public void WireEquipAndAttributeSpend_AreStillQueued()
     {
         PlayerActionQueue queue = new();
-        ServerRoutingContext context = new("connection-1", new FakeAuthority(), actionQueue: queue)
+        ServerRoutingContext context = new("connection-1", new FakeAuthority { DevCommandsAllowed = true }, actionQueue: queue)
         {
             LastJoinRequest = new ClientJoinRequestMessage(SessionA, "player-a")
         };
@@ -69,6 +69,50 @@ public class ClientInputValidationTests
             queue.Drain([new PlayerSessionId(SessionA)]),
             first => Assert.IsType<InventoryEquipIntent>(first.Message.Payload),
             second => Assert.IsType<PlayerAttributeSpendIntent>(second.Message.Payload));
+    }
+
+    [Fact]
+    public void DedicatedHost_HostileNoclipFreezeAndStats_AreIgnoredOrRejected()
+    {
+        FakeAuthority authority = new();
+        LatestPlayerCommandInbox inbox = new();
+        PlayerActionQueue queue = new();
+        ServerRoutingContext context = new("connection-1", authority, inbox, queue)
+        {
+            LastJoinRequest = new ClientJoinRequestMessage(SessionA, "player-a")
+        };
+        PlayerSessionId session = new(SessionA);
+
+        new PlayerCommandHandler().Handle(context, new PlayerCommandMessage(new PlayerCommandFrame(
+            session,
+            1,
+            new PlayerModeSwitchIntent(PlayerInteractionMode.Building),
+            new PlayerMoveIntent(1f, 0f, 0f, JumpPressed: true, FreezePressed: true, ToggleNoclipPressed: true),
+            new PlayerLookIntent(0f, 0f, null),
+            PrimaryUsePressed: true)));
+        new PlayerActionHandler().Handle(context, new PlayerActionMessage(
+            session,
+            2,
+            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))));
+
+        Assert.True(inbox.TryDrain(session, out PlayerCommandFrame frame));
+        Assert.False(frame.MoveIntent.FreezePressed);
+        Assert.False(frame.MoveIntent.ToggleNoclipPressed);
+        Assert.True(frame.MoveIntent.JumpPressed);
+        Assert.Equal(1f, frame.MoveIntent.ForwardAxis);
+        Assert.True(frame.PrimaryUsePressed);
+        Assert.False(Assert.IsType<ServerActionMessage>(Assert.Single(context.OutboundMessages)).Result.Accepted);
+        Assert.Empty(queue.Drain([session]));
+
+        authority.DevCommandsAllowed = true;
+        new PlayerCommandHandler().Handle(context, new PlayerCommandMessage(frame with
+        {
+            Sequence = 3,
+            MoveIntent = frame.MoveIntent with { FreezePressed = true, ToggleNoclipPressed = true }
+        }));
+        Assert.True(inbox.TryDrain(session, out PlayerCommandFrame allowed));
+        Assert.True(allowed.MoveIntent.FreezePressed);
+        Assert.True(allowed.MoveIntent.ToggleNoclipPressed);
     }
 
     [Fact]
@@ -383,6 +427,8 @@ public class ClientInputValidationTests
 
     private sealed class FakeAuthority : IAuthoritativeSessionHost
     {
+        public bool DevCommandsAllowed { get; set; }
+
         public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName) => throw new NotSupportedException();
 
         public AuthoritativeActionResult ProcessAction(PlayerActionMessage message) => throw new NotSupportedException();

@@ -142,7 +142,7 @@ public sealed class LegacySchemaMigrationTests
 
         Assert.Equal(new SchemaMigrationResult(0, MigrationTestDatabase.ShippedLatestVersion, result.BackupPath), result);
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0011\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0014\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
         // Migration 0003 moves the per-world tables to (world_id, ...) keys and the seed and clock onto
         // the worlds row, so only the tables it leaves alone compare equal here; the per-world rows are
@@ -150,7 +150,10 @@ public sealed class LegacySchemaMigrationTests
         IReadOnlyList<string> rowsAfter = SqliteSchemaSnapshot.DumpRows(migrated);
         string[] unchangedTables = ["player_profiles ", "player_profile_change_log ", "combat_formulas "];
         Assert.Equal(
-            rowsBefore.Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal))),
+            rowsBefore
+                .Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal)))
+                // Migration 0011 lowers the experience curve where the row still holds the old default.
+                .Select(row => row.StartsWith("combat_formulas ", StringComparison.Ordinal) ? row.Replace("1000 + level * 23", "100 + level * 50", StringComparison.Ordinal) : row),
             rowsAfter
                 .Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal)))
                 // Migration 0009 seeds the four enemy and armor formulas.
@@ -166,7 +169,7 @@ public sealed class LegacySchemaMigrationTests
                 rowsAfter.Count(row => row.StartsWith(table + " ", StringComparison.Ordinal)));
         }
 
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "character_stat_points")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps"), (12L, "ground_items_wallets"), (13L, "quickbar_mana"), (14L, "party_quests_admin")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(0L, Scalar(migrated, "SELECT COUNT(*) FROM player_starter_grants;"));
     }
 

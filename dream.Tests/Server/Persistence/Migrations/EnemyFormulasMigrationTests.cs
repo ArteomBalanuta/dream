@@ -50,8 +50,8 @@ public sealed class EnemyFormulasMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(fromVersion, result.FromVersion);
-        Assert.Equal(11, result.ToVersion);
-        Assert.Equal(11, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(14, result.ToVersion);
+        Assert.Equal(14, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Empty(Rows(c, "PRAGMA foreign_key_check;"));
@@ -106,7 +106,7 @@ public sealed class EnemyFormulasMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(8, result.FromVersion);
-        Assert.Equal(11, result.ToVersion);
+        Assert.Equal(14, result.ToVersion);
         Assert.Equal(before, DumpEnemies(database));
         Assert.Equal(otherTablesBefore, DumpOtherTables(database));
         using SqliteConnection c = database.Open();
@@ -150,9 +150,9 @@ public sealed class EnemyFormulasMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(11, result.ToVersion);
-        string backup = Assert.Single(database.Backups(), path => path.Contains("v0008-to-v0011", StringComparison.Ordinal));
-        Assert.Matches(@"persistence\.sqlite\.v0008-to-v0011\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal(14, result.ToVersion);
+        string backup = Assert.Single(database.Backups(), path => path.Contains("v0008-to-v0014", StringComparison.Ordinal));
+        Assert.Matches(@"persistence\.sqlite\.v0008-to-v0014\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection old = MigrationTestDatabase.OpenFile(backup);
         Assert.Equal(0L, Scalar(old, "SELECT COUNT(*) FROM combat_formulas WHERE formula_key IN ('enemy.attack_damage','enemy.max_health','enemy.attack_interval_seconds','player.damage_taken_factor');"));
         Assert.Equal(3L, Scalar(old, "SELECT COUNT(*) FROM enemy_instances;"));
@@ -185,7 +185,7 @@ public sealed class EnemyFormulasMigrationTests
         using SqliteConnection c = database.Open();
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() => v8Build.Migrate(database.DatabasePath, c));
 
-        Assert.Equal(11, error.StoredVersion);
+        Assert.Equal(14, error.StoredVersion);
         Assert.Equal(8, error.LatestVersion);
         Assert.Equal(3, ServerBootstrap.SchemaTooNewExitCode);
     }
@@ -211,7 +211,8 @@ public sealed class EnemyFormulasMigrationTests
     private static string DumpEnemies(MigrationTestDatabase database)
     {
         using SqliteConnection c = database.Open();
-        List<string> columns = Rows(c, "SELECT name FROM pragma_table_info('enemy_instances') ORDER BY cid;");
+        // camp_key (migration 0011) is new and NULL on every old row; the rest of the row must not change.
+        List<string> columns = Rows(c, "SELECT name FROM pragma_table_info('enemy_instances') WHERE name <> 'camp_key' ORDER BY cid;");
         return string.Join(";", Rows(c, $"SELECT {string.Join(" || '|' || ", columns.Select(name => $"quote({name})"))} FROM enemy_instances ORDER BY 1;"));
     }
 

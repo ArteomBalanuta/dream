@@ -2,7 +2,6 @@ using Dream.Client.Audio;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
-using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
@@ -30,28 +29,36 @@ public partial class PlayScene
 
         if (qPressed)
         {
-            UseFirstConsumable(ItemUseEffect.RestoreHealth);
+            UseFirstConsumable(ConsumablePool.Health);
         }
 
         if (ePressed)
         {
-            UseFirstConsumable(ItemUseEffect.RestoreMana);
+            UseFirstConsumable(ConsumablePool.Mana);
         }
     }
 
-    private void UseFirstConsumable(ItemUseEffect effect)
+    private void UseFirstConsumable(ConsumablePool pool)
     {
         if (_inventory is not PlayerInventorySnapshot inventory
             || !_remoteClient.IsConnected
-            || !CharacterPanelModel.TryFindConsumable(inventory, effect, out int anchor, out _, out _))
+            || !CharacterPanelModel.TryFindConsumable(inventory, pool, out int anchor, out _, out _)
+            || !CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemInstanceId))
         {
             return;
         }
 
+        SendItemUse(anchor, itemInstanceId);
+    }
+
+    // Every item use (Q, R, a quickbar tile, the bag's Use entry) goes out here as one ItemUseIntent:
+    // the server checks the item, the cooldown and whether anything would be restored.
+    private void SendItemUse(int anchor, long itemInstanceId)
+    {
         _remoteClient.QueuePlayerAction(new PlayerActionMessage(
             new PlayerSessionId(_remoteClient.SessionId),
             _actionSequences.NextActionSequence(),
-            new InventoryEquipIntent(anchor)));
+            new ItemUseIntent(anchor, itemInstanceId)));
         CurrentGameAudio.Instance.Play(SoundId.PotionDrink);
     }
 }

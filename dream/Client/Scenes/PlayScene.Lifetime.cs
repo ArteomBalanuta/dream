@@ -33,6 +33,14 @@ public partial class PlayScene
         _localServer = localServer;
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient ?? throw new ArgumentNullException(nameof(remoteClient));
+        // Noclip and freeze are predicted only where the server allows them: the integrated server
+        // (this client's own endpoint) or a DREAM_DEV_COMMANDS=1 process. Not localServer != null,
+        // which is also passed for remote connections.
+        bool onIntegrated = localServer is { IsReady: true }
+            && LoopbackHost.IsLoopback(remoteClient.Options.Host)
+            && remoteClient.Options.Port == localServer.BoundPort;
+        _commandInputFilter.AllowDevToggles = onIntegrated
+            || Environment.GetEnvironmentVariable(DevCommandsOptions.EnvironmentVariable) == "1";
         // A send stalled past the server's repeat window makes the prediction ticks idle, as the
         // server does (ClientCommandTickStream); so does an ack lag past the round trip (a network stall).
         _commandTicks.ObserveSendBacklog(() => _remoteClient.IsConnected ? _remoteClient.PendingCommandCount : 0);

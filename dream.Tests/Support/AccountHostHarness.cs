@@ -78,7 +78,7 @@ internal sealed class AccountHostHarness : IDisposable
         return ServerBootstrap.CreateAuthoritativeHost(WithAccounts(bundle, accounts));
     }
 
-    private static ServerPersistenceBundle WithAccounts(ServerPersistenceBundle bundle, IAccountRepository? accounts) =>
+    internal static ServerPersistenceBundle WithAccounts(ServerPersistenceBundle bundle, IAccountRepository? accounts) =>
         new(
             bundle.Schema,
             bundle.PlayerProfiles,
@@ -167,6 +167,19 @@ internal sealed class AccountHostHarness : IDisposable
 
     public void JoinAccepted(string connectionId, string sessionId, string name, string? token = null) =>
         Assert.IsType<JoinAcceptedMessage>(Join(connectionId, sessionId, name, token ?? TestAccountTokens.For(name)));
+
+    // Sends a character list request from a fresh unjoined connection, ticks and returns the answer.
+    public ServerCharacterList ListOf(string connectionId, string token, int maxTicks = 8)
+    {
+        int before = RepliesOf(connectionId).Count;
+        Record(connectionId, Host.HandleClientMessage(connectionId, new ClientCharacterListRequest(token)));
+        for (int i = 0; i < maxTicks && RepliesOf(connectionId).Count == before; i++)
+        {
+            Tick();
+        }
+
+        return Assert.IsType<ServerCharacterList>(RepliesOf(connectionId)[^1]);
+    }
 
     public void Leave(string connectionId)
     {

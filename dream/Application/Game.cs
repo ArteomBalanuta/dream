@@ -742,6 +742,7 @@ public class Game : GameWindow
     {
         base.OnTextInput(e);
         _startupScene?.QueueTextInput((uint)e.Unicode);
+        _playScene?.QueueTextInput((uint)e.Unicode);
     }
 
     // The scenes own GL objects (Render, the shared model cache, the startup menu's ImGui context),

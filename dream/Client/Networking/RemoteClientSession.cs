@@ -124,6 +124,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
     public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
+    // The prefix of every reason a session ends with when the link broke, as opposed to the server
+    // refusing or removing the player (a join rejection, a kick, a ban, a protocol mismatch).
+    public const string ConnectionLostPrefix = "Connection lost:";
+
+    // Whether a session that ended with this reason is worth reconnecting: only a lost connection is.
+    public static bool IsRetryableEnd(string? reason) =>
+        reason != null && reason.StartsWith(ConnectionLostPrefix, StringComparison.Ordinal);
+
     // The bounds this session receives world transfers under.
     public WorldTransferLimits WorldTransferLimits => _worldTransfers.Limits;
 
@@ -463,6 +471,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
         SignalSendLoop();
     }
 
+    public void QueueChat(ClientChatMessage chatMessage)
+    {
+        ArgumentNullException.ThrowIfNull(chatMessage);
+        _pendingMessages.Enqueue(chatMessage);
+        SignalSendLoop();
+    }
+
     public void QueuePlayerAction(PlayerActionMessage actionMessage)
     {
         ArgumentNullException.ThrowIfNull(actionMessage);
@@ -633,6 +648,13 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 }
 
                 _joinReplies.Writer.TryWrite(serverMessage);
+            }
+            else if (serverMessage is JoinRejectedMessage rejected)
+            {
+                // A rejection after the join settled (a takeover by another connection): the
+                // server closes next, so its reason is the player-facing one. Here, not in
+                // DeliverInbound, as the message can be held behind a world transfer.
+                DisconnectReason ??= rejected.Reason;
             }
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
@@ -948,6 +970,9 @@ public sealed class RemoteClientSession : IAsyncDisposable
             case ClientWorldResyncRequestMessage resync:
                 _codec.Encode(envelope, resync, _frameWriter);
                 break;
+            case ClientChatMessage chat:
+                _codec.Encode(envelope, chat, _frameWriter);
+                break;
             default:
                 throw new InvalidOperationException(
                     $"Unsupported client message type '{message.GetType().Name}' for remote client encoding.");
@@ -991,7 +1016,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             // A malformed frame or a transport error; previously this faulted the loop task and
             // resurfaced from DisposeAsync.
-            DisconnectReason = $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
         }
         finally
         {

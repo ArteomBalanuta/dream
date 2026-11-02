@@ -33,6 +33,11 @@ internal sealed partial class RuntimePersistenceBridge
     private readonly PersistenceWriteQueue? _writes;
     private readonly WorldObjectRegistry _worldObjects;
     private readonly EnemyRegistry _enemies;
+
+    // The spawn camp each live enemy belongs to, by actor id (M2-B). Filled by a camp spawn and by a
+    // restore of a row with a camp_key; an enemy of the world-wide population step is not in it. Pruned
+    // when the enemy's row is deleted, so it holds live enemies only.
+    private readonly Dictionary<int, string> _enemyCampKeys = [];
     private readonly SceneEventHub _events;
     // Wave C: the runtime's object id counter and its ObjectId <-> actor id map. Persisted cubes
     // and enemies have an ObjectId (never reused) bound to their current actor id; the actor id stays
@@ -155,6 +160,8 @@ internal sealed partial class RuntimePersistenceBridge
                 // The lookup comes first: an existing character is loaded under its own key, which
                 // may differ from the typed name.
                 CharacterLookup? lookup = accounts?.Lookup(playerName, account);
+                // M8: the lease of a character the account owns; another world's live one marks it held.
+                lookup = accounts == null ? lookup : ClaimPresenceForJoin(accounts, lookup, account);
                 string key = lookup?.Existing?.Key.Value ?? playerName;
                 PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(
@@ -453,6 +460,13 @@ internal sealed partial class RuntimePersistenceBridge
 
         _objectIds.Restore(_worldPersistence.LoadNextObjectId());
 
+        // M3: items lying on the ground are restored (claims gone, despawn timers restarted) and their ids
+        // reserved, before anything else can allocate one.
+        if (_host is WorldSessionRuntime groundHost)
+        {
+            groundHost.RestoreGroundItems(_worldPersistence.LoadGroundItems());
+        }
+
         Map map = _host.Map;
         RestoreTerrainOverrides(map);
         // A cube whose cell is later found occupied is skipped but its row still exists, so its id is
@@ -516,6 +530,9 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         _enemies.Clear();
+        _enemyCampKeys.Clear();
+        Dictionary<string, int> restoredPerCamp = new(StringComparer.Ordinal);
+        List<Vector3> restoredHomes = [];
         PersistedEnemyInstance[] ordered = enemies.OrderBy(enemy => enemy.ObjectId).ToArray();
         foreach (PersistedEnemyInstance enemy in ordered)
         {
@@ -540,12 +557,47 @@ internal sealed partial class RuntimePersistenceBridge
                 continue;
             }
 
-            // The home is not persisted: a restored wolf idles at its role's spawn on this map.
-            Vector3 home = template.SpawnRole == EnemySpawnRole.NightExtra
-                ? WolfSpawnPolicy.ResolveNightSpawn(map.Width, map.Depth)
-                : WolfSpawnPolicy.ResolveInitialSpawn(map.Width, map.Depth);
+            // The home is not persisted. A camp enemy (camp_key naming a camp still in the content) idles at
+            // its camp, in the next ring slot of it; any other wolf (a legacy row, or a camp the content no
+            // longer has) idles at its role's spawn on this map.
+            Vector3 home;
+            string? campKey = null;
+            SpawnCamp? camp = enemy.CampKey == null ? null : FindShippedCamp(enemy.CampKey);
+            if (camp != null)
+            {
+                campKey = camp.Key;
+                restoredPerCamp.TryGetValue(camp.Key, out int slot);
+                restoredPerCamp[camp.Key] = slot + 1;
+                if (!WolfSpawnPolicy.TryResolveCampSpawn(
+                        map,
+                        camp,
+                        slot,
+                        _host.WorldSpawn,
+                        Math.Max(template.AggroRange, template.AttackRange),
+                        restoredHomes,
+                        out home))
+                {
+                    // No free place for it on this map: the member is dropped like a spawn that finds none,
+                    // and its row deleted so the camp's refill is not a duplicate of it (the actor id taken is not reused).
+                    ObjectId droppedId = enemy.ObjectId;
+                    EnqueueWorldWrite(world => world.DeleteEnemyInstance(droppedId));
+                    continue;
+                }
+            }
+            else
+            {
+                home = template.SpawnRole == EnemySpawnRole.NightExtra
+                    ? WolfSpawnPolicy.ResolveNightSpawn(map.Width, map.Depth)
+                    : WolfSpawnPolicy.ResolveInitialSpawn(map.Width, map.Depth);
+            }
+
+            restoredHomes.Add(home);
             _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
+            if (campKey != null)
+            {
+                _enemyCampKeys[actorId] = campKey;
+            }
         }
     }
 
@@ -614,7 +666,7 @@ internal sealed partial class RuntimePersistenceBridge
             position,
             facing,
             CurrentHealth: currentHealth,
-            CurrentEnergy: 0,
+            CurrentEnergy: _host.GetSessionMana(sessionId),
             UpdatedUtc: DateTime.UtcNow);
         if (_profileCache.ContainsKey(player.CharacterKey.Value))
         {
@@ -1164,8 +1216,16 @@ internal sealed partial class RuntimePersistenceBridge
 
     // A new enemy is a new object, even a respawn: it takes a fresh ObjectId and is bound to its
     // actor id. Without world persistence nothing is allocated or written.
-    public void PersistEnemy(EnemyActor enemy)
+    //
+    // campKey names the spawn camp the enemy belongs to (null for the world-wide population step). It is
+    // remembered even without world persistence, because the runtime counts camp members through it.
+    public void PersistEnemy(EnemyActor enemy, string? campKey = null)
     {
+        if (campKey != null)
+        {
+            _enemyCampKeys[enemy.Combatant.Actor.Id] = campKey;
+        }
+
         if (_worldPersistence == null)
         {
             return;
@@ -1177,7 +1237,34 @@ internal sealed partial class RuntimePersistenceBridge
         EnqueueWorldWrite(world => world.SaveEnemyInstance(persisted));
     }
 
-    private static PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, ObjectId objectId, DateTime now)
+    // The camp an enemy belongs to, when it spawned from or was restored into one.
+    public bool TryGetEnemyCampKey(int actorId, out string campKey)
+    {
+        if (_enemyCampKeys.TryGetValue(actorId, out string? key))
+        {
+            campKey = key;
+            return true;
+        }
+
+        campKey = string.Empty;
+        return false;
+    }
+
+    private static SpawnCamp? FindShippedCamp(string campKey)
+    {
+        IReadOnlyList<SpawnCamp> camps = ContentCatalog.Shipped.Camps;
+        for (int i = 0; i < camps.Count; i++)
+        {
+            if (string.Equals(camps[i].Key, campKey, StringComparison.Ordinal))
+            {
+                return camps[i];
+            }
+        }
+
+        return null;
+    }
+
+    private PersistedEnemyInstance CreatePersistedEnemy(EnemyActor enemy, ObjectId objectId, DateTime now)
     {
         // The row holds the enemy's instance stats (wave I): what a spawn took from its template, what a
         // restore read from the row. Agility and Energy are not simulated and keep the factory defaults.
@@ -1199,12 +1286,14 @@ internal sealed partial class RuntimePersistenceBridge
                 AttackSpeed: stats[StatId.AttackSpeed],
                 Level: enemy.Level),
             now,
-            now);
+            now,
+            _enemyCampKeys.GetValueOrDefault(enemy.Combatant.Actor.Id));
     }
 
     // A no-op for an enemy with no ObjectId (never persisted).
     public void DeletePersistedEnemy(int enemyId)
     {
+        _enemyCampKeys.Remove(enemyId);
         if (!_objectIdentities.RemoveByActorId(enemyId, out ObjectId objectId))
         {
             return;

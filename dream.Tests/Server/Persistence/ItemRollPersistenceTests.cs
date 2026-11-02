@@ -111,6 +111,7 @@ public sealed class ItemRollPersistenceTests
     public void DeleteInventorySlot_RemovesOnlyThatRow()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // this test gives one item two rows
         (SqliteItemRepository items, SqliteInventoryRepository inventory) = Repositories(db);
         Give(items, inventory, Player, 3, Item(10, "tool.torch"));
         inventory.SaveInventorySlot(new PersistedInventorySlot(Player, 101, 10, default));
@@ -127,6 +128,7 @@ public sealed class ItemRollPersistenceTests
     public void DestroyInventoryItem_RemovesAllOfThePlayersRowsAndTheItem()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // this test gives one item two rows
         (SqliteItemRepository items, SqliteInventoryRepository inventory) = Repositories(db);
         Give(items, inventory, Player, 3, Item(10, "gear.iron-blade", Roll));
         inventory.SaveInventorySlot(new PersistedInventorySlot(Player, 100, 10, default));
@@ -142,6 +144,7 @@ public sealed class ItemRollPersistenceTests
     public void DestroyInventoryItem_KeepsAnotherPlayersRowAndTheItemWhenShared()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // this test shares one item between two players
         (SqliteItemRepository items, SqliteInventoryRepository inventory) = Repositories(db);
         Give(items, inventory, Player, 3, Item(10, "tool.torch"));
         inventory.SaveInventorySlot(new PersistedInventorySlot("p2", 5, 10, default));

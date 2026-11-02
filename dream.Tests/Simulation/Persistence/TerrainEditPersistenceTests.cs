@@ -553,7 +553,7 @@ public sealed class TerrainEditPersistenceTests
         {
         }
 
-        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, OpenTK.Mathematics.Vector3 deathPosition)
         {
         }
 

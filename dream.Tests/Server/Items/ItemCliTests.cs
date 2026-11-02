@@ -58,6 +58,7 @@ public sealed class ItemCliTests
     public void Grant_TakesTheFirstFitOfTheFootprint_AndTheIdIsBelowTheRaisedCounter()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup gives one item two rows
         db.ExecuteScript(
             "INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state, stack_count) " +
             "VALUES (1, 50, 'tool.torch', 'T', 'v', 'bob~2', 'Inventory', 1);" +
@@ -114,6 +115,7 @@ public sealed class ItemCliTests
     public void Grant_LooksAtTheBoardOnly_HeldBackWornAndUnknownRowsDoNotBlockIt_AndAnOverlappingRowIsIgnored()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup gives one item many rows
         db.ExecuteScript(
             "INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state, stack_count) " +
             "VALUES (1, 50, 'gear.iron-blade', 'B', 'v', 'bob~2', 'Inventory', 1);" +
@@ -166,6 +168,7 @@ public sealed class ItemCliTests
         Assert.Equal(0L, noGrant.Scalar("SELECT COUNT(*) FROM item_instances;"));
 
         using MigrationTestDatabase full = Migrated();
+        full.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup gives one item many rows
         full.ExecuteScript(
             "INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state, stack_count) " +
             "VALUES (1, 50, 'tool.torch', 'T', 'v', 'bob~2', 'Inventory', 1);");
@@ -220,6 +223,7 @@ public sealed class ItemCliTests
     public void List_PrintsSlotsKindsRarityAndModifiers_AndTakesNoLease()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup gives one item two rows
         Run(db, "grant", "1", "Bob", "gear.ward-lantern", "--rarity", "uncommon");
         db.ExecuteScript(
             "INSERT INTO item_instances (world_id, item_instance_id, item_kind, display_name, visual_id, owner_player_name, state, stack_count) " +

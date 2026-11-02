@@ -27,11 +27,14 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // the join's whole inventory object: it is cut out below (StripInventory) and pinned apart, by
     // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests, so the pin covers every
     // other byte of the three frames. Sha-256 was e98ef020127c415a..., now df39f10be444bb95....  The join is 6,031 B in all.
+    // Re-pinned by the lowered experience curve (migration 0011: 100 + level * 50): the join's player progression
+    // reads experienceToNextLevel 150 instead of 1023 at level 1, one digit shorter. Sha-256 was df39f10be444bb95...,
+    // now 73d2a7482a21a23b.... The join is 6,030 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 6_031;
+    private const long C0TotalBytes = 6_030;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "df39f10be444bb9563f2100d83e9436001a9eb6f9493b4ba3560038020a2cf4f";
+    private const string C0Sha256 = "73d2a7482a21a23b75e355ddb71e9bcf3c3adb43ac6b4fe1fe81cb37d4e9f230";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
@@ -175,7 +178,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // out, so every other byte still matches the capture. The inventory's size and shape are pinned by
             // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests.
             string text = StripInventory(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":14", "\"protocolVersion\":8"));
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":18", "\"protocolVersion\":8"));
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));

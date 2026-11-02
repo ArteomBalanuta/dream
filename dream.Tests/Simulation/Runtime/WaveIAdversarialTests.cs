@@ -218,8 +218,8 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         string[] beforeKills = Backpack(runtime, A);
         Assert.Equal(1, runtime.InventoryService.BuildSnapshot(key).FreeCells());
 
-        runtime.GrantLoot(A, "Wolf", enemyActorId: 9000, tick: 50);
-        runtime.GrantLoot(A, "Wolf", enemyActorId: 9001, tick: 50);
+        runtime.GrantLoot(A, "Wolf", enemyActorId: 9000, tick: 50, default);
+        runtime.GrantLoot(A, "Wolf", enemyActorId: 9001, tick: 50, default);
 
         List<SessionInventoryPush> pushes = [];
         runtime.DrainInventoryPushesInto(pushes);
@@ -247,8 +247,8 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         }
 
         // One tick, two killers: A has 3 free slots for 4 drops, B has exactly 4.
-        runtime.GrantLoot(A, "Wolf", enemyActorId: 9100, tick: 70);
-        runtime.GrantLoot(B, "Wolf", enemyActorId: 9101, tick: 70);
+        runtime.GrantLoot(A, "Wolf", enemyActorId: 9100, tick: 70, default);
+        runtime.GrantLoot(B, "Wolf", enemyActorId: 9101, tick: 70, default);
 
         List<SessionInventoryPush> pushes = [];
         runtime.DrainInventoryPushesInto(pushes);

@@ -82,6 +82,7 @@ public sealed class JoinRequestHandler : IServerMessageHandler
                 access);
             context.LastJoinRequest = joinRequest;
             context.JoinedIdentity = holder;
+            context.Standing = access.Standing;
             if (access.IsNewAccount)
             {
                 context.SessionClaims?.RecordNewAccount(context.ConnectionId);

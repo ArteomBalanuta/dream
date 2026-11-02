@@ -10,6 +10,14 @@ namespace Dream.Tests.Simulation.Content;
 // malformed content with a message that names the file and path.
 public sealed class ContentCatalogTests
 {
+    private static string ShippedSpawnsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.SpawnsFileName));
+
+    private static string ShippedNpcsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.NpcsFileName));
+
+    private static string ShippedSkillsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.SkillsFileName));
+
+    private static string ShippedQuestsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.QuestsFileName));
+
     private static string ShippedItemsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
 
     private static string ShippedLootJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
@@ -21,7 +29,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(57, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(59, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -169,7 +177,7 @@ public sealed class ContentCatalogTests
         Assert.Equal(1.35f, wolf.AttackRange);
         Assert.Equal(2.8f, wolf.MoveSpeed);
         Assert.Same(wolf, ContentCatalog.Shipped.Wolf);
-        Assert.Equal(["Wolf", "DireWolf"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
+        Assert.Equal(["Wolf", "DireWolf", "AshenProwler", "GraveHowler"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
     }
 
     [Fact]
@@ -186,8 +194,8 @@ public sealed class ContentCatalogTests
     [Fact]
     public void ContentDigest_IsStable_IgnoresFormatting_AndChangesWithValues()
     {
-        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
-        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson, ShippedLootJson);
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
         Assert.Equal(first.ContentDigest, second.ContentDigest);
         Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);
 
@@ -314,7 +322,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
     [InlineData("\"moveSpeed\": 2.8,", "\"moveSpeed\": 2.8, \"attackIntervalSeconds\": 0,", "outside the range")]
     [InlineData("\"level\": 1,", "\"level\": 0,", "outside the range")]
-    [InlineData("\"level\": 1,", "\"level\": 1, \"maxHealth\": 100,", "unknown property")]
+    [InlineData("\"level\": 1,", "\"level\": 1, \"maxHp\": 100,", "unknown property")]
     [InlineData("\"visualKey\": \"enemy.wolf\"", "\"visualKey\": \"Enemy Wolf\"", "is not a visual id")]
     [InlineData("\"spawnRole\": \"Primary\"", "\"spawnRole\": \"Boss\"", "unknown spawn role")]
     [InlineData("\"spawnRole\": \"Primary\"", "\"spawnRole\": \"NightExtra\"", "needs at least one enemy with spawnRole 'Primary'")]
@@ -373,7 +381,7 @@ public sealed class ContentCatalogTests
         ContentCatalog catalog = ContentCatalog.Shipped;
 
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "loot.json")));
-        Assert.Equal(2, catalog.LootTables.Count);
+        Assert.Equal(4, catalog.LootTables.Count);
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
@@ -388,6 +396,13 @@ public sealed class ContentCatalogTests
         Assert.Equal(50, dire.NothingWeight);
         Assert.True(wolf.Items.Sum(item => item.Weight) > 25);
         Assert.True(dire.Items.Sum(item => item.Weight) > 50);
+        // M9: the frontier tiers pay more, and more often.
+        Assert.True(catalog.TryGetLootTable("ashen-prowler", out LootTable ashen));
+        Assert.Equal((2, 35), (ashen.Drops, ashen.NothingWeight));
+        Assert.Equal((45, 40, 15), (ashen.CommonWeight, ashen.UncommonWeight, ashen.RareWeight));
+        Assert.True(catalog.TryGetLootTable("grave-howler", out LootTable howler));
+        Assert.Equal((3, 15), (howler.Drops, howler.NothingWeight));
+        Assert.Equal((25, 50, 25), (howler.CommonWeight, howler.UncommonWeight, howler.RareWeight));
         Assert.False(catalog.TryGetLootTable("missing", out _));
         Assert.False(catalog.TryGetLootTable(null!, out _));
     }
@@ -395,7 +410,7 @@ public sealed class ContentCatalogTests
     [Fact]
     public void TheTwoArgumentLoad_HasNoLootTables()
     {
-        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-)?wolf\"", string.Empty);
+        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler)\"", string.Empty);
         Assert.DoesNotContain("lootTable", noLootReference);
 
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, noLootReference);
@@ -408,9 +423,9 @@ public sealed class ContentCatalogTests
     [Fact]
     public void ContentDigest_ChangesWithALootWeight_AndIgnoresLootFormatting()
     {
-        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
-        ContentCatalog reformatted = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\r\n", "\n").Replace("  ", "\t"));
-        ContentCatalog changed = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\"nothingWeight\": 75", "\"nothingWeight\": 76"));
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        ContentCatalog reformatted = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        ContentCatalog changed = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\"nothingWeight\": 75", "\"nothingWeight\": 76"), ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
 
         Assert.Equal(first.ContentDigest, reformatted.ContentDigest);
         Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);
@@ -478,6 +493,30 @@ public sealed class ContentCatalogTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AnEnemyMaxHealth_IsOptional_Validated_AndInTheDigestOnlyWhenSet()
+    {
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
+        Assert.Equal(400, prowler.MaxHealth);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
+        Assert.Equal(700, howler.MaxHealth);
+        Assert.Null(ContentCatalog.Shipped.Wolf.MaxHealth);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("DireWolf", out EnemyTemplate? dire));
+        Assert.Null(dire.MaxHealth);
+
+        string plain = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, @",\s*""maxHealth"":\s*\d+", string.Empty);
+        Assert.DoesNotContain("maxHealth", plain, StringComparison.Ordinal);
+        ContentCatalog without = ContentCatalog.Load(ShippedItemsJson, plain, ShippedLootJson);
+        ContentCatalog with = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson);
+        Assert.NotEqual(without.ContentDigest, with.ContentDigest);
+
+        foreach (string bad in new[] { "0", "-5", "100001", "\"400\"", "1.5" })
+        {
+            string changed = ShippedEnemiesJson.Replace("\"maxHealth\": 400", $"\"maxHealth\": {bad}");
+            Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, changed, ShippedLootJson));
         }
     }
 }

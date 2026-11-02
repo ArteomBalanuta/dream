@@ -55,10 +55,17 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         return Task.FromResult(new WireLoopbackServer(host, service));
     }
 
-    public async Task<WireLoopbackClient> ConnectAndJoinAsync(string sessionId, int? receiveBufferSize = null, bool awaitPrefetchBeforeTicking = false)
+    public async Task<WireLoopbackClient> ConnectAndJoinAsync(
+        string sessionId,
+        int? receiveBufferSize = null,
+        bool awaitPrefetchBeforeTicking = false,
+        string? asName = null,
+        string? withTokenOf = null)
     {
         Task<ServerConnection> accept = Service.AcceptOnThreadPoolAsync();
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(Port, sessionId, receiveBufferSize);
+        client.JoinNameOverride = asName;
+        client.JoinTokenOverride = withTokenOf == null ? null : Dream.Tests.Support.TestAccountTokens.For(withTokenOf);
         ServerConnection connection = await accept.WaitAsync(Timeout);
         _connections[client] = connection;
         await client.HandshakeAsync();
@@ -328,10 +335,17 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
         return new WireLoopbackClient(tcp, sessionId);
     }
 
+    // Set before HandshakeAsync to join as another character of another account's token (an alt):
+    // the default is "Name {session}" with the token derived from that name.
+    public string? JoinNameOverride { get; set; }
+
+    public string? JoinTokenOverride { get; set; }
+
     public async Task HandshakeAsync()
     {
+        string name = JoinNameOverride ?? $"Name {SessionId}";
         await SendAsync(new ClientHelloMessage($"wire-{SessionId}"));
-        await SendAsync(new ClientJoinRequestMessage(SessionId, $"Name {SessionId}", Dream.Tests.Support.TestAccountTokens.For($"Name {SessionId}")));
+        await SendAsync(new ClientJoinRequestMessage(SessionId, name, JoinTokenOverride ?? Dream.Tests.Support.TestAccountTokens.For(name)));
     }
 
     public Task WaitForJoinAcceptedAsync()

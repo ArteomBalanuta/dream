@@ -13,7 +13,26 @@ public enum ItemTier : byte
 
 public readonly record struct HudItemView(InventoryItemSnapshot Item, bool HasIcon, UiSprite Icon, ItemTier Tier, bool Equipped);
 
-public readonly record struct HudWorldLabel(Vector2 Screen, string Name, string Health);
+// What a click on a world label does (M3). None for the actor labels; the ground-item and NPC labels carry
+// the id the click acts on (an item instance id, or an NPC actor id).
+public enum HudLabelClickKind : byte
+{
+    None,
+    PickUpGround,
+    InteractNpc
+}
+
+public readonly record struct HudLabelClick(HudLabelClickKind Kind, long Id);
+
+// Click, Tier and Dim only matter to the ground-item and NPC labels: a clickable label is built from its
+// Click, drawn in the colour of its Tier, and Dim greys it (an item another player holds a claim on).
+public readonly record struct HudWorldLabel(
+    Vector2 Screen,
+    string Name,
+    string Health,
+    HudLabelClick Click = default,
+    ItemTier Tier = ItemTier.Common,
+    bool Dim = false);
 
 // Everything the classic HUD reads for one frame. One instance is reused: HudViewBuilder refills it
 // (rebuilding rows only when status or the inventory snapshot changes). Panels only read it; the
@@ -97,6 +116,12 @@ public sealed class HudView
     public IReadOnlyList<FloatingCombatTextRenderState> CombatText { get; set; } = NoCombatText;
 
     public IReadOnlyList<HudWorldLabel> Labels { get; set; } = NoLabels;
+
+    // The vendor window's state (M3); null or closed means no vendor window.
+    public VendorHudState? Vendor { get; set; }
+
+    // The quickbar's state (M4); null draws the status bar exactly as before the quickbar.
+    public QuickbarHudState? Quickbar { get; set; }
 
     public bool InventoryOpen { get; set; }
 
