@@ -142,6 +142,14 @@ public sealed class WorldAggregateRepositoryTests
     public void Inventory_CreateReadUpdateDelete_AndLoadsOnePlayersItemsOnce()
     {
         using PersistenceTestDatabase database = NewDatabaseWithOwner();
+        // This test gives one item several rows, which the unique index of migration 0012 refuses.
+        using (SqliteConnection connection = database.Schema.CreateOpenConnection())
+        using (SqliteCommand command = connection.CreateCommand())
+        {
+            command.CommandText = "DROP INDEX ux_player_inventory_slots_item;";
+            command.ExecuteNonQuery();
+        }
+
         SqliteWorldStore store = new(database.Schema);
         SqliteItemRepository items = new(store);
         SqliteInventoryRepository inventory = new(store);
