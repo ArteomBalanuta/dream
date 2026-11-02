@@ -95,6 +95,17 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
         }
 
         CharacterLookup lookup = Runtime.ResolveCharacterLookup(typedName, joinAccount);
+        // M8: a live ban is refused before ownership is looked at, and a character another world holds is not joinable.
+        if (BanMessage.IsActive(lookup.Standing, DateTime.UtcNow))
+        {
+            return Rejected(typedName, BanMessage.Format(lookup.Standing));
+        }
+
+        if (lookup.HeldElsewhere)
+        {
+            return Rejected(typedName, JoinRejectionReasons.OnlineElsewhere);
+        }
+
         return CharacterAccessRules.Decide(typedName, joinAccount, lookup);
     }
 
@@ -195,7 +206,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
                 InitialWorld: Runtime.ExportWorldSnapshot(),
                 Roster: BuildJoinedPlayerRoster(),
                 Inventory: existingInventory,
-                InitialActors: Runtime.CaptureActorSnapshots(),
+                InitialActors: Runtime.CaptureWireActorSnapshots(),
                 InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
                 WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
                 World: GetWorldWire(),
@@ -235,7 +246,7 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             InitialWorld: Runtime.ExportWorldSnapshot(),
             Roster: BuildJoinedPlayerRoster(),
             Inventory: inventory,
-            InitialActors: Runtime.CaptureActorSnapshots(),
+            InitialActors: Runtime.CaptureWireActorSnapshots(),
             InitialWorldMutationSequence: Runtime.LastWorldMutationSequence,
             WorldClock: Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick),
             World: GetWorldWire(),

@@ -647,7 +647,7 @@ public sealed class DedicatedServerService : IAsyncDisposable
         try
         {
             // The old client hears why before its socket closes. Bounded, so a dead peer cannot hold this task.
-            connection.Enqueue(new JoinRejectedMessage(DedicatedServerHost.OpenedElsewhereRejectionReason));
+            connection.Enqueue(new JoinRejectedMessage(_host.TakeCloseReason(connectionId)));
             await connection.FlushOutboundAsync(TakeoverNoticeFlushTimeout);
             await connection.CloseTransportAsync();
         }

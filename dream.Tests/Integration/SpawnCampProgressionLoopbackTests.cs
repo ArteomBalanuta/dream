@@ -51,6 +51,23 @@ public sealed class SpawnCampProgressionLoopbackTests
         }
     }
 
+    // The owner's level, experience and stats no longer ride in actor snapshots (M8): they arrive as
+    // ServerPlayerProgress on the 16-tick vitals cadence, so a test waits for the panel to show them.
+    private static async Task StepUntilAsync(WireLoopbackServer server, HeadlessPlayScene client, Func<HudStatusSnapshot, bool> done, string what)
+    {
+        for (int i = 0; i < 48; i++)
+        {
+            await StepAsync(server, client);
+            client.Pump();
+            if (done(Panel(client)))
+            {
+                return;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"the panel never showed {what}");
+    }
+
     private static HudStatusSnapshot Panel(HeadlessPlayScene client) =>
         client.World.CapturePresentationState(64f).HudStatus;
 
@@ -77,7 +94,7 @@ public sealed class SpawnCampProgressionLoopbackTests
             // A server-side level-up: the snapshot carries the level and the server's threshold.
             IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(server.Runtime, Session);
             target.Combatant.ApplyProgression(3, 10);
-            await StepAsync(server, client, 2);
+            await StepUntilAsync(server, client, p => p.Level == 3 && p.Experience == 10, "the level-up");
             HudStatusSnapshot panel = Panel(client);
             Assert.Equal(3, panel.Level);
             Assert.Equal(10, panel.Experience);
@@ -98,9 +115,9 @@ public sealed class SpawnCampProgressionLoopbackTests
                 await StepAsync(server, client);
             }
 
-            await StepAsync(server, client, 3);
             serverStrength = target.Combatant.BaseStats.Strength;
             Assert.Equal(strengthBefore + 1, serverStrength);
+            await StepUntilAsync(server, client, p => p.BaseStrength == serverStrength, "the spent point");
             panel = Panel(client);
             Assert.Equal(serverStrength, panel.BaseStrength);
             Assert.Equal(9, CharacterPanelModel.PointsAvailable(panel));
@@ -108,7 +125,7 @@ public sealed class SpawnCampProgressionLoopbackTests
             // A rejoin on the same server keeps them.
             await client.LeaveAsync();
             await using HeadlessPlayScene again = await HeadlessPlayScene.JoinAsync(server, Session);
-            await StepAsync(server, again, 3);
+            await StepUntilAsync(server, again, p => p.Level == 3, "the level after a rejoin");
             panel = Panel(again);
             Assert.Equal(3, panel.Level);
             Assert.Equal(serverStrength, panel.BaseStrength);
@@ -120,7 +137,7 @@ public sealed class SpawnCampProgressionLoopbackTests
         await using (WireLoopbackServer restarted = await StartAsync(db))
         {
             await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(restarted, Session);
-            await StepAsync(restarted, client, 6);
+            await StepUntilAsync(restarted, client, p => p.Level == 3, "the level after a restart");
             HudStatusSnapshot panel = Panel(client);
             Assert.Equal(3, panel.Level);
             Assert.Equal(10, panel.Experience);
@@ -148,7 +165,7 @@ public sealed class SpawnCampProgressionLoopbackTests
 
         await using WireLoopbackServer server = await StartAsync(db);
         await using HeadlessPlayScene joined = await HeadlessPlayScene.JoinAsync(server, Session);
-        await StepAsync(server, joined, 3);
+        await StepUntilAsync(server, joined, p => p.Level > 1, "the leveled character");
         HudStatusSnapshot panel = Panel(joined);
         Assert.True(panel.Level > 1);
         Assert.InRange(panel.Experience, 0, panel.ExperienceToNextLevel - 1);

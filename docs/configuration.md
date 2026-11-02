@@ -204,7 +204,7 @@ These are read by the desktop client (`RemoteClientOptions`, `PlayScene`) and by
 | Variable | Read in | Effect |
 | --- | --- | --- |
 | `DREAM_SERVER_HOST` | `RemoteClientOptions.TryResolveFromEnvironment` (called from `Game`) | Host the startup form is prefilled with; `DREAM_AUTO_CONNECT` then connects to it instead of the integrated local server. When it is unset or blank the other client variables are not read. |
-| `DREAM_SERVER_PORT` | same | Port for the prefill (default `ServerBootstrap.DefaultPort`, 5057); a non-integer value throws at startup. It is client-only: the dedicated server always listens on 5057 and does not read it. |
+| `DREAM_SERVER_PORT` | same | Port for the prefill (default `ServerBootstrap.DefaultPort`, 5057); a non-integer value throws at startup. It is client-only: the dedicated server reads `DREAM_PORT` (see Dedicated Server Settings), never this. |
 | `DREAM_CLIENT_NAME` | same | Player name for the prefill. Default `dream-client`. |
 | `DREAM_CLIENT_SESSION_ID` | same | Parsed, but `Game` forwards only host, port and name, so the desktop client still joins with a fresh `client-<guid>` (`ClientConnectionOptions`). |
 | `DREAM_LOOPBACK_REMOTE_PLAYERS` | `PlayScene.ResolveLoopbackRemotePlayersEnabled` | `1` or `true` feeds fake remote-player snapshots into the presenter for local render checks. |
@@ -268,6 +268,32 @@ The server simulates at 64 Hz but encodes and broadcasts actor snapshots only ev
 **Identity limits.** An account is a random token kept on the player's computer, not a login (decision U10). The token travels in plain text in the join request, so anyone who can capture the traffic gets it; the server stores only its SHA-256. A session id is a fresh `client-<guid>` per connect, is broadcast to every client and grants nothing. A token file that is lost means a new account: an admin frees the old characters with `--characters release`.
 
 None of these have an environment override. When a session ends for any reason, the desktop client goes back to the connection screen and shows the reason (see `docs/architecture.md`, Startup Flow).
+
+## Dedicated Server Settings
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `DREAM_PORT` | `5057` | TCP port of the dedicated server, 1 to 65535. A value that is set and is not a port stops the start with exit code 9 and a line on standard error. |
+| `DREAM_BIND_ADDRESS` | `0.0.0.0` | The interface address to listen on, IPv4 or IPv6 (`127.0.0.1` keeps the server on this computer). A value that is set and is not an address stops the start with exit code 9. |
+| `DREAM_MAX_PLAYERS` | `64` | Players joined at once. A join from a connection with no seat, while every seat is taken (joins waiting for the next tick count), is answered "Server is full." and the connection stays open. A value that is not a positive integer keeps the default, with a line on standard error. Separate from `DREAM_MAX_CONNECTIONS`, which caps open sockets. |
+| `DREAM_MOTD` | none | One System chat line sent to each player right after the join reply. Control and bidi characters are stripped and it is cut at 256 characters. |
+| `DREAM_PARTY_CUBES` | off | `1` lets an online party mate damage the owner's cubes. Offline owners are never reachable. |
+
+The dedicated server binds every network interface unless `DREAM_BIND_ADDRESS` says otherwise; the start-up line `Server listening on <address>:<port>` names what it bound, and says so when that is all interfaces. The integrated server of the desktop client always binds loopback and ignores these variables. `DREAM_SERVER_PORT` is a client variable and the server never reads it.
+
+Exit codes of the server: 3 schema too new, 4 world not found, 5 world cannot be opened, 6 database integrity, 7 world held, 8 content invalid, 9 invalid `DREAM_PORT` or `DREAM_BIND_ADDRESS`.
+
+### Character presence
+
+A character is played in one world at a time. Joining takes a lease on the character (`character_presence`, schema 14) for a character the joining account owns; the server renews it every 15 s while the player is in the world and drops it when they leave or the server stops. A lease expires 45 s after its last renewal, so a crash frees the character in under a minute. The same world takes its own lease back at once. Another world's join of the character is refused with "That character is being played in another world right now." A server without accounts takes no leases.
+
+### Owner-only progress
+
+Other players see a level and nothing else. Actor snapshots on the wire carry the public level and hide experience and base stats; the owner receives their own as `server.progress`, at most every 16 ticks. Server state and checksums are not affected.
+
+### Reconnecting
+
+A client whose session ends with `Connection lost: ...` returns to the connection screen and retries on its own, after 1, 2, 4, 8 and 16 s ("Reconnecting (n/5)..."). A rejection ends the retries at once (a kick, a ban, a full server), as do pressing Connect, Use Local Server or Esc. A retry is a full rejoin: a party does not survive it. A session on the game's own integrated server is not retried; connecting there starts a new server as before.
 
 ## Physics Environment Flags
 
@@ -391,6 +417,33 @@ dream --characters rename <old> <new>    changes the display name; the key never
 
 Exit codes: 0 done, 1 usage or an invalid name, 2 not found or the name is taken, 3 the database is newer than this build, 7 a world is held.
 
+### Managing accounts: `--accounts`
+
+```
+dream --accounts grant-admin <name>    the account that owns the character becomes an administrator
+dream --accounts revoke-admin <name>   back to a player
+dream --accounts unban <name>          clears the ban of that account
+```
+
+`<name>` is a character the account owns (display name, ignoring ASCII case). Administrator is granted here and nowhere else; no chat line or client message can set it. All three work while a server runs. The server reads the role when a player joins, so an administrator who is online keeps the role they joined with until they rejoin, and a ban set here is read on the next join. Output is `<command>` and the name, tab-separated.
+
+Exit codes: 0 done, 1 usage, 2 no account owns that name, 3 the database is newer than this build, 7 the database is busy.
+
+### Server commands (administrators)
+
+An administrator types these in chat. The server alone decides: the line travels as a `Command` chat line and is honoured only when the connection joined with the administrator role; anyone else gets "You do not have permission."
+
+| Command | Effect |
+| --- | --- |
+| `/kick <name> [reason]` | Closes the player's connection with the reason. They may rejoin. |
+| `/ban <name> [minutes] [reason]` | Bans the account that owns the character and kicks it if it is online. No minutes means permanent. The player sees the reason on every refused join. Works on offline characters. |
+| `/unban <name>` | Lifts the ban. |
+| `/mute <name> [minutes]` | The player's chat lines are refused with "You are muted." No minutes means permanent. |
+| `/unmute <name>` | Lifts the mute. |
+| `/announce <text>` | A System line to every joined player. |
+
+Put a name with spaces in double quotes. A ban or mute belongs to the account, not the character, and holds in every world of the database and across restarts (`accounts.banned_until_utc`, `ban_reason`, `muted_until_utc`, schema 14). An administrator cannot sanction themselves or another administrator who is online. Every command is logged as `server.admin` with the administrator, the action and the target; tokens are never logged. A ban made by a new token is a new account: there are no address bans.
+
 ### Rolled items: `--items`
 
 ```
@@ -469,6 +522,26 @@ Optional: a content directory without the file has no skills. It is read at star
 `defaultQuickbar` holds at most 6 entries, for keys 1 to 6: `{"kind":"Skill","key":...}`, `{"kind":"Item","key":...}` or `{"kind":"None"}`. A missing skill, or an item with no `use`, stops the load. The bar is per character and per world (`player_quickbar_slots`, schema 13): a character who never bound a slot has no rows and sees this default, and the first bind stores all 6 slots.
 
 An item is a consumable when `items.json` gives it a `"use"` object: `{"restoreHealth":50,"restoreMana":0,"cooldownTicks":320}`. Each kind has its own cooldown. Using an item costs an inventory action from the budget and, unlike the other inventory actions, is refused while dead, as are skills; a potion with nothing to restore is refused and kept.
+
+### Quests: `config/content/quests.json` (version 1)
+
+Optional: a content directory without the file has no quests. It is read at start with the other content files, is part of the content digest, and an edit needs a restart. A quest giver must be an NPC in `npcs.json`; the shipped giver is `gate-warden`.
+
+```json
+{"version":1,"quests":[{"key":"wolf-cull","title":"Thin the Pack","description":"...","giver":"gate-warden",
+  "objectives":[{"kind":"Kill","target":"Wolf","count":2}],
+  "rewards":{"xp":100,"gold":40,"items":[{"item":"potion.health","count":1}]}}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `key` | Unique text, the id the progress is saved under. |
+| `title`, `description` | Shown in the dialogue and the tracker. |
+| `giver` | The NPC key that offers and takes the quest. Unknown NPC stops the load. |
+| `objectives` | 1 to 4. `Kill` names an enemy kind from `enemies.json`; `Collect` names an item from `items.json` and counts the bag, consuming the items at turn-in (worn items do not count). `count` is 1..99. |
+| `rewards` | `xp` and `gold`, and `items`: fixed-stat items only (a rolled item stops the load), each with a `count`. The turn-in is refused with a full bag. |
+
+At most 32 quests. Quest state is per character and per world (`player_quests`, schema 14). A reward is paid once: the completion and its rewards are one write, and a failed write leaves the quest open.
 
 ### Mana
 

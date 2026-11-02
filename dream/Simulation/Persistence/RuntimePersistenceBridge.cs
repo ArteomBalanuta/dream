@@ -160,6 +160,8 @@ internal sealed partial class RuntimePersistenceBridge
                 // The lookup comes first: an existing character is loaded under its own key, which
                 // may differ from the typed name.
                 CharacterLookup? lookup = accounts?.Lookup(playerName, account);
+                // M8: the lease of a character the account owns; another world's live one marks it held.
+                lookup = accounts == null ? lookup : ClaimPresenceForJoin(accounts, lookup, account);
                 string key = lookup?.Existing?.Key.Value ?? playerName;
                 PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(

@@ -395,6 +395,12 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                     }
 
                     joinRequest = rawJoinRequest with { AccountToken = null, ResolvedAccount = account };
+
+                    // A ban set here moments ago may not be in the join's persisted-state load yet.
+                    if (RecentBanText(account) is { } recentBan)
+                    {
+                        return RejectJoinBeforeQueue(context, recentBan);
+                    }
                 }
                 else if (rawJoinRequest.AccountToken != null || rawJoinRequest.ResolvedAccount != null)
                 {
@@ -403,6 +409,14 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 }
 
                 message = joinRequest;
+
+                // The player cap: a connection with no seat is refused while every seat is taken. A joined
+                // connection repeating its join keeps its seat.
+                if (IsServerFullFor(connectionId))
+                {
+                    return RejectJoinBeforeQueue(context, ServerConnectionOptions.ServerFullRejectionReason);
+                }
+
                 if (TryThrottleJoin(context, joinRequest, out IServerToClientMessage? throttleReply))
                 {
                     return throttleReply == null ? Array.Empty<IServerToClientMessage>() : [throttleReply];
@@ -425,16 +439,23 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 DeliverPendingChats(context);
             }
 
+            ServerChatMessage? motd = null;
             if (message is ClientJoinRequestMessage routedJoin)
             {
                 CompleteJoinAttempt(context, routedJoin);
                 if (_connectionClaims.ContainsKey(context.ConnectionId))
                 {
                     EnqueueGroundReset(context.ConnectionId, Runtime);
+                    if (HasJoinAccepted(context.OutboundMessages))
+                    {
+                        motd = CompleteAcceptedJoin(context);
+                    }
                 }
             }
 
-            return context.OutboundMessages.ToArray();
+            return motd == null
+                ? context.OutboundMessages.ToArray()
+                : [.. context.OutboundMessages, motd];
         }
     }
 
@@ -546,7 +567,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         context.JoinRejectionSent = true;
         NetworkDiagnosticsLog.Write(
             "server.join.rejected",
-            $"connection={context.ConnectionId} reason={(reason == JoinRejectionReasons.NameInvalid ? "name-invalid" : reason == JoinRejectionReasons.TokenRequired ? "token-required" : "token-invalid")}");
+            $"connection={context.ConnectionId} reason={(reason == JoinRejectionReasons.NameInvalid ? "name-invalid" : reason == JoinRejectionReasons.TokenRequired ? "token-required" : reason == ServerConnectionOptions.ServerFullRejectionReason ? "server-full" : reason.StartsWith(JoinRejectionReasons.Banned, StringComparison.Ordinal) ? "banned" : reason == JoinRejectionReasons.TokenInvalid ? "token-invalid" : "refused")}");
         return [new JoinRejectedMessage(reason)];
     }
 
@@ -1249,6 +1270,8 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             Volatile.Write(ref _disposed, true);
         }
 
+        // The leases of the players still here go before the write queue drains.
+        Runtime?.ReleaseAllPresence();
         // Finish pending checkpoint writes before the authority disposes its persistence.
         _checkpointWrites?.Dispose();
         switch (_authority)
@@ -1609,6 +1632,14 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                     continue;
             }
 
+            // A ban set here since this join's load started: refused without routing it.
+            if (RecentBanText(join.Request.ResolvedAccount) is { } recentBan)
+            {
+                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, new JoinRejectedMessage(recentBan)));
+                continue;
+            }
+
             context.ClearOutboundMessages();
             context.ClearJoinConflict();
             _router.RouteServerInbound(context, join.Request);
@@ -1618,10 +1649,25 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, context.OutboundMessages[replyIndex]));
             }
 
+            bool accepted = _connectionClaims.ContainsKey(join.ConnectionId) && HasJoinAccepted(context.OutboundMessages);
             context.ClearOutboundMessages();
             if (_connectionClaims.ContainsKey(join.ConnectionId))
             {
                 EnqueueGroundReset(join.ConnectionId, runtime);
+            }
+
+            if (accepted)
+            {
+                // The message of the day follows the join reply.
+                if (CompleteAcceptedJoin(context) is { } motd)
+                {
+                    _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, motd));
+                }
+            }
+            else if (!_connectionClaims.ContainsKey(join.ConnectionId))
+            {
+                // Refused after the load took the character's lease: let it go.
+                runtime?.ReleasePresenceOfRejectedJoin(join.PlayerName, join.Request.ResolvedAccount);
             }
 
             // An accepted join consumed its load; a rejected one (or one that restored nothing)
