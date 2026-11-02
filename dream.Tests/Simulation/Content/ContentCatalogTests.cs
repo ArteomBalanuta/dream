@@ -175,7 +175,7 @@ public sealed class ContentCatalogTests
         Assert.Equal(1.35f, wolf.AttackRange);
         Assert.Equal(2.8f, wolf.MoveSpeed);
         Assert.Same(wolf, ContentCatalog.Shipped.Wolf);
-        Assert.Equal(["Wolf", "DireWolf"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
+        Assert.Equal(["Wolf", "DireWolf", "AshenProwler", "GraveHowler"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
     }
 
     [Fact]
@@ -379,7 +379,7 @@ public sealed class ContentCatalogTests
         ContentCatalog catalog = ContentCatalog.Shipped;
 
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "loot.json")));
-        Assert.Equal(2, catalog.LootTables.Count);
+        Assert.Equal(4, catalog.LootTables.Count);
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
@@ -392,6 +392,13 @@ public sealed class ContentCatalogTests
         // same total as before (100), so whether a roll drops anything is unchanged.
         Assert.Equal((75, 25), (wolf.NothingWeight, wolf.Items.Sum(item => item.Weight)));
         Assert.Equal((50, 50), (dire.NothingWeight, dire.Items.Sum(item => item.Weight)));
+        // M9: the frontier tiers pay more, and more often.
+        Assert.True(catalog.TryGetLootTable("ashen-prowler", out LootTable ashen));
+        Assert.Equal((2, 35), (ashen.Drops, ashen.NothingWeight));
+        Assert.Equal((45, 40, 15), (ashen.CommonWeight, ashen.UncommonWeight, ashen.RareWeight));
+        Assert.True(catalog.TryGetLootTable("grave-howler", out LootTable howler));
+        Assert.Equal((3, 15), (howler.Drops, howler.NothingWeight));
+        Assert.Equal((25, 50, 25), (howler.CommonWeight, howler.UncommonWeight, howler.RareWeight));
         Assert.False(catalog.TryGetLootTable("missing", out _));
         Assert.False(catalog.TryGetLootTable(null!, out _));
     }
@@ -399,7 +406,7 @@ public sealed class ContentCatalogTests
     [Fact]
     public void TheTwoArgumentLoad_HasNoLootTables()
     {
-        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-)?wolf\"", string.Empty);
+        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler)\"", string.Empty);
         Assert.DoesNotContain("lootTable", noLootReference);
 
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, noLootReference);

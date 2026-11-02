@@ -45,10 +45,10 @@ public sealed class M6EndToEndLoopbackTests
 
     private static readonly Vector3 Pen = new(45f, 1f, 45f);
     private static readonly Vector3 SpotA = new(20f, 1.5f, 20f);
-    private static readonly int WardenActorId = ReplicatedActorIdRanges.FirstNpcId + 1;
+    internal static readonly int WardenActorId = ReplicatedActorIdRanges.FirstNpcId + 1;
     private static readonly int QuartermasterActorId = ReplicatedActorIdRanges.FirstNpcId;
 
-    private static string KeyOf(string session) => WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
+    internal static string KeyOf(string session) => WorldSessionRuntime.ResolveJoinPlayerName(session, $"Name {session}");
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db)
     {
@@ -60,7 +60,7 @@ public sealed class M6EndToEndLoopbackTests
         return server;
     }
 
-    private static IAuthoritativePlayerTarget Target(WireLoopbackServer server, string session) =>
+    internal static IAuthoritativePlayerTarget Target(WireLoopbackServer server, string session) =>
         WaveIRuntimeKit.Target(server.Runtime, session);
 
     // ---- driving the scene the way PlayScene.Update does ----
@@ -74,7 +74,7 @@ public sealed class M6EndToEndLoopbackTests
     private static ulong NextActionSequence(HeadlessPlayScene client) =>
         (ulong)typeof(ClientActionSequenceTracker).GetField("_nextActionSequence", Fields)!.GetValue(Tracker(client))!;
 
-    private static QuestHudState Hud(HeadlessPlayScene client) =>
+    internal static QuestHudState Hud(HeadlessPlayScene client) =>
         (QuestHudState)typeof(PlayScene).GetField("_questHud", Fields)!.GetValue(client.Scene)!;
 
     private static KeyboardState Keyboard(params Keys[] down)
@@ -101,7 +101,7 @@ public sealed class M6EndToEndLoopbackTests
     }
 
     // A click of the dialogue window: the intent goes into the HUD queue, and the scene's frame hook sends it.
-    private static ulong? Click(HeadlessPlayScene client, IPlayerActionPayload payload)
+    internal static ulong? Click(HeadlessPlayScene client, IPlayerActionPayload payload)
     {
         ulong before = NextActionSequence(client);
         ((HudIntentQueue)typeof(PlayScene).GetField("_hudIntents", Fields)!.GetValue(client.Scene)!).Enqueue(payload);
@@ -110,7 +110,7 @@ public sealed class M6EndToEndLoopbackTests
     }
 
     // The scene's per frame HUD hook (Update does not run in the headless scene).
-    private static void Frame(HeadlessPlayScene client) =>
+    internal static void Frame(HeadlessPlayScene client) =>
         typeof(PlayScene).GetMethod("UpdateMultiplayerHud", Fields)!.Invoke(client.Scene, null);
 
     // The dialogue window opened the inventory under it; the player closes it before the next E (an open
@@ -124,7 +124,7 @@ public sealed class M6EndToEndLoopbackTests
         }
     }
 
-    private static async Task PlaceAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who, Vector3 position)
+    internal static async Task PlaceAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who, Vector3 position)
     {
         Target(server, who.SessionId).SetWorldPosition(position);
         who.World.Player.SetWorldPosition(position);
@@ -134,13 +134,13 @@ public sealed class M6EndToEndLoopbackTests
     }
 
     // Beside the gate warden, past the interact range of the quartermaster.
-    private static Vector3 BesideTheWarden(HeadlessPlayScene client, float dz = 0f)
+    internal static Vector3 BesideTheWarden(HeadlessPlayScene client, float dz = 0f)
     {
         Assert.True(client.Npcs.TryGet(WardenActorId, out ClientNpc warden));
         return new Vector3(warden.Position.X + 1.5f, 1.5f, warden.Position.Z + 1.5f + dz);
     }
 
-    private static async Task StepAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene? attacker = null, EnemyActor? except = null)
+    internal static async Task StepAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene? attacker = null, EnemyActor? except = null)
     {
         foreach (EnemyActor enemy in server.Runtime.Enemies.ActiveActors)
         {
@@ -181,7 +181,7 @@ public sealed class M6EndToEndLoopbackTests
         }
     }
 
-    private static async Task<ServerActionMessage> ResultAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who, ulong? sequence)
+    internal static async Task<ServerActionMessage> ResultAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who, ulong? sequence)
     {
         Assert.NotNull(sequence);
         await WaitActionReadAsync(server, who, sequence.Value);
@@ -204,10 +204,10 @@ public sealed class M6EndToEndLoopbackTests
         Assert.Contains(reason, result.Result.Rejection!.Reason, StringComparison.Ordinal);
     }
 
-    private static void AssertAccepted(ServerActionMessage result) =>
+    internal static void AssertAccepted(ServerActionMessage result) =>
         Assert.True(result.Result.Accepted, result.Result.Rejection?.Reason);
 
-    private static async Task StepUntilAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, Func<bool> done, string what)
+    internal static async Task StepUntilAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, Func<bool> done, string what)
     {
         for (int i = 0; i < 60; i++)
         {
@@ -230,7 +230,7 @@ public sealed class M6EndToEndLoopbackTests
 
     // Holds the attack on a 1 HP enemy of the kind in front of the killer until it dies: a real attack
     // command, the real resolver, real credit.
-    private static async Task KillAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene killer, string kind)
+    internal static async Task KillAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene killer, string kind)
     {
         IAuthoritativePlayerTarget target = Target(server, killer.SessionId);
         for (int i = 0; i < 96; i++)
@@ -253,7 +253,7 @@ public sealed class M6EndToEndLoopbackTests
         throw new Xunit.Sdk.XunitException($"no {kind} could be killed");
     }
 
-    private static void Flush(WireLoopbackServer server)
+    internal static void Flush(WireLoopbackServer server)
     {
         Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
         Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
@@ -261,14 +261,14 @@ public sealed class M6EndToEndLoopbackTests
 
     private static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
 
-    private static QuestHudEntry Entry(HeadlessPlayScene client, string key) =>
+    internal static QuestHudEntry Entry(HeadlessPlayScene client, string key) =>
         Assert.Single(Hud(client).Entries, entry => entry.Key == key);
 
-    private static QuestHudOffer Offer(HeadlessPlayScene client, string key) =>
+    internal static QuestHudOffer Offer(HeadlessPlayScene client, string key) =>
         Assert.Single(Hud(client).Offers, offer => offer.Key == key);
 
     // E at the warden: the dialogue opens.
-    private static async Task OpenDialogueAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who)
+    internal static async Task OpenDialogueAsync(WireLoopbackServer server, HeadlessPlayScene[] clients, HeadlessPlayScene who)
     {
         ulong? talk = PressE(who);
         ServerActionMessage opened = await ResultAsync(server, clients, who, talk);
@@ -319,7 +319,8 @@ public sealed class M6EndToEndLoopbackTests
             await OpenDialogueAsync(server, both, a);
             Assert.Equal("Gate Warden", Hud(a).NpcName);
             Assert.Equal(ContentCatalog.Shipped.Npcs[1].Greeting, Hud(a).Greeting);
-            Assert.Equal(ContentCatalog.Shipped.Quests.Select(q => q.Key), Hud(a).Offers.Select(o => o.Key));
+            Assert.Equal(ContentCatalog.Shipped.Quests.Where(q => q.ExistsOn(WorldDefaults.StartupFloorSize)).Select(q => q.Key), Hud(a).Offers.Select(o => o.Key));
+            Assert.DoesNotContain(Hud(a).Offers, offer => offer.Key is "ash-on-the-wind" or "the-long-road" or "grave-howl");
             Assert.All(Hud(a).Offers, offer => Assert.Equal(QuestOfferState.Available, offer.State));
             Assert.All(Hud(a).Offers, offer => Assert.False(string.IsNullOrWhiteSpace(offer.RewardText)));
             Assert.False(a.Vendor.IsOpen);

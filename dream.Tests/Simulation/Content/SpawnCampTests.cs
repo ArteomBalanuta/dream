@@ -38,7 +38,8 @@ public sealed class SpawnCampTests
     [Fact]
     public void TheShippedCamps_AreThreeDayCampsAndANightCamp_OfWolvesAndDireWolves()
     {
-        IReadOnlyList<SpawnCamp> camps = ContentCatalog.Shipped.Camps;
+        // The camps of a 56 m world; the frontier camps (M9) exist on 100 m worlds only.
+        IReadOnlyList<SpawnCamp> camps = [.. ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(WorldDefaults.StartupFloorSize))];
 
         Assert.Equal(4, camps.Count);
         Assert.Equal(3, camps.Count(camp => !camp.Night));
@@ -58,7 +59,7 @@ public sealed class SpawnCampTests
         HashSet<(int X, int Z)> raised = [.. cells.Where(cell => cell.Key.Y >= 1).Select(cell => (cell.Key.X, cell.Key.Z))];
         float maxAggro = ContentCatalog.Shipped.Enemies.Max(template => template.AggroRange);
 
-        foreach (SpawnCamp camp in ContentCatalog.Shipped.Camps)
+        foreach (SpawnCamp camp in ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(WorldDefaults.StartupFloorSize)))
         {
             for (int slot = 0; slot < camp.Count; slot++)
             {
@@ -80,6 +81,57 @@ public sealed class SpawnCampTests
             }
         }
     }
+
+    [Fact]
+    public void EveryFrontierCampMember_StandsOnOpenFloor_Of100mWorld_AtItsAbsoluteHome_AndTiersGrowWithDistance()
+    {
+        const int Size = ServerNewWorldSizeForTests;
+        WorldGenerator generator = new();
+        IReadOnlyList<Dream.Simulation.World.Geometry.GeometryCellRecord> cells = generator.CreateStartupGeometry(Size, 8, Size, enrichTerrain: true);
+        HashSet<(int X, int Z)> raised = [.. cells.Where(cell => cell.Key.Y >= 1).Select(cell => (cell.Key.X, cell.Key.Z))];
+        float maxAggro = ContentCatalog.Shipped.Enemies.Max(template => template.AggroRange);
+        List<SpawnCamp> frontier = [.. ContentCatalog.Shipped.Camps.Where(camp => camp.IsAbsolute)];
+
+        Assert.Equal(10, frontier.Count);
+        Assert.All(frontier, camp => Assert.True(camp.ExistsOn(Size) && !camp.ExistsOn(Size - 1), camp.Key));
+        Assert.All(ContentCatalog.Shipped.Camps.Where(camp => !camp.IsAbsolute), camp => Assert.False(camp.ExistsOn(Size), camp.Key));
+        foreach (SpawnCamp camp in frontier)
+        {
+            for (int slot = 0; slot < camp.Count; slot++)
+            {
+                Vector3 spot = WolfSpawnPolicy.ResolveCampSpawn(camp.X, camp.Z, slot, camp.Count, Size, Size, absolute: true);
+                Assert.True((spot.Xz - new Vector2(camp.X, camp.Z)).Length < 2f, $"{camp.Key}: {spot} is not at its metres");
+                int cellX = (int)MathF.Floor(spot.X);
+                int cellZ = (int)MathF.Floor(spot.Z);
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        Assert.DoesNotContain((cellX + dx, cellZ + dz), raised);
+                    }
+                }
+
+                Assert.InRange(spot.X, 3f, Size - 4f);
+                Assert.InRange(spot.Z, 3f, Size - 4f);
+                Assert.True((spot.Xz - new Vector2(5f, 5f)).Length > maxAggro + 1f, $"{camp.Key}: {spot}");
+            }
+        }
+
+        // Tier order: by distance from the spawn (5, 5), the strongest level in a camp never drops, and the
+        // nearest camps are the lowest tier.
+        List<(float Distance, int Level)> tiers = [.. frontier
+            .Select(camp => ((new Vector2(camp.X, camp.Z) - new Vector2(5f, 5f)).Length, ContentCatalog.Shipped.Enemies.Single(t => t.Key == camp.Template).Level))
+            .OrderBy(tier => tier.Item1)];
+        for (int i = 1; i < tiers.Count; i++)
+        {
+            Assert.True(tiers[i].Level >= tiers[i - 1].Level, $"{tiers[i - 1]} then {tiers[i]}");
+        }
+
+        Assert.All(tiers.Where(tier => tier.Distance < 30f), tier => Assert.Equal(1, tier.Level));
+        Assert.Equal(8, tiers.Max(tier => tier.Level));
+    }
+
+    private const int ServerNewWorldSizeForTests = WorldDefaults.ServerNewWorldSize;
 
     [Fact]
     public void ACampSpawn_IsDeterministic_AndInsideTheMap()
@@ -509,7 +561,12 @@ public sealed class SpawnCampTests
             Tick(runtime, ref tick, 12);
 
             AssertPlacedSanely(runtime, $"size {size} hour {hour}");
-            if (size >= 56)
+            if (size >= 100)
+            {
+                // The frontier camps (M9): 24 members by day, and the night hunt's 3 more in the dark.
+                Assert.Equal(hour == 12 ? 24 : 27, Active(runtime));
+            }
+            else if (size >= 56)
             {
                 Assert.Equal(hour == 12 ? 5 : 7, Active(runtime));
             }

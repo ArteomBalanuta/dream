@@ -33,7 +33,9 @@ public sealed class KillBurstFightOnlyBaselineTests(ITestOutputHelper output)
     private const string NothingTable =
         "{\"version\":1,\"tables\":[" +
         "{\"key\":\"wolf\",\"drops\":1,\"nothingWeight\":1000000,\"items\":[{\"item\":\"gear.leather-cap\",\"weight\":1}],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}," +
-        "{\"key\":\"dire-wolf\",\"drops\":1,\"nothingWeight\":1000000,\"items\":[{\"item\":\"gear.leather-cap\",\"weight\":1}],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}]}";
+        "{\"key\":\"dire-wolf\",\"drops\":1,\"nothingWeight\":1000000,\"items\":[{\"item\":\"gear.leather-cap\",\"weight\":1}],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}," +
+        "{\"key\":\"ashen-prowler\",\"drops\":1,\"nothingWeight\":1000000,\"items\":[{\"item\":\"gear.leather-cap\",\"weight\":1}],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}," +
+        "{\"key\":\"grave-howler\",\"drops\":1,\"nothingWeight\":1000000,\"items\":[{\"item\":\"gear.leather-cap\",\"weight\":1}],\"rarity\":{\"common\":1,\"uncommon\":0,\"rare\":0}}]}";
 
     private static IAuthoritativePlayerTarget Target(WorldSessionRuntime runtime, PlayerSessionId session)
     {

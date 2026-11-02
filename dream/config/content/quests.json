@@ -41,6 +41,40 @@
         { "kind": "Collect", "target": "tool.torch", "count": 1 }
       ],
       "rewards": { "xp": 80, "gold": 30, "items": [ { "item": "potion.mana", "count": 1 } ] }
+    },
+    {
+      "key": "ash-on-the-wind",
+      "title": "Ash on the Wind",
+      "description": "Grey things walk the burnt ground beyond the ridge, and the wind carries their ash to my door. Three of them will do. Bring back nothing but the sound of their silence.",
+      "giver": "gate-warden",
+      "minWorldSize": 100,
+      "objectives": [
+        { "kind": "Kill", "target": "AshenProwler", "count": 3 }
+      ],
+      "rewards": { "xp": 300, "gold": 120, "items": [ { "item": "potion.health", "count": 2 } ] }
+    },
+    {
+      "key": "the-long-road",
+      "title": "The Long Road",
+      "description": "The road runs on past the last lantern, and everything that hunts it wants a wanderer. Cut down two of the great hounds and three of the ash-grey ones, and the road is a little less long.",
+      "giver": "gate-warden",
+      "minWorldSize": 100,
+      "objectives": [
+        { "kind": "Kill", "target": "DireWolf", "count": 2 },
+        { "kind": "Kill", "target": "AshenProwler", "count": 3 }
+      ],
+      "rewards": { "xp": 520, "gold": 220, "items": [ { "item": "potion.health", "count": 3 }, { "item": "potion.mana", "count": 2 } ] }
+    },
+    {
+      "key": "grave-howl",
+      "title": "The Howl in the Barrow",
+      "description": "Something calls from the far barrows at dusk, and the hounds answer it. I will not send a second warden to learn what. End the howl, and bring me the quiet.",
+      "giver": "gate-warden",
+      "minWorldSize": 100,
+      "objectives": [
+        { "kind": "Kill", "target": "GraveHowler", "count": 1 }
+      ],
+      "rewards": { "xp": 450, "gold": 200, "items": [ { "item": "potion.health", "count": 3 }, { "item": "potion.mana", "count": 1 } ] }
     }
   ]
 }

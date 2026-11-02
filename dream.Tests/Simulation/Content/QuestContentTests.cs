@@ -29,7 +29,14 @@ public sealed class QuestContentTests
     {
         ContentCatalog catalog = ContentCatalog.Shipped;
 
-        Assert.Equal(["wolf-cull", "torch-supply", "pale-eyes", "marked-for-the-dark"], catalog.Quests.Select(q => q.Key));
+        Assert.Equal(
+            ["wolf-cull", "torch-supply", "pale-eyes", "marked-for-the-dark", "ash-on-the-wind", "the-long-road", "grave-howl"],
+            catalog.Quests.Select(q => q.Key));
+        // The three tier quests (M9) are for 100 m worlds only.
+        Assert.Equal(
+            ["ash-on-the-wind", "the-long-road", "grave-howl"],
+            catalog.Quests.Where(q => !q.ExistsOn(56)).Select(q => q.Key));
+        Assert.Equal(4, catalog.Quests.Count(q => q.ExistsOn(56)));
         NpcDefinition warden = Assert.Single(catalog.Npcs, npc => npc.Key == "gate-warden");
         Assert.Empty(warden.Stock);
         Assert.False(string.IsNullOrWhiteSpace(warden.Greeting));

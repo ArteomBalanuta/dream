@@ -32,6 +32,38 @@
       "lootTable": "dire-wolf",
       "goldMin": 5,
       "goldMax": 15
+    },
+    {
+      "key": "AshenProwler",
+      "displayName": "Ashen Prowler",
+      "level": 5,
+      "strength": 24,
+      "vitality": 45,
+      "attackSpeed": 1.0,
+      "aggroRange": 12,
+      "attackRange": 1.35,
+      "moveSpeed": 3.4,
+      "visualKey": "enemy.dire-wolf",
+      "spawnRole": "Primary",
+      "lootTable": "ashen-prowler",
+      "goldMin": 15,
+      "goldMax": 35
+    },
+    {
+      "key": "GraveHowler",
+      "displayName": "Grave Howler",
+      "level": 8,
+      "strength": 40,
+      "vitality": 50,
+      "attackSpeed": 1.1,
+      "aggroRange": 14,
+      "attackRange": 1.35,
+      "moveSpeed": 3.6,
+      "visualKey": "enemy.dire-wolf",
+      "spawnRole": "Primary",
+      "lootTable": "grave-howler",
+      "goldMin": 40,
+      "goldMax": 90
     }
   ]
 }
