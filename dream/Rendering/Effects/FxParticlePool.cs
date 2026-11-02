@@ -7,7 +7,8 @@ public enum FxParticleKind : byte
     Spark,
     Ember,
     Dust,
-    Ash
+    Ash,
+    Flash
 }
 
 // One live particle. Color is premultiplied RGBA at full strength; the fade over its life scales
@@ -28,6 +29,8 @@ public struct FxParticle
     public float Drag;
     // Offsets the ember flicker so a burst does not pulse in step.
     public float Phase;
+    // Scales the sideways curl of a plume ember; 0 for every other particle.
+    public float Sway;
     public Vector4 Color;
 }
 
