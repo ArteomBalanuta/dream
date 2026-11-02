@@ -109,6 +109,12 @@ public sealed partial class WorldSessionRuntime
         public bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record)
             => runtime.CanDamageCube(attacker, record);
 
+        public bool TryGetNearbyPartyMembers(PlayerSessionId member, OpenTK.Mathematics.Vector3 at, List<PlayerSessionId> into)
+            => runtime.TryGetNearbyPartyMembers(member, at, into);
+
+        public void RecordEnemyKill(ReadOnlySpan<Dream.Simulation.Enemies.EnemyDamageContribution> contributors, string enemyKind, OpenTK.Mathematics.Vector3 at)
+            => runtime.RecordEnemyKill(contributors, enemyKind, at);
+
         public CombatTargetPolicy TargetPolicy => new(runtime.PvpEnabled);
 
         public void FillPvpTargets(PlayerSessionId attacker, List<CombatTargetCandidate> into)
@@ -120,12 +126,18 @@ public sealed partial class WorldSessionRuntime
 
     // Build protection (M4). A cube with no owner (terrain, unowned) can be damaged by anyone; an owned
     // cube only by its owner. The owner is stored as the attacker's character key (see ProcessBuildUseAction),
-    // compared ordinally. The seam M5 parties extend: allow a party member here.
+    // compared ordinally. With PartyCubeAccess an online party mate of the owner may damage it too.
     private bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record)
     {
         string? owner = record.OwnerPlayerName;
-        return string.IsNullOrWhiteSpace(owner)
-            || string.Equals(owner, TryResolveCharacterKey(attacker), StringComparison.Ordinal);
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            return true;
+        }
+
+        string? attackerKey = TryResolveCharacterKey(attacker);
+        return string.Equals(owner, attackerKey, StringComparison.Ordinal)
+            || (PartyCubeAccess && attackerKey != null && AreInSameParty(owner, attackerKey));
     }
 
     private readonly List<IAuthoritativePlayerTarget> _pvpPlayerScratch = [];

@@ -39,6 +39,10 @@ public enum InventoryEquipOutcome
     // it restores are already full).
     OnCooldown = 19,
     NothingToRestore = 20,
+    // M5 trade and M6 quests: the trade or quest action is not possible now (no such trade, the quest is not
+    // active, not complete, not offered by this NPC).
+    TradeUnavailable = 21,
+    QuestUnavailable = 22,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id

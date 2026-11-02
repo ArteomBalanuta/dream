@@ -47,6 +47,9 @@ public static class ServerBootstrap
     // One server process hosts one world, so this is per world in practice.
     public const string PvpEnvironmentVariable = "DREAM_PVP";
 
+    // "1" lets an online party mate damage the owner's cubes (M5). Off by default.
+    public const string PartyCubesEnvironmentVariable = "DREAM_PARTY_CUBES";
+
     // Selects the world a dedicated server opens when no --world argument is given: a world id or
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
@@ -107,6 +110,11 @@ public static class ServerBootstrap
                 Environment.GetEnvironmentVariable(DevCommandsEnvironmentVariable), "1", StringComparison.Ordinal);
             host.Runtime.PvpEnabled = string.Equals(
                 Environment.GetEnvironmentVariable(PvpEnvironmentVariable), "1", StringComparison.Ordinal);
+            host.Runtime.PartyCubeAccess = string.Equals(
+                Environment.GetEnvironmentVariable(PartyCubesEnvironmentVariable), "1", StringComparison.Ordinal);
+            // M8: other players' experience and stats stay out of actor snapshots; the owner gets them
+            // as ServerPlayerProgress.
+            host.Runtime.OwnerOnlyProgress = true;
             double dayLengthMinutes = ResolveDayLengthMinutes(
                 Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
                 log);
@@ -329,7 +337,8 @@ public static class ServerBootstrap
         try
         {
             Console.Error.WriteLine(
-                $"Server listening on 0.0.0.0:{DefaultPort} with protocol version {TransportEnvelope.CurrentProtocolVersion}. " +
+                $"Server listening on 0.0.0.0:{DefaultPort} (all network interfaces: the dedicated server default) " +
+                $"with protocol version {TransportEnvelope.CurrentProtocolVersion}. " +
                 "Single-session authoritative runtime is active; press Ctrl+C to stop.");
             await service.RunAsync(cancellation.Token);
             return 0;

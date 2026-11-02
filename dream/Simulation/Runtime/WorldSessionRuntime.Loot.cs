@@ -115,6 +115,19 @@ public sealed partial class WorldSessionRuntime
         return new Vector3(center.X + (MathF.Cos(angle) * radius), center.Y, center.Z + (MathF.Sin(angle) * radius));
     }
 
+    // Marks the session's inventory as changed so the next drain sends a fresh snapshot, with no notice
+    // (a trade or a quest turn-in changed the bag).
+    internal void MarkInventoryPush(PlayerSessionId session)
+    {
+        if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))
+        {
+            pending = new PendingLoot();
+            _pendingLoot[session] = pending;
+        }
+
+        pending.InventoryChanged = true;
+    }
+
     internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged, bool gone = false)
     {
         if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))

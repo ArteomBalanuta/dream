@@ -15,7 +15,7 @@ namespace Dream.Server;
 // JoinAccepted or JoinRejected, or a world resync served after a tick.
 public readonly record struct PendingConnectionReply(string ConnectionId, IServerToClientMessage Message);
 
-public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
+public sealed partial class DedicatedServerHost : IDisposable, IServerSessionClaimRegistry
 {
     private static readonly PlayerSimulationTuning DefaultServerTuning = PlayerSimulationTuning.AuthoritativeDefault;
 
@@ -78,6 +78,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
     private readonly ConcurrentDictionary<string, ServerRoutingContext> _connections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _sessionClaims = new(StringComparer.Ordinal);
     private readonly List<SessionVitals> _vitalsScratch = [];
+    private readonly List<SessionServerMessage> _sessionMessageScratch = [];
     private readonly Func<PlayerSessionId, bool> _isSessionClaimed;
     private readonly ConcurrentDictionary<string, string> _connectionClaims = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<AuthoritativeActionResult> _pendingActionResults = new();
@@ -476,13 +477,66 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         List<PendingConnectionReply> replies = [];
         for (int i = 0; i < lines.Count; i++)
         {
-            ChatRouter.Route(found, lines[i], participants, runtime.CurrentServerTick, replies);
+            // M8: slash commands are decided by the server alone, and a muted account is not heard.
+            if (lines[i].Channel == ChatChannel.Command)
+            {
+                HandleAdminCommand(context, found, lines[i], replies);
+                continue;
+            }
+
+            if (IsMuted(context))
+            {
+                replies.Add(new PendingConnectionReply(
+                    found.ConnectionId,
+                    new ServerChatMessage(ChatChannel.System, "", MutedText, runtime.CurrentServerTick)));
+                continue;
+            }
+
+            // M5: the party chat goes to the sender's party members only.
+            List<ChatParticipant>? party = lines[i].Channel == ChatChannel.Party
+                ? BuildPartyParticipants(runtime, senderSession, participants)
+                : null;
+            ChatRouter.Route(found, lines[i], participants, runtime.CurrentServerTick, replies, party);
         }
 
         for (int i = 0; i < replies.Count; i++)
         {
             _pendingConnectionReplies.Enqueue(replies[i]);
         }
+    }
+
+    // The chat participants that share the sender's party (the sender included); null when the sender is
+    // in none.
+    private List<ChatParticipant>? BuildPartyParticipants(
+        WorldSessionRuntime runtime,
+        string senderSession,
+        List<ChatParticipant> participants)
+    {
+        List<PlayerSessionId> members = [];
+        if (!runtime.CopyPartyMemberSessions(new PlayerSessionId(senderSession), members))
+        {
+            return null;
+        }
+
+        List<ChatParticipant> party = [];
+        for (int m = 0; m < members.Count; m++)
+        {
+            if (!_sessionClaims.TryGetValue(members[m].Value, out string? connectionId))
+            {
+                continue;
+            }
+
+            for (int p = 0; p < participants.Count; p++)
+            {
+                if (string.Equals(participants[p].ConnectionId, connectionId, StringComparison.Ordinal))
+                {
+                    party.Add(participants[p]);
+                    break;
+                }
+            }
+        }
+
+        return party;
     }
 
     // A join refused before it is throttled, queued or prefetched (missing or malformed token, blank
@@ -1267,6 +1321,7 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         ServePendingInventoryPushes(runtime);
         ServePendingGroundItems(runtime);
         ServePendingVitals(runtime);
+        ServePendingSessionMessages(runtime);
     }
 
     // M4: mana, max mana and running cooldowns, to the owning session only, outside the action results.
@@ -1289,6 +1344,29 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
         }
 
         _vitalsScratch.Clear();
+    }
+
+    // M5, M6 and M8: the generic server pushes (party, trade, quest log, owner progress), each to its own
+    // session's connection, outside the action results. A message of a session with no connection yet
+    // stays queued in the runtime. A steady tick reads a count.
+    private void ServePendingSessionMessages(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingSessionMessages)
+        {
+            return;
+        }
+
+        runtime.DrainSessionMessagesInto(_sessionMessageScratch, _isSessionClaimed);
+        for (int i = 0; i < _sessionMessageScratch.Count; i++)
+        {
+            SessionServerMessage entry = _sessionMessageScratch[i];
+            if (_sessionClaims.TryGetValue(entry.SessionId.Value, out string? connectionId))
+            {
+                _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, entry.Message));
+            }
+        }
+
+        _sessionMessageScratch.Clear();
     }
 
     // M3: ground items that appeared, changed or went since the last tick, to every claimed session. Delta

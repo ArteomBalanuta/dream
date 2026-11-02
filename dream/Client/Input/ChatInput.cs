@@ -19,6 +19,10 @@ public sealed class ChatInput
 
     public ChatHudState State { get; }
 
+    // Where the slash commands that are player actions (party and trade) go, set by the scene. Null: they
+    // are not sent.
+    public Action<IPlayerActionPayload>? SendAction { get; set; }
+
     public bool IsTyping => State.Typing;
 
     // Characters from the window's text event; ignored unless the line is open.

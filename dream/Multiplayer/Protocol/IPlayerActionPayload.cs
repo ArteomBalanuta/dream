@@ -20,6 +20,18 @@ namespace Dream.Multiplayer.Protocol;
 [JsonDerivedType(typeof(SkillUseIntent), "skill.use")]
 [JsonDerivedType(typeof(ItemUseIntent), "item.use")]
 [JsonDerivedType(typeof(QuickbarBindIntent), "quickbar.bind")]
+[JsonDerivedType(typeof(PartyInviteIntent), "party.invite")]
+[JsonDerivedType(typeof(PartyRespondIntent), "party.respond")]
+[JsonDerivedType(typeof(PartyLeaveIntent), "party.leave")]
+[JsonDerivedType(typeof(TradeRequestIntent), "trade.request")]
+[JsonDerivedType(typeof(TradeRespondIntent), "trade.respond")]
+[JsonDerivedType(typeof(TradeOfferIntent), "trade.offer")]
+[JsonDerivedType(typeof(TradeLockIntent), "trade.lock")]
+[JsonDerivedType(typeof(TradeConfirmIntent), "trade.confirm")]
+[JsonDerivedType(typeof(TradeCancelIntent), "trade.cancel")]
+[JsonDerivedType(typeof(QuestAcceptIntent), "quest.accept")]
+[JsonDerivedType(typeof(QuestTurnInIntent), "quest.turn-in")]
+[JsonDerivedType(typeof(QuestAbandonIntent), "quest.abandon")]
 public interface IPlayerActionPayload
 {
 }

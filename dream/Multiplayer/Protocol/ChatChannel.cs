@@ -7,5 +7,7 @@ public enum ChatChannel : byte
     World,
     Say,
     Whisper,
-    System
+    System,
+    Party = 4,
+    Command = 5
 }

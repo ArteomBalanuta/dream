@@ -173,6 +173,7 @@ public sealed partial class WorldSessionRuntime
         _persistence.ForgetUnrestoredSession(sessionId);
         // The build material is per connection: a rejoin starts from Auto, as its HUD does.
         _buildMaterialSelections.Remove(sessionId);
+        OnSessionDetachedMultiplayer(sessionId, player.CharacterKey.Value);
         player.MarkDespawned();
         player.ResetAcceptedSequences();
         // Wave I: a rejoin that finds the character dead waits a fresh 5 s, and an undrained push for

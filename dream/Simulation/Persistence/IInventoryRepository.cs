@@ -38,6 +38,20 @@ public interface IInventoryRepository
     {
     }
 
+    // M5 trade. Deletes the player's slot rows for the item without deleting the item row; SQLite THROWS
+    // when no row was deleted (the item was never persisted for that player). The default (a fake) does
+    // nothing.
+    void DetachHeldItem(string fromPlayer, long itemInstanceId)
+    {
+    }
+
+    // M5 trade. Hands the item to toPlayer in the given slot: UPDATE item_instances owner and state
+    // 'Inventory', THROWS unless one row changed; then a plain INSERT of the slot row, NOT the upsert, so an
+    // occupied slot throws and never overwrites. The default (a fake) does nothing.
+    void AttachItem(string toPlayer, long itemInstanceId, int slotIndex, DateTime utc)
+    {
+    }
+
     // Upserts one quickbar slot row of the player (M4). The default (a fake) does nothing.
     void SaveQuickbarSlot(PersistedQuickbarSlot slot)
     {

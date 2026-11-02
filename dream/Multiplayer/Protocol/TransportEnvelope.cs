@@ -51,9 +51,12 @@ public readonly record struct TransportEnvelope(
     // Version 17 (quickbar and mana, M4) adds the "skill.use", "item.use" and "quickbar.bind" actions,
     // the "ability.used" action result, the server.vitals message and the optional "quick" field of the
     // inventory snapshot (written only when the character has a bar); a v16 peer would fail on the
-    // unknown kinds, so both sides refuse it.
+    // unknown kinds, so both sides refuse it. Version 18 (party, trade, quests and admin, M5, M6 and M8) adds twelve
+    // player actions, the "npc.dialogue" action result, the Party and Command chat channels and the
+    // server.party, server.trade, server.quest-log and server.progress messages, and stops sending other
+    // players' experience and stats in actor snapshots; a v17 peer would fail on the unknown kinds, so both sides refuse it.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 17;
+    public const int CurrentProtocolVersion = 18;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

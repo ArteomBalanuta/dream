@@ -33,6 +33,8 @@ public partial class PlayScene
     // Called once a frame before the global keys. True when chat used the frame's keys.
     private bool HandleChatInput(KeyboardState keyboardState)
     {
+        // The party and trade slash commands send player actions (M5).
+        _chatInput.SendAction = SendEconomyIntent;
         bool connected = _remoteClient.IsConnected;
         bool canOpen = connected && _settings.CurrentRuntimeState.AllowGameplayInput;
         bool used = _chatInput.Update(keyboardState, canOpen, _remoteClient.QueueChat);
@@ -61,6 +63,7 @@ public partial class PlayScene
     // late from a key still held when the line closes.
     private void HandleGlobalInputUnlessTyping(KeyboardState keyboardState)
     {
+        UpdateMultiplayerHud();
         if (HandleChatInput(keyboardState))
         {
             _wasSettingsTogglePressed = keyboardState.IsKeyDown(Keys.Escape);
@@ -81,6 +84,31 @@ public partial class PlayScene
 
     public void ApplyReplicatedMessage(IServerToClientMessage message)
     {
+        // M5, M6 and M8: owner-only pushes. None is a routed kind; each only feeds its own HUD state.
+        if (message is ServerPartyState party)
+        {
+            ApplyPartyState(party);
+            return;
+        }
+
+        if (message is ServerTradeState trade)
+        {
+            ApplyTradeState(trade);
+            return;
+        }
+
+        if (message is ServerQuestLog questLog)
+        {
+            ApplyQuestLog(questLog);
+            return;
+        }
+
+        if (message is ServerPlayerProgress progress)
+        {
+            ApplyOwnerProgress(progress);
+            return;
+        }
+
         if (message is ServerChatMessage chat)
         {
             // Not a routed kind: it only feeds the chat log, as plain clamped text.
@@ -236,6 +264,10 @@ public partial class PlayScene
             else if (resultTargetsLocalSession && actionMessage.Result.Payload is VendorOpenedResult vendorOpened)
             {
                 ApplyVendorOpened(vendorOpened);
+            }
+            else if (resultTargetsLocalSession && actionMessage.Result.Payload is NpcDialogueResult dialogue)
+            {
+                ApplyNpcDialogue(dialogue);
             }
         }
     }

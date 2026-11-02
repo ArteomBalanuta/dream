@@ -38,7 +38,7 @@ public sealed class QuickbarManaMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(13, result.ToVersion);
+        Assert.Equal(14, result.ToVersion);
         Assert.Equal(2L, database.Scalar("SELECT COUNT(*) FROM player_world_state WHERE current_energy = 1000000;"));
         Assert.Equal(80L, database.Scalar("SELECT current_hp FROM player_world_state WHERE player_name = 'p1';"));
         Assert.Equal(90L, database.Scalar("SELECT current_hp FROM player_world_state WHERE player_name = 'p2';"));

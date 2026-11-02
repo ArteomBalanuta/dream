@@ -9,5 +9,7 @@ public static class JoinRejectionReasons
     public const string NameInvalid = "Character names must be 1 to 32 characters, with no control characters.";
     public const string NameTaken = "That character name is not available. Choose another name.";
     public const string CharacterInUse = "That character is being played right now.";
+    public const string Banned = "You are banned from this server.";
+    public const string OnlineElsewhere = "That character is being played in another world right now.";
     public const string AlreadyJoined = "This connection is already playing another character. Reconnect to switch.";
 }

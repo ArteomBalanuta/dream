@@ -47,6 +47,16 @@ internal interface IAuthoritativeCombatHost
     // host that does not model ownership (a test double) behaves as before.
     bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record) => true;
 
+    // M5 parties: appends the other party members of the session that are spawned, alive and within the
+    // sharing range of the position. False (and nothing appended) for a host without parties or a session
+    // in none; the kill experience then goes to the member alone.
+    bool TryGetNearbyPartyMembers(PlayerSessionId member, Vector3 at, List<PlayerSessionId> into) => false;
+
+    // M6 quests: called once per kill with everyone who damaged the enemy, before the loot is granted.
+    void RecordEnemyKill(ReadOnlySpan<EnemyDamageContribution> contributors, string enemyKind, Vector3 at)
+    {
+    }
+
     // M4 PvP: read per use. The default is PvE only, so no code path changes unless a host enables it.
     CombatTargetPolicy TargetPolicy => CombatTargetPolicy.DefaultPve;
 
@@ -81,6 +91,7 @@ internal sealed class AuthoritativeCombatResolver
     // the registry mid-loop), the player candidates of PvP, and the players one arc reaches.
     private readonly List<EnemyActor> _arcScratch = [];
     private readonly List<CombatTargetCandidate> _pvpCandidates = [];
+    private readonly List<PlayerSessionId> _partyMateScratch = [];
     private readonly List<(float DistanceSquared, CombatTargetCandidate Candidate)> _pvpArcScratch = [];
 
     public AuthoritativeCombatResolver(
@@ -243,7 +254,7 @@ internal sealed class AuthoritativeCombatResolver
     // contributors still in the world, in session-id order, the first ones taking the remainder points.
     // Returns who gets the loot: the top damage dealer still present (ties: lowest session id), or the
     // finishing session when nobody recorded is present (a scripted kill). Allocation-free.
-    private PlayerSessionId AwardKillRewards(EnemyActor enemy, PlayerSessionId finisher)
+    private PlayerSessionId AwardKillRewards(EnemyActor enemy, PlayerSessionId finisher, Vector3 deathPosition)
     {
         ReadOnlySpan<EnemyDamageContribution> contributors = enemy.Contributors;
         Span<int> present = stackalloc int[EnemyActor.MaxContributors];
@@ -290,11 +301,39 @@ internal sealed class AuthoritativeCombatResolver
             EnemyDamageContribution entry = contributors[present[k]];
             if (_host.TryGetSessionCombatant(entry.SessionId, out PlayerCombatant? combatant) && combatant != null)
             {
-                GrantExperience(entry.SessionId, combatant, pool / count + (k < pool % count ? 1 : 0));
+                GrantSharedExperience(entry.SessionId, combatant, pool / count + (k < pool % count ? 1 : 0), deathPosition);
             }
         }
 
         return winner;
+    }
+
+    // M5: one contributor's share, split evenly with the party mates near the death, in ordinal session
+    // order, the first ones taking the remainder. Without mates it is the plain grant. A mate's part is
+    // not split again, so shares do not chain.
+    private void GrantSharedExperience(PlayerSessionId sessionId, PlayerCombatant combatant, int share, Vector3 at)
+    {
+        _partyMateScratch.Clear();
+        if (share <= 0 || !_host.TryGetNearbyPartyMembers(sessionId, at, _partyMateScratch) || _partyMateScratch.Count == 0)
+        {
+            _partyMateScratch.Clear();
+            GrantExperience(sessionId, combatant, share);
+            return;
+        }
+
+        _partyMateScratch.Add(sessionId);
+        _partyMateScratch.Sort(static (left, right) => string.CompareOrdinal(left.Value, right.Value));
+        int people = _partyMateScratch.Count;
+        for (int k = 0; k < people; k++)
+        {
+            PlayerSessionId who = _partyMateScratch[k];
+            if (_host.TryGetSessionCombatant(who, out PlayerCombatant? whoCombatant) && whoCombatant != null)
+            {
+                GrantExperience(who, whoCombatant, share / people + (k < share % people ? 1 : 0));
+            }
+        }
+
+        _partyMateScratch.Clear();
     }
 
     private void GrantExperience(PlayerSessionId sessionId, PlayerCombatant combatant, int reward)
@@ -414,7 +453,8 @@ internal sealed class AuthoritativeCombatResolver
         if (receipt.WasFatal)
         {
             Vector3 deathPosition = enemy.Position;
-            PlayerSessionId lootWinner = AwardKillRewards(enemy, message.SessionId);
+            PlayerSessionId lootWinner = AwardKillRewards(enemy, message.SessionId, deathPosition);
+            _host.RecordEnemyKill(enemy.Contributors, enemy.EnemyKind, deathPosition);
             _host.DeletePersistedEnemy(enemy.Combatant.Actor.Id);
             _enemies.PruneInactive();
             _host.GrantLoot(lootWinner, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick, deathPosition);

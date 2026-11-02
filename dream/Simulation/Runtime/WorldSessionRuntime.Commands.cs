@@ -135,6 +135,7 @@ public sealed partial class WorldSessionRuntime
             _tickPlayerTargets.Clear();
             AdvanceRespawns();
             AdvanceMana();
+            StepMultiplayerSystems(CurrentServerTick);
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
@@ -216,7 +217,9 @@ public sealed partial class WorldSessionRuntime
         if (!context.Combatant.Health.IsAlive
             && message.Payload is BuildUseIntent or CombatUseIntent
                 or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
-                or SkillUseIntent or ItemUseIntent)
+                or SkillUseIntent or ItemUseIntent
+                or TradeRequestIntent or TradeRespondIntent or TradeOfferIntent or TradeLockIntent
+                or TradeConfirmIntent or QuestAcceptIntent or QuestTurnInIntent)
         {
             return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
         }
@@ -273,6 +276,30 @@ public sealed partial class WorldSessionRuntime
                 => ProcessItemUseAction(message, context, itemUseIntent),
             QuickbarBindIntent quickbarIntent
                 => ProcessQuickbarBindAction(message, context.Player, quickbarIntent),
+            PartyInviteIntent partyInvite
+                => ProcessPartyInviteAction(message, context.Player, partyInvite),
+            PartyRespondIntent partyRespond
+                => ProcessPartyRespondAction(message, context.Player, partyRespond),
+            PartyLeaveIntent partyLeave
+                => ProcessPartyLeaveAction(message, context.Player, partyLeave),
+            TradeRequestIntent tradeRequest
+                => ProcessTradeRequestAction(message, context.Player, tradeRequest),
+            TradeRespondIntent tradeRespond
+                => ProcessTradeRespondAction(message, context.Player, tradeRespond),
+            TradeOfferIntent tradeOffer
+                => ProcessTradeOfferAction(message, context.Player, tradeOffer),
+            TradeLockIntent tradeLock
+                => ProcessTradeLockAction(message, context.Player, tradeLock),
+            TradeConfirmIntent tradeConfirm
+                => ProcessTradeConfirmAction(message, context.Player, tradeConfirm),
+            TradeCancelIntent tradeCancel
+                => ProcessTradeCancelAction(message, context.Player, tradeCancel),
+            QuestAcceptIntent questAccept
+                => ProcessQuestAcceptAction(message, context.Player, questAccept),
+            QuestTurnInIntent questTurnIn
+                => ProcessQuestTurnInAction(message, context.Player, questTurnIn),
+            QuestAbandonIntent questAbandon
+                => ProcessQuestAbandonAction(message, context.Player, questAbandon),
             CombatUseIntent
                 => CreateRejectedActionResult(
                     message,

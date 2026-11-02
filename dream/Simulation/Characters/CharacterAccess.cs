@@ -4,7 +4,18 @@ public readonly record struct CharacterRecordRef(CharacterKey Key, string Displa
 
 // What the join prefetch read. Existing: the row whose display_name matches NOCASE. KeyReserved: no
 // display match, but a row has this exact player_name. OwnedByAccount: characters the token owns.
-public readonly record struct CharacterLookup(CharacterRecordRef? Existing, bool KeyReserved, int OwnedByAccount);
+// M8. What the account behind a character stands at: Role 0 player or 1 admin, a ban and a mute with their
+// end (UTC; null for none), and the ban reason.
+public readonly record struct AccountStanding(int Role, DateTime? BannedUntilUtc, string? BanReason, DateTime? MutedUntilUtc);
+
+// Standing is the owning account's role and sanctions (M8); HeldElsewhere is true while another world holds
+// the character's presence lease.
+public readonly record struct CharacterLookup(
+    CharacterRecordRef? Existing,
+    bool KeyReserved,
+    int OwnedByAccount,
+    AccountStanding Standing = default,
+    bool HeldElsewhere = false);
 
 public enum CharacterAccessOutcome : byte
 {

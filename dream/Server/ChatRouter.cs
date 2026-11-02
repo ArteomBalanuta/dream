@@ -16,12 +16,15 @@ public static class ChatRouter
 
     public const string PlayerOfflineText = "That player is not online.";
 
+    // party: the sender's party members (the sender included) for a Party line, null when the sender is in
+    // none. The Party and Command channels are not routed here yet (M5 workstream A, M8 workstream C).
     public static void Route(
         ChatParticipant sender,
         ClientChatMessage chat,
         IReadOnlyList<ChatParticipant> participants,
         ulong serverTick,
-        List<PendingConnectionReply> replies)
+        List<PendingConnectionReply> replies,
+        IReadOnlyList<ChatParticipant>? party = null)
     {
         switch (chat.Channel)
         {

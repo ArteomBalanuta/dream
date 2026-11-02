@@ -88,6 +88,11 @@ public sealed partial class WorldSessionRuntime
             return CompleteInventoryAction(message, player, InventoryEquipOutcome.Throttled, "interact");
         }
 
+        if (HasQuestsFor(npc))
+        {
+            return BuildNpcDialogue(message, player, npc);
+        }
+
         IReadOnlyList<NpcStockEntry> stock = npc.Definition.Stock;
         VendorStockEntry[] entries = new VendorStockEntry[stock.Count];
         for (int i = 0; i < entries.Length; i++)

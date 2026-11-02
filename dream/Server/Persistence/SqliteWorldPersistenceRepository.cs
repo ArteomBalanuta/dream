@@ -19,6 +19,7 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     private readonly SqliteEnemyRepository _enemies;
     private readonly SqliteItemRepository _items;
     private readonly SqliteInventoryRepository _inventory;
+    private readonly SqliteQuestRepository _quests;
     private readonly SqliteObjectIdCounterRepository _objectIdCounter;
     private readonly SqliteTerrainOverrideRepository _terrainOverrides;
 
@@ -32,6 +33,7 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
         _enemies = new SqliteEnemyRepository(store, worldId);
         _items = new SqliteItemRepository(store, worldId);
         _inventory = new SqliteInventoryRepository(store, worldId);
+        _quests = new SqliteQuestRepository(store, worldId);
         _objectIdCounter = new SqliteObjectIdCounterRepository(store, worldId);
         _terrainOverrides = new SqliteTerrainOverrideRepository(store, worldId);
         TerrainChunks = new SqliteTerrainChunkRepository(store, worldId);
@@ -79,7 +81,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => _inventory.LoadInventorySlots();
 
-    public PersistedPlayerInventory LoadPlayerInventory(string playerName) => _inventory.LoadPlayerInventory(playerName);
+    public PersistedPlayerInventory LoadPlayerInventory(string playerName)
+        => _inventory.LoadPlayerInventory(playerName) with { Quests = ((IQuestRepository)_quests).LoadPlayerQuests(playerName) };
 
     public void SaveInventorySlot(PersistedInventorySlot slot) => _inventory.SaveInventorySlot(slot);
 
@@ -94,6 +97,22 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     public void SaveStarterKitGrant(string playerName, int kitVersion) => _inventory.SaveStarterKitGrant(playerName, kitVersion);
 
     public void ApplyWalletDelta(string playerName, long delta) => _inventory.ApplyWalletDelta(playerName, delta);
+
+    public void DetachHeldItem(string fromPlayer, long itemInstanceId)
+        => ((IInventoryRepository)_inventory).DetachHeldItem(fromPlayer, itemInstanceId);
+
+    public void AttachItem(string toPlayer, long itemInstanceId, int slotIndex, DateTime utc)
+        => ((IInventoryRepository)_inventory).AttachItem(toPlayer, itemInstanceId, slotIndex, utc);
+
+    public IReadOnlyList<PersistedQuest> LoadPlayerQuests(string playerName)
+        => ((IQuestRepository)_quests).LoadPlayerQuests(playerName);
+
+    public void SaveQuestProgress(PersistedQuest quest) => ((IQuestRepository)_quests).SaveQuestProgress(quest);
+
+    public void CompleteQuest(string playerName, string questKey, DateTime utc)
+        => ((IQuestRepository)_quests).CompleteQuest(playerName, questKey, utc);
+
+    public void DeleteQuest(string playerName, string questKey) => ((IQuestRepository)_quests).DeleteQuest(playerName, questKey);
 
     public void SaveQuickbarSlot(PersistedQuickbarSlot slot) => _inventory.SaveQuickbarSlot(slot);
 

@@ -139,6 +139,8 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.OnCooldown => "the item is on cooldown",
             InventoryEquipOutcome.NothingToRestore => "there is nothing to restore",
             InventoryEquipOutcome.WriteFailed => "an earlier inventory save failed, so inventory changes are paused",
+            InventoryEquipOutcome.TradeUnavailable => "the trade is not available",
+            InventoryEquipOutcome.QuestUnavailable => "the quest is not available",
             _ => "the request was not valid",
         };
         if (reason != null)

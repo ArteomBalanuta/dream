@@ -285,7 +285,8 @@ public sealed class TransportJsonCodec : IProtocolCodec
         return messageKind is "server.hello" or "server.join-accepted" or "server.join-rejected"
             or "server.snapshot" or "server.action" or WorldChunkMessage.Kind or TerrainChunkMessage.Kind
             or InventoryPushMessage.Kind or ServerChatMessage.Kind or ServerCharacterList.Kind
-            or ServerGroundItems.Kind or ServerPlayerVitals.Kind;
+            or ServerGroundItems.Kind or ServerPlayerVitals.Kind
+            or ServerPartyState.Kind or ServerTradeState.Kind or ServerQuestLog.Kind or ServerPlayerProgress.Kind;
     }
 
     private DecodedProtocolMessage Decode(ReadOnlySpan<byte> payload, bool fromClient)
@@ -404,6 +405,10 @@ public sealed class TransportJsonCodec : IProtocolCodec
             ServerCharacterList.Kind => DeserializeMessage<ServerCharacterList>(ref payloadReader, hasPayload),
             ServerGroundItems.Kind => DeserializeMessage<ServerGroundItems>(ref payloadReader, hasPayload),
             ServerPlayerVitals.Kind => DeserializeMessage<ServerPlayerVitals>(ref payloadReader, hasPayload),
+            ServerPartyState.Kind => DeserializeMessage<ServerPartyState>(ref payloadReader, hasPayload),
+            ServerTradeState.Kind => DeserializeMessage<ServerTradeState>(ref payloadReader, hasPayload),
+            ServerQuestLog.Kind => DeserializeMessage<ServerQuestLog>(ref payloadReader, hasPayload),
+            ServerPlayerProgress.Kind => DeserializeMessage<ServerPlayerProgress>(ref payloadReader, hasPayload),
             _ => throw new InvalidOperationException($"Unknown protocol message kind '{messageKind}'.")
         };
 
@@ -418,7 +423,8 @@ public sealed class TransportJsonCodec : IProtocolCodec
         "client.join-request", "client.world-resync", "server.hello", "server.join-accepted", "server.join-rejected",
         WorldChunkMessage.Kind, TerrainChunkMessage.Kind, InventoryPushMessage.Kind,
         ClientChatMessage.Kind, ServerChatMessage.Kind, ClientCharacterListRequest.Kind, ServerCharacterList.Kind,
-        ServerGroundItems.Kind, ServerPlayerVitals.Kind
+        ServerGroundItems.Kind, ServerPlayerVitals.Kind,
+        ServerPartyState.Kind, ServerTradeState.Kind, ServerQuestLog.Kind, ServerPlayerProgress.Kind
     ];
 
     private static readonly byte[][] KnownMessageKindsUtf8 = Array.ConvertAll(KnownMessageKinds, System.Text.Encoding.UTF8.GetBytes);

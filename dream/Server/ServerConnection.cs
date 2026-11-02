@@ -1012,6 +1012,18 @@ public sealed class ServerConnection : IAsyncDisposable
                 case ServerGroundItems groundItems:
                     _codec.Encode(envelope, groundItems, _frameWriter);
                     break;
+                case ServerPartyState partyState:
+                    _codec.Encode(envelope, partyState, _frameWriter);
+                    break;
+                case ServerTradeState tradeState:
+                    _codec.Encode(envelope, tradeState, _frameWriter);
+                    break;
+                case ServerQuestLog questLog:
+                    _codec.Encode(envelope, questLog, _frameWriter);
+                    break;
+                case ServerPlayerProgress progress:
+                    _codec.Encode(envelope, progress, _frameWriter);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");
@@ -1178,6 +1190,10 @@ public sealed class ServerConnection : IAsyncDisposable
             InventoryPushMessage push => $"notices={push.Notices.Count} inventory={(push.Inventory.HasValue ? 1 : 0)}",
             ServerGroundItems ground => $"reset={ground.Reset} upserts={ground.Upserts.Count} removed={ground.RemovedIds.Count}",
             ServerPlayerVitals vitals => $"mana={vitals.CurrentMana}/{vitals.MaxMana} cooldowns={vitals.Cooldowns.Count}",
+            ServerPartyState party => $"members={party.Members.Count} invite={(party.PendingInviteFrom != null ? 1 : 0)}",
+            ServerTradeState trade => $"stage={trade.Stage} mine={trade.MyItems.Count} theirs={trade.TheirItems.Count}",
+            ServerQuestLog quests => $"entries={quests.Entries.Count}",
+            ServerPlayerProgress progress => $"level={progress.Level} xp={progress.Experience}",
             _ => string.Empty
         };
 
