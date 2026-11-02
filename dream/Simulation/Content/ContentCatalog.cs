@@ -16,7 +16,7 @@ namespace Dream.Simulation.Content;
 //
 // ContentDigest covers the parsed values, not the file bytes, so whitespace and line endings do not
 // change it. It is a lockstep input: two servers with different content diverge.
-public sealed class ContentCatalog
+public sealed partial class ContentCatalog
 {
     public const string WolfKey = "Wolf";
 
@@ -38,6 +38,7 @@ public sealed class ContentCatalog
     // Vendors and gold (M3).
     public const int MaxNpcs = 64;
     public const int MaxNpcStock = 32;
+    public const int MaxNpcGreetingLength = 400;
     public const float MaxNpcOffset = 1000f;
     public const int MaxGoldAmount = 1_000_000;
 
@@ -203,7 +204,10 @@ public sealed class ContentCatalog
         // skills.json is optional as well: a content directory without it has no skills.
         string skillsPath = Path.Combine(directory, SkillsFileName);
         string skillsJson = File.Exists(skillsPath) ? ReadFile(skillsPath) : EmptySkillsJson;
-        return Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, skillsJson);
+        // quests.json is optional as well: a content directory without it has no quests.
+        string questsPath = Path.Combine(directory, QuestsFileName);
+        string questsJson = File.Exists(questsPath) ? ReadFile(questsPath) : EmptyQuestsJson;
+        return Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, skillsJson, questsJson);
     }
 
     // A catalog with no loot tables (fixtures that predate loot.json).
@@ -227,8 +231,12 @@ public sealed class ContentCatalog
     public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson) =>
         Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, EmptySkillsJson);
 
-    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson, string skillsJson)
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson, string skillsJson) =>
+        Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, skillsJson, EmptyQuestsJson);
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson, string skillsJson, string questsJson)
     {
+        ArgumentNullException.ThrowIfNull(questsJson);
         ArgumentNullException.ThrowIfNull(skillsJson);
         ArgumentNullException.ThrowIfNull(npcsJson);
         ArgumentNullException.ThrowIfNull(spawnsJson);
@@ -242,8 +250,9 @@ public sealed class ContentCatalog
         List<SpawnCamp> camps = ParseSpawns(spawnsJson, enemies);
         List<NpcDefinition> npcs = ParseNpcs(npcsJson, items);
         ParsedSkills skills = ParseSkills(skillsJson, items);
-        string digest = ComputeDigest(items, enemies, loot, camps, npcs, skills);
-        return new ContentCatalog(
+        List<QuestDefinition> quests = ParseQuests(questsJson, items, enemies, npcs);
+        string digest = ComputeDigest(items, enemies, loot, camps, npcs, skills, quests);
+        ContentCatalog catalog = new(
             items.ByKey,
             items.List,
             items.StarterKit,
@@ -259,6 +268,8 @@ public sealed class ContentCatalog
             skills.List,
             skills.DefaultQuickbar,
             digest);
+        catalog.SetQuests(quests);
+        return catalog;
     }
 
     private static ContentCatalog LoadShipped() => LoadFromDirectory(ShippedDirectory);
@@ -830,7 +841,8 @@ public sealed class ContentCatalog
                 NpcsFileName,
                 path,
                 npcElement,
-                ["key", "displayName", "visualKey", "offsetX", "offsetZ", "stock"]);
+                ["key", "displayName", "visualKey", "offsetX", "offsetZ", "stock"],
+                ["greeting"]);
             string key = ReadKey(NpcsFileName, $"{path}.key", npc["key"]);
             if (!keys.Add(key))
             {
@@ -886,7 +898,10 @@ public sealed class ContentCatalog
                 ReadVisualId(NpcsFileName, $"{path}.visualKey", npc["visualKey"]),
                 ReadFloat(NpcsFileName, $"{path}.offsetX", npc["offsetX"], -MaxNpcOffset, MaxNpcOffset),
                 ReadFloat(NpcsFileName, $"{path}.offsetZ", npc["offsetZ"], -MaxNpcOffset, MaxNpcOffset),
-                stock));
+                stock,
+                npc.TryGetValue("greeting", out JsonElement greeting)
+                    ? ReadText(NpcsFileName, $"{path}.greeting", greeting, MaxNpcGreetingLength)
+                    : string.Empty));
             index++;
         }
 
@@ -1154,7 +1169,7 @@ public sealed class ContentCatalog
 
     // ---- digest ----
 
-    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps, List<NpcDefinition> npcs, ParsedSkills skills)
+    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps, List<NpcDefinition> npcs, ParsedSkills skills, List<QuestDefinition> quests)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
@@ -1274,6 +1289,12 @@ public sealed class ContentCatalog
                 AppendField(text, npc.DisplayName).Append('|');
                 AppendField(text, npc.VisualKey).Append('|')
                     .Append(npc.OffsetX.ToString("R", c)).Append('|').Append(npc.OffsetZ.ToString("R", c)).Append('\n');
+                if (npc.Greeting.Length > 0)
+                {
+                    text.Append("greeting|");
+                    AppendField(text, npc.Greeting).Append('\n');
+                }
+
                 foreach (NpcStockEntry entry in npc.Stock)
                 {
                     text.Append("stock|");
@@ -1305,6 +1326,8 @@ public sealed class ContentCatalog
                 AppendField(text, entry.Key).Append('\n');
             }
         }
+
+        AppendQuestDigest(text, quests);
 
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()));
         return Convert.ToHexStringLower(hash);

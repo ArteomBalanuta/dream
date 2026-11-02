@@ -313,8 +313,8 @@ public sealed class M3EndToEndLoopbackTests
             // Both players stand where the scene was told, away from the vendor; the vendor is known to both.
             Assert.True(Vector3.Distance(a.World.Player.GetWorldPosition(), targetA.Position) < 1f, $"A: {a.World.Player.GetWorldPosition()} vs {targetA.Position}");
             Assert.True(Vector3.Distance(b.World.Player.GetWorldPosition(), targetB.Position) < 1f, $"B: {b.World.Player.GetWorldPosition()} vs {targetB.Position}");
-            Assert.Equal(1, a.Npcs.Count);
-            Assert.Equal(1, b.Npcs.Count);
+            Assert.Equal(2, a.Npcs.Count);
+            Assert.Equal(2, b.Npcs.Count);
             Assert.False(a.Npcs.TryGetNearest(a.World.Player.GetWorldPosition(), ClientNpcCache.InteractRange, out _));
             Assert.Equal(0, a.GroundItems.Count);
             Assert.Equal(0L, a.Inventory!.Value.Gold);

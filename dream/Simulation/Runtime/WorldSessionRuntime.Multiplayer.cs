@@ -81,6 +81,7 @@ public sealed partial class WorldSessionRuntime
         StepTrades(tick);
         StepPartyRefresh(tick);
         StepOwnerProgress(tick);
+        StepQuestLogs(tick);
         StepPresence(tick);
     }
 

@@ -72,7 +72,7 @@ public sealed class SkillContentTests
         Assert.True(catalog.TryGetItem("potion.mana", out ItemDefinition mana));
         Assert.Equal(new ItemUseDefinition(0, 40, 320), mana.Use);
 
-        NpcDefinition quartermaster = Assert.Single(catalog.Npcs);
+        NpcDefinition quartermaster = Assert.Single(catalog.Npcs, n => n.Key == "spawn-quartermaster");
         Assert.Contains(quartermaster.Stock, e => e.ItemKind == "potion.health" && e.Price == 12);
         Assert.Contains(quartermaster.Stock, e => e.ItemKind == "potion.mana" && e.Price == 12);
         Assert.Null(catalog.Items.First(i => i.Key == "tool.torch").Use);

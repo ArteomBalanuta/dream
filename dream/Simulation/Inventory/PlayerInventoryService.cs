@@ -91,6 +91,15 @@ internal sealed partial class PlayerInventoryService
     // main thread, together with the queued wallet delta (TryAddGold and the vendor actions).
     private readonly Dictionary<string, long> _goldByPlayer = new(StringComparer.Ordinal);
 
+    // The quests each loaded inventory's player has accepted or completed (M6, PlayerInventoryService.Quests.cs).
+    // Kept here so they share the failed-write gate, the eviction retention and the queued closures.
+    private readonly Dictionary<string, Dictionary<string, QuestRecord>> _questsByPlayer = new(StringComparer.Ordinal);
+
+    // Bumped on every inventory write queued (first line of NoteWriteQueued) and on every quest change, so
+    // the runtime can tell cheaply when the quest log it last sent is stale.
+    private readonly Dictionary<string, long> _inventoryRevisions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _questRevisions = new(StringComparer.Ordinal);
+
     // The loaded inventories whose layout has been repaired (RepairLayout): done once per load, on the
     // first Ensure, and forgotten on Evict, so a reloaded inventory is checked again.
     private readonly HashSet<string> _repairedLayouts = new(StringComparer.Ordinal);
@@ -178,6 +187,7 @@ internal sealed partial class PlayerInventoryService
         }
 
         LoadQuickbar(playerName, inventory.Quickbar);
+        LoadQuests(playerName, inventory.Quests);
 
         // A hand-edited row can hold an id of 0 or below, which is not a valid ObjectId: the row still
         // loads, it just has nothing to reserve (the allocator never hands such an id out).
@@ -797,6 +807,9 @@ internal sealed partial class PlayerInventoryService
             tracker.EvictedQuickbar = _quickbarByPlayer.Remove(playerName, out QuickbarSlotSnapshot[]? evictedQuickbar)
                 ? evictedQuickbar
                 : null;
+            tracker.EvictedQuests = _questsByPlayer.Remove(playerName, out Dictionary<string, QuestRecord>? evictedQuests)
+                ? evictedQuests
+                : null;
             if (!writes.EnqueueRead(() => tracker.Settle(failed: writes.FailedWrites > baseline)))
             {
                 tracker.Settle(failed: true);
@@ -817,6 +830,9 @@ internal sealed partial class PlayerInventoryService
         _starterKitByPlayer.Remove(playerName);
         _goldByPlayer.Remove(playerName);
         _quickbarByPlayer.Remove(playerName);
+        _questsByPlayer.Remove(playerName);
+        _inventoryRevisions.Remove(playerName);
+        _questRevisions.Remove(playerName);
         foreach (long itemInstanceId in slots.Values)
         {
             _itemInstances.Remove(itemInstanceId);
@@ -1164,6 +1180,12 @@ internal sealed partial class PlayerInventoryService
         }
 
         tracker.EvictedQuickbar = null;
+        if (tracker.EvictedQuests != null)
+        {
+            _questsByPlayer[playerName] = tracker.EvictedQuests;
+        }
+
+        tracker.EvictedQuests = null;
         tracker.EvictedSlots = null;
         tracker.EvictedItems = null;
         tracker.EvictedStarterKitVersion = null;
@@ -1685,6 +1707,7 @@ internal sealed partial class PlayerInventoryService
     // the first write since the inventory was loaded is queued, so every later failure counts.
     private void NoteWriteQueued(string playerName)
     {
+        _inventoryRevisions[playerName] = _inventoryRevisions.GetValueOrDefault(playerName) + 1;
         if (_writes == null || _worldPersistence == null || _writeTrackers.ContainsKey(playerName))
         {
             return;
@@ -1726,6 +1749,9 @@ internal sealed partial class PlayerInventoryService
 
         // The moved-out inventory's quickbar rows, if it had any.
         public QuickbarSlotSnapshot[]? EvictedQuickbar { get; set; }
+
+        // The moved-out inventory's quest records, if it had any.
+        public Dictionary<string, QuestRecord>? EvictedQuests { get; set; }
 
         public InventoryWriteVerdict Verdict => (InventoryWriteVerdict)Volatile.Read(ref _verdict);
 

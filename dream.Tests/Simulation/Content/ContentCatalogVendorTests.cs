@@ -26,7 +26,8 @@ public sealed class ContentCatalogVendorTests
     public void TheShippedVendor_StandsNearTheSpawn_AndSellsOnlyUnrolledItemsAboveTheirSellPrice()
     {
         ContentCatalog catalog = ContentCatalog.Shipped;
-        NpcDefinition npc = Assert.Single(catalog.Npcs);
+        Assert.Equal(["spawn-quartermaster", "gate-warden"], catalog.Npcs.Select(n => n.Key));
+        NpcDefinition npc = catalog.Npcs[0];
         Assert.Equal("npc.vendor", npc.VisualKey);
         Assert.InRange(Math.Abs(npc.OffsetX) + Math.Abs(npc.OffsetZ), 0.1f, 10f);
         Assert.NotEmpty(npc.Stock);
@@ -55,7 +56,17 @@ public sealed class ContentCatalogVendorTests
         Assert.Empty(none.Npcs);
         ContentCatalog withVendor = Load(Shipped(ContentCatalog.NpcsFileName));
         Assert.NotEqual(none.ContentDigest, withVendor.ContentDigest);
-        Assert.Equal(ContentCatalog.Shipped.ContentDigest, withVendor.ContentDigest);
+        // The shipped digest also covers quests.json, which the helper above leaves out.
+        ContentCatalog withQuests = ContentCatalog.Load(
+            Shipped(ContentCatalog.ItemsFileName),
+            Shipped(ContentCatalog.EnemiesFileName),
+            Shipped(ContentCatalog.LootFileName),
+            Shipped(ContentCatalog.SpawnsFileName),
+            Shipped(ContentCatalog.NpcsFileName),
+            Shipped(ContentCatalog.SkillsFileName),
+            Shipped(ContentCatalog.QuestsFileName));
+        Assert.Equal(ContentCatalog.Shipped.ContentDigest, withQuests.ContentDigest);
+        Assert.NotEqual(withVendor.ContentDigest, withQuests.ContentDigest);
     }
 
     [Fact]
