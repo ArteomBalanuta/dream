@@ -873,10 +873,15 @@ public class FxSimulationTests
         FxInstance day = Assert.Single(WriteAll(noon), i => IsFlame(i));
         FxInstance dark = Assert.Single(WriteAll(night), i => IsFlame(i));
 
-        // Not scaled by the 0.12 halo strength: a clearly visible flame with coverage alpha 0.8.
+        // Not scaled by the 0.12 halo strength: a clearly visible flame with full instance alpha
+        // (the atlas coverage peaks at 0.8), tinted orange: red held at the alpha, green and blue below.
         uint alpha = day.Color >> 24;
-        Assert.InRange(alpha, 203u, 205u);
-        Assert.True((day.Color & 0xFFu) >= alpha && ((day.Color >> 8) & 0xFFu) >= alpha && ((day.Color >> 16) & 0xFFu) >= alpha);
+        Assert.Equal(255u, alpha);
+        uint red = day.Color & 0xFFu;
+        uint green = (day.Color >> 8) & 0xFFu;
+        uint blue = (day.Color >> 16) & 0xFFu;
+        Assert.True(red >= alpha);
+        Assert.True(green < red && blue < green && blue > 0u);
         // Night is pure additive, as before.
         Assert.Equal(0u, dark.Color >> 24);
         Assert.True((dark.Color & 0xFFu) >= 190u);

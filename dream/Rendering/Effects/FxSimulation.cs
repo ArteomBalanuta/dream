@@ -60,9 +60,6 @@ public sealed class FxSimulation
     private const float HeldHaloLift = 0.12f;
     private const float FlameLift = 0.1f;
     private const float FlameHalfSize = 0.20f;
-    // The flame's instance alpha at noon: with the atlas coverage it occludes a bright sky, and
-    // falls to 0 (pure additive) at night.
-    private const float FlameDayAlpha = 0.8f;
     public const float SparkStartHalfSize = 0.10f;
     public const float SparkEndHalfSize = 0.04f;
     // Embers read tiny at isometric range, so every ember row is this much larger than the plan.
@@ -388,13 +385,16 @@ public sealed class FxSimulation
                 // The flame ignores the halo strength (0.12 at noon): additive light cannot show on a
                 // bright sky, so by day it gets coverage alpha instead and stays opaque enough to read.
                 // RGB never drops below the alpha, so the occluding flame is not dark.
-                float alpha = (1f - _nightFactor) * FlameDayAlpha * cull;
-                float white = MathF.Max(cull * flicker * flameNight, alpha);
+                float alpha = (1f - _nightFactor) * cull;
+                float flame = cull * flicker * flameNight;
+                // By day the flame is tinted saturated orange; only red is held at the alpha.
+                float tintG = 0.62f + 0.38f * _nightFactor;
+                float tintB = 0.25f + 0.75f * _nightFactor;
                 _halos[_haloCount++] = new FxInstance
                 {
                     Position = fxPosition + Vector3.UnitY * FlameLift,
                     HalfSize = FlameHalfSize,
-                    Color = FxInstance.PackColor(white, white, white, alpha),
+                    Color = FxInstance.PackColor(MathF.Max(flame, alpha), flame * tintG, flame * tintB, alpha),
                     Rotation = 0f,
                     Frame = (float)FxFrame.Flame0 + (((int)(_clock * 12f + i)) & 3),
                     DepthBias = FlameDepthBias
@@ -545,7 +545,9 @@ public sealed class FxSimulation
             b += light.Color.Z * f;
         }
 
-        return new Vector3(MathF.Min(r, 1f), MathF.Min(g, 1f), MathF.Min(b, 1f));
+        // Divide by the brightest channel when above 1, so the hue survives a strong light.
+        float scale = 1f / MathF.Max(MathF.Max(r, g), MathF.Max(b, 1f));
+        return new Vector3(r * scale, g * scale, b * scale);
     }
 
     // White-hot at birth, orange mid-life, dull red at the end; piecewise linear in life.

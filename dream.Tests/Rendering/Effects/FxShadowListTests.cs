@@ -19,7 +19,7 @@ public class FxShadowListTests
         shadows.Add(new Vector3(5f, 2f, 6f), 2f, FxShadowList.PlayerRadius);
         FxInstance[] destination = new FxInstance[4];
 
-        int written = shadows.Write(destination, Camera, Centre);
+        int written = shadows.Write(destination, Camera, Centre, 1f);
 
         Assert.Equal(1, written);
         FxInstance blob = destination[0];
@@ -27,8 +27,41 @@ public class FxShadowListTests
         Assert.Equal((float)FxFrame.Blob, blob.Frame);
         Assert.Equal(FxInstance.GroundAligned, blob.Stretch);
         Assert.Equal(FxShadowList.PlayerRadius, blob.HalfSize, 4);
-        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, FxShadowList.Alpha), blob.Color);
+        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, FxShadowList.NightAlpha), blob.Color);
         Assert.Equal(0u, blob.Color & 0x00FFFFFFu);
+    }
+
+    [Fact]
+    public void The_Blob_Is_Stronger_By_Day_And_Blends_Linearly_With_The_Night_Factor()
+    {
+        FxShadowList shadows = new();
+        shadows.Add(new Vector3(5f, 2f, 6f), 2f, 0.5f);
+        FxInstance[] destination = new FxInstance[1];
+
+        shadows.Write(destination, Camera, Centre, 0f);
+        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, 0.95f), destination[0].Color);
+        shadows.Write(destination, Camera, Centre, 0.5f);
+        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, 0.825f), destination[0].Color);
+        shadows.Write(destination, Camera, Centre, 1f);
+        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, 0.7f), destination[0].Color);
+    }
+
+    [Fact]
+    public void Begin_Culls_Far_Blobs_In_Add_So_They_Cannot_Take_A_Near_Slot()
+    {
+        FxShadowList shadows = new();
+        shadows.Begin(Centre);
+        for (int i = 0; i < FxLimits.ShadowBudget + 4; i++)
+        {
+            shadows.Add(new Vector3(100f + i, 1f, 5f), 1f, 0.5f);
+        }
+
+        Assert.Equal(0, shadows.Count);
+        shadows.Add(new Vector3(6f, 1f, 5f), 1f, 0.5f);
+        Assert.Equal(1, shadows.Count);
+        FxInstance[] destination = new FxInstance[4];
+        Assert.Equal(1, shadows.Write(destination, Camera, Centre, 1f));
+        Assert.Equal(6f, destination[0].Position.X);
     }
 
     [Fact]
@@ -38,10 +71,10 @@ public class FxShadowListTests
         shadows.Add(new Vector3(5f, 2f + FxShadowList.MaxAirHeight, 6f), 2f, 0.5f);
         FxInstance[] destination = new FxInstance[1];
 
-        shadows.Write(destination, Camera, Centre);
+        shadows.Write(destination, Camera, Centre, 1f);
 
         Assert.Equal(0.5f * 1.3f, destination[0].HalfSize, 4);
-        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, FxShadowList.Alpha * 0.35f), destination[0].Color);
+        Assert.Equal(FxInstance.PackColor(0f, 0f, 0f, FxShadowList.NightAlpha * 0.35f), destination[0].Color);
     }
 
     [Fact]
@@ -53,7 +86,7 @@ public class FxShadowListTests
         shadows.Add(new Vector3(3f, 0f, 3f), 0f, 0.5f);
         FxInstance[] destination = new FxInstance[4];
 
-        Assert.Equal(1, shadows.Write(destination, Vector3.Zero, Centre));
+        Assert.Equal(1, shadows.Write(destination, Vector3.Zero, Centre, 1f));
         Assert.Equal(3f, destination[0].Position.X);
     }
 
@@ -68,12 +101,12 @@ public class FxShadowListTests
 
         Assert.Equal(FxLimits.ShadowBudget, shadows.Count);
         FxInstance[] small = new FxInstance[3];
-        Assert.Equal(3, shadows.Write(small, Camera, Centre));
+        Assert.Equal(3, shadows.Write(small, Camera, Centre, 1f));
         FxInstance[] large = new FxInstance[FxLimits.ShadowBudget + 8];
-        Assert.Equal(FxLimits.ShadowBudget, shadows.Write(large, Camera, Centre));
+        Assert.Equal(FxLimits.ShadowBudget, shadows.Write(large, Camera, Centre, 1f));
 
         shadows.Clear();
-        Assert.Equal(0, shadows.Write(large, Camera, Centre));
+        Assert.Equal(0, shadows.Write(large, Camera, Centre, 1f));
     }
 
     [Fact]
@@ -90,7 +123,7 @@ public class FxShadowListTests
                 shadows.Add(new Vector3(5f + i, 1.5f, 6f), 1f, 0.5f);
             }
 
-            shadows.Write(destination, Camera, Centre);
+            shadows.Write(destination, Camera, Centre, 1f);
         });
     }
 
@@ -137,17 +170,109 @@ public class FxShadowListTests
         Assert.True(FxGroundProbe.TryFindGroundY(map, standing, out float groundY));
         Assert.Equal(top + 1f / resolution, groundY, 1e-4f);
 
-        // A child top above the feet is skipped, and the result is never above the feet.
+        // A child top above the feet is skipped: mid-cell, the top of the lowest layer is not
+        // reached by feet half a child up, so the scan falls to the cell below (its full top is y).
         Vector3 inside = new(x + 0.5f, top + 0.5f / resolution, z + 0.5f);
-        FxGroundProbe.TryFindGroundY(map, inside, out groundY);
-        Assert.True(groundY <= inside.Y, $"{groundY}");
+        bool found = FxGroundProbe.TryFindGroundY(map, inside, out groundY);
+        Assert.Equal(CellBelowTop(map, x, top, z, out float below), found);
+        if (found)
+        {
+            Assert.Equal(below, groundY, 1e-4f);
+        }
 
-        // An empty column in the cell falls through to the cell below, not the full-cube top.
+        // A solid child below an above-feet child: the lower child's top is the answer.
+        state.SetChildSolid(new GeometrySubcellKey(resolution / 2, 1, resolution / 2), true);
+        state.SetChildSolid(new GeometrySubcellKey(resolution / 2, 3 % resolution, resolution / 2), true);
+        Vector3 between = new(x + (resolution / 2 + 0.5f) / resolution, top + 2.5f / resolution, z + (resolution / 2 + 0.5f) / resolution);
+        Assert.True(FxGroundProbe.TryFindGroundY(map, between, out groundY));
+        Assert.Equal(top + 2f / resolution, groundY, 1e-4f);
+
+        // An empty cell falls through to the cell below, not the full-cube top.
         state.SetAllChildrenEmpty();
         Vector3 above = new(x + 0.5f, top + 1f, z + 0.5f);
-        FxGroundProbe.TryFindGroundY(map, above, out groundY);
-        Assert.True(groundY <= top + 0.001f, $"{groundY}");
+        found = FxGroundProbe.TryFindGroundY(map, above, out groundY);
+        Assert.Equal(CellBelowTop(map, x, top, z, out below), found);
+        if (found)
+        {
+            Assert.Equal(below, groundY, 1e-4f);
+        }
     }
+
+    // The probe's expected answer under a cell whose column below is a stack of full cubes (or nothing).
+    private static bool CellBelowTop(Map map, int x, int top, int z, out float expected)
+    {
+        expected = 0f;
+        for (int y = top - 1; y >= top - FxGroundProbe.MaxCellsDown && y >= 0; y--)
+        {
+            GeometryCellRecord? record = map.TryGetGeometryCellAtCell(x, y, z);
+            if (record != null && record.SubdivisionState == null && record.Definition.ShapeKind == GeometryShapeKind.SolidCube)
+            {
+                expected = y + 1;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [Fact]
+    public void Feet_Mid_Air_Beside_A_Full_Cube_Wall_Ignore_The_Wall_Top()
+    {
+        Map map = new(physics: null, generateStartupTerrain: true, width: 10, depth: 10, headless: true);
+        Assert.True(FindColumn(map, out int x, out int z, out int top));
+        BuildWall(map, x + 1, z, top, subdividedLayer: -1);
+
+        // Jumping 1.5 m up, 0.3 m from the wall: the wall top (top + 3) is above the feet, which are
+        // inside the wall's top cell.
+        Vector3 feet = new(x + 0.7f, top + 2.5f, z + 0.5f);
+        Assert.True(FxGroundProbe.TryFindGroundY(map, feet, FxShadowList.PlayerRadius, out float groundY));
+        Assert.Equal(top + 1f, groundY);
+    }
+
+    [Fact]
+    public void Feet_Mid_Air_Beside_A_Subdivided_Wall_Ignore_The_Wall_Top()
+    {
+        Map map = new(physics: null, generateStartupTerrain: true, width: 10, depth: 10, headless: true);
+        Assert.True(FindColumn(map, out int x, out int z, out int top));
+        BuildWall(map, x + 1, z, top, subdividedLayer: 2);
+
+        Vector3 feet = new(x + 0.7f, top + 2.5f, z + 0.5f);
+        Assert.True(FxGroundProbe.TryFindGroundY(map, feet, FxShadowList.PlayerRadius, out float groundY));
+        Assert.Equal(top + 1f, groundY);
+
+        // Standing on top of the wall, the wall top is the ground.
+        Vector3 onWall = new(x + 1.5f, top + 3.4f, z + 0.5f);
+        Assert.True(FxGroundProbe.TryFindGroundY(map, onWall, FxShadowList.PlayerRadius, out groundY));
+        Assert.Equal(top + 3f, groundY);
+    }
+
+    // A wall of cubes in column (x, z) up to a top at top + 3 (the neighbouring column is the
+    // floor); the cell at top + subdividedLayer (when >= 0) is made of fully solid children.
+    private static void BuildWall(Map map, int x, int z, int top, int subdividedLayer)
+    {
+        for (int y = 1; y <= top + 2; y++)
+        {
+            map.AddCube(new Vector3(x, y, z), isStatic: true, withPhysics: false);
+        }
+
+        if (subdividedLayer < 0)
+        {
+            return;
+        }
+
+        GeometrySubdivisionState state = map.TryGetGeometryCellAtCell(x, top + subdividedLayer, z)!.EnsureSubdivisionState();
+        for (int cx = 0; cx < state.Resolution; cx++)
+        {
+            for (int cy = 0; cy < state.Resolution; cy++)
+            {
+                for (int cz = 0; cz < state.Resolution; cz++)
+                {
+                    state.SetChildSolid(new GeometrySubcellKey(cx, cy, cz), true);
+                }
+            }
+        }
+    }
+
 
     [Fact]
     public void The_Probe_Finds_The_Higher_Neighbour_At_A_Ledge()

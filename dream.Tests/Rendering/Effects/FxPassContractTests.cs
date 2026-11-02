@@ -297,7 +297,7 @@ public class FxPassContractTests
 
         int flashAdvanceAt = IndexOf(pass, "flashes.Advance(deltaSeconds);");
         int advanceAt = IndexOf(pass, "simulation.Advance(in inputs, _render.Lights.Lights);");
-        int collectAt = IndexOf(pass, "CollectShadows(shadows, in presentation);");
+        int collectAt = IndexOf(pass, "CollectShadows(shadows, in presentation, viewCentre);");
         int shadowWriteAt = IndexOf(pass, "shadows.Write(_fxInstances,");
         int writeAt = IndexOf(pass, "simulation.WriteInstances(_fxInstances, shadowCount);");
         Assert.True(flashAdvanceAt < advanceAt && advanceAt < collectAt && collectAt < shadowWriteAt && shadowWriteAt < writeAt);

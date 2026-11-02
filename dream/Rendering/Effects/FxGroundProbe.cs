@@ -36,29 +36,17 @@ public static class FxGroundProbe
         bool found = ProbeColumn(map, feet.X, feet.Z, feet.Y, out float best);
         if (radius > 0f && float.IsFinite(radius) && (!found || best < feet.Y - LedgeMargin))
         {
-            int minX = (int)MathF.Floor(feet.X - radius);
-            int maxX = (int)MathF.Floor(feet.X + radius);
-            int minZ = (int)MathF.Floor(feet.Z - radius);
-            int maxZ = (int)MathF.Floor(feet.Z + radius);
-            for (int cx = minX; cx <= maxX; cx++)
+            // A fixed ring of eight points at the radius, so children of the feet's own cell are
+            // seen and the cost does not depend on the radius.
+            float d = radius * 0.70710678f;
+            for (int i = 0; i < 8; i++)
             {
-                for (int cz = minZ; cz <= maxZ; cz++)
+                float ox = i switch { 0 => radius, 1 => d, 2 => 0f, 3 => -d, 4 => -radius, 5 => -d, 6 => 0f, _ => d };
+                float oz = i switch { 0 => 0f, 1 => d, 2 => radius, 3 => d, 4 => 0f, 5 => -d, 6 => -radius, _ => -d };
+                if (ProbeColumn(map, feet.X + ox, feet.Z + oz, feet.Y, out float top) && (!found || top > best))
                 {
-                    // The point of the column nearest the centre must be inside the capsule.
-                    float sx = Math.Clamp(feet.X, cx, cx + 0.999f);
-                    float sz = Math.Clamp(feet.Z, cz, cz + 0.999f);
-                    float dx = sx - feet.X;
-                    float dz = sz - feet.Z;
-                    if (dx * dx + dz * dz > radius * radius)
-                    {
-                        continue;
-                    }
-
-                    if (ProbeColumn(map, sx, sz, feet.Y, out float top) && (!found || top > best))
-                    {
-                        best = top;
-                        found = true;
-                    }
+                    best = top;
+                    found = true;
                 }
             }
         }
@@ -89,8 +77,14 @@ public static class FxGroundProbe
 
             if (record.SubdivisionState == null && record.Definition.ShapeKind == GeometryShapeKind.SolidCube)
             {
-                top = y + 1;
-                return true;
+                // A top above the feet (a wall beside a jump) or covered by more solid is no surface.
+                if (y + 1 <= feetY + TopTolerance && !SolidAtBottom(map, x, z, cx, y + 1, cz))
+                {
+                    top = y + 1;
+                    return true;
+                }
+
+                continue;
             }
 
             int resolution = record.SubdivisionState?.Resolution ?? record.Definition.SubdivisionResolution;
@@ -109,11 +103,44 @@ public static class FxGroundProbe
                     continue;
                 }
 
+                bool covered = k + 1 < resolution
+                    ? record.IsChildSolid(new GeometrySubcellKey(childX, k + 1, childZ))
+                    : SolidAtBottom(map, x, z, cx, y + 1, cz);
+                if (covered)
+                {
+                    continue;
+                }
+
                 top = childTop;
                 return true;
             }
         }
 
         return false;
+    }
+
+    // Whether the lowest slice of the cell at (cx, y, cz) is solid under the point (x, z).
+    private static bool SolidAtBottom(Map map, float x, float z, int cx, int y, int cz)
+    {
+        GeometryCellRecord? record = map.TryGetGeometryCellAtCell(cx, y, cz);
+        if (record == null)
+        {
+            return false;
+        }
+
+        if (record.SubdivisionState == null && record.Definition.ShapeKind == GeometryShapeKind.SolidCube)
+        {
+            return true;
+        }
+
+        int resolution = record.SubdivisionState?.Resolution ?? record.Definition.SubdivisionResolution;
+        if (resolution < 1)
+        {
+            return false;
+        }
+
+        int childX = Math.Clamp((int)((x - cx) * resolution), 0, resolution - 1);
+        int childZ = Math.Clamp((int)((z - cz) * resolution), 0, resolution - 1);
+        return record.IsChildSolid(new GeometrySubcellKey(childX, 0, childZ));
     }
 }

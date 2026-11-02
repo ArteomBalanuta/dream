@@ -61,8 +61,9 @@ public partial class PlayScene
         flashes.Advance(deltaSeconds);
         simulation.Advance(in inputs, _render.Lights.Lights);
 
-        CollectShadows(shadows, in presentation);
-        int shadowCount = shadows.Write(_fxInstances, presentation.Camera.Position, FxSimulation.ViewCentre(in inputs));
+        Vector3 viewCentre = FxSimulation.ViewCentre(in inputs);
+        CollectShadows(shadows, in presentation, viewCentre);
+        int shadowCount = shadows.Write(_fxInstances, presentation.Camera.Position, viewCentre, sky.StarVisibility);
         int count = simulation.WriteInstances(_fxInstances, shadowCount);
 
         gpuTimer.BeginSection(GpuTimerSection.Effects);
@@ -72,9 +73,9 @@ public partial class PlayScene
 
     // The players probe the map for the ground under their feet (the pose is the capsule centre,
     // half a metre above them); enemies keep to their own pose height.
-    private void CollectShadows(FxShadowList shadows, in WorldSessionPresentationState presentation)
+    private void CollectShadows(FxShadowList shadows, in WorldSessionPresentationState presentation, Vector3 viewCentre)
     {
-        shadows.Clear();
+        shadows.Begin(viewCentre);
         AddPlayerShadow(shadows, _runtime.Player.GetWorldPosition());
 
         IReadOnlyList<RemotePlayerPresentationState>? remotePlayers = _fxRemotePlayers;
