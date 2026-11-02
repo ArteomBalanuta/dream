@@ -144,7 +144,7 @@ public sealed class ConsumableUseTests
             WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             PlayerInventorySnapshot inventory = JoinInventory(client);
             Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Health, out int anchor, out string kind, out int count));
-            Assert.Equal(2, count);
+            Assert.Equal(3, count);  // weak-heal, minor-heal and the kit v4 potion.health
             ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition);
             int amount = definition!.Use!.RestoreHealth;
             Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemId));
@@ -164,7 +164,7 @@ public sealed class ConsumableUseTests
             Assert.Equal(Math.Min(health.MaxHealth, before + amount), health.CurrentHealth);
             Assert.Null(after.ItemAt(anchor));
             Assert.True(CharacterPanelModel.TryFindConsumable(after, ConsumablePool.Health, out _, out _, out int left));
-            Assert.Equal(1, left);
+            Assert.Equal(2, left);
             await server.DisconnectAsync(client);
         }
 
@@ -172,7 +172,7 @@ public sealed class ConsumableUseTests
         {
             WireLoopbackClient client = await restarted.ConnectAndJoinAsync(Session);
             Assert.True(CharacterPanelModel.TryFindConsumable(JoinInventory(client), ConsumablePool.Health, out _, out _, out int persisted));
-            Assert.Equal(1, persisted);
+            Assert.Equal(2, persisted);
             await restarted.DisconnectAsync(client);
         }
     }
@@ -189,7 +189,7 @@ public sealed class ConsumableUseTests
             server.Runtime.InventoryService.TryGrantRolled(key, "consumable.minor-mana", ItemRarity.Common, new ItemRollSeed(1, 2, 3, 4, 5)));
         PlayerInventorySnapshot inventory = server.Runtime.InventoryService.BuildSnapshot(key);
         Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out int anchor, out string kind, out int count));
-        Assert.Equal(1, count);
+        Assert.Equal(2, count);
         ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition);
         int amount = definition!.Use!.RestoreMana;
         Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemId));
