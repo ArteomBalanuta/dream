@@ -54,7 +54,8 @@ public sealed class StartupMenuRenderer : IDisposable
         string playerName,
         string localServerStatus,
         string connectionStatus,
-        bool isBusy)
+        bool isBusy,
+        bool showBack = false)
     {
         BeginFrame(args, windowFocused, mouseState, keyboardState);
 
@@ -63,6 +64,7 @@ public sealed class StartupMenuRenderer : IDisposable
         string playerNameBuffer = playerName;
         bool useLocalServerPressed = false;
         bool connectPressed = false;
+        bool backPressed = false;
 
         Vector2i safeViewport = GetSafeViewportSize(_currentSize);
         ImGui.SetNextWindowPos(new System.Numerics.Vector2(safeViewport.X * 0.5f, safeViewport.Y * 0.5f), ImGuiCond.Always, new System.Numerics.Vector2(0.5f, 0.5f));
@@ -100,6 +102,16 @@ public sealed class StartupMenuRenderer : IDisposable
             connectPressed = true;
         }
 
+        if (showBack)
+        {
+            // Disabled while a connect is in flight, so no connected session is left behind.
+            ImGui.SameLine();
+            if (ImGui.Button("Back"))
+            {
+                backPressed = true;
+            }
+        }
+
         if (isBusy)
         {
             ImGui.EndDisabled();
@@ -115,7 +127,8 @@ public sealed class StartupMenuRenderer : IDisposable
             portBuffer,
             playerNameBuffer,
             useLocalServerPressed,
-            connectPressed);
+            connectPressed,
+            backPressed);
     }
 
     private bool _disposed;

@@ -5,4 +5,5 @@ public readonly record struct ConnectionUiRequest(
     string PortText,
     string PlayerName,
     bool UseLocalServerPressed,
-    bool ConnectPressed);
+    bool ConnectPressed,
+    bool BackPressed = false);

@@ -1,11 +1,15 @@
 using System.Runtime.ExceptionServices;
 using Dream.Assets;
 using Dream.Client.Identity;
+using Dream.Client.Menu;
 using Dream.Client.Networking;
 using Dream.Client.Scenes;
 using Dream.Client.Startup;
 using Dream.Configuration;
 using Dream.Rendering.Core;
+using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Gl;
+using Dream.Rendering.Ui.Menu;
 using Dream.Rendering.ViewModels;
 using Dream.Server;
 using Dream.Server.Hosting;
@@ -21,6 +25,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using MouseButton = OpenTK.Windowing.GraphicsLibraryFramework.MouseButton;
 
 public class Game : GameWindow
 {
@@ -39,6 +44,20 @@ public class Game : GameWindow
     private readonly ChangedTextSink _windowTitle;
     private StartupConnectionScene? _startupScene;
     private PlayScene? _playScene;
+
+    // The title screen and the Esc pause menu share one renderer, created on the first frame that
+    // needs it (it needs the GL context). When it cannot be created the old connection screen and
+    // the ImGui settings window are used instead.
+    private MainMenuScene? _mainMenu;
+    private MenuUiRenderer? _menuRenderer;
+    private bool _menuRendererFailed;
+    private readonly bool _menuEnabled;
+    private readonly List<MenuOptionRow> _optionRows;
+    private readonly MenuScreenState _pauseScreen = new();
+    private bool _pauseWasVisible;
+    private bool _exitToMainMenuPending;
+    // DREAM_MENU_CAPTURE: walks the title screen and writes a PNG of each screen (art review).
+    private readonly MenuCapture? _menuCapture = MenuCapture.FromEnvironment();
 
     // DEBUG drains the GL error flags after every frame. Release builds check less often, which is
     // enough to notice GL_OUT_OF_MEMORY or GL_CONTEXT_LOST and close instead of drawing garbage.
@@ -59,7 +78,8 @@ public class Game : GameWindow
         ClientSize = new Vector2i(1440, 1024),
         Title = GameWindowTitleBuilder.BaseTitle,
         // A capture run drives itself and must not pull focus from whatever the user is doing.
-        StartFocused = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DREAM_HUD_CAPTURE")),
+        StartFocused = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DREAM_HUD_CAPTURE"))
+            && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(MenuCapture.EnvironmentVariable)),
 #if DEBUG
         // KHR_debug messages are only guaranteed in a debug context.
         Flags = ContextFlags.Debug,
@@ -79,6 +99,9 @@ public class Game : GameWindow
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
         _localServer = CreateLocalServerHandle();
+        _optionRows = BuildOptionRows();
+        bool remoteClient = RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions);
+        _menuEnabled = MenuLaunchPolicy.ShouldShowMainMenu(Environment.GetEnvironmentVariable, remoteClient);
         // A client that only joins a remote server never passes ServerBootstrap's content check, so
         // the content is read once here; a failure is shown on the connection screen.
         _contentError = ClientContentCheck.TryReadShipped();
@@ -87,7 +110,7 @@ public class Game : GameWindow
             Console.Error.WriteLine($"[startup] {_contentError}");
         }
 
-        if (RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions))
+        if (remoteClient)
         {
             ShowStartupScene(
                 new Vector2i(1440, 1024),
@@ -99,8 +122,15 @@ public class Game : GameWindow
                 autoConnectUsesInitialOptions: true,
                 sessionEndReason: null);
         }
+        else if (_menuEnabled)
+        {
+            // The title screen. No server starts until Single Player is chosen.
+            ShowMainMenu(sessionEndReason: null);
+        }
         else
         {
+            // DREAM_SKIP_MENU, DREAM_AUTO_CONNECT and the HUD capture keep the connection screen,
+            // which starts the integrated server at launch.
             ShowStartupScene(
                 new Vector2i(1440, 1024),
                 _desktopClientConfig.ToConnectionOptions(),
@@ -108,6 +138,57 @@ public class Game : GameWindow
                 autoConnectUsesInitialOptions: false,
                 sessionEndReason: null);
         }
+    }
+
+    // The rows of the Options screen: the standard ones, then whatever AddExtraOptionRows adds.
+    private List<MenuOptionRow> BuildOptionRows()
+    {
+        List<MenuOptionRow> rows = MenuOptionRows.CreateStandard(
+            _settings,
+            _desktopClientConfig,
+            ApplyFrameCap,
+            PersistDesktopClientConfig);
+        AddExtraOptionRows(rows);
+        return rows;
+    }
+
+    // Hook for features that add their own Options rows (the audio sliders).
+    private void AddExtraOptionRows(List<MenuOptionRow> rows)
+    {
+    }
+
+    private void ApplyFrameCap()
+    {
+        int cap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
+        UpdateFrequency = cap;
+        Console.WriteLine($"[settings] frame cap: {FrameRateCap.Describe(cap)}");
+    }
+
+    // The title screen over a fresh coordinator on the current local server handle. sessionEndReason
+    // is shown under the buttons when a play session just ended.
+    private void ShowMainMenu(string? sessionEndReason)
+    {
+        NetworkSessionCoordinator coordinator = new(
+            _localServer,
+            new RemoteSessionConnector(),
+            _contentError,
+            ClientIdentityStore.ForCurrentUser());
+        SinglePlayerLauncher launcher = new(coordinator, _localServer, _contentError, () => _desktopClientConfig.PlayerName);
+        _mainMenu = new MainMenuScene(launcher, _optionRows, sessionEndReason);
+        CursorState = _mainMenu.DesiredCursorState;
+    }
+
+    // Join Server: the existing connection screen, with a Back button to the title screen.
+    private void OpenJoinServerScreen()
+    {
+        _mainMenu = null;
+        ShowStartupScene(
+            ClientSize,
+            _desktopClientConfig.ToConnectionOptions(),
+            resolveLocalPort: false,
+            autoConnectUsesInitialOptions: false,
+            sessionEndReason: null,
+            allowBack: true);
     }
 
     // The handle reads the shutdown gate when it is asked to start, not now: the ended session's
@@ -129,14 +210,14 @@ public class Game : GameWindow
     // endpoint is resolved to the integrated server's current port, which starts it. After a
     // session to the integrated server ended (relaunchLocalServerFor), a connect to that ended
     // endpoint starts the new integrated server instead (LocalServerRelaunchConnector).
-    [MemberNotNull(nameof(_startupScene))]
     private void ShowStartupScene(
         Vector2i size,
         ClientConnectionOptions options,
         bool resolveLocalPort,
         bool autoConnectUsesInitialOptions,
         string? sessionEndReason,
-        RemoteClientOptions? relaunchLocalServerFor = null)
+        RemoteClientOptions? relaunchLocalServerFor = null,
+        bool allowBack = false)
     {
         IRemoteSessionConnector connector = new RemoteSessionConnector();
         if (relaunchLocalServerFor != null)
@@ -162,7 +243,8 @@ public class Game : GameWindow
             initialOptions,
             PersistConnectionOptions,
             autoConnectUsesInitialOptions,
-            sessionEndReason);
+            sessionEndReason,
+            allowBack);
         CursorState = _startupScene.DesiredCursorState;
     }
 
@@ -197,41 +279,86 @@ public class Game : GameWindow
         base.OnUpdateFrame(args);
         if (_playScene == null)
         {
-            _startupScene!.Update();
-            if (_startupScene.TryTakeConnectedSession(out RemoteClientSession? remoteClient) && remoteClient != null)
-            {
-                _playScene = new PlayScene(
-                    _settings,
-                    remoteClient,
-                    _desktopClientConfig,
-                    PersistDesktopClientConfig,
-                    PlayScene.ResolveLoopbackRemotePlayersEnabled(),
-                    _localServer);
-                // The classic inventory's static panel state belongs to one scene.
-                Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
-                // The replaced startup scene releases its menu renderer and ImGui context here;
-                // the play scene's Render has already created and made current its own context.
-                _startupScene.Dispose();
-                _startupScene = null;
-            }
+            UpdateFrontEnd();
         }
         else
         {
-            _playScene.Update(args, KeyboardState, MouseState);
-            Vector3 position = _playScene.LastReportedPlayerPosition;
-            _consoleTitle.Set($"Player Position: ({position.X:0.0}, {position.Y:0.0}, {position.Z:0.0})");
-            ReturnToStartupIfSessionEnded();
+            if (_exitToMainMenuPending)
+            {
+                // Chosen in the pause menu during the last render: leave the scene here, outside any draw.
+                _exitToMainMenuPending = false;
+                EndPlaySession(reason: null);
+            }
+            else
+            {
+                _playScene.Update(args, KeyboardState, MouseState);
+                Vector3 position = _playScene.LastReportedPlayerPosition;
+                _consoleTitle.Set($"Player Position: ({position.X:0.0}, {position.Y:0.0}, {position.Z:0.0})");
+                ReturnToStartupIfSessionEnded();
+            }
         }
 
-        CursorState = _playScene?.DesiredCursorState ?? _startupScene!.DesiredCursorState;
+        CursorState = _playScene?.DesiredCursorState
+            ?? _mainMenu?.DesiredCursorState
+            ?? _startupScene?.DesiredCursorState
+            ?? CursorState.Normal;
+    }
+
+    // The title screen or the connection screen: advance it and enter the world when a session connects.
+    private void UpdateFrontEnd()
+    {
+        if (_mainMenu != null)
+        {
+            _mainMenu.Update();
+            if (_mainMenu.TryTakeConnectedSession(out RemoteClientSession? menuSession) && menuSession != null)
+            {
+                _mainMenu = null;
+                EnterPlayScene(menuSession);
+            }
+
+            return;
+        }
+
+        if (_startupScene == null)
+        {
+            return;
+        }
+
+        _startupScene.Update();
+        if (_startupScene.TryTakeConnectedSession(out RemoteClientSession? remoteClient) && remoteClient != null)
+        {
+            EnterPlayScene(remoteClient);
+            // The replaced startup scene releases its menu renderer and ImGui context here;
+            // the play scene's Render has already created and made current its own context.
+            _startupScene.Dispose();
+            _startupScene = null;
+        }
+        else if (_startupScene.TryTakeBackRequest())
+        {
+            _startupScene.Dispose();
+            _startupScene = null;
+            ShowMainMenu(sessionEndReason: null);
+        }
+    }
+
+    private void EnterPlayScene(RemoteClientSession remoteClient)
+    {
+        _settings.ResetOverlays();
+        _pauseScreen.Reset();
+        _pauseWasVisible = false;
+        _playScene = new PlayScene(
+            _settings,
+            remoteClient,
+            _desktopClientConfig,
+            PersistDesktopClientConfig,
+            PlayScene.ResolveLoopbackRemotePlayersEnabled(),
+            _localServer);
+        // The classic inventory's static panel state belongs to one scene.
+        Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
     }
 
     // A play session that ended (the server closed or went silent, or the join failed) would
-    // otherwise leave the player in a frozen world. Runs on the update pass of the single-threaded
-    // window, so the GL context is current for the play scene's GL cleanup. The scene is cleared
-    // before its teardown and the local server handle replaced first, so OnUnload can never
-    // dispose either a second time. The connection screen comes back with the same endpoint and
-    // name and shows the reason; the player can reconnect or start a local game again.
+    // otherwise leave the player in a frozen world.
     private void ReturnToStartupIfSessionEnded()
     {
         if (_playScene == null || !PlaySessionEndTransition.HasEnded(_playScene, out string? reason))
@@ -239,8 +366,26 @@ public class Game : GameWindow
             return;
         }
 
+        EndPlaySession(reason);
+    }
+
+    // Leaves the play scene: a dropped session (reason) or Exit to Main Menu (null). Runs on the update
+    // pass of the single-threaded window, so the GL context is current for the play scene's GL cleanup.
+    // The scene is cleared before its teardown and the local server handle replaced first, so
+    // OnUnload can never dispose either a second time. The title screen comes back (or, when the menu
+    // was skipped at launch, the connection screen with the same endpoint and name) and shows the
+    // reason; the player can start a local game again or join a server.
+    private void EndPlaySession(string? reason)
+    {
+        if (_playScene == null)
+        {
+            return;
+        }
+
         PlayScene endedScene = _playScene;
         _playScene = null;
+        _pauseWasVisible = false;
+        _settings.ResetOverlays();
         Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
         ILocalServerHandle endedLocalServer = _localServer;
         _localServer = CreateLocalServerHandle();
@@ -258,9 +403,16 @@ public class Game : GameWindow
             Console.WriteLine($"[session] teardown failed: {failure.GetType().Name}: {failure.Message}");
         }
 
+        bool toMainMenu = _menuEnabled && !_menuRendererFailed;
         Console.WriteLine(
-            $"[session] returned to the connection screen: {reason}" +
+            $"[session] returned to {(toMainMenu ? "the main menu" : "the connection screen")}: {reason ?? "left by the player"}" +
             (stoppedLocalServer ? " (local server stopped)" : string.Empty));
+        if (toMainMenu)
+        {
+            ShowMainMenu(reason);
+            return;
+        }
+
         // The endpoint comes back exactly as it was and nothing starts here: no integrated server
         // on the update thread, no rebound port, no redirect of a loopback dedicated server that
         // dropped. Only when the ended session was this game's own integrated server does a
@@ -270,7 +422,7 @@ public class Game : GameWindow
             PlaySessionEndTransition.ReturnOptions(endedOptions),
             resolveLocalPort: false,
             autoConnectUsesInitialOptions: false,
-            sessionEndReason: reason,
+            sessionEndReason: reason ?? "left the game",
             relaunchLocalServerFor: relaunchFor);
     }
 
@@ -278,13 +430,18 @@ public class Game : GameWindow
     {
         base.OnRenderFrame(args);
         Stopwatch frameStopwatch = Stopwatch.StartNew();
-        if (_playScene == null)
+        if (_playScene != null)
         {
-            _startupScene!.Render(args, IsFocused, MouseState, KeyboardState);
+            _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
+            RenderPauseMenu();
+        }
+        else if (_mainMenu != null)
+        {
+            RenderMainMenu();
         }
         else
         {
-            _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
+            _startupScene?.Render(args, IsFocused, MouseState, KeyboardState);
         }
         Stopwatch swapStopwatch = Stopwatch.StartNew();
         SwapBuffers();
@@ -298,6 +455,151 @@ public class Game : GameWindow
 
         UpdateFPS();
         _windowTitle.Set(GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint));
+    }
+
+    // The shared front-end renderer, created on first use. Null (and latched) when it cannot be built.
+    private MenuUiRenderer? EnsureMenuRenderer()
+    {
+        if (_menuRenderer != null || _menuRendererFailed)
+        {
+            return _menuRenderer;
+        }
+
+        _menuRenderer = MenuUiRenderer.TryCreate(out string error);
+        if (_menuRenderer == null)
+        {
+            _menuRendererFailed = true;
+            Console.Error.WriteLine($"[menu] the menu UI is unavailable: {error}");
+        }
+
+        return _menuRenderer;
+    }
+
+    private UiPointer MenuPointer() =>
+        _menuCapture?.ScriptedPointer(ClientSize.X, ClientSize.Y, _settings.UiScaleSetting)
+        ?? new UiPointer(
+            new Vector2(MouseState.Position.X, MouseState.Position.Y),
+            MouseState.IsButtonDown(MouseButton.Left),
+            MouseState.IsButtonDown(MouseButton.Right),
+            IsFocused);
+
+    private void RenderMainMenu()
+    {
+        MenuUiRenderer? renderer = EnsureMenuRenderer();
+        if (renderer == null || _mainMenu == null)
+        {
+            // No menu art or glyphs: fall back to the connection screen, which starts the local server.
+            _mainMenu = null;
+            ShowStartupScene(
+                ClientSize,
+                _desktopClientConfig.ToConnectionOptions(),
+                resolveLocalPort: true,
+                autoConnectUsesInitialOptions: false,
+                sessionEndReason: null);
+            return;
+        }
+
+        MenuAction action = _mainMenu.Render(renderer, ClientSize.X, ClientSize.Y, _settings.UiScaleSetting, MenuPointer());
+        if (renderer.State == UiAtlasState.Failed)
+        {
+            Console.Error.WriteLine($"[menu] the menu art failed to load ({renderer.FailureReason}); using the connection screen.");
+            _menuRendererFailed = true;
+            _mainMenu = null;
+            ShowStartupScene(
+                ClientSize,
+                _desktopClientConfig.ToConnectionOptions(),
+                resolveLocalPort: true,
+                autoConnectUsesInitialOptions: false,
+                sessionEndReason: null);
+            return;
+        }
+
+        if (_menuCapture != null)
+        {
+            _menuCapture.AfterFrame(
+                _mainMenu,
+                renderer,
+                ClientSize.X,
+                ClientSize.Y,
+                _settings.UiScaleSetting,
+                path => UiFramebufferCapture.CaptureBackBufferToPng(path, ClientSize.X, ClientSize.Y));
+            if (_menuCapture.Done)
+            {
+                Close();
+            }
+        }
+
+        switch (action)
+        {
+            case MenuAction.JoinServer:
+                OpenJoinServerScreen();
+                break;
+            case MenuAction.Exit:
+                Close();
+                break;
+        }
+    }
+
+    // The Esc menu, drawn over the finished world frame. Resume closes it; Exit to Main Menu is
+    // carried out on the next update, not inside this draw.
+    private void RenderPauseMenu()
+    {
+        if (!_settings.PauseMenuVisible)
+        {
+            _pauseWasVisible = false;
+            return;
+        }
+
+        if (!_pauseWasVisible)
+        {
+            _pauseWasVisible = true;
+            _pauseScreen.Reset();
+        }
+
+        MenuUiRenderer? renderer = EnsureMenuRenderer();
+        if (renderer == null || renderer.State == UiAtlasState.Failed)
+        {
+            // Without the menu UI, Esc opens the ImGui developer window as it did before.
+            _settings.ClosePauseMenu();
+            _settings.ToggleDeveloperSettings();
+            return;
+        }
+
+        MenuAction action = MenuAction.None;
+        renderer.Draw(ClientSize.X, ClientSize.Y, _settings.UiScaleSetting, MenuPointer(), w => action = BuildPauseScreen(w));
+        ApplyPauseAction(action);
+    }
+
+    private MenuAction BuildPauseScreen(MenuWidgets w) => _pauseScreen.Current switch
+    {
+        MenuScreen.Options => OptionsPanel.Build(w, _optionRows, backdrop: false),
+        MenuScreen.KeyBindings => KeyBindingsPanel.Build(w, backdrop: false),
+        _ => PauseMenuPanel.Build(w, _settings.AdminHudAvailable)
+    };
+
+    private void ApplyPauseAction(MenuAction action)
+    {
+        if (action == MenuAction.None || _pauseScreen.Apply(action))
+        {
+            return;
+        }
+
+        switch (action)
+        {
+            case MenuAction.Resume:
+                _settings.ClosePauseMenu();
+                break;
+            case MenuAction.DeveloperSettings:
+                _settings.ToggleDeveloperSettings();
+                break;
+            case MenuAction.ExitToMainMenu:
+                _settings.ClosePauseMenu();
+                _exitToMainMenuPending = true;
+                break;
+            case MenuAction.ExitGame:
+                Close();
+                break;
+        }
     }
 
     private void CheckGLErrorsAfterFrame()
@@ -352,8 +654,17 @@ public class Game : GameWindow
             }
             finally
             {
-                _startupScene?.Dispose();
-                _startupScene = null;
+                try
+                {
+                    _startupScene?.Dispose();
+                    _startupScene = null;
+                    _mainMenu = null;
+                }
+                finally
+                {
+                    _menuRenderer?.Dispose();
+                    _menuRenderer = null;
+                }
             }
         }
         catch (Exception ex)

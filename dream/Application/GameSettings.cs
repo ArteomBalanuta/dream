@@ -42,7 +42,14 @@ public class GameSettings
 
     public bool ShowPerformanceCounters { get; private set; }
 
-    public bool SettingsVisible { get; private set; }
+    // The Esc pause menu (Resume, Options, Exit to Main Menu...). Drawn by the front-end renderer.
+    public bool PauseMenuVisible { get; private set; }
+
+    // The ImGui developer Settings window, opened from the pause menu (admin HUD only).
+    public bool DeveloperSettingsVisible { get; private set; }
+
+    // Either overlay blocks gameplay input and the HUD pointer.
+    public bool SettingsVisible => PauseMenuVisible || DeveloperSettingsVisible;
 
     public bool InventoryVisible { get; private set; }
 
@@ -103,15 +110,70 @@ public class GameSettings
         ResolutionApplied?.Invoke(new ResolutionAppliedEvent(size));
     }
 
+    // Esc: closes the developer window when it is open, else toggles the pause menu.
     public void ToggleSettings()
     {
-        SettingsVisible = !SettingsVisible;
+        if (DeveloperSettingsVisible)
+        {
+            DeveloperSettingsVisible = false;
+        }
+        else
+        {
+            PauseMenuVisible = !PauseMenuVisible;
+        }
+
         if (SettingsVisible)
         {
             InventoryVisible = false;
         }
 
         ApplyRuntimeState();
+    }
+
+    // Opens or closes the ImGui developer window. Opening it closes the pause menu. The pause menu
+    // offers it only when AdminHudAvailable; the HUD capture script opens it directly.
+    public void ToggleDeveloperSettings()
+    {
+        DeveloperSettingsVisible = !DeveloperSettingsVisible;
+        if (DeveloperSettingsVisible)
+        {
+            PauseMenuVisible = false;
+            InventoryVisible = false;
+        }
+
+        ApplyRuntimeState();
+    }
+
+    // Resume.
+    public void ClosePauseMenu()
+    {
+        if (!PauseMenuVisible)
+        {
+            return;
+        }
+
+        PauseMenuVisible = false;
+        ApplyRuntimeState();
+    }
+
+    // A play session ended: the next one starts with no overlay open.
+    public void ResetOverlays()
+    {
+        PauseMenuVisible = false;
+        DeveloperSettingsVisible = false;
+        InventoryVisible = false;
+        ApplyRuntimeState();
+    }
+
+    // The Options screen's admin HUD toggle. Display only, like the config key it mirrors.
+    public void SetAdminHudAvailable(bool available)
+    {
+        AdminHudAvailable = available;
+        if (!available && DeveloperSettingsVisible)
+        {
+            DeveloperSettingsVisible = false;
+            ApplyRuntimeState();
+        }
     }
 
     public void ToggleInventory()
