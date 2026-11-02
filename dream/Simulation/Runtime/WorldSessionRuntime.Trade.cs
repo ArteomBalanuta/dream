@@ -394,6 +394,12 @@ public sealed partial class WorldSessionRuntime
                 continue;
             }
 
+            if (session.Phase == TradePhase.Requested && tick - session.CreatedTick > (ulong)TradeRules.RequestTimeoutTicks)
+            {
+                EndTrade(session, TradeStage.Cancelled, "The trade request was not answered.", "The trade request was not answered.");
+                continue;
+            }
+
             if (tick - session.CreatedTick > (ulong)TradeRules.TimeoutTicks)
             {
                 EndTrade(session, TradeStage.Cancelled, "The trade timed out.", "The trade timed out.");

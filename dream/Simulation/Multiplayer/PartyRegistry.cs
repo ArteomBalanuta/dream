@@ -15,6 +15,7 @@ public enum PartyOutcome : byte
     InviteExpired,
     AlreadyInParty,
     NotInParty,
+    Cooldown,
 }
 
 // Who is in which party and who has a pending invite (M5). Pure memory keyed by character key through
@@ -35,6 +36,11 @@ public sealed class PartyRegistry
     private readonly Dictionary<string, PendingInvite> _invites = new(CharacterNames.Comparer);
     private readonly HashSet<string> _changed = new(CharacterNames.Comparer);
     private readonly List<string> _scratch = [];
+
+    private readonly Dictionary<string, ulong> _lastInviteTick = new(CharacterNames.Comparer);
+
+    // Ticks an inviter must wait between invites; 0 is no cooldown (the runtime sets PartyRules.InviteCooldownTicks).
+    public ulong InviteCooldownTicks { get; set; }
 
     public int PartyCount { get; private set; }
 
@@ -84,7 +90,14 @@ public sealed class PartyRegistry
     // from invites to. A member who is not the leader cannot invite. The invitee must be in no party and
     // have no other pending invite (the same inviter may refresh its own).
     public PartyOutcome Invite(string from, string to, ulong tick)
+        => Invite(from, to, tick, out _);
+
+    // refreshed: the same inviter already had a pending invite to this invitee, so its time was renewed and
+    // nothing changed for the invitee (no state is sent). Cooldown: with InviteCooldownTicks set, an inviter
+    // may make one invite (or refresh) per that many ticks.
+    public PartyOutcome Invite(string from, string to, ulong tick, out bool refreshed)
     {
+        refreshed = false;
         Expire(tick);
         if (string.IsNullOrWhiteSpace(from) || !IsValidName(to))
         {
@@ -119,8 +132,21 @@ public sealed class PartyRegistry
             return PartyOutcome.AlreadyInvited;
         }
 
+        if (InviteCooldownTicks > 0
+            && _lastInviteTick.TryGetValue(from, out ulong last)
+            && tick - last < InviteCooldownTicks)
+        {
+            return PartyOutcome.Cooldown;
+        }
+
+        _lastInviteTick[from] = tick;
+        refreshed = _invites.ContainsKey(to);
         _invites[to] = new PendingInvite(from, tick + (ulong)PartyRules.InviteTimeoutTicks);
-        _changed.Add(to);
+        if (!refreshed)
+        {
+            _changed.Add(to);
+        }
+
         return PartyOutcome.Ok;
     }
 
@@ -204,6 +230,7 @@ public sealed class PartyRegistry
     public void Remove(string key)
     {
         Leave(key);
+        _lastInviteTick.Remove(key);
         if (_invites.Remove(key))
         {
             _changed.Add(key);

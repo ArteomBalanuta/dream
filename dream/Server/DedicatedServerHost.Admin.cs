@@ -106,13 +106,16 @@ public sealed partial class DedicatedServerHost
             return;
         }
 
-        if (online && targetContext!.IsAdmin && command.Kind is AdminCommandKind.Kick or AdminCommandKind.Ban or AdminCommandKind.Mute)
+        // A kick closes one connection, so it is judged on the connection. A ban or mute is judged on the
+        // account that owns the character (see QueueSanction), which the repository resolves.
+        if (online && targetContext!.IsAdmin && command.Kind == AdminCommandKind.Kick)
         {
             Reply("That player is an administrator.");
             return;
         }
 
         string shownName = SanitizeForLog(targetName);
+        AccountKey? senderAccount = context.JoinedIdentity?.Account;
         switch (command.Kind)
         {
             case AdminCommandKind.Kick:
@@ -134,32 +137,28 @@ public sealed partial class DedicatedServerHost
                     ? DateTime.UtcNow.AddMinutes(minutes)
                     : PermanentUntilUtc;
                 string? reason = string.IsNullOrEmpty(command.Text) ? null : command.Text;
-                AccountStanding banned = new(0, until, reason, null);
                 LogAdmin(sender, "ban", shownName, command.Minutes, command.Text);
-                RememberSanction(runtime, targetName, targetContext, ban: (until, reason), mute: null, clearBan: false, clearMute: false);
                 QueueSanction(
                     runtime,
                     sender.ConnectionId,
+                    senderAccount,
+                    targetName,
+                    new SanctionChange((until, reason), null, false, false, GuardsAdmin: true),
                     accounts => accounts.TrySetBan(targetName, until, reason),
-                    $"Banned {targetName}.",
-                    NotFoundText(targetName));
-                if (online)
-                {
-                    CloseConnectionWithReason(targetConnection, BanMessage.Format(banned));
-                }
-
+                    $"Banned {targetName}.");
                 return;
             }
 
             case AdminCommandKind.Unban:
                 LogAdmin(sender, "unban", shownName, null, string.Empty);
-                RememberSanction(runtime, targetName, targetContext, ban: null, mute: null, clearBan: true, clearMute: false);
                 QueueSanction(
                     runtime,
                     sender.ConnectionId,
+                    senderAccount,
+                    targetName,
+                    new SanctionChange(null, null, true, false, GuardsAdmin: false),
                     accounts => accounts.TrySetBan(targetName, null, null),
-                    $"Unbanned {targetName}.",
-                    NotFoundText(targetName));
+                    $"Unbanned {targetName}.");
                 return;
             case AdminCommandKind.Mute:
             {
@@ -167,25 +166,27 @@ public sealed partial class DedicatedServerHost
                     ? DateTime.UtcNow.AddMinutes(minutes)
                     : PermanentUntilUtc;
                 LogAdmin(sender, "mute", shownName, command.Minutes, string.Empty);
-                RememberSanction(runtime, targetName, targetContext, ban: null, mute: until, clearBan: false, clearMute: false);
                 QueueSanction(
                     runtime,
                     sender.ConnectionId,
+                    senderAccount,
+                    targetName,
+                    new SanctionChange(null, until, false, false, GuardsAdmin: true),
                     accounts => accounts.TrySetMute(targetName, until),
-                    $"Muted {targetName}.",
-                    NotFoundText(targetName));
+                    $"Muted {targetName}.");
                 return;
             }
 
             default:
                 LogAdmin(sender, "unmute", shownName, null, string.Empty);
-                RememberSanction(runtime, targetName, targetContext, ban: null, mute: null, clearBan: false, clearMute: true);
                 QueueSanction(
                     runtime,
                     sender.ConnectionId,
+                    senderAccount,
+                    targetName,
+                    new SanctionChange(null, null, false, true, GuardsAdmin: false),
                     accounts => accounts.TrySetMute(targetName, null),
-                    $"Unmuted {targetName}.",
-                    NotFoundText(targetName));
+                    $"Unmuted {targetName}.");
                 return;
         }
     }
@@ -204,6 +205,12 @@ public sealed partial class DedicatedServerHost
         return until is { } end && end > DateTime.UtcNow;
     }
 
+    // Whether the account behind the session is muted now (the runtime asks on the tick, for party invites).
+    private bool IsSessionMuted(PlayerSessionId session) =>
+        _sessionClaims.TryGetValue(session.Value, out string? connectionId)
+        && _connections.TryGetValue(connectionId, out ServerRoutingContext? context)
+        && IsMuted(context);
+
     private void AnnounceToEveryone(ChatParticipant sender, string text, ulong tick, List<PendingConnectionReply> replies)
     {
         LogAdmin(sender, "announce", string.Empty, null, text);
@@ -214,43 +221,192 @@ public sealed partial class DedicatedServerHost
         }
     }
 
-    // Runs the account write on the persistence queue and tells the admin how it went. Without a queue or
-    // accounts nothing can be stored, and the admin is told so.
+    // What a sanction command changes on the account.
+    private readonly record struct SanctionChange(
+        (DateTime Until, string? Reason)? Ban,
+        DateTime? Mute,
+        bool ClearBan,
+        bool ClearMute,
+        bool GuardsAdmin);
+
+    // The result of a queued sanction, written by the queue's worker before the reply barrier reads it.
+    private sealed class SanctionOutcome
+    {
+        public volatile string? Text;
+        public AccountKey? Applied;
+    }
+
+    // Sanctions are per account, so the account is resolved first: the repository says who owns the
+    // character name, and everything after (the self and administrator guards, the write, the memory for
+    // joins in flight, the live effect on every connection of the account) is about that account. The
+    // work runs on the persistence queue, never on the tick. A write failure propagates to the queue
+    // (it retries a locked database); the admin's reply is sent on a read barrier queued behind the
+    // write, so it is never sent before the change committed.
     private void QueueSanction(
         WorldSessionRuntime runtime,
         string adminConnection,
+        AccountKey? senderAccount,
+        string targetName,
+        SanctionChange change,
         Func<IAccountRepository, bool> write,
-        string doneText,
-        string notFoundText)
+        string doneText)
     {
         IAccountRepository? accounts = runtime.AccountRepository;
         PersistenceWriteQueue? writes = runtime.PersistenceWrites;
+        ulong tick = runtime.CurrentServerTick;
         if (accounts == null || writes == null)
         {
-            EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", AccountDataUnavailableText, runtime.CurrentServerTick));
+            EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", AccountDataUnavailableText, tick));
             return;
         }
 
-        ulong tick = runtime.CurrentServerTick;
+        string notFoundText = NotFoundText(targetName);
+        SanctionOutcome outcome = new();
         bool queued = writes.Enqueue(() =>
         {
-            bool changed;
-            try
+            outcome.Text = null;
+            outcome.Applied = null;
+            if (accounts.Lookup(targetName, null).Existing is not { Owner: { } owner })
             {
-                changed = write(accounts);
-            }
-            catch (Exception ex)
-            {
-                NetworkDiagnosticsLog.Write("server.admin.failed", $"{ex.GetType().Name}: {ex.Message}");
-                EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", "The change could not be saved.", tick));
+                outcome.Text = notFoundText;
                 return;
             }
 
-            EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", changed ? doneText : notFoundText, tick));
+            if (senderAccount is { } self && self.Equals(owner))
+            {
+                outcome.Text = "You cannot do that to yourself.";
+                return;
+            }
+
+            if (change.GuardsAdmin && accounts.Lookup(targetName, owner).Standing.Role == 1)
+            {
+                outcome.Text = "That player is an administrator.";
+                return;
+            }
+
+            if (!write(accounts))
+            {
+                outcome.Text = notFoundText;
+                return;
+            }
+
+            RememberSanction(owner, change.Ban, change.Mute, change.ClearBan, change.ClearMute);
+            outcome.Applied = owner;
+            outcome.Text = doneText;
+        });
+        bool barrier = queued && writes.EnqueueRead(() =>
+        {
+            if (outcome.Applied is { } account)
+            {
+                _pendingAccountUpdates.Enqueue(new AccountUpdate(account, null));
+            }
+
+            EnqueueConnectionReply(
+                adminConnection,
+                new ServerChatMessage(ChatChannel.System, "", outcome.Text ?? "The change could not be saved.", tick));
+        });
+        if (!barrier)
+        {
+            EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", AccountDataUnavailableText, tick));
+        }
+    }
+
+    // A change to what the host knows of an account, made off the tick and applied to its connections
+    // on the next tick. Read null: re-apply the recent sanctions on top of the connection's standing;
+    // otherwise the standing was just read from the database (role included).
+    private readonly record struct AccountUpdate(AccountKey Account, AccountStanding? Read);
+
+    private readonly ConcurrentQueue<AccountUpdate> _pendingAccountUpdates = new();
+    private int _standingRefreshInFlight;
+
+    // How often (in ticks) the role and sanctions of the connected accounts are read again, so another
+    // world's ban, or a revoked role, reaches a player who stays connected. It rides the presence renew's
+    // cadence by default; 0 turns it off.
+    internal ulong StandingRefreshIntervalTicks { get; set; } = WorldSessionRuntime.PresenceRenewIntervalTicks;
+
+    // Runs first in a tick, under the tick lock: applies the queued account changes to the live
+    // connections and, on the refresh cadence, queues one read of the connected accounts' standing.
+    private void StepAccountStandings(WorldSessionRuntime? runtime, ulong tick)
+    {
+        while (_pendingAccountUpdates.TryDequeue(out AccountUpdate update))
+        {
+            ApplyAccountUpdate(update);
+        }
+
+        if (runtime == null
+            || StandingRefreshIntervalTicks == 0
+            || tick % StandingRefreshIntervalTicks != 0
+            || runtime.AccountRepository is not { } accounts
+            || runtime.PersistenceWrites is not { } writes
+            || Interlocked.CompareExchange(ref _standingRefreshInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        Dictionary<string, AccountKey> connected = new(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
+        {
+            if (connection.Value.JoinedIdentity is { } identity)
+            {
+                connected[identity.Account.HashHex] = identity.Account;
+            }
+        }
+
+        if (connected.Count == 0)
+        {
+            Volatile.Write(ref _standingRefreshInFlight, 0);
+            return;
+        }
+
+        AccountKey[] keys = [.. connected.Values];
+        bool queued = writes.EnqueueRead(() =>
+        {
+            try
+            {
+                foreach (AccountKey key in keys)
+                {
+                    if (accounts.ReadStanding(key) is { } read)
+                    {
+                        _pendingAccountUpdates.Enqueue(new AccountUpdate(key, read));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                NetworkDiagnosticsLog.Write("server.admin.refresh-failed", $"{ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                Volatile.Write(ref _standingRefreshInFlight, 0);
+            }
         });
         if (!queued)
         {
-            EnqueueConnectionReply(adminConnection, new ServerChatMessage(ChatChannel.System, "", AccountDataUnavailableText, tick));
+            Volatile.Write(ref _standingRefreshInFlight, 0);
+        }
+    }
+
+    // Sets the standing of every connection of the account, and closes the ones now banned. Under the tick lock.
+    private void ApplyAccountUpdate(in AccountUpdate update)
+    {
+        DateTime now = DateTime.UtcNow;
+        foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
+        {
+            ServerRoutingContext context = connection.Value;
+            if (context.JoinedIdentity is not { } identity || !identity.Account.Equals(update.Account))
+            {
+                continue;
+            }
+
+            AccountStanding next = OverlaySanctions(update.Account, update.Read ?? context.Standing);
+            context.Standing = next;
+            if (BanMessage.IsActive(next, now)
+                && _connectionClaims.ContainsKey(connection.Key)
+                && !_takenOverConnections.ContainsKey(connection.Key))
+            {
+                NetworkDiagnosticsLog.Write("server.admin.ban-applied", $"connection={connection.Key}");
+                CloseConnectionWithReason(connection.Key, BanMessage.Format(next));
+            }
         }
     }
 
@@ -280,65 +436,16 @@ public sealed partial class DedicatedServerHost
         return false;
     }
 
-    // Applies a sanction to what the host holds in memory: the live connection's standing (so it takes
-    // effect at once), and the recent-sanction memory by account (so a join already in flight is judged on
-    // it). The account is found through the live connection or a pending join of that character.
+    // Keeps a sanction in the recent-sanction memory by account, so a join already in flight is judged on
+    // it and the live connections of the account can be brought up to date from it (ApplyAccountUpdate).
+    // Thread-safe: it runs on the persistence worker, even when nobody is online.
     private void RememberSanction(
-        WorldSessionRuntime runtime,
-        string targetName,
-        ServerRoutingContext? online,
+        AccountKey key,
         (DateTime Until, string? Reason)? ban,
         DateTime? mute,
         bool clearBan,
         bool clearMute)
     {
-        _ = runtime;
-        AccountKey? account = online?.JoinedIdentity?.Account;
-        if (account == null)
-        {
-            foreach (PendingJoin pending in _pendingJoins)
-            {
-                if (pending.Request.ResolvedAccount is { } pendingAccount
-                    && (CharacterNames.Comparer.Equals(pending.PlayerName, targetName)
-                        || CharacterNames.Comparer.Equals(pending.Request.DisplayName.Trim(), targetName)))
-                {
-                    account = pendingAccount;
-                    break;
-                }
-            }
-        }
-
-        if (online != null)
-        {
-            AccountStanding standing = online.Standing;
-            if (ban is { } setBan)
-            {
-                standing = standing with { BannedUntilUtc = setBan.Until, BanReason = setBan.Reason };
-            }
-
-            if (clearBan)
-            {
-                standing = standing with { BannedUntilUtc = null, BanReason = null };
-            }
-
-            if (mute is { } until)
-            {
-                standing = standing with { MutedUntilUtc = until };
-            }
-
-            if (clearMute)
-            {
-                standing = standing with { MutedUntilUtc = null };
-            }
-
-            online.Standing = standing;
-        }
-
-        if (account is not { } key)
-        {
-            return;
-        }
-
         if (_sanctionMemory.Count >= MaxSanctionMemory)
         {
             DateTime now = DateTime.UtcNow;
@@ -454,10 +561,60 @@ public sealed partial class DedicatedServerHost
         return slots;
     }
 
-    private bool IsServerFullFor(string connectionId) =>
+    private bool IsServerFullFor(string connectionId, ClientJoinRequestMessage join) =>
         MaxPlayers > 0
         && !_connectionClaims.ContainsKey(connectionId)
-        && PlayerSlotsInUse(connectionId) >= MaxPlayers;
+        && PlayerSlotsInUse(connectionId) >= MaxPlayers
+        && !HoldsSeat(connectionId, join);
+
+    // Whether the joining account or character already holds a seat (or a leftover claim of the requested
+    // session): its new connection replaces the old one, so a full server must not lock it out of its own
+    // seat. Under the tick lock.
+    private bool HoldsSeat(string connectionId, ClientJoinRequestMessage join)
+    {
+        AccountKey? account = join.ResolvedAccount;
+        string name = join.DisplayName.Trim();
+        foreach (KeyValuePair<string, string> claim in _connectionClaims)
+        {
+            if (string.Equals(claim.Key, connectionId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!_connections.TryGetValue(claim.Key, out ServerRoutingContext? other))
+            {
+                // A claim without a context is a leftover; the requested session id is its.
+                if (string.Equals(claim.Value, join.RequestedSessionId, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (other.JoinedIdentity is { } identity
+                && ((account is { } joining && identity.Account.Equals(joining))
+                    || CharacterNames.Comparer.Equals(identity.Character.Value, name)))
+            {
+                return true;
+            }
+        }
+
+        if (account is { } pendingAccount)
+        {
+            for (int i = 0; i < _pendingJoins.Count; i++)
+            {
+                if (!string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal)
+                    && _pendingJoins[i].Request.ResolvedAccount is { } other
+                    && other.Equals(pendingAccount))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private static string SanitizeForLog(string value) =>
         ChatMessageHandler.Sanitize(value).Replace('\n', ' ');

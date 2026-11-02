@@ -136,6 +136,29 @@ public sealed class SqliteAccountRepository(SqliteSchemaBootstrapper schema)
         return new CharacterLookup(existing, reserved, owned, standing);
     }
 
+    public AccountStanding? ReadStanding(AccountKey account)
+    {
+        if (account.HashHex.Length == 0)
+        {
+            return null;
+        }
+
+        using SqliteSession session = Store.OpenSession();
+        using SqliteCommand command = session.CreateCommand(StandingSql);
+        command.Parameters.AddWithValue("$hash", account.ToHashBytes());
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        return new AccountStanding(
+            reader.GetInt32(0),
+            reader.IsDBNull(1) ? null : reader.GetUtc(1),
+            reader.GetNullableString(2),
+            reader.IsDBNull(3) ? null : reader.GetUtc(3));
+    }
+
     public bool TrySetBan(string displayName, DateTime? untilUtc, string? reason)
     {
         ArgumentNullException.ThrowIfNull(displayName);

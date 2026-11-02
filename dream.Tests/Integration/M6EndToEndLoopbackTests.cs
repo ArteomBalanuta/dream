@@ -491,6 +491,20 @@ public sealed class M6EndToEndLoopbackTests
 
         foreach (HeadlessPlayScene mate in new[] { b, c })
         {
+            // One invite per inviter cooldown (PartyRules.InviteCooldownTicks).
+            for (int i = 0; i < Dream.Simulation.Multiplayer.PartyRules.InviteCooldownTicks + 8; i++)
+            {
+                if (i % 32 == 0)
+                {
+                    foreach (EnemyActor enemy in server.Runtime.Enemies.ActiveActors)
+                    {
+                        enemy.SetPosition(Pen);
+                    }
+                }
+
+                await server.TickAsync();
+            }
+
             AssertAccepted(await ResultAsync(server, all, a, Click(a, new PartyInviteIntent($"Name {mate.SessionId}"))));
             AssertAccepted(await ResultAsync(server, all, mate, Click(mate, new PartyRespondIntent(true))));
         }

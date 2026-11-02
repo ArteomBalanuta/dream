@@ -432,7 +432,31 @@ public sealed class NetworkSessionCoordinator
     {
         session = _connectedSession;
         _connectedSession = null;
+        if (session != null)
+        {
+            MarkSessionStarted(TimeProvider.System.GetTimestamp());
+        }
+
         return session != null;
+    }
+
+    // A lost connection is retried automatically only when the session before it lasted at least this long,
+    // so a server that accepts the client and drops it again at once cannot cause a reconnect loop.
+    public static readonly TimeSpan AutoReconnectMinimumSession = TimeSpan.FromSeconds(30);
+
+    // Each ended session builds a fresh scene and coordinator, so the start of the play session is kept
+    // here, stamped when the game takes the connected session. 0: no session has been taken.
+    private static long s_sessionStartedTimestamp;
+
+    internal static void MarkSessionStarted(long timestamp) => Volatile.Write(ref s_sessionStartedTimestamp, timestamp);
+
+    // Whether the play session that just ended lasted AutoReconnectMinimumSession or more. Reads and
+    // clears the stamp, so a session is judged once.
+    public bool TakeSessionLastedLongEnoughToReconnect()
+    {
+        long started = Interlocked.Exchange(ref s_sessionStartedTimestamp, 0);
+        return started != 0
+            && TimeProvider.System.GetElapsedTime(started) >= AutoReconnectMinimumSession;
     }
 
     // The list probe's connection may still hold its server slot when the real connect starts, so a

@@ -15,10 +15,16 @@ internal readonly record struct SessionServerMessage(PlayerSessionId SessionId, 
 // which hashes every result, so they reach the owner through this queue after the tick, like vitals.
 public sealed partial class WorldSessionRuntime
 {
-    // A host that never drains cannot grow the queue past this; the oldest message goes first.
-    private const int MaxQueuedSessionMessages = 1024;
+    // A session that is never drained (its connection is gone, or it is slow) cannot hold more than this many
+    // messages; its own oldest goes first, so one session never pushes another's messages out.
+    internal const int MaxQueuedSessionMessagesPerSession = 128;
 
     private readonly List<SessionServerMessage> _sessionMessages = [];
+    private readonly Dictionary<PlayerSessionId, int> _sessionMessageCounts = [];
+
+    // Whether the account behind a session is muted; set by the hosting server (the runtime knows no
+    // accounts' sanctions). Null: nobody is muted. Called on the tick.
+    public Func<PlayerSessionId, bool>? IsSessionMuted { get; set; }
 
     // M5: whether an online party mate of a cube's owner may damage it. Off by default; the dedicated
     // bootstrap sets it from DREAM_PARTY_CUBES.
@@ -33,12 +39,22 @@ public sealed partial class WorldSessionRuntime
     internal void QueueSessionMessage(PlayerSessionId session, IServerToClientMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        if (_sessionMessages.Count >= MaxQueuedSessionMessages)
+        _sessionMessageCounts.TryGetValue(session, out int queued);
+        if (queued >= MaxQueuedSessionMessagesPerSession)
         {
-            _sessionMessages.RemoveAt(0);
+            for (int i = 0; i < _sessionMessages.Count; i++)
+            {
+                if (_sessionMessages[i].SessionId.Equals(session))
+                {
+                    _sessionMessages.RemoveAt(i);
+                    queued--;
+                    break;
+                }
+            }
         }
 
         _sessionMessages.Add(new SessionServerMessage(session, message));
+        _sessionMessageCounts[session] = queued + 1;
     }
 
     // Moves the queued messages into into, oldest first. A message of a session isClaimed rejects (no
@@ -55,6 +71,7 @@ public sealed partial class WorldSessionRuntime
         {
             into.AddRange(_sessionMessages);
             _sessionMessages.Clear();
+            _sessionMessageCounts.Clear();
             return;
         }
 
@@ -65,6 +82,17 @@ public sealed partial class WorldSessionRuntime
             if (isClaimed(entry.SessionId))
             {
                 into.Add(entry);
+                if (_sessionMessageCounts.TryGetValue(entry.SessionId, out int left))
+                {
+                    if (left <= 1)
+                    {
+                        _sessionMessageCounts.Remove(entry.SessionId);
+                    }
+                    else
+                    {
+                        _sessionMessageCounts[entry.SessionId] = left - 1;
+                    }
+                }
             }
             else
             {

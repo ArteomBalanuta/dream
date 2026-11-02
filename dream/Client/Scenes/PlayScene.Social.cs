@@ -34,7 +34,10 @@ public partial class PlayScene
             return;
         }
 
-        if (_deathTracker.IsDead || !_settings.InventoryVisible)
+        // An incoming request waits for the player to open the inventory (it is not opened for them), so a
+        // closed inventory does not decline it; the server drops it after TradeRules.RequestTimeoutTicks.
+        bool inventoryGone = !_settings.InventoryVisible && _tradeHud.Stage != TradeHudStage.Incoming;
+        if (_deathTracker.IsDead || inventoryGone)
         {
             CancelTradeFromHere();
         }
@@ -118,11 +121,13 @@ public partial class PlayScene
         TradeHudLine[] theirs = ReadTradeLines(state.TheirItems);
         if (!_tradeHud.IsOpen && stage == TradeHudStage.Incoming && partner.Length > 0)
         {
-            _chatInput.State.AddSystemLine($"{partner} wants to trade with you.");
+            _chatInput.State.AddSystemLine($"{partner} wants to trade with you. Open your inventory to answer.");
         }
 
-        // The window sits over the inventory: it opens it.
-        if (!_settings.InventoryVisible)
+        // The window sits over the inventory. A request the player started or a trade they are in opens it;
+        // an incoming request from someone else never throws the inventory over their screen (mid-fight, say):
+        // the notice above says so, and the window is there once the player opens the inventory.
+        if (stage != TradeHudStage.Incoming && !_settings.InventoryVisible)
         {
             _settings.ToggleInventory();
         }

@@ -336,7 +336,10 @@ public static class ServerBootstrap
             transport,
             new TransportJsonCodec(),
             FrameLimitOptions.FromEnvironment(log).CreateServerFramer(),
-            ServerConnectionOptions.Default.WithEnvironmentOverrides(log));
+            ServerConnectionOptions.Default.WithEnvironmentOverrides(log).WithPlayerCapHeadroom(
+                config.MaxPlayers,
+                Environment.GetEnvironmentVariable(ServerConnectionOptions.MaxConnectionsEnvironmentVariable),
+                log));
 
         using CancellationTokenSource cancellation = new();
         ConsoleCancelEventHandler? cancelHandler = (_, args) =>

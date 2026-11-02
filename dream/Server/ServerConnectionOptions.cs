@@ -80,6 +80,36 @@ public sealed record ServerConnectionOptions
             .WithMaxConnectionsOverride(Environment.GetEnvironmentVariable(MaxConnectionsEnvironmentVariable), log);
     }
 
+    // Sockets kept free above the player cap when the connection cap is derived from it: joins in flight,
+    // a returning player's new connection beside its old one, and clients still choosing a character.
+    public const int PlayerCapHeadroom = 8;
+
+    // At startup: a connection cap at or below the player cap would refuse sockets before the player cap
+    // could (and would lock a full server's own players out of reconnecting). Unless DREAM_MAX_CONNECTIONS
+    // was set explicitly, the effective cap becomes maxPlayers + PlayerCapHeadroom; an explicit one is kept
+    // with a warning. The effective number is always logged when the two clash.
+    public ServerConnectionOptions WithPlayerCapHeadroom(int maxPlayers, string? maxConnectionsVariable, Action<string>? log = null)
+    {
+        if (maxPlayers <= 0 || MaxConnections <= 0 || maxPlayers < MaxConnections)
+        {
+            return this;
+        }
+
+        if (!string.IsNullOrWhiteSpace(maxConnectionsVariable))
+        {
+            log?.Invoke(
+                $"Warning: DREAM_MAX_PLAYERS ({maxPlayers}) is not below {MaxConnectionsEnvironmentVariable} ({MaxConnections}); " +
+                $"the effective connection cap stays {MaxConnections}, so players may be refused at the socket.");
+            return this;
+        }
+
+        int effective = maxPlayers + PlayerCapHeadroom;
+        log?.Invoke(
+            $"DREAM_MAX_PLAYERS ({maxPlayers}) is not below the default connection cap ({MaxConnections}); " +
+            $"the effective connection cap is {effective} (players + {PlayerCapHeadroom}). Set {MaxConnectionsEnvironmentVariable} to choose it.");
+        return this with { MaxConnections = effective };
+    }
+
     public ServerConnectionOptions WithMaxConnectionsOverride(string? value, Action<string>? log = null)
     {
         if (string.IsNullOrWhiteSpace(value))

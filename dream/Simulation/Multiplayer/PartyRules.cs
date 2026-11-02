@@ -10,6 +10,9 @@ public static class PartyRules
     // A pending invite lapses after 60 s.
     public const int InviteTimeoutTicks = 60 * SimulationClock.AuthoritativeTicksPerSecond;
 
+    // One inviter makes at most one invite per 2 s.
+    public const int InviteCooldownTicks = 2 * SimulationClock.AuthoritativeTicksPerSecond;
+
     // A party mate this close (metres, 3D) to a kill shares its experience.
     public const float ShareRangeMeters = 40f;
 

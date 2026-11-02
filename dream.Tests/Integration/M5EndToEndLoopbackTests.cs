@@ -14,6 +14,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Multiplayer;
 using Dream.Simulation.Players;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Runtime;
@@ -128,6 +129,23 @@ public sealed class M5EndToEndLoopbackTests
         foreach (HeadlessPlayScene client in clients)
         {
             await client.PumpToSnapshotAsync(snapshot);
+        }
+    }
+
+    // An inviter makes one invite per PartyRules.InviteCooldownTicks: waits it out, the enemies kept in their pen.
+    private static async Task InviteCooldownAsync(WireLoopbackServer server)
+    {
+        for (int i = 0; i < PartyRules.InviteCooldownTicks + 8; i++)
+        {
+            if (i % 32 == 0)
+            {
+                foreach (EnemyActor enemy in server.Runtime.Enemies.ActiveActors)
+                {
+                    enemy.SetPosition(Pen);
+                }
+            }
+
+            await server.TickAsync();
         }
     }
 
@@ -362,6 +380,7 @@ public sealed class M5EndToEndLoopbackTests
         await StepUntilAsync(server, all, () => c.Applied.OfType<ServerChatMessage>().Any(m => m.Text == "hello all"), "world chat");
 
         // ---- a declined invite joins nothing ----
+        await InviteCooldownAsync(server);
         await AcceptedAsync(server, all, a, new PartyInviteIntent(NameOf(SessionC)));
         await StepUntilAsync(server, all, () => PartyHud(c).PendingInviteFrom == NameOf(SessionA), "C's invite");
         await AcceptedAsync(server, all, c, new PartyRespondIntent(false));
@@ -375,6 +394,7 @@ public sealed class M5EndToEndLoopbackTests
         await RejectedAsync(server, all, b, new PartyLeaveIntent(), "not in a party");
 
         // ---- a member who disconnects leaves the party ----
+        await InviteCooldownAsync(server);
         await AcceptedAsync(server, all, a, new PartyInviteIntent(NameOf(SessionB)));
         await AcceptedAsync(server, all, b, new PartyRespondIntent(true));
         await StepUntilAsync(server, all, () => PartyHud(a).Count == 2, "the party again");
@@ -402,6 +422,7 @@ public sealed class M5EndToEndLoopbackTests
         // A leads a party with B (2 m away) and C (about 46 m from where the enemy dies).
         foreach (string mate in new[] { SessionB, SessionC })
         {
+            await InviteCooldownAsync(server);
             await AcceptedAsync(server, all, a, new PartyInviteIntent(NameOf(mate)));
             HeadlessPlayScene who = mate == SessionB ? b : c;
             await AcceptedAsync(server, all, who, new PartyRespondIntent(true));
@@ -758,6 +779,116 @@ public sealed class M5EndToEndLoopbackTests
         Assert.Contains("timed out", EndReason(a, TradeStage.Cancelled), StringComparison.Ordinal);
         Assert.Equal(0, server.Runtime.ActiveTradeCount);
         Assert.Contains(a1, InventoryOf(server, SessionA).AllItems().Select(item => item.ItemInstanceId));
+    }
+
+    [Fact]
+    public async Task Trade_AnIncomingRequest_DoesNotOpenTheInventory_ShowsANotice_AndTheWindowWaitsForTheInventory()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        HeadlessPlayScene[] all = await JoinAsync(server, SessionA, SessionB);
+        await using HeadlessPlayScene a = all[0];
+        await using HeadlessPlayScene b = all[1];
+        MethodInfo frame = typeof(PlayScene).GetMethod("UpdateMultiplayerHud", Fields)!;
+        Assert.False(InventoryVisible(b));
+
+        await AcceptedAsync(server, all, a, new TradeRequestIntent(NameOf(SessionB)));
+        await StepUntilAsync(server, all, () => TradeHud(b).Stage == TradeHudStage.Incoming, "the request on B's screen");
+
+        // B's screen was not taken over; a line says how to answer.
+        Assert.False(InventoryVisible(b));
+        Assert.Contains(ChatLines(b), line => line.Contains("wants to trade with you. Open your inventory to answer.", StringComparison.Ordinal));
+        // The next frames do not decline it either.
+        frame.Invoke(b.Scene, null);
+        frame.Invoke(b.Scene, null);
+        Assert.True(TradeHud(b).IsOpen);
+        Assert.Equal(TradeHudStage.Incoming, TradeHud(b).Stage);
+        Assert.Equal(0, HudIntents(b).Count);
+
+        // Opening the inventory shows the window (the trade panel draws over an open inventory).
+        b.Scene.PressInventoryKey();
+        Assert.True(InventoryVisible(b));
+        frame.Invoke(b.Scene, null);
+        Assert.True(TradeHud(b).IsOpen);
+        Assert.Equal(0, HudIntents(b).Count);
+
+        // Closing it again leaves the request pending; answering works from the window.
+        b.Scene.PressInventoryKey();
+        frame.Invoke(b.Scene, null);
+        Assert.True(TradeHud(b).IsOpen);
+        await AcceptedAsync(server, all, b, new TradeRespondIntent(true));
+        await StepUntilAsync(server, all, () => TradeHud(a).Stage == TradeHudStage.Open && TradeHud(b).Stage == TradeHudStage.Open, "the open trade");
+    }
+
+    [Fact]
+    public async Task Trade_ARequestNobodyAnswers_IsCancelledAfter20Seconds_NotThe120OfAnOpenTrade()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        HeadlessPlayScene[] all = await JoinAsync(server, SessionA, SessionB);
+        await using HeadlessPlayScene a = all[0];
+        await using HeadlessPlayScene b = all[1];
+        await AcceptedAsync(server, all, a, new TradeRequestIntent(NameOf(SessionB)));
+        await StepUntilAsync(server, all, () => TradeHud(b).Stage == TradeHudStage.Incoming, "the request on B's screen");
+
+        async Task TicksAsync(int ticks)
+        {
+            for (int i = 0; i < ticks; i++)
+            {
+                if (i % 64 == 0)
+                {
+                    foreach (EnemyActor enemy in server.Runtime.Enemies.ActiveActors)
+                    {
+                        enemy.SetPosition(Pen);
+                    }
+                }
+
+                await server.TickAsync();
+            }
+        }
+
+        await TicksAsync(Dream.Simulation.Multiplayer.TradeRules.RequestTimeoutTicks - 150);
+        Assert.Equal(1, server.Runtime.ActiveTradeCount);
+
+        await TicksAsync(250);
+        await StepUntilAsync(server, all, () => !TradeHud(a).IsOpen && !TradeHud(b).IsOpen, "the request lapsing on both screens");
+        Assert.Contains("not answered", EndReason(a, TradeStage.Cancelled), StringComparison.Ordinal);
+        Assert.Equal(0, server.Runtime.ActiveTradeCount);
+    }
+
+    [Fact]
+    public async Task Party_ARefreshedInviteSendsNothing_AnInviterIsHeldToACooldown_AndAMutedSenderCannotInvite()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        HeadlessPlayScene[] all = await JoinAsync(server, SessionA, SessionB, SessionC);
+        await using HeadlessPlayScene a = all[0];
+        await using HeadlessPlayScene b = all[1];
+        await using HeadlessPlayScene c = all[2];
+        static int Invited(HeadlessPlayScene who) => ChatLines(who).Count(line => line.Contains("invited you", StringComparison.Ordinal));
+
+        await AcceptedAsync(server, all, a, new PartyInviteIntent(NameOf(SessionB)));
+        await StepUntilAsync(server, all, () => Invited(b) == 1, "the invite on B's screen");
+
+        // A second invite at once is held back by the inviter's cooldown, even to another player.
+        await RejectedAsync(server, all, a, new PartyInviteIntent(NameOf(SessionC)), "wait a moment");
+
+        // After the cooldown the same inviter renews its invite: A is told, B hears nothing new.
+        for (int i = 0; i < PartyRules.InviteCooldownTicks + 10; i++)
+        {
+            await server.TickAsync();
+        }
+
+        await AcceptedAsync(server, all, a, new PartyInviteIntent(NameOf(SessionB)));
+        await StepUntilAsync(server, all, () => ChatLines(a).Any(line => line.Contains("already has your invite", StringComparison.Ordinal)), "the renewal notice");
+        await StepAsync(server, all);
+        Assert.Equal(1, Invited(b));
+
+        // A muted account (the host asks its connection's standing) cannot invite.
+        server.Runtime.IsSessionMuted = id => id.Value == SessionC;
+        await RejectedAsync(server, all, c, new PartyInviteIntent(NameOf(SessionA)), "muted");
+        Assert.Contains(ChatLines(c), line => line == "You are muted.");
+        Assert.Null(server.Runtime.Parties.PendingInviteFrom(KeyOf(SessionA)));
     }
 
     [Fact]

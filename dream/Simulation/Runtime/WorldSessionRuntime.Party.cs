@@ -12,7 +12,7 @@ namespace Dream.Simulation.Runtime;
 // Nothing here is persisted: a party does not outlive its members' sessions, and a detach removes the member.
 public sealed partial class WorldSessionRuntime
 {
-    private readonly PartyRegistry _parties = new();
+    private readonly PartyRegistry _parties = new() { InviteCooldownTicks = PartyRules.InviteCooldownTicks };
     private readonly List<string> _partyChangedScratch = [];
     private readonly List<PartyMemberSnapshot> _partyMemberScratch = [];
 
@@ -99,11 +99,19 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Party invite rejected because that player is not online.");
         }
 
-        PartyOutcome outcome = _parties.Invite(player.CharacterKey.Value, target.CharacterKey.Value, CurrentServerTick);
+        // A muted account cannot reach other players through an invite either.
+        if (IsSessionMuted?.Invoke(player.SessionId) == true)
+        {
+            SendSystemLine(player.SessionId, "You are muted.");
+            return CreateRejectedActionResult(message, "Party invite rejected because the sender is muted.");
+        }
+
+        PartyOutcome outcome = _parties.Invite(player.CharacterKey.Value, target.CharacterKey.Value, CurrentServerTick, out bool refreshed);
         if (outcome != PartyOutcome.Ok)
         {
             string text = outcome switch
             {
+                PartyOutcome.Cooldown => "Wait a moment before inviting again.",
                 PartyOutcome.SelfInvite => "You cannot invite yourself.",
                 PartyOutcome.NotLeader => "Only the party leader can invite.",
                 PartyOutcome.TargetInParty => $"{target.DisplayName} is already in a party.",
@@ -113,6 +121,13 @@ public sealed partial class WorldSessionRuntime
             };
             SendSystemLine(player.SessionId, text);
             return CreateRejectedActionResult(message, $"Party invite rejected: {text}");
+        }
+
+        if (refreshed)
+        {
+            // The invite is already on the target's screen: its time is renewed, and nothing is sent to it.
+            SendSystemLine(player.SessionId, $"{target.DisplayName} already has your invite.");
+            return CreateAcceptedActionResult(message);
         }
 
         SendSystemLine(player.SessionId, $"You invited {target.DisplayName} to your party.");

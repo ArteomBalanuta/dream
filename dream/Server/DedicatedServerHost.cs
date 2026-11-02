@@ -146,6 +146,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         {
             // Snapshots count the inbox's carried repeat debt in StarvedTicks (W9-2).
             runtime.CarriedRepeatDebtTicks = _commandInbox.GetCarriedRepeatDebtTicks;
+            runtime.IsSessionMuted = IsSessionMuted;
         }
 
         _checkpointWrites =Runtime?.CheckpointWriter is { } checkpointWriter
@@ -412,7 +413,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
 
                 // The player cap: a connection with no seat is refused while every seat is taken. A joined
                 // connection repeating its join keeps its seat.
-                if (IsServerFullFor(connectionId))
+                if (IsServerFullFor(connectionId, joinRequest))
                 {
                     return RejectJoinBeforeQueue(context, ServerConnectionOptions.ServerFullRejectionReason);
                 }
@@ -1307,6 +1308,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
 
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
+        StepAccountStandings(Runtime, tick);
         ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);

@@ -19,6 +19,10 @@ public interface IAccountRepository
     // Only the account's own rows are returned. A repository that cannot list returns none.
     IReadOnlyList<AccountCharacterSummary> ListCharacters(AccountKey account, int max) => [];
 
+    // M8. Read-only. The role and sanctions of the account now; null when it has no row (or the repository
+    // cannot read them, as a fake). The server reads connected accounts again on a slow cadence.
+    AccountStanding? ReadStanding(AccountKey account) => null;
+
     // M8. Sets (untilUtc and reason) or clears (untilUtc null) the ban of the account that owns the
     // character displayName. False when no account owns it. The default (a fake) changes nothing.
     bool TrySetBan(string displayName, DateTime? untilUtc, string? reason) => false;

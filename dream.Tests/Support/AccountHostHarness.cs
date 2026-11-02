@@ -78,7 +78,7 @@ internal sealed class AccountHostHarness : IDisposable
         return ServerBootstrap.CreateAuthoritativeHost(WithAccounts(bundle, accounts));
     }
 
-    private static ServerPersistenceBundle WithAccounts(ServerPersistenceBundle bundle, IAccountRepository? accounts) =>
+    internal static ServerPersistenceBundle WithAccounts(ServerPersistenceBundle bundle, IAccountRepository? accounts) =>
         new(
             bundle.Schema,
             bundle.PlayerProfiles,

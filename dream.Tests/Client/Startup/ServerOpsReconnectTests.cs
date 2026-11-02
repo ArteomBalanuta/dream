@@ -183,6 +183,46 @@ public sealed class ServerOpsReconnectTests : IDisposable
         Assert.False(coordinator.IsReconnecting);
     }
 
+    [Fact]
+    public async Task ASessionThatLastedLongEnough_IsRetried_AShortOneIsNot_AndTheStampIsJudgedOnce()
+    {
+        NetworkSessionCoordinator coordinator = new(new FakeLocalServerHandle(), new ScriptedConnector(failures: 0));
+        long frequency = TimeProvider.System.TimestampFrequency;
+        long now = TimeProvider.System.GetTimestamp();
+
+        // Lasted 31 s: a lost connection is retried.
+        NetworkSessionCoordinator.MarkSessionStarted(now - (31 * frequency));
+        Assert.True(coordinator.TakeSessionLastedLongEnoughToReconnect());
+        // The stamp is consumed: the next ended session has to be taken again to count.
+        Assert.False(coordinator.TakeSessionLastedLongEnoughToReconnect());
+
+        // Dropped 5 s after the game took it: the server keeps dropping the client, so no loop.
+        NetworkSessionCoordinator.MarkSessionStarted(now - (5 * frequency));
+        Assert.False(coordinator.TakeSessionLastedLongEnoughToReconnect());
+
+        // No session was ever taken (a failed join): nothing to retry on.
+        Assert.False(coordinator.TakeSessionLastedLongEnoughToReconnect());
+
+        // Taking a connected session stamps it, and the stamp is young.
+        coordinator.BeginReconnect(Endpoint);
+        await coordinator.WaitForPendingConnectionAsync();
+        Assert.True(coordinator.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+        Assert.False(coordinator.TakeSessionLastedLongEnoughToReconnect());
+    }
+
+    [Fact]
+    public void TheScene_RetriesOnlyAfterALongSession()
+    {
+        // The scene needs a GL context to build, so its gate is read from source: the retry is behind the
+        // coordinator's session-length check, and the comment no longer claims a one-scene limit alone.
+        string source = File.ReadAllText(Path.Combine(
+            Dream.Tests.Integration.RepoRoot.Find(), "dream", "Client", "Startup", "StartupConnectionScene.cs"));
+
+        Assert.Contains("TakeSessionLastedLongEnoughToReconnect()", source, StringComparison.Ordinal);
+        Assert.Contains("lastedLongEnough && RemoteClientSession.IsRetryableEnd(sessionEndReason)", source, StringComparison.Ordinal);
+    }
+
     // Named like the production connector (Dream.Application.LocalServerRelaunchConnector) on purpose: the
     // coordinator recognises it by name because the Client layer cannot reference Application.
     private sealed class LocalServerRelaunchConnector : IRemoteSessionConnector

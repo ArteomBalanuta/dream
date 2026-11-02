@@ -15,6 +15,9 @@ public static class TradeRules
     // A trade that has not finished 120 s after it was requested is cancelled.
     public const int TimeoutTicks = 120 * SimulationClock.AuthoritativeTicksPerSecond;
 
+    // A request that has not been answered 20 s after it was made is cancelled.
+    public const int RequestTimeoutTicks = 20 * SimulationClock.AuthoritativeTicksPerSecond;
+
     public static bool InRange(Vector3 a, Vector3 b)
     {
         float dx = a.X - b.X;
