@@ -77,7 +77,7 @@ public sealed class ManaPersistenceTests
             await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);
             PlayerCombatant combatant = M4AKit.Combatant(again, SessionA);
             Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
-            Assert.Equal(PlayerManaRules.MaxMana(combatant.Level), combatant.MaxMana);
+            Assert.Equal(PlayerManaRules.MaxMana(combatant.Level, combatant.Stats.Energy), combatant.MaxMana);
             await back.LeaveAsync();
         }
     }
@@ -101,7 +101,7 @@ public sealed class ManaPersistenceTests
         PlayerCombatant occupant = M4AKit.Combatant(server, SessionB);
         Assert.Same(server.Runtime.Player.Combatant, occupant);
         Assert.Equal(occupant.MaxMana, occupant.CurrentMana);
-        Assert.Equal(PlayerManaRules.MaxMana(occupant.Level), occupant.CurrentMana);
+        Assert.Equal(PlayerManaRules.MaxMana(occupant.Level, occupant.Stats.Energy), occupant.CurrentMana);
         await b.LeaveAsync();
     }
 

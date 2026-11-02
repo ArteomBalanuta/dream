@@ -99,13 +99,13 @@ public sealed class CharacterStatsWireTests
     public void SpendIntent_RoundTrips()
     {
         TransportJsonCodec codec = new();
-        PlayerActionMessage message = new(new PlayerSessionId("session-a"), 7, new PlayerAttributeSpendIntent(StatId.Energy, 1));
+        PlayerActionMessage message = new(new PlayerSessionId("session-a"), 7, new PlayerStatSpendIntent(StatId.Energy, 1));
 
         byte[] bytes = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 3), message);
         PlayerActionMessage decoded = Assert.IsType<PlayerActionMessage>(codec.Decode(bytes).Message);
 
-        PlayerAttributeSpendIntent intent = Assert.IsType<PlayerAttributeSpendIntent>(decoded.Payload);
-        Assert.Equal(StatId.Energy, intent.Attribute);
+        PlayerStatSpendIntent intent = Assert.IsType<PlayerStatSpendIntent>(decoded.Payload);
+        Assert.Equal(StatId.Energy, intent.Stat);
         Assert.Equal(1, intent.Points);
     }
 

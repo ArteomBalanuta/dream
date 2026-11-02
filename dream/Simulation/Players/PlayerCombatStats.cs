@@ -14,14 +14,12 @@ public sealed class PlayerCombatStats
     public const int MaxAgility = 1000;
     public const int MinEnergy = 0;
     public const int MaxEnergy = 1000;
-    public const int MaxStatPoints = 1_000_000;
 
     private int _strength = 10;
     private float _attackSpeed = 2.0f;
     private int _vitality = 10;
     private int _agility;
     private int _energy;
-    private int _statPoints;
     private int _mana;
     private int _maxMana;
 
@@ -53,13 +51,6 @@ public sealed class PlayerCombatStats
     {
         get => _energy;
         set => _energy = Math.Clamp(value, MinEnergy, MaxEnergy);
-    }
-
-    // Unspent attribute points (base block only; effective blocks leave it 0).
-    public int StatPoints
-    {
-        get => _statPoints;
-        set => _statPoints = Math.Clamp(value, 0, MaxStatPoints);
     }
 
     // Mana pool, mirrored from the combatant onto the effective block. On a block handed to

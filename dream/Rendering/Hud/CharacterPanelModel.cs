@@ -110,7 +110,7 @@ public static class CharacterPanelModel
     // Unspent stat points, from the level and base stats the server sent. The same rule the server
     // checks a spend against (PlayerStatRules), so the panel never offers what would be refused.
     public static int PointsAvailable(in HudStatusSnapshot status) =>
-        PlayerStatRules.PointsAvailable(status.Level, status.BaseStrength, status.BaseAttackSpeed, status.BaseVitality);
+        PlayerStatRules.PointsAvailable(status.Level, status.BaseStrength, status.BaseAttackSpeed, status.BaseVitality, status.BaseAgility, status.BaseEnergy);
 
     // True when the stat can take a point now: one is free and the stat is below its cap. Armor has
     // no base value and never takes one.

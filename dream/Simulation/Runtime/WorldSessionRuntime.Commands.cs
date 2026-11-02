@@ -258,9 +258,6 @@ public sealed partial class WorldSessionRuntime
                 => ProcessInventoryDestroyAction(message, context.Player, destroyIntent),
             BuildMaterialSelectIntent materialIntent
                 => ProcessBuildMaterialSelectAction(message, context.Player, materialIntent),
-            PlayerAttributeSpendIntent spendIntent
-                => ProcessPlayerAttributeSpendAction(message, context.Combatant, spendIntent),
-            // Not client-sendable any more (PlayerActionHandler); kept for in-process callers and tests.
             PlayerStatsUpdateIntent statsIntent
                 => ProcessPlayerStatsUpdateAction(message, context.Combatant, statsIntent),
             PlayerStatSpendIntent spendIntent
@@ -373,8 +370,8 @@ public sealed partial class WorldSessionRuntime
         PlayerStatsUpdateIntent intent)
     {
         // Base stats drive the use cadence (attack interval) and damage, so only what the old stat
-        // editor allowed is accepted; see PlayerCombatStats.TryValidateBaseStats. Agility, Energy and
-        // the unspent points are not part of this intent and keep their values.
+        // editor allowed is accepted; see PlayerCombatStats.TryValidateBaseStats. Agility and Energy are
+        // not part of this intent and keep their values.
         if (!PlayerCombatStats.TryValidateBaseStats(intent.Stats, out string? invalidReason))
         {
             return CreateRejectedActionResult(message, $"Stats update rejected: {invalidReason}");
@@ -383,34 +380,7 @@ public sealed partial class WorldSessionRuntime
         PlayerCombatStats updated = intent.Stats.ToCombatStats();
         updated.Agility = combatant.BaseStats.Agility;
         updated.Energy = combatant.BaseStats.Energy;
-        updated.StatPoints = combatant.BaseStats.StatPoints;
         combatant.ApplyBaseStats(updated);
-        PersistPlayerProfile(message.SessionId, combatant);
-
-        return new AuthoritativeActionResult(
-            message.SessionId.Value,
-            message.ActionSequence,
-            CurrentServerTick,
-            Accepted: true,
-            Payload: new PlayerStatsUpdateResult(combatant.CaptureStatsSnapshot()));
-    }
-
-    private AuthoritativeActionResult ProcessPlayerAttributeSpendAction(
-        PlayerActionMessage message,
-        PlayerCombatant combatant,
-        PlayerAttributeSpendIntent intent)
-    {
-        // The client names an attribute and a count; the server owns the point budget and the caps.
-        if (!combatant.Health.IsAlive)
-        {
-            return CreateRejectedActionResult(message, "Attribute points cannot be spent while dead.");
-        }
-
-        if (!combatant.TrySpendPoint(intent.Attribute, intent.Points, out string? reason))
-        {
-            return CreateRejectedActionResult(message, $"Attribute spend rejected: {reason}");
-        }
-
         PersistPlayerProfile(message.SessionId, combatant);
 
         return new AuthoritativeActionResult(

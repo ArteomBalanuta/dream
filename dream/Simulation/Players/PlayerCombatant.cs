@@ -43,9 +43,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public int MagicMaxDamage { get; private set; }
 
-    // Unspent attribute points.
-    public int StatPoints => BaseStats.StatPoints;
-
     public int Level { get; private set; } = 1;
 
     public int Experience { get; private set; }
@@ -127,7 +124,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         BaseStats.Vitality = (stats ?? new PlayerCombatStats()).Vitality;
         BaseStats.Agility = (stats ?? new PlayerCombatStats()).Agility;
         BaseStats.Energy = (stats ?? new PlayerCombatStats()).Energy;
-        BaseStats.StatPoints = (stats ?? new PlayerCombatStats()).StatPoints;
         RecalculateEffectiveStats();
         Health = new HealthState(DerivedStats.MaxHealth);
         Actor = new CombatActorHandle(actorId, CreatureKind.Player, Health, this);
@@ -161,65 +157,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         _attackCooldownRemaining = Math.Max(0f, _attackCooldownRemaining - Math.Max(0f, deltaTime));
     }
 
-    public void GrantStatPoints(int points)
-    {
-        if (points <= 0)
-        {
-            return;
-        }
-
-        BaseStats.StatPoints = (int)Math.Min((long)BaseStats.StatPoints + points, PlayerCombatStats.MaxStatPoints);
-    }
-
-    // Spends points on one of Strength, Agility, Vitality, Energy. Nothing changes on a refusal.
-    public bool TrySpendPoint(StatId attribute, int points, out string? reason)
-    {
-        if (!PlayerAttributeRules.IsSpendable(attribute))
-        {
-            reason = $"{attribute} cannot be raised with attribute points.";
-            return false;
-        }
-
-        if (points <= 0)
-        {
-            reason = "Spend at least one attribute point.";
-            return false;
-        }
-
-        if (points > BaseStats.StatPoints)
-        {
-            reason = "Not enough attribute points.";
-            return false;
-        }
-
-        long current = attribute switch
-        {
-            StatId.Strength => BaseStats.Strength,
-            StatId.Agility => BaseStats.Agility,
-            StatId.Vitality => BaseStats.Vitality,
-            _ => BaseStats.Energy
-        };
-        if (current + points > StatRules.MaxBase(attribute))
-        {
-            reason = $"{attribute} is already at its maximum.";
-            return false;
-        }
-
-        int value = (int)(current + points);
-        switch (attribute)
-        {
-            case StatId.Strength: BaseStats.Strength = value; break;
-            case StatId.Agility: BaseStats.Agility = value; break;
-            case StatId.Vitality: BaseStats.Vitality = value; break;
-            default: BaseStats.Energy = value; break;
-        }
-
-        BaseStats.StatPoints -= points;
-        RecalculateEffectiveStats();
-        reason = null;
-        return true;
-    }
-
     // The base block with the pool values of this moment, as it goes on the wire.
     public PlayerCombatStatsSnapshot CaptureStatsSnapshot()
     {
@@ -233,7 +170,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         BaseStats.Vitality = updatedStats.Vitality;
         BaseStats.Agility = updatedStats.Agility;
         BaseStats.Energy = updatedStats.Energy;
-        BaseStats.StatPoints = updatedStats.StatPoints;
 
         RecalculateEffectiveStats();
         // A block from the wire carries the server's current mana; a stored profile does not.
@@ -288,11 +224,11 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Stats.Vitality = (int)effective[StatId.Vitality];
         Stats.Agility = (int)effective[StatId.Agility];
         Stats.Energy = (int)effective[StatId.Energy];
-        Stats.AttackSpeed = PlayerAttributeRules.EffectiveAttackSpeed(effective[StatId.AttackSpeed], Stats.Agility);
+        Stats.AttackSpeed = PlayerStatRules.EffectiveAttackSpeed(effective[StatId.AttackSpeed], Stats.Agility);
         DerivedStats = Stats.Derive(_combatFormulaService, Level);
-        Defense = PlayerAttributeRules.Defense(Stats.Agility);
-        MagicMinDamage = PlayerAttributeRules.MagicMinDamage(Stats.Energy);
-        MagicMaxDamage = PlayerAttributeRules.MagicMaxDamage(Stats.Energy);
+        Defense = PlayerStatRules.Defense(Stats.Agility);
+        MagicMinDamage = PlayerStatRules.MagicMinDamage(Stats.Energy);
+        MagicMaxDamage = PlayerStatRules.MagicMaxDamage(Stats.Energy);
         int armor = EffectiveArmor + Defense;
         if (armor != _factorArmor)
         {

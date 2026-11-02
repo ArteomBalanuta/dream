@@ -353,7 +353,6 @@ internal sealed class AuthoritativeCombatResolver
             required = _formulas.EvaluateExperienceToNextLevel(level, experience);
         }
 
-        combatant.GrantStatPoints(PlayerAttributeRules.PointsForLevelsGained(level - combatant.Level));
         combatant.ApplyProgression(level, experience);
         _host.PersistPlayerProgression(sessionId, combatant);
     }

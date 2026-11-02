@@ -20,7 +20,7 @@ public readonly record struct PlayerCombatStatsSnapshot(
             stats.Vitality,
             stats.Agility,
             stats.Energy,
-            stats.StatPoints,
+            0,
             stats.Mana,
             stats.MaxMana);
     }
@@ -34,7 +34,6 @@ public readonly record struct PlayerCombatStatsSnapshot(
             Vitality = Vitality,
             Agility = Agility,
             Energy = Energy,
-            StatPoints = StatPoints,
             Mana = Mana,
             MaxMana = MaxMana
         };

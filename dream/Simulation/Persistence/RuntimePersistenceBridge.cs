@@ -627,7 +627,6 @@ internal sealed partial class RuntimePersistenceBridge
                 Vitality = combatant.BaseStats.Vitality,
                 Agility = combatant.BaseStats.Agility,
                 Energy = combatant.BaseStats.Energy,
-                StatPoints = combatant.BaseStats.StatPoints,
                 AttackSpeed = combatant.BaseStats.AttackSpeed,
                 Level = combatant.Level,
                 Experience = combatant.Experience

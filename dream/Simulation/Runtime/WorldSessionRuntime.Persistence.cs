@@ -104,8 +104,7 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
             AttackSpeed = profile.Stats.AttackSpeed,
             Vitality = profile.Stats.Vitality,
             Agility = profile.Stats.Agility,
-            Energy = profile.Stats.Energy,
-            StatPoints = profile.Stats.StatPoints
+            Energy = profile.Stats.Energy
         });
         // Run the level-up loop once over the stored values (the same loop a kill uses): experience that
         // outgrew the formula it was saved under becomes levels instead of an over-100 percent bar. The

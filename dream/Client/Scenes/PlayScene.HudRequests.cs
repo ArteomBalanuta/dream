@@ -58,7 +58,7 @@ public partial class PlayScene
             _remoteClient.QueuePlayerAction(new PlayerActionMessage(
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
-                new PlayerAttributeSpendIntent(attribute)));
+                new PlayerStatSpendIntent(attribute, 1)));
             CurrentGameAudio.Instance.Play(SoundId.StatSpend);
         }
 

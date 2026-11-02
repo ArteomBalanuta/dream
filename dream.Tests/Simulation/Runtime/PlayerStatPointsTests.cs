@@ -12,13 +12,16 @@ namespace Dream.Tests.Simulation.Runtime;
 
 // M2-A: stat points are derived from the level and the base stats, spent through
 // PlayerStatSpendIntent, and checked by the server on every server (not only with dev commands).
+// Since the stats sheet merge the four attributes (Strength, Agility, Vitality, Energy) take points
+// and Attack Speed does not (it comes from Agility); caps are PlayerCombatStats' (1000).
 public class PlayerStatPointsTests
 {
     private const string SessionA = "session-a";
     private const string SessionB = "session-b";
 
-    private static PlayerCombatStats Stats(int strength = 10, float attackSpeed = 2f, int vitality = 10) =>
-        new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality };
+    // A stored character starts at Agility 10 and Energy 10 (PersistedPlayerProfile.CreateDefault).
+    private static PlayerCombatStats Stats(int strength = 10, float attackSpeed = 2f, int vitality = 10, int agility = 10, int energy = 10) =>
+        new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality, Agility = agility, Energy = energy };
 
     [Theory]
     [InlineData(1, 0)]
@@ -53,20 +56,23 @@ public class PlayerStatPointsTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         Assert.False(host.DevCommandsAllowed);
         PlayerCombatant a = Combatant(host, SessionA);
+        a.ApplyBaseStats(Stats());
         a.ApplyProgression(3, 0);
 
         Assert.True(Spend(host, SessionA, 1, StatId.Strength, 4).Accepted);
         Assert.True(Spend(host, SessionA, 2, StatId.Vitality, 1).Accepted);
-        AuthoritativeActionResult speed = Spend(host, SessionA, 3, StatId.AttackSpeed, 5);
+        Assert.True(Spend(host, SessionA, 3, StatId.Agility, 2).Accepted);
+        AuthoritativeActionResult energy = Spend(host, SessionA, 4, StatId.Energy, 3);
 
-        Assert.True(speed.Accepted, speed.Rejection?.Reason);
+        Assert.True(energy.Accepted, energy.Rejection?.Reason);
         Assert.Equal(14, a.BaseStats.Strength);
         Assert.Equal(11, a.BaseStats.Vitality);
-        Assert.Equal(2.25f, a.BaseStats.AttackSpeed, 3);
+        Assert.Equal(12, a.BaseStats.Agility);
+        Assert.Equal(13, a.BaseStats.Energy);
         Assert.Equal(0, PlayerStatRules.PointsAvailable(a.Level, a.BaseStats));
         Assert.Equal(
             PlayerCombatStatsSnapshot.From(a.BaseStats),
-            Assert.IsType<PlayerStatsUpdateResult>(speed.Payload).Stats);
+            Assert.IsType<PlayerStatsUpdateResult>(energy.Payload).Stats);
     }
 
     [Fact]
@@ -120,8 +126,7 @@ public class PlayerStatPointsTests
     }
 
     [Theory]
-    [InlineData(StatId.Agility)]
-    [InlineData(StatId.Energy)]
+    [InlineData(StatId.AttackSpeed)]
     [InlineData(StatId.MovementSpeed)]
     [InlineData(StatId.Armor)]
     [InlineData(StatId.Count)]
@@ -144,12 +149,13 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
-        a.ApplyProgression(20, 0);
+        // Enough levels that the budget is not what stops the spends below (5 * 799 points).
+        a.ApplyProgression(800, 0);
 
-        // 49 + 1 reaches the cap; the over-cap spend is refused, not clamped.
-        a.ApplyBaseStats(Stats(strength: 49));
+        // One under the cap: the over-cap spend is refused, not clamped.
+        a.ApplyBaseStats(Stats(strength: PlayerCombatStats.MaxStrength - 1));
         Assert.False(Spend(host, SessionA, 1, StatId.Strength, 2).Accepted);
-        Assert.Equal(49, a.BaseStats.Strength);
+        Assert.Equal(PlayerCombatStats.MaxStrength - 1, a.BaseStats.Strength);
         Assert.True(Spend(host, SessionA, 2, StatId.Strength, 1).Accepted);
         Assert.Equal(PlayerCombatStats.MaxStrength, a.BaseStats.Strength);
         Assert.False(Spend(host, SessionA, 3, StatId.Strength, 1).Accepted);
@@ -157,11 +163,17 @@ public class PlayerStatPointsTests
         a.ApplyBaseStats(Stats(vitality: PlayerCombatStats.MaxVitality));
         Assert.False(Spend(host, SessionA, 4, StatId.Vitality, 1).Accepted);
 
+        a.ApplyBaseStats(Stats(agility: PlayerCombatStats.MaxAgility));
+        Assert.False(Spend(host, SessionA, 5, StatId.Agility, 1).Accepted);
+
+        a.ApplyBaseStats(Stats(energy: PlayerCombatStats.MaxEnergy - 1));
+        Assert.False(Spend(host, SessionA, 6, StatId.Energy, 2).Accepted);
+        Assert.True(Spend(host, SessionA, 7, StatId.Energy, 1).Accepted);
+        Assert.Equal(PlayerCombatStats.MaxEnergy, a.BaseStats.Energy);
+
+        // Attack Speed takes no points at all.
         a.ApplyBaseStats(Stats(attackSpeed: 4.95f));
-        Assert.False(Spend(host, SessionA, 5, StatId.AttackSpeed, 2).Accepted);
-        Assert.True(Spend(host, SessionA, 6, StatId.AttackSpeed, 1).Accepted);
-        Assert.Equal(PlayerCombatStats.MaxAttackSpeed, a.BaseStats.AttackSpeed, 3);
-        Assert.False(Spend(host, SessionA, 7, StatId.AttackSpeed, 1).Accepted);
+        Assert.False(Spend(host, SessionA, 8, StatId.AttackSpeed, 1).Accepted);
     }
 
     [Fact]

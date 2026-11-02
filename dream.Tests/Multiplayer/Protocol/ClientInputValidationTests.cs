@@ -62,13 +62,13 @@ public class ClientInputValidationTests
         handler.Handle(context, new PlayerActionMessage(
             new PlayerSessionId(SessionA),
             2,
-            new PlayerAttributeSpendIntent(Dream.Simulation.Stats.StatId.Strength, 1)));
+            new PlayerStatSpendIntent(Dream.Simulation.Stats.StatId.Strength, 1)));
 
         Assert.Empty(context.OutboundMessages);
         Assert.Collection(
             queue.Drain([new PlayerSessionId(SessionA)]),
             first => Assert.IsType<InventoryEquipIntent>(first.Message.Payload),
-            second => Assert.IsType<PlayerAttributeSpendIntent>(second.Message.Payload));
+            second => Assert.IsType<PlayerStatSpendIntent>(second.Message.Payload));
     }
 
     [Fact]
