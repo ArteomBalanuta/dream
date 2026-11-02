@@ -21,6 +21,7 @@
         { "stat": "Strength", "op": "Flat", "value": 2 },
         { "stat": "AttackSpeed", "op": "Flat", "value": 0.25 }
       ],
+      "sellPrice": 8,
       "equipSlots": ["MainHand"],
       "footprint": [2, 3]
     },
@@ -35,6 +36,7 @@
         { "stat": "Strength", "op": "Flat", "value": 4 },
         { "stat": "AttackSpeed", "op": "Flat", "value": 1.5 }
       ],
+      "sellPrice": 12,
       "equipSlots": ["MainHand"],
       "footprint": [2, 3]
     },
@@ -49,6 +51,7 @@
         { "stat": "Strength", "op": "Flat", "value": 8 },
         { "stat": "AttackSpeed", "op": "Flat", "value": -0.75 }
       ],
+      "sellPrice": 14,
       "equipSlots": ["MainHand"],
       "footprint": [2, 3]
     },
@@ -63,6 +66,7 @@
         { "stat": "Strength", "op": "Flat", "value": 1 },
         { "stat": "AttackSpeed", "op": "Flat", "value": 0.1 }
       ],
+      "sellPrice": 10,
       "equipSlots": ["MainHand", "OffHand"],
       "footprint": [1, 2]
     },
@@ -74,6 +78,7 @@
       "detailLines": [ "Role: Light", "Light: warm, radius 8" ],
       "heldLight": "Torch",
       "modifiers": [],
+      "sellPrice": 2,
       "equipSlots": ["MainHand", "OffHand"],
       "footprint": [1, 2]
     },
@@ -85,6 +90,7 @@
       "detailLines": [ "Role: Combat", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 20,
       "equipSlots": ["MainHand"],
       "footprint": [2, 3],
       "rolls": {
@@ -101,6 +107,7 @@
       "detailLines": [ "Role: Ward", "Light: soft, wide", "Stats: rolled when made" ],
       "heldLight": "Lantern",
       "modifiers": [],
+      "sellPrice": 16,
       "equipSlots": ["OffHand"],
       "footprint": [1, 2],
       "rolls": {
@@ -117,6 +124,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 10,
       "equipSlots": ["Head"],
       "footprint": [2, 2],
       "rolls": {
@@ -133,6 +141,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 18,
       "equipSlots": ["Body"],
       "footprint": [2, 2],
       "rolls": {
@@ -149,6 +158,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 14,
       "equipSlots": ["Hands"],
       "footprint": [2, 2],
       "rolls": {
@@ -165,6 +175,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 14,
       "equipSlots": ["Feet"],
       "footprint": [2, 2],
       "rolls": {
@@ -181,6 +192,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 16,
       "equipSlots": ["Legs"],
       "footprint": [2, 2],
       "rolls": {
@@ -197,6 +209,7 @@
       "detailLines": [ "Role: Ward", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 12,
       "equipSlots": ["Neck"],
       "footprint": [1, 1],
       "rolls": {
@@ -213,6 +226,7 @@
       "detailLines": [ "Role: Might", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 10,
       "equipSlots": ["RingLeft", "RingRight"],
       "footprint": [1, 1],
       "rolls": {
@@ -229,6 +243,7 @@
       "detailLines": [ "Role: Protection", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 12,
       "equipSlots": ["Back"],
       "footprint": [3, 2],
       "rolls": {
@@ -245,6 +260,7 @@
       "detailLines": [ "Role: Tempo", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 24,
       "equipSlots": ["Back"],
       "footprint": [3, 2],
       "rolls": {
@@ -261,6 +277,7 @@
       "detailLines": [ "Role: Might", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 24,
       "equipSlots": ["Companion"],
       "footprint": [2, 2],
       "rolls": {
@@ -277,6 +294,7 @@
       "detailLines": [ "Role: Combat", "Stats: rolled when made" ],
       "heldLight": "None",
       "modifiers": [],
+      "sellPrice": 22,
       "equipSlots": ["MainHand"],
       "footprint": [2, 4],
       "rolls": {
