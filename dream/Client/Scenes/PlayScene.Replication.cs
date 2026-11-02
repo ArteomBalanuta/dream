@@ -68,11 +68,14 @@ public partial class PlayScene
             _wasCameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
             _wasAdminHudTogglePressed = keyboardState.IsKeyDown(Keys.F3);
             _wasInteractKeyPressed = keyboardState.IsKeyDown(Keys.E);
+            // A digit still held when the line closes is not a press.
+            _quickbarKeysDown = QuickbarInput.ReadMask(keyboardState);
             return;
         }
 
         // Before the global keys: it reads the Esc edge they consume.
         HandleInteractKey(keyboardState);
+        HandleQuickbarKeys(keyboardState);
         HandleGlobalInput(keyboardState);
     }
 
@@ -89,6 +92,13 @@ public partial class PlayScene
         {
             // Not a routed kind either: it only feeds the ground list, which validates every entry.
             _groundItems.Apply(groundItems);
+            return;
+        }
+
+        if (message is ServerPlayerVitals vitals)
+        {
+            // Not a routed kind either: mana and cooldowns for the quickbar, clamped by the state.
+            _quickbarHud.ApplyVitals(vitals);
             return;
         }
 
@@ -129,6 +139,9 @@ public partial class PlayScene
             }
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+            // A new session shows no mana, cooldowns or bar from the one before; the join's inventory
+            // brings the bar, and the first vitals message the mana.
+            _quickbarHud.Clear();
             ApplyInventorySnapshot(joinAcceptedMessage.Inventory);
             // A join starts a new timeline; its own actor list counts, so a join while dead shows
             // the overlay at once instead of at the first snapshot.
@@ -413,6 +426,7 @@ public partial class PlayScene
     {
         _inventory = inventory;
         _inventoryApplyCount++;
+        _quickbarHud.ApplyInventory(inventory);
         EquipmentPresentation presentation = ReadEquipment(inventory, _equipmentLoadout);
 
         _runtime.Player.Combatant.ApplyEquipment(_equipmentLoadout);

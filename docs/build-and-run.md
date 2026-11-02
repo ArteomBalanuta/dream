@@ -59,7 +59,8 @@ On startup, the game currently:
 - Mouse movement: look around
 - `Space`: jump
 - `C`: toggle first-person / third-person camera
-- `1` / `2`: select building / combat mode
+- `B` / `G`: select building / combat mode
+- `1` to `6`: use the quickbar slot (a skill, or the first matching consumable in the bag); open the inventory (`V`) and click a quickbar tile to change what it holds. Skills need combat mode, except Mend
 - Left mouse button: the active mode's primary action (place a cube, or attack)
 - `F`: toggle frozen movement
 - `V`: open or close the inventory and character windows; the cursor is released and shown as a sprite

@@ -32,7 +32,10 @@ public readonly record struct HudInteractionRequest(
     long? GroundPickupId = null,
     int? InteractActorId = null,
     VendorHudAction? Vendor = null,
-    bool CloseVendor = false)
+    bool CloseVendor = false,
+    // M4: a quickbar tile clicked while the inventory is open (0..5). The scene sends the next entry in
+    // the cycle as one QuickbarBindIntent.
+    int? QuickbarCycleSlot = null)
 {
     public static HudInteractionRequest None => new(
         null,

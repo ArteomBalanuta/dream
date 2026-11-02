@@ -20,7 +20,11 @@ public readonly record struct HudStatusSnapshot(
     int BaseVitality = 0,
     int Armor = 0,
     bool IsDead = false,
-    int RespawnSeconds = 0)
+    int RespawnSeconds = 0,
+    // M4: the owner's mana from ServerPlayerVitals. MaxMana 0 means none is known and the MP gem keeps
+    // StatusBarPanel.ManaGemFill.
+    int CurrentMana = 0,
+    int MaxMana = 0)
 {
     public const string DeathTitle = "You died";
     public const string RespawningNow = "Respawning";

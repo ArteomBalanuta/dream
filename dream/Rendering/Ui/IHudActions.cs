@@ -29,4 +29,9 @@ public interface IHudActions
     void CloseVendor()
     {
     }
+
+    // M4. A quickbar tile (0..5) was clicked with the inventory open: cycle what it holds.
+    void Quickbar(int slot)
+    {
+    }
 }
