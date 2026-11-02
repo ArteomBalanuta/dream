@@ -63,6 +63,8 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetMatrix4("projection", _projection);
         shader.SetBool("useSkinning", false);
         shader.SetBool("useInstancing", false);
+        // The cube program is shared with AnimatedModel, which leaves its last emissive flag set.
+        shader.SetHasEmissiveTexture(false);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetInt("material.baseColorTexture", 0);
@@ -186,6 +188,7 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetEmissiveFactor(material.Emissive);
+        shader.SetHasEmissiveTexture(false);
         // Terrain is opaque: it always draws with the base "cube" program, which has no discard
         // (only its alpha-mask variant has one).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);

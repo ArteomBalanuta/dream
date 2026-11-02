@@ -10,6 +10,7 @@ using Dream.Configuration;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
+using Dream.Rendering.Effects;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Sky;
 using Dream.Rendering.ViewModels;
@@ -51,7 +52,29 @@ public partial class PlayScene
         _scenePresenter = new ClientScenePresenter(_remoteClient.SessionId);
         _render = new Render(_settings);
         _sky = new SkyRenderer();
+        try
+        {
+            _fxRenderer = new FxRenderer();
+            _fxSimulation = new FxSimulation();
+            _fxFlashes = new FxFlashList();
+            _fxShadows = new FxShadowList();
+        }
+        catch (Exception exception)
+        {
+            // A missing atlas or a failed effects shader costs the effects, not the session: the
+            // scene runs without them (DrawEffectsPass returns early) and the fault is logged once.
+            _fxRenderer = null;
+            _fxSimulation = null;
+            _fxFlashes = null;
+            _fxShadows = null;
+            RenderFaultLog.Shared.Report("effects", exception);
+        }
+
         PreloadModels();
+        if (_fxSimulation != null && _fxFlashes != null)
+        {
+            _fxBridge = new FxEventBridge(_events, _fxSimulation, _fxFlashes);
+        }
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem(), () => _runtime.Player.Combatant.Actor.Id);
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
         _diagnostics = new MultiplayerDiagnostics();
@@ -98,6 +121,7 @@ public partial class PlayScene
         RunDisposeStep(_render.Dispose, ref failures);
         RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(DisposeSky, ref failures);
+        RunDisposeStep(DisposeEffects, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
         RunDisposeStep(_combatFeedback.Dispose, ref failures);
         RunDisposeStep(_actionFeedback.Dispose, ref failures);

@@ -141,7 +141,7 @@ public class GpuFrameTimerTests
     {
         FakeGpuQueryApi api = new();
         GpuFrameTimer timer = new(api, ringSize: 3);
-        Assert.Equal(3 * 4, api.Created.Count);
+        Assert.Equal(3 * 5, api.Created.Count);
 
         timer.BeginFrame();
         timer.BeginSection(GpuTimerSection.Hud);
@@ -178,6 +178,32 @@ public class GpuFrameTimerTests
                 throw new InvalidOperationException();
             }
         });
+    }
+
+    [Fact]
+    public void Effects_Section_Is_Timed_Between_Actors_And_Hud()
+    {
+        FakeGpuQueryApi api = new() { AvailableAfterFrames = 2 };
+        using GpuFrameTimer timer = new(api);
+
+        for (int frame = 0; frame < 4; frame++)
+        {
+            timer.BeginFrame();
+            api.CurrentFrame++;
+            timer.BeginSection(GpuTimerSection.Actors);
+            api.NextTimeElapsed = 1_000_000;
+            timer.BeginSection(GpuTimerSection.Effects);
+            api.NextTimeElapsed = 2_500_000;
+            timer.BeginSection(GpuTimerSection.Hud);
+            api.NextTimeElapsed = 4_000_000;
+            timer.EndFrame();
+        }
+
+        timer.BeginFrame();
+        Assert.True(timer.Latest.HasValue);
+        Assert.Equal(1.0, timer.Latest.ActorsMilliseconds, 6);
+        Assert.Equal(2.5, timer.Latest.EffectsMilliseconds, 6);
+        Assert.Equal(4.0, timer.Latest.HudMilliseconds, 6);
     }
 
     private static void RunFrame(GpuFrameTimer timer, FakeGpuQueryApi api, long worldNs, long actorsNs, long hudNs, long primitives)

@@ -1,0 +1,136 @@
+{
+ "alpha": "premultiplied",
+ "cell": 64,
+ "columns": 8,
+ "frames": [
+  {
+   "alpha": "zero",
+   "index": 0,
+   "name": "spark.0"
+  },
+  {
+   "alpha": "zero",
+   "index": 1,
+   "name": "spark.1"
+  },
+  {
+   "alpha": "zero",
+   "index": 2,
+   "name": "spark.2"
+  },
+  {
+   "alpha": "zero",
+   "index": 3,
+   "name": "spark.3"
+  },
+  {
+   "alpha": "zero",
+   "index": 4,
+   "name": "ember.0"
+  },
+  {
+   "alpha": "zero",
+   "index": 5,
+   "name": "ember.1"
+  },
+  {
+   "alpha": "zero",
+   "index": 6,
+   "name": "ember.2"
+  },
+  {
+   "alpha": "zero",
+   "index": 7,
+   "name": "ember.3"
+  },
+  {
+   "alpha": "zero",
+   "index": 8,
+   "name": "dust.0"
+  },
+  {
+   "alpha": "zero",
+   "index": 9,
+   "name": "dust.1"
+  },
+  {
+   "alpha": "zero",
+   "index": 10,
+   "name": "dust.2"
+  },
+  {
+   "alpha": "zero",
+   "index": 11,
+   "name": "dust.3"
+  },
+  {
+   "alpha": "coverage",
+   "index": 12,
+   "name": "ash.0"
+  },
+  {
+   "alpha": "coverage",
+   "index": 13,
+   "name": "ash.1"
+  },
+  {
+   "alpha": "coverage",
+   "index": 14,
+   "name": "ash.2"
+  },
+  {
+   "alpha": "coverage",
+   "index": 15,
+   "name": "ash.3"
+  },
+  {
+   "alpha": "zero",
+   "index": 16,
+   "name": "halo"
+  },
+  {
+   "alpha": "zero",
+   "index": 17,
+   "name": "halo.core"
+  },
+  {
+   "alpha": "coverage",
+   "index": 18,
+   "name": "flame.0"
+  },
+  {
+   "alpha": "coverage",
+   "index": 19,
+   "name": "flame.1"
+  },
+  {
+   "alpha": "coverage",
+   "index": 20,
+   "name": "flame.2"
+  },
+  {
+   "alpha": "coverage",
+   "index": 21,
+   "name": "flame.3"
+  },
+  {
+   "alpha": "coverage",
+   "index": 22,
+   "name": "blob"
+  }
+ ],
+ "image": "particles.png",
+ "margin": 4,
+ "origin": "top-left",
+ "reserved": [
+  23,
+  31
+ ],
+ "rows": 4,
+ "size": [
+  512,
+  256
+ ],
+ "version": 1,
+ "yDown": true
+}

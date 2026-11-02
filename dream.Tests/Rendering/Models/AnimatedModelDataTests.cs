@@ -190,6 +190,36 @@ public class AnimatedModelDataTests : IClassFixture<GltfModelRootFixture>
     }
 
     [Fact]
+    public void EmissiveScroll_Extra_Reads_A_Two_Number_Array()
+    {
+        Assert.Equal(new Vector2(0.25f, -0.5f), Scroll("""{"dreamEmissiveScroll": [0.25, -0.5]}"""));
+    }
+
+    [Theory]
+    [InlineData("""{}""")]
+    [InlineData("""{"other": 1}""")]
+    [InlineData("""{"dreamEmissiveScroll": 1}""")]
+    [InlineData("""{"dreamEmissiveScroll": [1]}""")]
+    [InlineData("""{"dreamEmissiveScroll": [1, 2, 3]}""")]
+    [InlineData("""{"dreamEmissiveScroll": ["a", "b"]}""")]
+    [InlineData("""{"dreamEmissiveScroll": [1, null]}""")]
+    [InlineData("""{"dreamEmissiveScroll": {"u": 1, "v": 2}}""")]
+    [InlineData("""[1, 2]""")]
+    public void EmissiveScroll_Extra_Absent_Or_Malformed_Is_Zero(string json)
+    {
+        Assert.Equal(Vector2.Zero, Scroll(json));
+    }
+
+    [Fact]
+    public void EmissiveScroll_Without_Extras_Is_Zero()
+    {
+        Assert.Equal(Vector2.Zero, AnimatedModelData.ReadEmissiveUvScroll(null));
+    }
+
+    private static Vector2 Scroll(string json) =>
+        AnimatedModelData.ReadEmissiveUvScroll(System.Text.Json.Nodes.JsonNode.Parse(json));
+
+    [Fact]
     public void Source_TextureDecoder_SeparatesDecodeFromUpload()
     {
         string source = ReadSource("dream/Rendering/Core/TextureDecoder.cs");

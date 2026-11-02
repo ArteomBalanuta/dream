@@ -27,9 +27,11 @@ public static class ClientSnapshotDamageApplier
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(playerSessions);
 
-        foreach (DamageEventDelta damageEvent in snapshot.DamageEvents)
+        IReadOnlyList<DamageEventDelta> damageEvents = snapshot.DamageEvents;
+        for (int i = 0; i < damageEvents.Count; i++)
         {
-            if (damageEvent.Amount <= 0)
+            DamageEventDelta damageEvent = damageEvents[i];
+            if (damageEvent.Amount <= 0 && !damageEvent.ActorDied)
             {
                 continue;
             }
@@ -39,11 +41,39 @@ public static class ClientSnapshotDamageApplier
                 continue;
             }
 
-            if (runtime.TryResolveCombatActor(damageEvent.ActorId, out CombatActorHandle actor))
+            if (!runtime.TryResolveCombatActor(damageEvent.ActorId, out CombatActorHandle actor))
+            {
+                continue;
+            }
+
+            if (damageEvent.Amount > 0)
             {
                 events.Publish(new DamageAppliedEvent(actor, damageEvent.Amount, ResolveHitKind(damageEvent.HitKind)));
             }
+
+            // Nothing on the client raises ActorDiedEvent itself: remote combatants have no hub, and
+            // the local player's PlayerCombatant could publish but nothing on the client calls its
+            // ApplyDamage, so there is no double publish. The wire's ActorDied flag is the client's
+            // only death signal. The server writes two deltas per
+            // death (Amount 0, and the killing hit), so publish once per actor per snapshot.
+            if (damageEvent.ActorDied && !DiedEarlierInSnapshot(damageEvents, i, damageEvent.ActorId))
+            {
+                events.Publish(new ActorDiedEvent(actor));
+            }
         }
+    }
+
+    private static bool DiedEarlierInSnapshot(IReadOnlyList<DamageEventDelta> damageEvents, int index, int actorId)
+    {
+        for (int i = 0; i < index; i++)
+        {
+            if (damageEvents[i].ActorDied && damageEvents[i].ActorId == actorId)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // A value this client does not know (a newer or hostile peer) is a regular hit.

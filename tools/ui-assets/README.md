@@ -18,6 +18,8 @@ Each `gen_*.py` exposes `main(out_root)` and writes only its own directory. Each
 
 Atlases are straight-alpha RGBA PNGs at 4 px per logical unit with a JSON sprite table. Rects exclude the extrusion. `yDown` is true, so the loader must not flip V. The spec lives in `docs/superpowers/specs/2026-11-01-classic-mmo-ui/`.
 
+`gen_particles.py` writes the effects atlas `dream/ui/particles/particles.png` and `particles.json`. It is a fixed grid, not a shelf-packed atlas: 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip. Each cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful where A=0 (A=0 draws purely additive); A is coverage. Frames: 0-3 sparks (one straight streak along +X, head at +u, near-neutral, A=0), 4-7 embers (near-neutral nucleus, peak at least 200, A=0; the particle tint sets the heat), 8-11 dust motes (cold near-neutral, RGB peak about 215, A=0), 12-15 ash (soot RGB about 0.30 of A, A>0), 16 soft halo, 17 tighter halo (A=0, peaks about 194 and 240, no clipped plateau), 18-21 flame tongue (baked ember-to-gold ramp, A=0), 22 contact blob (RGB=0, A>0, darkens), 23-31 reserved and empty. The PNG must stay at most 32 KB. `tests/check_particles.py` gates all of it, and `previews/particles.png` is the review sheet.
+
 `items_mask.png` is a data texture: RGB stays meaningful where A=0, so load it raw, with no premultiply and no alpha stripping.
 
 ## forge.py: the renderer for forged art
