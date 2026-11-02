@@ -42,7 +42,7 @@ public sealed partial class WorldSessionRuntime
             return CompleteInventoryAction(message, player, outcome, "use");
         }
 
-        if (!player.Cooldowns.IsReady(kind, tick))
+        if (!player.Cooldowns.IsReady(use.EffectiveCooldownGroup, tick))
         {
             return CompleteInventoryAction(message, player, InventoryEquipOutcome.OnCooldown, "use");
         }
@@ -62,7 +62,7 @@ public sealed partial class WorldSessionRuntime
         {
             combatant.RestoreHealth(use.RestoreHealth);
             combatant.RestoreMana(use.RestoreMana);
-            player.Cooldowns.Start(kind, tick + (ulong)Math.Max(0, use.CooldownTicks), tick);
+            player.Cooldowns.Start(use.EffectiveCooldownGroup, tick + (ulong)Math.Max(0, use.CooldownTicks), tick);
             player.VitalsDirty = true;
         }
 

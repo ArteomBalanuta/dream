@@ -448,7 +448,7 @@ public sealed partial class ContentCatalog
     private static ItemUseDefinition ParseItemUse(string path, JsonElement element)
     {
         ExpectObject(ItemsFileName, path, element);
-        Dictionary<string, JsonElement> use = ReadProperties(ItemsFileName, path, element, ["restoreHealth", "restoreMana", "cooldownTicks"]);
+        Dictionary<string, JsonElement> use = ReadProperties(ItemsFileName, path, element, ["restoreHealth", "restoreMana", "cooldownTicks"], ["cooldownGroup"]);
         int health = ReadInt(ItemsFileName, $"{path}.restoreHealth", use["restoreHealth"], 0, MaxItemRestore);
         int mana = ReadInt(ItemsFileName, $"{path}.restoreMana", use["restoreMana"], 0, MaxItemRestore);
         int cooldown = ReadInt(ItemsFileName, $"{path}.cooldownTicks", use["cooldownTicks"], 0, MaxCooldownTicks);
@@ -457,7 +457,10 @@ public sealed partial class ContentCatalog
             throw Fail(ItemsFileName, path, "must restore health or mana");
         }
 
-        return new ItemUseDefinition(health, mana, cooldown);
+        string? group = use.TryGetValue("cooldownGroup", out JsonElement groupElement)
+            ? ReadNonEmptyString(ItemsFileName, $"{path}.cooldownGroup", groupElement)
+            : null;
+        return new ItemUseDefinition(health, mana, cooldown, group);
     }
 
     // [columns, rows], each a whole number 1..BagGrid.MaxFootprint. The item is placed by its top-left cell.

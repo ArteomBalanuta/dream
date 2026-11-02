@@ -21,6 +21,7 @@ public sealed class QuickbarHudState
     private readonly long[] _itemIds = new long[SlotCount];
     private readonly int[] _manaCosts = new int[SlotCount];
     private readonly int[] _cooldownTotals = new int[SlotCount];
+    private readonly string?[] _cooldownGroups = new string?[SlotCount];
     private readonly bool[] _healOnly = new bool[SlotCount];
     private readonly string[] _labels = new string[SlotCount];
     private readonly string[] _iconNames = new string[SlotCount];
@@ -162,7 +163,7 @@ public sealed class QuickbarHudState
             return 0;
         }
 
-        string key = _slots[index].Key;
+        string key = _cooldownGroups[index] ?? _slots[index].Key;
         for (int i = 0; i < _cooldownCount; i++)
         {
             if (string.Equals(_cooldowns[i].Key, key, StringComparison.OrdinalIgnoreCase))
@@ -253,6 +254,7 @@ public sealed class QuickbarHudState
             _itemIds[i] = 0;
             _manaCosts[i] = 0;
             _cooldownTotals[i] = 0;
+            _cooldownGroups[i] = null;
             _healOnly[i] = false;
             _labels[i] = string.Empty;
             _iconNames[i] = string.Empty;
@@ -305,6 +307,7 @@ public sealed class QuickbarHudState
             _slots[i] = new QuickbarSlotSnapshot(i, QuickbarEntryKind.Skill, skill.Key);
             _manaCosts[i] = skill.ManaCost;
             _cooldownTotals[i] = skill.CooldownTicks;
+            _cooldownGroups[i] = null;
             _healOnly[i] = skill.Kind == SkillKind.SelfHeal;
             _labels[i] = skill.DisplayName;
             _iconNames[i] = skill.IconKey ?? string.Empty;
@@ -315,6 +318,7 @@ public sealed class QuickbarHudState
         {
             _slots[i] = new QuickbarSlotSnapshot(i, QuickbarEntryKind.Item, item.Key);
             _cooldownTotals[i] = use.CooldownTicks;
+            _cooldownGroups[i] = use.EffectiveCooldownGroup;
             _labels[i] = item.DisplayName;
             _iconNames[i] = "item." + item.Key;
         }

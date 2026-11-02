@@ -21,5 +21,15 @@ public sealed record SkillDefinition(
     int HealAmount);
 
 // The "use" object of a consumable item (M4). Restores are applied through the player's vitals, capped
-// at their maximum; the cooldown is per item kind, in server ticks.
-public sealed record ItemUseDefinition(int RestoreHealth, int RestoreMana, int CooldownTicks);
+// at their maximum; the cooldown is shared by a cooldown group, in server ticks. The group is the optional
+// "cooldownGroup" of items.json; without it every health potion shares "potion.health" and every mana
+// potion "potion.mana", so drinking different kinds of one pool cannot chain past the cooldown.
+public sealed record ItemUseDefinition(int RestoreHealth, int RestoreMana, int CooldownTicks, string? CooldownGroup = null)
+{
+    public const string HealthGroup = "potion.health";
+    public const string ManaGroup = "potion.mana";
+
+    public string EffectiveCooldownGroup => !string.IsNullOrEmpty(CooldownGroup)
+        ? CooldownGroup
+        : RestoreHealth > 0 ? HealthGroup : ManaGroup;
+}
