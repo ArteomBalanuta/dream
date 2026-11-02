@@ -16,13 +16,13 @@ public partial class PlayScene
 
     private void HandleConsumableHotkeys(KeyboardState keyboardState, bool allowGameplayInput)
     {
-        bool qDown = keyboardState.IsKeyDown(Keys.Q);
-        bool eDown = keyboardState.IsKeyDown(Keys.E);
+        bool qDown = keyboardState.IsKeyDown(Keys.Q) || CaptureKeyHeld(Keys.Q);
+        bool eDown = keyboardState.IsKeyDown(Keys.E) || CaptureKeyHeld(Keys.E);
         bool qPressed = qDown && !_wasConsumableQDown;
         bool ePressed = eDown && !_wasConsumableEDown;
         _wasConsumableQDown = qDown;
         _wasConsumableEDown = eDown;
-        if (!allowGameplayInput || _settings.InventoryVisible)
+        if (!allowGameplayInput || !_windowFocused || _settings.InventoryVisible)
         {
             return;
         }

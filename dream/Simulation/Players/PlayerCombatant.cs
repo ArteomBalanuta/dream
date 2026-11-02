@@ -131,6 +131,15 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     }
 
     // Returns the mana actually restored (0 when full or the amount is not positive).
+    // Fills the pool to the current maximum. For a joining or respawning player only: ApplyBaseStats
+    // raises MaxMana without refilling, so a fresh combatant would otherwise start part empty.
+    public void RefillMana()
+    {
+        Mana = MaxMana;
+        _manaRegenRemainder = 0f;
+        MirrorMana();
+    }
+
     public int RestoreMana(int amount)
     {
         if (amount <= 0 || Mana >= MaxMana)
@@ -245,8 +254,8 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         RecalculateEffectiveStats();
     }
 
-    // Sets all four equipment sources (source slot = EquipmentSlot value: 0 main hand, 1 off hand,
-    // 2 head, 3 body, resolved in ascending order), then derives once, so max health is rescaled a
+    // Sets every equipment source (all EquipmentSlots.Count slots; source slot = EquipmentSlot value,
+    // resolved in ascending order), then derives once, so max health is rescaled a
     // single time. The loadout's modifiers are already screened by EquipmentLoadout.Set.
     public void ApplyEquipment(EquipmentLoadout equipment)
     {

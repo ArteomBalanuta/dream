@@ -22,6 +22,11 @@ public sealed class HeldWeaponRenderer : IDisposable
     public const float ShieldOffsetX = 0.31f;
     public const float ShieldOffsetY = -0.55f;
 
+    // The models are authored to the blocky character's proportions; at the isometric zoom that left a
+    // blade a few pixels wide, so everything held is drawn larger (about the grip, or the shield's centre).
+    public const float HandScale = 1.7f;
+    public const float ShieldScale = 1.5f;
+
     private StaticMeshBuffer? _cube;
     private bool _disposed;
 
@@ -90,7 +95,8 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
 
         WeaponModel model = WeaponMeshCatalog.Resolve(visualId);
-        Matrix4 attach = CreateGrip(model.Grip, offHand) * arm * modelMatrix;
+        float scale = model.Grip == WeaponGrip.Shield ? ShieldScale : HandScale;
+        Matrix4 attach = Matrix4.CreateScale(scale) * CreateGrip(model.Grip, offHand) * arm * modelMatrix;
 
         if (!prepared)
         {

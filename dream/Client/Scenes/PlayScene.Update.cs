@@ -5,6 +5,7 @@ using Dream.Application;
 using Dream.Client.Input;
 using Dream.Client.Networking;
 using Dream.Client.Replication;
+using Dream.Client.Startup;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
@@ -49,6 +50,10 @@ public partial class PlayScene
         }
 
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
+        // Only the integrated host (Game.CreateLocalServerHandle) lets noclip and freeze through.
+        _commandInputFilter.AllowDevToggles = _localServer is { IsReady: true } localServer
+            && LoopbackHost.IsLoopback(_remoteClient.Options.Host)
+            && _remoteClient.Options.Port == localServer.BoundPort;
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _commandTicks.CaptureInput(commandFrame);

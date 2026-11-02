@@ -51,6 +51,24 @@ public sealed class PlayerRespawnTests
     }
 
     [Fact]
+    public void PrimarySeat_Respawn_RefillsMana()
+    {
+        using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
+        runtime.AttachRemoteSession(A, A.Value);
+        ulong tick = 0;
+        WaveIRuntimeKit.Tick(runtime, ref tick, 15);
+        PlayerCombatant combatant = WaveIRuntimeKit.Target(runtime, A.Value).Combatant;
+        combatant.ApplyBaseStats(new PlayerCombatStats { Energy = 10, Mana = 5, MaxMana = 70 });
+        Assert.Equal(5, combatant.Mana);
+        WaveIRuntimeKit.Kill(runtime, A.Value);
+
+        WaveIRuntimeKit.Tick(runtime, ref tick, Delay + 2);
+
+        Assert.True(combatant.Health.IsAlive);
+        Assert.Equal(combatant.MaxMana, combatant.Mana);
+    }
+
+    [Fact]
     public void PrimarySeat_RespawnsAtExactlyTheSeenTickPlusDelay_AtTheSpawnWithFullHealth_InTwoLockstepRuns()
     {
         List<string> first = RunPrimary(out ulong deadTick);
