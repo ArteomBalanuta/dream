@@ -58,7 +58,9 @@ public class Game : GameWindow
     private bool _pauseWasVisible;
     private bool _exitToMainMenuPending;
     // DREAM_MENU_CAPTURE: walks the title screen and writes a PNG of each screen (art review).
-    private readonly MenuCapture? _menuCapture = MenuCapture.FromEnvironment();
+    private readonly MenuCapture? _menuCapture = MenuFlowScript.IsEnabled(Environment.GetEnvironmentVariable) ? null : MenuCapture.FromEnvironment();
+    // DREAM_MENU_FLOW: the scripted Single Player / pause / exit walk (verification only).
+    private readonly MenuFlowScript? _menuFlow = MenuFlowScript.IsEnabled(Environment.GetEnvironmentVariable) ? new MenuFlowScript() : null;
 
     // DEBUG drains the GL error flags after every frame. Release builds check less often, which is
     // enough to notice GL_OUT_OF_MEMORY or GL_CONTEXT_LOST and close instead of drawing garbage.
@@ -492,6 +494,7 @@ public class Game : GameWindow
         {
             _startupScene?.Render(args, IsFocused, MouseState, KeyboardState);
         }
+        RunMenuFlowStep();
         Stopwatch swapStopwatch = Stopwatch.StartNew();
         SwapBuffers();
         swapStopwatch.Stop();
@@ -504,6 +507,52 @@ public class Game : GameWindow
 
         UpdateFPS();
         _windowTitle.Set(GameWindowTitleBuilder.Build(FPS, _playScene?.ConnectedServerEndpoint));
+    }
+
+    private void RunMenuFlowStep()
+    {
+        if (_menuFlow == null)
+        {
+            return;
+        }
+
+        MenuFlowScript.Command command = _menuFlow.Tick(new MenuFlowScript.SceneState(
+            _playScene != null,
+            _settings.PauseMenuVisible,
+            _pauseScreen.Current == MenuScreen.Root));
+        if (command.Step == MenuFlowScript.Step.None)
+        {
+            return;
+        }
+
+        Console.WriteLine($"[flow] {command.Step}: {command.Log}");
+        string? dir = Environment.GetEnvironmentVariable(MenuCapture.EnvironmentVariable);
+        if (command.CapturePng != null && !string.IsNullOrWhiteSpace(dir))
+        {
+            Directory.CreateDirectory(dir.Trim());
+            UiFramebufferCapture.CaptureBackBufferToPng(Path.Combine(dir.Trim(), command.CapturePng), ClientSize.X, ClientSize.Y);
+        }
+
+        switch (command.Step)
+        {
+            case MenuFlowScript.Step.StartSinglePlayer:
+                _mainMenu?.Handle(MenuAction.SinglePlayer);
+                break;
+            case MenuFlowScript.Step.OpenPauseWithEsc:
+            case MenuFlowScript.Step.EscBack:
+                _playScene?.PressEscape();
+                break;
+            case MenuFlowScript.Step.OpenOptionsInPause:
+                ApplyPauseAction(MenuAction.Options);
+                break;
+            case MenuFlowScript.Step.ExitToMainMenu:
+                ApplyPauseAction(MenuAction.ExitToMainMenu);
+                break;
+            case MenuFlowScript.Step.ExitGame:
+            case MenuFlowScript.Step.Fail:
+                Close();
+                break;
+        }
     }
 
     // The shared front-end renderer, created on first use. Null (and latched) when it cannot be built.

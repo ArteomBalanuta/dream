@@ -13,6 +13,21 @@ public static class GameAudio
 
     public static IGameAudio Current => s_current;
 
+    // DREAM_AUDIO_LOG=1 prints every sound the game asks for ("[audio] play Swing"), even while audio is
+    // silent (DREAM_AUDIO=0, the HUD capture): a verification aid, off by default.
+    public static bool PlayLogEnabled { get; set; } = IsPlayLogRequested(Environment.GetEnvironmentVariable);
+
+    public static bool IsPlayLogRequested(Func<string, string?> environment) =>
+        environment("DREAM_AUDIO_LOG")?.Trim() == "1";
+
+    public static void LogPlay(SoundId id, bool positional)
+    {
+        if (PlayLogEnabled)
+        {
+            Console.WriteLine($"[audio] play {id}{(positional ? " (at)" : string.Empty)}");
+        }
+    }
+
     // Idempotent. Starts the device and loads the clips on the first call that is allowed to sound;
     // later calls just apply the volumes. A setting that is off is retried on the next call (so
     // switching Sound on later works); a missing device or an environment switch is final.
@@ -96,7 +111,9 @@ public static class GameAudio
 
     private static void PlayUiFeedback(UiFeedback feedback)
     {
-        s_current.Play(feedback == UiFeedback.Click ? SoundId.UiClick : SoundId.UiHover);
+        SoundId id = feedback == UiFeedback.Click ? SoundId.UiClick : SoundId.UiHover;
+        LogPlay(id, false);
+        s_current.Play(id);
     }
 
     private static void Disable(string reason)
