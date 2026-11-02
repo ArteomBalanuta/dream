@@ -43,6 +43,10 @@ public static class ServerBootstrap
     // the integrated server turns it on itself.
     public const string DevCommandsEnvironmentVariable = "DREAM_DEV_COMMANDS";
 
+    // "1" lets players damage each other (M4). Off by default: with it off no player is ever a target.
+    // One server process hosts one world, so this is per world in practice.
+    public const string PvpEnvironmentVariable = "DREAM_PVP";
+
     // Selects the world a dedicated server opens when no --world argument is given: a world id or
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
@@ -101,6 +105,8 @@ public static class ServerBootstrap
             host = RuntimeAuthoritativeSessionHost.CreateDefault(ports);
             host.DevCommandsAllowed = string.Equals(
                 Environment.GetEnvironmentVariable(DevCommandsEnvironmentVariable), "1", StringComparison.Ordinal);
+            host.Runtime.PvpEnabled = string.Equals(
+                Environment.GetEnvironmentVariable(PvpEnvironmentVariable), "1", StringComparison.Ordinal);
             double dayLengthMinutes = ResolveDayLengthMinutes(
                 Environment.GetEnvironmentVariable(DayLengthEnvironmentVariable),
                 log);

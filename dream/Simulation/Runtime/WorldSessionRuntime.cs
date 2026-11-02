@@ -261,6 +261,10 @@ public sealed partial class WorldSessionRuntime : IDisposable
 
     public ulong CurrentServerTick { get; private set; }
 
+    // M4: whether players can damage each other. Off by default; the dedicated bootstrap sets it from
+    // DREAM_PVP. Read per use by the combat host. Cubes stay owner-only whatever this says.
+    public bool PvpEnabled { get; set; }
+
     // Root of every seeded simulation roll; see AuthoritativeCombatResolver.ResolveSeededAttack.
     public ulong SimulationSeed { get; }
 
