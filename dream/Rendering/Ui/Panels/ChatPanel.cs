@@ -88,6 +88,7 @@ public sealed class ChatHudState
             ChatChannel.System => cleanText,
             ChatChannel.Say => $"[Say] {cleanFrom}: {cleanText}",
             ChatChannel.Whisper => $"[Whisper] {cleanFrom}: {cleanText}",
+            ChatChannel.Party => $"[Party] {cleanFrom}: {cleanText}",
             _ => $"{cleanFrom}: {cleanText}"
         };
         AddLine(channel, line);
@@ -159,6 +160,11 @@ public static class ChatPanel
     private static readonly UiColor Say = new(0xF5, 0xDD, 0xA5, 255);
     private static readonly UiColor Whisper = new(0xC4, 0x9B, 0xE0, 255);
     private static readonly UiColor System = new(0xF4, 0x66, 0x50, 255);
+
+    // Party lines in the green of old verdigris, server commands in tarnished bronze: both stay muted next to
+    // the gold of Say and the violet of Whisper.
+    private static readonly UiColor Party = new(0x86, 0xB4, 0x7A, 255);
+    private static readonly UiColor Command = new(0xC8, 0x9A, 0x5E, 255);
     private static readonly UiColor Panel = new(0x0B, 0x07, 0x06, 170);
     private static readonly UiColor Rim = new(0x5A, 0x44, 0x2A, 220);
     private static readonly UiColor Prompt = new(0x0B, 0x07, 0x06, 235);
@@ -169,6 +175,8 @@ public static class ChatPanel
         ChatChannel.Say => Say,
         ChatChannel.Whisper => Whisper,
         ChatChannel.System => System,
+        ChatChannel.Party => Party,
+        ChatChannel.Command => Command,
         _ => World
     };
 

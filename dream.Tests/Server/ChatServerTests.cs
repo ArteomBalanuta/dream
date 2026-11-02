@@ -99,7 +99,7 @@ public sealed class ChatServerTests
 
     [Theory]
     [InlineData((byte)3)]
-    [InlineData((byte)4)]
+    [InlineData((byte)6)]
     [InlineData((byte)255)]
     public void InvalidChannel_AndSystem_AreDropped(byte channel)
     {
@@ -109,6 +109,22 @@ public sealed class ChatServerTests
         host.HandleClientMessage(A, new ClientChatMessage((ChatChannel)channel, "hello"));
 
         Assert.Empty(Drain(host));
+    }
+
+    // M5: channel 4 is Party now. A sender in no party is told so, and nobody else hears anything.
+    [Fact]
+    public void PartyChat_FromASenderInNoParty_IsAnsweredWithASystemLine_ToTheSenderOnly()
+    {
+        using DedicatedServerHost host = CreateHost(new ManualClock());
+        Join(host, A, "session-a", "Alice");
+        Join(host, B, "session-b", "Bob");
+
+        host.HandleClientMessage(A, new ClientChatMessage((ChatChannel)4, "hello party"));
+
+        PendingConnectionReply reply = Assert.Single(Drain(host));
+        Assert.Equal(A, reply.ConnectionId);
+        ServerChatMessage line = Assert.IsType<ServerChatMessage>(reply.Message);
+        Assert.Equal((ChatChannel.System, ChatRouter.NotInPartyText), (line.Channel, line.Text));
     }
 
     [Fact]

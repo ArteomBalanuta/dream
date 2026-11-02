@@ -16,8 +16,10 @@ public static class ChatRouter
 
     public const string PlayerOfflineText = "That player is not online.";
 
+    public const string NotInPartyText = "You are not in a party.";
+
     // party: the sender's party members (the sender included) for a Party line, null when the sender is in
-    // none. The Party and Command channels are not routed here yet (M5 workstream A, M8 workstream C).
+    // none. The Command channel is not routed here: the host hands it to its admin commands (M8).
     public static void Route(
         ChatParticipant sender,
         ClientChatMessage chat,
@@ -76,6 +78,41 @@ public static class ChatRouter
                 if (!string.Equals(found.ConnectionId, sender.ConnectionId, StringComparison.Ordinal))
                 {
                     replies.Add(new PendingConnectionReply(sender.ConnectionId, whisper));
+                }
+
+                break;
+            case ChatChannel.Party:
+                bool senderListed = false;
+                if (party != null)
+                {
+                    for (int i = 0; i < party.Count && !senderListed; i++)
+                    {
+                        senderListed = string.Equals(party[i].ConnectionId, sender.ConnectionId, StringComparison.Ordinal);
+                    }
+                }
+
+                if (party == null || !senderListed)
+                {
+                    replies.Add(new PendingConnectionReply(
+                        sender.ConnectionId,
+                        new ServerChatMessage(ChatChannel.System, "", NotInPartyText, serverTick)));
+                    break;
+                }
+
+                // Members only, each connection once; nobody outside the party hears the line.
+                ServerChatMessage partyLine = new(ChatChannel.Party, sender.Name, chat.Text, serverTick);
+                for (int i = 0; i < party.Count; i++)
+                {
+                    bool repeated = false;
+                    for (int j = 0; j < i && !repeated; j++)
+                    {
+                        repeated = string.Equals(party[j].ConnectionId, party[i].ConnectionId, StringComparison.Ordinal);
+                    }
+
+                    if (!repeated)
+                    {
+                        replies.Add(new PendingConnectionReply(party[i].ConnectionId, partyLine));
+                    }
                 }
 
                 break;

@@ -178,6 +178,20 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
               WHERE s.world_id = $worldId AND s.item_instance_id = $itemInstanceId);
         """;
 
+    // M5 trade: the item row moves to its new owner and goes back to the Inventory state; one row or the
+    // closure throws.
+    private const string AttachItemOwnerSql = """
+        UPDATE item_instances
+        SET owner_player_name = $toPlayer, state = 'Inventory', updated_utc = $updatedUtc
+        WHERE world_id = $worldId AND item_instance_id = $itemInstanceId;
+        """;
+
+    // A plain INSERT: an occupied slot, or an item that already has a slot row (the unique index), throws.
+    private const string AttachItemSlotSql = """
+        INSERT INTO player_inventory_slots (world_id, player_name, slot_index, item_instance_id, updated_utc)
+        VALUES ($worldId, $toPlayer, $slotIndex, $itemInstanceId, $updatedUtc);
+        """;
+
     // The recorded version never goes down, so a stale write cannot undo a newer grant.
     private const string UpsertStarterGrantSql = """
         INSERT INTO player_starter_grants (
@@ -317,6 +331,45 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         }
 
         Execute(DestroyItemRowSql, itemInstanceId, static (command, id) => command.BindInt64("$itemInstanceId", id));
+    }
+
+    // M5 trade. Deletes the player's slot rows of the item and keeps the item row; throws when the player
+    // had no row for it, so the trade's closure rolls back (a phantom item cannot be handed over).
+    public void DetachHeldItem(string fromPlayer, long itemInstanceId)
+    {
+        int deleted = Execute(DestroyItemSlotsSql, (fromPlayer, itemInstanceId), static (command, d) =>
+        {
+            command.BindText("$playerName", d.fromPlayer.Trim());
+            command.BindInt64("$itemInstanceId", d.itemInstanceId);
+        });
+        if (deleted == 0)
+        {
+            throw new InvalidOperationException($"{fromPlayer} has no persisted slot row for item {itemInstanceId}.");
+        }
+    }
+
+    // M5 trade. Gives the item row to toPlayer and inserts its slot row. Throws unless exactly one item row
+    // changed, and on an occupied slot (never an upsert), so the closure rolls back whole.
+    public void AttachItem(string toPlayer, long itemInstanceId, int slotIndex, DateTime utc)
+    {
+        int moved = Execute(AttachItemOwnerSql, (toPlayer, itemInstanceId, utc), static (command, d) =>
+        {
+            command.BindText("$toPlayer", d.toPlayer.Trim());
+            command.BindInt64("$itemInstanceId", d.itemInstanceId);
+            command.BindUtc("$updatedUtc", d.utc);
+        });
+        if (moved != 1)
+        {
+            throw new InvalidOperationException($"Item {itemInstanceId} has no item row to hand to {toPlayer}.");
+        }
+
+        Execute(AttachItemSlotSql, (toPlayer, itemInstanceId, slotIndex, utc), static (command, d) =>
+        {
+            command.BindText("$toPlayer", d.toPlayer.Trim());
+            command.BindInt64("$itemInstanceId", d.itemInstanceId);
+            command.BindInt64("$slotIndex", d.slotIndex);
+            command.BindUtc("$updatedUtc", d.utc);
+        });
     }
 
     public void DestroyInventoryItem(string playerName, long itemInstanceId)
