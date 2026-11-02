@@ -1,0 +1,159 @@
+{
+ "version": 1,
+ "pitchDeg": 50,
+ "yawDeg": 45,
+ "pxPerUnit": 4,
+ "yDown": true,
+ "straightAlpha": true,
+ "sheet": "iso_sheet.png",
+ "objects": [
+  {
+   "name": "rust_barrel",
+   "size": [
+    128,
+    160
+   ],
+   "pivot": [
+    40,
+    118
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/rust_barrel.png",
+     "shadow": "shadows/rust_barrel.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "dead_oak",
+   "size": [
+    448,
+    448
+   ],
+   "pivot": [
+    166,
+    311
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/dead_oak.png",
+     "shadow": "shadows/dead_oak.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "bramble",
+   "size": [
+    288,
+    288
+   ],
+   "pivot": [
+    122,
+    139
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/bramble.png",
+     "shadow": "shadows/bramble.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "slate_rocks",
+   "size": [
+    240,
+    192
+   ],
+   "pivot": [
+    115,
+    105
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/slate_rocks.png",
+     "shadow": "shadows/slate_rocks.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "tombstone",
+   "size": [
+    176,
+    176
+   ],
+   "pivot": [
+    58,
+    140
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/tombstone.png",
+     "shadow": "shadows/tombstone.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "bone_pile",
+   "size": [
+    208,
+    144
+   ],
+   "pivot": [
+    104,
+    92
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/bone_pile.png",
+     "shadow": "shadows/bone_pile.png",
+     "durationMs": 0
+    }
+   ]
+  },
+  {
+   "name": "rune_potion_drop",
+   "size": [
+    160,
+    240
+   ],
+   "pivot": [
+    60,
+    190
+   ],
+   "loop": false,
+   "frames": [
+    {
+     "image": "sprites/rune_potion_drop_0.png",
+     "shadow": "shadows/rune_potion_drop_0.png",
+     "durationMs": 90
+    },
+    {
+     "image": "sprites/rune_potion_drop_1.png",
+     "shadow": "shadows/rune_potion_drop_1.png",
+     "durationMs": 90
+    },
+    {
+     "image": "sprites/rune_potion_drop_2.png",
+     "shadow": "shadows/rune_potion_drop_2.png",
+     "durationMs": 110
+    },
+    {
+     "image": "sprites/rune_potion_drop_3.png",
+     "shadow": "shadows/rune_potion_drop_3.png",
+     "durationMs": 160
+    }
+   ]
+  }
+ ]
+}

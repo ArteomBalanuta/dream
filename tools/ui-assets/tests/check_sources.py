@@ -13,7 +13,9 @@ UI = ROOT / "dream" / "ui"
 ALLOWED_MODULES = {"__future__", "json", "math", "sys", "pathlib", "numpy", "PIL", "uiart", "typing",
                    "dataclasses", "re", "hashlib", "tempfile", "importlib", "zlib",
                    # forge.py (shared renderer), gemtrace.py (gem ray tracer) and its process pool over tiles
-                   "forge", "gemtrace", "concurrent", "os"}
+                   "forge", "gemtrace", "concurrent", "os",
+                   # isoforge.py (isometric renderer) and the gen_iso*.py generators that build on it
+                   "isoforge"}
 BAD_STR = re.compile(r"reference|\.webp|fonts|\.ttf|\.otf|https?:|screenshot", re.I)
 BAD_NAME = re.compile(r"(^|[._\-])(mu|muonline|zen|chaos|larkan|loch|arcana|soul|bless|webzen|kundun|lorencia)([._\-]|$)", re.I)
 errs: list[str] = []
