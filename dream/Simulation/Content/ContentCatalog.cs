@@ -24,6 +24,7 @@ public sealed class ContentCatalog
     public const string EnemiesFileName = "enemies.json";
     public const string LootFileName = "loot.json";
     public const string SpawnsFileName = "spawns.json";
+    public const string NpcsFileName = "npcs.json";
 
     // The visual an enemy without an explicit key draws (the wolf). The wire leaves it out.
     public const string DefaultEnemyVisualKey = "enemy.wolf";
@@ -32,6 +33,12 @@ public sealed class ContentCatalog
     public const int MaxCampCount = 8;
     public const float MaxCampCoordinate = 100_000f;
     public const float MaxCampRespawnSeconds = 86_400f;
+
+    // Vendors and gold (M3).
+    public const int MaxNpcs = 64;
+    public const int MaxNpcStock = 32;
+    public const float MaxNpcOffset = 1000f;
+    public const int MaxGoldAmount = 1_000_000;
 
     public const int MaxLootDrops = 4;
     public const int MaxEnemyLevel = 1000;
@@ -57,6 +64,7 @@ public sealed class ContentCatalog
         Dictionary<string, LootTable> lootTables,
         IReadOnlyList<LootTable> lootList,
         IReadOnlyList<SpawnCamp> camps,
+        IReadOnlyList<NpcDefinition> npcs,
         string digest)
     {
         _items = items;
@@ -69,6 +77,7 @@ public sealed class ContentCatalog
         _lootTables = lootTables;
         LootTables = lootList;
         Camps = camps;
+        Npcs = npcs;
         ContentDigest = digest;
     }
 
@@ -86,6 +95,9 @@ public sealed class ContentCatalog
     // The spawn camps in file order (spawns.json). Empty when the content has none, and the runtime
     // then falls back to the world-wide wolf population step.
     public IReadOnlyList<SpawnCamp> Camps { get; }
+
+    // The vendors in file order (npcs.json). Empty when the content has none.
+    public IReadOnlyList<NpcDefinition> Npcs { get; }
 
     // The starter kit in seeding order, with the kit version that introduced each kind.
     public IReadOnlyList<StarterKitEntry> StarterKit { get; }
@@ -148,7 +160,10 @@ public sealed class ContentCatalog
         // spawns.json is optional: a content directory without it has no camps.
         string spawnsPath = Path.Combine(directory, SpawnsFileName);
         string spawnsJson = File.Exists(spawnsPath) ? ReadFile(spawnsPath) : EmptySpawnsJson;
-        return Load(itemsJson, enemiesJson, lootJson, spawnsJson);
+        // npcs.json is optional too: a content directory without it has no vendors.
+        string npcsPath = Path.Combine(directory, NpcsFileName);
+        string npcsJson = File.Exists(npcsPath) ? ReadFile(npcsPath) : EmptyNpcsJson;
+        return Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson);
     }
 
     // A catalog with no loot tables (fixtures that predate loot.json).
@@ -162,8 +177,14 @@ public sealed class ContentCatalog
     public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson) =>
         Load(itemsJson, enemiesJson, lootJson, EmptySpawnsJson);
 
-    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson)
+    private const string EmptyNpcsJson = "{\"version\":1,\"npcs\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson) =>
+        Load(itemsJson, enemiesJson, lootJson, spawnsJson, EmptyNpcsJson);
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson)
     {
+        ArgumentNullException.ThrowIfNull(npcsJson);
         ArgumentNullException.ThrowIfNull(spawnsJson);
         ArgumentNullException.ThrowIfNull(itemsJson);
         ArgumentNullException.ThrowIfNull(enemiesJson);
@@ -173,7 +194,8 @@ public sealed class ContentCatalog
         ParsedLoot loot = ParseLoot(lootJson, items);
         ParsedEnemies enemies = ParseEnemies(enemiesJson, loot);
         List<SpawnCamp> camps = ParseSpawns(spawnsJson, enemies);
-        string digest = ComputeDigest(items, enemies, loot, camps);
+        List<NpcDefinition> npcs = ParseNpcs(npcsJson, items);
+        string digest = ComputeDigest(items, enemies, loot, camps, npcs);
         return new ContentCatalog(
             items.ByKey,
             items.List,
@@ -185,6 +207,7 @@ public sealed class ContentCatalog
             loot.ByKey,
             loot.List,
             camps,
+            npcs,
             digest);
     }
 
@@ -295,7 +318,7 @@ public sealed class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
-            optional: ["rolls", "footprint"]);
+            optional: ["rolls", "footprint", "sellPrice"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
@@ -333,6 +356,10 @@ public sealed class ContentCatalog
             ? ParseFootprint($"{path}.footprint", footprintElement)
             : ItemFootprint.One;
 
+        int sellPrice = properties.TryGetValue("sellPrice", out JsonElement sellElement)
+            ? ReadInt(ItemsFileName, $"{path}.sellPrice", sellElement, 0, MaxGoldAmount)
+            : 0;
+
         return new ItemDefinition(
             key,
             displayName,
@@ -344,7 +371,8 @@ public sealed class ContentCatalog
             equipSlotMask,
             equipSlots,
             rolls,
-            footprint);
+            footprint,
+            sellPrice);
     }
 
     // [columns, rows], each a whole number 1..BagGrid.MaxFootprint. The item is placed by its top-left cell.
@@ -547,7 +575,7 @@ public sealed class ContentCatalog
                 path,
                 enemyElement,
                 ["key", "displayName", "level", "strength", "vitality", "attackSpeed", "aggroRange", "attackRange", "moveSpeed", "visualKey", "spawnRole"],
-                optional: ["attackIntervalSeconds", "lootTable"]);
+                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax"]);
             float? interval = enemy.TryGetValue("attackIntervalSeconds", out JsonElement intervalElement)
                 ? ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", intervalElement, 0.05f, 3600f)
                 : null;
@@ -559,6 +587,17 @@ public sealed class ContentCatalog
                 {
                     throw Fail(EnemiesFileName, $"{path}.lootTable", $"references missing loot table '{Truncate(lootTable)}'");
                 }
+            }
+
+            int goldMin = enemy.TryGetValue("goldMin", out JsonElement goldMinElement)
+                ? ReadInt(EnemiesFileName, $"{path}.goldMin", goldMinElement, 0, MaxGoldAmount)
+                : 0;
+            int goldMax = enemy.TryGetValue("goldMax", out JsonElement goldMaxElement)
+                ? ReadInt(EnemiesFileName, $"{path}.goldMax", goldMaxElement, 0, MaxGoldAmount)
+                : goldMin;
+            if (goldMax < goldMin)
+            {
+                throw Fail(EnemiesFileName, $"{path}.goldMax", $"{goldMax} is below goldMin {goldMin}");
             }
 
             // The wolf stops at 90% of its attack range at most. A range at or below the separation distance
@@ -587,7 +626,9 @@ public sealed class ContentCatalog
                 ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f),
                 ReadVisualId(EnemiesFileName, $"{path}.visualKey", enemy["visualKey"]),
                 lootTable,
-                ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]));
+                ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]),
+                goldMin,
+                goldMax);
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -685,6 +726,97 @@ public sealed class ContentCatalog
             }
 
             list.Add(parsed);
+            index++;
+        }
+
+        return list;
+    }
+
+    // ---- npcs ----
+
+    private static List<NpcDefinition> ParseNpcs(string json, ParsedItems items)
+    {
+        using JsonDocument document = ParseDocument(NpcsFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(NpcsFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(NpcsFileName, "$", root, ["version", "npcs"]);
+        _ = ReadInt(NpcsFileName, "$.version", properties["version"], 1, 1);
+
+        List<NpcDefinition> list = [];
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        JsonElement npcsElement = properties["npcs"];
+        ExpectArray(NpcsFileName, "$.npcs", npcsElement);
+        int index = 0;
+        foreach (JsonElement npcElement in npcsElement.EnumerateArray())
+        {
+            string path = $"$.npcs[{index}]";
+            if (index >= MaxNpcs)
+            {
+                throw Fail(NpcsFileName, "$.npcs", $"more than {MaxNpcs} npcs");
+            }
+
+            ExpectObject(NpcsFileName, path, npcElement);
+            Dictionary<string, JsonElement> npc = ReadProperties(
+                NpcsFileName,
+                path,
+                npcElement,
+                ["key", "displayName", "visualKey", "offsetX", "offsetZ", "stock"]);
+            string key = ReadKey(NpcsFileName, $"{path}.key", npc["key"]);
+            if (!keys.Add(key))
+            {
+                throw Fail(NpcsFileName, $"{path}.key", $"duplicate npc key '{key}'");
+            }
+
+            JsonElement stockElement = npc["stock"];
+            ExpectArray(NpcsFileName, $"{path}.stock", stockElement);
+            if (stockElement.GetArrayLength() > MaxNpcStock)
+            {
+                throw Fail(NpcsFileName, $"{path}.stock", $"has more than {MaxNpcStock} entries");
+            }
+
+            List<NpcStockEntry> stock = [];
+            HashSet<string> stocked = new(StringComparer.OrdinalIgnoreCase);
+            int stockIndex = 0;
+            foreach (JsonElement entryElement in stockElement.EnumerateArray())
+            {
+                string entryPath = $"{path}.stock[{stockIndex}]";
+                ExpectObject(NpcsFileName, entryPath, entryElement);
+                Dictionary<string, JsonElement> entry = ReadProperties(NpcsFileName, entryPath, entryElement, ["item", "price"]);
+                string itemKey = ReadKey(NpcsFileName, $"{entryPath}.item", entry["item"]);
+                if (!items.ByKey.TryGetValue(itemKey, out ItemDefinition? item))
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"references missing item '{Truncate(itemKey)}'");
+                }
+
+                // A vendor sells fixed-stat items only: a rolled item would need a seed per sale.
+                if (item.Rolls != null)
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"'{item.Key}' is a rolled item; a vendor sells fixed-stat items only");
+                }
+
+                if (!stocked.Add(item.Key))
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"duplicate stock item '{item.Key}'");
+                }
+
+                int price = ReadInt(NpcsFileName, $"{entryPath}.price", entry["price"], 1, MaxGoldAmount);
+                // The buy price must beat the sell price, or a buy-and-sell loop would mint gold.
+                if (price <= item.SellPrice)
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.price", $"{price} must exceed the sell price {item.SellPrice} of '{item.Key}'");
+                }
+
+                stock.Add(new NpcStockEntry(item.Key, price));
+                stockIndex++;
+            }
+
+            list.Add(new NpcDefinition(
+                key,
+                ReadName(NpcsFileName, $"{path}.displayName", npc["displayName"]),
+                ReadVisualId(NpcsFileName, $"{path}.visualKey", npc["visualKey"]),
+                ReadFloat(NpcsFileName, $"{path}.offsetX", npc["offsetX"], -MaxNpcOffset, MaxNpcOffset),
+                ReadFloat(NpcsFileName, $"{path}.offsetZ", npc["offsetZ"], -MaxNpcOffset, MaxNpcOffset),
+                stock));
             index++;
         }
 
@@ -797,7 +929,7 @@ public sealed class ContentCatalog
 
     // ---- digest ----
 
-    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps)
+    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps, List<NpcDefinition> npcs)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
@@ -839,6 +971,11 @@ public sealed class ContentCatalog
 
             text.Append('\n');
             text.Append("foot|").Append(item.Footprint.Cols.ToString(c)).Append('x').Append(item.Footprint.Rows.ToString(c)).Append('\n');
+            if (item.SellPrice > 0)
+            {
+                text.Append("sell|").Append(item.SellPrice.ToString(c)).Append('\n');
+            }
+
             if (item.Rolls != null)
             {
                 AppendRolls(text, "common", item.Rolls.Common);
@@ -860,6 +997,10 @@ public sealed class ContentCatalog
                 .Append(enemy.MoveSpeed.ToString("R", c)).Append('|');
             AppendField(text, enemy.VisualKey).Append('|');
             AppendField(text, enemy.LootTable ?? "-").Append('|').Append(enemy.SpawnRole.ToString()).Append('\n');
+            if (enemy.GoldMax > 0)
+            {
+                text.Append("gold|").Append(enemy.GoldMin.ToString(c)).Append('|').Append(enemy.GoldMax.ToString(c)).Append('\n');
+            }
         }
 
         text.Append("loot.v1\n");
@@ -888,6 +1029,25 @@ public sealed class ContentCatalog
                     .Append(camp.X.ToString("R", c)).Append('|').Append(camp.Z.ToString("R", c)).Append('|')
                     .Append(camp.Count.ToString(c)).Append('|').Append(camp.RespawnSeconds.ToString("R", c)).Append('|')
                     .Append(camp.Night ? "night" : "any").Append('\n');
+            }
+        }
+
+        // Likewise for vendors.
+        if (npcs.Count > 0)
+        {
+            text.Append("npcs.v1\n");
+            foreach (NpcDefinition npc in npcs)
+            {
+                text.Append("npc|");
+                AppendField(text, npc.Key).Append('|');
+                AppendField(text, npc.DisplayName).Append('|');
+                AppendField(text, npc.VisualKey).Append('|')
+                    .Append(npc.OffsetX.ToString("R", c)).Append('|').Append(npc.OffsetZ.ToString("R", c)).Append('\n');
+                foreach (NpcStockEntry entry in npc.Stock)
+                {
+                    text.Append("stock|");
+                    AppendField(text, entry.ItemKind).Append('|').Append(entry.Price.ToString(c)).Append('\n');
+                }
             }
         }
 

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "npcs": [
+    {
+      "key": "spawn-quartermaster",
+      "displayName": "Quartermaster",
+      "visualKey": "npc.vendor",
+      "offsetX": 4,
+      "offsetZ": 2,
+      "stock": [
+        { "item": "tool.torch", "price": 6 },
+        { "item": "tool.survey-lantern", "price": 25 },
+        { "item": "tool.field-blade", "price": 30 },
+        { "item": "tool.builder-hammer", "price": 20 }
+      ]
+    }
+  ]
+}

@@ -111,6 +111,9 @@ public static class ServerBootstrap
                 Environment.GetEnvironmentVariable(TimeOfDayEnvironmentVariable),
                 log);
             host.Runtime.ConfigureWorldClock(clockSettings, worldTicks);
+            // The content's vendors (M3). Only the server host spawns them: a runtime built any other way
+            // has none, so its snapshots and goldens do not change.
+            host.Runtime.SpawnContentNpcs();
             return host;
         }
         catch

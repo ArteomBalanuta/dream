@@ -13,7 +13,9 @@
       "moveSpeed": 2.8,
       "visualKey": "enemy.wolf",
       "spawnRole": "Primary",
-      "lootTable": "wolf"
+      "lootTable": "wolf",
+      "goldMin": 1,
+      "goldMax": 5
     },
     {
       "key": "DireWolf",
@@ -27,7 +29,9 @@
       "moveSpeed": 3.2,
       "visualKey": "enemy.dire-wolf",
       "spawnRole": "NightExtra",
-      "lootTable": "dire-wolf"
+      "lootTable": "dire-wolf",
+      "goldMin": 5,
+      "goldMax": 15
     }
   ]
 }

@@ -16,9 +16,11 @@ internal static class LegacyWolfPopulation
     [ModuleInitializer]
     internal static void UseAsTheDefaultContent() => WorldSessionRuntime.DefaultEnemyContent = Content;
 
+    // Also without kill gold (M3): the scenario tests pin exact loot notices and inventory pushes, and a gold
+    // notice would join every kill. The gold tests set EnemyContent to content that pays.
     private static readonly Lazy<ContentCatalog> Catalog = new(() => ContentCatalog.Load(
         Read(ContentCatalog.ItemsFileName),
-        Read(ContentCatalog.EnemiesFileName),
+        System.Text.RegularExpressions.Regex.Replace(Read(ContentCatalog.EnemiesFileName), "\"gold(Min|Max)\":\\s*\\d+", "\"gold$1\": 0"),
         Read(ContentCatalog.LootFileName)));
 
     public static ContentCatalog Content => Catalog.Value;
