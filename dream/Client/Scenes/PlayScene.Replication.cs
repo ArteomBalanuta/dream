@@ -238,6 +238,7 @@ public partial class PlayScene
             if (actor.Kind == CreatureKind.Player &&
                 string.Equals(actor.SessionId, localSessionId, StringComparison.Ordinal))
             {
+                _serverLocalActorId = actor.ActorId;
                 _deathTracker.Observe(actor.IsAlive && actor.CurrentHealth > 0, serverTick);
                 return;
             }

@@ -534,7 +534,8 @@ public sealed class PersistenceWriteQueue : IDisposable
 
     // One transaction for the whole group. If the commit itself fails (the transaction is lost,
     // not one write), every write is rolled back with it, so each is replayed in a group of its
-    // own; the repositories' writes are upserts and deletes, so a replay lands the same rows.
+    // own; nothing of the lost group landed, so the replay applies each write once (wallet deltas
+    // included). A write that throws (a guarded slot upsert or sell destroy) rolls back its savepoint.
     // When the transaction cannot start because the database stays locked past busy_timeout, the
     // write that hit it and every write after it go to requeue unrun (not counted), and the caller
     // puts them back at the head of the queue; the writes before it still commit. Once the dispose

@@ -25,6 +25,16 @@ public sealed class LootFeedbackSystemTests
     }
 
     [Fact]
+    public void ATrulyLostNotice_SaysWasLost_NotDroppedOnTheGround()
+    {
+        LootFeedbackSystem feed = new();
+
+        feed.AddNotices([new LootNotice("Leather Cap", ItemRarity.Common, Lost: true, Gone: true)]);
+
+        Assert.Equal("Backpack full: Leather Cap was lost", feed.GetLine(0));
+    }
+
+    [Fact]
     public void ItHoldsFourLines_ForFourSeconds()
     {
         LootFeedbackSystem feed = new();

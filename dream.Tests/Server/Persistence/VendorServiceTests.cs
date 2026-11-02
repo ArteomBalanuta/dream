@@ -348,4 +348,112 @@ public sealed class VendorServiceTests
         Assert.Equal(goldInRows, run.Rows().Gold);
         Assert.Single(run.Rows().Items);
     }
+
+    [Fact]
+    public void AFailedBuy_ThenASell_IsRefused_AndARestartFindsTheGoldUnchanged()
+    {
+        using MigrationTestDatabase db = Migrated();
+        long price = Price(Kind);
+        using (Run run = new(db))
+        {
+            run.Fund(50);
+            db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryBuy(Player, Kind, price));
+            run.Flush();
+            Assert.Equal(1, run.FailedWrites);
+            db.ExecuteScript("DROP TRIGGER fail_wallet;");
+            InventorySlotSnapshot phantom = run.OnlyBagItem();
+
+            // The phantom item (never persisted) does not sell for gold, nor does anything else trade.
+            Assert.Equal(
+                InventoryEquipOutcome.WriteFailed,
+                run.Inventory.TrySell(Player, phantom.SlotIndex, phantom.Item!.Value.ItemInstanceId));
+            Assert.Equal(InventoryEquipOutcome.WriteFailed, run.Inventory.TryBuy(Player, Kind, price));
+            run.Flush();
+
+            Assert.Equal(1, run.FailedWrites);
+            Assert.Equal(50, run.Rows().Gold);
+            Assert.Empty(run.Rows().Slots);
+        }
+
+        using Run restarted = new(db);
+        Assert.Equal(50, restarted.Rows().Gold);
+        Assert.Equal(50, restarted.Inventory.GoldOf(Player));
+        Assert.Empty(restarted.Rows().Slots);
+        Assert.Empty(restarted.Rows().Items);
+    }
+
+    [Fact]
+    public void AFailedCredit_ThenABuyAndSellLoop_GainsNothingInTheRows()
+    {
+        using MigrationTestDatabase db = Migrated();
+        using Run run = new(db);
+        run.Fund(50);
+        db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
+        Assert.True(run.Inventory.TryAddGold(Player, 10));
+        run.Flush();
+        db.ExecuteScript("DROP TRIGGER fail_wallet;");
+        Assert.Equal(1, run.FailedWrites);
+
+        for (int n = 0; n < 10; n++)
+        {
+            Assert.Equal(InventoryEquipOutcome.WriteFailed, run.Inventory.TryBuy(Player, Kind, Price(Kind)));
+            Assert.Equal(InventoryEquipOutcome.WriteFailed, run.Inventory.TrySell(Player, 0, 1));
+        }
+
+        run.Flush();
+        Assert.Equal(1, run.FailedWrites);
+        Assert.Equal(50, run.Rows().Gold);
+        Assert.Empty(run.Rows().Slots);
+        Assert.Empty(run.Rows().Items);
+    }
+
+    [Fact]
+    public void TheSellDestroy_ThrowsForAnItemNoSlotRowHolds_SoNoGoldIsCredited()
+    {
+        using MigrationTestDatabase db = Migrated();
+        using Run run = new(db);
+        run.Fund(50);
+
+        Assert.Throws<InvalidOperationException>(() => run.World.DestroyHeldInventoryItem(Player, 12345));
+
+        Assert.Equal(50, run.Rows().Gold);
+    }
+
+    [Fact]
+    public void ASlotUpsertOverADifferentItem_FailsAndKeepsTheOccupant_ButTheSameItemUpdates()
+    {
+        using MigrationTestDatabase db = Migrated();
+        using Run run = new(db);
+        run.Fund(50);
+        Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryBuy(Player, Kind, Price(Kind)));
+        run.Flush();
+        InventorySlotSnapshot item = run.OnlyBagItem();
+        long occupant = item.Item!.Value.ItemInstanceId;
+        db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
+
+        // A failed sell: memory has the cell empty, the row still holds the occupant.
+        Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TrySell(Player, item.SlotIndex, occupant));
+        run.Flush();
+        db.ExecuteScript("DROP TRIGGER fail_wallet;");
+        Assert.Equal(1, run.FailedWrites);
+
+        // The next placement lands in the same cell; its closure must fail, not orphan the occupant.
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            run.Inventory.TryGrantRolled(Player, "gear.leather-cap", ItemRarity.Common, new ItemRollSeed(1, 1, 1, 1, 1)));
+        run.Flush();
+
+        Assert.Equal(2, run.FailedWrites);
+        PersistedPlayerInventory rows = run.Rows();
+        PersistedInventorySlot kept = Assert.Single(rows.Slots);
+        Assert.Equal(occupant, kept.ItemInstanceId);
+        Assert.Equal(item.SlotIndex, kept.SlotIndex);
+        Assert.Equal(occupant, Assert.Single(rows.Items).ItemInstanceId);
+
+        // Saving the same item again is not a conflict.
+        run.World.SaveInventorySlot(new PersistedInventorySlot(Player, item.SlotIndex, occupant, default));
+        Assert.Throws<InvalidOperationException>(
+            () => run.World.SaveInventorySlot(new PersistedInventorySlot(Player, item.SlotIndex, occupant + 1, default)));
+    }
 }

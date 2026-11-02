@@ -84,19 +84,20 @@ public sealed partial class WorldSessionRuntime
                 case InventoryEquipOutcome.BackpackFull:
                     // M3: the overflow lands on the ground near the kill, claimed by the winner for a
                     // while. The notice stays a "lost" one either way, so its priority is unchanged.
-                    if (!_inventory.TryDropRolled(
+                    bool landed = _inventory.TryDropRolled(
                             drop.ItemKind,
                             drop.Rarity,
                             in seed,
                             RingPosition(deathPosition, dropIndex),
                             characterKey,
                             player.ActorId,
-                            tick))
+                            tick);
+                    if (!landed)
                     {
                         NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason=ground-drop-failed kind={enemyKind}");
                     }
 
-                    AddLootNotice(killer, drop, lost: true, inventoryChanged: false);
+                    AddLootNotice(killer, drop, lost: true, inventoryChanged: false, gone: !landed);
                     break;
                 default:
                     NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason={outcome} kind={enemyKind}");
@@ -114,7 +115,7 @@ public sealed partial class WorldSessionRuntime
         return new Vector3(center.X + (MathF.Cos(angle) * radius), center.Y, center.Z + (MathF.Sin(angle) * radius));
     }
 
-    internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged)
+    internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged, bool gone = false)
     {
         if (!_pendingLoot.TryGetValue(session, out PendingLoot? pending))
         {
@@ -126,7 +127,7 @@ public sealed partial class WorldSessionRuntime
         string name = ContentCatalog.Shipped.TryGetItem(drop.ItemKind, out ItemDefinition? definition)
             ? definition.DisplayName
             : drop.ItemKind;
-        LootNotice notice = new(name, drop.Rarity, lost);
+        LootNotice notice = new(name, drop.Rarity, lost, gone);
         if (pending.Notices.Count < InventoryPushMessage.MaxNotices)
         {
             pending.Notices.Add(notice);
