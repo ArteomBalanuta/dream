@@ -72,6 +72,10 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteItemInstance(long itemInstanceId) => _items.DeleteItemInstance(itemInstanceId);
 
+    public IReadOnlyList<PersistedItemInstance> LoadGroundItems() => _items.LoadGroundItems();
+
+    public void DeleteGroundItem(long itemInstanceId) => _items.DeleteGroundItem(itemInstanceId);
+
 
     public IReadOnlyList<PersistedInventorySlot> LoadInventorySlots() => _inventory.LoadInventorySlots();
 
@@ -86,6 +90,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
     public void DestroyInventoryItem(string playerName, long itemInstanceId) => _inventory.DestroyInventoryItem(playerName, itemInstanceId);
 
     public void SaveStarterKitGrant(string playerName, int kitVersion) => _inventory.SaveStarterKitGrant(playerName, kitVersion);
+
+    public void ApplyWalletDelta(string playerName, long delta) => _inventory.ApplyWalletDelta(playerName, delta);
 
     public long LoadNextObjectId() => _objectIdCounter.LoadNextObjectId();
 

@@ -15,7 +15,9 @@ namespace Dream.Multiplayer.Protocol;
 // Wire shape:
 //   {"playerName":s,"columns":n,"rows":n,
 //    "bag":[[anchor,id,kind,flags,[stat,value,...],stack?,name?,visual?],...],
-//    "worn":[[slot,id,kind,flags,[stat,value,...],stack?,name?,visual?],...]}
+//    "worn":[[slot,id,kind,flags,[stat,value,...],stack?,name?,visual?],...],"gold":n?}
+// - gold (protocol v16) is written only when above 0, so a snapshot of a player without gold is
+//   byte-identical to v15's; a reader clamps a negative value to 0.
 // - bag lists the items on the board by anchor (0..63), then the held-back items (200..215); an empty
 //   cell has no entry. worn lists the equipment slots (100..111) that hold an item, main hand
 //   included. A reader makes the main hand an empty slot when it is not listed.
@@ -51,6 +53,7 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
     private static readonly JsonEncodedText Rows = JsonEncodedText.Encode("rows");
     private static readonly JsonEncodedText Bag = JsonEncodedText.Encode("bag");
     private static readonly JsonEncodedText Worn = JsonEncodedText.Encode("worn");
+    private static readonly JsonEncodedText Gold = JsonEncodedText.Encode("gold");
 
     public override PlayerInventorySnapshot Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -58,6 +61,7 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         string playerName = string.Empty;
         int columns = 0;
         int rows = 0;
+        long gold = 0;
         List<InventorySlotSnapshot> bag = [];
         List<InventorySlotSnapshot> worn = [];
         int entries = 0;
@@ -83,6 +87,16 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
             {
                 ReadEntries(ref reader, worn, ref entries, equipment: true);
             }
+            else if (reader.ValueTextEquals(Gold.EncodedUtf8Bytes))
+            {
+                HotPathJson.ReadValue(ref reader);
+                if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt64(out gold))
+                {
+                    throw new JsonException($"Expected a 64-bit integer for gold, found {reader.TokenType}.");
+                }
+
+                gold = Math.Max(gold, 0L);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
@@ -104,7 +118,7 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         }
 
         equipment?.Sort(static (a, b) => a.SlotIndex.CompareTo(b.SlotIndex));
-        return new PlayerInventorySnapshot(playerName, columns, rows, bag, mainHand, equipment);
+        return new PlayerInventorySnapshot(playerName, columns, rows, bag, mainHand, equipment, gold);
     }
 
     public override void Write(Utf8JsonWriter writer, PlayerInventorySnapshot value, JsonSerializerOptions options)
@@ -148,6 +162,11 @@ internal sealed class PlayerInventorySnapshotJsonConverter : JsonConverter<Playe
         }
 
         writer.WriteEndArray();
+        if (value.Gold > 0)
+        {
+            writer.WriteNumber(Gold, value.Gold);
+        }
+
         writer.WriteEndObject();
     }
 

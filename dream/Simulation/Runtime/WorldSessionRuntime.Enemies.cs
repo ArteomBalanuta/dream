@@ -132,6 +132,9 @@ public sealed partial class WorldSessionRuntime
     // Named for its call site in WorldSessionRuntime.Commands.cs, which this step keeps unchanged.
     private void EnsureWolfExists()
     {
+        // M3: claims lapse and old ground items despawn, whichever population step follows.
+        StepGroundItems(CurrentServerTick);
+
         // A world whose content has camps is populated by them instead (M2-B).
         if (EnemyContent.Camps.Count > 0)
         {

@@ -27,6 +27,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         "terrain_cell_overrides",
         "player_inventory_slots",
         "player_starter_grants",
+        "player_wallets",
         "item_instances",
         "enemy_instances",
         "cube_fracture_pieces",
@@ -57,7 +58,8 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             "object_id, cell_x, cell_y, cell_z, kind, cell_data, created_utc, updated_utc"),
         ("terrain_chunks", "chunk_x, chunk_z, format_version, cell_count, data, updated_utc"),
         ("player_inventory_slots", "player_name, slot_index, item_instance_id, updated_utc"),
-        ("player_starter_grants", "player_name, kit_version, updated_utc")
+        ("player_starter_grants", "player_name, kit_version, updated_utc"),
+        ("player_wallets", "player_name, gold, updated_utc")
     ];
 
     private readonly IWorldStore _store;

@@ -86,10 +86,13 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // character. It goes away when levels give stat points.
     // PlayerStatSpendIntent is the real thing: points the level earned, checked by the runtime and
     // allowed on every server, so it is not gated on DevCommandsAllowed.
+    // The M3 intents (ground pickup, NPC interact, vendor buy and sell) name what they act on; the
+    // server rechecks existence, claim, range and budget for each.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
         return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
-            or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent;
+            or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent
+            or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

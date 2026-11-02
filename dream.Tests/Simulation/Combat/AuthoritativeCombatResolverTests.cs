@@ -435,7 +435,7 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
 
         public void DeletePersistedEnemy(int enemyId) => Calls.Add($"DeletePersistedEnemy {enemyId}");
 
-        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, OpenTK.Mathematics.Vector3 deathPosition)
             => Calls.Add($"GrantLoot {killer.Value} {enemyKind} {enemyActorId} {tick}");
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)

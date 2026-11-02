@@ -4,6 +4,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Inventory;
+using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Runtime;
 
@@ -37,8 +38,9 @@ public sealed partial class WorldSessionRuntime
     // synchronously, which can flush the write queue), and the grant uses the character key, never the
     // display name. A kill by a dead player or after leaving cannot get here: the action is rejected or
     // the session purged first. A roll happens even when the backpack is full, so nothing downstream
-    // depends on free space.
-    internal void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+    // depends on free space. deathPosition is where the enemy died, for the ground items an overflowing
+    // backpack drops (M3).
+    internal void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, Vector3 deathPosition)
     {
         if (!_sessions.TryGet(killer, out ConnectedPlayer? player) || player == null || !player.IsSpawned)
         {
@@ -51,6 +53,9 @@ public sealed partial class WorldSessionRuntime
             NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason=inventory-not-loaded kind={enemyKind}");
             return;
         }
+
+        // Gold does not depend on the loot table; a kind without one still pays (M3).
+        GrantKillGold(killer, enemyKind, enemyActorId, tick, StableHash.Of(killer.Value));
 
         ContentCatalog content = LootContent ?? ContentCatalog.Shipped;
         if (!content.TryGetEnemy(enemyKind, out EnemyTemplate? template)

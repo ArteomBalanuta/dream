@@ -24,4 +24,12 @@ public interface IInventoryRepository
     // Records that the player has received the starter kit up to kitVersion (see
     // ToolCatalog.StarterKit). Never lowers a recorded version; DeleteInventorySlots keeps it.
     void SaveStarterKitGrant(string playerName, int kitVersion);
+
+    // Adds delta to the player's wallet (an upsert: gold = gold + delta). A negative delta that would
+    // take the wallet below zero, or that finds no row, fails the CHECK so the enclosing closure rolls
+    // back. Always a delta, never an absolute value, so a rolled-back action cannot keep the gold. The
+    // default implementation (a fake without wallets) does nothing.
+    void ApplyWalletDelta(string playerName, long delta)
+    {
+    }
 }

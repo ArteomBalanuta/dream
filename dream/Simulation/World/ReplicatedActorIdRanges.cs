@@ -34,6 +34,10 @@ public static class ReplicatedActorIdRanges
     // 2^30: about a billion enemy ids below it and about a billion more world-object ids above it.
     public const int FirstOverflowWorldObjectId = 1 << 30;
 
+    // Content NPCs (M3): a block of 1024 ids at the top of the enemy range, FirstNpcId + content index.
+    // Enemy ids are handed out from the bottom, so reaching them takes a billion enemies.
+    public const int FirstNpcId = (1 << 30) - 1024;
+
     // The top 2^20 ids: players beyond the 999 low ids connected at once. Never reached in
     // practice; it only guarantees a join can never take a cube or enemy id.
     public const int FirstOverflowPlayerId = int.MaxValue - (1 << 20) + 1;

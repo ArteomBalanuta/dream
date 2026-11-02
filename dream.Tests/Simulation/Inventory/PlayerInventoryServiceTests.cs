@@ -963,6 +963,14 @@ public sealed class PlayerInventoryServiceTests
 
         public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
         {
+            // An action's closure deletes before it upserts, and a real closure aborts as a whole (the
+            // queue's savepoint); this fake has no rollback, so the failing closure fails at its first
+            // slot write and changes nothing.
+            if (FailSlotWrites)
+            {
+                throw new InvalidOperationException("Simulated slot write failure.");
+            }
+
             if (Rows.TryGetValue((playerName, slotIndex), out PersistedInventorySlot row) && row.ItemInstanceId == expectedItemInstanceId)
             {
                 Rows.Remove((playerName, slotIndex));

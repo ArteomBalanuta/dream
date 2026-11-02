@@ -129,6 +129,13 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.ItemMismatch => "the slot no longer holds that item",
             InventoryEquipOutcome.Throttled => "too many inventory actions, try again shortly",
             InventoryEquipOutcome.NoRoom => "the item does not fit there",
+            InventoryEquipOutcome.TooFar => "it is too far away",
+            InventoryEquipOutcome.NotYours => "it is reserved for another player",
+            InventoryEquipOutcome.ItemGone => "the item is gone",
+            InventoryEquipOutcome.NotEnoughGold => "there is not enough gold",
+            InventoryEquipOutcome.WalletFull => "the wallet is full",
+            InventoryEquipOutcome.NotSellable => "the item cannot be sold",
+            InventoryEquipOutcome.NotInStock => "the vendor does not sell that",
             _ => "the request was not valid",
         };
         if (reason != null)

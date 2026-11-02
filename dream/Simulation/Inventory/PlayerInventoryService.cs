@@ -23,6 +23,16 @@ public enum InventoryEquipOutcome
     // The item does not fit there: out of the bag's bounds, over two or more items, nowhere for a
     // swapped item to go (BagGrid.PlanMove Blocked), or an unequip target cell that is not free.
     NoRoom = 10,
+    // M3 ground items and vendors: the player or the NPC is out of range, the ground item is claimed by
+    // someone else, it (or the sold item) is gone, the wallet cannot pay or cannot take the gold, the
+    // item has no sell price, the vendor does not stock the kind.
+    TooFar = 11,
+    NotYours = 12,
+    ItemGone = 13,
+    NotEnoughGold = 14,
+    WalletFull = 15,
+    NotSellable = 16,
+    NotInStock = 17,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id
@@ -48,7 +58,7 @@ public enum InventoryEquipOutcome
 //
 // Its only dependencies are the world repository (reads) and the ordered write queue (writes and
 // the confirming reads); both are null when the runtime has no persistence.
-internal sealed class PlayerInventoryService
+internal sealed partial class PlayerInventoryService
 {
     private readonly IWorldPersistenceRepository? _worldPersistence;
     // Shared with cubes, rubble and enemies; the persistence bridge seeds it from the world's stored counter.
@@ -66,6 +76,10 @@ internal sealed class PlayerInventoryService
     // The starter kit version each loaded inventory has received (see GrantStarterKit). A loaded
     // inventory without an entry has no recorded grant yet.
     private readonly Dictionary<string, int> _starterKitByPlayer = new(StringComparer.Ordinal);
+
+    // The gold each loaded inventory's wallet holds (0..MaxGold); no entry means 0. Changed only on the
+    // main thread, together with the queued wallet delta (TryAddGold and the vendor actions).
+    private readonly Dictionary<string, long> _goldByPlayer = new(StringComparer.Ordinal);
 
     // The loaded inventories whose layout has been repaired (RepairLayout): done once per load, on the
     // first Ensure, and forgotten on Evict, so a reloaded inventory is checked again.
@@ -146,6 +160,11 @@ internal sealed class PlayerInventoryService
         if (inventory.StarterKitVersion is int starterKitVersion)
         {
             _starterKitByPlayer[playerName] = starterKitVersion;
+        }
+
+        if (inventory.Gold > 0)
+        {
+            _goldByPlayer[playerName] = Math.Min(inventory.Gold, InventoryConstants.MaxGold);
         }
 
         // A hand-edited row can hold an id of 0 or below, which is not a valid ObjectId: the row still
@@ -748,6 +767,7 @@ internal sealed class PlayerInventoryService
             tracker.EvictedStarterKitVersion = _starterKitByPlayer.Remove(playerName, out int starterKitVersion)
                 ? starterKitVersion
                 : null;
+            tracker.EvictedGold = _goldByPlayer.Remove(playerName, out long evictedGold) ? evictedGold : 0;
             if (!writes.EnqueueRead(() => tracker.Settle(failed: writes.FailedWrites > baseline)))
             {
                 tracker.Settle(failed: true);
@@ -766,6 +786,7 @@ internal sealed class PlayerInventoryService
         _slotsByPlayer.Remove(playerName);
         _equippedSummaryByPlayer.Remove(playerName);
         _starterKitByPlayer.Remove(playerName);
+        _goldByPlayer.Remove(playerName);
         foreach (long itemInstanceId in slots.Values)
         {
             _itemInstances.Remove(itemInstanceId);
@@ -811,7 +832,32 @@ internal sealed class PlayerInventoryService
             InventoryConstants.GridRows,
             backpack,
             new InventorySlotSnapshot(EquipmentSlots.FirstSlotIndex, mainHand, mainHand.HasValue),
-            equipment);
+            equipment,
+            GoldOf(playerName));
+    }
+
+    // The gold in a loaded player's wallet; 0 for a player that is not loaded or has none.
+    internal long GoldOf(string player) => _goldByPlayer.GetValueOrDefault(player);
+
+    // Credits the wallet and queues the matching delta as its own closure. False (nothing changed) for
+    // an inventory that is not loaded, an amount of 0 or less, or a credit that would pass MaxGold.
+    internal bool TryAddGold(string player, long amount)
+    {
+        if (amount <= 0 || !_slotsByPlayer.ContainsKey(player))
+        {
+            return false;
+        }
+
+        long current = GoldOf(player);
+        if (amount > InventoryConstants.MaxGold - current)
+        {
+            return false;
+        }
+
+        _goldByPlayer[player] = current + amount;
+        NoteWriteQueued(player);
+        EnqueueWorldWrite(world => world.ApplyWalletDelta(player, amount));
+        return true;
     }
 
     // Fills the loadout with the modifiers of what the player has equipped, per slot. A rolled item's
@@ -1075,6 +1121,12 @@ internal sealed class PlayerInventoryService
             _starterKitByPlayer[playerName] = starterKitVersion;
         }
 
+        if (tracker.EvictedGold > 0)
+        {
+            _goldByPlayer[playerName] = tracker.EvictedGold;
+        }
+
+        tracker.EvictedGold = 0;
         tracker.EvictedSlots = null;
         tracker.EvictedItems = null;
         tracker.EvictedStarterKitVersion = null;
@@ -1483,7 +1535,10 @@ internal sealed class PlayerInventoryService
     // The net row changes of one action, queued as ONE closure (QueueChanges) so the queue's savepoint
     // makes them atomic. Removes are guarded by the item id the row held, so a row that diverged from
     // the in-memory view (an earlier write failed) is left alone; sets are upserts. A slot that is
-    // removed and then set again costs no delete: the upsert replaces the row.
+    // set over an occupied row records that previous occupant as a guarded remove too (SetSlot), and
+    // every guarded delete runs before any upsert, including for a slot that is set again. The unique
+    // index on (world_id, item_instance_id) allows an item one row only, so a swap (item A moves to
+    // B's slot while B moves to A's) must delete A's old row before A's new row is written.
     private sealed class SlotChanges
     {
         private readonly List<(int Slot, long ItemInstanceId)> _removed = [];
@@ -1503,18 +1558,13 @@ internal sealed class PlayerInventoryService
             _set.Add((slot, itemInstanceId));
         }
 
-        // The writes in the order they must run: the guarded deletes first (a slot that is set again is
-        // not deleted), then the upserts. The primary key is per slot, so the order matters.
+        // The writes in the order they must run: every guarded delete first (also for a slot that is set
+        // again: the item that left it may be written to another slot in the same closure), then the
+        // upserts. A delete is guarded by the item id, so it never removes a row that has been replaced
+        // by a different item.
         public Action<IWorldPersistenceRepository> ToWrite(string playerName, Action<IWorldPersistenceRepository>? before)
         {
-            List<(int Slot, long ItemInstanceId)> deletes = [];
-            foreach ((int slot, long itemInstanceId) in _removed)
-            {
-                if (!_set.Exists(entry => entry.Slot == slot))
-                {
-                    deletes.Add((slot, itemInstanceId));
-                }
-            }
+            (int Slot, long ItemInstanceId)[] deletes = [.. _removed];
 
             DateTime now = DateTime.UtcNow;
             PersistedInventorySlot[] upserts = new PersistedInventorySlot[_set.Count];
@@ -1539,9 +1589,15 @@ internal sealed class PlayerInventoryService
         }
     }
 
-    // Sets a row in memory and records the upsert.
+    // Sets a row in memory and records the upsert, preceded by the guarded remove of the row's previous
+    // occupant when there is one (see SlotChanges).
     private static void SetSlot(Dictionary<int, long> slots, SlotChanges changes, int slotIndex, long itemInstanceId)
     {
+        if (slots.TryGetValue(slotIndex, out long previousItemInstanceId))
+        {
+            changes.Remove(slotIndex, previousItemInstanceId);
+        }
+
         slots[slotIndex] = itemInstanceId;
         changes.Set(slotIndex, itemInstanceId);
     }
@@ -1627,6 +1683,9 @@ internal sealed class PlayerInventoryService
 
         // The moved-out inventory's recorded starter kit version, if any.
         public int? EvictedStarterKitVersion { get; set; }
+
+        // The moved-out inventory's wallet.
+        public long EvictedGold { get; set; }
 
         public InventoryWriteVerdict Verdict => (InventoryWriteVerdict)Volatile.Read(ref _verdict);
 

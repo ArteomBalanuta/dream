@@ -203,8 +203,8 @@ public sealed class LootGrantTests
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
         int before = Backpack(runtime, Killer).Length;
 
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick);
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5001, tick);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick, default);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5001, tick, default);
 
         List<SessionInventoryPush> pushes = [];
         runtime.DrainInventoryPushesInto(pushes);
@@ -220,8 +220,8 @@ public sealed class LootGrantTests
     public void TwoKillers_OneHeld_DrainsExactlyTheOtherPush_AndKeepsTheHeldOneForTheNextDrain()
     {
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick);
-        runtime.GrantLoot(Bystander, "Wolf", enemyActorId: 5001, tick);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick, default);
+        runtime.GrantLoot(Bystander, "Wolf", enemyActorId: 5001, tick, default);
 
         List<SessionInventoryPush> pushes = [];
         runtime.DrainInventoryPushesInto(pushes, [Bystander.Value]);
@@ -246,7 +246,7 @@ public sealed class LootGrantTests
         // 40 kills that nobody drains: 160 rolls, the backpack fills after 16 and the rest are lost.
         for (int i = 0; i < 40; i++)
         {
-            runtime.GrantLoot(Killer, "Wolf", enemyActorId: 6000 + i, tick);
+            runtime.GrantLoot(Killer, "Wolf", enemyActorId: 6000 + i, tick, default);
         }
 
         List<SessionInventoryPush> pushes = [];
@@ -254,7 +254,7 @@ public sealed class LootGrantTests
         InventoryPushMessage push = Assert.Single(pushes).Message;
         Assert.Equal(InventoryPushMessage.MaxNotices, push.Notices.Count);
 
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 7000, tick);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 7000, tick, default);
         Assert.True(runtime.HasPendingInventoryPushes);
         runtime.DetachRemoteSession(Killer);
         Assert.False(runtime.HasPendingInventoryPushes);
@@ -345,7 +345,7 @@ public sealed class LootGrantTests
         string key = player.CharacterKey.Value;
         Assert.False(runtime.InventoryService.IsLoaded(key));
 
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick: 10);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick: 10, default);
 
         // Ensure would have loaded it synchronously, which can flush the write queue for seconds.
         Assert.False(runtime.InventoryService.IsLoaded(key));
@@ -358,8 +358,8 @@ public sealed class LootGrantTests
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
         runtime.DetachRemoteSession(Killer);
 
-        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick);
-        runtime.GrantLoot(new PlayerSessionId("never-joined"), "Wolf", enemyActorId: 5001, tick);
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick, default);
+        runtime.GrantLoot(new PlayerSessionId("never-joined"), "Wolf", enemyActorId: 5001, tick, default);
 
         Assert.False(runtime.HasPendingInventoryPushes);
     }
@@ -369,7 +369,7 @@ public sealed class LootGrantTests
     {
         using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
 
-        runtime.GrantLoot(Killer, "NoSuchKind", enemyActorId: 5000, tick);
+        runtime.GrantLoot(Killer, "NoSuchKind", enemyActorId: 5000, tick, default);
 
         Assert.False(runtime.HasPendingInventoryPushes);
     }

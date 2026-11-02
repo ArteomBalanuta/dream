@@ -14,6 +14,9 @@ public static class InventoryConstants
     // The number of bag cells, which is also the number of anchor values (0..63).
     public const int BackpackSlotCount = GridColumns * GridRows;
 
+    // The most gold a wallet holds; a credit that would pass it is refused.
+    public const long MaxGold = 2_000_000_000L;
+
     public const int EquippedSlotIndex = 100;
 
     public const int HeldBackFirstIndex = 200;

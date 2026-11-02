@@ -43,9 +43,13 @@ public readonly record struct TransportEnvelope(
     // (multiplayer M1) adds the chat messages (client.chat, server.chat) and the character list
     // (client.character-list, server.character-list); a v13 peer would fail on the unknown kinds, so
     // both sides refuse it. Existing payloads are unchanged apart from the version digit. Version 15
-    // (stat points, M2-A) adds the "player.stats.spend" action (PlayerStatSpendIntent). Decode
-    // rejects any other version.
-    public const int CurrentProtocolVersion = 15;
+    // (stat points, M2-A) adds the "player.stats.spend" action (PlayerStatSpendIntent). Version
+    // 16 (ground items, gold and vendors, M3) adds the server.ground-items message, the "ground.pickup",
+    // "npc.interact", "vendor.buy" and "vendor.sell" actions, the "vendor.opened" action result, the
+    // optional "gold" field of the inventory snapshot (written only above 0) and the Npc creature kind
+    // of an actor snapshot; a v15 peer would fail on the unknown kinds, so both sides refuse it.
+    // Decode rejects any other version.
+    public const int CurrentProtocolVersion = 16;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

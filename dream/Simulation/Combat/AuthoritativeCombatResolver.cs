@@ -27,7 +27,7 @@ internal interface IAuthoritativeCombatHost
     // The killer's loot for an enemy killed at the tick. Called after DeletePersistedEnemy, so a crash
     // between the two can lose a drop but never duplicate one by restoring the enemy. Must not block the
     // tick (see WorldSessionRuntime.GrantLoot).
-    void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick);
+    void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, Vector3 deathPosition);
 
     // Returns the record to damage, with its health restored from persistence when it drifted.
     WorldObjectRecord RepairCubeRecord(WorldObjectRecord record);
@@ -336,10 +336,11 @@ internal sealed class AuthoritativeCombatResolver
 
         if (receipt.WasFatal)
         {
+            Vector3 deathPosition = enemy.Position;
             PlayerSessionId lootWinner = AwardKillRewards(enemy, message.SessionId);
             _host.DeletePersistedEnemy(enemy.Combatant.Actor.Id);
             _enemies.PruneInactive();
-            _host.GrantLoot(lootWinner, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick);
+            _host.GrantLoot(lootWinner, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick, deathPosition);
         }
 
         return new AuthoritativeActionResult(

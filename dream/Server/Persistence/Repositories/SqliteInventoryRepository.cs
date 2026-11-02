@@ -54,7 +54,8 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             i.created_utc,
             i.updated_utc,
             i.rolled_modifiers,
-            NULL AS kit_version
+            NULL AS kit_version,
+            NULL AS gold
         FROM player_inventory_slots AS s
         LEFT JOIN item_instances AS i ON i.world_id = s.world_id AND i.item_instance_id = s.item_instance_id
         WHERE s.world_id = $worldId AND s.player_name = $playerName
@@ -63,14 +64,53 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             g.player_name,
             NULL, NULL, NULL,
             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-            g.kit_version
+            g.kit_version,
+            NULL
         FROM player_starter_grants AS g
         WHERE g.world_id = $worldId AND g.player_name = $playerName
+        UNION ALL
+        SELECT
+            w.player_name,
+            NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL,
+            w.gold
+        FROM player_wallets AS w
+        WHERE w.world_id = $worldId AND w.player_name = $playerName
         ORDER BY 2;
         """;
 
-    // LoadPlayerInventorySql's last column.
+    // LoadPlayerInventorySql's last two columns. A row with a NULL slot_index is the grant row (kit
+    // version set) or the wallet row (kit version NULL, gold set).
     private const int KitVersionOrdinal = 17;
+
+    private const int GoldOrdinal = 18;
+
+    // Adds the delta to the wallet row, creating it. A delta that would take the balance below zero
+    // violates CHECK (gold >= 0) and fails the statement; so does a negative delta on a missing row. The
+    // caller's closure then rolls back. SQLite checks the proposed insert row before it looks for the
+    // conflict, so the proposed gold is 0 when the row exists (a negative delta must not fail there) and
+    // the delta itself when it does not (a negative one then fails the CHECK, as it must).
+    private const string ApplyWalletDeltaSql = """
+        INSERT INTO player_wallets (
+            world_id,
+            player_name,
+            gold,
+            updated_utc
+        )
+        VALUES (
+            $worldId,
+            $playerName,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM player_wallets AS w
+                WHERE w.world_id = $worldId AND w.player_name = $playerName)
+            THEN 0 ELSE $delta END,
+            $updatedUtc
+        )
+        ON CONFLICT(world_id, player_name) DO UPDATE SET
+            gold = player_wallets.gold + $delta,
+            updated_utc = excluded.updated_utc;
+        """;
 
     private const string UpsertSlotSql = """
         INSERT INTO player_inventory_slots (
@@ -141,12 +181,21 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         List<PersistedItemInstance> items = [];
         HashSet<long> itemIds = [];
         int? starterKitVersion = null;
+        long gold = 0;
         while (reader.Read())
         {
             if (reader.IsDBNull(1))
             {
-                // The grant row: slot_index is NOT NULL in every slot row.
-                starterKitVersion = reader.GetInt32(KitVersionOrdinal);
+                // The grant row or the wallet row: slot_index is NOT NULL in every slot row.
+                if (reader.IsDBNull(KitVersionOrdinal))
+                {
+                    gold = reader.GetInt64(GoldOrdinal);
+                }
+                else
+                {
+                    starterKitVersion = reader.GetInt32(KitVersionOrdinal);
+                }
+
                 continue;
             }
 
@@ -159,7 +208,7 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             items.Add(SqliteItemRepository.ReadItem(reader, 4));
         }
 
-        return new PersistedPlayerInventory(slots, items, starterKitVersion);
+        return new PersistedPlayerInventory(slots, items, starterKitVersion, gold);
     }
 
     // updated_utc is the write time.
@@ -199,6 +248,15 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         {
             command.BindText("$playerName", grant.playerName.Trim());
             command.BindInt64("$kitVersion", grant.kitVersion);
+            command.BindUtc("$updatedUtc", DateTime.UtcNow);
+        });
+
+    // updated_utc is the write time.
+    public void ApplyWalletDelta(string playerName, long delta) =>
+        Execute(ApplyWalletDeltaSql, (playerName, delta), static (command, d) =>
+        {
+            command.BindText("$playerName", d.playerName.Trim());
+            command.BindInt64("$delta", d.delta);
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
         });
 

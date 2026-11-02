@@ -1006,6 +1006,9 @@ public sealed class ServerConnection : IAsyncDisposable
                 case ServerCharacterList characterList:
                     _codec.Encode(envelope, characterList, _frameWriter);
                     break;
+                case ServerGroundItems groundItems:
+                    _codec.Encode(envelope, groundItems, _frameWriter);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"Unsupported server message type '{message.GetType().Name}' for connection encoding.");
@@ -1170,6 +1173,7 @@ public sealed class ServerConnection : IAsyncDisposable
             ServerActionMessage action => $"session={action.Result.SessionId} actionSeq={action.Result.ActionSequence} accepted={action.Result.Accepted} payload={action.Result.Payload?.GetType().Name ?? "none"}",
             ServerHelloMessage hello => $"server={hello.ServerName}",
             InventoryPushMessage push => $"notices={push.Notices.Count} inventory={(push.Inventory.HasValue ? 1 : 0)}",
+            ServerGroundItems ground => $"reset={ground.Reset} upserts={ground.Upserts.Count} removed={ground.RemovedIds.Count}",
             _ => string.Empty
         };
 

@@ -201,7 +201,7 @@ public class FairKillTests
 
         public void DeletePersistedEnemy(int enemyId) { }
 
-        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, OpenTK.Mathematics.Vector3 deathPosition)
             => Loots.Add($"GrantLoot {killer.Value} {enemyKind} {enemyActorId}");
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record) => record;

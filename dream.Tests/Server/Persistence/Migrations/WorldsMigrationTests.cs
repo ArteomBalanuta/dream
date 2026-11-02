@@ -88,9 +88,9 @@ public sealed class WorldsMigrationTests
         Assert.Equal(
             [
                 "ix_cube_fracture_pieces_owner_player_name", "ix_cube_fracture_pieces_parent_cell",
-                "ix_item_instances_owner_player_name", "ix_item_instances_updated_utc",
+                "ix_item_instances_ground", "ix_item_instances_owner_player_name", "ix_item_instances_updated_utc",
                 "ix_placed_cube_instances_owner_player_name",
-                "ix_player_inventory_slots_item_instance_id", "ix_player_world_state_updated_utc"
+                "ix_player_world_state_updated_utc"
             ],
             Column(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'ix\\_%' ESCAPE '\\' AND name NOT LIKE 'ix\\_player\\_profile%' ESCAPE '\\' ORDER BY name;"));
         Assert.Equal(
@@ -131,9 +131,9 @@ public sealed class WorldsMigrationTests
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0011\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0012\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps"), (12L, "ground_items_wallets")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
             // Migration 0010 moved old slot 3 (row 0, column 3 of the 4x4 backpack) to anchor 6 of the 8x8 board.
