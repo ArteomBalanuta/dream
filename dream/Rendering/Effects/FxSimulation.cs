@@ -33,14 +33,43 @@ public sealed class FxSimulation
     // Halos fade out over this last stretch before the cull, so they do not pop.
     public const float HaloFadeDistance = 5f;
     public const float HaloNightStrength = 1f;
-    public const float HaloDayStrength = 0.35f;
+    public const float HaloDayStrength = 0.12f;
     public const float DepthBiasLamp = 0.9f;
-    public const float DepthBiasHeld = 0.2f;
+    // Enough that the carrier's body does not cut the glow with a hard edge.
+    public const float DepthBiasHeld = 0.4f;
+    // Held fire burns at shoulder height: the light itself sits HeldLightAnchor.BodyUp above the
+    // feet (and does not move), the halo, flame and embers sit this far below it.
+    public const float HeldFxDrop = 1f;
+    // Hit and death effects start this far below the anchor (the text anchor floats above the target).
+    public const float AnchorDrop = 0.2f;
+    public const float DustLightGain = 0.45f;
+    public const int DustLightCount = 6;
 
     private const int DustSpawnsPerFrame = 12;
     private const int MaxEmberTorches = 8;
-    private const float TorchEmbersPerSecond = 3f;
+    private const int MaxEmberLamps = 8;
+    private const float TorchEmbersPerSecond = 5f;
+    private const float LampEmbersPerSecond = 0.5f;
     private const float RadiusTolerance = 0.01f;
+    private const float ClockWrap = 4096f;
+    private const float FlameDepthBias = 0.55f;
+    private const float FlashDepthBias = 0.4f;
+    private const float TorchHaloHalfSize = 0.7f;
+    private const float LanternHaloHalfSize = 0.55f;
+    private const float LampHaloHalfSize = 1.25f;
+    private const float HeldHaloLift = 0.12f;
+    private const float FlameLift = 0.1f;
+    private const float FlameHalfSize = 0.15f;
+    private const float SparkStretchPerSpeed = 0.03f;
+    private const float MaxSparkStretch = 6f;
+    private static readonly Vector3 SparkCoolTint = new(1f, 0.55f, 0.25f);
+    private static readonly Vector3 AshWarmTint = new(1f, 0.62f, 0.38f);
+    private static readonly Vector3 AshColdTint = new(0.6f, 0.58f, 0.56f);
+    private static readonly Vector3 HeatBirth = new(1f, 0.62f, 0.2f);
+    private static readonly Vector3 HeatMid = new(0.95f, 0.33f, 0.07f);
+    private static readonly Vector3 HeatEnd = new(0.42f, 0.07f, 0.015f);
+    private static readonly Vector3 HeldHaloTint = new(0.375f, 0.27f, 0.157f);
+    private static readonly Vector3 LampHaloTint = new(0.3f, 0.22f, 0.13f);
 
     private readonly FxParticlePool _pool = new(FxLimits.ParticleCapacity);
     private readonly FxInstance[] _halos = new FxInstance[FxLimits.HaloBudget];
@@ -49,7 +78,14 @@ public sealed class FxSimulation
     private int _dustCount;
     private Vector3 _cameraPosition;
     private Vector3 _viewCentre;
+    private Vector3 _playerPosition;
     private float _nightFactor;
+    private float _clock;
+    private FxViewBasis _basis;
+    // The lights nearest the view centre, nearest first, which light the dust.
+    private readonly PointLight[] _dustLights = new PointLight[DustLightCount];
+    private readonly float[] _dustLightDistances = new float[DustLightCount];
+    private int _dustLightCount;
 
     public FxSimulation(uint seed = FxRandom.DefaultSeed)
     {
@@ -74,55 +110,30 @@ public sealed class FxSimulation
 
     public void SpawnHit(Vector3 anchor, FloatingCombatTextKind kind)
     {
+        anchor.Y -= AnchorDrop;
         switch (kind)
         {
             case FloatingCombatTextKind.Critical:
-                for (int i = 0; i < 12; i++)
-                {
-                    EmitSpark(anchor, new Vector3(1f, 0.86f, 0.5f), 3f, 8f, 1.3f);
-                }
-
-                for (int i = 0; i < 3; i++)
-                {
-                    EmitEmber(anchor, 0.8f, 2.4f, 0.6f);
-                }
-
+                EmitSparks(anchor, 16, new Vector3(1f, 0.88f, 0.58f), 3f, 8f, 1f);
+                EmitBurstEmbers(anchor, 3, 0.8f, 2.4f, 0.85f);
                 break;
             case FloatingCombatTextKind.Incoming:
-                for (int i = 0; i < 5; i++)
-                {
-                    EmitSpark(anchor, new Vector3(1f, 0.26f, 0.12f), 2f, 5f, 1f);
-                }
-
-                for (int i = 0; i < 2; i++)
-                {
-                    EmitEmber(anchor, 0.6f, 1.6f, 0.5f);
-                }
-
+                EmitSparks(anchor, 6, new Vector3(1f, 0.34f, 0.14f), 2f, 5f, 1f);
+                EmitBurstEmbers(anchor, 2, 0.6f, 1.6f, 0.7f);
                 break;
             default:
-                for (int i = 0; i < 7; i++)
-                {
-                    EmitSpark(anchor, new Vector3(1f, 0.68f, 0.3f), 2.5f, 6f, 1f);
-                }
-
+                EmitSparks(anchor, 8, new Vector3(1f, 0.72f, 0.36f), 2.5f, 6f, 1f);
                 break;
         }
     }
 
     public void SpawnDeath(Vector3 anchor)
     {
-        for (int i = 0; i < 18; i++)
-        {
-            EmitEmber(anchor, 1f, 3.5f, 1f);
-        }
-
+        anchor.Y -= AnchorDrop;
+        EmitFlash(anchor);
+        EmitSparks(anchor, 26, new Vector3(1f, 0.66f, 0.3f), 3f, 8f, 1.2f);
+        EmitBurstEmbers(anchor, 20, 1f, 3.5f, 1f);
         for (int i = 0; i < 14; i++)
-        {
-            EmitSpark(anchor, new Vector3(1f, 0.6f, 0.26f), 3f, 7f, 1.1f);
-        }
-
-        for (int i = 0; i < 7; i++)
         {
             EmitAsh(anchor);
         }
@@ -133,8 +144,15 @@ public sealed class FxSimulation
         float dt = inputs.DeltaSeconds;
         dt = dt > 0f ? MathF.Min(dt, MaxDeltaSeconds) : 0f;
         _cameraPosition = inputs.CameraPosition;
+        _playerPosition = inputs.PlayerPosition;
         _viewCentre = ViewCentre(in inputs);
         _nightFactor = Math.Clamp(inputs.NightFactor, 0f, 1f);
+        _basis = inputs.Basis;
+        _clock += dt;
+        if (_clock >= ClockWrap)
+        {
+            _clock -= ClockWrap;
+        }
 
         StepParticles(dt);
         TopUpDust();
@@ -186,6 +204,13 @@ public sealed class FxSimulation
                 continue;
             }
 
+            if (p.Sway != 0f)
+            {
+                // Plume curl: a slow sideways wander so the column does not rise ruler-straight.
+                p.Velocity.X += MathF.Sin(p.Age * 3f + p.Phase) * 0.6f * p.Sway * dt;
+                p.Velocity.Z += MathF.Cos(p.Age * 2.3f + p.Phase) * 0.6f * p.Sway * dt;
+            }
+
             p.Velocity.Y += p.Gravity * dt;
             p.Velocity /= 1f + p.Drag * dt;
             p.Position += p.Velocity * dt;
@@ -220,11 +245,13 @@ public sealed class FxSimulation
                 Position = _viewCentre + offset,
                 Velocity = new Vector3(_random.Range(-0.12f, 0.12f), _random.Range(-0.05f, 0.08f), _random.Range(-0.12f, 0.12f)),
                 Life = float.PositiveInfinity,
-                StartHalfSize = _random.Range(0.012f, 0.026f),
+                StartHalfSize = _random.Range(0.028f, 0.05f),
                 Rotation = _random.Range(0f, MathHelper.TwoPi),
                 AngularVelocity = _random.Range(-0.4f, 0.4f),
                 Frame = (float)FxFrame.Dust0 + _random.Range(0, 4),
-                Color = Premultiply(0.62f, 0.66f, 0.72f, 0.2f)
+                Phase = _random.Range(0f, MathHelper.TwoPi),
+                // Pure light: the lighting at the mote is worked out when it is written.
+                Color = new Vector4(1f, 1f, 1f, 0f)
             };
             mote.EndHalfSize = mote.StartHalfSize;
             if (!_pool.TryAddQuietly(in mote))
@@ -236,53 +263,139 @@ public sealed class FxSimulation
         }
     }
 
-    // One pass over the frame's lights: build the halo list and let held torches shed embers.
+    // One pass over the frame's lights: keep the few nearest the view for the dust, build the
+    // halo list (and the torch flames) and let held torches and lamps shed embers.
     private void ScanLights(ReadOnlySpan<PointLight> lights, float dt)
     {
         _haloCount = 0;
+        _dustLightCount = 0;
         float strength = HaloDayStrength + (HaloNightStrength - HaloDayStrength) * _nightFactor;
         float maxViewSquared = HaloMaxViewDistance * HaloMaxViewDistance;
         float minCameraSquared = HaloMinCameraDistance * HaloMinCameraDistance;
+        float flameNight = 0.75f + 0.25f * _nightFactor;
         int emberTorches = 0;
-        for (int i = 0; i < lights.Length && _haloCount < FxLimits.HaloBudget; i++)
+        int emberLamps = 0;
+        for (int i = 0; i < lights.Length; i++)
         {
             ref readonly PointLight light = ref lights[i];
+            float viewSquared = (light.Position - _viewCentre).LengthSquared;
+            InsertDustLight(in light, viewSquared);
             if (!TryClassify(light.Radius, out FxLightClass lightClass))
             {
                 continue;
             }
 
-            if ((light.Position - _viewCentre).LengthSquared > maxViewSquared)
-            {
-                continue;
-            }
-
-            if (lightClass == FxLightClass.Torch && emberTorches < MaxEmberTorches)
-            {
-                emberTorches++;
-                if (_random.NextFloat() < TorchEmbersPerSecond * dt)
-                {
-                    EmitTorchEmber(light.Position);
-                }
-            }
-
-            if ((light.Position - _cameraPosition).LengthSquared < minCameraSquared)
+            if (viewSquared > maxViewSquared)
             {
                 continue;
             }
 
             bool lamp = lightClass == FxLightClass.Lamp;
-            float distance = MathF.Sqrt((light.Position - _viewCentre).LengthSquared);
-            float gain = (lamp ? 0.42f : 0.5f) * strength * Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
+            bool torch = lightClass == FxLightClass.Torch;
+            bool firstPerson = !lamp && (light.Position - _cameraPosition).LengthSquared < minCameraSquared;
+            Vector3 fxPosition = lamp || firstPerson ? light.Position : light.Position - Vector3.UnitY * HeldFxDrop;
+            bool emberTorch = torch && emberTorches < MaxEmberTorches;
+            if (emberTorch)
+            {
+                emberTorches++;
+                if (_random.NextFloat() < TorchEmbersPerSecond * dt)
+                {
+                    EmitPlumeEmber(fxPosition + Vector3.UnitY * 0.2f, 1f);
+                }
+            }
+            else if (lamp && emberLamps < MaxEmberLamps)
+            {
+                emberLamps++;
+                if (_random.NextFloat() < LampEmbersPerSecond * _nightFactor * dt)
+                {
+                    EmitPlumeEmber(light.Position + Vector3.UnitY * 0.55f, 0.8f);
+                }
+            }
+
+            if (firstPerson || _haloCount >= FxLimits.HaloBudget)
+            {
+                continue;
+            }
+
+            float distance = MathF.Sqrt(viewSquared);
+            float fade = strength * Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
+            float phi = i * 2.4f;
+            float flicker;
+            float halfSize;
+            Vector3 tint;
+            Vector3 position;
+            if (lamp)
+            {
+                float hash = light.Position.X * 12.9898f + light.Position.Z * 78.233f;
+                float slowPhi = (hash - MathF.Floor(hash)) * MathHelper.TwoPi;
+                flicker = 1f + 0.04f * MathF.Sin(1.7f * _clock + slowPhi) + 0.025f * MathF.Sin(2.9f * _clock + 1.3f * slowPhi);
+                halfSize = LampHaloHalfSize;
+                tint = LampHaloTint;
+                position = light.Position;
+            }
+            else
+            {
+                flicker = torch
+                    ? 1f + 0.07f * MathF.Sin(7.3f * _clock + phi) + 0.05f * MathF.Sin(13.1f * _clock + 1.7f * phi) + 0.03f * MathF.Sin(23.9f * _clock + 0.6f * phi)
+                    : 1f;
+                halfSize = (torch ? TorchHaloHalfSize : LanternHaloHalfSize) * (1f + 0.5f * (flicker - 1f));
+                tint = HeldHaloTint;
+                position = fxPosition + Vector3.UnitY * HeldHaloLift;
+            }
+
+            float gain = fade * flicker;
             _halos[_haloCount++] = new FxInstance
             {
-                Position = light.Position,
-                HalfSize = lightClass switch { FxLightClass.Lamp => 1.7f, FxLightClass.Torch => 1.1f, _ => 0.95f },
-                Color = FxInstance.PackColor(light.Color.X * gain, light.Color.Y * gain, light.Color.Z * gain, 0f),
+                Position = position,
+                HalfSize = halfSize,
+                Color = FxInstance.PackColor(light.Color.X * tint.X * gain, light.Color.Y * tint.Y * gain, light.Color.Z * tint.Z * gain, 0f),
                 Rotation = 0f,
                 Frame = (float)(lamp ? FxFrame.Halo : FxFrame.HaloCore),
                 DepthBias = lamp ? DepthBiasLamp : DepthBiasHeld
             };
+
+            if (emberTorch && _haloCount < FxLimits.HaloBudget)
+            {
+                float white = fade * flicker * flameNight;
+                _halos[_haloCount++] = new FxInstance
+                {
+                    Position = fxPosition + Vector3.UnitY * FlameLift,
+                    HalfSize = FlameHalfSize,
+                    Color = FxInstance.PackColor(white, white, white, 0f),
+                    Rotation = 0f,
+                    Frame = (float)FxFrame.Flame0 + (((int)(_clock * 12f + i)) & 3),
+                    DepthBias = FlameDepthBias
+                };
+            }
+        }
+    }
+
+    // Insertion into the short, sorted list of the lights nearest the view centre.
+    private void InsertDustLight(in PointLight light, float distanceSquared)
+    {
+        int slot = _dustLightCount;
+        while (slot > 0 && _dustLightDistances[slot - 1] > distanceSquared)
+        {
+            slot--;
+        }
+
+        if (slot >= DustLightCount)
+        {
+            return;
+        }
+
+        int last = Math.Min(_dustLightCount, DustLightCount - 1);
+        for (int j = last; j > slot; j--)
+        {
+            _dustLights[j] = _dustLights[j - 1];
+            _dustLightDistances[j] = _dustLightDistances[j - 1];
+        }
+
+        _dustLights[slot] = light;
+        _dustLightDistances[slot] = distanceSquared;
+        if (_dustLightCount < DustLightCount)
+        {
+            _dustLightCount++;
         }
     }
 
@@ -313,22 +426,38 @@ public sealed class FxSimulation
     private void WriteParticle(ref FxParticle p, ref FxInstance instance)
     {
         float t = p.Life > 0f && float.IsFinite(p.Life) ? p.Age / p.Life : 0f;
+        float halfSize = p.StartHalfSize + (p.EndHalfSize - p.StartHalfSize) * t;
         float fade = 1f;
+        Vector3 tint = Vector3.One;
+        float rotation = p.Rotation;
+        float stretch = 0f;
+        float depthBias = 0f;
         switch (p.Kind)
         {
             case FxParticleKind.Spark:
-                fade = 1f - t;
+                fade = MathF.Pow(1f - t, 0.7f);
+                tint = Vector3.Lerp(Vector3.One, SparkCoolTint, t);
+                // Lay the streak along the velocity as the camera sees it. A velocity straight at
+                // (or away from) the lens, or no basis at all, projects to nothing and stays square.
+                Streak(p.Velocity, in _basis, halfSize, out rotation, out stretch);
                 break;
             case FxParticleKind.Ember:
-                fade = MathF.Min(1f, t / 0.12f) * (1f - t) * (0.8f + 0.2f * MathF.Sin(p.Age * 24f + p.Phase));
+                fade = MathF.Min(1f, t / 0.08f) * MathF.Pow(1f - t, 0.6f) * (0.85f + 0.15f * MathF.Sin(p.Age * 17f + p.Phase));
+                tint = HeatRamp(t);
                 break;
             case FxParticleKind.Ash:
                 fade = MathF.Min(1f, t / 0.15f) * (1f - t);
+                tint = Vector3.Lerp(AshWarmTint, AshColdTint, Math.Clamp(t / 0.35f, 0f, 1f));
                 break;
             case FxParticleKind.Dust:
                 Vector3 relative = (p.Position - _viewCentre) / DustHalfExtents;
                 float edge = 1f - MathF.Max(MathF.Abs(relative.X), MathF.Max(MathF.Abs(relative.Y), MathF.Abs(relative.Z)));
-                fade = Smooth(edge * 4f) * (1f - 0.5f * _nightFactor);
+                fade = Smooth(edge * 4f) * (0.75f + 0.25f * MathF.Sin(p.Age * 1.3f + p.Phase));
+                tint = DustLight(p.Position);
+                break;
+            case FxParticleKind.Flash:
+                fade = (1f - t) * (1f - t);
+                depthBias = FlashDepthBias;
                 break;
         }
 
@@ -339,36 +468,100 @@ public sealed class FxSimulation
         fade = MathF.Max(fade, 0f);
 
         instance.Position = p.Position;
-        instance.HalfSize = p.StartHalfSize + (p.EndHalfSize - p.StartHalfSize) * t;
-        instance.Color = FxInstance.PackColor(p.Color.X * fade, p.Color.Y * fade, p.Color.Z * fade, p.Color.W * fade);
-        instance.Rotation = p.Rotation;
+        instance.HalfSize = halfSize;
+        instance.Color = FxInstance.PackColor(p.Color.X * tint.X * fade, p.Color.Y * tint.Y * fade, p.Color.Z * tint.Z * fade, p.Color.W * fade);
+        instance.Rotation = rotation;
         instance.Frame = p.Frame;
-        instance.DepthBias = 0f;
-        instance.Stretch = 0f;
+        instance.DepthBias = depthBias;
+        instance.Stretch = stretch;
     }
 
-    private void EmitSpark(Vector3 anchor, Vector3 rgb, float speedMin, float speedMax, float sizeScale)
+    // The streak of a spark moving at `velocity`: rotated along its projection onto the screen and
+    // stretched in proportion to the screen-space speed. A velocity straight at (or away from) the
+    // lens, or no basis at all, projects to nothing and gives a square quad (stretch 1).
+    internal static void Streak(Vector3 velocity, in FxViewBasis basis, float halfSize, out float rotation, out float stretch)
     {
-        Vector3 direction = _random.UnitVector();
-        direction.Y += 0.5f;
-        direction = Vector3.Normalize(direction);
+        float vx = Vector3.Dot(velocity, basis.Right);
+        float vy = Vector3.Dot(velocity, basis.Up);
+        rotation = MathF.Atan2(vy, vx);
+        stretch = Math.Clamp(MathF.Sqrt(vx * vx + vy * vy) * SparkStretchPerSpeed / MathF.Max(halfSize, 1e-4f), 1f, MaxSparkStretch);
+    }
+
+    // What the nearest lights (and, by day, the sky) put on a mote: the same squared falloff the
+    // point-light shader uses. With no light and no daylight this is exactly zero.
+    private Vector3 DustLight(Vector3 position)
+    {
+        float day = 1f - _nightFactor;
+        float r = 0.14f * day;
+        float g = 0.15f * day;
+        float b = 0.16f * day;
+        for (int i = 0; i < _dustLightCount; i++)
+        {
+            ref readonly PointLight light = ref _dustLights[i];
+            float distanceSquared = (position - light.Position).LengthSquared;
+            float radiusSquared = light.Radius * light.Radius;
+            if (!(distanceSquared < radiusSquared))
+            {
+                continue;
+            }
+
+            float f = 1f - distanceSquared / radiusSquared;
+            f = f * f * DustLightGain;
+            r += light.Color.X * f;
+            g += light.Color.Y * f;
+            b += light.Color.Z * f;
+        }
+
+        return new Vector3(MathF.Min(r, 1f), MathF.Min(g, 1f), MathF.Min(b, 1f));
+    }
+
+    // White-hot at birth, orange mid-life, dull red at the end; piecewise linear in life.
+    private static Vector3 HeatRamp(float t)
+    {
+        return t < 0.35f
+            ? Vector3.Lerp(HeatBirth, HeatMid, t / 0.35f)
+            : Vector3.Lerp(HeatMid, HeatEnd, (t - 0.35f) / 0.65f);
+    }
+
+    private void EmitSparks(Vector3 anchor, int count, Vector3 rgb, float speedMin, float speedMax, float sizeScale)
+    {
+        // Throw sparks away from the player: they read against the scene rather than into the lens.
+        Vector3 away = new(anchor.X - _playerPosition.X, 0f, anchor.Z - _playerPosition.Z);
+        float lengthSquared = away.LengthSquared;
+        away = lengthSquared >= 0.01f ? away / MathF.Sqrt(lengthSquared) : Vector3.Zero;
+        for (int i = 0; i < count; i++)
+        {
+            EmitSpark(anchor, away, rgb, speedMin, speedMax, sizeScale);
+        }
+    }
+
+    private void EmitSpark(Vector3 anchor, Vector3 away, Vector3 rgb, float speedMin, float speedMax, float sizeScale)
+    {
+        Vector3 direction = _random.UnitVector() + away + Vector3.UnitY * 0.35f;
+        direction = direction.LengthSquared > 1e-6f ? Vector3.Normalize(direction) : Vector3.UnitY;
         float heat = _random.Range(0.75f, 1f);
         FxParticle spark = new()
         {
             Kind = FxParticleKind.Spark,
             Position = anchor,
             Velocity = direction * _random.Range(speedMin, speedMax),
-            Life = _random.Range(0.28f, 0.55f),
-            StartHalfSize = _random.Range(0.035f, 0.06f) * sizeScale,
-            EndHalfSize = 0.01f,
-            Rotation = _random.Range(0f, MathHelper.TwoPi),
-            AngularVelocity = _random.Range(-6f, 6f),
+            Life = _random.Range(0.3f, 0.6f),
+            StartHalfSize = 0.07f * sizeScale,
+            EndHalfSize = 0.025f,
             Frame = (float)FxFrame.Spark0 + _random.Range(0, 4),
-            Gravity = -9f,
-            Drag = 1.6f,
+            Gravity = -7f,
+            Drag = 0.9f,
             Color = Premultiply(rgb.X * heat, rgb.Y * heat, rgb.Z * heat, 0f)
         };
         _pool.TryAdd(in spark);
+    }
+
+    private void EmitBurstEmbers(Vector3 anchor, int count, float speedMin, float speedMax, float brightness)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            EmitEmber(anchor, speedMin, speedMax, brightness);
+        }
     }
 
     private void EmitEmber(Vector3 anchor, float speedMin, float speedMax, float brightness)
@@ -381,38 +574,39 @@ public sealed class FxSimulation
             Kind = FxParticleKind.Ember,
             Position = anchor,
             Velocity = direction * _random.Range(speedMin, speedMax),
-            Life = _random.Range(0.9f, 2.0f),
-            StartHalfSize = _random.Range(0.04f, 0.07f),
-            EndHalfSize = 0.015f,
+            Life = _random.Range(0.8f, 1.6f),
+            StartHalfSize = _random.Range(0.028f, 0.05f),
+            EndHalfSize = 0.01f,
             Rotation = _random.Range(0f, MathHelper.TwoPi),
             AngularVelocity = _random.Range(-2f, 2f),
             Frame = (float)FxFrame.Ember0 + _random.Range(0, 4),
-            Gravity = -0.9f,
-            Drag = 1.2f,
+            Gravity = -0.3f,
+            Drag = 1.6f,
             Phase = _random.Range(0f, MathHelper.TwoPi),
-            Color = Premultiply(0.9f * brightness, 0.24f * brightness, 0.07f * brightness, 0f)
+            Color = new Vector4(brightness, brightness, brightness, 0f)
         };
         _pool.TryAdd(in ember);
     }
 
-    // A slow, dull-red ember rising off a held torch.
-    private void EmitTorchEmber(Vector3 torch)
+    // A slow ember rising off a held torch or a street lamp, curling as it goes.
+    private void EmitPlumeEmber(Vector3 origin, float sizeScale)
     {
         FxParticle ember = new()
         {
             Kind = FxParticleKind.Ember,
-            Position = torch + new Vector3(_random.Range(-0.08f, 0.08f), _random.Range(0.05f, 0.2f), _random.Range(-0.08f, 0.08f)),
-            Velocity = new Vector3(_random.Range(-0.25f, 0.25f), _random.Range(0.5f, 1.2f), _random.Range(-0.25f, 0.25f)),
-            Life = _random.Range(1.2f, 2.4f),
-            StartHalfSize = _random.Range(0.025f, 0.045f),
-            EndHalfSize = 0.01f,
+            Position = origin + new Vector3(_random.Range(-0.04f, 0.04f), _random.Range(-0.04f, 0.04f), _random.Range(-0.04f, 0.04f)),
+            Velocity = new Vector3(_random.Range(-0.1f, 0.1f), _random.Range(0.7f, 1.3f), _random.Range(-0.1f, 0.1f)),
+            Life = _random.Range(0.9f, 1.6f),
+            StartHalfSize = _random.Range(0.02f, 0.034f) * sizeScale,
+            EndHalfSize = 0.008f * sizeScale,
             Rotation = _random.Range(0f, MathHelper.TwoPi),
             AngularVelocity = _random.Range(-1.5f, 1.5f),
             Frame = (float)FxFrame.Ember0 + _random.Range(0, 4),
-            Gravity = 0.2f,
-            Drag = 0.6f,
+            Gravity = 0.35f,
+            Drag = 0.8f,
             Phase = _random.Range(0f, MathHelper.TwoPi),
-            Color = Premultiply(0.85f, 0.22f, 0.06f, 0f)
+            Sway = 1f,
+            Color = new Vector4(1f, 1f, 1f, 0f)
         };
         _pool.TryAddQuietly(in ember);
     }
@@ -424,18 +618,34 @@ public sealed class FxSimulation
         {
             Kind = FxParticleKind.Ash,
             Position = anchor,
-            Velocity = new Vector3(direction.X * 0.7f, _random.Range(0.3f, 1.1f), direction.Z * 0.7f),
-            Life = _random.Range(1.2f, 2.2f),
-            StartHalfSize = _random.Range(0.1f, 0.16f),
-            EndHalfSize = _random.Range(0.28f, 0.42f),
+            Velocity = new Vector3(direction.X * 0.7f, _random.Range(0.5f, 1.4f), direction.Z * 0.7f),
+            Life = _random.Range(1.4f, 2.4f),
+            StartHalfSize = 0.14f,
+            EndHalfSize = 0.5f,
             Rotation = _random.Range(0f, MathHelper.TwoPi),
             AngularVelocity = _random.Range(-0.8f, 0.8f),
             Frame = (float)FxFrame.Ash0 + _random.Range(0, 4),
-            Gravity = 0.1f,
+            Gravity = 0.2f,
             Drag = 1.4f,
-            Color = Premultiply(0.5f, 0.47f, 0.44f, 0.55f)
+            Color = Premultiply(1f, 1f, 1f, 0.75f)
         };
         _pool.TryAdd(in ash);
+    }
+
+    // The brief glow of a kill, lighting the air around it.
+    private void EmitFlash(Vector3 anchor)
+    {
+        FxParticle flash = new()
+        {
+            Kind = FxParticleKind.Flash,
+            Position = anchor,
+            Life = 0.32f,
+            StartHalfSize = _random.Range(0.8f, 1.5f),
+            Frame = (float)FxFrame.Halo,
+            Color = new Vector4(0.75f, 0.4f, 0.16f, 0f)
+        };
+        flash.EndHalfSize = flash.StartHalfSize;
+        _pool.TryAdd(in flash);
     }
 
     // Colour and coverage to the premultiplied form the blend state expects: with coverage the

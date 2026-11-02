@@ -13,6 +13,9 @@ namespace Dream.Tests.Rendering.Effects;
 // these tests call the simulation directly.
 public class FxAllocationTests
 {
+    // A real basis: a default one leaves every spark square and skips the streak maths.
+    private static readonly FxViewBasis Basis = new(Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
+
     private static PointLight[] FullLightList()
     {
         PointLight[] lights = new PointLight[LightCollector.Capacity];
@@ -48,7 +51,7 @@ public class FxAllocationTests
         FxSimulation simulation = FullPoolSimulation();
         PointLight[] lights = FullLightList();
         FxInstance[] destination = new FxInstance[FxLimits.MaxInstances];
-        FxFrameInputs inputs = new(1f / 60f, new Vector3(10f, 2f, 10f), -Vector3.UnitZ, new Vector3(10f, 1.5f, 8f), 0.6f);
+        FxFrameInputs inputs = new(1f / 60f, new Vector3(10f, 2f, 10f), -Vector3.UnitZ, new Vector3(10f, 1.5f, 8f), 0.6f, Basis);
 
         AllocationAssert.AtMost(0, () =>
         {
@@ -65,7 +68,7 @@ public class FxAllocationTests
     {
         FxSimulation simulation = FullPoolSimulation();
         FxInstance[] destination = new FxInstance[FxLimits.MaxInstances];
-        FxFrameInputs inputs = new(1f / 60f, new Vector3(10f, 2f, 10f), -Vector3.UnitZ, new Vector3(10f, 1.5f, 8f), 0f);
+        FxFrameInputs inputs = new(1f / 60f, new Vector3(10f, 2f, 10f), -Vector3.UnitZ, new Vector3(10f, 1.5f, 8f), 0f, Basis);
         Vector3 anchor = new(10f, 1f, 4f);
 
         AllocationAssert.AtMost(0, () =>
