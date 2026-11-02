@@ -60,7 +60,20 @@ public class ClientScenePresenterLongSessionIntegrationTests
             {
                 double renderTick = tick - 2 + render * 0.5;
                 IReadOnlyList<RemotePlayerPresentationState> states = presenter.BuildRemotePlayerStates(renderTick);
-                Assert.Equal(reference.BuildRemotePlayerStates(renderTick), states.ToArray());
+                // The reference is the presenter as it was before the avatar fields (held items, serials,
+                // speed, death age); parity is over the fields it had.
+                Assert.Equal(
+                    reference.BuildRemotePlayerStates(renderTick),
+                    states.Select(state => state with
+                    {
+                        MainHandVisual = null,
+                        OffHandVisual = null,
+                        AttackSerial = 0,
+                        HitSerial = 0,
+                        Airborne = false,
+                        HorizontalSpeed = 0f,
+                        DeathAgeSeconds = float.PositiveInfinity
+                    }).ToArray());
                 // The reused list is refilled, never appended to.
                 Assert.Same(states, presenter.BuildRemotePlayerStates(renderTick));
                 Assert.Equal(states.Count, states.Select(state => state.ActorId).Distinct().Count());

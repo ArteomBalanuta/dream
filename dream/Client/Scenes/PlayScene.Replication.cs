@@ -3,6 +3,7 @@ using Dream.Client.Networking;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Actors;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Inventory;
@@ -177,8 +178,8 @@ public partial class PlayScene
 
         Vector3 localPosition = _runtime.Player.GetWorldPosition();
         float orbit = (float)_clientPresentationTimeSeconds;
-        Vector3 remoteOnePosition = localPosition + new Vector3(MathF.Cos(orbit) * 3f, 0f, -5f + MathF.Sin(orbit) * 2f);
-        Vector3 remoteTwoPosition = localPosition + new Vector3(-4f, 0f, -6f + MathF.Cos(orbit * 0.5f) * 1.5f);
+        Vector3 remoteOnePosition = localPosition + new Vector3(MathF.Cos(orbit) * 2.5f, 0f, 3.5f + MathF.Sin(orbit) * 1.5f);
+        Vector3 remoteTwoPosition = localPosition + new Vector3(-2.5f, 0f, 3.5f + MathF.Cos(orbit * 0.5f) * 1.5f);
 
         ServerSnapshotEnvelope snapshot = new(
             _runtime.CurrentServerTick,
@@ -207,7 +208,9 @@ public partial class PlayScene
                     true,
                     null,
                     null,
-                    "Loopback One"),
+                    "Loopback One",
+                    VisualKey: LoopbackGalleryVisualKey(orbit, shieldOffset: 0),
+                    Progression: null),
                 new ActorSnapshot(
                     9002,
                     CreatureKind.Player,
@@ -219,7 +222,8 @@ public partial class PlayScene
                     true,
                     null,
                     null,
-                    "Loopback Two")
+                    "Loopback Two",
+                    VisualKey: LoopbackGalleryVisualKey(orbit, shieldOffset: 1))
             ],
             _runtime.InteractionMode,
             null,
@@ -227,6 +231,28 @@ public partial class PlayScene
             Array.Empty<DamageEventDelta>());
 
         ApplyReplicatedMessage(new ServerSnapshotMessage(snapshot));
+    }
+
+    // A weapon gallery for the loopback remote players: every few seconds each one holds the next
+    // known item (the shields in the off hand), so every mesh can be looked at without the items.
+    private static string? LoopbackGalleryVisualKey(float seconds, int shieldOffset)
+    {
+        List<string> weapons = [];
+        List<string> shields = [];
+        foreach (string id in WeaponMeshCatalog.KnownVisualIds)
+        {
+            (WeaponMeshCatalog.IsShield(id) ? shields : weapons).Add(id);
+        }
+
+        if (weapons.Count == 0)
+        {
+            return null;
+        }
+
+        int step = (int)(seconds / 3f);
+        string main = weapons[(step + (shieldOffset * 5)) % weapons.Count];
+        string? off = shields.Count == 0 ? null : shields[(step + shieldOffset) % shields.Count];
+        return PlayerEquipmentVisuals.Format(main, off);
     }
 
     public static bool ResolveLoopbackRemotePlayersEnabled()
@@ -330,5 +356,11 @@ public partial class PlayScene
         _viewModelController.SetOffHandItem(presentation.OffHandVisualId);
         // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
         _localHeldLight = presentation.HeldLight;
+        // Before the first snapshot nothing is drawn in the hands; afterwards each hand shows its item.
+        _localEquipmentVisuals = inventory is null
+            ? default
+            : new PlayerEquipmentVisuals(
+                PlayerEquipmentVisuals.Normalize(presentation.MainHandVisualId),
+                PlayerEquipmentVisuals.Normalize(presentation.OffHandVisualId));
     }
 }
