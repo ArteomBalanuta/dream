@@ -79,6 +79,33 @@ public class PlayerAnimationClipTrackerFrameTests
     }
 
     [Fact]
+    public void Respawn_AfterHold_RestoresNodesThatOnlyTheDeathClipAnimates()
+    {
+        PlayerAnimationClipTracker tracker = new();
+        AnimatedModelInstance instance = CreateInstance();
+        instance.Skeleton.TryGetClip("die", out Animation? die, out _);
+        instance.Skeleton.TryGetClip("idle", out Animation? idle, out _);
+        HashSet<int> idleNodes = instance.Skeleton.GetTracks(idle!).Select(t => t.NodeIndex).ToHashSet();
+        int[] deathOnly = instance.Skeleton.GetTracks(die!).Select(t => t.NodeIndex).Where(n => !idleNodes.Contains(n)).ToArray();
+        Assert.NotEmpty(deathOnly);
+
+        AnimatedModelInstance rest = CreateInstance();
+        tracker.ApplyFrame(1, Frame("idle", PlayerClipMode.Loop), instance);
+        tracker.ApplyFrame(1, Frame("die", PlayerClipMode.Hold, serial: 1), instance);
+        instance.Update(3f);
+        Assert.Contains(deathOnly, n => instance.Pose.GetNodeLocalMatrix(n) != rest.Pose.GetNodeLocalMatrix(n));
+
+        tracker.ApplyFrame(1, Frame("idle", PlayerClipMode.Loop, serial: 2), instance);
+        instance.Update(0.1f);
+
+        Assert.True(instance.IsPlayingLoop("idle"));
+        foreach (int n in deathOnly)
+        {
+            Assert.Equal(rest.Pose.GetNodeLocalMatrix(n), instance.Pose.GetNodeLocalMatrix(n));
+        }
+    }
+
+    [Fact]
     public void Remove_ForgetsTheActor_SoANewInstanceStartsItsClip()
     {
         PlayerAnimationClipTracker tracker = new();

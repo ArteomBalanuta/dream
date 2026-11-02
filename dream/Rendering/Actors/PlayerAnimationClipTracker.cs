@@ -61,6 +61,13 @@ public sealed class PlayerAnimationClipTracker
 
         instance.AnimationSpeed = frame.PlaybackSpeed;
         bool tracked = _framesByActorId.TryGetValue(actorId, out (string Clip, PlayerClipMode Mode, int Serial) last);
+        if (tracked && last.Mode == PlayerClipMode.Hold && frame.Mode != PlayerClipMode.Hold)
+        {
+            // Respawn: Pose.Apply only writes the nodes the playing clip animates, so the nodes
+            // that the death clip moved (and idle/walk do not) would keep the lying pose.
+            instance.Pose.ResetToRest();
+        }
+
         switch (frame.Mode)
         {
             case PlayerClipMode.Loop:
