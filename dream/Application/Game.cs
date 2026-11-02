@@ -163,7 +163,7 @@ public class Game : GameWindow
     private void AddExtraOptionRows(List<MenuOptionRow> rows)
     {
         DesktopClientConfig cfg = _desktopClientConfig;
-        rows.Add(MenuOptionRow.Header("Sound"));
+        rows.Add(MenuOptionRow.Header("Audio"));
         rows.Add(MenuOptionRow.Toggle(
             "Sound",
             () => cfg.AudioEnabled,
@@ -457,6 +457,9 @@ public class Game : GameWindow
             Console.WriteLine($"[session] teardown failed: {failure.GetType().Name}: {failure.Message}");
         }
 
+        // The scene's GL objects are gone; stop the context naming them as bound.
+        GLUtils.UnbindAll();
+
         bool toMainMenu = _menuEnabled && !_menuRendererFailed;
         Console.WriteLine(
             $"[session] returned to {(toMainMenu ? "the main menu" : "the connection screen")}: {reason ?? "left by the player"}" +
@@ -747,6 +750,7 @@ public class Game : GameWindow
     // closed its connection to it. A scene that throws still lets the rest of the teardown run.
     protected override void OnUnload()
     {
+        Console.WriteLine("[exit] window closing: releasing scenes and stopping the local server");
         List<Exception>? failures = null;
         try
         {
@@ -805,6 +809,7 @@ public class Game : GameWindow
             }
         }
 
+        Console.WriteLine(failures is null ? "[exit] shutdown complete" : $"[exit] shutdown finished with {failures.Count} failure(s)");
         if (failures is not null)
         {
             if (failures.Count == 1)

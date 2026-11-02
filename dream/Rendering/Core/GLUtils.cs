@@ -63,6 +63,19 @@ public static class GLUtils
     public static GLFaultKind CheckGLError(string context) =>
         WithFatalLatch(CheckGLError(context, s_getError, RenderFaultLog.Shared));
 
+    // Unbinds the program, vertex array, array buffer and 2D texture on unit 0. A scene's teardown
+    // deletes objects that are still bound; the name then stays "current", and the next pass that
+    // captures and restores GL state (the menu renderer) would bind the deleted name back and raise
+    // InvalidValue. Call it after a scene's GL objects are deleted. Render thread only.
+    public static void UnbindAll()
+    {
+        GL.UseProgram(0);
+        GL.BindVertexArray(0);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture2D, 0);
+    }
+
     // Raises a check's result to Fatal once a fatal error has been latched.
     public static GLFaultKind WithFatalLatch(GLFaultKind kind) =>
         s_fatalErrorLatched ? GLFaultKind.Fatal : kind;

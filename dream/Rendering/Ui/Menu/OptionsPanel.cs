@@ -61,8 +61,9 @@ public static class OptionsPanel
     {
         if (row.Kind == MenuOptionKind.Header)
         {
-            UiTextStyle headerStyle = w.FitStyle(row.Label, rect.W, allowLarge: false);
-            w.TextCentred(row.Label, rect.X + rect.W * 0.5f, rect.Y + (rect.H - w.TextHeight(headerStyle)) * 0.5f, headerStyle, MenuWidgets.Gold);
+            // The same size and colour as the row labels, so a section header does not shrink or turn orange.
+            UiTextStyle headerStyle = w.FitStyle(row.Label, LabelWidthUnits * w.Scale);
+            w.TextLeftCentred(row.Label, rect, rect.X, headerStyle, MenuWidgets.Bone);
             return;
         }
 
