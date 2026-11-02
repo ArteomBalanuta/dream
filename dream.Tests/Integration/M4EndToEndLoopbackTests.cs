@@ -437,7 +437,11 @@ public sealed class M4EndToEndLoopbackTests
         Assert.True(healthAfterFirst > max / 4);
 
         // The cooldown shows on the tile for a while after the use.
-        await StepUntilVitalsAsync(server, all, a, minimumCount: 2);
+        for (int i = 0; i < 40 && a.Quickbar.RemainingTicks(4, (ulong)Math.Max(0L, (long)server.Runtime.CurrentServerTick), out _) == 0; i++)
+        {
+            await StepAsync(server, all);
+        }
+
         Assert.True(a.Quickbar.RemainingTicks(4, (ulong)Math.Max(0L, (long)server.Runtime.CurrentServerTick), out _) > 0);
     }
 

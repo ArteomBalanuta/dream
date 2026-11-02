@@ -444,7 +444,7 @@ Read at start with the other content files, and part of the content digest. `ene
 | `items` | The item kinds a roll can give. Each must exist in `items.json` and have `rolls`. |
 | `rarity` | Weights of the rarity the item is rolled at. |
 
-Weights are 0..1,000,000 with an int total and at least one above 0. Duplicates and unknown properties fail at load. The killing blow takes the drop. A dropped item goes to the first spot of the bag its footprint fits, and when it fits nowhere it is lost with a notice, even with free cells showing. There are no ground drops.
+Weights are 0..1,000,000 with an int total and at least one above 0. Duplicates and unknown properties fail at load. The killing blow takes the drop. A dropped item goes to the first spot of the bag its footprint fits, and when it fits nowhere it is lost with a notice, even with free cells showing. A dropped item that fits nowhere in the bag goes to the ground instead, as a ground item that the killer alone may pick up for a short while and that despawns after a few minutes. Gold is credited directly and never lies on the ground.
 
 ### Enemies: `config/content/enemies.json` (version 2)
 

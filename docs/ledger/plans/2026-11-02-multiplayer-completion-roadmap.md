@@ -32,6 +32,8 @@ Other gaps: `ix_player_inventory_slots_item_instance_id` is not unique, which mu
 
 ## Milestones
 
+Status: M0-M4 done, on `integrate/mp-m4`. Build protection and PVP from M7 done. M5, M6, M8 and M9 open.
+
 | # | Milestone | Size | Depends on |
 |---|---|---|---|
 | M0 | Authority and separation fixes | S-M | none |
@@ -73,9 +75,13 @@ Protocol v15, migration 0011.
 Merge order B, C, A. Filter: `FullyQualifiedName~EnemyLootEndToEndTests|FullyQualifiedName~LootGrantTests|FullyQualifiedName~EnemyFactoryTests|FullyQualifiedName~WolfSpawnPolicyTests|FullyQualifiedName~WaveT2NightSpawnTests|FullyQualifiedName~WolfRestartLockstepTests|FullyQualifiedName~SimulationStateChecksumTests|FullyQualifiedName~WorldSessionRuntimeTickEquivalenceTests|FullyQualifiedName~CombatFormula`
 
 ### M3: Ground items, gold, vendors
+Status: done. Decision: gold is credited directly, there is no ground gold.
+
 Unique index on `player_inventory_slots(world_id, item_instance_id)` after cleaning shared rows. Ground items use existing `state` and `world_position_*` columns, with a 30 s killer claim and 5 min despawn. A full bag drops to the ground. Pickup is range-checked and moves the item in one closure. `player_wallets(world_id, player_name, gold)`. `CreatureKind.Npc`, interact, buy and sell intents.
 
 ### M4: Quickbar, consumables, mana, skills
+Status: done. Decisions: mana is per world; keys 1-6 are the quickbar, with the mode switches on B and G; potions do not stack; PvP is switched only by the `DREAM_PVP` env var. Sprites live separately on `integrate/iso-sprites`.
+
 Keys 1-6, per-character quickbar rows, a use-item intent, server cooldowns in ticks, real mana, 3-4 skills. `PlayerController.cs` is an isometric file.
 
 ### M5: Party and trade
@@ -85,6 +91,8 @@ In-memory parties with invite, accept, leave, party chat and shared XP. Trade ha
 `config/content/quests.json`, `player_quests`, NPC dialogue, HUD log, kill and collect objectives, rewards through the M3 grant path.
 
 ### M7: PvP and build protection
+Status: build protection and PVP done (`DREAM_PVP` env var only).
+
 Per-world PvP flag. Only the owner, later the party, may damage a placed cube.
 
 ### M8: Admin and server ops
