@@ -394,7 +394,7 @@ public class HandWrittenConverterTests(ITestOutputHelper output)
     // ServerSnapshotConverterTests.
     // Wave I added EnemyLevel and VisualKey to ActorSnapshot (16 B per actor with padding); the 24-actor
     // decode measured 5,640 B afterwards, so the budget went from 5,504 B to 5,760 B.
-    private const long SnapshotDecodeBudgetBytes = 5_760;
+    private const long SnapshotDecodeBudgetBytes = 6_144; // protocol 14 widened the combat group
 
     // ---- Helpers -------------------------------------------------------------------------
 

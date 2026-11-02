@@ -138,6 +138,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
     private HudViewBuilder? _builder;
     private InventoryHudAction? _action;
     private bool _closeInventory;
+    private Dream.Simulation.Stats.StatId? _spendAttribute;
     private bool _gemsStarted;
     private double _lastSeconds;
     private double _animationSeconds;
@@ -208,16 +209,18 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _lastSeconds = now;
         HudStatusSnapshot st = v.Status;
         float health = st.MaxHealth <= 0 ? 0f : Math.Clamp(st.CurrentHealth / (float)st.MaxHealth, 0f, 1f);
+        // A status that carries no mana pool (an older snapshot) keeps the gem full, as before.
+        float mana = st.MaxMana <= 0 ? StatusBarPanel.ManaGemFill : Math.Clamp(st.Mana / (float)st.MaxMana, 0f, 1f);
         if (_gemsStarted)
         {
             v.HealthLevel = GemAnimation.Ease(v.HealthLevel, health, delta);
-            v.ManaLevel = GemAnimation.Ease(v.ManaLevel, StatusBarPanel.ManaGemFill, delta);
+            v.ManaLevel = GemAnimation.Ease(v.ManaLevel, mana, delta);
         }
         else
         {
             _gemsStarted = true;
             v.HealthLevel = health;
-            v.ManaLevel = Math.Clamp(StatusBarPanel.ManaGemFill, 0f, 1f);
+            v.ManaLevel = mana;
         }
 
         _animationSeconds = (_animationSeconds + delta) % GemAnimation.LoopSeconds;
@@ -233,6 +236,16 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _action = null;
         _closeInventory = false;
     }
+
+    // The attribute "+" pressed this frame, cleared by the read.
+    public Dream.Simulation.Stats.StatId? TakeAttributeSpend()
+    {
+        Dream.Simulation.Stats.StatId? spend = _spendAttribute;
+        _spendAttribute = null;
+        return spend;
+    }
+
+    void IHudActions.SpendAttribute(Dream.Simulation.Stats.StatId attribute) => _spendAttribute = attribute;
 
     void IHudActions.Inventory(InventoryHudAction action) => _action = action;
 

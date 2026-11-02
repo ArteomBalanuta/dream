@@ -107,7 +107,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            784,
+            832, // HudStatusSnapshot gained the character sheet fields (824 B)
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 

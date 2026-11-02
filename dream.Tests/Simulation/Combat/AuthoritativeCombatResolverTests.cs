@@ -167,6 +167,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         // Reward 100 * 14 = 1400; level 1 needs 1000 + 23 = 1023, so level 2 with 377 left over.
         Assert.Equal(2, combatant.Level);
         Assert.Equal(377, combatant.Experience);
+        // One level gained: five attribute points.
+        Assert.Equal(5, combatant.StatPoints);
         Assert.Equal(
             // Wave I: the loot is granted after the delete, so a crash between them loses a drop, never duplicates it.
             ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}", $"GrantLoot session-a Wolf {EnemyActorId} 5"],

@@ -158,6 +158,11 @@ internal static class ActorFrameJson
                 writer.WriteNumberValue(stats.Strength);
                 writer.WriteNumberValue(stats.AttackSpeed);
                 writer.WriteNumberValue(stats.Vitality);
+                writer.WriteNumberValue(stats.Agility);
+                writer.WriteNumberValue(stats.Energy);
+                writer.WriteNumberValue(stats.StatPoints);
+                writer.WriteNumberValue(stats.Mana);
+                writer.WriteNumberValue(stats.MaxMana);
                 writer.WriteEndArray();
             }
             else
@@ -377,8 +382,13 @@ internal static class ActorFrameJson
                 }
 
                 int vitality = NextInt32(ref reader);
+                int agility = NextInt32(ref reader);
+                int energy = NextInt32(ref reader);
+                int statPoints = NextInt32(ref reader);
+                int mana = NextInt32(ref reader);
+                int maxMana = NextInt32(ref reader);
                 ExpectEndArray(ref reader, "combat stats");
-                combatStats = new PlayerCombatStatsSnapshot(strength, attackSpeed, vitality);
+                combatStats = new PlayerCombatStatsSnapshot(strength, attackSpeed, vitality, agility, energy, statPoints, mana, maxMana);
             }
         }
 

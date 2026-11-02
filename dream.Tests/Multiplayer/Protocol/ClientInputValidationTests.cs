@@ -22,7 +22,8 @@ public class ClientInputValidationTests
     public static TheoryData<IPlayerActionPayload> ServerOnlyPayloads => new()
     {
         new BuildUseIntent(new Vector3(6f, 1f, 5f)),
-        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ)
+        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ),
+        new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))
     };
 
     [Theory]
@@ -48,7 +49,7 @@ public class ClientInputValidationTests
     }
 
     [Fact]
-    public void WireEquipAndStatsUpdates_AreStillQueued()
+    public void WireEquipAndAttributeSpend_AreStillQueued()
     {
         PlayerActionQueue queue = new();
         ServerRoutingContext context = new("connection-1", new FakeAuthority(), actionQueue: queue)
@@ -61,13 +62,13 @@ public class ClientInputValidationTests
         handler.Handle(context, new PlayerActionMessage(
             new PlayerSessionId(SessionA),
             2,
-            new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))));
+            new PlayerAttributeSpendIntent(Dream.Simulation.Stats.StatId.Strength, 1)));
 
         Assert.Empty(context.OutboundMessages);
         Assert.Collection(
             queue.Drain([new PlayerSessionId(SessionA)]),
             first => Assert.IsType<InventoryEquipIntent>(first.Message.Payload),
-            second => Assert.IsType<PlayerStatsUpdateIntent>(second.Message.Payload));
+            second => Assert.IsType<PlayerAttributeSpendIntent>(second.Message.Payload));
     }
 
     [Fact]
