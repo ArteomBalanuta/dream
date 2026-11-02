@@ -46,7 +46,7 @@ public static class ClassicHud
         InventoryWindow.Build(c, i, v, l, s, a);
         StatusBarPanel.Build(c, i, v, l, s, a);
         PartyPanel.Build(c, v, l, Party, Intents);
-        QuestLogPanel.Build(c, v, l, Quests);
+        QuestLogPanel.Build(c, v, l, Quests, Party);
         NoticePanel.Build(c, v, l);
         ChatPanel.Build(c, v, l, Chat);
         ItemOverlays.Build(c, i, v, l, s, a);   // tooltip, context menu, confirm, drag ghost

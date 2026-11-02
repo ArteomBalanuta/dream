@@ -35,14 +35,11 @@ public static class PartyPanel
         UiTextStyle style = UiTextStyle.Body;
         float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
         float textH = PanelText.Height(c, style);
-        float rowH = textH + MathF.Max(3f, MathF.Round(2f * l.Scale)) + 2f;
+        float rowH = RowHeight(l, textH);
         float width = MathF.Max(MathF.Min(l.ViewportWidth * 0.2f, 96f * l.Scale), MathF.Min(l.ViewportWidth, 130f));
         float x = MathF.Round(6f * l.Scale);
-        float y = MathF.Round(l.ViewportHeight * 0.16f);
-
-        float inviteH = party.PendingInviteFrom != null ? (2f * textH) + 3f : 0f;
-        float height = (party.Count * rowH) + inviteH + (2f * pad);
-        Frame(c, new UiRect(x, y, width, height), Plate);
+        float y = Top(l);
+        Frame(c, new UiRect(x, y, width, PlateHeight(party, textH, rowH, pad)), Plate);
 
         float rowY = y + pad;
         for (int n = 0; n < party.Count; n++)
@@ -55,6 +52,29 @@ public static class PartyPanel
         {
             DrawInvite(c, style, inviter, x + pad, rowY, width - (2f * pad), textH);
         }
+    }
+
+    // Where the plate ends, for the tracker below it on the same edge; 0 when nothing is drawn.
+    internal static float BottomOf(IUiCanvas c, in UiLayout l, PartyHudState? party)
+    {
+        if (party is null || party.IsEmpty)
+        {
+            return 0f;
+        }
+
+        float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
+        float textH = PanelText.Height(c, UiTextStyle.Body);
+        return Top(l) + PlateHeight(party, textH, RowHeight(l, textH), pad);
+    }
+
+    private static float Top(in UiLayout l) => MathF.Round(l.ViewportHeight * 0.16f);
+
+    private static float RowHeight(in UiLayout l, float textH) => textH + MathF.Max(3f, MathF.Round(2f * l.Scale)) + 2f;
+
+    private static float PlateHeight(PartyHudState party, float textH, float rowH, float pad)
+    {
+        float inviteH = party.PendingInviteFrom != null ? (2f * textH) + 3f : 0f;
+        return (party.Count * rowH) + inviteH + (2f * pad);
     }
 
     private static void DrawMember(IUiCanvas c, UiTextStyle style, PartyMemberLine member, float x, float y, float width, float textH, float rowH)

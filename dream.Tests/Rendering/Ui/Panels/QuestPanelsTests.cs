@@ -244,6 +244,29 @@ public sealed class QuestPanelsTests : IDisposable
         Assert.True(_scene.Canvas.HasText("Return to the quest giver"));
     }
 
+    [Theory]
+    [InlineData(640, 480)]
+    [InlineData(800, 600)]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    public void TheTracker_StaysBelowAFullPartyPlate(int width, int height)
+    {
+        PartyHudState party = new();
+        PartyMemberLine[] members = [.. Enumerable.Range(0, PartyHudState.MaxMembers).Select(n => new PartyMemberLine("Member " + n, 3, 50, 100, n == 0))];
+        party.Set(members, "Someone");
+        _quests.SetLog([Entry("a", QuestState.Active, new QuestObjectiveLine("Slay Wolf", 1, 2))]);
+        UiLayout layout = UiLayout.Create(width, height, 0f);
+
+        _scene.Canvas.Calls.Clear();
+        PartyPanel.Build(_scene.Canvas, _scene.View, layout, party, null);
+        float partyBottom = _scene.Canvas.Calls.First(call => call.Kind == CanvasCallKind.Solid).Rect.Bottom;
+        _scene.Canvas.Calls.Clear();
+        QuestLogPanel.Build(_scene.Canvas, _scene.View, layout, _quests, party);
+        float trackerTop = _scene.Canvas.Calls.First(call => call.Kind == CanvasCallKind.Solid).Rect.Y;
+
+        Assert.True(trackerTop >= partyBottom, $"the tracker at {trackerTop} overlaps the party plate ending at {partyBottom}");
+    }
+
     [Fact]
     public void TheTracker_DrawsNothing_WithoutAnActiveQuest()
     {

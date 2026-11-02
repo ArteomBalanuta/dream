@@ -36,6 +36,7 @@ public sealed class M6EndToEndLoopbackTests
 {
     private const string SessionA = "m6e2e-a";
     private const string SessionB = "m6e2e-b";
+    private const string SessionC = "m6e2e-c";
     private const string Torch = "tool.torch";
     private const string ManaPotion = "potion.mana";
     private const string MixedQuest = "marked-for-the-dark";
@@ -464,5 +465,49 @@ public sealed class M6EndToEndLoopbackTests
             await a.LeaveAsync();
             await b.LeaveAsync();
         }
+    }
+
+    // A real party (the M5 lookup, not a stub): A kills, the mate beside her gets the kill, the mate far from
+    // the death does not.
+    [Fact]
+    public async Task Quest_PartyMateCreditedNearby()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        HeadlessPlayScene a = await HeadlessPlayScene.JoinAsync(server, SessionA);
+        HeadlessPlayScene b = await HeadlessPlayScene.JoinAsync(server, SessionB);
+        HeadlessPlayScene c = await HeadlessPlayScene.JoinAsync(server, SessionC);
+        await using HeadlessPlayScene clientA = a;
+        await using HeadlessPlayScene clientB = b;
+        await using HeadlessPlayScene clientC = c;
+        HeadlessPlayScene[] all = [a, b, c];
+        await StepAsync(server, all);
+
+        foreach (HeadlessPlayScene who in all)
+        {
+            await PlaceAsync(server, all, who, BesideTheWarden(who));
+            AssertAccepted(await ResultAsync(server, all, who, Click(who, new QuestAcceptIntent(WardenActorId, WolfQuest))));
+        }
+
+        foreach (HeadlessPlayScene mate in new[] { b, c })
+        {
+            AssertAccepted(await ResultAsync(server, all, a, Click(a, new PartyInviteIntent($"Name {mate.SessionId}"))));
+            AssertAccepted(await ResultAsync(server, all, mate, Click(mate, new PartyRespondIntent(true))));
+        }
+
+        await StepUntilAsync(server, all, () => all.All(who => Hud(who).Entries.Count == 1), "three quest logs");
+        await PlaceAsync(server, all, a, new Vector3(6f, 1.5f, 20f));
+        await PlaceAsync(server, all, b, new Vector3(8f, 1.5f, 20f));
+        await PlaceAsync(server, all, c, new Vector3(52f, 1.5f, 20f));
+
+        await KillAsync(server, all, a, "Wolf");
+        await StepUntilAsync(server, all, () => Entry(b, WolfQuest).Objectives[0].Have == 1, "the kill in B's log");
+
+        Assert.Equal(1, Entry(a, WolfQuest).Objectives[0].Have);
+        Assert.Equal(0, Entry(c, WolfQuest).Objectives[0].Have);
+        Assert.True(server.Runtime.InventoryService.TryGetQuestRecord(KeyOf(SessionB), WolfQuest, out PlayerInventoryService.QuestRecord? recordB));
+        Assert.Equal(1, recordB.Kills[0]);
+        Assert.True(server.Runtime.InventoryService.TryGetQuestRecord(KeyOf(SessionC), WolfQuest, out PlayerInventoryService.QuestRecord? recordC));
+        Assert.Equal(0, recordC.Kills[0]);
     }
 }

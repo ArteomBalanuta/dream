@@ -32,7 +32,7 @@ Other gaps: `ix_player_inventory_slots_item_instance_id` is not unique, which mu
 
 ## Milestones
 
-Status: M0-M4 done, on `integrate/mp-m4`. Build protection and PVP from M7 done. M5, M6, M8 and M9 open.
+Status: M0-M8 done, with M5, M6, M7 and M8 on `integrate/mp-m5` at protocol v18, schema v14. M9 open.
 
 | # | Milestone | Size | Depends on |
 |---|---|---|---|
@@ -85,17 +85,23 @@ Status: done. Decisions: mana is per world; keys 1-6 are the quickbar, with the 
 Keys 1-6, per-character quickbar rows, a use-item intent, server cooldowns in ticks, real mana, 3-4 skills. `PlayerController.cs` is an isometric file.
 
 ### M5: Party and trade
+Status: done. Decisions: only the party leader can invite. `/accept` and `/decline` answer party invites only; trades are answered in the trade window. Trades conserve gold: both wallet changes sit in one closure with the item moves, debits first and credits last, so a failed write rolls back whole. A trade cancels on any change to either inventory fingerprint.
+
 In-memory parties with invite, accept, leave, party chat and shared XP. Trade has offer, lock and confirm from both sides; inventories and gold change in one closure, and any change cancels it.
 
 ### M6: Quests
+Status: done. Decisions: kill credit goes to every present contributor and their party mates within 40 m of the death; rewards and the completion share one closure.
+
 `config/content/quests.json`, `player_quests`, NPC dialogue, HUD log, kill and collect objectives, rewards through the M3 grant path.
 
 ### M7: PvP and build protection
-Status: build protection and PVP done (`DREAM_PVP` env var only).
+Status: done. PvP is switched by the `DREAM_PVP` env var only. Party cube access is off unless `DREAM_PARTY_CUBES=1`.
 
 Per-world PvP flag. Only the owner, later the party, may damage a placed cube.
 
 ### M8: Admin and server ops
+Status: done. Decisions: ban and mute are stored on the account and set by the in-game admin commands `/ban`, `/unban`, `/mute` and `/unmute`. The CLI is `--accounts grant-admin|revoke-admin|unban <name>`, and it has no ban or mute verb. The dedicated server keeps its 0.0.0.0 default bind, which `DREAM_BIND_ADDRESS` overrides; the integrated server stays on loopback.
+
 Port, bind address, player cap, MOTD. Admin role, kick, ban, mute, announce. Client auto-retry. World-presence lease for B9. XP and base stats to the owner only.
 
 ### M9: Zones and a bigger world

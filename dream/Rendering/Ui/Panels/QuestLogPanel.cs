@@ -19,7 +19,7 @@ public static class QuestLogPanel
     private static readonly UiColor Body = new(0xD8, 0xD2, 0xC4, 255);
     private static readonly UiColor Met = new(0x5F, 0xD6, 0xA0, 255);
 
-    public static void Build(IUiCanvas c, HudView v, in UiLayout l, QuestHudState? quests)
+    public static void Build(IUiCanvas c, HudView v, in UiLayout l, QuestHudState? quests, PartyHudState? party = null)
     {
         if (quests is null || quests.Entries.Count == 0)
         {
@@ -53,6 +53,9 @@ public static class QuestLogPanel
         float height = (rows * rowH) + (2f * pad);
         float top = MathF.Round(l.ViewportHeight * 0.3f);
         top = MathF.Min(top, MathF.Max(0f, l.Bar.Y - height - 2f));
+
+        // The party plate shares this edge and can reach past 30 percent on a short viewport.
+        top = MathF.Max(top, PartyPanel.BottomOf(c, l, party) + 2f);
         Frame(c, new UiRect(x, top, width, height));
 
         float y = top + pad;
