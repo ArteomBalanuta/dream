@@ -10,7 +10,7 @@ namespace Dream.Tests.Server.Persistence.Migrations;
 public sealed class SchemaMigrationTests
 {
     [Fact]
-    public void ShippedMigrations_AreTheBaseline_TheStarterGrants_TheWorlds_TheIndexDrop_ThenTheObjectIds_TheTerrain_TheAccounts_ThenTheItemRolls_TheEnemyFormulas_ThenTheBagGrid_ThenTheCharacterStatPoints()
+    public void ShippedMigrations_AreTheBaseline_TheStarterGrants_TheWorlds_TheIndexDrop_ThenTheObjectIds_TheTerrain_TheAccounts_ThenTheItemRolls_TheEnemyFormulas_ThenTheBagGrid()
     {
         IReadOnlyList<ISchemaMigration> migrations = SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory);
 

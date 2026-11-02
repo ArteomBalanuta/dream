@@ -227,15 +227,10 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         // Stops at 0010: the schema is compared with the v9 one (0011 adds a column).
         SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(10));
 
-        Assert.Equal(new SchemaMigrationResult(9, 11, result.BackupPath), result);
+        Assert.Equal(new SchemaMigrationResult(9, 10, result.BackupPath), result);
         SqliteConnection.ClearAllPools();
         using SqliteConnection after = database.Open();
-        // Migration 0011 then appends player_profiles.stat_points; every other table is the v9 one.
-        static bool NotProfiles(string line) =>
-            !line.StartsWith("master table player_profiles on ", StringComparison.Ordinal)
-            && !line.StartsWith("column player_profiles ", StringComparison.Ordinal);
-        Assert.Equal(v9.Where(NotProfiles), SqliteSchemaSnapshot.Capture(after).Where(NotProfiles));
-        Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('player_profiles') WHERE name = 'stat_points';"));
+        Assert.Equal(v9, SqliteSchemaSnapshot.Capture(after));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances;"));
         Assert.Equal(5L, database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id';"));
     }

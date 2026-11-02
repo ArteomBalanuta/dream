@@ -260,10 +260,6 @@ public sealed class ItemRollsMigrationTests
         return string.Join(";", Rows(c, $"SELECT {string.Join(" || '|' || ", columns.Select(name => $"quote({name})"))} FROM item_instances ORDER BY 1;"));
     }
 
-    // Migration 0011 appends player_profiles.stat_points, which a v7 file does not have.
-    private const string PlayerProfilesWithoutStatPoints =
-        "SELECT player_name, display_name, interaction_mode, strength, agility, vitality, energy, movement_speed, attack_speed, level, experience, current_hp, max_hp, created_utc, updated_utc, account_id FROM player_profiles ORDER BY 1, 2, 3;";
-
     private static string DumpOtherTables(MigrationTestDatabase database)
     {
         using SqliteConnection c = database.Open();

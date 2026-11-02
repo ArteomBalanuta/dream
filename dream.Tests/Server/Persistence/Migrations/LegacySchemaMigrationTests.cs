@@ -158,8 +158,6 @@ public sealed class LegacySchemaMigrationTests
                 .Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal)))
                 // Migration 0009 seeds the four enemy and armor formulas.
                 .Where(row => !row.StartsWith("combat_formulas ", StringComparison.Ordinal) || !WaveINewFormulaKeys.Any(key => row.Contains("formula_key=String:" + key, StringComparison.Ordinal)))
-                // Migration 0011 appends player_profiles.stat_points, (level - 1) * 5 for every existing row.
-                .Select(row => System.Text.RegularExpressions.Regex.Replace(row, @" stat_points=Int64:\d+$", string.Empty))
                 // Migration 0007 appends player_profiles.account_id, NULL for every existing row.
                 .Select(row => row.EndsWith(" account_id=NULL", StringComparison.Ordinal) ? row[..^" account_id=NULL".Length] : row));
         foreach (string table in new[] { "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances", "item_instances", "player_inventory_slots" })
