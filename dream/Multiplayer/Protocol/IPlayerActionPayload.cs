@@ -17,6 +17,9 @@ namespace Dream.Multiplayer.Protocol;
 [JsonDerivedType(typeof(NpcInteractIntent), "npc.interact")]
 [JsonDerivedType(typeof(VendorBuyIntent), "vendor.buy")]
 [JsonDerivedType(typeof(VendorSellIntent), "vendor.sell")]
+[JsonDerivedType(typeof(SkillUseIntent), "skill.use")]
+[JsonDerivedType(typeof(ItemUseIntent), "item.use")]
+[JsonDerivedType(typeof(QuickbarBindIntent), "quickbar.bind")]
 public interface IPlayerActionPayload
 {
 }

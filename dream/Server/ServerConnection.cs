@@ -1006,6 +1006,9 @@ public sealed class ServerConnection : IAsyncDisposable
                 case ServerCharacterList characterList:
                     _codec.Encode(envelope, characterList, _frameWriter);
                     break;
+                case ServerPlayerVitals vitals:
+                    _codec.Encode(envelope, vitals, _frameWriter);
+                    break;
                 case ServerGroundItems groundItems:
                     _codec.Encode(envelope, groundItems, _frameWriter);
                     break;
@@ -1174,6 +1177,7 @@ public sealed class ServerConnection : IAsyncDisposable
             ServerHelloMessage hello => $"server={hello.ServerName}",
             InventoryPushMessage push => $"notices={push.Notices.Count} inventory={(push.Inventory.HasValue ? 1 : 0)}",
             ServerGroundItems ground => $"reset={ground.Reset} upserts={ground.Upserts.Count} removed={ground.RemovedIds.Count}",
+            ServerPlayerVitals vitals => $"mana={vitals.CurrentMana}/{vitals.MaxMana} cooldowns={vitals.Cooldowns.Count}",
             _ => string.Empty
         };
 

@@ -407,6 +407,42 @@
    "x": 652,
    "y": 892
   },
+  "item.potion.health": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 1141,
+   "y": 892
+  },
+  "item.potion.mana": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 1139,
+   "y": 892
+  },
   "item.relic.disc": {
    "h": 128,
    "meta": {

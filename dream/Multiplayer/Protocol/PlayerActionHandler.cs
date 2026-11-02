@@ -92,7 +92,8 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     {
         return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
             or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent
-            or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent;
+            or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
+            or SkillUseIntent or ItemUseIntent or QuickbarBindIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

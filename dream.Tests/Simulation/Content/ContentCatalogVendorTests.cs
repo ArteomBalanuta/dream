@@ -16,7 +16,8 @@ public sealed class ContentCatalogVendorTests
             enemiesJson ?? Shipped(ContentCatalog.EnemiesFileName),
             Shipped(ContentCatalog.LootFileName),
             Shipped(ContentCatalog.SpawnsFileName),
-            npcsJson);
+            npcsJson,
+            Shipped(ContentCatalog.SkillsFileName));
 
     private static string Npcs(string stock, string key = "v") =>
         "{\"version\":1,\"npcs\":[{\"key\":\"" + key + "\",\"displayName\":\"V\",\"visualKey\":\"npc.vendor\",\"offsetX\":1,\"offsetZ\":2,\"stock\":[" + stock + "]}]}";

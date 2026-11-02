@@ -14,6 +14,8 @@ public sealed class ContentCatalogTests
 
     private static string ShippedNpcsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.NpcsFileName));
 
+    private static string ShippedSkillsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.SkillsFileName));
+
     private static string ShippedItemsJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
 
     private static string ShippedLootJson => File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
@@ -25,7 +27,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(18, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(20, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -188,8 +190,8 @@ public sealed class ContentCatalogTests
     [Fact]
     public void ContentDigest_IsStable_IgnoresFormatting_AndChangesWithValues()
     {
-        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson);
-        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson);
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson);
+        ContentCatalog second = ContentCatalog.Load(ShippedItemsJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson);
         Assert.Equal(first.ContentDigest, second.ContentDigest);
         Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);
 
@@ -408,9 +410,9 @@ public sealed class ContentCatalogTests
     [Fact]
     public void ContentDigest_ChangesWithALootWeight_AndIgnoresLootFormatting()
     {
-        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson);
-        ContentCatalog reformatted = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedSpawnsJson, ShippedNpcsJson);
-        ContentCatalog changed = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\"nothingWeight\": 75", "\"nothingWeight\": 76"), ShippedSpawnsJson, ShippedNpcsJson);
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson);
+        ContentCatalog reformatted = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\r\n", "\n").Replace("  ", "\t"), ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson);
+        ContentCatalog changed = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson.Replace("\"nothingWeight\": 75", "\"nothingWeight\": 76"), ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson);
 
         Assert.Equal(first.ContentDigest, reformatted.ContentDigest);
         Assert.Equal(ContentCatalog.Shipped.ContentDigest, first.ContentDigest);

@@ -12,7 +12,8 @@ public readonly record struct PlayerInventorySnapshot(
     IReadOnlyList<InventorySlotSnapshot> Slots,
     InventorySlotSnapshot? EquippedSlot = null,
     IReadOnlyList<InventorySlotSnapshot>? Equipment = null,
-    long Gold = 0)
+    long Gold = 0,
+    IReadOnlyList<QuickbarSlotSnapshot>? Quickbar = null)
 {
     public static PlayerInventorySnapshot Empty(string playerName)
         => new(

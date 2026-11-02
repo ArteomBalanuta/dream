@@ -134,6 +134,7 @@ public sealed partial class WorldSessionRuntime
             // Do not keep a detached (disposed) secondary referenced until the next tick.
             _tickPlayerTargets.Clear();
             AdvanceRespawns();
+            AdvanceMana();
         }
 
         PhysicsSyncResult syncResult = _physicsSync.SyncDynamicMapBodies(Map, Physics.DynamicMapCubeBodies);
@@ -214,7 +215,8 @@ public sealed partial class WorldSessionRuntime
         // M3: a dead player does not pick up, talk or trade either.
         if (!context.Combatant.Health.IsAlive
             && message.Payload is BuildUseIntent or CombatUseIntent
-                or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent)
+                or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
+                or SkillUseIntent or ItemUseIntent)
         {
             return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
         }
@@ -265,6 +267,12 @@ public sealed partial class WorldSessionRuntime
                 => ProcessVendorBuyAction(message, context.Player, buyIntent),
             VendorSellIntent sellIntent
                 => ProcessVendorSellAction(message, context.Player, sellIntent),
+            SkillUseIntent skillIntent
+                => ProcessSkillUseAction(message, context, skillIntent),
+            ItemUseIntent itemUseIntent
+                => ProcessItemUseAction(message, context, itemUseIntent),
+            QuickbarBindIntent quickbarIntent
+                => ProcessQuickbarBindAction(message, context.Player, quickbarIntent),
             CombatUseIntent
                 => CreateRejectedActionResult(
                     message,

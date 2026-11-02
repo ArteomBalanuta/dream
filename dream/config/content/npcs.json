@@ -11,7 +11,9 @@
         { "item": "tool.torch", "price": 6 },
         { "item": "tool.survey-lantern", "price": 25 },
         { "item": "tool.field-blade", "price": 30 },
-        { "item": "tool.builder-hammer", "price": 20 }
+        { "item": "tool.builder-hammer", "price": 20 },
+        { "item": "potion.health", "price": 12 },
+        { "item": "potion.mana", "price": 12 }
       ]
     }
   ]

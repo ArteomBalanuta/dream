@@ -246,6 +246,12 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 while (reader.Read())
                 {
                     string name = reader.GetString(1);
+                    // Migration 0013 sets every current_energy high (QuickbarManaMigrationTests pins it).
+                    if (name == "current_energy")
+                    {
+                        continue;
+                    }
+
                     // Migration 0005 renumbers the ids of cubes, rubble and enemies, so they are not compared.
                     if (name != "world_id" && name != "account_id" && name != "rolled_modifiers" && name != "camp_key" && !RenumberedColumns.Contains(name))
                     {

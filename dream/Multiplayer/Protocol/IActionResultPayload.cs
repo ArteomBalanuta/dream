@@ -9,6 +9,7 @@ namespace Dream.Multiplayer.Protocol;
 [JsonDerivedType(typeof(InventoryChangedResult), "inventory.changed")]
 [JsonDerivedType(typeof(PlayerStatsUpdateResult), "player.stats.update")]
 [JsonDerivedType(typeof(VendorOpenedResult), "vendor.opened")]
+[JsonDerivedType(typeof(AbilityUsedResult), "ability.used")]
 public interface IActionResultPayload
 {
 }

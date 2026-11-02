@@ -32,7 +32,7 @@ public class DamageEventHitWireTests
         ((ServerSnapshotMessage)new TransportJsonCodec().Decode(Encoding.UTF8.GetBytes(json)).Message).Snapshot;
 
     private static string RawSnapshot(string damageEventJson) =>
-        "{\"protocolVersion\":16,\"messageKind\":\"server.snapshot\",\"sequence\":1,\"payload\":{\"snapshot\":{\"serverTick\":500," +
+        "{\"protocolVersion\":17,\"messageKind\":\"server.snapshot\",\"sequence\":1,\"payload\":{\"snapshot\":{\"serverTick\":500," +
         "\"lastAcceptedCommandSequences\":{},\"actors\":[],\"interactionMode\":0,\"worldMutations\":[],\"damageEvents\":[" +
         damageEventJson + "],\"worldChecksumSequence\":0}}}";
 
@@ -55,7 +55,7 @@ public class DamageEventHitWireTests
     {
         string json = Encode(new DamageEventDelta(2003, CreatureKind.Enemy, 7, false, 33, 40));
 
-        Assert.StartsWith("{\"protocolVersion\":16,", json, StringComparison.Ordinal);
+        Assert.StartsWith("{\"protocolVersion\":17,", json, StringComparison.Ordinal);
         Assert.Contains(RegularEvent, json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"hit\"", json, StringComparison.Ordinal);
     }

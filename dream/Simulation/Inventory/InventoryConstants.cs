@@ -17,6 +17,9 @@ public static class InventoryConstants
     // The most gold a wallet holds; a credit that would pass it is refused.
     public const long MaxGold = 2_000_000_000L;
 
+    // Quickbar slots per character (keys 1..6).
+    public const int QuickbarSlots = 6;
+
     public const int EquippedSlotIndex = 100;
 
     public const int HeldBackFirstIndex = 200;

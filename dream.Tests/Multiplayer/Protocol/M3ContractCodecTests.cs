@@ -21,9 +21,9 @@ public sealed class M3ContractCodecTests
         Codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, sequence), message);
 
     [Fact]
-    public void TheProtocolVersion_IsSixteen_AndTheNpcIdBlockSitsInsideTheEnemyRange()
+    public void TheProtocolVersion_IsSeventeen_AndTheNpcIdBlockSitsInsideTheEnemyRange()
     {
-        Assert.Equal(16, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(17, TransportEnvelope.CurrentProtocolVersion);
         Assert.Equal(3, (int)CreatureKind.Npc);
         Assert.Equal((1 << 30) - 1024, ReplicatedActorIdRanges.FirstNpcId);
         Assert.True(ReplicatedActorIdRanges.IsEnemyId(ReplicatedActorIdRanges.FirstNpcId));

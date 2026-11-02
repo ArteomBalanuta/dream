@@ -302,6 +302,32 @@
         "uncommon": [ { "stat": "Strength", "min": 6, "max": 8 }, { "stat": "AttackSpeed", "min": 0.75, "max": 1.1 } ],
         "rare": [ { "stat": "Strength", "min": 8, "max": 10 }, { "stat": "AttackSpeed", "min": 1.0, "max": 1.4 } ]
       }
+    },
+    {
+      "key": "potion.health",
+      "displayName": "Health Potion",
+      "description": "A bitter red draught that closes wounds.",
+      "visualId": "worn.ring",
+      "detailLines": [ "Role: Consumable", "Restores 50 health" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 3,
+      "equipSlots": [],
+      "footprint": [1, 1],
+      "use": { "restoreHealth": 50, "restoreMana": 0, "cooldownTicks": 320 }
+    },
+    {
+      "key": "potion.mana",
+      "displayName": "Mana Potion",
+      "description": "A cold blue tincture that steadies the mind.",
+      "visualId": "worn.ring",
+      "detailLines": [ "Role: Consumable", "Restores 40 mana" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 3,
+      "equipSlots": [],
+      "footprint": [1, 1],
+      "use": { "restoreHealth": 0, "restoreMana": 40, "cooldownTicks": 320 }
     }
   ]
 }

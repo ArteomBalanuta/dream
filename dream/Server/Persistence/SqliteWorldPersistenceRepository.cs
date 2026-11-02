@@ -95,6 +95,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void ApplyWalletDelta(string playerName, long delta) => _inventory.ApplyWalletDelta(playerName, delta);
 
+    public void SaveQuickbarSlot(PersistedQuickbarSlot slot) => _inventory.SaveQuickbarSlot(slot);
+
     public long LoadNextObjectId() => _objectIdCounter.LoadNextObjectId();
 
     public IReadOnlyList<PersistedTerrainCellOverride> LoadTerrainCellOverrides() => _terrainOverrides.LoadTerrainCellOverrides();

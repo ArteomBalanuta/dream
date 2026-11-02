@@ -37,4 +37,9 @@ public interface IInventoryRepository
     void ApplyWalletDelta(string playerName, long delta)
     {
     }
+
+    // Upserts one quickbar slot row of the player (M4). The default (a fake) does nothing.
+    void SaveQuickbarSlot(PersistedQuickbarSlot slot)
+    {
+    }
 }

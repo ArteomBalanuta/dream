@@ -44,6 +44,60 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public CombatActorHandle Actor { get; }
 
+    // M4: mana. The maximum comes from the level alone (PlayerManaRules); the current value starts full,
+    // is clamped, never topped up, when the maximum falls, and is not part of AdvanceCombat (which the
+    // client runs too). Regeneration and persistence belong to the session runtime.
+    public int CurrentMana { get; private set; }
+
+    public int MaxMana { get; private set; }
+
+    // Spends amount when that much is available; a negative amount is refused. Nothing changes on false.
+    public bool TrySpendMana(int amount)
+    {
+        if (amount < 0 || amount > CurrentMana)
+        {
+            return false;
+        }
+
+        CurrentMana -= amount;
+        return true;
+    }
+
+    // Returns the mana actually added (0 for an amount of 0 or less, or when already full).
+    public int RestoreMana(int amount)
+    {
+        if (amount <= 0)
+        {
+            return 0;
+        }
+
+        int applied = Math.Min(amount, MaxMana - CurrentMana);
+        CurrentMana += applied;
+        return applied;
+    }
+
+    // Returns the health actually added: 0 for an amount of 0 or less, for a dead player and when full.
+    public int RestoreHealth(int amount)
+    {
+        if (amount <= 0 || !Health.IsAlive)
+        {
+            return 0;
+        }
+
+        int applied = Math.Min(amount, Health.MaxHealth - Health.CurrentHealth);
+        if (applied > 0)
+        {
+            Health.SetAuthoritativeState(Health.CurrentHealth + applied, Health.MaxHealth);
+        }
+
+        return applied;
+    }
+
+    public void SetMana(int current)
+    {
+        CurrentMana = Math.Clamp(current, 0, MaxMana);
+    }
+
     public PlayerCombatant(
         Func<Vector3> positionProvider,
         SceneEventHub? eventHub = null,
@@ -152,6 +206,10 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
             _factorArmor = armor;
             DamageTakenFactor = _combatFormulaService.EvaluateDamageTakenFactor(armor);
         }
+
+        int maxMana = PlayerManaRules.MaxMana(Level);
+        CurrentMana = MaxMana == 0 ? maxMana : Math.Min(CurrentMana, maxMana);
+        MaxMana = maxMana;
 
         if (Health != null)
         {

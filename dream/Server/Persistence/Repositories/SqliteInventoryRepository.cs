@@ -112,6 +112,36 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             updated_utc = excluded.updated_utc;
         """;
 
+    private const string LoadQuickbarSql = """
+        SELECT player_name, slot, kind, ref_key, updated_utc
+        FROM player_quickbar_slots
+        WHERE world_id = $worldId AND player_name = $playerName
+        ORDER BY slot;
+        """;
+
+    private const string UpsertQuickbarSql = """
+        INSERT INTO player_quickbar_slots (
+            world_id,
+            player_name,
+            slot,
+            kind,
+            ref_key,
+            updated_utc
+        )
+        VALUES (
+            $worldId,
+            $playerName,
+            $slot,
+            $kind,
+            $refKey,
+            $updatedUtc
+        )
+        ON CONFLICT(world_id, player_name, slot) DO UPDATE SET
+            kind = excluded.kind,
+            ref_key = excluded.ref_key,
+            updated_utc = excluded.updated_utc;
+        """;
+
     private const string UpsertSlotSql = """
         INSERT INTO player_inventory_slots (
             world_id,
@@ -209,8 +239,40 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             items.Add(SqliteItemRepository.ReadItem(reader, 4));
         }
 
-        return new PersistedPlayerInventory(slots, items, starterKitVersion, gold);
+        reader.Close();
+
+        // The quickbar rows are a second query on the same session; only this player's own session
+        // writes them, so they cannot diverge from the first read. Null when the player has no row.
+        List<PersistedQuickbarSlot>? quickbar = null;
+        using (SqliteCommand quickbarCommand = session.CreateCommand(LoadQuickbarSql))
+        {
+            quickbarCommand.BindInt64("$worldId", WorldIdValue);
+            quickbarCommand.BindText("$playerName", playerName.Trim());
+            using SqliteDataReader quickbarReader = quickbarCommand.ExecuteReader();
+            while (quickbarReader.Read())
+            {
+                (quickbar ??= []).Add(new PersistedQuickbarSlot(
+                    quickbarReader.GetString(0),
+                    quickbarReader.GetInt32(1),
+                    quickbarReader.GetInt32(2),
+                    quickbarReader.GetString(3),
+                    quickbarReader.GetUtc(4)));
+            }
+        }
+
+        return new PersistedPlayerInventory(slots, items, starterKitVersion, gold, quickbar);
     }
+
+    // Upserts one quickbar slot. updated_utc is the write time.
+    public void SaveQuickbarSlot(PersistedQuickbarSlot slot) =>
+        Execute(UpsertQuickbarSql, slot, static (command, s) =>
+        {
+            command.BindText("$playerName", s.PlayerName.Trim());
+            command.BindInt64("$slot", s.Slot);
+            command.BindInt64("$kind", s.Kind);
+            command.BindText("$refKey", s.Key ?? string.Empty);
+            command.BindUtc("$updatedUtc", DateTime.UtcNow);
+        });
 
     // updated_utc is the write time. A row that holds a DIFFERENT item is never overwritten: the upsert
     // changes nothing and this throws, so the closure's savepoint rolls back and the occupant's row is

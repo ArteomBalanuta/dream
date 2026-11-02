@@ -48,8 +48,12 @@ public readonly record struct TransportEnvelope(
     // "npc.interact", "vendor.buy" and "vendor.sell" actions, the "vendor.opened" action result, the
     // optional "gold" field of the inventory snapshot (written only above 0) and the Npc creature kind
     // of an actor snapshot; a v15 peer would fail on the unknown kinds, so both sides refuse it.
+    // Version 17 (quickbar and mana, M4) adds the "skill.use", "item.use" and "quickbar.bind" actions,
+    // the "ability.used" action result, the server.vitals message and the optional "quick" field of the
+    // inventory snapshot (written only when the character has a bar); a v16 peer would fail on the
+    // unknown kinds, so both sides refuse it.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 16;
+    public const int CurrentProtocolVersion = 17;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)
