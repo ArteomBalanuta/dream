@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -41,6 +42,23 @@ internal interface IAuthoritativeCombatHost
     // A cell of the map's base terrain (not a placed cube) was destroyed. Called after
     // DeletePersistedPlacedCube and immediately before PersistFracturePieces for the same cell.
     void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell);
+
+    // M4 build protection: whether the attacker may damage this cube. The default allows everything, so a
+    // host that does not model ownership (a test double) behaves as before.
+    bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record) => true;
+
+    // M4 PvP: read per use. The default is PvE only, so no code path changes unless a host enables it.
+    CombatTargetPolicy TargetPolicy => CombatTargetPolicy.DefaultPve;
+
+    // Appends the players the attacker could hit: spawned, alive, not the attacker, not under spawn
+    // protection. Only called when TargetPolicy enables player-versus-player.
+    void FillPvpTargets(PlayerSessionId attacker, List<CombatTargetCandidate> into)
+    {
+    }
+
+    // The combatant behind a PvP candidate's actor id. A player's actor handle holds only its health, so
+    // damage must go through the combatant to be mitigated by armor and to publish the death event.
+    PlayerCombatant? ResolvePvpVictim(int actorId) => null;
 }
 
 // Resolves an authoritative combat use: the seeded attack roll, the enemy or destructible cube it
@@ -59,6 +77,11 @@ internal sealed class AuthoritativeCombatResolver
     // Reused scratch for one fractured cell's pieces; never handed out.
     private readonly List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)>
         _fracturePieceScratch = [];
+    // Reused scratch for skills: the enemies of one arc (collected before any damage, because a kill prunes
+    // the registry mid-loop), the player candidates of PvP, and the players one arc reaches.
+    private readonly List<EnemyActor> _arcScratch = [];
+    private readonly List<CombatTargetCandidate> _pvpCandidates = [];
+    private readonly List<(float DistanceSquared, CombatTargetCandidate Candidate)> _pvpArcScratch = [];
 
     public AuthoritativeCombatResolver(
         ulong simulationSeed,
@@ -156,6 +179,20 @@ internal sealed class AuthoritativeCombatResolver
             return ResolveEnemyHit(message, combatant, tick, enemy);
         }
 
+        // Enemies come first on the ray; with PvP enabled a player on the ray is hit before any cube.
+        if (_host.TargetPolicy.PlayerVsPlayerEnabled)
+        {
+            CombatActorHandle? player = TryResolvePvpTarget(
+                message.SessionId,
+                intent.RayOrigin,
+                intent.RayDirection,
+                CombatUseResolver.DefaultHitRange);
+            if (player.HasValue)
+            {
+                return ResolvePlayerHit(message, combatant, tick, player.Value, 100);
+            }
+        }
+
         Map map = _map();
         WorldObjectRecord? record = CombatUseResolver.TryResolveDestructibleCubeHit(
             map,
@@ -177,6 +214,12 @@ internal sealed class AuthoritativeCombatResolver
                     TargetDied: false,
                     CurrentHealth: 0,
                     MaxHealth: 0));
+        }
+
+        // Build protection: nothing is damaged, repaired or written for a cube that is someone else's.
+        if (!_host.CanDamageCube(message.SessionId, record))
+        {
+            return CreateRejectedResult(message, tick, "That belongs to someone else.");
         }
 
         return ResolveCubeHit(message, combatant, tick, map, record);
@@ -317,14 +360,46 @@ internal sealed class AuthoritativeCombatResolver
         PlayerActionMessage message,
         PlayerCombatant combatant,
         ulong tick,
-        EnemyActor enemy)
+        EnemyActor enemy,
+        int damagePercent = 100)
+    {
+        DamageReceipt receipt = ApplyEnemyHit(message, combatant, tick, enemy, damagePercent);
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            tick,
+            Accepted: true,
+            Payload: new CombatResolutionResult(
+                enemy.Combatant.Actor.Id,
+                enemy.Combatant.Actor.Kind,
+                receipt.AppliedAmount,
+                receipt.WasFatal,
+                enemy.Combatant.Health.CurrentHealth,
+                enemy.Combatant.Health.MaxHealth));
+    }
+
+    // The damage of a seeded attack scaled by a skill's percent. At 100 it is exactly attack.Damage, which
+    // keeps the primary attack (and every golden) unchanged.
+    private static int ScaleDamage(int damage, int damagePercent)
+    {
+        return damagePercent == 100 ? damage : Math.Max(1, damage * damagePercent / 100);
+    }
+
+    // The one path every enemy hit takes (primary attack and skills): seeded roll, damage, contributor
+    // record, damage event, and on a kill the experience, persistence delete and loot.
+    private DamageReceipt ApplyEnemyHit(
+        PlayerActionMessage message,
+        PlayerCombatant combatant,
+        ulong tick,
+        EnemyActor enemy,
+        int damagePercent)
     {
         PlayerAttackResolution attack = ResolveSeededAttack(
             combatant,
             message,
             tick,
             Seed.FromInt(enemy.Combatant.Actor.Id));
-        DamageReceipt receipt = enemy.Combatant.ApplyDamage(attack.Damage);
+        DamageReceipt receipt = enemy.Combatant.ApplyDamage(ScaleDamage(attack.Damage, damagePercent));
         if (receipt.AppliedAmount > 0)
         {
             enemy.RecordDamage(message.SessionId, receipt.AppliedAmount);
@@ -343,18 +418,241 @@ internal sealed class AuthoritativeCombatResolver
             _host.GrantLoot(lootWinner, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick, deathPosition);
         }
 
+        return receipt;
+    }
+
+    // PvP: the first player on the ray, within maxDistance, among the host's candidates.
+    private CombatActorHandle? TryResolvePvpTarget(
+        PlayerSessionId attacker,
+        Vector3 origin,
+        Vector3 direction,
+        float maxDistance)
+    {
+        _pvpCandidates.Clear();
+        _host.FillPvpTargets(attacker, _pvpCandidates);
+        if (_pvpCandidates.Count == 0)
+        {
+            return null;
+        }
+
+        return AuthoritativeCombatTargetResolver.TryResolve(origin, direction, maxDistance, _pvpCandidates);
+    }
+
+    private DamageReceipt ApplyPlayerHit(
+        PlayerActionMessage message,
+        PlayerCombatant attacker,
+        ulong tick,
+        CombatActorHandle victim,
+        int damagePercent)
+    {
+        PlayerAttackResolution attack = ResolveSeededAttack(
+            attacker,
+            message,
+            tick,
+            Seed.FromInt(victim.Id));
+        // The victim's own ApplyDamage mitigates by armor and publishes ActorDiedEvent on death; the
+        // respawn scan and replication take it from there. No experience, loot or gold for a player kill.
+        int damage = ScaleDamage(attack.Damage, damagePercent);
+        PlayerCombatant? victimCombatant = _host.ResolvePvpVictim(victim.Id);
+        DamageReceipt receipt = victimCombatant != null
+            ? victimCombatant.ApplyDamage(damage)
+            : victim.Damageable.ApplyDamage(damage);
+        if (receipt.AppliedAmount > 0)
+        {
+            _events.Publish(new DamageAppliedEvent(victim, receipt.AppliedAmount, attack.FloatingTextKind));
+        }
+
+        return receipt;
+    }
+
+    private AuthoritativeActionResult ResolvePlayerHit(
+        PlayerActionMessage message,
+        PlayerCombatant attacker,
+        ulong tick,
+        CombatActorHandle victim,
+        int damagePercent)
+    {
+        DamageReceipt receipt = ApplyPlayerHit(message, attacker, tick, victim, damagePercent);
         return new AuthoritativeActionResult(
             message.SessionId.Value,
             message.ActionSequence,
             tick,
             Accepted: true,
             Payload: new CombatResolutionResult(
-                enemy.Combatant.Actor.Id,
-                enemy.Combatant.Actor.Kind,
+                victim.Id,
+                victim.Kind,
                 receipt.AppliedAmount,
                 receipt.WasFatal,
-                enemy.Combatant.Health.CurrentHealth,
-                enemy.Combatant.Health.MaxHealth));
+                victim.Damageable.Health.CurrentHealth,
+                victim.Damageable.Health.MaxHealth));
+    }
+
+    // M4 skills. The caller (the session runtime) has already validated the cast and spent mana and
+    // cooldown; a cast that hits nothing is still accepted. Skills never damage cubes.
+    public AuthoritativeActionResult ProcessSkillUse(
+        PlayerActionMessage message,
+        SkillDefinition skill,
+        Vector3 rayOrigin,
+        Vector3 rayDirection,
+        PlayerCombatant combatant,
+        ulong tick)
+    {
+        ArgumentNullException.ThrowIfNull(skill);
+        int targetsHit = 0;
+        int damageApplied = 0;
+        int healthRestored = 0;
+        switch (skill.Kind)
+        {
+            case SkillKind.SelfHeal:
+                healthRestored = combatant.RestoreHealth(skill.HealAmount);
+                break;
+            case SkillKind.RangedBolt:
+                ResolveBolt(message, skill, rayOrigin, rayDirection, combatant, tick, ref targetsHit, ref damageApplied);
+                break;
+            case SkillKind.MeleeArc:
+                ResolveArc(message, skill, rayOrigin, rayDirection, combatant, tick, ref targetsHit, ref damageApplied);
+                break;
+        }
+
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            tick,
+            Accepted: true,
+            Payload: new AbilityUsedResult(skill.Key, targetsHit, damageApplied, healthRestored));
+    }
+
+    // True when a solid cube lies between the origin and the anchor (the last half cell excluded, so a
+    // target standing against a wall is not hidden by it).
+    private static bool IsBlockedByWall(Map map, Vector3 origin, Vector3 anchor)
+    {
+        Vector3 toTarget = anchor - origin;
+        float distance = toTarget.Length;
+        return map.TryGetFirstSolidCubeAlongRay(origin, toTarget, distance - 0.5f) != null;
+    }
+
+    private void ResolveBolt(
+        PlayerActionMessage message,
+        SkillDefinition skill,
+        Vector3 origin,
+        Vector3 direction,
+        PlayerCombatant combatant,
+        ulong tick,
+        ref int targetsHit,
+        ref int damageApplied)
+    {
+        Map map = _map();
+        EnemyActor? enemy = _enemies.TryResolveHit(origin, direction, skill.Range);
+        if (enemy != null && IsBlockedByWall(map, origin, enemy.Combatant.GetCombatAnchorWorldPosition()))
+        {
+            enemy = null;
+        }
+
+        if (enemy != null)
+        {
+            DamageReceipt receipt = ApplyEnemyHit(message, combatant, tick, enemy, skill.DamagePercent);
+            targetsHit++;
+            damageApplied += receipt.AppliedAmount;
+            return;
+        }
+
+        if (!_host.TargetPolicy.PlayerVsPlayerEnabled)
+        {
+            return;
+        }
+
+        CombatActorHandle? player = TryResolvePvpTarget(message.SessionId, origin, direction, skill.Range);
+        if (player.HasValue && !IsBlockedByWall(map, origin, player.Value.GetWorldAnchor()))
+        {
+            DamageReceipt receipt = ApplyPlayerHit(message, combatant, tick, player.Value, skill.DamagePercent);
+            targetsHit++;
+            damageApplied += receipt.AppliedAmount;
+        }
+    }
+
+    private void ResolveArc(
+        PlayerActionMessage message,
+        SkillDefinition skill,
+        Vector3 origin,
+        Vector3 direction,
+        PlayerCombatant combatant,
+        ulong tick,
+        ref int targetsHit,
+        ref int damageApplied)
+    {
+        Vector3 horizontal = new(direction.X, 0f, direction.Z);
+        if (horizontal.LengthSquared <= 0.0001f)
+        {
+            return;
+        }
+
+        horizontal.Normalize();
+        float minDot = Math.Clamp(MathF.Cos(MathHelper.DegreesToRadians(skill.ArcDegrees * 0.5f)), -1f, 1f);
+        Map map = _map();
+
+        // Collect first: a kill prunes the registry. The cap is the content maximum, so enemies behind a
+        // wall do not use up the skill's targets.
+        _arcScratch.Clear();
+        _enemies.CollectInArc(origin, horizontal, skill.Range, minDot, Math.Max(skill.MaxTargets, 16), _arcScratch);
+        for (int i = 0; i < _arcScratch.Count && targetsHit < skill.MaxTargets; i++)
+        {
+            EnemyActor enemy = _arcScratch[i];
+            if (!enemy.IsActive || IsBlockedByWall(map, origin, enemy.Combatant.GetCombatAnchorWorldPosition()))
+            {
+                continue;
+            }
+
+            DamageReceipt receipt = ApplyEnemyHit(message, combatant, tick, enemy, skill.DamagePercent);
+            targetsHit++;
+            damageApplied += receipt.AppliedAmount;
+        }
+
+        _arcScratch.Clear();
+        if (!_host.TargetPolicy.PlayerVsPlayerEnabled || targetsHit >= skill.MaxTargets)
+        {
+            return;
+        }
+
+        // Players in the same arc, nearest first, actor id breaking ties.
+        _pvpCandidates.Clear();
+        _host.FillPvpTargets(message.SessionId, _pvpCandidates);
+        _pvpArcScratch.Clear();
+        for (int i = 0; i < _pvpCandidates.Count; i++)
+        {
+            CombatTargetCandidate candidate = _pvpCandidates[i];
+            if (!candidate.Actor.Damageable.Health.IsAlive
+                || !EnemyRegistry.TryMeasureArc(origin, horizontal, skill.Range, minDot, candidate.Anchor, out float distanceSquared)
+                || IsBlockedByWall(map, origin, candidate.Anchor))
+            {
+                continue;
+            }
+
+            int at = _pvpArcScratch.Count;
+            _pvpArcScratch.Add((distanceSquared, candidate));
+            while (at > 0 && ArcOrder(_pvpArcScratch[at], _pvpArcScratch[at - 1]) < 0)
+            {
+                (_pvpArcScratch[at], _pvpArcScratch[at - 1]) = (_pvpArcScratch[at - 1], _pvpArcScratch[at]);
+                at--;
+            }
+        }
+
+        for (int i = 0; i < _pvpArcScratch.Count && targetsHit < skill.MaxTargets; i++)
+        {
+            DamageReceipt receipt = ApplyPlayerHit(message, combatant, tick, _pvpArcScratch[i].Candidate.Actor, skill.DamagePercent);
+            targetsHit++;
+            damageApplied += receipt.AppliedAmount;
+        }
+
+        _pvpArcScratch.Clear();
+        _pvpCandidates.Clear();
+    }
+
+    private static int ArcOrder(
+        (float DistanceSquared, CombatTargetCandidate Candidate) a,
+        (float DistanceSquared, CombatTargetCandidate Candidate) b)
+    {
+        int byDistance = a.DistanceSquared.CompareTo(b.DistanceSquared);
+        return byDistance != 0 ? byDistance : a.Candidate.Actor.Id.CompareTo(b.Candidate.Actor.Id);
     }
 
     private AuthoritativeActionResult ResolveCubeHit(
