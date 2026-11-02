@@ -308,7 +308,9 @@ public sealed partial class WorldSessionRuntime
             }
 
             SpawnCamp camp = state.Camp;
-            if (camp.Night && !night)
+            // A camp outside its world-size band behaves like a night camp by day: never filled, and its
+            // survivors (if any) are removed one per tick.
+            if (!camp.ExistsOn(Map.Width) || (camp.Night && !night))
             {
                 state.Pending = 0;
                 state.Seeded = false;

@@ -24,4 +24,9 @@ public sealed record QuestDefinition(
     string Description,
     string Giver,
     IReadOnlyList<QuestObjective> Objectives,
-    QuestRewards Rewards);
+    QuestRewards Rewards,
+    int MinWorldSize = 0)
+{
+    // Whether the quest is offered on a floor of floorSize metres.
+    public bool ExistsOn(int floorSize) => floorSize >= MinWorldSize;
+}

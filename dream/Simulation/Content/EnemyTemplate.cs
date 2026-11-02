@@ -45,4 +45,14 @@ public sealed record SpawnCamp(
     float Z,
     int Count,
     float RespawnSeconds,
-    bool Night);
+    bool Night,
+    int MinWorldSize = 0,
+    int MaxWorldSize = 0)
+{
+    // A camp with a MinWorldSize is authored in metres: X and Z are never scaled to the map.
+    public bool IsAbsolute => MinWorldSize > 0;
+
+    // Whether the camp exists on a floor of floorSize metres (the optional minWorldSize..maxWorldSize band).
+    public bool ExistsOn(int floorSize) =>
+        floorSize >= MinWorldSize && (MaxWorldSize == 0 || floorSize <= MaxWorldSize);
+}

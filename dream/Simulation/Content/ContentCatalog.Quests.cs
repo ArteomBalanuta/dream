@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Content;
 
@@ -106,7 +107,8 @@ public sealed partial class ContentCatalog
                 QuestsFileName,
                 path,
                 questElement,
-                ["key", "title", "description", "giver", "objectives", "rewards"]);
+                ["key", "title", "description", "giver", "objectives", "rewards"],
+                optional: ["minWorldSize"]);
             string key = ReadKey(QuestsFileName, $"{path}.key", quest["key"]);
             if (!keys.Add(key))
             {
@@ -123,7 +125,13 @@ public sealed partial class ContentCatalog
             QuestRewards rewards = ParseQuestRewards($"{path}.rewards", quest["rewards"], items);
             string title = ReadName(QuestsFileName, $"{path}.title", quest["title"]);
             string description = ReadText(QuestsFileName, $"{path}.description", quest["description"], MaxDescriptionLength);
-            list.Add(new QuestDefinition(key, title, description, giver, objectives, rewards));
+            int minWorldSize = 0;
+            if (quest.TryGetValue("minWorldSize", out JsonElement minElement))
+            {
+                minWorldSize = ReadInt(QuestsFileName, $"{path}.minWorldSize", minElement, WorldDescriptor.MinHorizontalSize, WorldDescriptor.MaxHorizontalSize);
+            }
+
+            list.Add(new QuestDefinition(key, title, description, giver, objectives, rewards, minWorldSize));
             index++;
         }
 
@@ -246,7 +254,13 @@ public sealed partial class ContentCatalog
             AppendField(text, quest.Title).Append('|');
             AppendField(text, quest.Description).Append('|');
             AppendField(text, quest.Giver).Append('|')
-                .Append(quest.Rewards.Xp.ToString(c)).Append('|').Append(quest.Rewards.Gold.ToString(c)).Append('\n');
+                .Append(quest.Rewards.Xp.ToString(c)).Append('|').Append(quest.Rewards.Gold.ToString(c));
+            if (quest.MinWorldSize > 0)
+            {
+                text.Append("|min|").Append(quest.MinWorldSize.ToString(c));
+            }
+
+            text.Append('\n');
             foreach (QuestObjective objective in quest.Objectives)
             {
                 text.Append("objective|").Append(objective.Kind.ToString()).Append('|');

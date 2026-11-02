@@ -106,7 +106,8 @@ public sealed partial class WorldSessionRuntime
 
         if (questKey == null
             || !EnemyContent.TryGetQuest(questKey, out QuestDefinition? found)
-            || !string.Equals(found.Giver, npc.Definition.Key, StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(found.Giver, npc.Definition.Key, StringComparison.OrdinalIgnoreCase)
+            || !found.ExistsOn(Map.Width))
         {
             return InventoryEquipOutcome.QuestUnavailable;
         }
@@ -130,6 +131,11 @@ public sealed partial class WorldSessionRuntime
         List<QuestOfferLine> lines = new(quests.Count);
         foreach (QuestDefinition quest in quests)
         {
+            if (!quest.ExistsOn(Map.Width))
+            {
+                continue;
+            }
+
             QuestOfferState state = QuestOfferState.Available;
             if (_inventory.TryGetQuestRecord(key, quest.Key, out PlayerInventoryService.QuestRecord? record))
             {

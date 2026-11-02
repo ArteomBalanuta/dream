@@ -6,6 +6,7 @@ using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Content;
 
@@ -774,7 +775,7 @@ public sealed partial class ContentCatalog
                 path,
                 campElement,
                 ["key", "template", "x", "z", "count", "respawnSeconds"],
-                optional: ["night"]);
+                optional: ["night", "minWorldSize", "maxWorldSize"]);
             string key = ReadKey(SpawnsFileName, $"{path}.key", camp["key"]);
             string template = ReadKey(SpawnsFileName, $"{path}.template", camp["template"]);
             if (!enemies.ByKey.TryGetValue(template, out EnemyTemplate? known))
@@ -793,6 +794,22 @@ public sealed partial class ContentCatalog
                 night = nightElement.GetBoolean();
             }
 
+            int minWorldSize = 0;
+            int maxWorldSize = 0;
+            if (camp.TryGetValue("minWorldSize", out JsonElement minElement))
+            {
+                minWorldSize = ReadInt(SpawnsFileName, $"{path}.minWorldSize", minElement, WorldDescriptor.MinHorizontalSize, WorldDescriptor.MaxHorizontalSize);
+            }
+
+            if (camp.TryGetValue("maxWorldSize", out JsonElement maxElement))
+            {
+                maxWorldSize = ReadInt(SpawnsFileName, $"{path}.maxWorldSize", maxElement, WorldDescriptor.MinHorizontalSize, WorldDescriptor.MaxHorizontalSize);
+                if (maxWorldSize < minWorldSize)
+                {
+                    throw Fail(SpawnsFileName, $"{path}.maxWorldSize", "is below minWorldSize");
+                }
+            }
+
             SpawnCamp parsed = new(
                 key,
                 known.Key,
@@ -800,7 +817,14 @@ public sealed partial class ContentCatalog
                 ReadFloat(SpawnsFileName, $"{path}.z", camp["z"], 0f, MaxCampCoordinate),
                 ReadInt(SpawnsFileName, $"{path}.count", camp["count"], 1, MaxCampCount),
                 ReadFloat(SpawnsFileName, $"{path}.respawnSeconds", camp["respawnSeconds"], 0.1f, MaxCampRespawnSeconds),
-                night);
+                night,
+                minWorldSize,
+                maxWorldSize);
+            if (minWorldSize > 0 && (parsed.X >= minWorldSize || parsed.Z >= minWorldSize))
+            {
+                throw Fail(SpawnsFileName, path, $"an absolute camp (minWorldSize {minWorldSize}) needs x and z inside 0..{minWorldSize}");
+            }
+
             if (!keys.Add(parsed.Key))
             {
                 throw Fail(SpawnsFileName, $"{path}.key", $"duplicate camp key '{parsed.Key}'");
@@ -1274,7 +1298,13 @@ public sealed partial class ContentCatalog
                 AppendField(text, camp.Template).Append('|')
                     .Append(camp.X.ToString("R", c)).Append('|').Append(camp.Z.ToString("R", c)).Append('|')
                     .Append(camp.Count.ToString(c)).Append('|').Append(camp.RespawnSeconds.ToString("R", c)).Append('|')
-                    .Append(camp.Night ? "night" : "any").Append('\n');
+                    .Append(camp.Night ? "night" : "any");
+                if (camp.MinWorldSize > 0 || camp.MaxWorldSize > 0)
+                {
+                    text.Append("|band|").Append(camp.MinWorldSize.ToString(c)).Append('|').Append(camp.MaxWorldSize.ToString(c));
+                }
+
+                text.Append('\n');
             }
         }
 

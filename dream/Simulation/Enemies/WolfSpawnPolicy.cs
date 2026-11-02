@@ -58,20 +58,20 @@ public static class WolfSpawnPolicy
     // Where member slot of a camp stands: its centre (x, z), scaled to the map, plus the slot's ring offset,
     // on the floor, clamped inside the map like the wolf spawns. A first choice only: it may be solid, or
     // near the world spawn (TryResolveCampSpawn checks). Pure, so every server picks the same position.
-    public static Vector3 ResolveCampSpawn(float x, float z, int slot, int campCount, int width, int depth)
+    public static Vector3 ResolveCampSpawn(float x, float z, int slot, int campCount, int width, int depth, bool absolute = false)
     {
-        return CampCandidate(x, z, slot, campCount, width, depth, ringStep: 1, ringIndex: slot);
+        return CampCandidate(x, z, slot, campCount, width, depth, ringStep: 1, ringIndex: slot, absolute);
     }
 
-    private static Vector3 CampCandidate(float x, float z, int slot, int campCount, int width, int depth, int ringStep, int ringIndex)
+    private static Vector3 CampCandidate(float x, float z, int slot, int campCount, int width, int depth, int ringStep, int ringIndex, bool absolute)
     {
         Vector2 offset = campCount > 1 || ringStep > 1
             ? CampSlotOffsets[((ringIndex % CampSlotOffsets.Length) + CampSlotOffsets.Length) % CampSlotOffsets.Length] * ringStep
             : Vector2.Zero;
         return new Vector3(
-            ClampAxis((x * width / DesignMapSize) + offset.X, width),
+            ClampAxis((absolute ? x : x * width / DesignMapSize) + offset.X, width),
             FloorSurfaceY,
-            ClampAxis((z * depth / DesignMapSize) + offset.Y, depth));
+            ClampAxis((absolute ? z : z * depth / DesignMapSize) + offset.Y, depth));
     }
 
     // The standing place for member slot of a camp on map: the first free candidate (the slot's ring spot, then
@@ -95,13 +95,13 @@ public static class WolfSpawnPolicy
                 // Step 1 starts at the slot's own ring spot; a single-member camp's first try is its centre.
                 if (step == 1 && j == 0 && camp.Count <= 1)
                 {
-                    if (TryAccept(map, CampCandidate(camp.X, camp.Z, slot, 1, map.Width, map.Depth, 1, 0), worldSpawn, aggroRange, occupied, out position))
+                    if (TryAccept(map, CampCandidate(camp.X, camp.Z, slot, 1, map.Width, map.Depth, 1, 0, camp.IsAbsolute), worldSpawn, aggroRange, occupied, out position))
                     {
                         return true;
                     }
                 }
 
-                Vector3 candidate = CampCandidate(camp.X, camp.Z, slot, 2, map.Width, map.Depth, step, slot + j);
+                Vector3 candidate = CampCandidate(camp.X, camp.Z, slot, 2, map.Width, map.Depth, step, slot + j, camp.IsAbsolute);
                 if (TryAccept(map, candidate, worldSpawn, aggroRange, occupied, out position))
                 {
                     return true;

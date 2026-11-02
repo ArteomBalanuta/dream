@@ -5,6 +5,7 @@ using Dream.Server.Characters;
 using Dream.Server.Items;
 using Dream.Server.Persistence;
 using Dream.Server.Worlds;
+using Dream.Simulation.World;
 
 namespace Dream.Application;
 
@@ -111,7 +112,7 @@ public static class Program
             if (valid)
             {
                 mode = ProcessMode.Server;
-                serverOptions = new ServerStartOptions(WorldSelector: world);
+                serverOptions = new ServerStartOptions(WorldSelector: world, NewWorldSize: WorldDefaults.ServerNewWorldSize);
                 errorMessage = null;
                 return true;
             }
