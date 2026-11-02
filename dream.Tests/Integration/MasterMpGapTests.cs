@@ -1,0 +1,280 @@
+using Microsoft.Data.Sqlite;
+using OpenTK.Mathematics;
+using Xunit;
+using Dream.Client.Startup;
+using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Actors;
+using Dream.Rendering.Hud;
+using Dream.Server;
+using Dream.Server.Hosting;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
+using Dream.Simulation.Stats;
+using Dream.Simulation.World;
+using Dream.Tests.Server.Persistence.Migrations;
+using Dream.Tests.Support;
+
+namespace Dream.Tests.Integration;
+
+// Gaps found when verifying the master-mp integration: Agility/Energy spends end to end (with a relog),
+// the mana potion's cooldown, noclip/freeze gating on a real server, a remote player's held-weapon key
+// next to M8's stat stripping, and what a brand-new character can drink with Q and R.
+[Collection(TimingSensitiveCollection.Name)]
+public sealed class MasterMpGapTests
+{
+    private const string SessionA = "mp-gap-a";
+    private const string SessionB = "mp-gap-b";
+
+    // ---- 1: Agility and Energy spend, end to end, persisted ----
+
+    [Fact]
+    public async Task SpendingAgilityAndEnergy_ChangesDefenseAttackSpeedAndMaxMana_DropsPoints_AndSurvivesARelog()
+    {
+        using MigrationTestDatabase db = new();
+        int defenseBefore;
+        int maxManaBefore;
+        float attackSpeedBefore;
+
+        await using (WireLoopbackServer server = await M4AKit.StartAsync(db))
+        {
+            await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+            await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+            PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
+
+            // A level gain: level 3 earns 10 points, a fresh character has spent none.
+            combatant.ApplyProgression(3, 0);
+            Assert.Equal(10, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
+            defenseBefore = combatant.Defense;
+            maxManaBefore = combatant.MaxMana;
+            attackSpeedBefore = combatant.Stats.AttackSpeed;
+
+            ServerActionMessage agility = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 4), a);
+            Assert.True(agility.Result.Accepted, agility.Result.Rejection?.Reason);
+            ServerActionMessage energy = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Energy, 3), a);
+            Assert.True(energy.Result.Accepted, energy.Result.Rejection?.Reason);
+            PlayerStatsUpdateResult update = Assert.IsType<PlayerStatsUpdateResult>(energy.Result.Payload);
+            Assert.Equal(14, update.Stats.Agility);
+            Assert.Equal(13, update.Stats.Energy);
+
+            Assert.Equal(14, combatant.BaseStats.Agility);
+            Assert.Equal(13, combatant.BaseStats.Energy);
+            Assert.Equal(14, combatant.Stats.Agility);
+            Assert.Equal(13, combatant.Stats.Energy);
+            Assert.Equal(PlayerStatRules.Defense(14), combatant.Defense);
+            Assert.True(combatant.Defense > defenseBefore, $"defense {defenseBefore} -> {combatant.Defense}");
+            Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
+            Assert.Equal(PlayerManaRules.MaxMana(3, 13), combatant.MaxMana);
+            Assert.True(combatant.MaxMana > maxManaBefore);
+            Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
+
+            // The remaining 3 points are all there is: a 4th is refused and nothing moves.
+            ServerActionMessage over = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 4), a);
+            Assert.False(over.Result.Accepted);
+            Assert.Equal(14, combatant.BaseStats.Agility);
+
+            // The owner's HUD hears the new base stats.
+            await M4AKit.StepThroughVitalsDrainAsync(server, a);
+            Assert.Contains(a.Applied.OfType<ServerPlayerProgress>(), p => p.BaseStats.Agility == 14 && p.BaseStats.Energy == 13);
+
+            await a.LeaveAsync();
+            M4AKit.Flush(server);
+        }
+
+        SqliteConnection.ClearAllPools();
+        await using (WireLoopbackServer again = await M4AKit.StartAsync(db))
+        {
+            await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);
+            PlayerCombatant combatant = M4AKit.Combatant(again, SessionA);
+            Assert.Equal(3, combatant.Level);
+            Assert.Equal(14, combatant.BaseStats.Agility);
+            Assert.Equal(13, combatant.BaseStats.Energy);
+            Assert.Equal(PlayerStatRules.Defense(14), combatant.Defense);
+            Assert.Equal(PlayerManaRules.MaxMana(3, 13), combatant.MaxMana);
+            Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore);
+            Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
+            await back.LeaveAsync();
+        }
+    }
+
+    // ---- 2: the mana potion ----
+
+    [Fact]
+    public async Task ManaPotion_RestoresItsManaOnce_AndASecondUseInsideTheCooldownIsRefusedAndKept()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        await M4AKit.BuyAsync(server, a, "potion.mana", a);
+        await M4AKit.BuyAsync(server, a, "potion.mana", a);
+        InventorySlotSnapshot[] potions = M4AKit.BagKind(a, "potion.mana");
+        Assert.Equal(2, potions.Length);
+
+        PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
+        Assert.True(combatant.TrySpendMana(combatant.MaxMana - 5));
+        int before = combatant.CurrentMana;
+
+        ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(potions[0].SlotIndex, potions[0].Item!.Value.ItemInstanceId), a);
+        Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
+        // Restores 40 (items.json), less than the 'max' cap would allow, so it is exactly the potion (plus at most regen).
+        Assert.InRange(combatant.CurrentMana, before + 40, combatant.MaxMana);
+        Assert.Single(M4AKit.BagKind(a, "potion.mana"));
+
+        // Spend again so a second potion has something to restore: the refusal is the cooldown, not "nothing to restore".
+        Assert.True(combatant.TrySpendMana(30));
+        int hurt = combatant.CurrentMana;
+        InventorySlotSnapshot second = M4AKit.BagKind(a, "potion.mana").Single();
+        ServerActionMessage refused = await M4AKit.ActAsync(server, a, new ItemUseIntent(second.SlotIndex, second.Item!.Value.ItemInstanceId), a);
+        Assert.False(refused.Result.Accepted);
+        Assert.Contains("cooldown", refused.Result.Rejection!.Reason, StringComparison.Ordinal);
+        Assert.Single(M4AKit.BagKind(a, "potion.mana"));
+        Assert.InRange(combatant.CurrentMana, hurt, hurt + 5);
+
+        await M4AKit.StepManyAsync(server, 330, a);
+        int rested = combatant.CurrentMana;
+        ServerActionMessage again = await M4AKit.ActAsync(server, a, new ItemUseIntent(second.SlotIndex, second.Item!.Value.ItemInstanceId), a);
+        Assert.True(again.Result.Accepted, again.Result.Rejection?.Reason);
+        Assert.Empty(M4AKit.BagKind(a, "potion.mana"));
+        Assert.True(combatant.CurrentMana >= Math.Min(combatant.MaxMana, rested + 40));
+    }
+
+    // ---- 3: dev gating on a real server ----
+
+    [Fact]
+    public async Task DedicatedServer_IgnoresNoclipOneShots_AndAServerWithDevCommandsHonoursThem()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        Assert.False(server.Host.DevCommandsAllowed);
+        Assert.False(server.Runtime.Player.IsNoclipEnabled);
+
+        PlayerMoveIntent toggle = new(0f, 0f, 0f, JumpPressed: false, FreezePressed: true, ToggleNoclipPressed: true);
+        await a.SendCommandAsync(toggle, Vector3.UnitZ, attack: false);
+        await M4AKit.StepManyAsync(server, 4, a);
+        Assert.False(server.Runtime.Player.IsNoclipEnabled);
+
+        // What the integrated single-player server sets (IntegratedLocalServerHandle.StartAsync): the same one-shot now lands.
+        server.Host.DevCommandsAllowed = true;
+        await a.SendCommandAsync(PlayerMoveIntent.None, Vector3.UnitZ, attack: false);
+        await a.SendCommandAsync(toggle, Vector3.UnitZ, attack: false);
+        await M4AKit.StepManyAsync(server, 4, a);
+        Assert.True(server.Runtime.Player.IsNoclipEnabled);
+    }
+
+    [Fact]
+    public async Task TheIntegratedLocalServer_EnablesDevCommands_WhileTheDefaultHostDoesNot()
+    {
+        using MigrationTestDatabase db = new();
+        DedicatedServerHost? created = null;
+        await using IntegratedLocalServerHandle handle = await IntegratedLocalServerHandle.StartAsync(
+            hostFactory: () => created = ServerBootstrap.CreateAuthoritativeHost(
+                ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath)));
+        Assert.True(handle.IsReady, handle.ErrorMessage);
+        Assert.True(created!.DevCommandsAllowed);
+
+        using DedicatedServerHost dedicated = ServerBootstrap.CreateAuthoritativeHost((Dream.Server.Persistence.ServerPersistenceBundle?)null);
+        Assert.False(dedicated.DevCommandsAllowed);
+    }
+
+    // ---- 4: VisualKey next to stat stripping ----
+
+    [Fact]
+    public async Task AnotherPlayersHeldWeaponKey_ReachesAStranger_WhileItsStatsAndExperienceStayHidden()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene holder = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, holder, M4AKit.Away, holder);
+        Assert.True(server.Runtime.OwnerOnlyProgress);
+
+        await using WireLoopbackClient stranger = await server.ConnectAndJoinAsync(SessionB);
+
+        InventorySlotSnapshot blade = holder.Inventory!.Value.Slots.First(slot => slot.Item?.ItemKind == "tool.field-blade");
+        ServerActionMessage equipped = await M4AKit.ActAsync(server, holder, new InventoryEquipIntent(blade.SlotIndex), holder);
+        Assert.True(equipped.Result.Accepted, equipped.Result.Rejection?.Reason);
+
+        int holderActor = M4AKit.Target(server, SessionA).ActorId;
+        List<ActorSnapshot> seen = [];
+        for (int i = 0; i < 30; i++)
+        {
+            await M4AKit.StepAsync(server, holder);
+            await server.FlushAllAsync();
+            seen.Clear();
+            foreach (WireFrame frame in stranger.Frames)
+            {
+                switch (frame.Decoded.Message)
+                {
+                    case JoinAcceptedMessage joined:
+                        seen.AddRange(joined.EffectiveInitialActors.Where(actor => actor.ActorId == holderActor));
+                        break;
+                    case ServerSnapshotMessage snapshot:
+                        seen.AddRange(snapshot.Snapshot.Actors.Where(actor => actor.ActorId == holderActor));
+                        break;
+                }
+            }
+
+            if (seen.Any(actor => actor.VisualKey is not null))
+            {
+                break;
+            }
+        }
+
+        ActorSnapshot withKey = seen.Last(actor => actor.VisualKey is not null);
+        PlayerEquipmentVisuals visuals = PlayerEquipmentVisuals.Parse(withKey.VisualKey);
+        Assert.NotNull(visuals.MainHand);
+        Assert.StartsWith("held.", visuals.MainHand, StringComparison.Ordinal);
+        // The stripped fields: no combat stats on any sighting, experience hidden.
+        Assert.All(seen, actor =>
+        {
+            Assert.Null(actor.CombatStats);
+            Assert.Equal(WorldSessionRuntime.HiddenExperience, actor.Progression!.Value.Experience);
+        });
+    }
+
+    // ---- 5: a new character's quickbar and the kit potions ----
+
+    [Fact]
+    public async Task ANewCharacter_HasOnlyKitHealingDraughts_QuickbarFiveAndSixNameShopPotions_QDrinksButRHasNothing()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        PlayerInventorySnapshot inventory = a.Inventory!.Value;
+
+        // The kit: consumable.* draughts, no potion.health or potion.mana.
+        Assert.Empty(M4AKit.BagKind(a, "potion.health"));
+        Assert.Empty(M4AKit.BagKind(a, "potion.mana"));
+        Assert.NotEmpty(M4AKit.BagKind(a, "consumable.weak-heal"));
+        Assert.NotEmpty(M4AKit.BagKind(a, "consumable.minor-heal"));
+        Assert.DoesNotContain(inventory.Slots, slot => slot.Item is { } item && item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal) && item.ItemKind.Contains("mana", StringComparison.Ordinal));
+
+        // The bar is the content default, and its keys 5 and 6 are bound to the shop potions by kind.
+        Assert.Null(inventory.Quickbar);
+        QuickbarHudState bar = a.Quickbar;
+        Assert.Equal(new QuickbarSlotSnapshot(4, QuickbarEntryKind.Item, "potion.health"), bar.Slot(4));
+        Assert.Equal(new QuickbarSlotSnapshot(5, QuickbarEntryKind.Item, "potion.mana"), bar.Slot(5));
+        Assert.False(bar.TryGetItemTarget(4, out _, out _));
+        Assert.False(bar.TryGetItemTarget(5, out _, out _));
+        Assert.Equal(0, bar.ItemCount(4));
+        Assert.Equal(0, bar.ItemCount(5));
+
+        // Q and R look for any potion that restores the pool, whatever its kind.
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Health, out int anchor, out string kind, out _));
+        Assert.StartsWith("consumable.", kind, StringComparison.Ordinal);
+        Assert.False(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out _, out _, out _));
+
+        // And the server accepts that kit draught.
+        PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
+        int max = combatant.Health.MaxHealth;
+        combatant.Health.SetAuthoritativeState(max - 60, max);
+        Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemId));
+        ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(anchor, itemId), a);
+        Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
+        Assert.True(combatant.Health.CurrentHealth > max - 60);
+    }
+}
