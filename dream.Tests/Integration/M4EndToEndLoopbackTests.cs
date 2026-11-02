@@ -292,11 +292,10 @@ public sealed class M4EndToEndLoopbackTests
         await using HeadlessPlayScene a = await HeadlessPlayScene.JoinAsync(server, SessionA);
         await StepAsync(server, [a]);
 
-        // Slot 4 (key 4) is empty on the default bar; slots 5 and 6 are potions the bag does not hold.
+        // Slot index 3 (key 4) is empty on the default bar; slots 5 and 6 are potions a new character now holds (kit v4), so those do send.
         Assert.Null(Press(a, 3));
-        Assert.Null(Press(a, 4));
-        Assert.Null(Press(a, 5));
-        Assert.Equal(0, a.Quickbar.ItemCount(4));
+        Assert.Equal(1, a.Quickbar.ItemCount(4));
+        Assert.Equal(1, a.Quickbar.ItemCount(5));
     }
 
     [Fact]
@@ -411,7 +410,7 @@ public sealed class M4EndToEndLoopbackTests
             Assert.True(result.Result.Accepted, result.Result.Rejection?.Reason);
         }
 
-        Assert.Equal(2, a.Quickbar.ItemCount(4));
+        Assert.Equal(3, a.Quickbar.ItemCount(4));
 
         // The vendor window sat over the inventory, which takes the keys from play: close it, as V does.
         a.Scene.PressInventoryKey();
@@ -424,7 +423,7 @@ public sealed class M4EndToEndLoopbackTests
         Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
         Assert.IsType<InventoryChangedResult>(used.Result.Payload);
         Assert.True(target.Combatant.Health.CurrentHealth > max / 4);
-        Assert.Equal(1, a.Quickbar.ItemCount(4));
+        Assert.Equal(2, a.Quickbar.ItemCount(4));
 
         // The second inside the cooldown is refused and costs nothing.
         int healthAfterFirst = target.Combatant.Health.CurrentHealth;
@@ -433,7 +432,7 @@ public sealed class M4EndToEndLoopbackTests
         ServerActionMessage refused = await ResultAsync(server, all, a, second);
         Assert.False(refused.Result.Accepted);
         Assert.Equal(max / 4, target.Combatant.Health.CurrentHealth);
-        Assert.Equal(1, a.Quickbar.ItemCount(4));
+        Assert.Equal(2, a.Quickbar.ItemCount(4));
         Assert.True(healthAfterFirst > max / 4);
 
         // The cooldown shows on the tile for a while after the use.

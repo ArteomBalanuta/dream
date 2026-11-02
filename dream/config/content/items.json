@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "starterKitVersion": 3,
+  "starterKitVersion": 4,
   "unrecordedStarterKitVersion": 1,
   "starterKit": [
     { "item": "tool.builder-hammer", "version": 1 },
@@ -9,7 +9,9 @@
     { "item": "tool.survey-lantern", "version": 1 },
     { "item": "tool.torch", "version": 2 },
     { "item": "consumable.weak-heal", "version": 3 },
-    { "item": "consumable.minor-heal", "version": 3 }
+    { "item": "consumable.minor-heal", "version": 3 },
+    { "item": "potion.health", "version": 4 },
+    { "item": "potion.mana", "version": 4 }
   ],
   "items": [
     {

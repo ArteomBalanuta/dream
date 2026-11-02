@@ -147,14 +147,16 @@ public sealed class ContentCatalogTests
             new("tool.survey-lantern", 1),
             new("tool.torch", 2),
             new("consumable.weak-heal", 3),
-            new("consumable.minor-heal", 3)
+            new("consumable.minor-heal", 3),
+            new("potion.health", 4),
+            new("potion.mana", 4)
         ];
 
         Assert.Equal(expected, ContentCatalog.Shipped.StarterKit);
         Assert.Equal(expected, ToolCatalog.StarterKit);
         Assert.Equal(expected.Select(entry => entry.ItemKind), ToolCatalog.StarterItemKinds);
-        Assert.Equal(3, ContentCatalog.Shipped.StarterKitVersion);
-        Assert.Equal(3, ToolCatalog.CurrentStarterKitVersion);
+        Assert.Equal(4, ContentCatalog.Shipped.StarterKitVersion);
+        Assert.Equal(4, ToolCatalog.CurrentStarterKitVersion);
         Assert.Equal(1, ContentCatalog.Shipped.UnrecordedStarterKitVersion);
         Assert.Equal(1, ToolCatalog.UnrecordedStarterKitVersion);
     }
@@ -216,7 +218,7 @@ public sealed class ContentCatalogTests
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"TOOL.FIELD-BLADE\"", "duplicate item key")]
     [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
     [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
-    [InlineData("\"starterKitVersion\": 3", "\"starterKitVersion\": 4", "must equal the highest starter kit entry version")]
+    [InlineData("\"starterKitVersion\": 4", "\"starterKitVersion\": 5", "must equal the highest starter kit entry version")]
     [InlineData("\"heldLight\": \"Torch\"", "\"heldLight\": \"Sun\"", "unknown held light")]
     [InlineData("\"visualId\": \"held.tool.torch\"", "\"visualId\": \"held.tool.torch\", \"extra\": 1", "unknown property")]
     [InlineData("\"displayName\": \"Torch\"", "\"displayName\": \" \"", "must not be blank")]

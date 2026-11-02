@@ -107,7 +107,7 @@ public sealed class MasterMpGapTests
         await using WireLoopbackServer server = await M4AKit.StartAsync(db);
         await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
         await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
-        await M4AKit.BuyAsync(server, a, "potion.mana", a);
+        // The kit holds one mana potion (starter kit v4); one bought makes the two this test needs.
         await M4AKit.BuyAsync(server, a, "potion.mana", a);
         InventorySlotSnapshot[] potions = M4AKit.BagKind(a, "potion.mana");
         Assert.Equal(2, potions.Length);
@@ -257,7 +257,7 @@ public sealed class MasterMpGapTests
     // ---- 5: a new character's quickbar and the kit potions ----
 
     [Fact]
-    public async Task ANewCharacter_HasOnlyKitHealingDraughts_QuickbarFiveAndSixNameShopPotions_QDrinksButRHasNothing()
+    public async Task ANewCharacter_HoldsKitPotions_QuickbarFiveAndSixResolveToThem_QAndRBothWork()
     {
         using MigrationTestDatabase db = new();
         await using WireLoopbackServer server = await M4AKit.StartAsync(db);
@@ -265,27 +265,27 @@ public sealed class MasterMpGapTests
         await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
         PlayerInventorySnapshot inventory = a.Inventory!.Value;
 
-        // The kit: consumable.* draughts, no potion.health or potion.mana.
-        Assert.Empty(M4AKit.BagKind(a, "potion.health"));
-        Assert.Empty(M4AKit.BagKind(a, "potion.mana"));
+        // The kit (v4): the consumable.* healing draughts plus one potion.health and one potion.mana, the kinds keys 5 and 6 are bound to.
+        Assert.Single(M4AKit.BagKind(a, "potion.health"));
+        Assert.Single(M4AKit.BagKind(a, "potion.mana"));
         Assert.NotEmpty(M4AKit.BagKind(a, "consumable.weak-heal"));
         Assert.NotEmpty(M4AKit.BagKind(a, "consumable.minor-heal"));
-        Assert.DoesNotContain(inventory.Slots, slot => slot.Item is { } item && item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal) && item.ItemKind.Contains("mana", StringComparison.Ordinal));
 
         // The bar is the content default, and its keys 5 and 6 are bound to the shop potions by kind.
         Assert.Null(inventory.Quickbar);
         QuickbarHudState bar = a.Quickbar;
         Assert.Equal(new QuickbarSlotSnapshot(4, QuickbarEntryKind.Item, "potion.health"), bar.Slot(4));
         Assert.Equal(new QuickbarSlotSnapshot(5, QuickbarEntryKind.Item, "potion.mana"), bar.Slot(5));
-        Assert.False(bar.TryGetItemTarget(4, out _, out _));
-        Assert.False(bar.TryGetItemTarget(5, out _, out _));
-        Assert.Equal(0, bar.ItemCount(4));
-        Assert.Equal(0, bar.ItemCount(5));
+        Assert.True(bar.TryGetItemTarget(4, out _, out _));
+        Assert.True(bar.TryGetItemTarget(5, out _, out _));
+        Assert.Equal(1, bar.ItemCount(4));
+        Assert.Equal(1, bar.ItemCount(5));
 
         // Q and R look for any potion that restores the pool, whatever its kind.
         Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Health, out int anchor, out string kind, out _));
         Assert.StartsWith("consumable.", kind, StringComparison.Ordinal);
-        Assert.False(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out _, out _, out _));
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out int manaAnchor, out string manaKind, out _));
+        Assert.Equal("potion.mana", manaKind);
 
         // And the server accepts that kit draught.
         PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
@@ -295,5 +295,13 @@ public sealed class MasterMpGapTests
         ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(anchor, itemId), a);
         Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
         Assert.True(combatant.Health.CurrentHealth > max - 60);
+
+        // R: the kit's mana potion restores mana.
+        Assert.True(combatant.TrySpendMana(combatant.MaxMana - 5));
+        int manaBefore = combatant.CurrentMana;
+        Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, manaAnchor, out long manaItemId));
+        ServerActionMessage drank = await M4AKit.ActAsync(server, a, new ItemUseIntent(manaAnchor, manaItemId), a);
+        Assert.True(drank.Result.Accepted, drank.Result.Rejection?.Reason);
+        Assert.True(combatant.CurrentMana > manaBefore);
     }
 }
