@@ -319,7 +319,9 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         // wolf stands still and nobody is bitten in 200 ticks) moves it to 58,140 B.
         // The lowered experience curve (100 + level * 50, M2) shortens experienceToNextLevel at level 1 from 1023 to 150,
         // one byte per progression it carries (8 in all): 58,132 B.
-        Assert.Equal(58_132L, total);
+        // The stats sheet merge (protocol 19) widens the combat group to [str, as, vit, agi, energy]: ",0,0" more
+        // in each of the 8 combat groups these frames carry: 58,164 B.
+        Assert.Equal(58_164L, total);
     }
 
     [Fact]

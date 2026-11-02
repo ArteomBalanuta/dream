@@ -30,11 +30,15 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // Re-pinned by the lowered experience curve (migration 0011: 100 + level * 50): the join's player progression
     // reads experienceToNextLevel 150 instead of 1023 at level 1, one digit shorter. Sha-256 was df39f10be444bb95...,
     // now 73d2a7482a21a23b.... The join is 6,030 B in all.
+    // Re-pinned by the stats sheet merge (protocol 19): the player's combatStats object carries
+    // ,"agility":10,"energy":10 (26 B) and the player actor its "visualKey":"held.tool.builder|" (32 B,
+    // the worn main hand and empty off hand). Sha-256 was 73d2a7482a21a23b..., now c1ba86757bab6b22....
+    // The join is 6,088 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 6_030;
+    private const long C0TotalBytes = 6_088;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "73d2a7482a21a23b75e355ddb71e9bcf3c3adb43ac6b4fe1fe81cb37d4e9f230";
+    private const string C0Sha256 = "c1ba86757bab6b2276d285f8bd1ef914f7875699180b6ff469cda6f0d2ca4d9e";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
