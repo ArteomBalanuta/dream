@@ -140,7 +140,9 @@ public sealed class LootGrantTests
 
         Assert.True(Assert.IsType<CombatResolutionResult>(hit.Payload).TargetDied);
         Assert.Equal(full, Backpack(run.Runtime, Killer));
-        Assert.Equal(itemsBefore, run.Runtime.NextItemInstanceId);
+        // M3: the overflow takes one item id and lies on the ground (an unowned row), not in any bag.
+        Assert.Equal(itemsBefore + 1, run.Runtime.NextItemInstanceId);
+        Assert.Equal(1, run.Runtime.GroundItemCount);
         List<SessionInventoryPush> pushes = [];
         run.Runtime.DrainInventoryPushesInto(pushes);
         InventoryPushMessage push = Assert.Single(pushes).Message;

@@ -82,6 +82,20 @@ public sealed partial class WorldSessionRuntime
                     AddLootNotice(killer, drop, lost: false, inventoryChanged: true);
                     break;
                 case InventoryEquipOutcome.BackpackFull:
+                    // M3: the overflow lands on the ground near the kill, claimed by the winner for a
+                    // while. The notice stays a "lost" one either way, so its priority is unchanged.
+                    if (!_inventory.TryDropRolled(
+                            drop.ItemKind,
+                            drop.Rarity,
+                            in seed,
+                            RingPosition(deathPosition, dropIndex),
+                            characterKey,
+                            player.ActorId,
+                            tick))
+                    {
+                        NetworkDiagnosticsLog.Write("server.loot.skipped", $"reason=ground-drop-failed kind={enemyKind}");
+                    }
+
                     AddLootNotice(killer, drop, lost: true, inventoryChanged: false);
                     break;
                 default:
@@ -89,6 +103,15 @@ public sealed partial class WorldSessionRuntime
                     break;
             }
         }
+    }
+
+    // Drops of one kill spread on a small ring around the death position (golden angle, so any count
+    // stays apart), so they can be told apart and clicked.
+    private static Vector3 RingPosition(Vector3 center, int dropIndex)
+    {
+        const float radius = 0.7f;
+        float angle = dropIndex * 2.3999632f;
+        return new Vector3(center.X + (MathF.Cos(angle) * radius), center.Y, center.Z + (MathF.Sin(angle) * radius));
     }
 
     internal void AddLootNotice(PlayerSessionId session, LootDrop drop, bool lost, bool inventoryChanged)
