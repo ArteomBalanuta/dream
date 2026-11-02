@@ -51,10 +51,6 @@ public partial class PlayScene
         }
 
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
-        // Only the integrated host (Game.CreateLocalServerHandle) lets noclip and freeze through.
-        _commandInputFilter.AllowDevToggles = _localServer is { IsReady: true } localServer
-            && LoopbackHost.IsLoopback(_remoteClient.Options.Host)
-            && _remoteClient.Options.Port == localServer.BoundPort;
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         PlayJumpSoundIfPressed(commandFrame.MoveIntent.JumpPressed);

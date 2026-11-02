@@ -284,8 +284,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
 
     public static DedicatedServerHost CreateRuntimeAttached(
         Dream.Server.Persistence.ServerPersistenceBundle? persistence = null,
-        bool deferJoinsToTick = false,
-        bool allowDevMovement = false)
+        bool deferJoinsToTick = false)
     {
         CharacterListHandler characterLists = new();
         ProtocolRouter router = new(
@@ -293,7 +292,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 new ClientHelloHandler(),
                 characterLists,
                 new JoinRequestHandler(),
-                new PlayerCommandHandler(allowDevMovement),
+                new PlayerCommandHandler(),
                 new PlayerActionHandler(),
                 new WorldResyncRequestHandler(),
                 new ChatMessageHandler()

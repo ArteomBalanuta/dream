@@ -22,8 +22,7 @@ public class ClientInputValidationTests
     public static TheoryData<IPlayerActionPayload> ServerOnlyPayloads => new()
     {
         new BuildUseIntent(new Vector3(6f, 1f, 5f)),
-        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ),
-        new PlayerStatsUpdateIntent(new PlayerCombatStatsSnapshot(10, 2.5f, 12))
+        new CombatUseIntent(new Vector3(5f, 1.85f, 5f), -Vector3.UnitZ)
     };
 
     [Theory]
@@ -224,20 +223,20 @@ public class ClientInputValidationTests
         Assert.Null(frame.LookIntent.Facing);
     }
 
-    // Noclip and freeze are dev movement: a dedicated server (the default) clears them, the
-    // integrated single-player host (allowDevMovement) passes them through.
+    // Noclip and freeze are development commands: a dedicated server (the default) clears them, a host
+    // with DevCommandsAllowed (the integrated single-player host, or DREAM_DEV_COMMANDS=1) passes them.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void CommandHandler_ClearsNoclipAndFreeze_UnlessDevMovementIsAllowed(bool allowDevMovement)
+    public void CommandHandler_ClearsNoclipAndFreeze_UnlessDevCommandsAreAllowed(bool allowDevMovement)
     {
         LatestPlayerCommandInbox inbox = new();
-        ServerRoutingContext context = new("connection-1", new FakeAuthority(), commandInbox: inbox)
+        ServerRoutingContext context = new("connection-1", new FakeAuthority { DevCommandsAllowed = allowDevMovement }, commandInbox: inbox)
         {
             LastJoinRequest = new ClientJoinRequestMessage(SessionA, "player-a")
         };
 
-        new PlayerCommandHandler(allowDevMovement).Handle(context, new PlayerCommandMessage(new PlayerCommandFrame(
+        new PlayerCommandHandler().Handle(context, new PlayerCommandMessage(new PlayerCommandFrame(
             new PlayerSessionId(SessionA),
             4,
             PlayerModeSwitchIntent.None,
@@ -252,7 +251,6 @@ public class ClientInputValidationTests
         Assert.Equal(allowDevMovement, frame.MoveIntent.ToggleNoclipPressed);
         Assert.True(frame.MoveIntent.JumpPressed);
         Assert.Equal(0.5f, frame.MoveIntent.ForwardAxis);
-        Assert.False(new ServerStartOptions().AllowDevMovement);
     }
 
     [Fact]

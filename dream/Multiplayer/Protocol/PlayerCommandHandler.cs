@@ -5,15 +5,6 @@ namespace Dream.Multiplayer.Protocol;
 
 public sealed class PlayerCommandHandler : IServerMessageHandler
 {
-    private readonly bool _allowDevMovement;
-
-    // allowDevMovement: whether client noclip and freeze toggles reach the simulation. Off by
-    // default (dedicated servers); the integrated single-player host turns it on.
-    public PlayerCommandHandler(bool allowDevMovement = false)
-    {
-        _allowDevMovement = allowDevMovement;
-    }
-
     public string MessageKind => "player.command";
 
     public void Handle(ServerRoutingContext context, IClientToServerMessage message)
