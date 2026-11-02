@@ -71,6 +71,7 @@ public sealed class MixerGameAudio : IGameAudio
         }
 
         _music = track;
+        AudioDiagnostics.Log($"music {track}");
         _mixer.SetLoopTarget(AudioLoopId.MusicMenu, track == MusicTrack.Menu ? 1f : 0f, AudioMixer.MusicFadeSeconds);
         _mixer.SetLoopTarget(AudioLoopId.MusicWorld, track == MusicTrack.World ? 1f : 0f, AudioMixer.MusicFadeSeconds);
     }
@@ -119,6 +120,7 @@ public sealed class MixerGameAudio : IGameAudio
 
         if (_bank.TryGet(id, _random, out WavClip clip))
         {
+            AudioDiagnostics.Log($"play {id} gain={left:F2}/{right:F2} pitch={pitch:F2}");
             _mixer.PlayOneShot(id, clip, Math.Max(0f, left), Math.Max(0f, right), pitch);
         }
     }

@@ -69,6 +69,12 @@ public sealed class AudioMixer
     // Voices playing as of the last Read.
     public int ActiveVoiceCount => Volatile.Read(ref _activeVoices);
 
+    // Current gain of a loop bed (diagnostics and tests; a racy read is fine).
+    public float LoopGain(AudioLoopId loop) => _loops[(int)loop].Gain;
+
+    public string DescribeLoops() =>
+        $"music={LoopGain(AudioLoopId.MusicMenu):F2}/{LoopGain(AudioLoopId.MusicWorld):F2} wind={LoopGain(AudioLoopId.Wind):F2} night={LoopGain(AudioLoopId.Night):F2} voices={ActiveVoiceCount}";
+
     public void SetVolumes(AudioVolumes volumes)
     {
         _volumes = volumes;

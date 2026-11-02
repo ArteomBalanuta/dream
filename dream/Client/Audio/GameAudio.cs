@@ -101,7 +101,9 @@ public static class GameAudio
             return "DREAM_AUDIO=0";
         }
 
-        if (!string.IsNullOrWhiteSpace(environment("DREAM_HUD_CAPTURE")))
+        // DREAM_AUDIO=1 set explicitly lets a scripted capture run sound (audio diagnostics).
+        bool forced = flag is not null && AudioDiagnostics.IsOn(flag);
+        if (!forced && !string.IsNullOrWhiteSpace(environment("DREAM_HUD_CAPTURE")))
         {
             return "DREAM_HUD_CAPTURE is set";
         }
