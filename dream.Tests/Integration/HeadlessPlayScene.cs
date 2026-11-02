@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Application;
+using Dream.Client.Input;
 using Dream.Client.Networking;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
@@ -10,6 +11,7 @@ using Dream.Client.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
 using Dream.Server;
 using Dream.Simulation.Inventory;
@@ -107,6 +109,8 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         Set(scene, "_scenePresenter", new ClientScenePresenter(session.SessionId));
         Set(scene, "_combatFeedback", new CombatFeedbackSystem(events, new FloatingCombatTextSystem()));
         Set(scene, "_actionFeedback", new AuthoritativeActionFeedbackSystem(events));
+        // An uninitialized object skips BindNewChat, and the fill below needs a parameterless constructor.
+        Set(scene, "_chatInput", new ChatInput(new ChatHudState()));
         Set(scene, "_lastWorldResyncRequestSeconds", double.NegativeInfinity);
         Set(scene, "_snapshotLogKey", string.Empty);
         Set(scene, "_commandLogKey", string.Empty);
