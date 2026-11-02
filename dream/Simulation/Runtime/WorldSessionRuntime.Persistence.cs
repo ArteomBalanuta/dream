@@ -67,6 +67,14 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
         ReapplyPersistedHealth(sessionId, worldState);
+        // Experience saved under an older, steeper curve may now be a full level or more: the join
+        // levelled it (ApplyPersistedPlayerState), so the profile is saved with the result.
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? restored)
+            && restored != null
+            && (restored.Combatant.Level != profile.Stats.Level || restored.Combatant.Experience != profile.Stats.Experience))
+        {
+            PersistPlayerProfile(sessionId, restored.Combatant);
+        }
     }
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
@@ -96,7 +104,20 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
             AttackSpeed = profile.Stats.AttackSpeed,
             Vitality = profile.Stats.Vitality
         });
-        playerTarget.Combatant.ApplyProgression(profile.Stats.Level, profile.Stats.Experience);
+        // Run the level-up loop once over the stored values (the same loop a kill uses): experience that
+        // outgrew the formula it was saved under becomes levels instead of an over-100 percent bar. The
+        // bonus levels are accepted.
+        int level = Math.Max(1, profile.Stats.Level);
+        int experience = Math.Max(0, profile.Stats.Experience);
+        int required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        while (experience >= required)
+        {
+            experience -= required;
+            level++;
+            required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        }
+
+        playerTarget.Combatant.ApplyProgression(level, experience);
 
         // A primary seat with no row starts at the world spawn, not where the last occupant stood.
         Vector3 fallbackPosition = worldState == null && sessionId == ResolvePrimaryControlledSessionId()
@@ -231,6 +252,8 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         maxHealth = target.Combatant.Health.MaxHealth;
         return true;
     }
+
+    Vector3 IRuntimePersistenceHost.WorldSpawn => _worldSpawn;
 
     bool IRuntimePersistenceHost.TryAllocateEnemyActorId(out int actorId) => TryAllocateEnemyActorId(out actorId);
 

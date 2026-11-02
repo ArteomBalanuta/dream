@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -174,6 +175,13 @@ public sealed partial class WorldSessionRuntime
         player.RespawnAtTick = 0;
         player.ProtectedThroughTick = 0;
         _pendingLoot.Remove(sessionId);
+        // A session id can be reused by a later join: it must not inherit this one's kill credit.
+        IReadOnlyList<EnemyActor> creditedEnemies = _enemies.ActiveActors;
+        for (int i = 0; i < creditedEnemies.Count; i++)
+        {
+            creditedEnemies[i].ClearContributor(sessionId);
+        }
+
         // After MarkDespawned, so the leaving session no longer counts as holding its name. The
         // profile was just saved, so the cached copy may now be evicted.
         MarkProfileDeparted(player.CharacterKey.Value);

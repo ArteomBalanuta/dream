@@ -523,6 +523,7 @@ internal sealed partial class RuntimePersistenceBridge
         _enemies.Clear();
         _enemyCampKeys.Clear();
         Dictionary<string, int> restoredPerCamp = new(StringComparer.Ordinal);
+        List<Vector3> restoredHomes = [];
         PersistedEnemyInstance[] ordered = enemies.OrderBy(enemy => enemy.ObjectId).ToArray();
         foreach (PersistedEnemyInstance enemy in ordered)
         {
@@ -558,7 +559,21 @@ internal sealed partial class RuntimePersistenceBridge
                 campKey = camp.Key;
                 restoredPerCamp.TryGetValue(camp.Key, out int slot);
                 restoredPerCamp[camp.Key] = slot + 1;
-                home = WolfSpawnPolicy.ResolveCampSpawn(camp.X, camp.Z, slot, camp.Count, map.Width, map.Depth);
+                if (!WolfSpawnPolicy.TryResolveCampSpawn(
+                        map,
+                        camp,
+                        slot,
+                        _host.WorldSpawn,
+                        Math.Max(template.AggroRange, template.AttackRange),
+                        restoredHomes,
+                        out home))
+                {
+                    // No free place for it on this map: the member is dropped like a spawn that finds none,
+                    // and its row deleted so the camp's refill is not a duplicate of it (the actor id taken is not reused).
+                    ObjectId droppedId = enemy.ObjectId;
+                    EnqueueWorldWrite(world => world.DeleteEnemyInstance(droppedId));
+                    continue;
+                }
             }
             else
             {
@@ -567,6 +582,7 @@ internal sealed partial class RuntimePersistenceBridge
                     : WolfSpawnPolicy.ResolveInitialSpawn(map.Width, map.Depth);
             }
 
+            restoredHomes.Add(home);
             _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
             if (campKey != null)

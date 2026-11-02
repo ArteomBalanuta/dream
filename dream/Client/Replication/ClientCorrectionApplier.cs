@@ -71,6 +71,7 @@ public static class ClientCorrectionApplier
         {
             PlayerProgressionSnapshot progression = actor.Value.Progression.Value;
             runtime.Player.Combatant.ApplyProgression(progression.Level, progression.Experience);
+            runtime.SetServerExperienceToNextLevel(progression.ExperienceToNextLevel);
         }
 
         if (reconciler == null)

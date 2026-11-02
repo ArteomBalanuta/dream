@@ -136,6 +136,27 @@ public sealed class EnemyActor
         }
     }
 
+    // Drops a session's entry (it detached; a later session reusing the id must not inherit its credit).
+    public void ClearContributor(PlayerSessionId sessionId)
+    {
+        for (int i = 0; i < _contributorCount; i++)
+        {
+            if (_contributors[i].SessionId != sessionId)
+            {
+                continue;
+            }
+
+            _contributorCount--;
+            for (int j = i; j < _contributorCount; j++)
+            {
+                _contributors[j] = _contributors[j + 1];
+            }
+
+            _contributors[_contributorCount] = default;
+            return;
+        }
+    }
+
     public bool IsActive => Combatant.Health.IsAlive;
 
     public void Update(

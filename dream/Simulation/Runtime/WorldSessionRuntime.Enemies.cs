@@ -234,11 +234,16 @@ public sealed partial class WorldSessionRuntime
     private int[] _campAlive = [];
     private ContentCatalog? _campStatesFor;
 
-    private void EnsureCampStates()
+    // Positions the camp spawn must keep clear of (the homes of the active enemies); reused per spawn tick.
+    private readonly List<Vector3> _campOccupiedScratch = [];
+    private readonly List<int> _legacyEnemyScratch = [];
+
+    // True when the states were just (re)built: the first camp step for this content.
+    private bool EnsureCampStates()
     {
         if (ReferenceEquals(_campStatesFor, EnemyContent))
         {
-            return;
+            return false;
         }
 
         IReadOnlyList<SpawnCamp> camps = EnemyContent.Camps;
@@ -254,6 +259,7 @@ public sealed partial class WorldSessionRuntime
         }
 
         _campStatesFor = EnemyContent;
+        return true;
     }
 
     // The camp population step: authoritative only, once per tick at the place the wolf step runs.
@@ -265,7 +271,12 @@ public sealed partial class WorldSessionRuntime
     // except on a spawn or despawn tick.
     private void StepSpawnCamps()
     {
-        EnsureCampStates();
+        bool firstFill = EnsureCampStates();
+        if (firstFill)
+        {
+            DropLegacyCamplessEnemies();
+        }
+
         int[] alive = _campAlive;
         Array.Clear(alive);
         IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
@@ -285,6 +296,14 @@ public sealed partial class WorldSessionRuntime
         for (int c = 0; c < _campStates.Length; c++)
         {
             CampState state = _campStates[c];
+            if (firstFill)
+            {
+                // A restart restores the camp's survivors in the first ring slots, so new members take the
+                // next ones. The camp then refills at once (Seeded is false), which is accepted: a restart
+                // does not preserve the respawn timers of the members that were dead.
+                state.NextSlot = alive[c];
+            }
+
             SpawnCamp camp = state.Camp;
             if (camp.Night && !night)
             {
@@ -312,15 +331,62 @@ public sealed partial class WorldSessionRuntime
                 Array.Copy(state.Due, 1, state.Due, 0, state.Pending);
                 if (EnemyContent.TryGetEnemy(camp.Template, out EnemyTemplate template))
                 {
-                    SpawnEnemy(
-                        template,
-                        WolfSpawnPolicy.ResolveCampSpawn(camp.X, camp.Z, state.NextSlot++, camp.Count, Map.Width, Map.Depth),
-                        camp.Key);
+                    // A member with no free place (solid terrain, the world spawn's aggro range, or the others
+                    // standing there) is skipped; the camp retries after its respawn delay.
+                    _campOccupiedScratch.Clear();
+                    for (int i = 0; i < enemies.Count; i++)
+                    {
+                        if (enemies[i].IsActive)
+                        {
+                            _campOccupiedScratch.Add(enemies[i].HomePosition);
+                        }
+                    }
+
+                    if (WolfSpawnPolicy.TryResolveCampSpawn(
+                            Map,
+                            camp,
+                            state.NextSlot++,
+                            _worldSpawn,
+                            Math.Max(template.AggroRange, template.AttackRange),
+                            _campOccupiedScratch,
+                            out Vector3 spawnPosition))
+                    {
+                        SpawnEnemy(template, spawnPosition, camp.Key);
+                    }
                 }
             }
         }
     }
 
+    // The first camp fill of a world drops the owned enemies with no camp key (rows from before the camps):
+    // the camps populate the world now, so they would be extras, and a night wolf would last all day.
+    private void DropLegacyCamplessEnemies()
+    {
+        _legacyEnemyScratch.Clear();
+        IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            int actorId = enemies[i].Combatant.Actor.Id;
+            if (enemies[i].IsActive
+                && actorId >= ReplicatedActorIdRanges.FirstEnemyId
+                && actorId < _nextEnemyActorId
+                && !_persistence.TryGetEnemyCampKey(actorId, out _))
+            {
+                _legacyEnemyScratch.Add(actorId);
+            }
+        }
+
+        for (int i = 0; i < _legacyEnemyScratch.Count; i++)
+        {
+            if (_enemies.Remove(_legacyEnemyScratch[i]))
+            {
+                DeletePersistedEnemy(_legacyEnemyScratch[i]);
+            }
+        }
+    }
+
+    // Dawn removes a night camp's highest-id member, but not one in a fight: with damage contributors, or
+    // chasing or attacking, it stays and is removed on a later tick once it idles.
     private void RemoveHighestCampMember(int campIndex)
     {
         int removeId = 0;
@@ -331,6 +397,9 @@ public sealed partial class WorldSessionRuntime
             int actorId = enemy.Combatant.Actor.Id;
             if (enemy.IsActive
                 && actorId > removeId
+                && enemy.Contributors.Length == 0
+                && enemy.BehaviorState != EnemyBehaviorState.Chasing
+                && enemy.BehaviorState != EnemyBehaviorState.Attacking
                 && _persistence.TryGetEnemyCampKey(actorId, out string campKey)
                 && _campIndexByKey.TryGetValue(campKey, out int index)
                 && index == campIndex)

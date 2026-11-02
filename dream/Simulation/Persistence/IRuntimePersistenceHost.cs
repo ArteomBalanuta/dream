@@ -39,6 +39,10 @@ internal interface IRuntimePersistenceHost
 
     void SpawnInitialWolf();
 
+    // Where players join and respawn; camp members keep out of the aggro range of it. Defaults to the
+    // runtime's usual start so test fakes need not provide it.
+    Vector3 WorldSpawn => new(5f, 1.5f, 5f);
+
     // Inventory forwarders (the runtime's inventory partial).
     bool IsPlayerInventoryLoaded(string playerName);
 

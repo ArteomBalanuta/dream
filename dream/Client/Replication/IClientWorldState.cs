@@ -31,5 +31,11 @@ public interface IClientWorldState : IReplicatedSessionStateTarget
     // Records the descriptor when the map already has its size.
     void AdoptWorldDescriptor(WorldDescriptor world);
 
+    // The experience needed for the next level, as the server's snapshot states it; the HUD shows it
+    // rather than evaluating a formula the client may not share.
+    void SetServerExperienceToNextLevel(int required)
+    {
+    }
+
     bool TryResolveCombatActor(int actorId, out CombatActorHandle actor);
 }

@@ -1,6 +1,7 @@
 using System.Reflection;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Multiplayer.Sessions;
 using Dream.Server.Persistence;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
@@ -29,7 +30,7 @@ public sealed class SpawnCampTests
 
     private static string Camps(params string[] camps) => "{\"version\":1,\"camps\":[" + string.Join(",", camps) + "]}";
 
-    private static string Camp(string key = "camp-a", string template = "Wolf", string x = "10.5", string z = "10.5", string count = "2", string respawn = "1", string extra = "") =>
+    private static string Camp(string key = "camp-a", string template = "Wolf", string x = "8.5", string z = "40.5", string count = "2", string respawn = "1", string extra = "") =>
         $"{{\"key\":\"{key}\",\"template\":\"{template}\",\"x\":{x},\"z\":{z},\"count\":{count},\"respawnSeconds\":{respawn}{extra}}}";
 
     // ---- content ----
@@ -232,7 +233,7 @@ public sealed class SpawnCampTests
         Assert.Equal(4, Active(runtime));
         Assert.All(
             runtime.Enemies.ActiveActors.Where(enemy => enemy.Position.X < 20f),
-            enemy => Assert.True((enemy.Position.Xz - new Vector2(10.5f, 10.5f)).Length < 2f, enemy.Position.ToString()));
+            enemy => Assert.True((enemy.Position.Xz - new Vector2(8.5f, 40.5f)).Length < 2f, enemy.Position.ToString()));
     }
 
     [Fact]
@@ -399,7 +400,7 @@ public sealed class SpawnCampTests
     }
 
     [Fact]
-    public void ARestoredLegacyWolf_KeepsWorking_AndNoCampRefillsIt()
+    public void ARestoredLegacyWolf_IsDroppedByTheFirstCampFill()
     {
         using IncrementalCheckpointTests.TempDatabase database = new();
         SqliteWorldPersistenceRepository world = new(database.Schema);
@@ -413,13 +414,13 @@ public sealed class SpawnCampTests
         ulong tick = 0;
         Tick(runtime, ref tick, 10);
 
-        // The legacy wolf stays and is not counted toward a camp: every camp still fills.
-        Assert.Equal(6, Active(runtime));
-        Assert.Contains(runtime.Enemies.ActiveActors, enemy => ReferenceEquals(enemy, legacy));
-
-        Kill(runtime, legacy);
+        // The first camp fill drops the legacy wolf (no camp_key) so the camps are the whole population.
+        Assert.Equal(5, Active(runtime));
+        Assert.DoesNotContain(runtime.Enemies.ActiveActors, enemy => ReferenceEquals(enemy, legacy));
         Tick(runtime, ref tick, 4 * TicksPerSecond);
         Assert.Equal(5, Active(runtime));
+        Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        Assert.DoesNotContain(world.LoadActiveEnemies(), row => row.CampKey == null);
     }
 
     [Fact]
@@ -444,6 +445,188 @@ public sealed class SpawnCampTests
             Tick(restarted, ref tick, 5);
             Assert.Equal(5, Active(restarted));
         }
+    }
+
+    // ---- placement on any map size (fix loop) ----
+
+    private static bool InSolid(Map map, Vector3 feet)
+    {
+        Vector3 resolved = WorldSessionRuntime.ResolveRespawnPosition(map, new Vector3(feet.X, feet.Y + 0.5f, feet.Z));
+        return resolved.Y - 0.5f - feet.Y > 0.001f;
+    }
+
+    private static void AssertPlacedSanely(WorldSessionRuntime runtime, string label)
+    {
+        List<EnemyActor> members = [.. runtime.Enemies.ActiveActors.Where(enemy => enemy.IsActive)];
+        foreach (EnemyActor member in members)
+        {
+            Vector3 home = member.HomePosition;
+            Assert.InRange(home.X, 0.5f, runtime.Map.Width - 0.5f);
+            Assert.InRange(home.Z, 0.5f, runtime.Map.Depth - 0.5f);
+            Assert.False(InSolid(runtime.Map, home), $"{label}: {member.EnemyKind} at {home} is in solid terrain");
+            Assert.True((home.Xz - new Vector2(5f, 5f)).Length > member.AggroRange, $"{label}: {member.EnemyKind} at {home} is inside the world spawn's aggro range");
+        }
+
+        for (int i = 0; i < members.Count; i++)
+        {
+            for (int j = i + 1; j < members.Count; j++)
+            {
+                Assert.True((members[i].HomePosition.Xz - members[j].HomePosition.Xz).Length >= 1f, $"{label}: two members stand at {members[i].HomePosition}");
+            }
+        }
+    }
+
+    private static WorldSessionRuntime CreateSizedRuntime(int size, ContentCatalog content, int hour)
+    {
+        WorldSessionRuntime runtime = new(size, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        runtime.WriteCheckpointOnDispose = false;
+        foreach (EnemyActor wolf in runtime.Enemies.ActiveActors.ToArray())
+        {
+            Kill(runtime, wolf);
+        }
+
+        runtime.EnemyContent = content;
+        runtime.ConfigureWorldClock(WorldClockSettings.Default, WorldTicksAt(hour));
+        return runtime;
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(10)]
+    [InlineData(16)]
+    [InlineData(20)]
+    [InlineData(32)]
+    [InlineData(42)]
+    [InlineData(56)]
+    [InlineData(88)]
+    [InlineData(100)]
+    public void TheShippedCamps_OnAnyMapSize_StandInOpenCellsOutsideTheSpawnsReach_WithoutStacking(int size)
+    {
+        foreach (int hour in new[] { 12, 23 })
+        {
+            using WorldSessionRuntime runtime = CreateSizedRuntime(size, ContentCatalog.Shipped, hour);
+            ulong tick = 0;
+            Tick(runtime, ref tick, 12);
+
+            AssertPlacedSanely(runtime, $"size {size} hour {hour}");
+            if (size >= 56)
+            {
+                Assert.Equal(hour == 12 ? 5 : 7, Active(runtime));
+            }
+        }
+    }
+
+    [Fact]
+    public void ACampOnAHandBuiltMap_AvoidsItsSolidCubes()
+    {
+        using WorldSessionRuntime runtime = CreateSizedRuntime(56, Load(Camps(Camp("walled", x: "30.5", z: "30.5", count: "4"))), 12);
+        // A 5x5 block of cubes, two high, over the camp's centre and ring.
+        for (int x = 28; x <= 32; x++)
+        {
+            for (int z = 28; z <= 32; z++)
+            {
+                for (int y = 1; y <= 2; y++)
+                {
+                    runtime.Map.TryAddCube(new Vector3(x, y, z), isStatic: true, withPhysics: false);
+                }
+            }
+        }
+
+        ulong tick = 0;
+        Tick(runtime, ref tick, 10);
+
+        Assert.Equal(4, Active(runtime));
+        AssertPlacedSanely(runtime, "hand-built");
+    }
+
+    [Fact]
+    public void AMemberWithNoFreePlace_IsSkipped_NotStacked()
+    {
+        // A 5 m world: all of it is inside the spawn's aggro range, so no member qualifies.
+        using WorldSessionRuntime runtime = CreateSizedRuntime(5, Load(Camps(Camp(count: "3"))), 12);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 20);
+
+        Assert.Equal(0, Active(runtime));
+    }
+
+    [Fact]
+    public void ACampKeepsItsPlaceOnTheMap_WhenTheMapIsLargerThanTheDesignSize()
+    {
+        using WorldSessionRuntime runtime = CreateSizedRuntime(112, Load(Camps(Camp(x: "28", z: "28", count: "1"))), 12);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 3);
+
+        EnemyActor member = Assert.Single(runtime.Enemies.ActiveActors);
+        Assert.True((member.HomePosition.Xz - new Vector2(56f, 56f)).Length < 8f, member.HomePosition.ToString());
+    }
+
+    [Fact]
+    public void ADawnDespawn_WaitsForAnEnemyWithContributors()
+    {
+        ContentCatalog content = Load(Camps(Camp("dark", x: "30.5", z: "30.5", count: "2", extra: ",\"night\":true")));
+        WorldClockSettings shortDay = WorldClockSettings.FromDayLengthMinutes(1);
+        using WorldSessionRuntime runtime = CreateRuntime(content, hour: 2, clock: shortDay);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 10);
+        Assert.Equal(2, Active(runtime));
+        EnemyActor fought = runtime.Enemies.ActiveActors.OrderBy(enemy => enemy.Combatant.Actor.Id).Last();
+        PlayerSessionId fighter = new("fighter");
+        fought.RecordDamage(fighter, 5);
+
+        Tick(runtime, ref tick, 400);
+        Assert.NotEqual(WorldDayPhase.Night, runtime.WorldClock.Phase);
+        Assert.Equal(1, Active(runtime));
+        Assert.Contains(runtime.Enemies.ActiveActors, enemy => ReferenceEquals(enemy, fought) && enemy.IsActive);
+
+        fought.ClearContributor(fighter);
+        Tick(runtime, ref tick, 5);
+        Assert.Equal(0, Active(runtime));
+    }
+
+    [Fact]
+    public void ClearContributor_DropsOnlyThatSessionsCredit()
+    {
+        PlayerSessionId a = new("a");
+        PlayerSessionId b = new("b");
+        using WorldSessionRuntime runtime = CreateRuntime(Load(Camps(Camp(count: "1"))), hour: 12);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 3);
+        EnemyActor enemy = Assert.Single(runtime.Enemies.ActiveActors);
+        enemy.RecordDamage(a, 3);
+        enemy.RecordDamage(b, 4);
+
+        enemy.ClearContributor(a);
+
+        EnemyDamageContribution left = Assert.Single(enemy.Contributors.ToArray());
+        Assert.Equal(b, left.SessionId);
+        Assert.Equal(4, left.Damage);
+
+        // A later session reusing the id starts from nothing.
+        enemy.RecordDamage(a, 1);
+        Assert.Equal(1, enemy.Contributors.ToArray().Single(entry => entry.SessionId == a).Damage);
+    }
+
+    [Fact]
+    public void ARestartedCamp_PlacesItsNewMembers_AwayFromTheRestoredOnes()
+    {
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        using (WorldSessionRuntime runtime = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema))
+        {
+            ulong tick = 0;
+            Tick(runtime, ref tick, 10);
+            Kill(runtime, runtime.Enemies.ActiveActors.First(enemy => enemy.IsActive && enemy.Position.X > 40f && enemy.Position.Z < 20f));
+            Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        }
+
+        using WorldSessionRuntime restarted = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false);
+        ulong next = 0;
+        // The camp refills at once after a restart (its timers are not saved); the new member must not stack.
+        Tick(restarted, ref next, 5);
+
+        Assert.Equal(5, Active(restarted));
+        AssertPlacedSanely(restarted, "restart");
     }
 
     private static List<(string? Camp, int Count)> Grouped(IReadOnlyList<PersistedEnemyInstance> rows) =>

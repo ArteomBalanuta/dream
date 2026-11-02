@@ -450,7 +450,12 @@ public static class ServerBootstrap
         ContentCatalog content = read();
         log?.Invoke(
             $"server.content.digest digest={content.ContentDigest} " +
-            $"items={content.Items.Count} enemies={content.Enemies.Count}");
+            $"items={content.Items.Count} enemies={content.Enemies.Count} camps={content.Camps.Count}");
+        if (content.Camps.Count == 0)
+        {
+            log?.Invoke("server.content.no-camps warning=spawns.json is missing or has no camps; the world keeps its single day wolf");
+        }
+
         return content;
     }
 

@@ -29,6 +29,7 @@ namespace Dream.Client.World;
 public sealed class ClientWorldSession : IClientWorldState, IDisposable
 {
     private readonly CombatFormulaService _combatFormulaService;
+    private int _serverExperienceToNextLevel;
     private readonly PhysicsSyncSystem _physicsSync = new();
     private double _lastPhysicsStepMilliseconds;
     // Reused first-person camera for CapturePresentationState. It never leaves this type:
@@ -168,9 +169,11 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
             Player.Combatant.Stats,
             Player.Combatant.Level,
             Player.Combatant.Experience,
-            _combatFormulaService.EvaluateExperienceToNextLevel(
-                Player.Combatant.Level,
-                Player.Combatant.Experience),
+            _serverExperienceToNextLevel > 0
+                ? _serverExperienceToNextLevel
+                : _combatFormulaService.EvaluateExperienceToNextLevel(
+                    Player.Combatant.Level,
+                    Player.Combatant.Experience),
             new FramePerformanceSnapshot(
                 renderExportMilliseconds,
                 _lastPhysicsStepMilliseconds,
@@ -238,6 +241,8 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
             Math.Clamp(currentPlayerPosition.Y, 1.5f, rebuiltMap.Height - 0.5f),
             Math.Clamp(currentPlayerPosition.Z, 0.5f, rebuiltMap.Depth - 0.5f)));
     }
+
+    public void SetServerExperienceToNextLevel(int required) => _serverExperienceToNextLevel = required;
 
     public void Dispose()
     {
