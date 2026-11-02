@@ -424,6 +424,10 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             if (message is ClientJoinRequestMessage routedJoin)
             {
                 CompleteJoinAttempt(context, routedJoin);
+                if (_connectionClaims.ContainsKey(context.ConnectionId))
+                {
+                    EnqueueGroundReset(context.ConnectionId, Runtime);
+                }
             }
 
             return context.OutboundMessages.ToArray();
@@ -1258,7 +1262,85 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
         ServePendingWorldResyncs();
         ServePendingInventoryPushes(runtime);
+        ServePendingGroundItems(runtime);
     }
+
+    // M3: ground items that appeared, changed or went since the last tick, to every claimed session. Delta
+    // only (a steady tick reads a flag), outside the action results because kills sit inside the tick
+    // golden. Upserts and removals are idempotent, so a joiner that also gets a Reset sees no conflict.
+    private void ServePendingGroundItems(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || !runtime.HasPendingGroundDeltas)
+        {
+            return;
+        }
+
+        runtime.DrainGroundDeltas(_groundUpsertScratch, _groundRemovedScratch);
+        if (_groundUpsertScratch.Count > 0 || _groundRemovedScratch.Count > 0)
+        {
+            List<ServerGroundItems> messages = BuildGroundItemMessages(reset: false, _groundUpsertScratch, _groundRemovedScratch);
+            foreach (string connectionId in _sessionClaims.Values)
+            {
+                for (int i = 0; i < messages.Count; i++)
+                {
+                    _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, messages[i]));
+                }
+            }
+        }
+
+        _groundUpsertScratch.Clear();
+        _groundRemovedScratch.Clear();
+    }
+
+    // The full ground list for a connection that just joined: a Reset first, then more messages when the
+    // list is larger than one message holds. Nothing when the ground is empty (a joiner starts empty).
+    private void EnqueueGroundReset(string connectionId, WorldSessionRuntime? runtime)
+    {
+        if (runtime == null || runtime.GroundItemCount == 0)
+        {
+            return;
+        }
+
+        List<GroundItemSnapshot> all = new(runtime.GroundItemCount);
+        runtime.CaptureGroundItems(all);
+        List<ServerGroundItems> messages = BuildGroundItemMessages(reset: true, all, []);
+        for (int i = 0; i < messages.Count; i++)
+        {
+            _pendingConnectionReplies.Enqueue(new PendingConnectionReply(connectionId, messages[i]));
+        }
+    }
+
+    // Splits into messages of at most MaxEntries entries (upserts and removals together); Reset only on
+    // the first.
+    private static List<ServerGroundItems> BuildGroundItemMessages(
+        bool reset,
+        List<GroundItemSnapshot> upserts,
+        List<long> removedIds)
+    {
+        List<ServerGroundItems> messages = [];
+        int upsertIndex = 0;
+        int removedIndex = 0;
+        bool first = true;
+        while (first || upsertIndex < upserts.Count || removedIndex < removedIds.Count)
+        {
+            int room = ServerGroundItems.MaxEntries;
+            int upsertCount = Math.Min(room, upserts.Count - upsertIndex);
+            room -= upsertCount;
+            int removedCount = Math.Min(room, removedIds.Count - removedIndex);
+            messages.Add(new ServerGroundItems(
+                reset && first,
+                upserts.GetRange(upsertIndex, upsertCount),
+                removedIds.GetRange(removedIndex, removedCount)));
+            upsertIndex += upsertCount;
+            removedIndex += removedCount;
+            first = false;
+        }
+
+        return messages;
+    }
+
+    private readonly List<GroundItemSnapshot> _groundUpsertScratch = [];
+    private readonly List<long> _groundRemovedScratch = [];
 
     // Wave I: loot gained or lost this tick, one push per killer. It travels the pending-connection-reply
     // route (delivered before the tick's snapshot), not the action results, because kills happen inside
@@ -1433,6 +1515,11 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
             }
 
             context.ClearOutboundMessages();
+            if (_connectionClaims.ContainsKey(join.ConnectionId))
+            {
+                EnqueueGroundReset(join.ConnectionId, runtime);
+            }
+
             // An accepted join consumed its load; a rejected one (or one that restored nothing)
             // drops it, so a later join of this player reads fresh rows.
             runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);

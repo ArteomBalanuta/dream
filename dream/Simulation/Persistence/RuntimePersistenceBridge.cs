@@ -458,6 +458,13 @@ internal sealed partial class RuntimePersistenceBridge
 
         _objectIds.Restore(_worldPersistence.LoadNextObjectId());
 
+        // M3: items lying on the ground are restored (claims gone, despawn timers restarted) and their ids
+        // reserved, before anything else can allocate one.
+        if (_host is WorldSessionRuntime groundHost)
+        {
+            groundHost.RestoreGroundItems(_worldPersistence.LoadGroundItems());
+        }
+
         Map map = _host.Map;
         RestoreTerrainOverrides(map);
         // A cube whose cell is later found occupied is skipped but its row still exists, so its id is
