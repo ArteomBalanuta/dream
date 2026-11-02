@@ -44,22 +44,22 @@
    "name": "ember.3"
   },
   {
-   "alpha": "low",
+   "alpha": "zero",
    "index": 8,
    "name": "dust.0"
   },
   {
-   "alpha": "low",
+   "alpha": "zero",
    "index": 9,
    "name": "dust.1"
   },
   {
-   "alpha": "low",
+   "alpha": "zero",
    "index": 10,
    "name": "dust.2"
   },
   {
-   "alpha": "low",
+   "alpha": "zero",
    "index": 11,
    "name": "dust.3"
   },
@@ -92,13 +92,38 @@
    "alpha": "zero",
    "index": 17,
    "name": "halo.core"
+  },
+  {
+   "alpha": "zero",
+   "index": 18,
+   "name": "flame.0"
+  },
+  {
+   "alpha": "zero",
+   "index": 19,
+   "name": "flame.1"
+  },
+  {
+   "alpha": "zero",
+   "index": 20,
+   "name": "flame.2"
+  },
+  {
+   "alpha": "zero",
+   "index": 21,
+   "name": "flame.3"
+  },
+  {
+   "alpha": "coverage",
+   "index": 22,
+   "name": "blob"
   }
  ],
  "image": "particles.png",
  "margin": 4,
  "origin": "top-left",
  "reserved": [
-  18,
+  23,
   31
  ],
  "rows": 4,

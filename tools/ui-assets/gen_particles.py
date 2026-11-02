@@ -1,8 +1,8 @@
-"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash and two lamp halos.
+"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues and a contact blob.
 
 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip.
 Every cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful
-where A=0 (A=0 draws purely additive); A is coverage. Frames 18-31 are reserved and empty.
+where A=0 (A=0 draws purely additive); A is coverage (ash, blob). Frames 23-31 are reserved and empty.
 """
 from __future__ import annotations
 
@@ -25,10 +25,12 @@ HALF = INNER / 2
 GROUPS = (
     ("spark", 0, 4, "zero"),
     ("ember", 4, 4, "zero"),
-    ("dust", 8, 4, "low"),
+    ("dust", 8, 4, "zero"),
     ("ash", 12, 4, "coverage"),
     ("halo", 16, 1, "zero"),
     ("halo.core", 17, 1, "zero"),
+    ("flame", 18, 4, "zero"),
+    ("blob", 22, 1, "coverage"),
 )
 
 
@@ -58,47 +60,26 @@ def downsample(a: np.ndarray) -> np.ndarray:
 
 # sparks -------------------------------------------------------------------------------------------
 
-def streak(x, y, origin, angle, length, width, kink, r: np.random.Generator) -> np.ndarray:
-    """One thin jagged streak, bright at the head (+u), pointed at both ends."""
-    ca, sa = np.cos(angle), np.sin(angle)
-    u = (x - origin[0]) * ca + (y - origin[1]) * sa
-    v = -(x - origin[0]) * sa + (y - origin[1]) * ca
-    t = u / length  # 0 at the origin, 1 at the head, -1 at the tail
-    bend = np.zeros_like(u)
-    for freq in (1.3, 2.9, 5.7):
-        bend += kink / freq * np.sin(freq * 2.4 * t + r.uniform(0, 6.283)) * r.uniform(0.5, 1.0)
-    taper = np.clip(1.0 - np.abs(t), 0.0, 1.0) ** 0.9
-    w = np.maximum(width * taper, 0.05)
-    d = (v - bend) / w
-    along = 0.5 + 0.5 * smoothstep(-1.0, 0.45, t)  # hotter toward the head
-    flicker = 0.8 + 0.2 * np.sin(t * r.uniform(7, 13) + r.uniform(0, 6.283))
-    core = np.exp(-d * d)
-    glow = 0.28 * np.exp(-(d * d) / 14.0)
-    return (core + glow) * along * flicker * (np.abs(t) < 1.0)
-
-
 def spark_frame(i: int) -> np.ndarray:
+    """One straight streak along +X, hot head at +u, tapered tail. The particle supplies angle and length."""
     r = uiart.rng(f"particles.spark.{i}")
     x, y = grid()
-    angles = (-1.30, -0.62, 0.34, -2.20)
-    angle = angles[i] + r.uniform(-0.12, 0.12)
-    length = r.uniform(21.0, 25.0)
-    out = streak(x, y, (0.0, 0.0), angle, length, r.uniform(1.0, 1.5), r.uniform(1.2, 2.2), r)
-    # a short broken-off fork from the middle, thinner and dimmer
-    side = 1.0 if r.random() < 0.5 else -1.0
-    base = r.uniform(-0.1, 0.3) * length
-    origin = (np.cos(angle) * base, np.sin(angle) * base)
-    fork = streak(x, y, origin, angle + side * r.uniform(0.35, 0.6), r.uniform(8.0, 11.0), 0.8, 1.2, r)
-    out = np.maximum(out, 0.7 * fork)
-    # a few cooling flecks trailing behind the tail
-    for _ in range(3):
-        s = r.uniform(0.35, 0.95) * length
-        px, py = -np.cos(angle) * s + r.uniform(-2, 2), -np.sin(angle) * s + r.uniform(-2, 2)
-        out = np.maximum(out, r.uniform(0.25, 0.5) * np.exp(-((x - px) ** 2 + (y - py) ** 2) / 1.1))
-    out = np.clip(out, 0.0, 1.0) * window(x, y)
+    head, tail = 21.0, 24.0
+    t = np.where(x >= 0, x / head, x / tail)  # 0 at the middle, 1 at the head, -1 at the tail
+    kink = r.uniform(0.3, 1.0) * np.sin(x * r.uniform(0.12, 0.2) + r.uniform(0, 6.283))
+    taper = np.clip(1.0 - np.maximum(-t, 0.0), 0.0, 1.0) ** 0.8
+    w = 5.0 * (0.3 + 0.7 * taper)
+    d = (y - kink) / w
+    along = 0.45 + 0.55 * smoothstep(-0.9, 0.7, t)  # hotter toward the head
+    along *= smoothstep(1.0, 0.82, t)  # round off the head
+    along *= smoothstep(-1.0, -0.6, t)
+    out = np.exp(-d * d) * along
+    for _ in range(i + 1):  # variants differ in flecks
+        px, py = -r.uniform(0.3, 0.95) * tail, r.uniform(-4.5, 4.5)
+        out = np.maximum(out, r.uniform(0.25, 0.5) * np.exp(-((x - px) ** 2 + (y - py) ** 2) / 1.6))
+    out = np.clip(out, 0.0, 1.0) * smoothstep(26.5, 22.5, np.abs(x)) * smoothstep(26.0, 20.0, np.abs(y))
     tint = np.array([1.0, 0.97, 0.93], dtype=np.float32)  # near-neutral: the particle tint sets the colour
-    rgb = out[..., None] * tint
-    return np.dstack((rgb, np.zeros_like(out)))
+    return np.dstack((out[..., None] * tint, np.zeros_like(out)))
 
 
 # embers -------------------------------------------------------------------------------------------
@@ -108,22 +89,21 @@ def ember_frame(i: int) -> np.ndarray:
     x, y = grid()
     angle = r.uniform(0, 3.1416)
     ca, sa = np.cos(angle), np.sin(angle)
-    stretch = r.uniform(1.2, 1.7)
+    stretch = r.uniform(1.3, 1.9)
     u, v = (x * ca + y * sa) / stretch, -x * sa + y * ca
-    r0 = r.uniform(9.0, 12.5)
+    r0 = r.uniform(5.0, 7.5)
     warp = (noise(f"particles.ember.shape.{i}", 1.6) - 0.5) * 2.0
-    d = np.hypot(u, v) / r0 + 0.55 * warp
-    body = smoothstep(1.0, 0.5, d)
+    d = np.hypot(u, v) / r0 + 0.45 * warp
+    body = smoothstep(1.0, 0.35, d)
     crust = noise(f"particles.ember.crust.{i}", 0.7, 4)
     heat = smoothstep(0.3, 0.8, crust)
-    inten = body * (0.3 + 0.7 * heat)
-    glow = 0.1 * np.exp(-((x * x + y * y) / (2.0 * r0 * r0)))
-    cold = np.array([0.36, 0.05, 0.02], dtype=np.float32)  # dull red crust
-    warm = np.array([0.74, 0.17, 0.05], dtype=np.float32)  # glowing cracks, never white
-    ramp = cold + (warm - cold) * np.clip(inten, 0, 1)[..., None]
-    rgb = ramp * inten[..., None] + glow[..., None] * np.array([0.7, 0.14, 0.04], dtype=np.float32)
-    rgb *= window(x, y)[..., None]
-    return np.dstack((np.clip(rgb, 0, 1), np.zeros_like(inten)))
+    inten = body * (0.55 + 0.45 * heat)
+    glow = 0.07 * np.exp(-((x * x + y * y) / (2.0 * (1.5 * r0) ** 2)))
+    v_ = np.clip(inten + glow, 0, None)
+    v_ = v_ / max(float(v_.max()), 1e-6) * 0.98  # peak ~250; the particle colour carries the heat
+    v_ *= window(x, y)
+    tint = np.array([1.0, 0.97, 0.93], dtype=np.float32)
+    return np.dstack((v_[..., None] * tint, np.zeros_like(v_)))
 
 
 # dust ---------------------------------------------------------------------------------------------
@@ -142,9 +122,10 @@ def dust_frame(i: int) -> np.ndarray:
         ang, dist = r.uniform(0, 6.283), r.uniform(0.9, 2.4) * r0
         gx, gy = np.cos(ang) * dist, np.sin(ang) * dist
         cov = np.maximum(cov, r.uniform(0.2, 0.45) * np.exp(-((x - gx) ** 2 + (y - gy) ** 2) / r.uniform(0.9, 2.2)))
-    alpha = np.clip(cov, 0, 1) * r.uniform(0.22, 0.4) * window(x, y)
-    cold = np.array([0.62, 0.65, 0.69], dtype=np.float32)  # cold grey
-    return np.dstack((alpha[..., None] * cold, alpha))
+    cov = np.clip(cov, 0, 1) * window(x, y)
+    cov = cov / max(float(cov.max()), 1e-6) * 0.84  # RGB peak about 215
+    cold = np.array([0.93, 0.96, 1.0], dtype=np.float32)  # near-neutral, a touch cold
+    return np.dstack((cov[..., None] * cold, np.zeros_like(cov)))
 
 
 # ash ----------------------------------------------------------------------------------------------
@@ -168,7 +149,7 @@ def ash_frame(i: int) -> np.ndarray:
     cov = smoothstep(1.0, 0.55, edge)
     mottle = 0.55 + 0.45 * noise(f"particles.ash.mottle.{i}", 1.2)
     alpha = np.clip(cov * mottle * 1.25, 0, 0.9) * window(x, y)
-    soot = np.array([0.075, 0.07, 0.066], dtype=np.float32)  # sooty, a touch warmer than black
+    soot = np.array([0.30, 0.28, 0.265], dtype=np.float32)  # sooty, a touch warmer than black; readable on dark
     tone = 0.6 + 0.4 * noise(f"particles.ash.tone.{i}", 0.8)
     return np.dstack((alpha[..., None] * soot * tone[..., None], alpha))
 
@@ -178,13 +159,45 @@ def ash_frame(i: int) -> np.ndarray:
 def halo_frame(core: bool) -> np.ndarray:
     x, y = grid()
     s = np.hypot(x, y) / (HALF - 1.0)
-    fall = np.clip(1.0 - s, 0, 1)
     if core:
-        v = 0.9 * np.exp(-((s * HALF / 5.5) ** 2)) + 0.4 * fall**3.5
+        v = 0.62 * np.exp(-((s / 0.22) ** 2)) + 0.32 * np.exp(-((s / 0.50) ** 2))
     else:
-        v = 0.55 * fall**2.2 + 0.25 * np.exp(-((s * HALF / 9.0) ** 2))
-    v = np.clip(v, 0, 1) * smoothstep(1.0, 0.8, s)
+        v = 0.46 * np.exp(-((s / 0.30) ** 2)) + 0.30 * np.exp(-((s / 0.62) ** 2))
+    v = v * smoothstep(1.0, 0.8, s)  # no clip: the peak stays under 255, so there is no plateau
     return np.dstack((v[..., None] * np.ones(3, dtype=np.float32), np.zeros_like(v)))
+
+
+# flame --------------------------------------------------------------------------------------------
+
+def flame_frame(i: int) -> np.ndarray:
+    """One tongue, base at the cell bottom, tip up. The colour ramp is baked; the particle tint is white."""
+    r = uiart.rng(f"particles.flame.{i}")
+    x, y = grid()
+    h = (24.0 - y) / 48.0  # 0 at the base, 1 at the tip
+    warp = (noise(f"particles.flame.warp.{i}", 1.4) - 0.5) * 2.0
+    sway = 3.2 * np.sin(h * 3.4 + r.uniform(0, 6.283)) * h + 2.2 * warp * np.clip(h, 0, 1)
+    half = 12.5 * np.clip(1.0 - h, 0.0, 1.0) ** 0.8 * (0.85 + 0.3 * np.sin(h * 3.1416)) * (1.0 + 0.2 * warp)
+    d = np.abs(x - sway) / np.maximum(half, 0.4)
+    body = smoothstep(1.0, -0.2, d) ** 1.1
+    body *= smoothstep(-0.02, 0.1, h) * smoothstep(1.02, 0.85, h)
+    body *= smoothstep(24.5, 21.0, y)  # exactly dark by the bottom margin ring
+    lick = 0.85 + 0.15 * noise(f"particles.flame.lick.{i}", 0.9)
+    e = np.clip(body * lick, 0.0, 1.0)
+    edge, mid, core = (np.array(c, dtype=np.float32) for c in ((0.6, 0.16, 0.03), (1.0, 0.5, 0.12), (1.0, 0.82, 0.45)))
+    k = e[..., None]
+    ramp = np.where(k < 0.55, edge + (mid - edge) * (k / 0.55), mid + (core - mid) * np.clip((k - 0.55) / 0.45, 0, 1))
+    rgb = ramp * (e ** 0.9)[..., None] * 0.96
+    return np.dstack((np.clip(rgb, 0, 0.96), np.zeros_like(e)))
+
+
+# blob ---------------------------------------------------------------------------------------------
+
+def blob_frame() -> np.ndarray:
+    """Contact shadow: black with soft coverage, so it darkens instead of adding."""
+    x, y = grid()
+    s = np.hypot(x, y) / (HALF - 1.0)
+    a = smoothstep(1.0, 0.0, s) ** 1.4 * 0.92 * smoothstep(1.0, 0.8, s)
+    return np.dstack((np.zeros((HI, HI, 3), dtype=np.float32), a))
 
 
 # atlas --------------------------------------------------------------------------------------------
@@ -195,6 +208,8 @@ def frames() -> list[np.ndarray]:
     out += [dust_frame(i) for i in range(4)]
     out += [ash_frame(i) for i in range(4)]
     out += [halo_frame(False), halo_frame(True)]
+    out += [flame_frame(i) for i in range(4)]
+    out.append(blob_frame())
     return out
 
 
@@ -218,7 +233,7 @@ def main(out_root: Path) -> None:
     doc = {
         "version": 1, "image": "particles.png", "size": [COLUMNS * CELL, ROWS * CELL],
         "origin": "top-left", "yDown": True, "alpha": "premultiplied",
-        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [18, 31],
+        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [23, 31],
         "frames": frame_table,
     }
     (out / "particles.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
