@@ -18,8 +18,8 @@ public sealed class PlayerCombatStats
     private int _strength = 10;
     private float _attackSpeed = 2.0f;
     private int _vitality = 10;
-    private int _agility;
-    private int _energy;
+    private int _agility = PlayerStatRules.StartAgility;
+    private int _energy = PlayerStatRules.StartEnergy;
 
     public int Strength
     {

@@ -321,7 +321,9 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         // one byte per progression it carries (8 in all): 58,132 B.
         // The stats sheet merge (protocol 19) widens the combat group to [str, as, vit, agi, energy]: ",0,0" more
         // in each of the 8 combat groups these frames carry: 58,164 B.
-        Assert.Equal(58_164L, total);
+        // Defaulting a fresh PlayerCombatStats to Agility/Energy 10 (not 0) writes "10,10" for ",0,0"'s "0,0": +2 bytes
+        // in each of the 8 combat groups: 58,180 B.
+        Assert.Equal(58_180L, total);
     }
 
     [Fact]
