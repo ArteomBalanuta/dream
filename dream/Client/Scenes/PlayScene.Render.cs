@@ -41,8 +41,11 @@ public partial class PlayScene
         // Evaluated before clearStart, so the clear timing stays the clear alone.
         SkyState sky = SkyModel.Evaluate(_render.TimeOfDayOverride.Resolve(WorldTimeOfDay01), _skySettings);
         _render.SetFrameLighting(in sky.Lighting);
+        bool isometric = _settings.CameraViewMode == CameraViewMode.Isometric;
         long clearStart = Stopwatch.GetTimestamp();
-        GL.ClearColor(sky.HorizonColor.X, sky.HorizonColor.Y, sky.HorizonColor.Z, 1f);
+        // Isometric shows the map edge, so the void is a dim horizon colour rather than the sky.
+        float clearScale = isometric ? 0.25f : 1f;
+        GL.ClearColor(sky.HorizonColor.X * clearScale, sky.HorizonColor.Y * clearScale, sky.HorizonColor.Z * clearScale, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         // The world pass sets its own state rather than inheriting whatever the last pass (the
         // HUD's ImGui restore, or the startup menu) left: opaque, depth-tested geometry.
@@ -54,7 +57,19 @@ public partial class PlayScene
             (float)_commandTicks.RemainingSeconds,
             _settings.CameraViewMode,
             _deathTracker.IsDead,
-            _deathTracker.SecondsRemaining(_serverTickClock.EstimatedTick));
+            _deathTracker.SecondsRemaining(_serverTickClock.EstimatedTick),
+            (float)args.Time);
+        if (isometric)
+        {
+            _render.FogOrigin = _runtime.LastCameraFocus;
+            _render.LastWorldCamera = presentation.Camera;
+        }
+        else
+        {
+            _render.FogOrigin = null;
+            _render.LastWorldCamera = null;
+        }
+
         _render.LootFeed = _lootFeedback;
         long remoteStatesStart = Stopwatch.GetTimestamp();
         // A live list owned by the presenter; it is only read within this frame.
@@ -82,7 +97,7 @@ public partial class PlayScene
         _lastRemotePlayerStatesMilliseconds = Stopwatch.GetElapsedTime(remoteStatesStart, worldDrawStart).TotalMilliseconds;
 
         double localPlayerDrawMilliseconds = 0d;
-        if (_settings.CameraViewMode == CameraViewMode.ThirdPerson)
+        if (_settings.CameraViewMode != CameraViewMode.FirstPerson)
         {
             long localPlayerDrawStart = Stopwatch.GetTimestamp();
             _render.LocalPlayers.Draw(
@@ -91,7 +106,8 @@ public partial class PlayScene
                     _runtime.Player.Camera.HorizontalForward,
                     _localPlayerWasMoving),
                 presentation.Camera,
-                (float)args.Time);
+                (float)args.Time,
+                silhouette: isometric);
             localPlayerDrawMilliseconds = Stopwatch.GetElapsedTime(localPlayerDrawStart).TotalMilliseconds;
         }
 
@@ -107,7 +123,10 @@ public partial class PlayScene
         // the pixels left at depth 1, and before the debug and viewmodel passes. It restores the
         // world state (DepthFunc Less, depth writes on, blending off) when it is done.
         SkyRenderer skyRenderer = _sky ?? throw new ObjectDisposedException(nameof(PlayScene));
-        skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
+        if (!isometric)
+        {
+            skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
+        }
 
         DedicatedServerPerformanceSnapshot serverPerformance =
             _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;

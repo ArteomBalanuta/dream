@@ -12,6 +12,9 @@ public enum RuntimeMode
 
 public readonly record struct RuntimeState(RuntimeMode Mode)
 {
-    public bool AllowGameplayInput => Mode == RuntimeMode.Gameplay;
-    public CursorState DesiredCursorState => AllowGameplayInput ? CursorState.Grabbed : CursorState.Normal;
+    // The inventory overlay no longer pauses play: clicks outside the windows still move the character.
+    public bool AllowGameplayInput => Mode != RuntimeMode.SettingsMenu;
+
+    // Click-to-move needs the cursor free at all times.
+    public CursorState DesiredCursorState => CursorState.Normal;
 }

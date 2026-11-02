@@ -1,4 +1,5 @@
 using Dream.Application;
+using Dream.Client.Presentation;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
@@ -91,17 +92,19 @@ public partial class Render : IDisposable
         return new Vector2i(Math.Max(size.X, 1), Math.Max(size.Y, 1));
     }
 
-    private void UpdateProjection(int width, int height, float fieldOfViewDegrees)
+    private void UpdateProjection(int width, int height, float fieldOfViewDegrees, bool isometric)
     {
         _currentSize = new Vector2i(width, height);
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         float aspectRatio = (float)safeViewportSize.X / safeViewportSize.Y;
 
-        _projection = Matrix4.CreatePerspectiveFieldOfView(
-            MathHelper.DegreesToRadians(fieldOfViewDegrees),
-            aspectRatio,
-            0.1f,
-            100.0f);
+        _projection = isometric
+            ? IsometricView.CreateProjection(aspectRatio)
+            : Matrix4.CreatePerspectiveFieldOfView(
+                MathHelper.DegreesToRadians(fieldOfViewDegrees),
+                aspectRatio,
+                0.1f,
+                100.0f);
 
         if (_currentSize != _crosshairViewportSize)
         {
@@ -111,7 +114,7 @@ public partial class Render : IDisposable
 
     public void UpdateProjectionForSettings(GameSettings settings)
     {
-        UpdateProjection(settings.WindowWidth, settings.WindowHeight, settings.FieldOfViewDegrees);
+        UpdateProjection(settings.WindowWidth, settings.WindowHeight, settings.FieldOfViewDegrees, settings.CameraViewMode == CameraViewMode.Isometric);
     }
 
     public WorldRenderer World => _worldRenderer;
@@ -131,4 +134,10 @@ public partial class Render : IDisposable
     public Vector2i ViewportSize => GetSafeViewportSize(_currentSize);
 
     public Matrix4 ProjectionMatrix => _projection;
+
+    // Set by the play scene each frame before the world draws. FogOrigin replaces the camera position
+    // for fog distance (isometric: the focus point).
+    public Dream.Simulation.Players.Camera? LastWorldCamera { get; set; }
+
+    public Vector3? FogOrigin { get; set; }
 }

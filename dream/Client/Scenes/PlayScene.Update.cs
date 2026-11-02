@@ -30,21 +30,22 @@ public partial class PlayScene
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
             _settings.CurrentRuntimeState.AllowGameplayInput,
             _runtime.Player.Combatant.Health.IsAlive);
+        // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
+        _clickMove.OnFrame(_render.SampleWorldPointer(mouseState, _settings, _windowFocused), allowGameplayInput);
         // The frame only captures input; each prediction tick below turns it into one command
         // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
             _runtime.LocalPlayerSessionId,
             0,
-            keyboardState,
-            mouseState,
+            key => keyboardState.IsKeyDown(key) || CaptureKeyHeld(key),
             allowGameplayInput);
         if (allowGameplayInput)
         {
             rawCommandFrame = ApplyCaptureFight(rawCommandFrame);
+            rawCommandFrame = _clickMove.MarkFrame(rawCommandFrame);
         }
 
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
-        rawCommandFrame = _lookHoldoff.Filter(rawCommandFrame, allowGameplayInput);
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         _commandTicks.CaptureInput(commandFrame);
@@ -86,6 +87,7 @@ public partial class PlayScene
     // and the prediction recorded for the same sequence is what its acknowledgement is compared to.
     private void RunPredictionTick(PlayerCommandFrame command, float fixedDeltaSeconds)
     {
+        command = _clickMove.SteerTick(command);
         ulong tick = command.Sequence;
         _actionSequences.ObserveCommandSequence(tick);
         QueueRemoteCommandFrame(command);
@@ -125,17 +127,6 @@ public partial class PlayScene
         }
 
         _wasInventoryTogglePressed = inventoryTogglePressed;
-
-        bool cameraViewTogglePressed = keyboardState.IsKeyDown(Keys.C);
-        if (cameraViewTogglePressed &&
-            !_wasCameraViewTogglePressed &&
-            _settings.CurrentRuntimeState.AllowGameplayInput)
-        {
-            _settings.ToggleCameraViewMode();
-            PersistDesktopClientConfig();
-        }
-
-        _wasCameraViewTogglePressed = cameraViewTogglePressed;
 
         // F3 swaps the classic HUD for the ImGui one and back. Display only: a no-op unless the
         // admin setting is available, in-session, never saved, and nothing is sent.

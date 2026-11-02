@@ -21,7 +21,7 @@ public class GameSettingsTests
         Assert.False(settings.SettingsVisible);
         Assert.Equal(70f, settings.FieldOfViewDegrees);
         Assert.Equal(18f, settings.NoclipSpeed);
-        Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
+        Assert.Equal(CameraViewMode.Isometric, settings.CameraViewMode);
         Assert.Equal(FloatingCombatTextTuning.Default, settings.FloatingCombatText);
         Assert.Equal(56, settings.FloorSize);
         Assert.Equal(56, settings.PendingFloorSize);
@@ -138,7 +138,7 @@ public class GameSettingsTests
     }
 
     [Fact]
-    public void ToggleInventory_Uses_Inventory_Runtime_Mode_And_Blocks_Gameplay_Input()
+    public void ToggleInventory_Uses_Inventory_Runtime_Mode_And_Keeps_Gameplay_Input()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));
 
@@ -146,7 +146,8 @@ public class GameSettingsTests
 
         Assert.True(settings.InventoryVisible);
         Assert.Equal(RuntimeMode.InventoryOverlay, settings.CurrentRuntimeState.Mode);
-        Assert.False(settings.CurrentRuntimeState.AllowGameplayInput);
+        Assert.True(settings.CurrentRuntimeState.AllowGameplayInput);
+        Assert.Equal(OpenTK.Windowing.Common.CursorState.Normal, settings.CurrentRuntimeState.DesiredCursorState);
     }
 
     [Fact]
@@ -253,21 +254,17 @@ public class GameSettingsTests
     }
 
     [Fact]
-    public void ToggleCameraViewMode_Switches_Between_First_And_Third_Person()
+    public void SetCameraViewMode_Stays_Isometric()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));
 
-        settings.ToggleCameraViewMode();
+        settings.SetCameraViewMode(CameraViewMode.ThirdPerson);
 
-        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
-
-        settings.ToggleCameraViewMode();
-
-        Assert.Equal(CameraViewMode.FirstPerson, settings.CameraViewMode);
+        Assert.Equal(CameraViewMode.Isometric, settings.CameraViewMode);
     }
 
     [Fact]
-    public void Constructor_Uses_Injected_Camera_View_Mode()
+    public void Constructor_Forces_Isometric_Over_Injected_Camera_View_Mode()
     {
         DesktopClientConfig config = new()
         {
@@ -276,7 +273,7 @@ public class GameSettingsTests
 
         GameSettings settings = new(new Vector2i(1440, 1024), ViewModelRigSettings.CreateDefault(), config);
 
-        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
+        Assert.Equal(CameraViewMode.Isometric, settings.CameraViewMode);
     }
 
     [Fact]

@@ -25,6 +25,10 @@ public readonly record struct HudFrameResult(
 // frame before the HUD pass, like WorldTransferHud (a plain struct, so nothing per frame grows).
 public readonly record struct HudSceneState(Vector3 PlayerPosition);
 
+// The pointer as click-to-move sees it. OverHud is true when a press at this moment would land on
+// the HUD: a window, the bar, an open modal, a drag in progress, or Settings.
+public readonly record struct WorldPointerState(Vector2 Position, bool LeftDown, bool RightDown, bool OverHud);
+
 public partial class Render
 {
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
@@ -97,8 +101,8 @@ public partial class Render
     private readonly List<FloatingCombatTextRenderState> _classicCombatText = new();
     private readonly List<HudWorldLabel> _classicLabels = new();
 
-    // True while the classic HUD draws (or is about to draw) the sprite cursor: inventory open,
-    // Settings closed. The scene hides the OS cursor then. Read by Update before the frame is drawn,
+    // True while the classic HUD draws (or is about to draw) the sprite cursor: Settings closed.
+    // The scene hides the OS cursor then. Read by Update before the frame is drawn,
     // so it is predicted from the surface state instead of waiting for the last draw; otherwise the
     // OS cursor and the sprite cursor would both show for the first frame after V.
     public bool ClassicHudCursorActive => _classicCursorActive || ClassicHudWillDraw();
@@ -109,6 +113,44 @@ public partial class Render
 
     // The classic surface and its view, for the capture script's logs and rect lookups.
     internal ClassicHudSurface? ClassicSurfaceForCapture => _classicSurface;
+
+    // The pointer for click-to-move, read in Update. The scripted pointer (capture script) takes the
+    // same path as a hand. The hover state is the previous Render's: ImGui's capture flag and the
+    // classic router's hot id are one frame old, and the bar and window rects are hit-tested live.
+    public WorldPointerState SampleWorldPointer(MouseState mouseState, GameSettings settings, bool windowFocused)
+    {
+        Vector2 position;
+        bool left;
+        bool right;
+        if (ScriptedPointer is { Active: true } scripted)
+        {
+            position = scripted.Position;
+            left = scripted.LeftDown;
+            right = scripted.RightDown;
+        }
+        else
+        {
+            position = new Vector2(mouseState.Position.X, mouseState.Position.Y);
+            left = windowFocused && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
+            right = windowFocused && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
+        }
+
+        bool overHud = settings.SettingsVisible || ImGui.GetIO().WantCaptureMouse;
+        if (!overHud && ClassicHudWillDraw())
+        {
+            UiInputRouter? router = _classicSurface?.Input;
+            overHud = router is not null
+                && (router.HotId != UiInputRouter.NoId || router.Dragging || router.ModalActive);
+            if (!overHud)
+            {
+                Vector2i size = GetSafeViewportSize(_currentSize);
+                UiLayout layout = UiLayout.Create(size.X, size.Y, settings.UiScaleSetting);
+                overHud = ClassicHudHitTest.Over(in layout, settings.InventoryVisible, position);
+            }
+        }
+
+        return new WorldPointerState(position, left, right, overHud);
+    }
 
     private bool ClassicHudWillDraw() =>
         _hudSelector is not null && ClassicCursorPolicy.WillDraw(_hudSelector.Current, _classicSurface?.State);
@@ -226,12 +268,11 @@ public partial class Render
                 scripted.Position,
                 scripted.LeftDown,
                 scripted.RightDown,
-                settings.InventoryVisible && !settings.SettingsVisible);
+                !settings.SettingsVisible);
         }
         else
         {
             bool interactive = windowFocused
-                && settings.InventoryVisible
                 && !settings.SettingsVisible
                 && !ImGui.GetIO().WantCaptureMouse;
             pointer = new UiPointer(
@@ -350,7 +391,7 @@ public partial class Render
                     windowFocused, settings, mouseState, camera, remotePlayers, activeEnemies,
                     combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
                     out classicAction, out classicClose);
-                _classicCursorActive = drew && settings.InventoryVisible && !settings.SettingsVisible;
+                _classicCursorActive = drew && !settings.SettingsVisible;
             }
             catch (Exception ex)
             {
@@ -535,7 +576,9 @@ public partial class Render
 
     private void DrawCrosshair(GameSettings settings)
     {
-        if ((settings.SettingsVisible || settings.InventoryVisible) || _currentSize.X <= 0 || _currentSize.Y <= 0)
+        // The cursor picks the target in the isometric view, so there is no aim point to mark.
+        if (settings.CameraViewMode == CameraViewMode.Isometric
+            || settings.SettingsVisible || settings.InventoryVisible || _currentSize.X <= 0 || _currentSize.Y <= 0)
         {
             return;
         }
@@ -559,17 +602,16 @@ public partial class Render
 
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
-        bool overlayVisible = settings.SettingsVisible || settings.InventoryVisible;
-        // The classic inventory draws its own sprite cursor, so the ImGui one stays off there, except
-        // over an ImGui window (the Build panel), where the sprite cursor is not drawn and the OS one
-        // is hidden.
-        bool classicCursor = ClassicHudCursorActive && settings.InventoryVisible && !settings.SettingsVisible && !io.WantCaptureMouse;
-        io.MouseDrawCursor = overlayVisible && !classicCursor;
-        io.MousePos = overlayVisible
+        // ImGui always gets the real mouse, so the Build panel works during play. The classic HUD
+        // draws its own sprite cursor, so the ImGui one stays off there, except over an ImGui window
+        // (the Build panel), where the sprite cursor is not drawn and the OS one is hidden.
+        bool classicCursor = ClassicHudCursorActive && !settings.SettingsVisible && !io.WantCaptureMouse;
+        io.MouseDrawCursor = !classicCursor;
+        io.MousePos = windowFocused
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)
             : new System.Numerics.Vector2(-float.MaxValue, -float.MaxValue);
-        io.MouseDown[0] = overlayVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
-        io.MouseDown[1] = overlayVisible && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
+        io.MouseDown[0] = windowFocused && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
+        io.MouseDown[1] = windowFocused && mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
 
         // Reset input states when regaining focus
         if (windowFocused && !_wasFocused)

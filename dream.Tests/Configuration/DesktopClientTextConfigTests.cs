@@ -89,7 +89,7 @@ public class DesktopClientTextConfigTests
 
         Assert.Equal(88f, settings.FieldOfViewDegrees);
         Assert.Equal(4.25f, settings.MouseSensitivity);
-        Assert.Equal(CameraViewMode.ThirdPerson, settings.CameraViewMode);
+        Assert.Equal(CameraViewMode.Isometric, settings.CameraViewMode);
         Assert.Equal(33f, settings.NoclipSpeed);
         Assert.Equal(new FloatingCombatTextTuning(2.4f, 0.65f, 4.75f), settings.FloatingCombatText);
     }

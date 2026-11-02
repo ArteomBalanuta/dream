@@ -76,7 +76,7 @@ The current `Game` constructor creates a window with:
 - Initial size: `1440 x 1024`
 - Frame cap: `GameWindow.UpdateFrequency` from `max_fps` (default `144`) or `DREAM_MAX_FPS`; VSync stays off (see Desktop Client Text Config)
 
-The project also grabs the cursor on startup.
+The cursor stays free: movement is by clicking, so the OS cursor is hidden only while the classic HUD draws its own sprite cursor.
 
 Runtime-adjustable window and camera settings are now grouped in `GameSettings.cs`, which currently owns:
 
@@ -185,7 +185,7 @@ The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the autom
 - The environment overrides are never written back to the file. Nothing about the admin setting is sent to the server: it hides and shows client-side UI only, and the server accepts the same intents either way.
 - The local player's own incoming damage number (red) cannot project from the first-person camera, so the classic HUD draws it at a fixed spot: horizontal centre, 62% down the window, between the crosshair and the bar. In third person it rises over the character. Enemy labels that would overlap move down below the earlier one; at most 24 are drawn, and none once less than 4096 of the 8192 batch quads remain. A frame that overflows the batch logs one `[hud-classic] ... quads did not fit` line per run.
 - `DREAM_HUD_CAPTURE=<dir>` and `DREAM_HUD_CAPTURE_SCRIPT=play,inventory,settings,admin` write one PNG per step (`NN-<step>.png`) of the real back buffer after a short warm-up, then close the window. `DREAM_HUD_CAPTURE_SETTLE=<frames>` holds each step longer (default 20), so `DREAM_RENDER_PERF_LOG=1` gets lines from each state. The `admin` step needs `DREAM_ADMIN_HUD=1`. Verification tool only.
-- `DREAM_HUD_CAPTURE_SCRIPT` also takes pointer steps. They feed synthetic pointer states through the real input router and panels (the scripted pointer replaces the mouse only while a script runs), so they send the same inventory intents a hand would, and the script logs the inventory and the character stat rows before and after each one: `hover:<slot>`, `drag:<from>:<to>`, `dragging:<from>:<to>` (button held), `release`, `rightclick:<slot>`, `menu:<row>`, `confirm:destroy|cancel`, `close`, `esc`, `v`, `size:<w>:<h>`, `burst:<a>:<b>:<n>` (n fast drops, to meet the server's action budget), `wait:<frames>`, `snap`, `log`, and `fight:<frames>` (for that many frames, face the nearest live enemy, walk in, ask for combat mode and hold the attack through the real command path, then capture; when the walk stalls it jumps, then sidesteps, and after a long stall it turns noclip on once, which then stays on; it is how a script gets damage numbers, loot and a death; set `DREAM_MAX_FPS=60` so frames are about 1/60 s, since the server runs in real time; a script holds at most 80 steps). A slot is `0..63` for a bag anchor (row * 8 + col; as a drag target it is where the item's top-left cell lands, with the item centred on the pointer, and a target where the item does not fit is clamped onto the board as a hand would get), or `100..111` / `main|off|head|body|hands|feet|legs|neck|ring1|ring2|back|pet` for the twelve equipment wells. After a step that sends an action the script waits for the server's answer (or 240 frames), then writes `NN-<step>.png` with `:` as `-`. Verification tool only; with the variable unset nothing about it runs.
+- `DREAM_HUD_CAPTURE_SCRIPT` also takes pointer steps. They feed synthetic pointer states through the real input router and panels (the scripted pointer replaces the mouse only while a script runs), so they send the same inventory intents a hand would, and the script logs the inventory and the character stat rows before and after each one: `hover:<slot>`, `drag:<from>:<to>`, `dragging:<from>:<to>` (button held), `release`, `rightclick:<slot>`, `menu:<row>`, `confirm:destroy|cancel`, `close`, `esc`, `v`, `size:<w>:<h>`, `burst:<a>:<b>:<n>` (n fast drops, to meet the server's action budget), `wait:<frames>`, `snap`, `log`, and `walkto:<x>:<z>:<maxFrames>` (clicks the ground at that cell through the real click path, aiming at its projection or, off screen, at the screen edge toward it, until the character is within 1.5 m or the frames run out; logs `walkto x,z start=... end=... clicks=N pathCells=M walked=metres reached=bool`, where `pathCells` is the last click's path only), `screenclick:<x>:<y>` (left click at a window pixel), `buildat:<x>:<z>` (right click the ground at that cell), `cell:<x>:<z>` (print which levels of that column hold a cell, plus the player and the goal), and `fight:<frames>` (for that many frames, face the nearest live enemy, walk in, ask for combat mode and hold the attack through the real command path, then capture; when the walk stalls it jumps, then sidesteps, and after a long stall it turns noclip on once, which then stays on; it is how a script gets damage numbers, loot and a death; set `DREAM_MAX_FPS=60` so frames are about 1/60 s, since the server runs in real time; a script holds at most 80 steps; `enemyclick:left|right` clicks the nearest live enemy on screen, `groundclick:<x>:<z>` left-clicks a ground cell once, `holdmove:<x1>:<z1>:<x2>:<z2>:<frames>` holds the left button on the first cell and carries the cursor to the second, `keys:<names>:<frames>` holds keys through the real key mapping (`w a s d space ctrl noclip building combat`, joined with `+`; `noclip` is the 0 key, `building` and `combat` are 1 and 2), `status` logs the player, the click goal, the mode, noclip and the enemies, and `waitidle:<frames>` waits until the click goal ends, up to that many frames). A slot is `0..63` for a bag anchor (row * 8 + col; as a drag target it is where the item's top-left cell lands, with the item centred on the pointer, and a target where the item does not fit is clamped onto the board as a hand would get), or `100..111` / `main|off|head|body|hands|feet|legs|neck|ring1|ring2|back|pet` for the twelve equipment wells. After a step that sends an action the script waits for the server's answer (or 240 frames), then writes `NN-<step>.png` with `:` as `-`. Verification tool only; with the variable unset nothing about it runs.
 
 ## Profiling Environment Flags
 
@@ -457,7 +457,7 @@ The project file includes:
 The project currently expects:
 
 - Keyboard input from OpenTK `KeyboardState`
-- Mouse input from OpenTK `MouseState`
+- Mouse input from OpenTK `MouseState`, read once per Update as a pointer state (`Render.SampleWorldPointer`)
 - A per-frame physics step driven from `OnUpdateFrame`
 - Per-frame HUD drawing driven from `OnRenderFrame`
 
@@ -465,12 +465,20 @@ The project currently expects:
 
 `Esc` is the settings toggle, with one exception that holds on both HUD surfaces (classic and ImGui): with the inventory open and Settings closed, `Esc` closes the inventory and leaves Settings shut (it used to open Settings over it). From play, or with Settings open, `Esc` toggles Settings as before. When settings are visible:
 
-- the window cursor switches to `Normal`
-- gameplay movement input is paused
-- cube placement is paused
+- the OS cursor is shown (the sprite cursor is not drawn)
+- gameplay input is paused and the current click goal is cancelled
 - ImGui receives live mouse input for the settings panel
 
-When settings are hidden, the cursor is re-grabbed and normal gameplay input resumes.
+When settings are hidden, gameplay input resumes. The `V` inventory overlay does not pause play: clicks outside the bar and the open windows still move the character.
+
+### Controls
+
+- Left click on the ground: walk there along a client-side path, in any interaction mode. Holding the button re-aims the walk at the cursor up to four times a second.
+- Left click on an enemy: walk into range (3.2 m), stop, face it and attack until it is gone or a new click arrives. Asks for Combat mode once if the mode is not Combat.
+- Right click, Combat mode: face the cursor point and attack while the button is held, without moving.
+- Right click, Building mode: pick a cell; walk until it is within 2.4 m if it is further than 2.5 m, then place once.
+- A click on the bar, an open window or an ImGui panel never moves the character, and neither does a drag that began there.
+- `W`, `A`, `S`, `D`, mouse look and left-click-as-attack are gone. `Space` (jump), `Left Ctrl` (noclip descend), `F`, `0`, `1`, `2`, `V`, `Esc` and `F3` are unchanged. Clicks are ignored while noclip is on.
 
 For floor-size changes, the current flow is:
 

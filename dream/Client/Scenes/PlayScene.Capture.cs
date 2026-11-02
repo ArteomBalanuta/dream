@@ -1,6 +1,7 @@
 using System.Text;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using Dream.Client.Input;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
@@ -29,7 +30,12 @@ namespace Dream.Client.Scenes;
 //   close                     click the inventory Close button
 //   esc, v                    the Esc and V keys' own handlers
 //   size:<w>:<h>              resize the window (the same path as the Settings resolution)
-//   wait:<frames>, snap, log  idle, capture, print the inventory
+//   walkto:<x>:<z>:<maxFrames> click the ground at that cell (projected through last frame's camera, or
+//                             the screen edge toward it) until the character is within 1.5 m or the frames run out
+//   screenclick:<x>:<y>      left click at a window pixel (for the world or HUD click gate)
+//   buildat:<x>:<z>          right click the ground at that cell
+//   cell:<x>:<z>             print which levels of that column hold a cell, and the player and goal
+//   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
 //                             mode (the real command path), then capture; for damage numbers and death
 // <slot> is 0..63 for a bag anchor (row * 8 + col; the drag target is where the item's anchor lands, with the
@@ -117,7 +123,8 @@ public partial class PlayScene
         Pointer,
         WaitResult,
         Idle,
-        Settle
+        Settle,
+        Walk
     }
 
     // The wait for the server's answer to a sent inventory action, in frames.
@@ -147,6 +154,16 @@ public partial class PlayScene
     private float _captureFightLastDistance;
     private int _captureFightStuckTicks;
     private bool _captureFightNoclipSent;
+    private HudCaptureKeys _captureKeys;
+    private bool _captureWaitIdle;
+    private int _captureTraceFrames;
+    private HudCaptureStepSpec _captureWalk;
+    private Vector3 _captureWalkStart;
+    private int _captureWalkFrames;
+    private int _captureWalkClicks;
+    private int _captureWalkRest;
+    private float _captureWalkMetres;
+    private Vector3 _captureWalkLast;
 
     private bool CaptureRunning =>
         _hudCapture is not null && !_hudCaptureDone && _hudCaptureFrames + 1 >= HudCaptureScript.WarmupFrames
@@ -185,8 +202,19 @@ public partial class PlayScene
             BeginHudCaptureStep(script, script.Specs[_hudCaptureStep], in layout);
         }
 
+        if (_capturePhase == CapturePhase.Walk)
+        {
+            AdvanceCaptureWalk(in layout);
+            return;
+        }
+
         if (_capturePhase == CapturePhase.Pointer && _capturePointerIndex < _capturePointerFrames.Count)
         {
+            if (_captureTraceFrames > 0 && _capturePointerIndex % _captureTraceFrames == 0)
+            {
+                LogCaptureStatus("hold frame " + _capturePointerIndex);
+            }
+
             SetCapturePointer(_capturePointerFrames[_capturePointerIndex++]);
             return;
         }
@@ -267,6 +295,123 @@ public partial class PlayScene
                 _capturePhase = CapturePhase.Idle;
                 _captureIdleFrames = spec.A;
                 _captureFightActive = true;
+                break;
+            case HudCaptureVerb.WalkTo:
+                _capturePhase = CapturePhase.Walk;
+                _captureWalk = spec;
+                _captureWalkStart = _runtime.Player.GetWorldPosition();
+                _captureWalkFrames = 0;
+                _captureWalkClicks = 0;
+                _captureWalkRest = 0;
+                _captureWalkMetres = 0f;
+                _captureWalkLast = _captureWalkStart;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.ScreenClick:
+                HudCapturePointerPlan.Click(_capturePointerFrames, new Vector2(spec.A, spec.B));
+                _capturePhase = CapturePhase.Pointer;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.BuildAt:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                if (TryCaptureWalkClickPoint(in layout, player, new Vector3(spec.A + 0.5f, player.Y, spec.B + 0.5f), out Vector2 at))
+                {
+                    HudCapturePointerPlan.RightClick(_capturePointerFrames, at);
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] buildat {spec.A},{spec.B}: pixel {at.X:0},{at.Y:0}, mode {_runtime.InteractionMode}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.EnemyClick:
+            {
+                EnemyActor? target = NearestLiveEnemy(_runtime.Player.Camera.Position);
+                Camera? camera = _render.LastWorldCamera;
+                Vector2 enemyAt = default;
+                if (target is not null && camera is not null
+                    && TryProjectToScreen(camera.GetViewMatrix() * _render.ProjectionMatrix, target.Combatant.GetCombatAnchorWorldPosition(), _render.ViewportSize, out enemyAt, out bool enemyFront)
+                    && enemyFront)
+                {
+                    if (spec.A == 0)
+                    {
+                        HudCapturePointerPlan.Click(_capturePointerFrames, enemyAt);
+                    }
+                    else
+                    {
+                        HudCapturePointerPlan.RightClick(_capturePointerFrames, enemyAt);
+                    }
+
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] enemyclick {(spec.A == 0 ? "left" : "right")}: {(target?.DisplayName ?? "no enemy")} pixel {enemyAt.X:0},{enemyAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
+                LogCaptureStatus("enemyclick");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.GroundClick:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                if (TryCaptureWalkClickPoint(in layout, player, new Vector3(spec.A + 0.5f, player.Y, spec.B + 0.5f), out Vector2 groundAt))
+                {
+                    HudCapturePointerPlan.Click(_capturePointerFrames, groundAt);
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] groundclick {spec.A},{spec.B}: pixel {groundAt.X:0},{groundAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.HoldMove:
+            {
+                Vector3 player = _runtime.Player.GetWorldPosition();
+                Vector3 from = new(spec.A & 0xFFFF, player.Y, spec.A >> 16);
+                Vector3 to = new(spec.B & 0xFFFF, player.Y, spec.B >> 16);
+                Vector2 holdFrom = default;
+                Vector2 holdTo = default;
+                if (TryCaptureWalkClickPoint(in layout, player, from + new Vector3(0.5f, 0f, 0.5f), out holdFrom)
+                    && TryCaptureWalkClickPoint(in layout, player, to + new Vector3(0.5f, 0f, 0.5f), out holdTo))
+                {
+                    HudCapturePointerPlan.HoldAndMove(_capturePointerFrames, holdFrom, holdTo, spec.C);
+                    _capturePhase = CapturePhase.Pointer;
+                    _captureTraceFrames = 20;
+                }
+
+                Console.WriteLine($"[hud-capture] holdmove {from.X:0},{from.Z:0} -> {to.X:0},{to.Z:0}: pixels {holdFrom.X:0},{holdFrom.Y:0} -> {holdTo.X:0},{holdTo.Y:0}, frames={_capturePointerFrames.Count}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.Keys:
+                _captureKeys = (HudCaptureKeys)spec.A;
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.B;
+                _captureWritesPng = false;
+                Console.WriteLine($"[hud-capture] keys {_captureKeys} for {spec.B} frames");
+                LogCaptureStatus("keys begin");
+                break;
+            case HudCaptureVerb.Status:
+                LogCaptureStatus("status");
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.WaitIdle:
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.A;
+                _captureWaitIdle = true;
+                _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.CellProbe:
+                LogCaptureCell(spec.A, spec.B);
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
+                _captureWritesPng = false;
                 break;
             case HudCaptureVerb.Wait:
                 _capturePhase = CapturePhase.Idle;
@@ -359,7 +504,19 @@ public partial class PlayScene
                 _capturePhase = CapturePhase.Settle;
                 _hudCaptureSettle = 0;
                 return;
+            case CapturePhase.Walk:
+                return;
             case CapturePhase.Idle:
+                if (_captureWaitIdle && _clickMove.Goal == ClickGoalKind.None)
+                {
+                    break;
+                }
+
+                if (_captureWaitIdle && _captureIdleFrames % 60 == 0)
+                {
+                    LogCaptureStatus("waiting");
+                }
+
                 if (--_captureIdleFrames > 0)
                 {
                     return;
@@ -395,10 +552,197 @@ public partial class PlayScene
             LogHudCaptureInventory("after " + step);
         }
 
+        if (_captureKeys != HudCaptureKeys.None || _captureWaitIdle)
+        {
+            LogCaptureStatus(_captureWaitIdle ? "waitidle end" : "keys end");
+        }
+
         _hudCaptureStep++;
         _hudCaptureSettle = 0;
         _capturePhase = CapturePhase.Begin;
         _captureFightActive = false;
+        _captureKeys = HudCaptureKeys.None;
+        _captureWaitIdle = false;
+        _captureTraceFrames = 0;
+    }
+
+    private bool CaptureKeyHeld(Keys key) => _captureKeys != HudCaptureKeys.None && key switch
+    {
+        Keys.W => _captureKeys.HasFlag(HudCaptureKeys.W),
+        Keys.A => _captureKeys.HasFlag(HudCaptureKeys.A),
+        Keys.S => _captureKeys.HasFlag(HudCaptureKeys.S),
+        Keys.D => _captureKeys.HasFlag(HudCaptureKeys.D),
+        Keys.Space => _captureKeys.HasFlag(HudCaptureKeys.Space),
+        Keys.LeftControl => _captureKeys.HasFlag(HudCaptureKeys.Ctrl),
+        Keys.D0 => _captureKeys.HasFlag(HudCaptureKeys.Noclip),
+        Keys.D1 => _captureKeys.HasFlag(HudCaptureKeys.Building),
+        Keys.D2 => _captureKeys.HasFlag(HudCaptureKeys.Combat),
+        _ => false
+    };
+
+    private EnemyActor? NearestLiveEnemy(Vector3 from)
+    {
+        EnemyActor? nearest = null;
+        float best = float.MaxValue;
+        foreach (EnemyActor enemy in _runtime.Enemies.ActiveActors)
+        {
+            float d = (enemy.Position - from).LengthSquared;
+            if (enemy.IsActive && d < best)
+            {
+                best = d;
+                nearest = enemy;
+            }
+        }
+
+        return nearest;
+    }
+
+    // One line of what a click proof needs: where the player is, what the controller holds, the mode,
+    // and the nearest live enemy.
+    private void LogCaptureStatus(string tag)
+    {
+        Vector3 at = _runtime.Player.GetWorldPosition();
+        EnemyActor? enemy = NearestLiveEnemy(_runtime.Player.Camera.Position);
+        string near = enemy is null
+            ? "none"
+            : $"{enemy.DisplayName} at {enemy.Position.X:0.0},{enemy.Position.Z:0.0} {(enemy.Position - _runtime.Player.Camera.Position).Length:0.0} m hp {enemy.Combatant.Health.CurrentHealth}";
+        StringBuilder all = new();
+        foreach (EnemyActor each in _runtime.Enemies.ActiveActors)
+        {
+            all.Append(" #").Append(each.Combatant.Actor.Id).Append('@').Append(each.Position.X.ToString("0.0")).Append(',').Append(each.Position.Z.ToString("0.0"))
+                .Append(" hp").Append(each.Combatant.Health.CurrentHealth).Append(each.IsActive ? string.Empty : "(dead)");
+        }
+
+        Console.WriteLine($"[hud-capture] enemies:{all}");
+        Console.WriteLine(
+            $"[hud-capture] status {tag}: pos {at.X:0.0},{at.Y:0.0},{at.Z:0.0} goal {_clickMove.Goal} cell {_clickMove.GoalCell.X},{_clickMove.GoalCell.Level},{_clickMove.GoalCell.Z} " +
+            $"goalCellSolid {_runtime.Map.TryGetGeometryCellAtCell(_clickMove.GoalCell.X, _clickMove.GoalCell.Level, _clickMove.GoalCell.Z) is not null} walking {_clickMove.IsWalking} pathCells {_clickMove.LastPathCells} mode {_runtime.InteractionMode} noclip {_runtime.Player.IsNoclipEnabled} " +
+            $"alive {_runtime.Player.Combatant.Health.IsAlive} hp {_runtime.Player.Combatant.Health.CurrentHealth} nearest {near} " +
+            $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
+    }
+
+    private const float CaptureWalkReachMetres = 1.5f;
+    private const int CaptureWalkRestFrames = 4;
+
+    // The walkto step, one call per frame. While nothing is moving the character and no click is
+    // pending, it clicks the target through the real pointer path; it ends within 1.5 m or at the cap.
+    private void AdvanceCaptureWalk(in UiLayout layout)
+    {
+        Vector3 player = _runtime.Player.GetWorldPosition();
+        Vector3 target = new(_captureWalk.A + 0.5f, player.Y, _captureWalk.B + 0.5f);
+        float remaining = new Vector2(player.X - target.X, player.Z - target.Z).Length;
+        _captureWalkFrames++;
+        _captureWalkMetres += new Vector2(player.X - _captureWalkLast.X, player.Z - _captureWalkLast.Z).Length;
+        _captureWalkLast = player;
+        if (remaining <= CaptureWalkReachMetres || _captureWalkFrames >= _captureWalk.C)
+        {
+            bool reached = remaining <= CaptureWalkReachMetres;
+            Console.WriteLine(
+                $"[hud-capture] walkto {_captureWalk.A},{_captureWalk.B} start={_captureWalkStart.X:0.0},{_captureWalkStart.Y:0.0},{_captureWalkStart.Z:0.0} " +
+                $"end={player.X:0.0},{player.Y:0.0},{player.Z:0.0} clicks={_captureWalkClicks} pathCells={_clickMove.LastPathCells} walked={_captureWalkMetres:0.0} reached={(reached ? "true" : "false")}");
+            _capturePointerFrames.Clear();
+            _capturePointerIndex = 0;
+            SetCapturePointer(_captureLast with { LeftDown = false, RightDown = false });
+            _capturePhase = CapturePhase.Idle;
+            _captureIdleFrames = 1;
+            return;
+        }
+
+        if (_capturePointerIndex < _capturePointerFrames.Count)
+        {
+            SetCapturePointer(_capturePointerFrames[_capturePointerIndex++]);
+            return;
+        }
+
+        SetCapturePointer(_captureLast with { LeftDown = false, RightDown = false });
+        bool controllerIdle = _clickMove.Goal == ClickGoalKind.None && !_clickMove.IsWalking;
+        // A few frames of rest between clicks, so the previous one has been seen by an Update.
+        if (!controllerIdle || ++_captureWalkRest < CaptureWalkRestFrames || _render.LastWorldCamera is null)
+        {
+            return;
+        }
+
+        if (TryCaptureWalkClickPoint(in layout, player, target, out Vector2 at))
+        {
+            _capturePointerFrames.Clear();
+            _capturePointerIndex = 0;
+            HudCapturePointerPlan.Click(_capturePointerFrames, at);
+            _captureWalkClicks++;
+            _captureWalkRest = 0;
+        }
+    }
+
+    // Where on screen to click for a target on the ground: its projection, or when that is off
+    // screen (or under the bar) the point on the line from the player to it, inset 15%.
+    private bool TryCaptureWalkClickPoint(in UiLayout layout, Vector3 player, Vector3 target, out Vector2 at)
+    {
+        at = default;
+        Camera? camera = _render.LastWorldCamera;
+        if (camera is null)
+        {
+            return false;
+        }
+
+        Matrix4 viewProjection = camera.GetViewMatrix() * _render.ProjectionMatrix;
+        Vector2i size = _render.ViewportSize;
+        Vector3 feet = new(player.X, player.Y - 0.5f, player.Z);
+        Vector3 ground = new(target.X, feet.Y, target.Z);
+        if (!TryProjectToScreen(viewProjection, ground, size, out Vector2 targetScreen, out bool targetInFront)
+            || !TryProjectToScreen(viewProjection, feet, size, out Vector2 playerScreen, out _))
+        {
+            return false;
+        }
+
+        float left = size.X * 0.15f;
+        float right = size.X * 0.85f;
+        float top = size.Y * 0.15f;
+        float bottom = MathF.Min(size.Y * 0.85f, layout.Bar.Y - 8f);
+        if (targetInFront && targetScreen.X >= left && targetScreen.X <= right && targetScreen.Y >= top && targetScreen.Y <= bottom)
+        {
+            at = targetScreen;
+            return true;
+        }
+
+        Vector2 d = targetInFront ? targetScreen - playerScreen : playerScreen - targetScreen;
+        if (d.LengthSquared < 1e-6f)
+        {
+            return false;
+        }
+
+        float t = float.MaxValue;
+        if (d.X > 0f) { t = MathF.Min(t, (right - playerScreen.X) / d.X); }
+        else if (d.X < 0f) { t = MathF.Min(t, (left - playerScreen.X) / d.X); }
+        if (d.Y > 0f) { t = MathF.Min(t, (bottom - playerScreen.Y) / d.Y); }
+        else if (d.Y < 0f) { t = MathF.Min(t, (top - playerScreen.Y) / d.Y); }
+        if (t == float.MaxValue || t < 0f)
+        {
+            return false;
+        }
+
+        // Never past the target itself when it is in front.
+        if (targetInFront)
+        {
+            t = MathF.Min(t, 1f);
+        }
+
+        at = playerScreen + (d * t);
+        return true;
+    }
+
+    private static bool TryProjectToScreen(Matrix4 viewProjection, Vector3 world, Vector2i size, out Vector2 screen, out bool inFront)
+    {
+        Vector4 clip = Vector4.TransformRow(new Vector4(world, 1f), viewProjection);
+        inFront = clip.W > 0f;
+        if (MathF.Abs(clip.W) < 1e-6f)
+        {
+            screen = default;
+            return false;
+        }
+
+        float ndcX = clip.X / clip.W;
+        float ndcY = clip.Y / clip.W;
+        screen = new Vector2((ndcX + 1f) * 0.5f * size.X, (1f - ndcY) * 0.5f * size.Y);
+        return true;
     }
 
     // The fight step's input: through the same command frame a hand produces. Turns toward the
@@ -525,8 +869,22 @@ public partial class PlayScene
             sb.AppendLine();
         }
 
+        Vector3 at = _runtime.Player.GetWorldPosition();
+        sb.Append("  player: ").Append(at.X.ToString("0.0")).Append(',').Append(at.Y.ToString("0.0")).Append(',').Append(at.Z.ToString("0.0")).AppendLine();
         sb.Append("  inventory open: ").Append(_settings.InventoryVisible).Append(", settings open: ").Append(_settings.SettingsVisible).Append(", cursor: ").Append(DesiredCursorState);
         Console.WriteLine(sb.ToString());
+    }
+
+    private void LogCaptureCell(int x, int z)
+    {
+        StringBuilder sb = new();
+        for (int y = 1; y <= 4; y++)
+        {
+            sb.Append(_runtime.Map.TryGetGeometryCellAtCell(x, y, z) is null ? " ." : " " + y);
+        }
+
+        Vector3 at = _runtime.Player.GetWorldPosition();
+        Console.WriteLine($"[hud-capture] cell {x},{z}: levels{sb} player {at.X:0.0},{at.Y:0.0},{at.Z:0.0} goal {_clickMove.Goal}");
     }
 
     private static string DescribeItem(InventoryItemSnapshot item)
