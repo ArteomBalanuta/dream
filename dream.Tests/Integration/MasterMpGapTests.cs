@@ -140,6 +140,25 @@ public sealed class MasterMpGapTests
         Assert.True(combatant.CurrentMana >= Math.Min(combatant.MaxMana, rested + 40));
     }
 
+    [Fact]
+    public async Task ADeadPlayer_CannotSpendStatPoints()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await M4AKit.StartAsync(db);
+        await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
+        await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
+        combatant.ApplyProgression(3, 0);
+        combatant.Health.ApplyDamage(1_000_000);
+        Assert.False(combatant.Health.IsAlive);
+        int agilityBefore = combatant.BaseStats.Agility;
+
+        ServerActionMessage refused = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 2), a);
+        Assert.False(refused.Result.Accepted);
+        Assert.Contains("dead", refused.Result.Rejection!.Reason, StringComparison.Ordinal);
+        Assert.Equal(agilityBefore, combatant.BaseStats.Agility);
+    }
+
     // ---- 3: dev gating on a real server ----
 
     [Fact]

@@ -211,13 +211,13 @@ public sealed partial class WorldSessionRuntime
         }
 
         // Wave I: a dead player neither builds nor fights (inventory, stats, material and mode stay
-        // allowed). After the sequence step, so the rejected action is spent like any other; nothing
+        // allowed, except a stat point spend). After the sequence step, so the rejected action is spent like any other; nothing
         // else changes and no write is queued.
         // M3: a dead player does not pick up, talk or trade either.
         if (!context.Combatant.Health.IsAlive
             && message.Payload is BuildUseIntent or CombatUseIntent
                 or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
-                or SkillUseIntent or ItemUseIntent
+                or SkillUseIntent or ItemUseIntent or PlayerStatSpendIntent
                 or TradeRequestIntent or TradeRespondIntent or TradeOfferIntent or TradeLockIntent
                 or TradeConfirmIntent or QuestAcceptIntent or QuestTurnInIntent)
         {
