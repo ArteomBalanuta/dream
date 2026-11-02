@@ -84,10 +84,12 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // PlayerStatsUpdateIntent is the development stat sliders (decision U4): any client can set its own
     // base stats within the validated range, and they persist and travel between worlds with the
     // character. It goes away when levels give stat points.
+    // PlayerStatSpendIntent is the real thing: points the level earned, checked by the runtime and
+    // allowed on every server, so it is not gated on DevCommandsAllowed.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
         return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
-            or PlayerStatsUpdateIntent or BuildMaterialSelectIntent;
+            or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

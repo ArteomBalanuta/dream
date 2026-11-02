@@ -42,9 +42,10 @@ public readonly record struct TransportEnvelope(
     // refuse it. Actor and world snapshots are unchanged apart from the version digit. Version 14
     // (multiplayer M1) adds the chat messages (client.chat, server.chat) and the character list
     // (client.character-list, server.character-list); a v13 peer would fail on the unknown kinds, so
-    // both sides refuse it. Existing payloads are unchanged apart from the version digit. Decode
+    // both sides refuse it. Existing payloads are unchanged apart from the version digit. Version 15
+    // (stat points, M2-A) adds the "player.stats.spend" action (PlayerStatSpendIntent). Decode
     // rejects any other version.
-    public const int CurrentProtocolVersion = 14;
+    public const int CurrentProtocolVersion = 15;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)
