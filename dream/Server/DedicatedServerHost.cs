@@ -248,13 +248,14 @@ public sealed class DedicatedServerHost : IDisposable, IServerSessionClaimRegist
 
     public static DedicatedServerHost CreateRuntimeAttached(
         Dream.Server.Persistence.ServerPersistenceBundle? persistence = null,
-        bool deferJoinsToTick = false)
+        bool deferJoinsToTick = false,
+        bool allowDevMovement = false)
     {
         ProtocolRouter router = new(
             [
                 new ClientHelloHandler(),
                 new JoinRequestHandler(),
-                new PlayerCommandHandler(),
+                new PlayerCommandHandler(allowDevMovement),
                 new PlayerActionHandler(),
                 new WorldResyncRequestHandler()
             ],

@@ -76,7 +76,8 @@ public partial class PlayScene
     private void CollectShadows(FxShadowList shadows, in WorldSessionPresentationState presentation, Vector3 viewCentre)
     {
         shadows.Begin(viewCentre);
-        AddPlayerShadow(shadows, _runtime.Player.GetWorldPosition());
+        // The drawn (interpolated) pose, so the blob shadow stays under the model between ticks.
+        AddPlayerShadow(shadows, _runtime.LocalRenderPose.Position);
 
         IReadOnlyList<RemotePlayerPresentationState>? remotePlayers = _fxRemotePlayers;
         for (int i = 0; remotePlayers != null && i < remotePlayers.Count; i++)

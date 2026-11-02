@@ -5,6 +5,15 @@ namespace Dream.Multiplayer.Protocol;
 
 public sealed class PlayerCommandHandler : IServerMessageHandler
 {
+    private readonly bool _allowDevMovement;
+
+    // allowDevMovement: whether client noclip and freeze toggles reach the simulation. Off by
+    // default (dedicated servers); the integrated single-player host turns it on.
+    public PlayerCommandHandler(bool allowDevMovement = false)
+    {
+        _allowDevMovement = allowDevMovement;
+    }
+
     public string MessageKind => "player.command";
 
     public void Handle(ServerRoutingContext context, IClientToServerMessage message)
@@ -24,7 +33,20 @@ public sealed class PlayerCommandHandler : IServerMessageHandler
             return;
         }
 
-        context.CommandInbox?.Enqueue(SanitizeCommandFrame(commandMessage.CommandFrame));
+        context.CommandInbox?.Enqueue(SanitizeCommandFrame(commandMessage.CommandFrame, _allowDevMovement));
+    }
+
+    // As below; without allowDevMovement the noclip and freeze toggles are cleared.
+    public static PlayerCommandFrame SanitizeCommandFrame(PlayerCommandFrame frame, bool allowDevMovement)
+    {
+        PlayerCommandFrame sanitized = SanitizeCommandFrame(frame);
+        PlayerMoveIntent move = sanitized.MoveIntent;
+        if (allowDevMovement || (!move.FreezePressed && !move.ToggleNoclipPressed))
+        {
+            return sanitized;
+        }
+
+        return sanitized with { MoveIntent = move with { FreezePressed = false, ToggleNoclipPressed = false } };
     }
 
     // Client command frames are untrusted. Move axes become finite and are clamped to [-1, 1]: a

@@ -63,8 +63,8 @@ public sealed class LocalPlayerRenderer : IDisposable
             localPlayer.Facing,
             localPlayer.IsMoving);
 
-        // Moving is the command's word (the walk cycle plays in place against a wall); how fast is
-        // the body's, when it reports any.
+        // Moving comes from the render pose (tick speed with hysteresis, see
+        // LocalPlayerRenderSmoother); how fast is the body's, when it reports any.
         float speed = !localPlayer.IsMoving
             ? 0f
             : _inputs.HorizontalSpeed > PlayerAnimationStateMachine.MovingSpeedThreshold

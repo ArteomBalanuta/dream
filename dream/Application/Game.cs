@@ -119,7 +119,8 @@ public class Game : GameWindow
                 hostFactory: () => ServerBootstrap.CreateAuthoritativeHost(
                     new ServerStartOptions(
                         NewWorldSize: _settings.FloorSize,
-                        MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait))).AsTask().GetAwaiter().GetResult(),
+                        MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait,
+                        AllowDevMovement: true))).AsTask().GetAwaiter().GetResult(),
             startAfter: () => _localServerShutdown.Pending);
     }
 

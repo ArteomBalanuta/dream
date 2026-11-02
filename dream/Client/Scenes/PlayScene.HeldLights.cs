@@ -38,12 +38,14 @@ public partial class PlayScene
         Player player = _runtime.Player;
         Camera camera = presentation.Camera;
         PushLocalAvatarInputs(player);
+        // The interpolated render pose (raw body in first person), so a third-person light rides
+        // with the drawn model instead of stepping on prediction ticks.
         LocalHeldLight local = new(
             player.Combatant.Health.IsAlive ? _localHeldLight : HeldLightKind.None,
             player.Combatant.Actor.Id,
             _settings.CameraViewMode == CameraViewMode.FirstPerson,
-            player.GetWorldPosition(),
-            player.Camera.HorizontalForward);
+            _runtime.LocalRenderPose.Position,
+            _runtime.LocalRenderPose.Facing);
         AddHeldLights(lights, in local, camera.Position, camera.Front, camera.Right, camera.Up, remotePlayers, _clientPresentationTimeSeconds);
     }
 
