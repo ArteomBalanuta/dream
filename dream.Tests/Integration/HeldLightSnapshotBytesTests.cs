@@ -21,10 +21,12 @@ public sealed class HeldLightSnapshotBytesTests(ITestOutputHelper output)
     // Last fix loop of wave I: 58,140 B (-687 B). The day wolf now spawns in the far corner (52.5, 52.5), outside
     // its aggro range of the players, and the players are protected for their first 192 ticks, so over the 200
     // ticks the wolf stands still and nobody is bitten: no wolf movement or health change in the snapshots.
-    private const long NoLightSnapshotBytes = 58_140;
+    // Lowered experience curve (100 + level * 50): experienceToNextLevel at level 1 is 150, not 1023, one byte less in
+    // each progression it carries (8 in all): 58,132 B (-8 B).
+    private const long NoLightSnapshotBytes = 58_132;
 
     [Fact]
-    public void NoLight_200Ticks_Is58140Bytes()
+    public void NoLight_200Ticks_Is58132Bytes()
     {
         using WorldSessionRuntime runtime = CreateRuntime();
         long[] frames = Run(runtime, equipSlot: null);

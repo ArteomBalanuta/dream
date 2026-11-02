@@ -160,6 +160,8 @@ public sealed class WorldAggregateRepositoryTests
         inventory.SaveInventorySlot(new PersistedInventorySlot($" {Owner} ", 0, 2, Created));
         // The same item in a second slot.
         inventory.SaveInventorySlot(new PersistedInventorySlot(Owner, 1, 2, Created));
+        // A slot upsert never overwrites a different item (M3), so the occupant moves out first.
+        inventory.DeleteInventorySlot(Owner, 2, 1);
         inventory.SaveInventorySlot(new PersistedInventorySlot(Owner, 2, 2, Created));
 
         IReadOnlyList<PersistedInventorySlot> slots = inventory.LoadInventorySlots();

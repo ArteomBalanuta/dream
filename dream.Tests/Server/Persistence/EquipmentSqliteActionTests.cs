@@ -296,6 +296,7 @@ public sealed class EquipmentSqliteActionTests
     public void Destroy_OfASharedLegacyItem_LeavesTheOtherPlayersRowAndTheItem()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup shares one item between two players
         using (Run setup = new(db))
         {
             Give(setup.World, Player, 0, 90, "tool.torch");

@@ -317,7 +317,9 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         // 58,107 B at protocol v9 plus one digit per frame is 58,307 B; the wolf bite change (a chasing wolf stops
         // in bite range and bites) moved it to 58,827 B; the last fix loop (far wolf spawn, join protection: the
         // wolf stands still and nobody is bitten in 200 ticks) moves it to 58,140 B.
-        Assert.Equal(58_140L, total);
+        // The lowered experience curve (100 + level * 50, M2) shortens experienceToNextLevel at level 1 from 1023 to 150,
+        // one byte per progression it carries (8 in all): 58,132 B.
+        Assert.Equal(58_132L, total);
     }
 
     [Fact]
