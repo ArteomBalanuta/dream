@@ -104,12 +104,15 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         Assert.Equal(0, writes.FailedWrites);
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
-        Assert.Equal([0, 2, 4, 6, 32, 34, 36, 38], snapshot.BagItems().Select(slot => slot.SlotIndex));
+        // The starter kit top-up (kit v3: two heal potions) also lands in the bag; the gear is what moved.
+        Assert.Equal([0, 2, 4, 6, 32, 34, 36, 38], snapshot.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
+        int kitPotions = snapshot.BagItems().Count(IsConsumable);
+        Assert.Equal(2, kitPotions);
         Assert.Equal(8, snapshot.HeldBackItems().Count());
         // Every item id survived into the rows, once.
         List<SlotRow> repaired = BagGridMigrationAsserts.ReadSlots(database);
-        Assert.Equal(Enumerable.Range(100, 16).Select(id => (long)id), repaired.Select(row => row.ItemId).Order());
-        Assert.Equal(16, repaired.Count);
+        Assert.Equal(Enumerable.Range(100, 16).Select(id => (long)id), repaired.Select(row => row.ItemId).Where(id => id is >= 100 and < 116).Order());
+        Assert.Equal(16 + kitPotions, repaired.Count);
         Assert.Equal(snapshot.Layout(), BuildFresh(bundle).Layout());
 
         using (SqliteConnection connection = database.Open())
@@ -123,6 +126,9 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         output.WriteLine("16 x 2x3: 8 placed, 8 held back, all 16 ids kept; held back drain as room appears (BagLayoutRepairTests)");
     }
+
+    private static bool IsConsumable(InventorySlotSnapshot slot) =>
+        slot.Item is { } item && item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal);
 
     private static PlayerInventorySnapshot BuildFresh(ServerPersistenceBundle bundle)
     {
@@ -151,9 +157,11 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
         PlayerInventoryService inventory = OpenService(bundle, writes);
         Assert.True(inventory.Ensure(Player));
-        Assert.Equal([6], inventory.BuildSnapshot(Player).BagItems().Select(slot => slot.SlotIndex));
+        PlayerInventorySnapshot loaded = inventory.BuildSnapshot(Player);
+        Assert.Equal([6], loaded.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(4, BagGridMigrationAsserts.ReadSlots(database).Count);
+        // Plus the starter kit top-up (kit v3 potions).
+        Assert.Equal(4 + loaded.BagItems().Count(IsConsumable), BagGridMigrationAsserts.ReadSlots(database).Count);
         using SqliteConnection connection = database.Open();
         Assert.Equal(3, WorldIntegrityCheck.Run(connection, WorldDescriptor.Default).UnknownSlotIndexes);
     }

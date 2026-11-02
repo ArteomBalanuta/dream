@@ -307,9 +307,9 @@ public sealed class ContentCatalogTests
 
     [Theory]
     [InlineData("\"strength\": 10", "\"strength\": 0", "outside the range")]
-    [InlineData("\"strength\": 10", "\"strength\": 51", "outside the range")]
+    [InlineData("\"strength\": 10", "\"strength\": 1001", "outside the range")]
     [InlineData("\"vitality\": 10", "\"vitality\": 0", "outside the range")]
-    [InlineData("\"vitality\": 10", "\"vitality\": 51", "outside the range")]
+    [InlineData("\"vitality\": 10", "\"vitality\": 1001", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 0.49", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
     [InlineData("\"moveSpeed\": 2.8,", "\"moveSpeed\": 2.8, \"attackIntervalSeconds\": 0,", "outside the range")]

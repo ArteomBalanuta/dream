@@ -294,8 +294,11 @@ public static class CharacterPanelModel
         anchor = -1;
         itemKind = string.Empty;
         count = 0;
-        foreach (InventorySlotSnapshot slot in inventory.Slots)
+        // Indexed, not foreach: the status bar calls this every frame and an interface enumerator allocates.
+        IReadOnlyList<InventorySlotSnapshot> slots = inventory.Slots;
+        for (int i = 0; i < slots.Count; i++)
         {
+            InventorySlotSnapshot slot = slots[i];
             if (slot.Item is not InventoryItemSnapshot item
                 || slot.SlotIndex < 0
                 || slot.SlotIndex >= BagGrid.CellCount

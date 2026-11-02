@@ -192,6 +192,8 @@ public sealed class ConsumableUseTests
 
         PlayerCombatant combatant = server.Runtime.Player.Combatant;
         Assert.True(combatant.MaxMana > 0);
+        // A joining player's pool is not necessarily full (it regenerates), so top it up first.
+        combatant.RestoreMana(combatant.MaxMana);
         Assert.Equal(combatant.MaxMana, combatant.Mana);
 
         // Full mana: refused, nothing consumed.
