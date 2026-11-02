@@ -15,9 +15,12 @@ public partial class PlayScene
         lights.Clear();
         CollectHeldLights(lights, in presentation, remotePlayers);
         CollectLampLights(lights, in presentation);
+        CollectEffectLights(lights, remotePlayers);
     }
 
     partial void CollectLampLights(LightCollector lights, in WorldSessionPresentationState presentation);
+
+    partial void CollectEffectLights(LightCollector lights, IReadOnlyList<RemotePlayerPresentationState> remotePlayers);
 
     partial void CollectHeldLights(LightCollector lights, in WorldSessionPresentationState presentation, IReadOnlyList<RemotePlayerPresentationState> remotePlayers);
 }

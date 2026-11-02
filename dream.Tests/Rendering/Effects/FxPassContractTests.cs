@@ -207,7 +207,7 @@ public class FxPassContractTests
 
         int basisAt = IndexOf(pass, "FxViewBasis basis = FxViewBasis.FromView(in view);");
         int advanceAt = IndexOf(pass, "simulation.Advance(in inputs, _render.Lights.Lights);");
-        int writeAt = IndexOf(pass, "simulation.WriteInstances(_fxInstances);");
+        int writeAt = IndexOf(pass, "simulation.WriteInstances(_fxInstances, shadowCount);");
         int beginAt = IndexOf(pass, "gpuTimer.BeginSection(GpuTimerSection.Effects);");
         int drawAt = IndexOf(pass, "renderer.Draw(_fxInstances, count, in basis, view * _render.ProjectionMatrix);");
         int endAt = IndexOf(pass, "gpuTimer.EndSection();");
@@ -228,7 +228,7 @@ public class FxPassContractTests
 
         int skyAt = IndexOf(constructor, "_sky = new SkyRenderer();");
         int rendererAt = IndexOf(constructor, "_fxRenderer = new FxRenderer();");
-        int bridgeAt = IndexOf(constructor, "_fxBridge = new FxEventBridge(_events, _fxSimulation);");
+        int bridgeAt = IndexOf(constructor, "_fxBridge = new FxEventBridge(_events, _fxSimulation, _fxFlashes);");
         Assert.True(skyAt < rendererAt && rendererAt < bridgeAt);
 
         int disposeSkyAt = IndexOf(dispose, "RunDisposeStep(DisposeSky, ref failures);");
@@ -253,17 +253,56 @@ public class FxPassContractTests
         int nullRendererAt = IndexOf(constructor, "_fxRenderer = null;");
         int nullSimulationAt = IndexOf(constructor, "_fxSimulation = null;");
         int reportAt = IndexOf(constructor, "RenderFaultLog.Shared.Report(\"effects\", exception);");
-        int bridgeAt = IndexOf(constructor, "_fxBridge = new FxEventBridge(_events, _fxSimulation);");
+        int bridgeAt = IndexOf(constructor, "_fxBridge = new FxEventBridge(_events, _fxSimulation, _fxFlashes);");
         Assert.True(tryAt < rendererAt && rendererAt < catchAt && catchAt < nullRendererAt && nullRendererAt < nullSimulationAt);
         Assert.True(nullSimulationAt < reportAt && reportAt < bridgeAt);
-        Assert.Contains("if (_fxSimulation != null)", constructor);
+        Assert.Contains("if (_fxSimulation != null && _fxFlashes != null)", constructor);
 
-        int guardAt = IndexOf(pass, "if (_fxRenderer is not { } renderer || _fxSimulation is not { } simulation)");
+        int guardAt = IndexOf(pass, "if (_fxRenderer is not { } renderer || _fxSimulation is not { } simulation");
         int returnAt = IndexOf(pass, "return;");
         Assert.True(guardAt < returnAt && returnAt < IndexOf(pass, "simulation.Advance("));
         Assert.DoesNotContain("ObjectDisposedException", pass);
         Assert.Contains("_fxBridge?.Dispose();", disposeEffects);
         Assert.Contains("_fxRenderer?.Dispose();", disposeEffects);
+    }
+
+    [Fact]
+    public void A_Failed_Effects_Start_Leaves_No_Flashes_And_No_Shadows()
+    {
+        string source = ReadSource("dream/Client/Scenes/PlayScene.cs");
+        string constructor = Method(source, "public PlayScene(");
+        string pass = Method(source, "private void DrawEffectsPass(");
+        string disposeEffects = Method(source, "private void DisposeEffects()");
+
+        int simulationAt = IndexOf(constructor, "_fxSimulation = new FxSimulation();");
+        int flashesAt = IndexOf(constructor, "_fxFlashes = new FxFlashList();");
+        int shadowsAt = IndexOf(constructor, "_fxShadows = new FxShadowList();");
+        int catchAt = IndexOf(constructor, "catch (Exception exception)");
+        int nullFlashesAt = IndexOf(constructor, "_fxFlashes = null;");
+        int nullShadowsAt = IndexOf(constructor, "_fxShadows = null;");
+        Assert.True(simulationAt < flashesAt && flashesAt < shadowsAt && shadowsAt < catchAt);
+        Assert.True(catchAt < nullFlashesAt && nullFlashesAt < nullShadowsAt);
+        Assert.Contains("_fxFlashes is not { } flashes || _fxShadows is not { } shadows", pass);
+        Assert.Contains("_fxFlashes = null;", disposeEffects);
+        Assert.Contains("_fxShadows = null;", disposeEffects);
+        Assert.Contains("_fxFlashes?.AppendTo(lights, _fxLastNight);", source);
+    }
+
+    [Fact]
+    public void Effects_Pass_Writes_The_Shadows_Before_The_Particles_And_The_Flashes_Join_The_Lights_After_The_Lamps()
+    {
+        string source = ReadSource("dream/Client/Scenes/PlayScene.cs");
+        string pass = Method(source, "private void DrawEffectsPass(");
+        string lights = Method(source, "private void CollectFrameLights(");
+
+        int flashAdvanceAt = IndexOf(pass, "flashes.Advance(deltaSeconds);");
+        int advanceAt = IndexOf(pass, "simulation.Advance(in inputs, _render.Lights.Lights);");
+        int collectAt = IndexOf(pass, "CollectShadows(shadows, in presentation);");
+        int shadowWriteAt = IndexOf(pass, "shadows.Write(_fxInstances,");
+        int writeAt = IndexOf(pass, "simulation.WriteInstances(_fxInstances, shadowCount);");
+        Assert.True(flashAdvanceAt < advanceAt && advanceAt < collectAt && collectAt < shadowWriteAt && shadowWriteAt < writeAt);
+
+        Assert.True(IndexOf(lights, "CollectLampLights(lights, in presentation);") < IndexOf(lights, "CollectEffectLights(lights, remotePlayers);"));
     }
 
     [Fact]
@@ -301,7 +340,7 @@ public class FxPassContractTests
     [Fact]
     public void The_Effects_Simulation_Has_No_Gl_Dependency()
     {
-        foreach (string name in new[] { "FxSimulation.cs", "FxParticlePool.cs", "FxRandom.cs", "FxViewBasis.cs", "FxInstance.cs", "FxEventBridge.cs" })
+        foreach (string name in new[] { "FxSimulation.cs", "FxParticlePool.cs", "FxRandom.cs", "FxViewBasis.cs", "FxInstance.cs", "FxEventBridge.cs", "FxFlashList.cs", "FxShadowList.cs", "FxGroundProbe.cs" })
         {
             string code = ReadSource("dream/Rendering/Effects/" + name);
             Assert.DoesNotContain("OpenTK.Graphics", code);

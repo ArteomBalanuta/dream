@@ -56,6 +56,8 @@ public partial class PlayScene
         {
             _fxRenderer = new FxRenderer();
             _fxSimulation = new FxSimulation();
+            _fxFlashes = new FxFlashList();
+            _fxShadows = new FxShadowList();
         }
         catch (Exception exception)
         {
@@ -63,13 +65,15 @@ public partial class PlayScene
             // scene runs without them (DrawEffectsPass returns early) and the fault is logged once.
             _fxRenderer = null;
             _fxSimulation = null;
+            _fxFlashes = null;
+            _fxShadows = null;
             RenderFaultLog.Shared.Report("effects", exception);
         }
 
         PreloadModels();
-        if (_fxSimulation != null)
+        if (_fxSimulation != null && _fxFlashes != null)
         {
-            _fxBridge = new FxEventBridge(_events, _fxSimulation);
+            _fxBridge = new FxEventBridge(_events, _fxSimulation, _fxFlashes);
         }
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem(), () => _runtime.Player.Combatant.Actor.Id);
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
