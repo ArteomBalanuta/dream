@@ -256,7 +256,8 @@ public partial class Render
             WorldTransfer = WorldTransferHud,
             Loot = LootFeed,
             CombatText = _classicCombatText,
-            Labels = _classicLabels
+            Labels = _classicLabels,
+            Vendor = Vendor
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
@@ -311,6 +312,8 @@ public partial class Render
                 _classicLabels.Add(new HudWorldLabel(new Vector2(screen.X, screen.Y), label.DisplayName, label.HealthLabel));
             }
         }
+
+        AppendEconomyLabels(camera);
     }
 
     public HudFrameResult DrawHUD(
@@ -388,6 +391,11 @@ public partial class Render
                 InventoryAction = classicAction ?? request.InventoryAction,
                 CloseInventory = classicClose || request.CloseInventory
             };
+        }
+
+        if (_classicSurfaceActive)
+        {
+            request = MergeEconomyRequest(request);
         }
 
         ImGui.Render();

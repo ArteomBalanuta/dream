@@ -107,7 +107,14 @@ public sealed class LootFeedbackSystem
 
         if (notice.Lost)
         {
-            return string.Concat("Backpack full: ", name, " was lost");
+            // Overflow now lands on the ground (M3), where it can still be picked up.
+            return string.Concat("Backpack full: ", name, " dropped on the ground");
+        }
+
+        if (name.EndsWith(" gold", StringComparison.Ordinal))
+        {
+            // The server's gold credit ("12 gold"): coin has no rarity.
+            return string.Concat("Looted: ", name);
         }
 
         string? rarity = notice.Rarity switch

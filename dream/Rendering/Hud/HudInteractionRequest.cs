@@ -26,7 +26,13 @@ public readonly record struct HudInteractionRequest(
     // A UI scale picked in Settings: 0 is auto, other values snap to quarter steps (GameSettings.SetUiScale).
     float? UiScale = null,
     // The slider was released: only then is the scale written to the config file.
-    bool UiScaleCommitted = false)
+    bool UiScaleCommitted = false,
+    // M3: a ground item to pick up (a clicked label), an NPC to talk to, a vendor window pick, and the
+    // vendor window's close button. The scene turns each into one intent.
+    long? GroundPickupId = null,
+    int? InteractActorId = null,
+    VendorHudAction? Vendor = null,
+    bool CloseVendor = false)
 {
     public static HudInteractionRequest None => new(
         null,
@@ -74,6 +80,33 @@ public readonly record struct InventoryHudAction(
     int SlotIndex,
     int Target = 0,
     long ItemInstanceId = 0);
+
+public enum VendorHudActionKind : byte
+{
+    // Buy one of ItemKind (a kind the open vendor sells).
+    Buy,
+    // Sell the bag item ItemInstanceId anchored at SlotIndex (0..63).
+    Sell
+}
+
+// One pick in the vendor window. Names only what the window showed; the scene adds the NPC it is open
+// for, and the server checks the NPC, the range, the stock, the slot and the gold.
+public readonly record struct VendorHudAction(
+    VendorHudActionKind Kind,
+    string? ItemKind = null,
+    int SlotIndex = 0,
+    long ItemInstanceId = 0);
+
+// The economy picks of one classic frame (M3): a ground label or the vendor window. All empty is the
+// common case.
+public readonly record struct HudEconomyRequest(
+    long? GroundPickupId = null,
+    int? InteractActorId = null,
+    VendorHudAction? Vendor = null,
+    bool CloseVendor = false)
+{
+    public bool IsEmpty => GroundPickupId is null && InteractActorId is null && Vendor is null && !CloseVendor;
+}
 
 // A building menu pick. MaterialId null is Auto, so the request wraps it to tell "Auto picked"
 // from "nothing picked".

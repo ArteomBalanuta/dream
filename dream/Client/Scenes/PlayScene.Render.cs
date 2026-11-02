@@ -102,6 +102,7 @@ public partial class PlayScene
             (float)args.Time);
         double remotePlayerDrawMilliseconds = Stopwatch.GetElapsedTime(remotePlayerDrawStart).TotalMilliseconds;
         LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
+        DrawEconomyEntities(presentation.Camera);
 
         // Sky pass, still inside the Actors GPU section: after every opaque actor, so it shades only
         // the pixels left at depth 1, and before the debug and viewmodel passes. It restores the

@@ -55,6 +55,9 @@ public readonly struct ClassicHudFrame
     public IReadOnlyList<FloatingCombatTextRenderState>? CombatText { get; init; }
 
     public IReadOnlyList<HudWorldLabel>? Labels { get; init; }
+
+    // The vendor window's state (M3); null draws no vendor window.
+    public VendorHudState? Vendor { get; init; }
 }
 
 // The timing of the liquid gems, pure and allocation free. The surface advances the eased levels and the
@@ -138,6 +141,10 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
     private HudViewBuilder? _builder;
     private InventoryHudAction? _action;
     private bool _closeInventory;
+    private long? _pickUpGround;
+    private int? _interactNpc;
+    private VendorHudAction? _vendorAction;
+    private bool _closeVendor;
     private bool _gemsStarted;
     private double _lastSeconds;
     private double _animationSeconds;
@@ -171,6 +178,11 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
             return false;
         }
 
+        // Picks left by a frame nobody read (a faulted one) are stale.
+        _pickUpGround = null;
+        _interactNpc = null;
+        _vendorAction = null;
+        _closeVendor = false;
         _builder ??= new HudViewBuilder(sprites, _view);
         _builder.Refresh(frame.Status, frame.Inventory);
         if (_builder.InventoryChanged)
@@ -188,6 +200,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.InventoryOpen = frame.InventoryOpen;
         v.CombatText = frame.CombatText ?? Array.Empty<FloatingCombatTextRenderState>();
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
+        v.Vendor = frame.Vendor;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);
@@ -233,6 +246,25 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _action = null;
         _closeInventory = false;
     }
+
+    // The economy picks of the last drawn frame (a clicked label, the vendor window), cleared by the read.
+    public HudEconomyRequest TakeEconomyRequests()
+    {
+        HudEconomyRequest request = new(_pickUpGround, _interactNpc, _vendorAction, _closeVendor);
+        _pickUpGround = null;
+        _interactNpc = null;
+        _vendorAction = null;
+        _closeVendor = false;
+        return request;
+    }
+
+    void IHudActions.PickUpGround(long itemInstanceId) => _pickUpGround = itemInstanceId;
+
+    void IHudActions.InteractNpc(int npcActorId) => _interactNpc = npcActorId;
+
+    void IHudActions.Vendor(VendorHudAction action) => _vendorAction = action;
+
+    void IHudActions.CloseVendor() => _closeVendor = true;
 
     void IHudActions.Inventory(InventoryHudAction action) => _action = action;
 

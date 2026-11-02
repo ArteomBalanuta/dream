@@ -64,7 +64,7 @@ public sealed class PlaySceneInventoryPushTests
 
         feed.AddNotices(push.Notices);
 
-        Assert.Equal("Backpack full: Leather Cap was lost", feed.GetLine(0));
+        Assert.Equal("Backpack full: Leather Cap dropped on the ground", feed.GetLine(0));
     }
 
     [Fact]
