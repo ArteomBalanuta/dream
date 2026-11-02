@@ -903,9 +903,9 @@ public partial class PlayScene
         bool wantSettings = step == HudCaptureScript.StepSettings;
         bool wantAdmin = step == HudCaptureScript.StepAdmin;
 
-        if (_settings.SettingsVisible && !wantSettings)
+        if (_settings.DeveloperSettingsVisible && !wantSettings)
         {
-            _settings.ToggleSettings();
+            _settings.ToggleDeveloperSettings();
         }
 
         if (_settings.InventoryVisible && !wantInventory)
@@ -918,9 +918,9 @@ public partial class PlayScene
             _settings.ToggleInventory();
         }
 
-        if (wantSettings && !_settings.SettingsVisible)
+        if (wantSettings && !_settings.DeveloperSettingsVisible)
         {
-            _settings.ToggleSettings();
+            _settings.ToggleDeveloperSettings();
         }
 
         bool imGuiSurface = _render.CurrentHudSurface(_settings) == HudSurface.ImGui;

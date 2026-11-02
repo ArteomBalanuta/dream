@@ -1,3 +1,4 @@
+using Dream.Client.Audio;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
@@ -51,5 +52,6 @@ public partial class PlayScene
             new PlayerSessionId(_remoteClient.SessionId),
             _actionSequences.NextActionSequence(),
             new InventoryEquipIntent(anchor)));
+        CurrentGameAudio.Instance.Play(SoundId.PotionDrink);
     }
 }

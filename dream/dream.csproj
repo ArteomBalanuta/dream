@@ -21,6 +21,8 @@
 		<PackageReference Include="BulletSharp" NoWarn="NU1701" />
 		<PackageReference Include="ImGui.NET" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
+		<PackageReference Include="NAudio.Core" />
+		<PackageReference Include="NAudio.WinMM" />
 		<PackageReference Include="OpenTK" />
 		<PackageReference Include="OpenTK.Windowing.Desktop" />
 		<PackageReference Include="SharpGLTF.Core" />
@@ -30,7 +32,7 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <None Update="shaders\**\*;animations\**\*;fonts\**\*;config\**\*;ui\**\*">
+    <None Update="shaders\**\*;animations\**\*;fonts\**\*;audio\**\*;config\**\*;ui\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <!-- Kept in the repo for the later tier effects, but nothing loads it (UiAtlasStore.FilePages):

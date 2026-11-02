@@ -77,6 +77,7 @@ public partial class PlayScene
         }
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem(), () => _runtime.Player.Combatant.Actor.Id);
         _actionFeedback = new AuthoritativeActionFeedbackSystem(_events);
+        InitializeAudio();
         _diagnostics = new MultiplayerDiagnostics();
 
         NetworkDiagnosticsLog.Write(
@@ -123,6 +124,7 @@ public partial class PlayScene
         RunDisposeStep(DisposeSky, ref failures);
         RunDisposeStep(DisposeEffects, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
+        RunDisposeStep(DisposeAudio, ref failures);
         RunDisposeStep(_combatFeedback.Dispose, ref failures);
         RunDisposeStep(_actionFeedback.Dispose, ref failures);
         RunDisposeStep(_runtime.Dispose, ref failures);

@@ -42,16 +42,21 @@ public sealed class UiAtlasStore : IDisposable
     private readonly IUiAtlasLoader _loader;
     private readonly IUiTextureUploader _uploader;
     private readonly TimeProvider _time;
+    private readonly UiPage[] _pages;
     private readonly int[] _textures = new int[Enum.GetValues<UiPage>().Length];
-    private readonly Task<DecodedTexture>?[] _pageTasks = new Task<DecodedTexture>?[FilePages.Length];
-    private readonly bool[] _uploaded = new bool[FilePages.Length];
+    private readonly Task<DecodedTexture>?[] _pageTasks;
+    private readonly bool[] _uploaded;
     private Task<UiSpriteTable>? _tableTask;
     private UiSpriteTable? _table;
     private long _startTimestamp;
     private bool _disposed;
 
-    public UiAtlasStore(IUiAtlasLoader loader, IUiTextureUploader uploader, TimeProvider? time = null)
+    // pages: the file pages to load; null is FilePages (the HUD). The front end passes its own subset.
+    public UiAtlasStore(IUiAtlasLoader loader, IUiTextureUploader uploader, TimeProvider? time = null, IReadOnlyList<UiPage>? pages = null)
     {
+        _pages = pages is null ? FilePages : [.. pages];
+        _pageTasks = new Task<DecodedTexture>?[_pages.Length];
+        _uploaded = new bool[_pages.Length];
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _uploader = uploader ?? throw new ArgumentNullException(nameof(uploader));
         _time = time ?? TimeProvider.System;
@@ -86,9 +91,9 @@ public sealed class UiAtlasStore : IDisposable
         {
             IUiAtlasLoader loader = _loader;
             _tableTask = Task.Run(loader.LoadTable);
-            for (int i = 0; i < FilePages.Length; i++)
+            for (int i = 0; i < _pages.Length; i++)
             {
-                UiPage page = FilePages[i];
+                UiPage page = _pages[i];
                 _pageTasks[i] = Task.Run(() => loader.DecodePage(page));
             }
         }
@@ -141,7 +146,7 @@ public sealed class UiAtlasStore : IDisposable
 
     private void UploadOnePage(UiSpriteTable table)
     {
-        for (int i = 0; i < FilePages.Length; i++)
+        for (int i = 0; i < _pages.Length; i++)
         {
             if (_uploaded[i])
             {
@@ -150,7 +155,7 @@ public sealed class UiAtlasStore : IDisposable
 
             if (BackgroundWork.TryTakeCompleted(ref _pageTasks[i], out DecodedTexture? decoded, out Exception? fault))
             {
-                UiPage page = FilePages[i];
+                UiPage page = _pages[i];
                 if (decoded == null || !table.TryGetPageSize(page, out int w, out int h) || decoded.Width != w || decoded.Height != h)
                 {
                     Fail($"{page} image size does not match the sprite table.");
@@ -172,7 +177,7 @@ public sealed class UiAtlasStore : IDisposable
 
             if (fault != null)
             {
-                Fail($"{FilePages[i]} decode: {fault.Message}");
+                Fail($"{_pages[i]} decode: {fault.Message}");
                 return;
             }
         }

@@ -1,0 +1,179 @@
+{
+ "alpha": "straight",
+ "extrude": 4,
+ "image": "menu.png",
+ "kind": "color",
+ "meta": {
+  "source": "tools/ui-assets/gen_menu.py"
+ },
+ "origin": "top-left",
+ "scale": 4,
+ "size": [
+  1258,
+  1056
+ ],
+ "sprites": {
+  "menu.backdrop": {
+   "h": 576,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 1024,
+   "x": 4,
+   "y": 4
+  },
+  "menu.button.disabled": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    24,
+    24,
+    24,
+    24
+   ],
+   "tile": "none",
+   "w": 512,
+   "x": 4,
+   "y": 852
+  },
+  "menu.button.hover": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    24,
+    24,
+    24,
+    24
+   ],
+   "tile": "none",
+   "w": 512,
+   "x": 524,
+   "y": 852
+  },
+  "menu.button.normal": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    24,
+    24,
+    24,
+    24
+   ],
+   "tile": "none",
+   "w": 512,
+   "x": 4,
+   "y": 940
+  },
+  "menu.button.pressed": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    24,
+    24,
+    24,
+    24
+   ],
+   "tile": "none",
+   "w": 512,
+   "x": 524,
+   "y": 940
+  },
+  "menu.divider": {
+   "h": 24,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 480,
+   "x": 4,
+   "y": 1028
+  },
+  "menu.panel": {
+   "h": 256,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    56,
+    56,
+    56,
+    56
+   ],
+   "tile": "none",
+   "w": 256,
+   "x": 4,
+   "y": 588
+  },
+  "menu.slider.knob": {
+   "h": 56,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 32,
+   "x": 1044,
+   "y": 940
+  },
+  "menu.slider.track": {
+   "h": 24,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    48,
+    8,
+    48,
+    8
+   ],
+   "tile": "none",
+   "w": 256,
+   "x": 492,
+   "y": 1028
+  },
+  "menu.title": {
+   "h": 224,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 928,
+   "x": 268,
+   "y": 588
+  }
+ },
+ "version": 1,
+ "yDown": true
+}

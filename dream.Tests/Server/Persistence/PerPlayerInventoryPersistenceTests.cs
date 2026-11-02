@@ -516,14 +516,23 @@ public sealed class PerPlayerInventoryPersistenceTests
 
         public void Seed(string playerName, long firstItemId)
         {
-            // The hammer worn and the others at their first fits.
-            int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7];
+            // The hammer worn and the others at their first fits (computed, so a starter kit that
+            // grows, like the wave-3 potions, still seeds a complete, non-overlapping bag).
+            BagBoard board = new();
             for (int i = 0; i < ToolCatalog.StarterItemKinds.Count; i++)
             {
+                int anchor = InventoryConstants.EquippedSlotIndex;
+                if (i > 0)
+                {
+                    ItemFootprint footprint = BagGrid.FootprintOf(ToolCatalog.StarterItemKinds[i]);
+                    anchor = board.FirstFit(footprint);
+                    Assert.True(board.TryPlace(anchor, footprint));
+                }
+
                 // One item of each starter kind, like a seeded inventory, so Ensure's starter
                 // top-up (wave T2) finds nothing missing.
                 _items[firstItemId + i] = Item(firstItemId + i, playerName, ToolCatalog.StarterItemKinds[i]);
-                _slots[(playerName, anchors[i])] = new PersistedInventorySlot(playerName, anchors[i], firstItemId + i, DateTime.UtcNow);
+                _slots[(playerName, anchor)] = new PersistedInventorySlot(playerName, anchor, firstItemId + i, DateTime.UtcNow);
             }
         }
 

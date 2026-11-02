@@ -3,7 +3,7 @@ using OpenTK.Mathematics;
 namespace Dream.Rendering.Ui;
 
 // Which atlas page a sprite lives on. Uncommon and Rare reuse the rects of ItemsCommon; only the
-// texture differs. Font is the baked glyph page and has no JSON.
+// texture differs. Font is the baked glyph page and has no JSON. Menu is its own atlas (see MenuUiRenderer).
 public enum UiPage : byte
 {
     Window,
@@ -13,7 +13,9 @@ public enum UiPage : byte
     ItemsUncommon,
     ItemsRare,
     Digits,
-    Font
+    Font,
+    // The front-end art (title, buttons, panel). Loaded only by the menu renderer, never by the HUD atlas.
+    Menu
 }
 
 // How a sprite repeats when it fills a larger rect. XY is in the window JSON (a tiled filler).

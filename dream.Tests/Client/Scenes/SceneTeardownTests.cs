@@ -139,13 +139,15 @@ public class SceneTeardownTests
     public void Game_Disposes_The_Startup_Scene_When_The_Play_Scene_Replaces_It()
     {
         string source = ReadSource("dream", "Application", "Game.cs");
-        string update = ExtractMethodBody(source, "protected override void OnUpdateFrame(FrameEventArgs args)");
+        string update = ExtractMethodBody(source, "private void UpdateFrontEnd()");
 
-        int playScene = IndexOf(update, "_playScene = new PlayScene(");
+        // The play scene is built by EnterPlayScene (the one place that assigns the field).
+        int playScene = IndexOf(update, "EnterPlayScene(remoteClient);");
         int dispose = IndexOf(update, "_startupScene.Dispose();");
         int clear = IndexOf(update, "_startupScene = null;");
 
         Assert.True(playScene < dispose && dispose < clear);
+        Assert.Contains("_playScene = new PlayScene(", ExtractMethodBody(source, "private void EnterPlayScene(RemoteClientSession remoteClient)"));
         // The startup scene is the only scene ever replaced; nothing else assigns either field.
         Assert.Single(Regex.Matches(source, @"_playScene\s*=\s*new\b"));
         Assert.Single(Regex.Matches(source, @"_startupScene\s*=\s*new\b"));
@@ -164,8 +166,12 @@ public class SceneTeardownTests
             IndexOf(update, "_playScene.Update(args, KeyboardState, MouseState);") <
             IndexOf(update, "ReturnToStartupIfSessionEnded();"));
 
-        string switchBody = ExtractMethodBody(source, "private void ReturnToStartupIfSessionEnded()");
-        int decision = IndexOf(switchBody, "PlaySessionEndTransition.HasEnded(_playScene, out string? reason)");
+        string decisionBody = ExtractMethodBody(source, "private void ReturnToStartupIfSessionEnded()");
+        int decision = IndexOf(decisionBody, "PlaySessionEndTransition.HasEnded(_playScene, out string? reason)");
+        Assert.True(decision < IndexOf(decisionBody, "EndPlaySession(reason);"));
+
+        // The same switch also serves Exit to Main Menu (reason null) from the pause menu.
+        string switchBody = ExtractMethodBody(source, "private void EndPlaySession(string? reason)");
         int clearScene = IndexOf(switchBody, "_playScene = null;");
         int captureServer = IndexOf(switchBody, "ILocalServerHandle endedLocalServer = _localServer;");
         int replaceServer = IndexOf(switchBody, "_localServer = CreateLocalServerHandle();");
@@ -177,10 +183,13 @@ public class SceneTeardownTests
         int startup = IndexOf(switchBody, "ShowStartupScene(");
         int reasonArgument = IndexOf(switchBody, "sessionEndReason: reason");
 
-        Assert.True(decision < clearScene, "The scene is left only once its session has ended.");
+        Assert.True(IndexOf(switchBody, "if (_playScene == null)") < clearScene, "There is only a scene to leave while one runs.");
         Assert.True(clearScene < tearDown, "The scene field is cleared before the teardown, so OnUnload cannot dispose it again.");
         Assert.True(captureServer < replaceServer && replaceServer < tearDown, "The handle is replaced before the old one is stopped.");
         Assert.True(tearDown < startup && startup < reasonArgument, "The connection screen comes back after the teardown, with the reason.");
+        // With the menu on, the title screen comes back after the teardown instead, with the reason.
+        Assert.True(tearDown < IndexOf(switchBody, "ShowMainMenu(reason);"));
+        Assert.True(IndexOf(switchBody, "ShowMainMenu(reason);") < startup);
         // The teardown failures are reported, not thrown out of the frame.
         Assert.DoesNotContain("throw", switchBody);
         // W9-4: returning to the menu starts no integrated server and keeps the endpoint as it
@@ -199,7 +208,7 @@ public class SceneTeardownTests
         // Only ShowStartupScene creates a startup scene, at launch and after a session ends.
         string show = ExtractMethodBody(source, "private void ShowStartupScene(");
         Assert.Contains("_startupScene = new StartupConnectionScene(", show);
-        Assert.Contains("sessionEndReason);", show);
+        Assert.Contains("sessionEndReason,\n            allowBack);", show.Replace("\r\n", "\n"));
         Assert.Contains("IRemoteSessionConnector connector = new RemoteSessionConnector();", show);
         Assert.Matches(@"if \(relaunchLocalServerFor != null\)\s*\{\s*connector = new LocalServerRelaunchConnector\(\s*connector,\s*_localServer,", show);
         Assert.Matches(@"NetworkSessionCoordinator coordinator = new\(\s*_localServer,\s*connector,\s*_contentError,\s*ClientIdentityStore\.ForCurrentUser\(\)\);", show);
