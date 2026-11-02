@@ -60,10 +60,15 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // players. Checkpoints 1-5 are unchanged (the test now places the first wolf at (5.5, 1, 2.5) and ends the
     // join windows, which reproduces the old run exactly up to the wolf's death). The previous values were
     // 0x8118838F28D2A8DB, 0x896E506A472FAAF5, 0x7FB267DD0A1ED1E7, 0xA399D97471F2108A, 0x626AC8A4F7C77C1E.
+    // Re-pinned once by M2-C (fair kills): the XP curve default is now 100 + level * 50 (was 1000 + level * 23),
+    // which reaches the snapshot from checkpoint 1, and the wolf's kill shares XP among its contributors and
+    // sends the loot to the top damage dealer. The previous values were 0x154E692D35B2DD4E, 0x308F1C0DD0CD35B4,
+    // 0xB2C035E98C54CB57, 0x58DC81E03DE29867, 0x73E33D5492ADD38C, 0x47B5F355035AF99E, 0x1A65C2CE9810486A,
+    // 0xB2A5C4A1D0C2DEE1, 0xA0CDA305A4CCCCD4, 0x55BC8DA8232AA9FB.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x154E692D35B2DD4EUL, 0x308F1C0DD0CD35B4UL, 0xB2C035E98C54CB57UL, 0x58DC81E03DE29867UL, 0x73E33D5492ADD38CUL,
-        0x47B5F355035AF99EUL, 0x1A65C2CE9810486AUL, 0xB2A5C4A1D0C2DEE1UL, 0xA0CDA305A4CCCCD4UL, 0x55BC8DA8232AA9FBUL
+        0x57811F4CEEEA1202UL, 0x2254F43763F2C692UL, 0x49DC4557820EEEDBUL, 0x79937DA447E64F03UL, 0xAC348FD10F524A0DUL,
+        0xB079B6B30288666DUL, 0x92535FAA16E90FE5UL, 0xB516BC543298CF5AUL, 0x13A524EB4D26ADD3UL, 0x3DCDD6A338F05900UL
     ];
 
     [Fact]

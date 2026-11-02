@@ -191,7 +191,69 @@ internal sealed class AuthoritativeCombatResolver
             return;
         }
 
-        int reward = _formulas.EvaluateEnemyExperienceReward(enemyLevel, combatant.Level);
+        GrantExperience(sessionId, combatant, _formulas.EvaluateEnemyExperienceReward(enemyLevel, combatant.Level));
+    }
+
+    // Fair kills: the experience reward (at the top present dealer's level) is split equally among the
+    // contributors still in the world, in session-id order, the first ones taking the remainder points.
+    // Returns who gets the loot: the top damage dealer still present (ties: lowest session id), or the
+    // finishing session when nobody recorded is present (a scripted kill). Allocation-free.
+    private PlayerSessionId AwardKillRewards(EnemyActor enemy, PlayerSessionId finisher)
+    {
+        ReadOnlySpan<EnemyDamageContribution> contributors = enemy.Contributors;
+        Span<int> present = stackalloc int[EnemyActor.MaxContributors];
+        int count = 0;
+        int top = -1;
+        for (int i = 0; i < contributors.Length; i++)
+        {
+            if (!_host.TryGetSessionCombatant(contributors[i].SessionId, out PlayerCombatant? c) || c == null)
+            {
+                continue;
+            }
+
+            // Insertion by ordinal session id.
+            int at = count++;
+            while (at > 0 && string.CompareOrdinal(contributors[present[at - 1]].SessionId.Value, contributors[i].SessionId.Value) > 0)
+            {
+                present[at] = present[at - 1];
+                at--;
+            }
+
+            present[at] = i;
+        }
+
+        for (int k = 0; k < count; k++)
+        {
+            // Session-id order, so a strict > keeps the lowest id on a tie.
+            if (top < 0 || contributors[present[k]].Damage > contributors[top].Damage)
+            {
+                top = present[k];
+            }
+        }
+
+        if (top < 0)
+        {
+            AwardEnemyKillExperience(finisher, enemy.Level);
+            return finisher;
+        }
+
+        _host.TryGetSessionCombatant(contributors[top].SessionId, out PlayerCombatant? topCombatant);
+        int pool = _formulas.EvaluateEnemyExperienceReward(enemy.Level, topCombatant?.Level ?? 1);
+        PlayerSessionId winner = contributors[top].SessionId;
+        for (int k = 0; k < count; k++)
+        {
+            EnemyDamageContribution entry = contributors[present[k]];
+            if (_host.TryGetSessionCombatant(entry.SessionId, out PlayerCombatant? combatant) && combatant != null)
+            {
+                GrantExperience(entry.SessionId, combatant, pool / count + (k < pool % count ? 1 : 0));
+            }
+        }
+
+        return winner;
+    }
+
+    private void GrantExperience(PlayerSessionId sessionId, PlayerCombatant combatant, int reward)
+    {
         if (reward <= 0)
         {
             return;
@@ -265,6 +327,7 @@ internal sealed class AuthoritativeCombatResolver
         DamageReceipt receipt = enemy.Combatant.ApplyDamage(attack.Damage);
         if (receipt.AppliedAmount > 0)
         {
+            enemy.RecordDamage(message.SessionId, receipt.AppliedAmount);
             _events.Publish(new DamageAppliedEvent(
                 enemy.Combatant.Actor,
                 receipt.AppliedAmount,
@@ -273,10 +336,10 @@ internal sealed class AuthoritativeCombatResolver
 
         if (receipt.WasFatal)
         {
-            AwardEnemyKillExperience(message.SessionId, enemy.Level);
+            PlayerSessionId lootWinner = AwardKillRewards(enemy, message.SessionId);
             _host.DeletePersistedEnemy(enemy.Combatant.Actor.Id);
             _enemies.PruneInactive();
-            _host.GrantLoot(message.SessionId, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick);
+            _host.GrantLoot(lootWinner, enemy.EnemyKind, enemy.Combatant.Actor.Id, tick);
         }
 
         return new AuthoritativeActionResult(

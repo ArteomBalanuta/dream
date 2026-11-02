@@ -163,7 +163,7 @@ public sealed class CombatFormulaService
             new CombatFormulaDefinition(CombatFormulaKeys.PlayerCriticalDamage, "max_damage * 1.5", "Critical hit damage.", true, now),
             new CombatFormulaDefinition(CombatFormulaKeys.PlayerCriticalChance, "0.15", "Critical hit chance.", true, now),
             new CombatFormulaDefinition(CombatFormulaKeys.PlayerAttackIntervalSeconds, "1.0 / attack_speed", "Authoritative attack interval.", true, now),
-            new CombatFormulaDefinition(CombatFormulaKeys.PlayerExperienceToNextLevel, "1000 + level * 23", "Experience required to reach the next level.", true, now),
+            new CombatFormulaDefinition(CombatFormulaKeys.PlayerExperienceToNextLevel, "100 + level * 50", "Experience required to reach the next level.", true, now),
             new CombatFormulaDefinition(CombatFormulaKeys.EnemyExperienceReward, "enemy_level * 14", "Experience granted for killing an enemy.", true, now),
             new CombatFormulaDefinition(CombatFormulaKeys.EnemyAttackDamage, "strength + 2", "Enemy attack damage.", true, now),
             new CombatFormulaDefinition(CombatFormulaKeys.EnemyMaxHealth, "50 + vitality * 5", "Enemy maximum health.", true, now),
