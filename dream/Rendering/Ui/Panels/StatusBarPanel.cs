@@ -1,5 +1,7 @@
 using System.Globalization;
 using Dream.Rendering.Hud;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using OpenTK.Mathematics;
 
@@ -197,9 +199,14 @@ public static class StatusBarPanel
         Sprite(c, s, UiSpriteNames.ExpCup, cup, white);
 
         // Q/W/E: empty sockets, no letters, no input.
-        Sprite(c, s, UiSpriteNames.QweSlotQ, l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f), white);
+        UiRect slotQ = l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f);
+        UiRect slotE = l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f);
+        Sprite(c, s, UiSpriteNames.QweSlotQ, slotQ, white);
         Sprite(c, s, UiSpriteNames.QweSlotW, l.FromUnits(g, 235f - CentreStart, 18f, 29f, 28f), white);
-        Sprite(c, s, UiSpriteNames.QweSlotE, l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f), white);
+        Sprite(c, s, UiSpriteNames.QweSlotE, slotE, white);
+        // Q drinks the first healing potion in the bag, E the first mana potion: icon and count.
+        DrawPotionSlot(c, s, v, l, slotQ, ItemUseEffect.RestoreHealth);
+        DrawPotionSlot(c, s, v, l, slotE, ItemUseEffect.RestoreMana);
         for (int k = 0; k < NotchX.Length; k++)
         {
             Sprite(c, s, UiSpriteNames.QweNotch, l.FromUnits(g, NotchX[k] - CentreStart, 14f, 18f, 14f), white);
@@ -398,6 +405,28 @@ public static class StatusBarPanel
         string? name = ch == '/' ? UiSpriteNames.HudNumSlash : ch is >= '0' and <= '9' ? UiSpriteNames.HudNum(ch - '0') : null;
         glyph = default;
         return name is not null && s.TryGet(name, out glyph);
+    }
+
+    private static void DrawPotionSlot(IUiCanvas c, UiSpriteTable s, HudView v, in UiLayout l, UiRect slot, ItemUseEffect effect)
+    {
+        if (v.Inventory is not PlayerInventorySnapshot inventory
+            || !CharacterPanelModel.TryFindConsumable(inventory, effect, out _, out string kind, out int count)
+            || !s.TryGet("item." + kind, out UiSprite icon))
+        {
+            return;
+        }
+
+        // The icon sprite carries a 6 u margin round its 1 x 1 cell: draw it square, centred on the socket.
+        float size = MathF.Min(slot.W, slot.H) * 1.15f;
+        c.Sprite(icon, new UiRect(slot.X + (slot.W - size) * 0.5f, slot.Y + (slot.H - size) * 0.5f, size, size), UiColor.White);
+        if (count > 1)
+        {
+            Span<char> buf = stackalloc char[8];
+            if (PanelText.TryWriteInt(buf, count, out int n))
+            {
+                TryDrawNumerals(c, s, l, buf[..n], slot.X + slot.W * 0.78f, slot.Y + slot.H * 0.95f, false, slot.W * 0.5f, slot.H * 0.4f);
+            }
+        }
     }
 
     private static void Sprite(IUiCanvas c, UiSpriteTable s, string name, UiRect dst, UiColor tint)

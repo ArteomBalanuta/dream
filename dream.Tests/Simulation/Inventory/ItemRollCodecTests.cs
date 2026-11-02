@@ -105,8 +105,9 @@ public sealed class ItemRollCodecTests
     [InlineData("""{"v":1,"r":"Rare","m":[["Strength","Percent",1]]}""")]
     [InlineData("""{"v":1,"r":"Rare","m":[["Strength","flat",1]]}""")]
     [InlineData("""{"v":1,"r":"Rare","m":[["Strength",0,1]]}""")]
-    [InlineData("""{"v":1,"r":"Rare","m":[["Agility","Flat",1]]}""")]
-    [InlineData("""{"v":1,"r":"Rare","m":[["Energy","Flat",1]]}""")]
+    [InlineData("""{"v":1,"r":"Rare","m":[["MovementSpeed","Flat",1]]}""")]
+    [InlineData("""{"v":1,"r":"Rare","m":[["Agility","Flat",1.5]]}""")]
+    [InlineData("""{"v":1,"r":"Rare","m":[["Energy","Flat",51]]}""")]
     [InlineData("""{"v":1,"r":"Rare","m":[["MovementSpeed","Flat",1]]}""")]
     [InlineData("""{"v":1,"r":"Rare","m":[["Strength","Flat","1"]]}""")]
     [InlineData("""{"v":1,"r":"Rare","m":[["Strength","Flat",null]]}""")]
@@ -212,9 +213,18 @@ public sealed class ItemRollCodecTests
     }
 
     [Fact]
+    public void AgilityAndEnergy_AreLiveWholeNumberStats_AndRoundTrip()
+    {
+        ItemRoll roll = Roll(ItemRarity.Rare, new StatModifier(StatId.Agility, StatOp.Flat, 4f), new StatModifier(StatId.Energy, StatOp.Flat, 6f));
+        ItemRoll parsed = ItemRollCodec.Parse(ItemRollCodec.Serialize(roll))!;
+        Assert.False(parsed.IsDamaged);
+        Assert.Equal(roll.Modifiers, parsed.Modifiers);
+    }
+
+    [Fact]
     public void Serialize_RefusesWhatItCouldNotParse()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => ItemRollCodec.Serialize(Roll(ItemRarity.Common, new StatModifier(StatId.Agility, StatOp.Flat, 1f))));
+        Assert.Throws<ArgumentOutOfRangeException>(() => ItemRollCodec.Serialize(Roll(ItemRarity.Common, new StatModifier(StatId.MovementSpeed, StatOp.Flat, 1f))));
         Assert.Throws<ArgumentOutOfRangeException>(() => ItemRollCodec.Serialize(Roll(ItemRarity.Common, new StatModifier(StatId.Strength, StatOp.Percent, 1f))));
     }
 }

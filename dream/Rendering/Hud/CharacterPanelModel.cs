@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Stats;
 
@@ -198,7 +199,9 @@ public static class CharacterPanelModel
             {
                 StatId.Strength => "Strength",
                 StatId.AttackSpeed => "Attack Speed",
+                StatId.Agility => "Agility",
                 StatId.Vitality => "Vitality",
+                StatId.Energy => "Energy",
                 StatId.Armor => "Armor",
                 _ => null
             };
@@ -234,6 +237,15 @@ public static class CharacterPanelModel
             return entries;
         }
 
+        if (TryGetUse(item.ItemKind, out ItemUse? use) && use != null)
+        {
+            // Target -1 tells the server this is a use, not an equip to a worn slot.
+            entries.Add(new CharacterMenuEntry(
+                "Use",
+                new InventoryHudAction(InventoryHudActionKind.EquipTo, backpackSlotIndex, FirstFitCell),
+                RequiresConfirm: false));
+        }
+
         foreach (EquipmentSlot slot in AllowedSlots(item.EquipSlots))
         {
             entries.Add(new CharacterMenuEntry(
@@ -260,6 +272,49 @@ public static class CharacterPanelModel
         }
 
         return entries;
+    }
+
+    // The use an item kind has (a consumable), from the shipped catalog.
+    public static bool TryGetUse(string? itemKind, out ItemUse? use)
+    {
+        use = null;
+        if (itemKind is null || !ContentCatalog.Shipped.TryGetItem(itemKind, out ItemDefinition? definition))
+        {
+            return false;
+        }
+
+        use = definition.Use;
+        return use != null;
+    }
+
+    // The consumable with the effect at the lowest bag anchor (what Q and E use), and how many such
+    // consumables the bag holds. Allocation free.
+    public static bool TryFindConsumable(in PlayerInventorySnapshot inventory, ItemUseEffect effect, out int anchor, out string itemKind, out int count)
+    {
+        anchor = -1;
+        itemKind = string.Empty;
+        count = 0;
+        foreach (InventorySlotSnapshot slot in inventory.Slots)
+        {
+            if (slot.Item is not InventoryItemSnapshot item
+                || slot.SlotIndex < 0
+                || slot.SlotIndex >= BagGrid.CellCount
+                || !TryGetUse(item.ItemKind, out ItemUse? use)
+                || use!.Effect != effect)
+            {
+                continue;
+            }
+
+            if (anchor < 0 || slot.SlotIndex < anchor)
+            {
+                anchor = slot.SlotIndex;
+                itemKind = item.ItemKind;
+            }
+
+            count++;
+        }
+
+        return anchor >= 0;
     }
 
     // The context menu of an equipment slot: Unequip.

@@ -171,7 +171,7 @@ public sealed class CharacterPanelModelTests
 
         List<string> lines = CharacterPanelModel.TooltipLines(rolled);
 
-        Assert.Equal(["Rare", "+6 Strength", "+1.75 Attack Speed", "-4 Armor"], lines);
+        Assert.Equal(["Rare", "+6 Strength", "+1.75 Attack Speed", "-4 Armor", "+3 Agility"], lines);
         Assert.Empty(CharacterPanelModel.TooltipLines(Item(2, "Torch")));
     }
 

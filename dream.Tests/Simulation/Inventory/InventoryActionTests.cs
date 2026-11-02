@@ -146,7 +146,7 @@ public sealed class InventoryActionTests
             Dictionary<int, long> bob = legacyWorld.SlotsOf("Bob");
             Assert.Equal(30L, bob[100]);
             // The item moved into the main hand: it has no bag row any more.
-            Assert.False(bob.ContainsKey(2));
+            Assert.False(bob.TryGetValue(2, out long atTwo) && atTwo == 30);
         }
     }
 

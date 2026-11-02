@@ -3,7 +3,7 @@ using Dream.Simulation.Stats;
 
 namespace Dream.Simulation.Content;
 
-// One stat range of a roll table. Strength, Vitality and Armor roll integers inclusive; Attack Speed
+// One stat range of a roll table. Strength, Agility, Vitality, Energy and Armor roll integers inclusive; Attack Speed
 // rolls min + k * 0.05 up to max.
 public readonly record struct ItemRollRange(StatId Stat, float Min, float Max);
 
@@ -26,7 +26,8 @@ public sealed record ItemRollTable(
 // Modifiers are the flat modifiers of an unrolled instance, in file order. EquipSlots is in file
 // order and its first entry is the default target; EquipSlotMask is the same set as a bit mask
 // (EquipmentSlots.MaskOf). Rolls is null for an item that cannot be rolled. Footprint is the size in
-// bag cells (1..4 by 1..4; the file's optional "footprint": [cols, rows], 1x1 when absent).
+// bag cells (1..4 by 1..4; the file's optional "footprint": [cols, rows], 1x1 when absent). Use is
+// non-null for a consumable (the file's optional "use": {"effect", "amount"}).
 public sealed record ItemDefinition(
     string Key,
     string DisplayName,
@@ -38,4 +39,5 @@ public sealed record ItemDefinition(
     int EquipSlotMask,
     IReadOnlyList<EquipmentSlot> EquipSlots,
     ItemRollTable? Rolls,
-    ItemFootprint Footprint);
+    ItemFootprint Footprint,
+    ItemUse? Use = null);

@@ -272,7 +272,7 @@ public sealed class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
-            optional: ["rolls", "footprint"]);
+            optional: ["rolls", "footprint", "use"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
@@ -309,6 +309,13 @@ public sealed class ContentCatalog
         ItemFootprint footprint = properties.TryGetValue("footprint", out JsonElement footprintElement)
             ? ParseFootprint($"{path}.footprint", footprintElement)
             : ItemFootprint.One;
+        ItemUse? use = properties.TryGetValue("use", out JsonElement useElement)
+            ? ParseUse($"{path}.use", useElement)
+            : null;
+        if (equipSlots.Count == 0 && use == null)
+        {
+            throw Fail(ItemsFileName, $"{path}.equipSlots", "must list at least one equipment slot");
+        }
 
         return new ItemDefinition(
             key,
@@ -321,7 +328,24 @@ public sealed class ContentCatalog
             equipSlotMask,
             equipSlots,
             rolls,
-            footprint);
+            footprint,
+            use);
+    }
+
+    // {"effect": "RestoreHealth" | "RestoreMana", "amount": 1..10000}. A consumable cannot be equipped.
+    private static ItemUse ParseUse(string path, JsonElement element)
+    {
+        ExpectObject(ItemsFileName, path, element);
+        Dictionary<string, JsonElement> use = ReadProperties(ItemsFileName, path, element, ["effect", "amount"]);
+        string effectName = ReadString(ItemsFileName, $"{path}.effect", use["effect"]);
+        ItemUseEffect effect = effectName switch
+        {
+            "RestoreHealth" => ItemUseEffect.RestoreHealth,
+            "RestoreMana" => ItemUseEffect.RestoreMana,
+            _ => throw Fail(ItemsFileName, $"{path}.effect", $"unknown use effect '{Truncate(effectName)}'"),
+        };
+        int amount = ReadInt(ItemsFileName, $"{path}.amount", use["amount"], 1, 10000);
+        return new ItemUse(effect, amount);
     }
 
     // [columns, rows], each a whole number 1..BagGrid.MaxFootprint. The item is placed by its top-left cell.
@@ -390,7 +414,9 @@ public sealed class ContentCatalog
             case "Armor":
                 return StatId.Armor;
             case "Agility":
+                return StatId.Agility;
             case "Energy":
+                return StatId.Energy;
             case "MovementSpeed":
                 throw Fail(ItemsFileName, path, $"stat '{statName}' has no effect yet and cannot be modified");
             default:
@@ -398,7 +424,7 @@ public sealed class ContentCatalog
         }
     }
 
-    // Strength, Vitality and Armor are whole numbers; Attack Speed is a float.
+    // Strength, Agility, Vitality, Energy and Armor are whole numbers; Attack Speed is a float.
     private static float ReadStatValue(string path, JsonElement element, StatId stat)
     {
         ItemRollCodec.TryGetValueRange(stat, out float min, out float max);
@@ -443,11 +469,7 @@ public sealed class ContentCatalog
             index++;
         }
 
-        if (slots.Count == 0)
-        {
-            throw Fail(ItemsFileName, path, "must list at least one equipment slot");
-        }
-
+        // The empty list is checked by the caller: only a consumable (one with a "use") may list none.
         return (mask, slots);
     }
 
@@ -747,6 +769,11 @@ public sealed class ContentCatalog
             }
 
             text.Append('\n');
+            if (item.Use != null)
+            {
+                text.Append("use|").Append(item.Use.Effect.ToString()).Append('|').Append(item.Use.Amount.ToString(c)).Append('\n');
+            }
+
             text.Append("foot|").Append(item.Footprint.Cols.ToString(c)).Append('x').Append(item.Footprint.Rows.ToString(c)).Append('\n');
             if (item.Rolls != null)
             {

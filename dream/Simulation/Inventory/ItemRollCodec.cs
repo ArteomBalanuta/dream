@@ -71,7 +71,9 @@ public static class ItemRollCodec
         switch (stat)
         {
             case StatId.Strength:
+            case StatId.Agility:
             case StatId.Vitality:
+            case StatId.Energy:
                 min = -50f;
                 max = 50f;
                 return true;
@@ -159,7 +161,7 @@ public static class ItemRollCodec
                 || value > max
                 || (stat != StatId.AttackSpeed && value != MathF.Floor(value)))
             {
-                // Strength, Vitality and Armor are whole numbers, as in content validation.
+                // Strength, Agility, Vitality, Energy and Armor are whole numbers, as in content validation.
                 return false;
             }
 
@@ -208,7 +210,9 @@ public static class ItemRollCodec
     {
         StatId.Strength => "Strength",
         StatId.AttackSpeed => "AttackSpeed",
+        StatId.Agility => "Agility",
         StatId.Vitality => "Vitality",
+        StatId.Energy => "Energy",
         StatId.Armor => "Armor",
         _ => throw new ArgumentOutOfRangeException(nameof(stat), stat, "Not a live stat."),
     };
@@ -223,8 +227,14 @@ public static class ItemRollCodec
             case "AttackSpeed":
                 stat = StatId.AttackSpeed;
                 return true;
+            case "Agility":
+                stat = StatId.Agility;
+                return true;
             case "Vitality":
                 stat = StatId.Vitality;
+                return true;
+            case "Energy":
+                stat = StatId.Energy;
                 return true;
             case "Armor":
                 stat = StatId.Armor;
