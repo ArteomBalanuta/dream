@@ -105,6 +105,12 @@ public sealed class LootFeedbackSystem
                 ? notice.ItemDisplayName[..MaxNameLength]
                 : notice.ItemDisplayName;
 
+        if (notice.Lost && notice.Gone)
+        {
+            // The overflow found no room on the ground either: it is really gone.
+            return string.Concat("Backpack full: ", name, " was lost");
+        }
+
         if (notice.Lost)
         {
             // Overflow now lands on the ground (M3), where it can still be picked up.

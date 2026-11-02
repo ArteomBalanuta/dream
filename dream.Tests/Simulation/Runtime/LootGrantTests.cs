@@ -262,6 +262,28 @@ public sealed class LootGrantTests
         Assert.False(runtime.HasPendingInventoryPushes);
     }
 
+    [Fact]
+    public void AnOverflowThatCannotLandOnTheGround_IsAGoneNotice_ButOneThatLandsIsNot()
+    {
+        using WorldSessionRuntime runtime = TwoHitters(out ulong tick);
+        runtime.LootContent = WaveIRuntimeKit.AlwaysDropCatalog(drops: 1, kinds: ["gear.iron-band"]);
+        string key = Killer.Value;
+        runtime.InventoryService.FillBagLeaving(key, freeCells: 0);
+
+        // A non-finite death position: the ground drop is refused, so the item is truly lost.
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5000, tick, new Vector3(float.NaN, 0f, 0f));
+        LootNotice gone = Assert.Single(DrainOnly(runtime).Notices);
+        Assert.True(gone.Lost);
+        Assert.True(gone.Gone);
+        Assert.Equal(0, runtime.GroundItemCount);
+
+        runtime.GrantLoot(Killer, "Wolf", enemyActorId: 5001, tick, default);
+        LootNotice landed = Assert.Single(DrainOnly(runtime).Notices);
+        Assert.True(landed.Lost);
+        Assert.False(landed.Gone);
+        Assert.Equal(1, runtime.GroundItemCount);
+    }
+
     private static InventoryPushMessage DrainOnly(WorldSessionRuntime runtime)
     {
         List<SessionInventoryPush> pushes = [];

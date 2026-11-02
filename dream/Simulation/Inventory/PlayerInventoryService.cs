@@ -33,6 +33,8 @@ public enum InventoryEquipOutcome
     WalletFull = 15,
     NotSellable = 16,
     NotInStock = 17,
+    // A write of this player's inventory failed, so the rows cannot be trusted; trading is refused.
+    WriteFailed = 18,
 }
 
 // The authoritative players' inventories: slots and item instances by player name, item-id

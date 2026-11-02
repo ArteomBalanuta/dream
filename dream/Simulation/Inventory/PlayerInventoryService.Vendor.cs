@@ -10,6 +10,16 @@ namespace Dream.Simulation.Inventory;
 // savepoint lands them together or not at all: a failed write cannot keep the gold and the item.
 internal sealed partial class PlayerInventoryService
 {
+    // True when a write failed since this player's first queued write (the same test Evict uses: the
+    // queue does not say which write failed, so any failure counts) or the inventory is already retained.
+    // The rows may then lack items or hold stale ones, so trading, which moves gold against rows, is
+    // refused. It does not clear while the run lasts: the in-memory copy stays the only current one
+    // (Evict keeps it, Retained is never reset), and only a restart reloads the rows.
+    private bool HasSeenFailedWrite(string playerName)
+        => _writes != null
+            && _writeTrackers.TryGetValue(playerName, out InventoryWriteTracker? tracker)
+            && (tracker.Retained || _writes.FailedWrites > tracker.FailedWritesBaseline);
+
     // Buys one unrolled item of the kind for price gold into the first free place of the bag. The caller
     // (the runtime) has already checked the NPC's range and that it stocks the kind at that price.
     // NotInStock when the kind is unknown or rolled, NotEnoughGold, BackpackFull, then Throttled.
@@ -18,6 +28,11 @@ internal sealed partial class PlayerInventoryService
         if (!Ensure(playerName))
         {
             return InventoryEquipOutcome.StillLoading;
+        }
+
+        if (HasSeenFailedWrite(playerName))
+        {
+            return InventoryEquipOutcome.WriteFailed;
         }
 
         if (price <= 0
@@ -91,6 +106,11 @@ internal sealed partial class PlayerInventoryService
             return InventoryEquipOutcome.StillLoading;
         }
 
+        if (HasSeenFailedWrite(playerName))
+        {
+            return InventoryEquipOutcome.WriteFailed;
+        }
+
         if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
             || !TryGetItem(slots, slotIndex, out PersistedItemInstance item))
         {
@@ -150,8 +170,10 @@ internal sealed partial class PlayerInventoryService
         DrainHeldBack(slots, changes);
         QueueChanges(playerName, changes, world =>
         {
+            // The destroy first: it throws when no slot row holds the item (a phantom from a failed
+            // buy, grant or kit), which rolls the closure back before any gold is credited.
+            world.DestroyHeldInventoryItem(playerName, itemInstanceId);
             world.ApplyWalletDelta(playerName, price);
-            world.DestroyInventoryItem(playerName, itemInstanceId);
         });
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;

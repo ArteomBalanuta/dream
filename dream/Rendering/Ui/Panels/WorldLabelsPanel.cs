@@ -1,3 +1,5 @@
+using OpenTK.Mathematics;
+
 namespace Dream.Rendering.Ui.Panels;
 
 // Actor name and level labels over the world: text only, no HP-bar art yet. Screen is the anchor
@@ -26,6 +28,18 @@ public static class WorldLabelsPanel
     public static void Build(IUiCanvas c, IUiInput? i, HudView v, in UiLayout l, IHudActions? a)
     {
         bool live = i is not null && a is not null && !InventoryUiState.Current.ModalOpen;
+        // Labels are built first, under the windows, and a window frame registers no widget of its own,
+        // so a click on a window's empty part would reach a label behind it. While the pointer is over
+        // an open window the labels take no hover or click.
+        if (live && v.InventoryOpen)
+        {
+            Vector2 pointer = i!.Pointer.Position;
+            if (l.Inventory.Contains(pointer) || l.Character.Contains(pointer))
+            {
+                live = false;
+            }
+        }
+
         IReadOnlyList<HudWorldLabel> labels = v.Labels;
         float maxWidth = MaxWidthUnits * l.Scale;
         float lineH = PanelText.Height(c, UiTextStyle.Body);

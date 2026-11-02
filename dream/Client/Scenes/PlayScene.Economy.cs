@@ -23,7 +23,12 @@ public partial class PlayScene
     // A vendor window closes when the player walks this far past the server's interact range.
     private const float VendorCloseMargin = 1f;
 
-    private int LocalActorId => _runtime.Player.Combatant.Actor.Id;
+    // The local player's actor id as the SERVER numbers it (ground item claims use it), learned from
+    // the join list and snapshots by session id. The client registry's own id is 1 on every client, so
+    // it is only the fallback before the first list that names the player. 0 once the session ends.
+    private int _serverLocalActorId;
+
+    private int LocalActorId => _serverLocalActorId != 0 ? _serverLocalActorId : _runtime.Player.Combatant.Actor.Id;
 
     private ulong EstimatedServerTick => (ulong)Math.Max(0d, _serverTickClock.EstimatedTick);
 
@@ -61,6 +66,7 @@ public partial class PlayScene
         if (!_remoteClient.IsConnected)
         {
             // The session is over: nothing on the ground or at a vendor belongs to it any more.
+            _serverLocalActorId = 0;
             _groundItems.Clear();
             _npcs.Clear();
             _vendorHud.Close();

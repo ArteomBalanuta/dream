@@ -87,6 +87,8 @@ public sealed class SqliteWorldPersistenceRepository : IWorldPersistenceReposito
 
     public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId) => _inventory.DeleteInventorySlot(playerName, slotIndex, expectedItemInstanceId);
 
+    public void DestroyHeldInventoryItem(string playerName, long itemInstanceId) => _inventory.DestroyHeldInventoryItem(playerName, itemInstanceId);
+
     public void DestroyInventoryItem(string playerName, long itemInstanceId) => _inventory.DestroyInventoryItem(playerName, itemInstanceId);
 
     public void SaveStarterKitGrant(string playerName, int kitVersion) => _inventory.SaveStarterKitGrant(playerName, kitVersion);

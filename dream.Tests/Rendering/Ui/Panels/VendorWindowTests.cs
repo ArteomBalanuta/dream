@@ -31,6 +31,10 @@ public sealed class VendorWindowTests : IDisposable
         public void Vendor(VendorHudAction action) => Picked.Add(action);
 
         public void CloseVendor() => VendorCloses++;
+
+        public List<long> PickedUp { get; } = new();
+
+        public void PickUpGround(long itemInstanceId) => PickedUp.Add(itemInstanceId);
     }
 
     private readonly VendorActions _actions = new();
@@ -250,5 +254,29 @@ public sealed class VendorWindowTests : IDisposable
 
         Assert.True(plain.HasText("Character"));
         Assert.False(plain.HasText("Old Mara"));
+    }
+
+    [Fact]
+    public void AClickInAVendorRowGap_SendsNoPickupForAGroundLabelBehindTheWindow()
+    {
+        OpenVendor(new VendorStockLine("tool.torch", "Torch", 12), new VendorStockLine("tool.field-blade", "Field Blade", 300));
+        // The gap between the first two stock rows (rows are 12 units tall on a 13 unit pitch).
+        UiRect gap = Units(19f, 58f + 12f, 152f, 1f);
+        Vector2 spot = InventoryScene.Centre(gap);
+        _scene.View.Labels = [new HudWorldLabel(spot, "Torch", "", new HudLabelClick(HudLabelClickKind.PickUpGround, 77))];
+        _scene.Input.Pointer = spot;
+        _scene.Input.LeftClick = true;
+
+        _scene.Canvas.Calls.Clear();
+        WorldLabelsPanel.Build(_scene.Canvas, _scene.Input, _scene.View, _scene.Layout, _actions);
+        _scene.Input.EndFrame();
+
+        Assert.Empty(_actions.PickedUp);
+
+        // With the windows closed the same click does pick the item up.
+        _scene.View.InventoryOpen = false;
+        _scene.Input.LeftClick = true;
+        WorldLabelsPanel.Build(_scene.Canvas, _scene.Input, _scene.View, _scene.Layout, _actions);
+        Assert.Equal([77L], _actions.PickedUp);
     }
 }

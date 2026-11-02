@@ -129,7 +129,8 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         )
         ON CONFLICT(world_id, player_name, slot_index) DO UPDATE SET
             item_instance_id = excluded.item_instance_id,
-            updated_utc = excluded.updated_utc;
+            updated_utc = excluded.updated_utc
+        WHERE player_inventory_slots.item_instance_id = excluded.item_instance_id;
         """;
 
     private const string DeleteSlotsSql = "DELETE FROM player_inventory_slots WHERE world_id = $worldId AND player_name = $playerName;";
@@ -211,15 +212,24 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
         return new PersistedPlayerInventory(slots, items, starterKitVersion, gold);
     }
 
-    // updated_utc is the write time.
-    public void SaveInventorySlot(PersistedInventorySlot slot) =>
-        Execute(UpsertSlotSql, slot, static (command, s) =>
+    // updated_utc is the write time. A row that holds a DIFFERENT item is never overwritten: the upsert
+    // changes nothing and this throws, so the closure's savepoint rolls back and the occupant's row is
+    // not orphaned (it is there because an earlier write failed; legitimate moves delete it first).
+    public void SaveInventorySlot(PersistedInventorySlot slot)
+    {
+        int changed = Execute(UpsertSlotSql, slot, static (command, s) =>
         {
             command.BindText("$playerName", s.PlayerName.Trim());
             command.BindInt64("$slotIndex", s.SlotIndex);
             command.BindInt64("$itemInstanceId", s.ItemInstanceId);
             command.BindUtc("$updatedUtc", DateTime.UtcNow);
         });
+        if (changed == 0)
+        {
+            throw new InvalidOperationException(
+                $"Inventory slot {slot.SlotIndex} of {slot.PlayerName} holds a different item than {slot.ItemInstanceId}.");
+        }
+    }
 
     public void DeleteInventorySlots(string playerName) =>
         Execute(DeleteSlotsSql, playerName, static (command, name) => command.BindText("$playerName", name.Trim()));
@@ -231,6 +241,21 @@ public sealed partial class SqliteInventoryRepository(IWorldStore store, WorldId
             command.BindInt64("$slotIndex", d.slotIndex);
             command.BindInt64("$expectedItemInstanceId", d.expectedItemInstanceId);
         });
+
+    public void DestroyHeldInventoryItem(string playerName, long itemInstanceId)
+    {
+        int deleted = Execute(DestroyItemSlotsSql, (playerName, itemInstanceId), static (command, d) =>
+        {
+            command.BindText("$playerName", d.playerName.Trim());
+            command.BindInt64("$itemInstanceId", d.itemInstanceId);
+        });
+        if (deleted == 0)
+        {
+            throw new InvalidOperationException($"{playerName} has no persisted slot row for item {itemInstanceId}.");
+        }
+
+        Execute(DestroyItemRowSql, itemInstanceId, static (command, id) => command.BindInt64("$itemInstanceId", id));
+    }
 
     public void DestroyInventoryItem(string playerName, long itemInstanceId)
     {
