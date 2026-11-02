@@ -150,7 +150,10 @@ public sealed class LegacySchemaMigrationTests
         IReadOnlyList<string> rowsAfter = SqliteSchemaSnapshot.DumpRows(migrated);
         string[] unchangedTables = ["player_profiles ", "player_profile_change_log ", "combat_formulas "];
         Assert.Equal(
-            rowsBefore.Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal))),
+            rowsBefore
+                .Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal)))
+                // Migration 0011 lowers the experience curve where the row still holds the old default.
+                .Select(row => row.StartsWith("combat_formulas ", StringComparison.Ordinal) ? row.Replace("1000 + level * 23", "100 + level * 50", StringComparison.Ordinal) : row),
             rowsAfter
                 .Where(row => unchangedTables.Any(table => row.StartsWith(table, StringComparison.Ordinal)))
                 // Migration 0009 seeds the four enemy and armor formulas.

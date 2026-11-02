@@ -5,3 +5,7 @@
 -- camp that was removed from spawns.json leaves its rows as legacy ones. No table is rebuilt, so the
 -- indexes and trg_enemy_instances_advance_object_id stay as they are.
 ALTER TABLE enemy_instances ADD COLUMN camp_key TEXT NULL;
+
+-- M2-C: the lower experience curve. Only a row that still holds the old default changes, so a curve
+-- edited by hand is kept.
+UPDATE combat_formulas SET expression_text = '100 + level * 50' WHERE formula_key = 'player.experience_to_next_level' AND expression_text = '1000 + level * 23';

@@ -49,7 +49,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         ("enemy_instances",
             "object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, " +
             "facing_z, current_hp, max_hp, strength, agility, vitality, energy, movement_speed, attack_speed, " +
-            "level, created_utc, updated_utc"),
+            "level, created_utc, updated_utc, camp_key"),
         ("item_instances",
             "item_instance_id, item_kind, display_name, visual_id, owner_player_name, world_position_x, " +
             "world_position_y, world_position_z, state, stack_count, created_utc, updated_utc, rolled_modifiers"),
