@@ -1,0 +1,465 @@
+using System.Reflection;
+using OpenTK.Mathematics;
+using Xunit;
+using Dream.Server.Persistence;
+using Dream.Simulation.Content;
+using Dream.Simulation.Enemies;
+using Dream.Simulation.Persistence;
+using Dream.Simulation.Players;
+using Dream.Simulation.Rules;
+using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
+using Dream.Tests.Server.Persistence;
+using Dream.Tests.Support;
+
+namespace Dream.Tests.Simulation.Content;
+
+// M2-B: spawn camps. spawns.json is validated at load; a camp fills on the first tick, a dead member is
+// replaced after respawnSeconds counted in ticks, a night camp exists only at night, and a restart keeps
+// every camp member with its camp (camp_key) instead of spawning a second set.
+public sealed class SpawnCampTests
+{
+    private const int TicksPerSecond = SimulationClock.AuthoritativeTicksPerSecond;
+
+    private static string Read(string fileName) =>
+        File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, fileName));
+
+    private static ContentCatalog Load(string spawnsJson) =>
+        ContentCatalog.Load(Read(ContentCatalog.ItemsFileName), Read(ContentCatalog.EnemiesFileName), Read(ContentCatalog.LootFileName), spawnsJson);
+
+    private static string Camps(params string[] camps) => "{\"version\":1,\"camps\":[" + string.Join(",", camps) + "]}";
+
+    private static string Camp(string key = "camp-a", string template = "Wolf", string x = "10.5", string z = "10.5", string count = "2", string respawn = "1", string extra = "") =>
+        $"{{\"key\":\"{key}\",\"template\":\"{template}\",\"x\":{x},\"z\":{z},\"count\":{count},\"respawnSeconds\":{respawn}{extra}}}";
+
+    // ---- content ----
+
+    [Fact]
+    public void TheShippedCamps_AreThreeDayCampsAndANightCamp_OfWolvesAndDireWolves()
+    {
+        IReadOnlyList<SpawnCamp> camps = ContentCatalog.Shipped.Camps;
+
+        Assert.Equal(4, camps.Count);
+        Assert.Equal(3, camps.Count(camp => !camp.Night));
+        SpawnCamp night = Assert.Single(camps, camp => camp.Night);
+        Assert.Equal("DireWolf", night.Template);
+        Assert.Contains(camps, camp => camp.Template == "Wolf");
+        Assert.Contains(camps, camp => camp.Template == "DireWolf" && !camp.Night);
+        Assert.Equal(camps.Count, camps.Select(camp => camp.Key).Distinct().Count());
+    }
+
+    [Fact]
+    public void EveryShippedCampMember_StandsOnOpenFloor_OfTheDefaultWorld_OutsideTheWorldSpawnsReach()
+    {
+        WorldGenerator generator = new();
+        IReadOnlyList<Dream.Simulation.World.Geometry.GeometryCellRecord> cells = generator.CreateStartupGeometry(
+            WorldDefaults.StartupFloorSize, 8, WorldDefaults.StartupFloorSize, enrichTerrain: true);
+        HashSet<(int X, int Z)> raised = [.. cells.Where(cell => cell.Key.Y >= 1).Select(cell => (cell.Key.X, cell.Key.Z))];
+        float maxAggro = ContentCatalog.Shipped.Enemies.Max(template => template.AggroRange);
+
+        foreach (SpawnCamp camp in ContentCatalog.Shipped.Camps)
+        {
+            for (int slot = 0; slot < camp.Count; slot++)
+            {
+                Vector3 spot = WolfSpawnPolicy.ResolveCampSpawn(camp.X, camp.Z, slot, camp.Count, WorldDefaults.StartupFloorSize, WorldDefaults.StartupFloorSize);
+                int cellX = (int)MathF.Floor(spot.X);
+                int cellZ = (int)MathF.Floor(spot.Z);
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        Assert.DoesNotContain((cellX + dx, cellZ + dz), raised);
+                    }
+                }
+
+                // Clear of the rim (the stone band within two cells of the edge) and of the world spawn.
+                Assert.InRange(spot.X, 3f, WorldDefaults.StartupFloorSize - 4f);
+                Assert.InRange(spot.Z, 3f, WorldDefaults.StartupFloorSize - 4f);
+                Assert.True((spot.Xz - new Vector2(5f, 5f)).Length > maxAggro + 1f, $"{camp.Key}: {spot}");
+            }
+        }
+    }
+
+    [Fact]
+    public void ACampSpawn_IsDeterministic_AndInsideTheMap()
+    {
+        Vector3 first = WolfSpawnPolicy.ResolveCampSpawn(30.5f, 30.5f, slot: 1, campCount: 2, width: 56, depth: 56);
+        Assert.Equal(first, WolfSpawnPolicy.ResolveCampSpawn(30.5f, 30.5f, slot: 1, campCount: 2, width: 56, depth: 56));
+        Assert.Equal(new Vector3(29f, 1f, 30.5f), first);
+        Assert.Equal(new Vector3(30.5f, 1f, 30.5f), WolfSpawnPolicy.ResolveCampSpawn(30.5f, 30.5f, slot: 3, campCount: 1, width: 56, depth: 56));
+
+        // A camp outside the map clamps in; a ring slot past the table wraps.
+        Vector3 clamped = WolfSpawnPolicy.ResolveCampSpawn(500f, -4f, slot: 9, campCount: 4, width: 56, depth: 56);
+        Assert.InRange(clamped.X, 0.5f, 54.5f);
+        Assert.InRange(clamped.Z, 0.5f, 54.5f);
+    }
+
+    [Fact]
+    public void ADigest_IsUnchangedWithoutCamps_AndChangesWithThem()
+    {
+        ContentCatalog none = ContentCatalog.Load(Read(ContentCatalog.ItemsFileName), Read(ContentCatalog.EnemiesFileName), Read(ContentCatalog.LootFileName));
+        ContentCatalog explicitEmpty = Load(Camps());
+        ContentCatalog one = Load(Camps(Camp()));
+        ContentCatalog moved = Load(Camps(Camp(x: "11.5")));
+
+        Assert.Empty(none.Camps);
+        Assert.Equal(none.ContentDigest, explicitEmpty.ContentDigest);
+        Assert.NotEqual(none.ContentDigest, one.ContentDigest);
+        Assert.NotEqual(one.ContentDigest, moved.ContentDigest);
+        Assert.Equal(one.ContentDigest, Load(Camps(Camp()).Replace(",", ", ")).ContentDigest);
+    }
+
+    [Theory]
+    [InlineData("camp-a", "Goblin", "10", "10", "2", "5", "", "missing enemy")]
+    [InlineData("", "Wolf", "10", "10", "2", "5", "", "")]
+    [InlineData("camp-a", "Wolf", "-1", "10", "2", "5", "", "")]
+    [InlineData("camp-a", "Wolf", "10", "10", "0", "5", "", "")]
+    [InlineData("camp-a", "Wolf", "10", "10", "9", "5", "", "")]
+    [InlineData("camp-a", "Wolf", "10", "10", "2", "0", "", "")]
+    [InlineData("camp-a", "Wolf", "10", "10", "2", "5", ",\"night\":1", "true or false")]
+    [InlineData("camp-a", "Wolf", "10", "10", "2", "5", ",\"extra\":1", "")]
+    public void AnInvalidCamp_FailsTheLoad(string key, string template, string x, string z, string count, string respawn, string extra, string message)
+    {
+        ContentValidationException error = Assert.Throws<ContentValidationException>(
+            () => Load(Camps(Camp(key, template, x, z, count, respawn, extra))));
+
+        Assert.Contains(ContentCatalog.SpawnsFileName, error.Message, StringComparison.Ordinal);
+        Assert.Contains(message, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADuplicateCampKey_FailsTheLoad()
+    {
+        ContentValidationException error = Assert.Throws<ContentValidationException>(
+            () => Load(Camps(Camp("same"), Camp("same", x: "20.5"))));
+
+        Assert.Contains("duplicate camp key", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AContentDirectoryWithoutSpawnsJson_HasNoCamps()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"dream-camps-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            foreach (string name in new[] { ContentCatalog.ItemsFileName, ContentCatalog.EnemiesFileName, ContentCatalog.LootFileName })
+            {
+                File.Copy(Path.Combine(ContentCatalog.ShippedDirectory, name), Path.Combine(directory, name));
+            }
+
+            Assert.Empty(ContentCatalog.LoadFromDirectory(directory).Camps);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    // ---- runtime ----
+
+    private static long WorldTicksAt(int hour, WorldClockSettings? clock = null)
+    {
+        WorldClockSettings settings = clock ?? WorldClockSettings.Default;
+        // The second day, so every hour is after the world began.
+        return settings.TicksPerDay + (long)Math.Round(hour / 24d * settings.TicksPerDay) - settings.StartOffsetTicks;
+    }
+
+    private static WorldSessionRuntime CreateRuntime(ContentCatalog content, int hour, IWorldPersistenceRepository? world = null, SqliteSchemaBootstrapper? schema = null, WorldClockSettings? clock = null, bool fresh = true)
+    {
+        WorldSessionRuntime runtime = schema == null || world == null
+            ? new(WorldDefaults.StartupFloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub())
+            : new(
+                WorldDefaults.StartupFloorSize,
+                new Vector3(5f, 1.5f, 5f),
+                new SceneEventHub(),
+                playerProfiles: new SqlitePlayerProfileRepository(schema),
+                worldPersistence: world,
+                persistenceWrites: PersistenceWriteQueue.Background());
+        runtime.WriteCheckpointOnDispose = false;
+        if (fresh)
+        {
+            // The test assembly's default content has no camps and spawns the first wolf of an empty world at
+            // construction; a camp world starts empty.
+            foreach (EnemyActor wolf in runtime.Enemies.ActiveActors.ToArray())
+            {
+                Kill(runtime, wolf);
+            }
+        }
+
+        runtime.EnemyContent = content;
+        runtime.ConfigureWorldClock(clock ?? WorldClockSettings.Default, WorldTicksAt(hour, clock));
+        return runtime;
+    }
+
+    private static void Tick(WorldSessionRuntime runtime, ref ulong tick, int count = 1)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            tick++;
+            runtime.AdvanceAuthoritativeTick(
+                tick,
+                SimulationClock.FixedDeltaSeconds,
+                default(PlayerCommandFrame),
+                PlayerSimulationTuning.AuthoritativeDefault);
+        }
+    }
+
+    private static void Kill(WorldSessionRuntime runtime, EnemyActor enemy)
+    {
+        int id = enemy.Combatant.Actor.Id;
+        Assert.True(runtime.Enemies.Remove(id));
+        typeof(WorldSessionRuntime)
+            .GetMethod("DeletePersistedEnemy", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(runtime, [id]);
+    }
+
+    private static int Active(WorldSessionRuntime runtime) => runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive);
+
+    [Fact]
+    public void ACampFillsOnTheFirstTicks_OneMemberPerCampPerTick_AtItsOwnSpot()
+    {
+        ContentCatalog content = Load(Camps(Camp("a", count: "3"), Camp("b", x: "30.5", z: "30.5", count: "1")));
+        using WorldSessionRuntime runtime = CreateRuntime(content, hour: 12);
+        Assert.Equal(0, Active(runtime));
+
+        ulong tick = 0;
+        Tick(runtime, ref tick);
+        Assert.Equal(2, Active(runtime));
+        Tick(runtime, ref tick, 2);
+        Assert.Equal(4, Active(runtime));
+        Tick(runtime, ref tick, 20);
+        Assert.Equal(4, Active(runtime));
+        Assert.All(
+            runtime.Enemies.ActiveActors.Where(enemy => enemy.Position.X < 20f),
+            enemy => Assert.True((enemy.Position.Xz - new Vector2(10.5f, 10.5f)).Length < 2f, enemy.Position.ToString()));
+    }
+
+    [Fact]
+    public void ADeadMember_IsReplacedAfterRespawnSeconds_CountedInTicks_AndOnlyThen()
+    {
+        // One second is 64 ticks.
+        ContentCatalog content = Load(Camps(Camp(count: "2", respawn: "1")));
+        using WorldSessionRuntime runtime = CreateRuntime(content, hour: 12);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 5);
+        Assert.Equal(2, Active(runtime));
+
+        Kill(runtime, runtime.Enemies.ActiveActors.First(enemy => enemy.IsActive));
+        Assert.Equal(1, Active(runtime));
+
+        // The timer starts on the tick that notices the death; nothing comes back before it runs out.
+        Tick(runtime, ref tick, TicksPerSecond - 1);
+        Assert.Equal(1, Active(runtime));
+        Tick(runtime, ref tick, 1);
+        int back = Active(runtime);
+        if (back == 1)
+        {
+            Tick(runtime, ref tick);
+            back = Active(runtime);
+        }
+
+        Assert.Equal(2, back);
+        Tick(runtime, ref tick, 3 * TicksPerSecond);
+        Assert.Equal(2, Active(runtime));
+    }
+
+    [Fact]
+    public void TwoRuns_RefillAtTheSameTicks()
+    {
+        ContentCatalog content = Load(Camps(Camp(count: "2", respawn: "2"), Camp("b", x: "30.5", z: "30.5", count: "1", respawn: "3")));
+        List<int> first = RefillTicks(content);
+        List<int> second = RefillTicks(content);
+
+        Assert.NotEmpty(first);
+        Assert.Equal(first, second);
+    }
+
+    private static List<int> RefillTicks(ContentCatalog content)
+    {
+        using WorldSessionRuntime runtime = CreateRuntime(content, hour: 12);
+        ulong tick = 0;
+        Tick(runtime, ref tick, 4);
+        List<int> changes = [];
+        int active = Active(runtime);
+        for (int i = 1; i <= 8 * TicksPerSecond; i++)
+        {
+            if (i == 10 || i == 200)
+            {
+                Kill(runtime, runtime.Enemies.ActiveActors.First(enemy => enemy.IsActive));
+                active = Active(runtime);
+            }
+
+            Tick(runtime, ref tick);
+            int now = Active(runtime);
+            if (now != active)
+            {
+                changes.Add(i * 10 + now);
+                active = now;
+            }
+        }
+
+        return changes;
+    }
+
+    [Fact]
+    public void ANightCamp_ExistsOnlyAtNight_AndDespawnsAtDawn()
+    {
+        ContentCatalog content = Load(Camps(Camp("day", count: "1"), Camp("dark", x: "30.5", z: "30.5", count: "2", extra: ",\"night\":true")));
+        using WorldSessionRuntime day = CreateRuntime(content, hour: 12);
+        ulong tick = 0;
+        Tick(day, ref tick, 10);
+        Assert.Equal(1, Active(day));
+
+        // A one-minute day, started at 02:00: 320 ticks to 04:00.
+        WorldClockSettings shortDay = WorldClockSettings.FromDayLengthMinutes(1);
+        using WorldSessionRuntime night = CreateRuntime(content, hour: 2, clock: shortDay);
+        tick = 0;
+        Tick(night, ref tick, 10);
+        Assert.Equal(WorldDayPhase.Night, night.WorldClock.Phase);
+        Assert.Equal(3, Active(night));
+
+        // Dawn: the night camp's members go one per tick, the day camp stays.
+        Tick(night, ref tick, 330);
+        Assert.NotEqual(WorldDayPhase.Night, night.WorldClock.Phase);
+        Assert.Equal(1, Active(night));
+        Assert.Equal(Active(night), night.Enemies.ActiveActors.Count(enemy => enemy.Position.X < 20f));
+    }
+
+    [Fact]
+    public void AWorldWithoutCamps_KeepsTheWorldWidePopulation()
+    {
+        using WorldSessionRuntime runtime = LegacyWolfPopulation.AndTheFirstWolf(
+            new WorldSessionRuntime(WorldDefaults.StartupFloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub()));
+        runtime.ConfigureWorldClock(WorldClockSettings.Default, WorldTicksAt(12));
+        ulong tick = 0;
+
+        Tick(runtime, ref tick, 30);
+
+        Assert.Equal(1, Active(runtime));
+    }
+
+    // ---- persistence ----
+
+    [Fact]
+    public void ACampMember_IsPersistedWithItsCampKey_AndALegacyWolfWithNone()
+    {
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+
+        using (WorldSessionRuntime runtime = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema))
+        {
+            ulong tick = 0;
+            Tick(runtime, ref tick, 10);
+            Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        }
+
+        IReadOnlyList<PersistedEnemyInstance> rows = world.LoadActiveEnemies();
+        Assert.Equal(5, rows.Count);
+        Assert.All(rows, row => Assert.NotNull(row.CampKey));
+        Assert.Equal(2, rows.Count(row => row.CampKey == "north-east-wolves"));
+        Assert.Equal(1, rows.Count(row => row.CampKey == "south-east-dire-wolf"));
+
+        world.SaveEnemyInstance(Legacy(9001));
+        Assert.Null(Assert.Single(world.LoadActiveEnemies(), row => row.ObjectId == new ObjectId(9001)).CampKey);
+    }
+
+    [Fact]
+    public void TheCamps_SurviveARestart_WithTheirMembers_AndNoSecondSet()
+    {
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        List<(string? Camp, int Count)> before;
+
+        using (WorldSessionRuntime runtime = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema))
+        {
+            ulong tick = 0;
+            Tick(runtime, ref tick, 10);
+            Assert.Equal(5, Active(runtime));
+            runtime.PersistCheckpoint();
+            Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+            before = Grouped(world.LoadActiveEnemies());
+        }
+
+        using (WorldSessionRuntime restarted = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false))
+        {
+            Assert.Equal(5, Active(restarted));
+            ulong tick = 0;
+            Tick(restarted, ref tick, 4 * TicksPerSecond);
+
+            Assert.Equal(5, Active(restarted));
+            Assert.Equal(before, Grouped(world.LoadActiveEnemies()));
+            // Each restored member idles at its camp, not at a legacy spawn.
+            foreach (EnemyActor enemy in restarted.Enemies.ActiveActors)
+            {
+                SpawnCamp camp = ContentCatalog.Shipped.Camps.OrderBy(c => (c.X - enemy.HomePosition.X) * (c.X - enemy.HomePosition.X) + (c.Z - enemy.HomePosition.Z) * (c.Z - enemy.HomePosition.Z)).First();
+                Assert.True((camp.X - enemy.HomePosition.X) * (camp.X - enemy.HomePosition.X) + (camp.Z - enemy.HomePosition.Z) * (camp.Z - enemy.HomePosition.Z) < 2.5f * 2.5f, $"{camp.Key} {enemy.HomePosition}");
+            }
+        }
+    }
+
+    [Fact]
+    public void ARestoredLegacyWolf_KeepsWorking_AndNoCampRefillsIt()
+    {
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+        world.SaveEnemyInstance(Legacy(9001));
+
+        using WorldSessionRuntime runtime = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false);
+        EnemyActor legacy = Assert.Single(runtime.Enemies.ActiveActors);
+        Vector3 legacyHome = legacy.HomePosition;
+        Assert.Equal(WolfSpawnPolicy.ResolveInitialSpawn(WorldDefaults.StartupFloorSize, WorldDefaults.StartupFloorSize), legacyHome);
+
+        ulong tick = 0;
+        Tick(runtime, ref tick, 10);
+
+        // The legacy wolf stays and is not counted toward a camp: every camp still fills.
+        Assert.Equal(6, Active(runtime));
+        Assert.Contains(runtime.Enemies.ActiveActors, enemy => ReferenceEquals(enemy, legacy));
+
+        Kill(runtime, legacy);
+        Tick(runtime, ref tick, 4 * TicksPerSecond);
+        Assert.Equal(5, Active(runtime));
+    }
+
+    [Fact]
+    public void ADeadCampMember_IsNotRestored_AndItsCampRefillsAfterTheRestart()
+    {
+        using IncrementalCheckpointTests.TempDatabase database = new();
+        SqliteWorldPersistenceRepository world = new(database.Schema);
+
+        using (WorldSessionRuntime runtime = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema))
+        {
+            ulong tick = 0;
+            Tick(runtime, ref tick, 10);
+            Kill(runtime, runtime.Enemies.ActiveActors.First(enemy => enemy.IsActive));
+            Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
+        }
+
+        Assert.Equal(4, world.LoadActiveEnemies().Count);
+        using (WorldSessionRuntime restarted = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false))
+        {
+            Assert.Equal(4, Active(restarted));
+            ulong tick = 0;
+            Tick(restarted, ref tick, 5);
+            Assert.Equal(5, Active(restarted));
+        }
+    }
+
+    private static List<(string? Camp, int Count)> Grouped(IReadOnlyList<PersistedEnemyInstance> rows) =>
+        [.. rows.GroupBy(row => row.CampKey).OrderBy(group => group.Key, StringComparer.Ordinal).Select(group => (group.Key, group.Count()))];
+
+    private static PersistedEnemyInstance Legacy(int id)
+    {
+        DateTime now = DateTime.UtcNow;
+        return new PersistedEnemyInstance(
+            new ObjectId(id),
+            "Wolf",
+            "Wolf",
+            new Vector3(40.5f, 1f, 40.5f),
+            Vector3.UnitZ,
+            new PersistedCreatureStats(100, 100, 10, 10, 10, 0, 2.8f, 0.952381f, 1),
+            now,
+            now);
+    }
+}

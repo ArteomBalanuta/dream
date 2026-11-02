@@ -30,3 +30,16 @@ public sealed record EnemyTemplate(
     string VisualKey,
     string? LootTable,
     EnemySpawnRole SpawnRole);
+
+// A spawn camp as authored in spawns.json (M2-B): Count enemies of Template stand around (X, Z) on the
+// floor; a dead one is replaced RespawnSeconds later (counted in simulation ticks). A Night camp only
+// exists while it is night: its enemies despawn at dawn and respawn only in the dark. Enemy rows keep
+// the camp by Key (camp_key), with no foreign key.
+public sealed record SpawnCamp(
+    string Key,
+    string Template,
+    float X,
+    float Z,
+    int Count,
+    float RespawnSeconds,
+    bool Night);

@@ -131,9 +131,9 @@ public sealed class WorldsMigrationTests
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0010\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0002-to-v0011\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection migrated = database.Open();
-        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid")], SchemaMigrationTests.VersionRows(migrated));
+        Assert.Equal([(1L, "baseline"), (2L, "player_starter_grants"), (3L, "worlds"), (4L, "drop_busy_table_updated_utc_indexes"), (5L, "object_ids"), (6L, "terrain"), (7L, "accounts"), (8L, "item_rolls"), (9L, "enemy_formulas"), (10L, "bag_grid"), (11L, "spawn_camps")], SchemaMigrationTests.VersionRows(migrated));
         Assert.Equal(2L, Scalar(migrated, "SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Equal(
             // Migration 0010 moved old slot 3 (row 0, column 3 of the 4x4 backpack) to anchor 6 of the 8x8 board.

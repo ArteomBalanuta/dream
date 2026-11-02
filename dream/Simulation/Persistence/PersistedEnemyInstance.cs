@@ -11,4 +11,6 @@ public readonly record struct PersistedEnemyInstance(
     Vector3 Facing,
     PersistedCreatureStats Stats,
     DateTime CreatedUtc,
-    DateTime UpdatedUtc);
+    DateTime UpdatedUtc,
+    // The spawn camp the enemy belongs to (camp_key); null for a row from before camps.
+    string? CampKey = null);

@@ -234,7 +234,15 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
 
     bool IRuntimePersistenceHost.TryAllocateEnemyActorId(out int actorId) => TryAllocateEnemyActorId(out actorId);
 
-    void IRuntimePersistenceHost.SpawnInitialWolf() => SpawnInitialWolf();
+    // A restore with no enemy rows: the first wolf, unless the content has spawn camps (the camp step
+    // fills them on the first tick).
+    void IRuntimePersistenceHost.SpawnInitialWolf()
+    {
+        if (EnemyContent.Camps.Count == 0)
+        {
+            SpawnInitialWolf();
+        }
+    }
 
     bool IRuntimePersistenceHost.IsPlayerInventoryLoaded(string playerName) =>
         _inventory.IsLoaded(playerName);
