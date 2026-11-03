@@ -206,3 +206,60 @@ the lights alone contribute about 0.004. In the target, bright pixels are fire *
 fire lights. A1 is therefore being satisfied more thinly than intended. If the baked terrain (darker
 than the photo terrain this was tuned against) pulls it below 0.020, the answer is more or better
 placed light, not a lower gate.
+
+## MSAA, and one unexplained capture
+
+4x MSAA is on the default framebuffer: no FBO, no alpha-to-coverage, no sample shading. MEASURED:
+the driver grants 4 samples; 0x vs 4x captures differ on 0.32% of pixels against a run-to-run noise
+floor of 0.155%, **98.9% of the differing pixels lie within 2 px of an edge, and 100% of those
+differing by more than 32 levels do**. Interior pixels move at most 15 levels. That spatial
+distribution, not the raw percentage, is the proof the change is edges-only. Cost is about 0.085 ms
+per frame, roughly 0.055 ms of it in swap where the resolve happens - about 1.2% of a 144 FPS budget,
+though the test scene was too light to measure the fill-rate cost properly.
+
+**Unresolved, recorded rather than closed.** The implementer's first 4x run wrote 91-byte 1x1 PNGs,
+i.e. the window reported a 1x1 `ClientSize`. It did not reproduce for them, and I then ran three more
+4x captures which all produced clean 1440x1024 frames with 4 samples granted. So it is not
+reproducible at roughly 1 in 8 runs and is more likely a transient window-creation race than an
+MSAA defect - but it was never explained. If capture runs ever start producing tiny PNGs, start here.
+
+Cutout (alpha-mask) edges are deliberately NOT anti-aliased: `discard` kills all samples. Alpha-to-
+coverage would fix it and was rejected for this change - it needs fragment alpha to carry the mask
+value and dithers coverage noisily on small hard-edged textures. Anisotropic filtering is a separate
+follow-up: it would sharpen the over-blurred distant ground, which is an art-direction call, whereas
+MSAA is strictly "same image, smoother edges".
+
+## Accepted: 0.77% night clipping, superseding the earlier 0.23% cap
+
+The 0.23% accepted earlier was measured on the **photo terrain**, at brazier intensity 1.68x, with
+bright sitting at 0.021 - one thousandth above the gate floor. When the baked tiles landed, that
+setup collapsed to bright 0.009 and A1 failed: the night bright tail is almost entirely lit ground
+inside the pool, which both the dimmer braziers and the darker ground had reduced.
+
+The retune restores intensity to 3.0x and tightens the falloff core to 1/(1+1.5s) - the tighter core
+is required, because the broader one pushes saturation to 0.392 and fails that gate on the darker
+tiles. VERIFIED independently on the final frame: **mean 0.115, near-black 0.660, bright 0.029,
+saturation 0.229, A1 passes with 0 problems**, and bright now sits inside the target art's
+0.024-0.038 band rather than on the floor.
+
+MEASURED trade-off curve at a fixed spawn view, which is why both targets cannot hold at once:
+
+| core K | intensity | bright | clipped |
+| --- | --- | --- | --- |
+| 3 | 2.4x | 0.019 (fails) | 0.29% |
+| 3 | 3.0x | 0.027 | 0.73% |
+| 1.5 | 3.0x | 0.029 | 0.77% |
+| 0.75 | 3.0x | 0.023 | 0.28% (saturation 0.392, fails) |
+
+Clipping tracks bright at roughly 1 clipped pixel per 13-26 bright pixels at every setting, because
+**the clipping is the `FxSimulation` lamp-class fire halo added on top of the light, not the light**.
+Reaching the 0.020 floor costs 0.3-0.5% clip; holding under 0.23% lands bright at 0.019.
+
+The user accepted 0.77% on 2026-11-03. The remaining lever, if it ever matters, is lowering the halo
+strength in `FxSimulation` and raising the light to match - a file no workstream owned.
+
+**A reported number that did not hold.** The retune reported the actor's internal spread at 0.651,
+clearing the 0.45 gate. It does not count: that branch carries the blocky Kenney player
+(asset sha1 `6e2e416d...`), not the grim figure (`1d774d3d...`), so it measured the colourful blocky
+model. A3 remains failed at the 0.137 measured on the integrated branch, and must be re-measured on
+the real character after assembly.
