@@ -86,11 +86,44 @@ public class CharacterWindowPreviewTests
         Assert.Equal(t.Px, batch.LineHeight(t.Style), 1);
     }
 
+    // The shipped faces, each with its licence beside it, and the glyph table built from them.
+    [Theory]
+    [InlineData("Cinzel.ttf", "Cinzel-OFL.txt")]
+    [InlineData("EBGaramond.ttf", "EBGaramond-OFL.txt")]
+    public void ShippedFonts_ComeWithTheirLicence(string font, string licence)
+    {
+        string ttf = Dream.Assets.AssetPaths.Font(font);
+        Assert.True(File.Exists(ttf), ttf);
+        Assert.Contains("SIL Open Font License", File.ReadAllText(Dream.Assets.AssetPaths.Font(licence)));
+        byte[] head = File.ReadAllBytes(ttf).AsSpan(0, 4).ToArray();
+        Assert.Equal(new byte[] { 0, 1, 0, 0 }, head);
+    }
+
+    [Fact]
+    public void RealFont_HasAllThreeFacesWithTheirOwnMetrics()
+    {
+        (UiGlyphTable glyphs, _) = RealFont.Get();
+        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif })
+        {
+            for (char ch = ' '; ch <= '~'; ch++)
+            {
+                Assert.True(glyphs.Has(style, ch), $"{style} '{ch}'");
+            }
+        }
+
+        Assert.Equal(UiFontSetup.SerifPixels, glyphs.LineHeight(UiTextStyle.Serif));
+        Assert.Equal(UiFontSetup.LargePixels, glyphs.LineHeight(UiTextStyle.Large));
+        // A serif digit differs from the pixel face's: the files really were loaded, not the fallback.
+        glyphs.TryGet(UiTextStyle.Serif, '8', out UiGlyph serif8);
+        glyphs.TryGet(UiTextStyle.Body, '8', out UiGlyph body8);
+        Assert.NotEqual(body8.Advance * UiFontSetup.SerifPixels / UiFontSetup.BodyPixels, serif8.Advance);
+    }
+
     [Theory]
     [InlineData(1f, 13f)]
-    [InlineData(2f, 19f)]
-    [InlineData(3f, 28f)]
-    [InlineData(4f, 38f)]
+    [InlineData(2f, 23f)]
+    [InlineData(3f, 34f)]
+    [InlineData(4f, 46f)]
     public void TextFor_GrowsWithTheScaleAndNeverBelowTheBake(float scale, float px)
     {
         UiLayout layout = UiLayout.Create(10000, 10000, scale);

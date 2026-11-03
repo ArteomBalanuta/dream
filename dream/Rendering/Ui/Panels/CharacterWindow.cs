@@ -29,16 +29,32 @@ public static class CharacterWindow
     // row at 2560x1440). The size now follows the scale, never below the baked 13 px, so scale 1 is as before.
     internal const float AttributeTextUnits = 9.5f;
     internal const float DerivedTextUnits = 8f;
-    internal const float TitleTextUnits = 6.5f;
+    internal const float TitleTextUnits = 7.5f;
 
-    // The font and glyph multiplier for text about units tall. Below 20 px the 13 px bake is stretched;
-    // from 20 px the 26 px bake is used (shrunk or stretched), which stays closer to its pixel grid.
-    internal static (UiTextStyle Style, float Scale, float Px) TextFor(in UiLayout l, float units)
+    // Below this the thin serif and the engraved capitals are not legible, so the pixel face keeps the text.
+    internal const float SerifMinPx = 15f;
+    internal const float SerifBoost = 1.2f;
+
+    // The font and glyph multiplier for text about units tall. From SerifMinPx up the text is set in
+    // `face` (Serif for rows, Large for the title) baked at 24 or 26 px and scaled to the size, which
+    // is a shrink or a small stretch; below it the 13 px Body bake is used, as before.
+    internal static (UiTextStyle Style, float Scale, float Px) TextFor(in UiLayout l, float units, UiTextStyle face = UiTextStyle.Serif)
     {
         float px = MathF.Max(UiFontSetup.BodyPixels, MathF.Round(units * l.Scale));
-        return px >= 20f
-            ? (UiTextStyle.Large, px / UiFontSetup.LargePixels, px)
-            : (UiTextStyle.Body, px / UiFontSetup.BodyPixels, px);
+        if (px < SerifMinPx)
+        {
+            return (UiTextStyle.Body, px / UiFontSetup.BodyPixels, px);
+        }
+
+        // EB Garamond's em is small for its letters (x-height about 0.4 em against the pixel face's 0.5),
+        // so the serif is set 20 percent larger to read as big as the size the row was given.
+        if (face == UiTextStyle.Serif)
+        {
+            px = MathF.Round(px * SerifBoost);
+        }
+
+        float bake = face == UiTextStyle.Large ? UiFontSetup.LargePixels : UiFontSetup.SerifPixels;
+        return (face, px / bake, px);
     }
 
     // Draws text in the sized style with a one-pixel shadow. Sets the canvas text scale first (Build puts it back).
@@ -130,7 +146,7 @@ public static class CharacterWindow
         InventoryWindow.DrawCloseButton(c, i, l, s, a, win, InventoryWindow.IdCloseCharacter, live);
 
         float canvasScale = c.TextScale;
-        var title = TextFor(in l, TitleTextUnits);
+        var title = TextFor(in l, TitleTextUnits, UiTextStyle.Large);
         var rowText = TextFor(in l, AttributeTextUnits);
         PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), "Character", title, ItemTierStyle.Title);
         if (v.Inventory is Simulation.Inventory.PlayerInventorySnapshot inventory && inventory.PlayerName is { Length: > 0 } name)

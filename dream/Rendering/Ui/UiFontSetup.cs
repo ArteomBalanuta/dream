@@ -2,27 +2,50 @@ using ImGuiNET;
 
 namespace Dream.Rendering.Ui;
 
-// The one place that decides which font the classic HUD uses: ImGui's built-in default font baked at
-// two sizes. Swapping in a licensed font later means changing AddFonts only.
+// The one place that decides which fonts the classic HUD uses, baked in three sizes:
+//   Body  (atlas 0)  ImGui's built-in ProggyClean at 13 px. Every panel lays out in 13 px lines, and a
+//                    thin serif is not legible that small, so the small text stays on the pixel face.
+//   Large (atlas 1)  Cinzel (engraved Roman capitals) at 26 px: the status bar numbers and titles.
+//   Serif (atlas 2)  EB Garamond at 24 px: the stats window, which sizes its own text by ui_scale.
+// Cinzel and EB Garamond are third-party SIL OFL fonts in dream/fonts (see the README there). Both are
+// variable fonts; stb_truetype ignores the wght axis and renders the default instance (Regular, 400).
+// A missing file falls back to the built-in face at that size, so the HUD still draws.
 public static unsafe class UiFontSetup
 {
     public const float BodyPixels = 13f;
     public const float LargePixels = 26f;
+    public const float SerifPixels = 24f;
+    public const string LargeFontFile = "Cinzel.ttf";
+    public const string SerifFontFile = "EBGaramond.ttf";
 
     // The Dear ImGui version whose glyph struct layout Fill reads (ImGui.NET 1.91.6.1 wraps it).
     // A different native version fails BuildGlyphTable, so the HUD falls back instead of reading junk.
     public const string AuditedImGuiVersion = "1.91.6";
 
-    // Adds the body font (atlas index 0, which is the one the ImGui windows keep using) and the
-    // large bake (index 1). Call before the font atlas texture is built.
+    // Adds the body font (atlas index 0, which is the one the ImGui windows keep using), the large
+    // bake (index 1) and the serif bake (index 2). Call before the font atlas texture is built.
     public static void AddFonts(ImGuiIOPtr io)
     {
         io.Fonts.AddFontDefault();
+        AddFace(io, LargeFontFile, LargePixels);
+        AddFace(io, SerifFontFile, SerifPixels);
+    }
+
+    // The file's font at size, or the built-in face at size when the file is not there (ImGui asserts on
+    // a missing file, so it is checked first).
+    private static void AddFace(ImGuiIOPtr io, string fileName, float size)
+    {
+        string path = Dream.Assets.AssetPaths.Font(fileName);
+        if (File.Exists(path))
+        {
+            io.Fonts.AddFontFromFileTTF(path, size);
+            return;
+        }
 
         ImFontConfigPtr config = ImGuiNative.ImFontConfig_ImFontConfig();
         try
         {
-            config.SizePixels = LargePixels;
+            config.SizePixels = size;
             io.Fonts.AddFontDefault(config);
         }
         finally
@@ -41,23 +64,28 @@ public static unsafe class UiFontSetup
             throw new InvalidOperationException($"Dear ImGui {version} is loaded; the glyph layout was audited for {AuditedImGuiVersion}.");
         }
 
-        if (atlas.Fonts.Size < 2)
+        if (atlas.Fonts.Size < 3)
         {
-            throw new InvalidOperationException("The UI font atlas does not contain the body and large fonts.");
+            throw new InvalidOperationException("The UI font atlas does not contain the body, large and serif fonts.");
         }
 
         ImFontPtr body = atlas.Fonts[0];
         ImFontPtr large = atlas.Fonts[1];
-        UiGlyphTable table = new(body.FontSize, large.FontSize);
+        ImFontPtr serif = atlas.Fonts[2];
+        UiGlyphTable table = new(body.FontSize, large.FontSize, serif.FontSize);
         Fill(table, UiTextStyle.Body, body);
         Fill(table, UiTextStyle.Large, large);
-        if (!table.Has(UiTextStyle.Body, UiGlyphTable.Fallback) || !table.Has(UiTextStyle.Large, UiGlyphTable.Fallback))
+        Fill(table, UiTextStyle.Serif, serif);
+        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif })
         {
-            throw new InvalidOperationException("The UI font has no '?' glyph.");
+            if (!table.Has(style, UiGlyphTable.Fallback))
+            {
+                throw new InvalidOperationException($"The {style} UI font has no '?' glyph.");
+            }
         }
 
         // Every missing character draws '?', so a misread struct would show up everywhere: check it.
-        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large })
+        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif })
         {
             table.TryGet(style, UiGlyphTable.Fallback, out UiGlyph question);
             if (GlyphFault(question) is { } fault)

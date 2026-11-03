@@ -27,9 +27,9 @@ public class AssetPathsTests
     [Fact]
     public void Font_Resolves_Under_Runtime_Fonts_Directory()
     {
-        string expected = Path.Combine(AppContext.BaseDirectory, "fonts", "Arial.ttf");
+        string expected = Path.Combine(AppContext.BaseDirectory, "fonts", "Cinzel.ttf");
 
-        Assert.Equal(expected, AssetPaths.Font("Arial.ttf"));
+        Assert.Equal(expected, AssetPaths.Font("Cinzel.ttf"));
     }
 
     [Fact]
