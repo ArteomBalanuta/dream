@@ -209,14 +209,14 @@ public class StatSheetTests
     public void Resolution_ClampsEffectiveAndBase()
     {
         StatSheet sheet = new();
-        sheet.SetBase(BlockOf(500f, -3f, 0f));
-        Assert.Equal(50f, sheet.Base[StatId.Strength]);
+        sheet.SetBase(BlockOf(5000f, -3f, 0f));
+        Assert.Equal(PlayerCombatStats.MaxStrength, sheet.Base[StatId.Strength]);
         Assert.Equal(0.5f, sheet.Base[StatId.AttackSpeed]);
         Assert.Equal(1f, sheet.Base[StatId.Vitality]);
 
-        sheet.SetBase(BlockOf(50f, 5f, 1f));
+        sheet.SetBase(BlockOf(PlayerCombatStats.MaxStrength - 2f, 5f, 1f));
         sheet.SetSource(0, [new StatModifier(StatId.Strength, StatOp.Flat, 8f), new StatModifier(StatId.Vitality, StatOp.Percent, -2f)]);
-        Assert.Equal(50f, sheet.Effective[StatId.Strength]);
+        Assert.Equal(PlayerCombatStats.MaxStrength, sheet.Effective[StatId.Strength]);
         Assert.Equal(1f, sheet.Effective[StatId.Vitality]);
     }
 
