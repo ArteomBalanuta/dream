@@ -181,7 +181,7 @@ internal static class SkyModelKeyframes
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
-            ambientSky: new Vector3(0.050f, 0.050f, 0.056f), ambientGround: new Vector3(0.022f, 0.021f, 0.030f),
+            ambientSky: new Vector3(0.048f, 0.048f, 0.068f), ambientGround: new Vector3(0.021f, 0.020f, 0.032f),
             exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         new(6f, // sunrise
             zenith: new Vector3(0.220f, 0.320f, 0.560f), horizon: new Vector3(0.950f, 0.540f, 0.270f),
@@ -218,7 +218,7 @@ internal static class SkyModelKeyframes
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
-            ambientSky: new Vector3(0.050f, 0.049f, 0.055f), ambientGround: new Vector3(0.022f, 0.020f, 0.029f),
+            ambientSky: new Vector3(0.048f, 0.047f, 0.068f), ambientGround: new Vector3(0.021f, 0.019f, 0.032f),
             exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         Night(20f),
     ];

@@ -10,6 +10,7 @@ public partial class PlayScene
 {
     partial void CollectPlacedLights(LightCollector lights, in WorldSessionPresentationState presentation)
     {
-        _render.PlacedLights.Collect(presentation.VisibleWorld, presentation.Camera.Position, lights);
+        _render.PlacedLights.Collect(
+            presentation.VisibleWorld, presentation.Camera.Position, lights, _render.CurrentFrameLighting.SunDirection.W);
     }
 }
