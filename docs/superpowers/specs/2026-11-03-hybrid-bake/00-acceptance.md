@@ -182,3 +182,27 @@ brighter highlights, not a different average brightness.
 The general lesson, which cost two attempts: **derive a gate from the target, not from intuition.**
 Both wrong versions were plausible and neither survived contact with a measurement of the thing we
 are trying to match.
+
+## Accepted: 0.23% of the night frame clips
+
+MEASURED. The brazier pool originally clipped 1.52% of the night frame to pure white - a third of the
+whole bright tail - and 2.50% of the morning frame. Lowering brazier intensity 3.0x -> 1.68x and
+broadening the falloff core (1/(1+6s) -> 1/(1+0.75s)) brought night clipping to **0.23%** and morning
+to 0.04%, with A1 still passing at mean 0.119 / near-black 0.595 / bright 0.021 / saturation 0.269.
+
+The remaining clip is **the `FxSimulation` fire halo, not the light**. Confirmed by shifting
+`BrazierRadius` off the lamp radius so the FX tag misses: clipping fell to 0.03% with bright 0.022,
+but the brazier then has no halo or embers. Reaching under 0.1% while holding bright >= 0.020 is not
+possible with the halo as it is - the measured curve is 1.9x -> 0.42%, 1.75x -> 0.28%, 1.68x -> 0.23%,
+1.6x -> 0.11%, 1.5x -> 0.03%, and bright falls through the floor by 1.6x.
+
+The user accepted 0.23% on 2026-11-03. Reasons: it is a 6.6x improvement, what clips is fire, and the
+alternative is weakening the fire FX to satisfy a number the target art's own compressed capture
+cannot be held to precisely.
+
+**Known thinness, recorded rather than hidden.** The bright tail is now 0.021 - on the gate floor and
+below the target art's 0.024-0.038 band - and **most of it is the particle halo, not lit geometry**:
+the lights alone contribute about 0.004. In the target, bright pixels are fire *and* the surfaces the
+fire lights. A1 is therefore being satisfied more thinly than intended. If the baked terrain (darker
+than the photo terrain this was tuned against) pulls it below 0.020, the answer is more or better
+placed light, not a lower gate.
