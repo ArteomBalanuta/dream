@@ -188,3 +188,37 @@ why the world stopped looking like daylit photographs of real dirt.
 - Each stone block carries an identical tile, so the ground reads as a regular lattice at the
   isometric camera distance. Accepted for now; a fix means per-cell UV variation in the chunk mesh
   builder, not an art change.
+
+## gen_props.py: world props as glTF (not part of build_all)
+
+Twenty-two rigid, unskinned, unanimated GLBs for the world's scenery, written straight to
+`dream/animations/props/` (the engine's `PropCatalog` loads them; there is no copy step). Seven are the
+**meshes of the sprite objects `gen_iso_*.py` drew and nothing ever consumed** (`rust_barrel`, `dead_oak`,
+`bramble`, `slate_rocks`, `tombstone`, `bone_pile`, and the bottle of `rune_potion_drop` as `rune_flask`):
+the sprite renderer cannot be used in a perspective world, the geometry can, so `gen_props.py` imports each
+`*_scene()` and keeps its meshes and materials unchanged. The other fifteen are generated for the village: brazier,
+well, cart, two fences, crates, sacks, woodpile, signpost, scarecrow, cottage, inn, hovel, ruined wall and standing stones.
+
+```bash
+.venv/Scripts/python tools/ui-assets/gen_props.py [--only name,name] [out_dir]     # about 45 s
+.venv/Scripts/python tools/ui-assets/tests/check_props.py [--fast] [--measure]     # about 90 s; --fast skips determinism
+```
+
+- Authored in u (16 u = 1 m), z up, front = +y, standing on z = 0, exported at `WORLD_UNITS_PER_U` = 0.039 so a prop
+  shares the **player's** scale (the engine normalises the player to 1.2 world units; the figure is 30.7 u). The
+  player GLB's own export scale (0.088) is the blocky model's, not the world's.
+- One baked albedo atlas per prop through `charforge.unwrap_split` + `bake_albedo` and `gen_char_player.encode_atlas`
+  (the actor shader is linear in albedo, so the texture bytes are linear albedo and the lift is applied once). **No
+  directional key is baked.** `bake_albedo` now multiplies in the mesh's per-vertex `tint` (the sprites' rust and
+  plate-to-plate darkness live there) and `unwrap_split` carries it through the seam split; a mesh without tint, the
+  player included, is bit-identical to before (`gen_char_player.py` still writes sha1 1d774d3d94).
+- The ground shadow is a flat contact-AO disc, a second primitive with an alpha-MASK material and a ragged
+  64 px texture. Blending is off in the world pass, so it is a dark ragged patch, not a soft shadow, and it needs no
+  framebuffer object. The brazier's coals are a third primitive with an emissive factor (`gltfwrite` takes
+  `alpha_mode`, `alpha_cutoff`, `emissive_factor` and `double_sided` on a material; none of them is written when absent).
+- Houses carry a stone footing that reaches one cell below the ground, so they may stand on a one-cell step.
+- `tests/check_props.py` gates the container (rigid, one node, embedded PNG, no URI), determinism and equality
+  with the committed files, no baked key (the check_terrain quadrant and low-frequency gates on each part rectangle,
+  and an azimuth-leakage gate that a baked key from any side raises), the grim palette, the atlas gutter and
+  uvs, a seam budget, grounding, the footprint `PropCatalog.cs` places with (parsed from the C# so they cannot
+  drift), triangle and byte budgets, and emissive only on the brazier. Each gate has a synthetic negative.

@@ -81,6 +81,10 @@ public partial class PlayScene
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        // Scenery after the terrain and before the actors: the braziers' bowls, the village, the graves. The index
+        // follows the placed lights collected above, so each light has its bowl.
+        _render.Props.Update(presentation.VisibleWorld, _render.PlacedLights);
+        _render.Props.Draw(presentation.Camera, _render.FogOrigin ?? presentation.Camera.Position);
         // Actors runs from the enemies through the sky, then the Effects section takes over. A
         // section cannot reopen within a frame, so the debug and viewmodel draws that follow are
         // untimed. BeginSection ends the open section first, so the timer queries never nest.
