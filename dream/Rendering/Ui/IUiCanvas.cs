@@ -49,6 +49,12 @@ public interface IUiCanvas
     // that never scales text leaves it at 1.
     float TextScale => 1f;
 
+    // Sets the multiplier for the text that follows (a panel that sizes its own text restores it
+    // after). A canvas that never scales text ignores it. UiBatch resets it from the layout each frame.
+    void SetTextScale(float scale)
+    {
+    }
+
     // Quads the canvas can still take this frame. Optional panels (the world labels, which draw first
     // and so would take the room of everything above them) stop when it runs low.
     int QuadHeadroom => int.MaxValue;

@@ -103,7 +103,7 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 
 ### `dream/fonts/`
 
-- `Arial.ttf`
+- `Cinzel.ttf`, `EBGaramond.ttf` and their `-OFL.txt` licences (third-party, SIL OFL 1.1; see `README.md` there)
 
 ## Documentation Files
 
