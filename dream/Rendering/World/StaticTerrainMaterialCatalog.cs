@@ -107,13 +107,13 @@ public static class StaticTerrainMaterialCatalog
                 role,
                 new Vector4(1f, 1f, 1f, 1f),
                 ResolveGrassTexture(role)),
-            GeometryMaterialId.Dirt => Single(materialId, ResolvePolyHavenTexture("park_dirt", "park_dirt.diffuse.jpg")),
-            GeometryMaterialId.Stone => Single(materialId, ResolvePolyHavenTexture("ground_grey", "ground_grey.diffuse.jpg")),
-            GeometryMaterialId.Sand => Single(materialId, ResolvePolyHavenTexture("sand_01", "sand_01.diffuse.jpg")),
-            GeometryMaterialId.Mud => Single(materialId, ResolvePolyHavenTexture("brown_mud", "brown_mud.diffuse.jpg")),
-            GeometryMaterialId.Snow => Single(materialId, ResolvePolyHavenTexture("snow_04", "snow_04.diffuse.jpg")),
-            GeometryMaterialId.Rock => Single(materialId, ResolvePolyHavenTexture("rocks_ground_08", "rocks_ground_08.diffuse.jpg")),
-            GeometryMaterialId.GrassPath => Single(materialId, ResolvePolyHavenTexture("grass_path_3", "grass_path_3.diffuse.jpg")),
+            GeometryMaterialId.Dirt => Single(materialId, ResolveForgeTexture("dirt")),
+            GeometryMaterialId.Stone => Single(materialId, ResolveForgeTexture("stone")),
+            GeometryMaterialId.Sand => Single(materialId, ResolveForgeTexture("sand")),
+            GeometryMaterialId.Mud => Single(materialId, ResolveForgeTexture("mud")),
+            GeometryMaterialId.Snow => Single(materialId, ResolveForgeTexture("snow")),
+            GeometryMaterialId.Rock => Single(materialId, ResolveForgeTexture("rock")),
+            GeometryMaterialId.GrassPath => Single(materialId, ResolveForgeTexture("grass_path")),
             // Untextured warm block that glows: the emissive term is added after exposure, so it
             // reads at night without lighting itself (its light on the surroundings comes from
             // LampLightIndex).
@@ -142,19 +142,20 @@ public static class StaticTerrainMaterialCatalog
     {
         return role switch
         {
-            StaticTerrainMaterialRole.Side => AssetPaths.Animation("grass_block_side_texture.png"),
-            StaticTerrainMaterialRole.Bottom => AssetPaths.Animation("Grass_bottom.jpg"),
-            _ => AssetPaths.Animation("grass_top.png")
+            StaticTerrainMaterialRole.Side => ResolveForgeTexture("grass_side"),
+            StaticTerrainMaterialRole.Bottom => ResolveForgeTexture("grass_bottom"),
+            _ => ResolveForgeTexture("grass_top")
         };
     }
 
-    private static string ResolvePolyHavenTexture(string folder, string fileName)
+    // Baked surface tiles from tools/ui-assets/gen_terrain.py, copied to library/forge/<name>/<name>.albedo.png.
+    private static string ResolveForgeTexture(string name)
     {
         return Path.Combine(
             AssetPaths.AnimationsDirectory,
             "library",
-            "polyhaven",
-            folder,
-            fileName);
+            "forge",
+            name,
+            name + ".albedo.png");
     }
 }
