@@ -18,7 +18,9 @@ namespace Dream.Tests.Rendering.Lighting;
 // pixels (the HUD band is excluded, as check_look.py --hud-rows does).
 //
 // Differences from a captured frame: mean-colour albedo instead of texels (so no texture grain) and no
-// actors, flames or FX. The thresholds are check_look.py's constants and move with it; they are not loosened here. Each column's
+// actors, flames or FX. Near-black, mean and saturation are check_look.py's constants and move with it. The bright-share
+// floor is DELIBERATELY lower than check_look.py's 0.020 - see ModelBrightShareMin below for why:
+// this model has no particle FX, and check_look.py on a real capture still owns the 0.020 gate. Each column's
 // surface is the material the world generator gives it, at the baked tiles' measured mean albedo (see
 // MaterialAlbedo).
 public class GrimLookHistogramTests(ITestOutputHelper output)

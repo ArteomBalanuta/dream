@@ -3,7 +3,7 @@
     python tools/ui-assets/gen_char_player.py [out_dir]
 
 Writes <out_dir>/player_grim.glb (default: tools/ui-assets/char/). Never writes dream/ anything; the shipped
-copy is dream/animations/players/kenney-blocky-character-a.glb, which is this file under the name the engine's
+copy is dream/animations/players/player-grim.glb, which is this file under the name the engine's
 PlayerModelAssetDefinition loads.
 
 Shape: a rigid part hierarchy, which is how dream's own player model is built - one mesh per part node, no

@@ -26,7 +26,7 @@ import gen_char_player as P  # noqa: E402
 import gltfwrite as G  # noqa: E402
 import uiart as U  # noqa: E402
 
-REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right")
+REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right", "holding-right-shoot")
 ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right")
 errs: list[str] = []
 

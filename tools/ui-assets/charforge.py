@@ -847,7 +847,7 @@ def main() -> None:
     assert all(abs(_area(a_) - _area(b_)) < 1e-4 * _area(b_) for a_, (b_, _) in zip(sm, parts)), "seam cut moved the surface"
     print("unwrap_split: straddling triangles", before, "->", after, "(surface area unchanged)")
     atlas = bake_albedo(parts, skins, sk, uvs, rects, TEX)
-    again =bake_albedo(parts, skins, sk, uvs, rects, TEX)
+    again = bake_albedo(parts, skins, sk, uvs, rects, TEX)
     assert atlas.tobytes() == again.tobytes(), "bake is not deterministic"
     print("bake sha1", hashlib.sha1(atlas.tobytes()).hexdigest(), "(identical on a second run)")
     print("stats", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in _hsv_report(atlas).items()})

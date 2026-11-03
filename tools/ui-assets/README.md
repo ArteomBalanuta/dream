@@ -130,20 +130,61 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
   chunks. It takes both paths - a skin with `JOINTS_0`/`WEIGHTS_0` and `inverseBindMatrices`, or
   rigid node-hierarchy animation with one mesh per node and no skin. Rotation samplers are
   quaternions, bufferViews are 4-byte aligned and `POSITION` carries min/max.
-- `gen_char_player.py` is the first actor: a 1.78 m hooded figure in seven parts over eight nodes,
-  with `idle` and `walk` as node rotations. It is rigid, not skinned, which matters - the engine's
+- `gen_char_player.py` is the shipped player: a gaunt hooded, cloaked, steel-armoured figure in 24
+  primitives over 7 nodes, with six clips - `idle`, `walk`, `sprint`, `die`, `attack-melee-right` and
+  `holding-right-shoot` - as node rotations. It is rigid, not skinned, which matters: the engine's
   `PlayerModelAssetDefinition` measures a model's own authored height and normalises to it, so a
   rigid part hierarchy drops in with no C# change. The wolf cannot: its normalisation is a
-  hard-coded 3.191 -> 0.60.
+  hard-coded 3.191 -> 0.60. It is exported in the blocky model's units (0.088 per authored unit, so
+  2.68 tall with the hand at -0.9), because `HeldWeaponRenderer` positions the fist in those units -
+  authored in metres, the axe floats a hand-width off the grip.
 - `gen_char_preview.py` renders the same geometry through `isoforge` with a darker `GRIM_RIG` as a
   four-view turntable sheet. That sheet is a review aid for judging form and material by eye; the
   shipped asset is the `.glb`, which looks different because the engine lights it.
-- Both generators are byte-deterministic (`player_grim.glb` is 44488 bytes; `charforge.py` prints
-  the bake sha1 and reruns the bake to prove it). The spec and its gate tables are in
-  `docs/superpowers/specs/2026-11-02-grim-actor-forge/`.
-- Known gaps, measured in-game: the baked atlas is **not** wired into the GLB yet, which ships flat
-  per-part `baseColorFactor`, so no material reads at gameplay distance. The grim albedo is also too
-  dark for a shader with no GGX or shadowing - the figure measured mean luma 0.175 against grass at
-  0.218, so it reads as a silhouette. Cylinder UV seams are not split, so a texture applied now
-  smears one column of triangles. `unwrap` requires UVs on every part, so the wolf's no-UV case is
-  unsupported, and the bake's crevice grime has never run on concave geometry.
+- Both generators are byte-deterministic (`player_grim.glb` is 311876 bytes; `charforge.py` prints
+  the bake sha1 and reruns the bake to prove it). The shipped copy is
+  `dream/animations/players/player-grim.glb` - original art, which replaced a third-party CC0 model.
+  `tests/check_char.py` gates it: determinism, no skin, the engine's node names, grounding at y=0,
+  every clip the state machine asks for, no clip sinking through the floor, zero cylinder triangles
+  straddling a UV seam, the albedo lift applied exactly once, and the saturated-texel budget. The
+  spec and its gate tables are in `docs/superpowers/specs/2026-11-02-grim-actor-forge/`.
+- `charforge.unwrap_split(parts, tex_size, axis=None)` is the one to call for a textured part: it
+  clips triangles that straddle a cylinder seam and gives each cap-fan apex its own vertex, so a
+  texture does not smear. Plain `unwrap()` leaves 263 of 1676 triangles straddling on the demo parts;
+  `unwrap_split` leaves 0. Use the meshes it returns, not the originals.
+- Known gaps, measured in-game: the figure's **internal contrast is about 0.21 against a 0.45 gate**
+  derived from the target art's own figures (0.50-0.78), so it still reads as a flat silhouette
+  rather than an armoured figure - it needs deeper recesses and brighter highlights, not a different
+  average brightness. `unwrap_split`'s planar path is unchanged and still lossy for two-sided plates.
+  `unwrap` requires UVs on every part, so the wolf's no-UV case is unsupported, and the bake's
+  crevice grime has never run on concave geometry.
+
+## gen_terrain.py: baked surface tiles (not part of build_all)
+
+Seamless 256 px (64 u) albedo tiles for the voxel world's surfaces, one per `GeometryMaterialId` plus
+the three grass roles: grass top/side/bottom, dirt, stone, sand, mud, snow, rock, grass_path. Output
+goes to `tools/ui-assets/terrain/` (tiles, `terrain_manifest.json`, a contact sheet); the shipped
+copies live at `dream/animations/library/forge/<name>/<name>.albedo.png`, which
+`StaticTerrainMaterialCatalog` resolves. They replaced third-party PolyHaven photo diffuse - that is
+why the world stopped looking like daylit photographs of real dirt.
+
+```bash
+.venv/Scripts/python tools/ui-assets/gen_terrain.py            # all ten, DREAM_ART_WORKERS processes
+.venv/Scripts/python tools/ui-assets/gen_terrain.py --only stone DIR
+.venv/Scripts/python tools/ui-assets/tests/check_terrain.py [--fast] [--measure]
+```
+
+- Chain per tile: a height field from `forge.waves(period=)`, `cell_dents(period=)` and
+  `facet_plane(period=)` inside the documented form bands -> `forge.bake(h, wrap="xy")` ->
+  `forge.age` for wear and grime -> a **dome-only** light -> `forge.finish` ->
+  `forge.downsample(wrap="xy")`.
+- **No directional key and no cast shadow are baked**, the same rule `charforge.bake_albedo` follows:
+  the engine applies its own ambient + N.L and the sun moves, so a baked key would be visibly wrong.
+  `check_terrain.py` gates this directly by comparing quadrant luma and low-frequency gradient energy.
+- Terrain UVs are `0..cellSize`, i.e. **one repeat per voxel**, so the tiles must be seamless; the
+  seam gate compares the wrap edges against interior neighbour pairs. `forge.py`'s `wrap="xy"` still
+  seams in `bake` (its AO resize clamps at the edge), so `gen_terrain.py` bakes on an oversized canvas
+  and crops. The real fix belongs in `forge.py`.
+- Each stone block carries an identical tile, so the ground reads as a regular lattice at the
+  isometric camera distance. Accepted for now; a fix means per-cell UV variation in the chunk mesh
+  builder, not an art change.

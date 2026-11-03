@@ -421,3 +421,7 @@ roadmap_ideas/*.gif
 roadmap_ideas/*.webp
 roadmap_ideas/*.jpg
 docs/superpowers/specs/**/reference/
+
+# local capture scratch
+_rv_cap/
+_cap/
