@@ -16,9 +16,10 @@ namespace Dream.Rendering.Lighting;
 // except while ViewModelRenderer draws.
 public sealed class FrameLightingBuffer : IDisposable
 {
-    // Sits a little under the dark-night up-facing light at the default night brightness (about 0.064
-    // luma), so the hands read without glowing against the terrain; a held torch lights them anyway.
-    public const float ViewModelAmbientFloor = 0.05f;
+    // Sits under the night and twilight ambient (the lowest per-channel sky ambient is 0.016, the dusk
+    // up-facing ambient about 0.05), so the hands read without glowing against a world that the grim
+    // look keeps near black; a held torch lights them anyway. Was 0.05 before the dusk ambient was cut.
+    public const float ViewModelAmbientFloor = 0.03f;
 
     private int _handle;
 
