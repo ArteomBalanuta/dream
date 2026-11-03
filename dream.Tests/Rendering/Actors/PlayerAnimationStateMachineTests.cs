@@ -15,8 +15,9 @@ public class PlayerAnimationStateMachineTests
         int hit = 0,
         bool main = false,
         bool off = false,
-        bool ranged = false) =>
-        new(alive, speed, airborne, attack, hit, main, off, ranged);
+        bool ranged = false,
+        float twist = 0f) =>
+        new(alive, speed, airborne, attack, hit, main, off, ranged, twist);
 
     private static PlayerAnimationFrame Run(PlayerAnimationStateMachine machine, PlayerAnimationInputs inputs, float seconds)
     {
@@ -50,6 +51,73 @@ public class PlayerAnimationStateMachineTests
         Assert.Equal(1f, normal.PlaybackSpeed, 3);
         Assert.Equal("walk", slow.Clip);
         Assert.Equal(0.6f, slow.PlaybackSpeed, 3);
+    }
+
+    [Fact]
+    public void LegTwist_IsZeroWhenTravelEqualsFacing()
+    {
+        Assert.Equal(0f, PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, 1f), 5);
+        Assert.Equal(0f, PlayerAnimationStateMachine.LegTwist(1f, 1f, 2f, 2f), 5);
+    }
+
+    [Fact]
+    public void LegTwist_IsSigned_ForStrafes()
+    {
+        // Facing +Z, yaw = atan2(x, z): travelling +X is +90 degrees, -X is -90.
+        Assert.Equal(MathF.PI / 2f, PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, 0f), 5);
+        Assert.Equal(-MathF.PI / 2f, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, 0f), 5);
+        // A forward-left diagonal is 45 degrees.
+        Assert.Equal(-MathF.PI / 4f, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, 1f), 5);
+    }
+
+    [Fact]
+    public void LegTwist_ClampsAtNinetyDegrees_IncludingStraightBackwards()
+    {
+        float max = PlayerAnimationStateMachine.MaxLegTwistRadians;
+
+        Assert.Equal(max, PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, -0.5f), 5);
+        Assert.Equal(-max, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, -0.5f), 5);
+        Assert.InRange(MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)), max - 1e-4f, max + 1e-4f);
+    }
+
+    [Fact]
+    public void LegTwist_WrapsAcrossTheYawSeam()
+    {
+        // Facing yaw just under +180, travel just past it: a small twist, not a near-full turn.
+        float twist = PlayerAnimationStateMachine.LegTwist(MathF.Sin(3.0f), MathF.Cos(3.0f), MathF.Sin(-3.0f), MathF.Cos(-3.0f));
+
+        Assert.Equal(MathF.Tau - 6.0f, twist, 4);
+    }
+
+    [Fact]
+    public void LegTwist_ZeroDirections_GiveNoTwist()
+    {
+        Assert.Equal(0f, PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, 0f));
+        Assert.Equal(0f, PlayerAnimationStateMachine.LegTwist(0f, 0f, 1f, 0f));
+    }
+
+    [Fact]
+    public void Frame_CarriesTheTwistWhileMoving_AndClampsIt()
+    {
+        PlayerAnimationStateMachine machine = new();
+
+        PlayerAnimationFrame moving = Run(machine, Inputs(speed: 6f, twist: 1.0f), 0.2f);
+        PlayerAnimationFrame over = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: 3.0f), Dt);
+        PlayerAnimationFrame under = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: -3.0f), Dt);
+
+        Assert.Equal(1.0f, moving.LegTwistRadians, 5);
+        Assert.Equal(PlayerAnimationStateMachine.MaxLegTwistRadians, over.LegTwistRadians, 5);
+        Assert.Equal(-PlayerAnimationStateMachine.MaxLegTwistRadians, under.LegTwistRadians, 5);
+    }
+
+    [Fact]
+    public void Frame_HasNoTwist_WhenStationaryOrDead()
+    {
+        PlayerAnimationFrame still = new PlayerAnimationStateMachine().Update(Inputs(speed: 0f, twist: 1.0f), Dt);
+        PlayerAnimationFrame dead = new PlayerAnimationStateMachine().Update(Inputs(alive: false, speed: 6f, twist: 1.0f), Dt);
+
+        Assert.Equal(0f, still.LegTwistRadians);
+        Assert.Equal(0f, dead.LegTwistRadians);
     }
 
     [Fact]

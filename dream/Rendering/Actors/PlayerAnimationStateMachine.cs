@@ -24,7 +24,10 @@ public readonly record struct PlayerAnimationInputs(
     int HitSerial,
     bool HoldsMainHand,
     bool HoldsOffHand,
-    bool RangedMainHand);
+    bool RangedMainHand,
+    // Signed yaw, radians, from where the body faces to where it travels; the pose layers twist the
+    // legs by it (see LegTwist). Clamped to +-MaxLegTwistRadians here and zeroed when not moving.
+    float LegTwistRadians = 0f);
 
 public readonly record struct PlayerAnimationFrame(
     string Clip,
@@ -38,7 +41,9 @@ public readonly record struct PlayerAnimationFrame(
     // How much the held-item arms override the clip: 0 clip-driven, 1 raised to hold the item.
     float MainArmHold,
     float OffArmHold,
-    bool IsDead);
+    bool IsDead,
+    // The clamped leg twist for the pose layers: 0 when stationary or dead.
+    float LegTwistRadians = 0f);
 
 // The animation priority for one player: die (held) > attack (one-shot; the shooting pose for a
 // bow) > walk or sprint (playback speed follows the real speed) > idle. A hit adds a short torso
@@ -65,6 +70,12 @@ public sealed class PlayerAnimationStateMachine
     public const float MinPlaybackSpeed = 0.6f;
     public const float MaxPlaybackSpeed = 1.6f;
 
+    // The legs twist at most a quarter turn off the facing. Straight backwards is 180 degrees off, so
+    // there the hips sit at the clamp and the stride is still 90 degrees off the travel: a strafe-like
+    // slide instead of a moonwalk, accepted rather than hidden. Going further would turn the
+    // knees backwards.
+    public const float MaxLegTwistRadians = MathF.PI / 2f;
+
     private const float LayerBlendPerSecond = 12f;
 
     private bool _seeded;
@@ -81,6 +92,21 @@ public sealed class PlayerAnimationStateMachine
     private bool _moving;
 
     public bool IsDead => _dead;
+
+    // The signed yaw from facing to travel on the ground plane, clamped to +-MaxLegTwistRadians; 0
+    // when either direction is (nearly) zero. Yaw is atan2(x, z), the same convention as the
+    // model's facing, so a positive twist turns the stride toward +X when facing +Z.
+    public static float LegTwist(float facingX, float facingZ, float travelX, float travelZ)
+    {
+        if (((facingX * facingX) + (facingZ * facingZ)) < 1e-8f || ((travelX * travelX) + (travelZ * travelZ)) < 1e-8f)
+        {
+            return 0f;
+        }
+
+        float delta = MathF.Atan2(travelX, travelZ) - MathF.Atan2(facingX, facingZ);
+        delta = MathF.IEEERemainder(delta, MathF.Tau);
+        return Math.Clamp(delta, -MaxLegTwistRadians, MaxLegTwistRadians);
+    }
 
     public PlayerAnimationFrame Update(in PlayerAnimationInputs inputs, float deltaSeconds)
     {
@@ -108,7 +134,7 @@ public sealed class PlayerAnimationStateMachine
             _offArm = 0f;
             _lastAttackSerial = inputs.AttackSerial;
             _lastHitSerial = inputs.HitSerial;
-            return new PlayerAnimationFrame(DieClip, PlayerClipMode.Hold, _oneShotSerial, 1f, 0f, 0f, 0f, 0f, true);
+            return new PlayerAnimationFrame(DieClip, PlayerClipMode.Hold, _oneShotSerial, 1f, 0f, 0f, 0f, 0f, true, 0f);
         }
 
         if (_dead)
@@ -155,12 +181,15 @@ public sealed class PlayerAnimationStateMachine
         _mainArm += ((mainArmHeld ? 1f : 0f) - _mainArm) * blend;
         _offArm += ((inputs.HoldsOffHand ? 1f : 0f) - _offArm) * blend;
 
+        // Only a moving body twists its hips; a stationary one (or an attacking one standing still) keeps them square.
+        float legTwist = _moving ? Math.Clamp(inputs.LegTwistRadians, -MaxLegTwistRadians, MaxLegTwistRadians) : 0f;
+
         float flinch = _hitLeft > 0f ? MathF.Sin(MathF.PI * (1f - (_hitLeft / HitSeconds))) : 0f;
 
         if (attacking)
         {
             return new PlayerAnimationFrame(
-                _attackClip, PlayerClipMode.OneShot, _oneShotSerial, 1f, flinch, _airTuck, _mainArm, _offArm, false);
+                _attackClip, PlayerClipMode.OneShot, _oneShotSerial, 1f, flinch, _airTuck, _mainArm, _offArm, false, legTwist);
         }
 
         string clip;
@@ -178,6 +207,6 @@ public sealed class PlayerAnimationStateMachine
         }
 
         return new PlayerAnimationFrame(
-            clip, PlayerClipMode.Loop, _oneShotSerial, speed, flinch, _airTuck, _mainArm, _offArm, false);
+            clip, PlayerClipMode.Loop, _oneShotSerial, speed, flinch, _airTuck, _mainArm, _offArm, false, legTwist);
     }
 }
