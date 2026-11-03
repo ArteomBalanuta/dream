@@ -228,3 +228,38 @@ coverage would fix it and was rejected for this change - it needs fragment alpha
 value and dithers coverage noisily on small hard-edged textures. Anisotropic filtering is a separate
 follow-up: it would sharpen the over-blurred distant ground, which is an art-direction call, whereas
 MSAA is strictly "same image, smoother edges".
+
+## Accepted: 0.77% night clipping, superseding the earlier 0.23% cap
+
+The 0.23% accepted earlier was measured on the **photo terrain**, at brazier intensity 1.68x, with
+bright sitting at 0.021 - one thousandth above the gate floor. When the baked tiles landed, that
+setup collapsed to bright 0.009 and A1 failed: the night bright tail is almost entirely lit ground
+inside the pool, which both the dimmer braziers and the darker ground had reduced.
+
+The retune restores intensity to 3.0x and tightens the falloff core to 1/(1+1.5s) - the tighter core
+is required, because the broader one pushes saturation to 0.392 and fails that gate on the darker
+tiles. VERIFIED independently on the final frame: **mean 0.115, near-black 0.660, bright 0.029,
+saturation 0.229, A1 passes with 0 problems**, and bright now sits inside the target art's
+0.024-0.038 band rather than on the floor.
+
+MEASURED trade-off curve at a fixed spawn view, which is why both targets cannot hold at once:
+
+| core K | intensity | bright | clipped |
+| --- | --- | --- | --- |
+| 3 | 2.4x | 0.019 (fails) | 0.29% |
+| 3 | 3.0x | 0.027 | 0.73% |
+| 1.5 | 3.0x | 0.029 | 0.77% |
+| 0.75 | 3.0x | 0.023 | 0.28% (saturation 0.392, fails) |
+
+Clipping tracks bright at roughly 1 clipped pixel per 13-26 bright pixels at every setting, because
+**the clipping is the `FxSimulation` lamp-class fire halo added on top of the light, not the light**.
+Reaching the 0.020 floor costs 0.3-0.5% clip; holding under 0.23% lands bright at 0.019.
+
+The user accepted 0.77% on 2026-11-03. The remaining lever, if it ever matters, is lowering the halo
+strength in `FxSimulation` and raising the light to match - a file no workstream owned.
+
+**A reported number that did not hold.** The retune reported the actor's internal spread at 0.651,
+clearing the 0.45 gate. It does not count: that branch carries the blocky Kenney player
+(asset sha1 `6e2e416d...`), not the grim figure (`1d774d3d...`), so it measured the colourful blocky
+model. A3 remains failed at the 0.137 measured on the integrated branch, and must be re-measured on
+the real character after assembly.
