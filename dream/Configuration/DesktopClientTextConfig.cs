@@ -72,6 +72,7 @@ public static class DesktopClientTextConfig
             $"damage_text_speed={Format(config.FloatingCombatText.MotionSpeedMultiplier)}",
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
             $"max_fps={config.MaxFramesPerSecond}",
+            $"msaa={config.MsaaSamples}",
             $"admin_hud={(config.AdminHud ? 1 : 0)}",
             $"ui_scale={Format(config.UiScale)}",
             $"audio_enabled={(config.AudioEnabled ? 1 : 0)}",
@@ -133,6 +134,9 @@ public static class DesktopClientTextConfig
                     case "max_fps":
                         config.MaxFramesPerSecond = integer;
                         break;
+                    case "msaa":
+                        config.MsaaSamples = integer;
+                        break;
                 }
             }
 
@@ -152,6 +156,9 @@ public static class DesktopClientTextConfig
                 break;
             case "max_fps":
                 config.MaxFramesPerSecond = (int)MathF.Round(parsed);
+                break;
+            case "msaa":
+                config.MsaaSamples = (int)MathF.Round(parsed);
                 break;
             case "ui_scale":
                 config.UiScale = parsed;

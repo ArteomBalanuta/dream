@@ -171,6 +171,8 @@ Older files may still hold `strength`, `attack_speed` or `vitality`: they are ig
 
 The `camera_view` key currently accepts `first_person` or `third_person`.
 
+The `msaa` key sets the multisample count of the window's default framebuffer: `0` (off), `2` or `4` (default); other values snap to the nearest of these. It is a window-creation hint (`GLFW_SAMPLES`), so it only takes effect on the next launch, and the Settings row says so. No framebuffer object is involved: the resolve happens at swap. The driver may grant fewer samples than requested, so the granted count is logged at startup (`[startup] msaa: requested 4x, granted 4 samples`). Alpha-mask (cutout) materials `discard` fragments, which kills every sample, so their edges are not smoothed.
+
 The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. VSync stays off. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
 
 The `admin_hud` key (`0` or `1`, default `0`) makes the F3 key and the developer controls in Settings available. The `ui_scale` key sets the classic HUD scale: `0` (default) fits the window, other values snap to quarter steps from 1 to 4 and are then capped at the auto fit for the window, because a larger scale pushes the windows under the bar (3 at 1440x1024 is used as 2; the Settings slider shows the scale in use). The Settings window has a UI Scale slider that writes `ui_scale` back. Missing keys use these defaults. The shipped `dream/config/desktop-client.txt` is not changed; the game adds the keys the next time it saves.
@@ -193,6 +195,8 @@ The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the autom
 For repeatable local profiling, set `DREAM_AUTO_CONNECT=1` before launching the desktop client. The startup scene waits for the integrated loopback server, applies its current local endpoint, and begins the same connection flow as the Connect button without requiring UI input.
 
 Set `DREAM_MAX_FPS` to override the `max_fps` frame cap for one run without writing it back to `config/desktop-client.txt`. It uses the same rules: `0` means uncapped and other integers are clamped to `30`-`500`. A non-integer value is ignored and the config value is used.
+
+Set `DREAM_MSAA` to override the `msaa` sample count for one run without writing it back to `config/desktop-client.txt`. Values snap to `0`, `2` or `4`; a non-integer value is ignored and the config value is used.
 
 Set `DREAM_RENDER_PERF_LOG=1` to print one render-performance line per second while in gameplay. The log includes render-export time, physics time, static chunk signature/extract/plan/sync/draw timings, static chunk cache reuse, visible chunk/triangle counts, and collision-body count.
 

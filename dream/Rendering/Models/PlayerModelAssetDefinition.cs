@@ -10,7 +10,7 @@ public static class PlayerModelAssetDefinition
     private static readonly Lazy<WorldAssetDimensions> AuthoredDimensionsCache =
         new(() => WorldAssetBounds.MeasureDimensions(ModelPath));
 
-    public static string ModelPath => AssetPaths.Animation(Path.Combine("players", "kenney-blocky-character-a.glb"));
+    public static string ModelPath => AssetPaths.Animation(Path.Combine("players", "player-grim.glb"));
 
     public const string IdleClip = "idle";
     public const string WalkClip = "walk";

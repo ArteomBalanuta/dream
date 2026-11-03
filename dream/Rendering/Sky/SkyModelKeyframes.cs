@@ -56,10 +56,13 @@ internal readonly struct SkyKeyframe
 
 // The authored day. Colors are linear-ish display RGB, chosen for a stylised voxel look:
 //
-//   00:00 / 04:00 / 20:00  Night      deep navy zenith, dark blue horizon, cool blue moonlight, full stars.
+//   00:00 / 04:00 / 20:00  Night      near-black neutral sky and horizon, cool blue moonlight, full stars.
 //                                     Up-facing ambient + moon at midnight is exactly NightBrightness x noon;
 //                                     most of it is the moon, so side faces fall off into silhouettes.
-//   05:00                  Blue hour  violet zenith, dusky rose horizon, stars fading, moon dimming.
+//   05:00                  Blue hour  dark grey-violet, stars fading, moon dimming. 05:00 and 19:00 are the grim
+//                                     look's dusk band: low ambient, a neutral horizon (the isometric void is
+//                                     a quarter of it, so a tinted one reads as saturated black), and the
+//                                     brazier pools (PlacedLightIndex) carry the bright tail.
 //   06:00                  Sunrise    warm orange horizon, low orange sun on side faces, warm ground bounce.
 //   07:30                  Morning    pale peach horizon settling to day, sun slightly warm.
 //   10:00 - 14:00          Day        Noon: a high (60 degree) near-white sun, cool sky / warm bounce ambient,
@@ -68,7 +71,7 @@ internal readonly struct SkyKeyframe
 //                                     every day look like late afternoon; ReferenceNoon is now the frozen legacy look.)
 //   16:30                  Afternoon  slightly warmer and hazier.
 //   18:00                  Sunset     saturated orange horizon, red-orange sun, warm bounce.
-//   19:00                  Dusk       mauve horizon under an indigo zenith, first stars.
+//   19:00                  Dusk       the blue hour's look, mirrored: first stars.
 //
 // Fog: start and exp2 density per keyframe keep 1 - exp2(-k^2), k = density * max(d - start, 0), at
 // >= 0.9 at 48 units (the render distance) and <= 0.1 at 16 units. Linear blends of two valid
@@ -94,10 +97,12 @@ internal static class SkyModelKeyframes
     public const float DayFogStart = 18f;
     public const float DayActorFloor = 0.35f;
 
-    // Dark blue: the horizon (and fog) sits just above lit night terrain, so distant ground fades into
-    // the sky instead of glowing.
-    public static readonly Vector3 NightZenith = new(0.008f, 0.013f, 0.036f);
-    public static readonly Vector3 NightHorizon = new(0.028f, 0.040f, 0.080f);
+    // Near-black and neutral: the horizon (and fog) sits just above lit night terrain, so distant ground
+    // fades into the sky instead of glowing. The isometric pass clears the void to a quarter of the horizon,
+    // and an 8-bit value of (1, 1, 2) measures as 50% saturated, so the horizon is neutral (b only a hair above
+    // r, which SkyModelTests wants cool) and the void rounds to (2, 2, 2).
+    public static readonly Vector3 NightZenith = new(0.010f, 0.010f, 0.011f);
+    public static readonly Vector3 NightHorizon = new(0.026f, 0.026f, 0.028f);
     public static readonly Vector3 NightAmbientSky = new(0.016f, 0.024f, 0.048f);
     public static readonly Vector3 NightAmbientGround = new(0.006f, 0.007f, 0.013f);
     public static readonly Vector3 MoonTint = new(0.60f, 0.70f, 1.00f);
@@ -172,11 +177,11 @@ internal static class SkyModelKeyframes
         Night(0f),
         Night(4f),
         new(5f, // blue hour
-            zenith: new Vector3(0.050f, 0.070f, 0.165f), horizon: new Vector3(0.230f, 0.180f, 0.270f),
+            zenith: new Vector3(0.030f, 0.032f, 0.040f), horizon: new Vector3(0.090f, 0.090f, 0.090f),
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
-            ambientSky: new Vector3(0.085f, 0.085f, 0.130f), ambientGround: new Vector3(0.036f, 0.034f, 0.052f),
+            ambientSky: new Vector3(0.048f, 0.048f, 0.068f), ambientGround: new Vector3(0.021f, 0.020f, 0.032f),
             exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         new(6f, // sunrise
             zenith: new Vector3(0.220f, 0.320f, 0.560f), horizon: new Vector3(0.950f, 0.540f, 0.270f),
@@ -209,11 +214,11 @@ internal static class SkyModelKeyframes
             ambientSky: new Vector3(0.170f, 0.130f, 0.130f), ambientGround: new Vector3(0.110f, 0.075f, 0.060f),
             exposure: 1f, actorFloor: 0.22f, actorAmbientScale: SunHorizonActorAmbientScale, stars: 0f, nightScaled: 0f),
         new(19f, // dusk
-            zenith: new Vector3(0.060f, 0.070f, 0.180f), horizon: new Vector3(0.360f, 0.200f, 0.300f),
+            zenith: new Vector3(0.030f, 0.032f, 0.040f), horizon: new Vector3(0.090f, 0.090f, 0.090f),
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
-            ambientSky: new Vector3(0.080f, 0.070f, 0.120f), ambientGround: new Vector3(0.034f, 0.030f, 0.048f),
+            ambientSky: new Vector3(0.048f, 0.047f, 0.068f), ambientGround: new Vector3(0.021f, 0.019f, 0.032f),
             exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
         Night(20f),
     ];

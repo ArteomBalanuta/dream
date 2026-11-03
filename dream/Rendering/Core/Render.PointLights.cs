@@ -34,6 +34,10 @@ public partial class Render
 
     public LightCollector Lights { get; } = new();
 
+    // The authored braziers of the current static world. PlayScene.CollectPlacedLights fills Lights from
+    // it; its Placements list is what the props follow (read-only, rescanned on static content change).
+    public PlacedLightIndex PlacedLights { get; } = new();
+
     // How many lights the last UploadFrameLighting selected (0..LightList.MaxLights).
     public int SelectedPointLightCount => _selectedLights.Count;
 

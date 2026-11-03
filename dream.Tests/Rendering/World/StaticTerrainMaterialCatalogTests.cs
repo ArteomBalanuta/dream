@@ -7,16 +7,16 @@ namespace Dream.Tests.Rendering.World;
 public class StaticTerrainMaterialCatalogTests
 {
     [Theory]
-    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Top, "grass_top.png")]
-    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Side, "grass_block_side_texture.png")]
-    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Bottom, "Grass_bottom.jpg")]
-    [InlineData(GeometryMaterialId.Dirt, StaticTerrainMaterialRole.Single, "library/polyhaven/park_dirt/park_dirt.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.Stone, StaticTerrainMaterialRole.Single, "library/polyhaven/ground_grey/ground_grey.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.Sand, StaticTerrainMaterialRole.Single, "library/polyhaven/sand_01/sand_01.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.Mud, StaticTerrainMaterialRole.Single, "library/polyhaven/brown_mud/brown_mud.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.Snow, StaticTerrainMaterialRole.Single, "library/polyhaven/snow_04/snow_04.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.Rock, StaticTerrainMaterialRole.Single, "library/polyhaven/rocks_ground_08/rocks_ground_08.diffuse.jpg")]
-    [InlineData(GeometryMaterialId.GrassPath, StaticTerrainMaterialRole.Single, "library/polyhaven/grass_path_3/grass_path_3.diffuse.jpg")]
+    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Top, "library/forge/grass_top/grass_top.albedo.png")]
+    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Side, "library/forge/grass_side/grass_side.albedo.png")]
+    [InlineData(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Bottom, "library/forge/grass_bottom/grass_bottom.albedo.png")]
+    [InlineData(GeometryMaterialId.Dirt, StaticTerrainMaterialRole.Single, "library/forge/dirt/dirt.albedo.png")]
+    [InlineData(GeometryMaterialId.Stone, StaticTerrainMaterialRole.Single, "library/forge/stone/stone.albedo.png")]
+    [InlineData(GeometryMaterialId.Sand, StaticTerrainMaterialRole.Single, "library/forge/sand/sand.albedo.png")]
+    [InlineData(GeometryMaterialId.Mud, StaticTerrainMaterialRole.Single, "library/forge/mud/mud.albedo.png")]
+    [InlineData(GeometryMaterialId.Snow, StaticTerrainMaterialRole.Single, "library/forge/snow/snow.albedo.png")]
+    [InlineData(GeometryMaterialId.Rock, StaticTerrainMaterialRole.Single, "library/forge/rock/rock.albedo.png")]
+    [InlineData(GeometryMaterialId.GrassPath, StaticTerrainMaterialRole.Single, "library/forge/grass_path/grass_path.albedo.png")]
     public void ResolveProvidesTexturePathForTerrainMaterials(
         GeometryMaterialId materialId,
         StaticTerrainMaterialRole role,

@@ -120,6 +120,11 @@ public partial class Render
         // No global blend state: each pass sets what it needs. The world pass turns blending off
         // and depth testing on at its start, and the HUD and ImGui passes enable blending themselves.
         GL.Enable(EnableCap.DepthTest);
+        // GL_MULTISAMPLE is already TRUE in a fresh context and nothing here disables it, so this call
+        // changes nothing; it documents that the multisampled default framebuffer (Game's NumberOfSamples)
+        // is resolved implicitly at SwapBuffers with no FBO. Alpha-mask materials discard, which kills
+        // every sample, so cutout edges stay aliased; no alpha-to-coverage by design.
+        GL.Enable(EnableCap.Multisample);
 
         InitializeShaders();
         InitializeFrameLighting();
