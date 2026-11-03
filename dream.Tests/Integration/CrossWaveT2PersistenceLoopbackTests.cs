@@ -40,9 +40,9 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
         {
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             await TickAsync(server, 4);
-            // The hammer is worn; the other four kit items are in the bag.
-            Assert.Equal(5, Inventory(server).AllItems().Count());
-            Assert.Equal(4, Inventory(server).Slots.Count(slot => slot.Item is not null));
+            // The hammer is worn; the other four kit tools are in the bag (the kit potions are not counted here).
+            Assert.Equal(5, Inventory(server).AllItems().Count(item => item.ItemKind.StartsWith("tool.", StringComparison.Ordinal)));
+            Assert.Equal(4, Inventory(server).Slots.Count(slot => slot.Item?.ItemKind.StartsWith("tool.", StringComparison.Ordinal) == true));
             await server.DisconnectAsync(client);
             await TickAsync(server, 2);
         }
@@ -54,7 +54,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             DELETE FROM player_starter_grants;
             """);
         Assert.Equal(0L, Scalar(database, "SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
-        Assert.Equal(4L, Scalar(database, "SELECT COUNT(*) FROM item_instances;"));
+        Assert.Equal(4L, Scalar(database, "SELECT COUNT(*) FROM item_instances WHERE item_kind LIKE 'tool.%';"));
         WriteWorldTime(database, WaveT2NightSpawnTests.WorldTicksAt(WorldClockSettings.Default, dayIndex: 1, hour: 23));
 
         // Phase 1 (night): the top-up grants the torch into slot 4; equip it, place a lamp, and let
@@ -103,7 +103,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
                 // The torch is worn (no bag row); the hammer it displaced and the other three kit items are
                 // in the bag, and nothing was topped up again.
                 Assert.DoesNotContain(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch");
-                Assert.Equal(5, inventory.AllItems().Count());
+                Assert.Equal(5, inventory.AllItems().Count(item => item.ItemKind.StartsWith("tool.", StringComparison.Ordinal)));
                 Assert.Equal(1, inventory.AllItems().Count(item => item.ItemKind == "tool.torch"));
                 Assert.Equal("tool.torch", inventory.EquippedSlot?.Item?.ItemKind);
                 Assert.Equal(HeldLightKind.Torch, PlayerActor(server).HeldLight);
@@ -148,7 +148,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
         Assert.Equal(enemies, Scalar(database, "SELECT COUNT(*) FROM enemy_instances;"));
         Assert.Equal(1L, Scalar(database, "SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp';"));
         Assert.Equal(1L, Scalar(database, "SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
-        Assert.Equal(5L, Scalar(database, "SELECT COUNT(*) FROM item_instances;"));
+        Assert.Equal(5L, Scalar(database, "SELECT COUNT(*) FROM item_instances WHERE item_kind LIKE 'tool.%';"));
         Assert.Equal("tool.torch", Scalar(database, $"""
             SELECT i.item_kind FROM player_inventory_slots s JOIN item_instances i ON i.item_instance_id = s.item_instance_id
             WHERE s.player_name = '{PlayerName}' AND s.slot_index = {InventoryConstants.EquippedSlotIndex};

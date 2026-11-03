@@ -104,10 +104,10 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         Assert.Equal(0, writes.FailedWrites);
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
-        // The starter kit top-up (kit v3: two heal potions) also lands in the bag; the gear is what moved.
+        // The starter kit top-up (kit v3+v4: heal and mana potions) also lands in the bag; the gear is what moved.
         Assert.Equal([0, 2, 4, 6, 32, 34, 36, 38], snapshot.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
         int kitPotions = snapshot.BagItems().Count(IsConsumable);
-        Assert.Equal(2, kitPotions);
+        Assert.Equal(4, kitPotions);
         Assert.Equal(8, snapshot.HeldBackItems().Count());
         // Every item id survived into the rows, once.
         List<SlotRow> repaired = BagGridMigrationAsserts.ReadSlots(database);
@@ -128,7 +128,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
     }
 
     private static bool IsConsumable(InventorySlotSnapshot slot) =>
-        slot.Item is { } item && item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal);
+        slot.Item is { } item && (item.ItemKind.StartsWith("consumable.", StringComparison.Ordinal) || item.ItemKind.StartsWith("potion.", StringComparison.Ordinal));
 
     private static PlayerInventorySnapshot BuildFresh(ServerPersistenceBundle bundle)
     {
@@ -160,7 +160,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         PlayerInventorySnapshot loaded = inventory.BuildSnapshot(Player);
         Assert.Equal([6], loaded.BagItems().Where(slot => !IsConsumable(slot)).Select(slot => slot.SlotIndex));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
-        // Plus the starter kit top-up (kit v3 potions).
+        // Plus the starter kit top-up (kit v3 and v4 potions).
         Assert.Equal(4 + loaded.BagItems().Count(IsConsumable), BagGridMigrationAsserts.ReadSlots(database).Count);
         using SqliteConnection connection = database.Open();
         Assert.Equal(3, WorldIntegrityCheck.Run(connection, WorldDescriptor.Default).UnknownSlotIndexes);

@@ -95,7 +95,7 @@ public sealed class ItemRollPersistenceTests
         Give(items, inventory, Player, 0, Item(10, "tool.torch"));
         Give(items, inventory, Player, 1, Item(11, "gear.iron-blade", Roll));
         db.ExecuteScript(
-            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Agility\",\"Flat\",5]]}' WHERE item_instance_id = 11;");
+            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Luck\",\"Flat\",5]]}' WHERE item_instance_id = 11;");
 
         PersistedPlayerInventory loaded = inventory.LoadPlayerInventory(Player);
 

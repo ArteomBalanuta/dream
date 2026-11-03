@@ -353,7 +353,8 @@ public sealed class TerrainEditPersistenceTests
 
         Assert.True(Assert.IsType<CombatResolutionResult>(result.Payload).TargetDied);
         Assert.Equal(
-            ["RepairCubeRecord", "DeletePersistedPlacedCube", "PersistTerrainCellRemoved", "PersistFracturePieces"],
+            // Repaired twice: once for the build-protection gate, once on entering the hit (9132638).
+            ["RepairCubeRecord", "RepairCubeRecord", "DeletePersistedPlacedCube", "PersistTerrainCellRemoved", "PersistFracturePieces"],
             host.Calls);
         PersistedTerrainCellOverride row = Assert.Single(world.Overrides);
         Assert.Equal(cell, row.Cell);
