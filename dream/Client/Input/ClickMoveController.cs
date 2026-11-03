@@ -50,6 +50,13 @@ public interface IClickMoveHost
     bool TryPick(Vector2 screenPosition, out ClickPick pick);
 
     void SetFacing(Vector3 direction);
+
+    // The character's current facing (the resolver's movement basis).
+    Vector3 Facing { get; }
+
+    // True while the cursor owns facing: a walk then must not turn the character to its travel
+    // direction, and sends the axes that move it that way from the facing it has.
+    bool AimOwnsFacing { get; }
 }
 
 // The path search and follower behind one seam.
@@ -101,7 +108,7 @@ public sealed class NavPathing : IClickPathing
     public NavStep Step(Vector3 bodyCentre, INavWorld world) => _follower.Step(bodyCentre, world);
 }
 
-// Turns pointer presses into a goal (walk, attack, build) and the goal into one steered command per
+// Turns right-button presses into a goal (walk, attack, build) and the goal into one steered command per
 // 64 Hz prediction tick. OnFrame runs once per Update, SteerTick once per tick.
 public sealed class ClickMoveController
 {
@@ -114,9 +121,7 @@ public sealed class ClickMoveController
 
     private readonly IClickMoveHost _host;
     private readonly IClickPathing _pathing;
-    private bool _prevLeft;
     private bool _prevRight;
-    private bool _leftArmed;
     private bool _rightArmed;
     private ClickGoalKind _goal;
     private NavCell _goalCell;
@@ -125,8 +130,6 @@ public sealed class ClickMoveController
     private bool _modeSent;
     private bool _buildWalking;
     private bool _buildPulsed;
-    private bool _rightHold;
-    private Vector3 _rightHoldPoint;
     private int _ticksSincePlan;
     private int _ticksSinceHeldPick;
 
@@ -152,22 +155,19 @@ public sealed class ClickMoveController
     {
         _goal = ClickGoalKind.None;
         _target = null;
-        _rightHold = false;
         _buildWalking = false;
         _pathing.Clear();
     }
 
-    // Frame level: press edges, picks and paths.
+    // Frame level: press edges, picks and paths. The left button is the cursor aim's (a held attack);
+    // the right button opens goals here.
     public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput)
     {
-        bool leftPressed = pointer.LeftDown && !_prevLeft;
         bool rightPressed = pointer.RightDown && !_prevRight;
-        _prevLeft = pointer.LeftDown;
         _prevRight = pointer.RightDown;
 
         if (!allowGameplayInput)
         {
-            _leftArmed = false;
             _rightArmed = false;
             Cancel();
             return;
@@ -175,15 +175,6 @@ public sealed class ClickMoveController
 
         // A press counts only if the press edge itself is over no HUD; a drag that began on the HUD
         // never becomes a world click.
-        if (leftPressed)
-        {
-            _leftArmed = !pointer.OverHud;
-        }
-        else if (!pointer.LeftDown)
-        {
-            _leftArmed = false;
-        }
-
         if (rightPressed)
         {
             _rightArmed = !pointer.OverHud;
@@ -191,7 +182,6 @@ public sealed class ClickMoveController
         else if (!pointer.RightDown)
         {
             _rightArmed = false;
-            _rightHold = false;
         }
 
         if (_host.NoclipActive)
@@ -205,21 +195,10 @@ public sealed class ClickMoveController
         {
             OnRightPress(pointer.Position);
         }
-        else if (leftPressed && _leftArmed)
-        {
-            OnLeftPress(pointer.Position);
-        }
-        else if (pointer.LeftDown && _leftArmed && _goal is ClickGoalKind.Walk or ClickGoalKind.None && _ticksSinceHeldPick >= HeldRepathTicks)
+        else if (pointer.RightDown && _rightArmed && _host.Mode == PlayerInteractionMode.Combat
+            && _goal is ClickGoalKind.Walk or ClickGoalKind.None && _ticksSinceHeldPick >= HeldRepathTicks)
         {
             RepathToCursor(pointer.Position);
-        }
-        else if (pointer.RightDown && _rightArmed && _rightHold && _ticksSinceHeldPick >= HeldRepathTicks)
-        {
-            _ticksSinceHeldPick = 0;
-            if (_host.TryPick(pointer.Position, out ClickPick pick) && pick.Kind != ClickPickKind.None)
-            {
-                _rightHoldPoint = pick.Point;
-            }
         }
     }
 
@@ -240,14 +219,9 @@ public sealed class ClickMoveController
         _ticksSincePlan++;
         _ticksSinceHeldPick++;
         INavWorld? world = _host.World;
-        if (world is null || (_goal == ClickGoalKind.None && !_rightHold))
+        if (world is null || _goal == ClickGoalKind.None)
         {
             return command;
-        }
-
-        if (_goal == ClickGoalKind.None)
-        {
-            return Aim(command, _rightHoldPoint - _host.Eye, primary: true, mode: null);
         }
 
         if (_target is { IsAlive: false })
@@ -346,7 +320,8 @@ public sealed class ClickMoveController
         return command.MoveIntent.ForwardAxis == 0f ? command : Walk(command, world);
     }
 
-    // One follower step: face the way of travel, jump when asked, replan when stuck.
+    // One follower step: face the way of travel (unless the cursor owns facing, then send the axes
+    // that move that way), jump when asked, replan when stuck.
     private PlayerCommandFrame Walk(PlayerCommandFrame command, INavWorld world)
     {
         Vector3 body = _host.BodyCentre;
@@ -376,17 +351,28 @@ public sealed class ClickMoveController
         }
 
         Vector3 direction = new(step.Direction.X, 0f, step.Direction.Z);
-        if (direction.LengthSquared > 0.000001f)
+        bool moving = direction.LengthSquared > 0.000001f;
+        float forward = 0f;
+        float strafe = 0f;
+        if (moving)
         {
-            _host.SetFacing(direction.Normalized());
+            direction.Normalize();
+            if (_host.AimOwnsFacing)
+            {
+                (forward, strafe) = PlayerController.ProjectWorld(direction, _host.Facing);
+            }
+            else
+            {
+                _host.SetFacing(direction);
+                forward = 1f;
+            }
         }
 
         // No direction means the follower is holding still for a hop.
         PlayerMoveIntent move = command.MoveIntent;
-        float forward = direction.LengthSquared > 0.000001f ? 1f : 0f;
         return command with
         {
-            MoveIntent = move with { ForwardAxis = forward, StrafeAxis = 0f, JumpPressed = move.JumpPressed || step.Jump }
+            MoveIntent = move with { ForwardAxis = forward, StrafeAxis = strafe, JumpPressed = move.JumpPressed || step.Jump }
         };
     }
 
@@ -407,7 +393,9 @@ public sealed class ClickMoveController
     private static PlayerCommandFrame WithForward(PlayerCommandFrame command, float forward) =>
         command with { MoveIntent = command.MoveIntent with { ForwardAxis = forward, StrafeAxis = 0f } };
 
-    private void OnLeftPress(Vector2 position)
+    // Combat: walk to the ground point, or approach and attack an enemy. Building: walk up to the
+    // cell and place one block; an enemy is still attacked.
+    private void OnRightPress(Vector2 position)
     {
         if (!_host.TryPick(position, out ClickPick pick) || _host.World is not { } world)
         {
@@ -415,37 +403,11 @@ public sealed class ClickMoveController
         }
 
         _ticksSinceHeldPick = 0;
-        if (pick.Kind == ClickPickKind.Enemy && pick.Target is { IsAlive: true } enemy)
+        // An enemy is attacked in either mode (a press in Building asks for Combat first); the ground
+        // is walked to in Combat and built on in Building.
+        if (_host.Mode == PlayerInteractionMode.Combat || pick.Kind == ClickPickKind.Enemy)
         {
-            BeginGoal(ClickGoalKind.Attack, NavCell.FromBody(enemy.Anchor));
-            _target = enemy;
-            _plannedAnchor = enemy.Anchor;
-            Plan(world, _goalCell, viaStartCentre: false);
-        }
-        else if (pick.Kind == ClickPickKind.Ground)
-        {
-            BeginGoal(ClickGoalKind.Walk, pick.Cell);
-            if (!Plan(world, pick.Cell, viaStartCentre: false))
-            {
-                Cancel();
-            }
-        }
-    }
-
-    private void OnRightPress(Vector2 position)
-    {
-        if (!_host.TryPick(position, out ClickPick pick) || pick.Kind == ClickPickKind.None || _host.World is not { } world)
-        {
-            return;
-        }
-
-        _ticksSinceHeldPick = 0;
-        if (_host.Mode == PlayerInteractionMode.Combat)
-        {
-            // Face the cursor point and hold primary while the button is down; no walking.
-            Cancel();
-            _rightHold = true;
-            _rightHoldPoint = pick.Point;
+            OnCombatPress(pick, world);
             return;
         }
 
@@ -459,6 +421,25 @@ public sealed class ClickMoveController
         if ((pick.Cell.Centre - _host.Eye).Length > BuildStartWalkMetres)
         {
             _buildWalking = true;
+            if (!Plan(world, pick.Cell, viaStartCentre: false))
+            {
+                Cancel();
+            }
+        }
+    }
+
+    private void OnCombatPress(ClickPick pick, INavWorld world)
+    {
+        if (pick.Kind == ClickPickKind.Enemy && pick.Target is { IsAlive: true } enemy)
+        {
+            BeginGoal(ClickGoalKind.Attack, NavCell.FromBody(enemy.Anchor));
+            _target = enemy;
+            _plannedAnchor = enemy.Anchor;
+            Plan(world, _goalCell, viaStartCentre: false);
+        }
+        else if (pick.Kind == ClickPickKind.Ground)
+        {
+            BeginGoal(ClickGoalKind.Walk, pick.Cell);
             if (!Plan(world, pick.Cell, viaStartCentre: false))
             {
                 Cancel();

@@ -69,6 +69,10 @@ public partial class PlayScene : IDisposable
     private bool _wasAdminHudTogglePressed;
     private bool _localPlayerWasMoving;
     private ClickMoveController? _clickMoveController;
+    private CursorAimController? _cursorAimController;
+    // W/A/S/D of the current frame in camera space; projected to forward/strafe per tick, once that
+    // tick's facing is known (PlayScene.Update).
+    private OpenTK.Mathematics.Vector2 _tickCameraAxes;
     private double _clientPresentationTimeSeconds;
     private double _renderPerformanceLogSeconds;
     private double _lastPresentedFrameMilliseconds;
@@ -114,6 +118,9 @@ public partial class PlayScene : IDisposable
     // Created on first use: it needs this scene for its host, which a field initialiser cannot take.
     private ClickMoveController _clickMove =>
         _clickMoveController ??= new ClickMoveController(new ClickMoveHost(this), new NavPathing());
+
+    private CursorAimController _cursorAim =>
+        _cursorAimController ??= new CursorAimController(new CursorAimHost(this));
 
     // Set by Render each frame; true until the first one.
     private bool _windowFocused = true;
@@ -185,5 +192,38 @@ public partial class PlayScene : IDisposable
         }
 
         public void SetFacing(Vector3 direction) => _scene._runtime.Player.SetFacing(direction);
+
+        public Vector3 Facing => _scene._runtime.Player.Camera.Front;
+
+        public bool AimOwnsFacing => _scene._cursorAim.OwnsFacing;
+    }
+
+    // The cursor aim reads the player and last frame's camera through this.
+    private sealed class CursorAimHost : ICursorAimHost
+    {
+        private readonly PlayScene _scene;
+
+        public CursorAimHost(PlayScene scene)
+        {
+            _scene = scene;
+        }
+
+        public Vector3 BodyCentre => _scene._runtime.Player.GetWorldPosition();
+
+        public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
+
+        public bool TryBuildRay(OpenTK.Mathematics.Vector2 screenPosition, out Vector3 origin, out Vector3 direction)
+        {
+            origin = default;
+            direction = default;
+            Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
+            return camera is not null && WorldCursorPicker.TryBuildRay(
+                camera.GetViewMatrix(),
+                _scene._render.ProjectionMatrix,
+                screenPosition,
+                _scene._render.ViewportSize,
+                out origin,
+                out direction);
+        }
     }
 }
