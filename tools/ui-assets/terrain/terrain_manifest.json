@@ -1,0 +1,91 @@
+{
+ "version": 1,
+ "tileSizePx": 256,
+ "periodU": 64.0,
+ "straightAlpha": true,
+ "wrap": "xy",
+ "colorSpace": "srgb-encoded-sampled-as-linear",
+ "sheet": "terrain_sheet.png",
+ "tiles": [
+  {
+   "name": "grass_top",
+   "image": "grass_top.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "grass_side",
+   "image": "grass_side.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "grass_bottom",
+   "image": "grass_bottom.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "dirt",
+   "image": "dirt.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "stone",
+   "image": "stone.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "sand",
+   "image": "sand.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "mud",
+   "image": "mud.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "snow",
+   "image": "snow.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "rock",
+   "image": "rock.png",
+   "size": [
+    256,
+    256
+   ]
+  },
+  {
+   "name": "grass_path",
+   "image": "grass_path.png",
+   "size": [
+    256,
+    256
+   ]
+  }
+ ]
+}

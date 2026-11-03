@@ -105,17 +105,17 @@
 		{
 			"mimeType":"image/jpeg",
 			"name":"grass_block_side_texture",
-			"uri":"library/polyhaven/park_dirt/park_dirt.diffuse.jpg"
+			"uri":"library/forge/dirt/dirt.albedo.png"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"grass_top",
-			"uri":"library/polyhaven/park_dirt/park_dirt.diffuse.jpg"
+			"uri":"library/forge/dirt/dirt.albedo.png"
 		},
 		{
 			"mimeType":"image/jpeg",
 			"name":"Grass_bottom",
-			"uri":"library/polyhaven/park_dirt/park_dirt.diffuse.jpg"
+			"uri":"library/forge/dirt/dirt.albedo.png"
 		}
 	],
 	"accessors":[

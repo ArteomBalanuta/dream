@@ -112,11 +112,84 @@ public static class TextureDecoder
             TextureTarget.Texture2D,
             TextureParameterName.TextureMagFilter,
             (int)TextureMagFilter.Linear);
+        // Terrain UVs run 0..cellSize, one repeat per voxel, so tiling is explicit rather than a GL default.
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
         if (generateMipmaps)
         {
-            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            if (IsPowerOfTwo(texture.Width) && IsPowerOfTwo(texture.Height))
+            {
+                // GenerateMipmap is driver defined and may clamp at the edge, which seams a tiling texture at
+                // coarse levels. A 2x2 box on a power-of-two level needs no edge handling at all.
+                UploadBoxMips(texture);
+            }
+            else
+            {
+                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            }
         }
 
         return handle;
+    }
+
+    public static bool IsPowerOfTwo(int value)
+    {
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
+    // One 2x2 box reduction of RGBA8 pixels; width and height are the source size and must be even or 1.
+    public static byte[] BoxReduce(byte[] src, int width, int height)
+    {
+        int w = Math.Max(1, width / 2);
+        int h = Math.Max(1, height / 2);
+        int sx = width > 1 ? 2 : 1;
+        int sy = height > 1 ? 2 : 1;
+        byte[] dst = new byte[4 * w * h];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                for (int c = 0; c < 4; c++)
+                {
+                    int sum = 0;
+                    for (int dy = 0; dy < sy; dy++)
+                    {
+                        for (int dx = 0; dx < sx; dx++)
+                        {
+                            sum += src[(4 * (((y * sy) + dy) * width + (x * sx) + dx)) + c];
+                        }
+                    }
+
+                    dst[(4 * ((y * w) + x)) + c] = (byte)((sum + ((sx * sy) / 2)) / (sx * sy));
+                }
+            }
+        }
+
+        return dst;
+    }
+
+    private static void UploadBoxMips(DecodedTexture texture)
+    {
+        byte[] level = texture.Rgba;
+        int w = texture.Width;
+        int h = texture.Height;
+        int index = 0;
+        while (w > 1 || h > 1)
+        {
+            level = BoxReduce(level, w, h);
+            w = Math.Max(1, w / 2);
+            h = Math.Max(1, h / 2);
+            index++;
+            GL.TexImage2D(
+                TextureTarget.Texture2D,
+                index,
+                PixelInternalFormat.Rgba,
+                w,
+                h,
+                0,
+                PixelFormat.Rgba,
+                PixelType.UnsignedByte,
+                level);
+        }
     }
 }
