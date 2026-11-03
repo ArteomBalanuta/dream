@@ -16,7 +16,7 @@ vec3 dreamPointLights(vec3 n, vec3 fragPos) {
         float d2 = dot(toLight, toLight);
         float s = d2 / (r * r);
         float f = clamp(1.0 - s, 0.0, 1.0);
-        f = f * f / (1.0 + 6.0 * s); // windowed to 0 at r; the 1/(1+6s) term keeps the core and thins the middle, so a pool punches
+        f = f * f / (1.0 + 0.75 * s); // windowed to 0 at r; the 1/(1+0.75s) term keeps the core and thins the middle, so a pool punches
         float lambert = max(dot(n, toLight * inversesqrt(max(d2, 1e-4))), 0.0);
         sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)); // 0.25 wrap keeps faces readable
     }

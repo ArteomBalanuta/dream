@@ -31,7 +31,7 @@ public sealed class PlacedLightIndex
 
     // Linear RGB times intensity: a deep orange fire, hotter than the held torch (1.6) so a brazier
     // is the brightest thing on the ground.
-    public static readonly Vector3 BrazierColor = new Vector3(1.0f, 0.72f, 0.46f) * 3.0f;
+    public static readonly Vector3 BrazierColor = new Vector3(1.0f, 0.72f, 0.46f) * 1.68f;
 
     public const int Spacing = 16;
     public const int Jitter = 1;
@@ -68,7 +68,21 @@ public sealed class PlacedLightIndex
     // must not mutate. Valid after the first Collect.
     public IReadOnlyList<PlacedLight> Placements => _placements;
 
-    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights)
+    // How much of a brazier's light shows at this sun intensity (FrameLighting.SunDirection.W, which the
+    // sky model already fades at the horizon): 1 at night and in the dusk band (sun 0), eased to 0 by
+    // SunFadeEnd, so the pools fade out through the morning and are gone at noon. A fire is a strong local
+    // source at night and nearly invisible in daylight.
+    public const float SunFadeEnd = 0.55f;
+
+    public static float DaylightFactor(float sunIntensity)
+    {
+        float t = Math.Clamp(sunIntensity / SunFadeEnd, 0f, 1f);
+        return 1f - t * t * (3f - 2f * t);
+    }
+
+    // sunIntensity: the frame's sun intensity (0 = night); scales every brazier and drops them once the
+    // factor is negligible, so a daylight frame carries no halo or embers for them either.
+    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights, float sunIntensity = 0f)
     {
         ArgumentNullException.ThrowIfNull(lights);
         long version = export.StaticContentVersion;
@@ -80,12 +94,19 @@ public sealed class PlacedLightIndex
         }
 
         int count = 0;
+        float strength = DaylightFactor(sunIntensity);
+        if (strength < 0.01f)
+        {
+            LastCollectedCount = 0;
+            return;
+        }
+
         for (int i = 0; i < _placements.Count; i++)
         {
             PlacedLight placed = _placements[i];
             if (Vector3.DistanceSquared(placed.Position, cameraPosition) <= CollectDistanceSquared)
             {
-                lights.Add(new PointLight(placed.Position, placed.Radius, placed.Color));
+                lights.Add(new PointLight(placed.Position, placed.Radius, placed.Color * strength));
                 count++;
             }
         }

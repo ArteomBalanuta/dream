@@ -1,5 +1,6 @@
 
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Sky;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -212,6 +213,41 @@ public class PlacedLightIndexTests
 
         Assert.InRange(most, 1, 13);
         Assert.True(most + 3 <= LightList.MaxLights, "braziers must leave slots for held and lamp lights");
+    }
+
+    [Fact]
+    public void Braziers_FadeOutWithTheSun_NightAndDuskFull_NoonGone()
+    {
+        Assert.Equal(1f, PlacedLightIndex.DaylightFactor(0f));
+        Assert.Equal(0f, PlacedLightIndex.DaylightFactor(PlacedLightIndex.SunFadeEnd));
+        Assert.Equal(0f, PlacedLightIndex.DaylightFactor(SkyModelKeyframes.DaySunIntensity));
+        float previous = 1f;
+        for (float sun = 0f; sun <= 1f; sun += 0.01f)
+        {
+            float f = PlacedLightIndex.DaylightFactor(sun);
+            Assert.InRange(f, 0f, previous + 1e-6f);
+            previous = f;
+        }
+
+        // The sky model's own sun: full at midnight, 05:00, 19:00 and 22:00, off by 08:00 and at noon.
+        foreach ((float hour, bool lit) in new[] { (0f, true), (5f, true), (19f, true), (22f, true), (8f, false), (12f, false) })
+        {
+            float factor = PlacedLightIndex.DaylightFactor(SkyModel.Evaluate(hour / 24f).Lighting.SunDirection.W);
+            Assert.True(lit ? factor > 0.99f : factor < 0.01f, $"{hour:F0}:00 factor {factor}");
+        }
+
+        PlacedLightIndex index = new();
+        LightCollector night = new();
+        LightCollector day = new();
+        LightCollector dusk = new();
+        GeometryRenderExport export = CreateExport(1, Floor(48, 48));
+        index.Collect(export, Camera, night);
+        index.Collect(export, Camera, day, SkyModelKeyframes.DaySunIntensity);
+        Assert.NotEqual(0, night.Count);
+        Assert.Equal(0, day.Count);
+        index.Collect(export, Camera, dusk, PlacedLightIndex.SunFadeEnd / 2f);
+        Assert.Equal(night.Count, dusk.Count);
+        Assert.True(dusk.Lights[0].Color.X < night.Lights[0].Color.X);
     }
 
     private static List<Cube> Floor(int width, int depth)
