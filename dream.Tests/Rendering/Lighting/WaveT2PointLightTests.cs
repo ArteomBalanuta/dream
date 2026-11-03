@@ -321,7 +321,7 @@ public class WaveT2PointLightTests
         Assert.Equal(0f, Falloff(8f, 8f));
         Assert.Equal(0f, Falloff(12f, 8f));
         float half = Falloff(4f, 8f);
-        Assert.Equal(0.5625f, half, 6); // (1 - 0.25)^2
+        Assert.Equal(0.5625f / 2.5f, half, 6); // (1 - 0.25)^2 / (1 + 6 * 0.25)
     }
 
     [Fact]
@@ -332,9 +332,9 @@ public class WaveT2PointLightTests
         list.PositionRadius[0] = new Vector4(0f, 2f, 0f, 8f);
         list.Color[0] = new Vector4(1.6f, 0.99f, 0.51f, 0f);
 
-        // Up-facing floor right under the light: full lambert, falloff (1 - 4/64)^2.
+        // Up-facing floor right under the light: full lambert, falloff (1 - 4/64)^2 / (1 + 6 * 4/64).
         Vector3 under = PointLights(in list, Vector3.UnitY, Vector3.Zero);
-        float f = MathF.Pow(1f - 4f / 64f, 2f);
+        float f = MathF.Pow(1f - 4f / 64f, 2f) / (1f + 6f * 4f / 64f);
         AssertClose(list.Color[0].Xyz * f, under, 1e-5f);
 
         // A face turned away still gets the 0.25 wrap term.
@@ -452,8 +452,9 @@ public class WaveT2PointLightTests
     // CPU mirror of the falloff in pointLights.glsl.
     private static float Falloff(float distance, float radius)
     {
-        float f = Math.Clamp(1f - distance * distance / (radius * radius), 0f, 1f);
-        return f * f;
+        float s = distance * distance / (radius * radius);
+        float f = Math.Clamp(1f - s, 0f, 1f);
+        return f * f / (1f + 6f * s);
     }
 
     // CPU mirror of dreamPointLights in pointLights.glsl.
@@ -465,8 +466,9 @@ public class WaveT2PointLightTests
             Vector3 toLight = list.PositionRadius[i].Xyz - fragPos;
             float r = list.PositionRadius[i].W;
             float d2 = Vector3.Dot(toLight, toLight);
-            float f = Math.Clamp(1f - d2 / (r * r), 0f, 1f);
-            f *= f;
+            float s = d2 / (r * r);
+            float f = Math.Clamp(1f - s, 0f, 1f);
+            f = f * f / (1f + 6f * s);
             float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
             sum += list.Color[i].Xyz * (f * (0.25f + 0.75f * lambert));
         }

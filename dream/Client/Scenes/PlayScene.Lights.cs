@@ -5,8 +5,9 @@ namespace Dream.Client.Scenes;
 
 // The frame's point lights. CollectHeldLights (PlayScene.HeldLights.cs) runs first: there are at
 // most a few held lights, one per lit player, and they must never lose their slots in the 1,024-slot
-// LightCollector to lamps. CollectLampLights (PlayScene.LampLights.cs) fills the rest with the lamps
-// near the camera. Unimplemented partials compile away.
+// LightCollector to lamps. CollectPlacedLights (PlayScene.PlacedLights.cs) adds the authored braziers
+// near the camera, then CollectLampLights (PlayScene.LampLights.cs) the lamps near the camera.
+// Unimplemented partials compile away.
 public partial class PlayScene
 {
     private void CollectFrameLights(in WorldSessionPresentationState presentation, IReadOnlyList<RemotePlayerPresentationState> remotePlayers)
@@ -14,9 +15,12 @@ public partial class PlayScene
         LightCollector lights = _render.Lights;
         lights.Clear();
         CollectHeldLights(lights, in presentation, remotePlayers);
+        CollectPlacedLights(lights, in presentation);
         CollectLampLights(lights, in presentation);
         CollectEffectLights(lights, remotePlayers);
     }
+
+    partial void CollectPlacedLights(LightCollector lights, in WorldSessionPresentationState presentation);
 
     partial void CollectLampLights(LightCollector lights, in WorldSessionPresentationState presentation);
 
