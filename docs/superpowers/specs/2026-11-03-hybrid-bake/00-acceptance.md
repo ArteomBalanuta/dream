@@ -120,3 +120,37 @@ frame for want of an actor crop; the earlier hand measurement put the margin at 
 graded-dark frame with no light sources, an oversaturated frame and dark noise - plus one built to
 pass. The graded-dark case is the important one: it is what a tone curve produces, and it fails on the
 bright tail, which is exactly the distinction A1 exists to enforce.
+
+## Surface tiles: two passes, and what the first one taught
+
+MEASURED in-engine, by building the terrain branch and capturing at the default 08:00 start.
+
+| | mean v | near-black | bright | mean sat |
+| --- | --- | --- | --- | --- |
+| master baseline | 0.254 | 0.012 | 0.003 | 0.451 |
+| pass 1 | 0.107 | 0.639 | 0.004 | 0.182 |
+| pass 2 | 0.189 | 0.085 | 0.004 | 0.146 |
+
+Pass 1 passed every tile-level gate and was wrong. It hit the A1 night numbers **at eight in the
+morning**, because A1's bands were derived from a night scene while albedo is time-independent: a
+darker tile darkens every hour of the clock equally. The user's decision was that the grim look owns
+night and dusk only, so pass 1 broke the half of the day it was supposed to leave alone.
+
+**The lesson, worth keeping: a gate measured on an asset is not a gate measured on a frame.** The
+tile gates (value ceiling, saturation ceiling, seam, no baked key) are all still correct and all
+still pass; none of them could have caught this, because none of them looks at a rendered frame. A1
+belongs on a capture, and an asset-level proxy for it will mislead.
+
+A second instance of the same mistake, mine: when sending the rework I asked for a *tile* mean value
+of 0.18-0.22 as a proxy for the frame. The tiles came back at 0.296 and the frame landed at 0.189,
+exactly where it should be. The proxy was wrong and the frame measurement was right. Ask for the
+frame number.
+
+## Deferred, with the reason
+
+- **Per-block texture repetition.** Terrain UVs are `0..cellSize`, one repeat per voxel
+  (`StaticWorldChunkMeshBuilder.cs:275-305`), so every stone block carries an identical cobble
+  arrangement and the ground reads as a regular lattice at the isometric camera distance. The user
+  saw it and accepted it for now (2026-11-03). A real fix is per-cell UV variation - rotate or offset
+  by a hash of the cell index - which is engine work in the chunk mesh builder, not an art change,
+  and would want its own gate measuring that neighbouring cells differ.
