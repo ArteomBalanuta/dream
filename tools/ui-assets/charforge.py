@@ -265,24 +265,41 @@ def _canon(e: np.ndarray) -> np.ndarray:
 
 
 def _project(mesh: Mesh):
+    return _project_ex(mesh)[:4]
+
+
+def _project_ex(mesh: Mesh, axis=None):
     """Flat parts (thinnest axis under 1/4 of the middle one) get a planar projection along it; everything else
     a cylinder around the longest axis (a blob is a short fat cylinder). Returns coords in u as (x, y), the
-    size in u, and whether x wraps."""
+    size in u, and whether x wraps. _project_ex adds a fifth item: (per-vertex distance from the cylinder axis in u,
+    mean radius), which unwrap_split uses to find the poles; (None, 0.0) for a planar part.
+    `axis` (a 3-vector) forces a cylinder about that direction instead: PCA picks the longest extent, which for a
+    short wide ring such as a belt is a horizontal axis through its side wall, not the loft axis it was built on."""
     v = mesh.v.astype(np.float64)
     d = v - v.mean(axis=0)
-    ev, E = np.linalg.eigh(d.T @ d / max(len(d), 1))
-    e2, e1, e0 = (_canon(E[:, k]) for k in range(3))  # minor, middle, major
-    ev = np.maximum(ev, 0.0)
+    if axis is not None:
+        e0 = np.asarray(axis, dtype=np.float64)
+        e0 = e0 / np.linalg.norm(e0)
+        helper = np.array((1.0, 0.0, 0.0)) if abs(e0[0]) < 0.9 else np.array((0.0, 1.0, 0.0))
+        e1 = np.cross(helper, e0)
+        e1 /= np.linalg.norm(e1)
+        e2 = np.cross(e0, e1)
+        ev = np.array((1.0, 1.0, 1.0))
+    else:
+        ev, E = np.linalg.eigh(d.T @ d / max(len(d), 1))
+        e2, e1, e0 = (_canon(E[:, k]) for k in range(3))  # minor, middle, major
+        ev = np.maximum(ev, 0.0)
     a0, a1 = d @ e0, d @ e1
     if ev[0] < ev[1] / 16.0:
         x, y = a0 - a0.min(), a1 - a1.min()
-        return np.stack((x, y), 1), max(x.max(), 1e-3), max(y.max(), 1e-3), False
+        return np.stack((x, y), 1), max(x.max(), 1e-3), max(y.max(), 1e-3), False, (None, 0.0)
     a2 = d @ e2
     ang = np.arctan2(a2, a1)
-    rad = max(float(np.hypot(a1, a2).mean()), 0.25)
+    rv = np.hypot(a1, a2)
+    rad = max(float(rv.mean()), 0.25)
     y = a0 - a0.min()
     w = TAU * rad
-    return np.stack(((ang / TAU) % 1.0 * w, y), 1), w, max(y.max(), 1e-3), True
+    return np.stack(((ang / TAU) % 1.0 * w, y), 1), w, max(y.max(), 1e-3), True, (rv, rad)
 
 
 def _shelf(sizes, tex: int):
@@ -328,6 +345,125 @@ def unwrap(parts, tex_size: int):
         uvs.append((np.stack((tx, ty), 1) / tex_size).astype(F32))
         rects.append(rect)
     return uvs, rects
+
+
+def _split_cylinder(mesh: Mesh, xy: np.ndarray, w: float, rv: np.ndarray):
+    """Cut a cylinder-projected mesh open along its seam, so no triangle spans the u wrap.
+
+    Two repairs, both leaving the surface itself exactly where it was:
+    - a triangle with a corner near the cylinder axis (a cap fan apex has no real angle) gets its own copy of that
+      corner whose u is the circular mean of the other two, so it does not smear across the whole cap;
+    - a triangle that straddles the seam (u spread over half the width) is clipped against u = w into a left
+      and a right piece. The cut vertices sit on the original edge, one copy at u = w and one at u = 0, so the
+      texture is continuous across the seam and the geometry is unchanged (the clipped areas sum to the original).
+    Returns (Mesh, xy) with the new vertices appended; the original vertices keep their indices."""
+    v = mesh.v.astype(np.float64)
+    nrm = None if mesh.n is None else mesh.n.astype(np.float64)
+    V, X, N = list(v), [tuple(r) for r in xy], (list(nrm) if nrm is not None else None)
+    cache: dict = {}
+    out: list = []
+    xc: dict = {}
+
+    def clone(i, x):
+        V.append(v[i].copy())
+        X.append((x, xy[i][1]))
+        if N is not None:
+            N.append(nrm[i].copy())
+        return len(V) - 1
+
+    def cut(a, b, side):
+        lo, hi = (a, b) if a < b else (b, a)
+        key = (lo, hi, side)
+        if key in cache:
+            return cache[key]
+        t = (w - xc[lo]) / (xc[hi] - xc[lo])
+        V.append(V[lo] + (V[hi] - V[lo]) * t)
+        X.append((w if side == "L" else 0.0, X[lo][1] + (X[hi][1] - X[lo][1]) * t))
+        if N is not None:
+            q = N[lo] + (N[hi] - N[lo]) * t
+            N.append(q / max(float(np.linalg.norm(q)), 1e-12))
+        cache[key] = len(V) - 1
+        return cache[key]
+
+    def clip(poly, keep_left):
+        res = []
+        for k in range(len(poly)):
+            a, b = poly[k], poly[(k + 1) % len(poly)]
+            ina, inb = (xc[a] <= w) == keep_left, (xc[b] <= w) == keep_left
+            if ina:
+                res.append(a)
+            if ina != inb:
+                res.append(cut(a, b, "L" if keep_left else "R"))
+        return res
+
+    for tri in mesh.f.tolist():
+        ids = list(tri)
+        # a pole apex: the corner nearest the axis, well inside the other two, in a triangle whose u is spread
+        # enough to smear (a cap fan; the axis is the PCA one, so a cap centre is rarely exactly on it)
+        k = min(range(3), key=lambda j: rv[ids[j]])
+        others = [rv[ids[j]] for j in range(3) if j != k]
+        xs0 = [xy[i][0] for i in ids]
+        if rv[ids[k]] < 0.5 * min(others) and max(xs0) - min(xs0) > w / 6:
+            xa, xb = (xy[ids[j]][0] for j in range(3) if j != k)
+            if abs(xa - xb) > w / 2:
+                xa, xb = (xa + w, xb) if xa < xb else (xa, xb + w)
+            ids[k] = clone(ids[k], ((xa + xb) / 2) % w)
+        xs = [X[i][0] for i in ids]
+        if max(xs) - min(xs) <= w / 2:
+            out.append(ids)
+            continue
+        top = max(xs)
+        for i in ids:
+            xc[i] = X[i][0] + w if X[i][0] < top - w / 2 else X[i][0]
+        for keep_left in (True, False):
+            poly = clip(ids, keep_left)
+            for a in range(1, len(poly) - 1):
+                out.append([poly[0], poly[a], poly[a + 1]])
+    m = Mesh(np.array(V), np.array(out, dtype=np.int32).reshape(-1, 3), None if N is None else np.array(N), None, None)
+    return m, np.array(X, dtype=np.float64)
+
+
+def unwrap_split(parts, tex_size: int, axis=None):
+    """unwrap() with the cylinder seams actually cut (see _split_cylinder); texel density, packing and Rect are
+    identical to unwrap(). Returns (meshes, uvs, rects): `meshes` are the parts' meshes with the seam and pole
+    vertices added (planar parts come back unchanged); uvs[i] is per vertex of meshes[i]. Use THESE meshes, not
+    the originals, for bake_albedo and for export: the uvs only mean something on the split topology. Where
+    unwrap() leaves one column of triangles whose u jumps across the atlas rectangle, this has none.
+    `axis` forces every part to a cylinder about that direction (a 3-vector, or a list with one vector or None
+    per part); None keeps unwrap()'s own choice. Use it for parts built as lofts along a known axis."""
+    meshes = [_mesh(p) for p in parts]
+    if axis is None or np.ndim(axis[0]) == 0:
+        axes = [axis] * len(meshes)
+    else:
+        axes = list(axis)
+    proj = [_project_ex(m, a) for m, a in zip(meshes, axes)]
+    split, coords = [], []
+    for m, (xy, wu, hu, cyl, (rv, _)) in zip(meshes, proj):
+        if cyl:
+            m2, xy2 = _split_cylinder(m, xy, wu, rv)
+            split.append(m2)
+            coords.append((xy2, wu, hu, True))
+        else:
+            split.append(m)
+            coords.append((xy, wu, hu, False))
+    d = 16.0
+    while True:
+        sizes = [(max(4, math.ceil(w * d)) + 2 * GUTTER, max(4, math.ceil(h * d)) + 2 * GUTTER) for _, w, h, _ in coords]
+        pos = _shelf(sizes, tex_size)
+        if pos is not None:
+            break
+        d *= 0.93
+        if d < 0.05:
+            raise ValueError("parts do not fit the atlas")
+    uvs, rects = [], []
+    for (xy, wu, hu, cyl), (pw, ph), (px, py) in zip(coords, sizes, pos):
+        rw, rh = pw - 2 * GUTTER, ph - 2 * GUTTER
+        rect = Rect(px + GUTTER, py + GUTTER, rw, rh, cyl)
+        tx = rect.x + xy[:, 0] * (rw / wu)
+        ty = rect.y + xy[:, 1] * (rh / hu)
+        uvs.append((np.stack((tx, ty), 1) / tex_size).astype(F32))
+        rects.append(rect)
+    return split, uvs, rects
 
 
 # 4. baked albedo -------------------------------------------------------------------------
@@ -692,8 +828,26 @@ def main() -> None:
             ra, rb, g = rects[a], rects[b], GUTTER
             assert (ra.x + ra.w + g <= rb.x - g or rb.x + rb.w + g <= ra.x - g or ra.y + ra.h + g <= rb.y - g
                     or rb.y + rb.h + g <= ra.y - g), "padded rectangles overlap"
+    # unwrap_split: the old unwrap leaves seam-straddling triangles, the split one has none and moves no surface
+    def _straddlers(ms, uv_list, rs):
+        n = 0
+        for m_, uv_, r_ in zip(ms, uv_list, rs):
+            if r_.cyl:
+                u_ = uv_[m_.f][:, :, 0] * TEX
+                n += int(((u_.max(1) - u_.min(1)) > r_.w / 2 + 1e-6).sum())
+        return n
+
+    def _area(m_):
+        t_ = m_.v.astype(np.float64)[m_.f]
+        return float(0.5 * np.linalg.norm(np.cross(t_[:, 1] - t_[:, 0], t_[:, 2] - t_[:, 0]), axis=1).sum())
+
+    sm, suv, srect = unwrap_split([m for m, _ in parts], TEX)
+    before, after = _straddlers([m for m, _ in parts], uvs, rects), _straddlers(sm, suv, srect)
+    assert before > 0 and after == 0, (before, after)
+    assert all(abs(_area(a_) - _area(b_)) < 1e-4 * _area(b_) for a_, (b_, _) in zip(sm, parts)), "seam cut moved the surface"
+    print("unwrap_split: straddling triangles", before, "->", after, "(surface area unchanged)")
     atlas = bake_albedo(parts, skins, sk, uvs, rects, TEX)
-    again = bake_albedo(parts, skins, sk, uvs, rects, TEX)
+    again =bake_albedo(parts, skins, sk, uvs, rects, TEX)
     assert atlas.tobytes() == again.tobytes(), "bake is not deterministic"
     print("bake sha1", hashlib.sha1(atlas.tobytes()).hexdigest(), "(identical on a second run)")
     print("stats", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in _hsv_report(atlas).items()})
