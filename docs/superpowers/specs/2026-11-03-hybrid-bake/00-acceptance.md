@@ -154,3 +154,31 @@ frame number.
   saw it and accepted it for now (2026-11-03). A real fix is per-cell UV variation - rotate or offset
   by a hash of the cell index - which is engine work in the chunk mesh builder, not an art change,
   and would want its own gate measuring that neighbouring cells differ.
+
+## A3 was wrong twice, and measuring the target art is what found it
+
+**First version** compared the actor's p99 against the p99 of a ring of ground as wide as the actor.
+Fine on evenly lit ground; useless once local light pools exist. MEASURED on the integrated night
+frame, the same figure scored -0.10, -0.24 and -0.60 as the ring grew from 20 to 60 to 140 px,
+because the ring reaches into a brazier's core. A number that depends that strongly on how far away
+you look is measuring the lighting, not the figure.
+
+**Second version** used a thin collar and medians, and counted separation in either direction, since
+the user has chosen a dark silhouette over a lit figure. Better behaved - our frame scored 0.063
+instead of swinging - but still wrong in premise. MEASURED on the target art with the same
+statistic, its own figures score 0.000 to 0.086, median 0.000: most of them do not differ from the
+ground they touch at all. That is not quantisation; the frame carries 82 distinct value levels with
+a median gap of 0.008, so a zero is a real zero. **A gate the target art fails is a bad gate.**
+
+**What the target art actually does.** Its figures read through internal contrast. MEASURED p90-p10
+within a figure: 0.50, 0.50, 0.58, 0.71, 0.77 - bright bone and steel against near-black recesses,
+inside the silhouette. Our character spans 0.278, about half. That is why ours reads as a flat shape
+and theirs reads as an armoured figure, and it is the thing worth gating.
+
+A3 is now **internal spread >= 0.45**, with the collar separation kept as a reported number. Our
+integrated night frame measures 0.278 and fails it, correctly: the figure needs deeper recesses and
+brighter highlights, not a different average brightness.
+
+The general lesson, which cost two attempts: **derive a gate from the target, not from intuition.**
+Both wrong versions were plausible and neither survived contact with a measurement of the thing we
+are trying to match.
