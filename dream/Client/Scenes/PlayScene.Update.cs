@@ -16,6 +16,10 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // Set by the capture script while a fight step drives facing and attacks itself: the cursor then
+    // neither aims nor attacks.
+    internal bool SuppressCursorAim { get; set; }
+
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
@@ -34,15 +38,31 @@ public partial class PlayScene
             _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping,
             _runtime.Player.Combatant.Health.IsAlive);
         HandleConsumableHotkeys(keyboardState, allowGameplayInput);
-        // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
-        _clickMove.OnFrame(_render.SampleWorldPointer(mouseState, _settings, _windowFocused), allowGameplayInput);
+        // The pointer is last Render's hover state, read once per Update. The left button is the
+        // cursor aim's (facing and the held attack), the right button sets click-to-move goals.
+        WorldPointerState pointer = _render.SampleWorldPointer(mouseState, _settings, _windowFocused);
+        _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim);
+        _clickMove.OnFrame(pointer, allowGameplayInput);
         // The frame only captures input; each prediction tick below turns it into one command
         // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
             _runtime.LocalPlayerSessionId,
             0,
             key => keyboardState.IsKeyDown(key) || CaptureKeyHeld(key),
-            allowGameplayInput);
+            allowGameplayInput,
+            _cursorAim.AttackHeld,
+            out _tickCameraAxes);
+        if (_tickCameraAxes != Vector2.Zero)
+        {
+            // Walking by hand ends a click goal, and marks the raw frame as walking (forward 1) so a
+            // send stall that zeroes the axes can be told apart; the tick projects the real axes.
+            _clickMove.Cancel();
+            rawCommandFrame = rawCommandFrame with
+            {
+                MoveIntent = rawCommandFrame.MoveIntent with { ForwardAxis = 1f, StrafeAxis = 0f }
+            };
+        }
+
         rawCommandFrame = QuickbarInput.RemapModeKeys(
             rawCommandFrame,
             keyboardState.IsKeyDown(Keys.B) || CaptureKeyHeld(Keys.B),
@@ -96,9 +116,19 @@ public partial class PlayScene
 
     // One prediction tick and its one command: the server gets every tick's command, in order,
     // and the prediction recorded for the same sequence is what its acknowledgement is compared to.
+    //
+    // Order matters: the facing the server resolves movement with is Camera.Front as read at
+    // QueueRemoteCommandFrame, so the cursor aim sets it first, click steering may override it, and
+    // the keyboard axes are projected against that same facing last.
     private void RunPredictionTick(PlayerCommandFrame command, float fixedDeltaSeconds)
     {
+        if (_cursorAim.TryGetFacing(out Vector3 aimFacing))
+        {
+            _runtime.Player.SetFacing(aimFacing);
+        }
+
         command = _clickMove.SteerTick(command);
+        command = ProjectKeyboardAxes(command);
         ulong tick = command.Sequence;
         _actionSequences.ObserveCommandSequence(tick);
         QueueRemoteCommandFrame(command);
@@ -119,6 +149,19 @@ public partial class PlayScene
         {
             _tickPrimaryUseTriggered = true;
         }
+    }
+
+    // The raw frame carries forward 1 as the "walking" mark when W/A/S/D are held; a stalled send zeroed
+    // it, and then the tick stays idle too.
+    private PlayerCommandFrame ProjectKeyboardAxes(PlayerCommandFrame command)
+    {
+        if (_tickCameraAxes == Vector2.Zero || command.MoveIntent.ForwardAxis == 0f)
+        {
+            return command;
+        }
+
+        (float forward, float strafe) = PlayerController.Project(_tickCameraAxes, _runtime.Player.Camera.Front);
+        return command with { MoveIntent = command.MoveIntent with { ForwardAxis = forward, StrafeAxis = strafe } };
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)

@@ -539,4 +539,53 @@ public sealed class HudCapturePointerPlanTests : IDisposable
         Assert.Equal(new Vector2(200f, 100f), frames[HudCapturePointerPlan.HoverLeadFrames + 9].Position);
         Assert.False(frames[^1].LeftDown);
     }
+
+    [Fact]
+    public void HoldAndMove_RightHoldsTheRightButtonOnly()
+    {
+        List<ScriptedPointerFrame> frames = new();
+
+        HudCapturePointerPlan.HoldAndMove(frames, new Vector2(100f, 100f), new Vector2(200f, 100f), 10, right: true);
+
+        Assert.All(frames.Skip(HudCapturePointerPlan.HoverLeadFrames).Take(10), f => Assert.True(f.RightDown && !f.LeftDown));
+        Assert.All(frames.Take(HudCapturePointerPlan.HoverLeadFrames), f => Assert.False(f.LeftDown || f.RightDown));
+        Assert.False(frames[^1].LeftDown || frames[^1].RightDown);
+    }
+
+    [Fact]
+    public void AimAndHoldLeftTokens_Parse()
+    {
+        Assert.True(HudCaptureStepSpec.TryParse("aim:900:420", out HudCaptureStepSpec aim));
+        Assert.Equal((HudCaptureVerb.Aim, 900, 420), (aim.Verb, aim.A, aim.B));
+        Assert.True(HudCaptureStepSpec.TryParse("holdleft:180", out HudCaptureStepSpec hold));
+        Assert.Equal((HudCaptureVerb.HoldLeft, 180), (hold.Verb, hold.A));
+        Assert.False(HudCaptureStepSpec.TryParse("aim:900", out _));
+        Assert.False(HudCaptureStepSpec.TryParse("aim:-1:5", out _));
+        Assert.False(HudCaptureStepSpec.TryParse("holdleft:0", out _));
+        Assert.False(HudCaptureStepSpec.TryParse("holdleft", out _));
+    }
+
+    [Fact]
+    public void Aim_RestsWithNoButtonAtThePixel()
+    {
+        List<ScriptedPointerFrame> frames = new();
+
+        HudCapturePointerPlan.Aim(frames, new Vector2(900f, 420f));
+
+        Assert.NotEmpty(frames);
+        Assert.All(frames, f => Assert.True(f.Position == new Vector2(900f, 420f) && !f.LeftDown && !f.RightDown));
+    }
+
+    [Fact]
+    public void HoldLeft_PressesOnTheFirstFrameForTheCountThenReleasesInPlace()
+    {
+        List<ScriptedPointerFrame> frames = new();
+
+        HudCapturePointerPlan.HoldLeft(frames, new Vector2(900f, 420f), 5);
+
+        Assert.Equal(6, frames.Count);
+        Assert.All(frames.Take(5), f => Assert.True(f.LeftDown && !f.RightDown));
+        Assert.False(frames[^1].LeftDown);
+        Assert.All(frames, f => Assert.Equal(new Vector2(900f, 420f), f.Position));
+    }
 }

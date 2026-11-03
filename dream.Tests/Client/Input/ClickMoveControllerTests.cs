@@ -40,7 +40,7 @@ public class ClickMoveControllerTests
 
         public bool NoclipActive { get; set; }
 
-        public PlayerInteractionMode Mode { get; set; } = PlayerInteractionMode.Building;
+        public PlayerInteractionMode Mode { get; set; } = PlayerInteractionMode.Combat;
 
         public ClickPick? NextPick { get; set; }
 
@@ -54,6 +54,10 @@ public class ClickMoveControllerTests
             pick = NextPick ?? default;
             return NextPick.HasValue;
         }
+
+        public Vector3 Facing { get; set; } = Vector3.UnitX;
+
+        public bool AimOwnsFacing { get; set; }
 
         public void SetFacing(Vector3 direction) => LastFacing = direction;
     }
@@ -157,7 +161,7 @@ public class ClickMoveControllerTests
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
 
-        controller.OnFrame(Pointer(left: true), allowGameplayInput: true);
+        controller.OnFrame(Pointer(right: true), allowGameplayInput: true);
 
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
         Assert.Equal(new NavCell(12, 1, 9), pathing.LastGoal);
@@ -171,7 +175,7 @@ public class ClickMoveControllerTests
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
 
-        controller.OnFrame(Pointer(left: true, overHud: true), allowGameplayInput: true);
+        controller.OnFrame(Pointer(right: true, overHud: true), allowGameplayInput: true);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.Equal(0, pathing.PlanCalls);
@@ -184,9 +188,9 @@ public class ClickMoveControllerTests
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
 
-        controller.OnFrame(Pointer(left: true, overHud: true), true);
-        controller.OnFrame(Pointer(left: true, overHud: false), true);
-        controller.OnFrame(Pointer(left: false, overHud: false), true);
+        controller.OnFrame(Pointer(right: true, overHud: true), true);
+        controller.OnFrame(Pointer(right: true, overHud: false), true);
+        controller.OnFrame(Pointer(right: false, overHud: false), true);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.Equal(0, pathing.PlanCalls);
@@ -198,7 +202,7 @@ public class ClickMoveControllerTests
         var (controller, host, pathing) = Create();
         host.NextPick = null;
 
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.Equal(0, pathing.PlanCalls);
@@ -209,7 +213,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         PlayerCommandFrame stalled = Frame(forward: 0f);
         PlayerCommandFrame result = controller.SteerTick(stalled);
@@ -225,7 +229,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         pathing.NextStep = new NavStep(new Vector3(0f, 0.5f, 2f), Jump: true, Arrived: false, NeedsReplan: false);
 
         PlayerCommandFrame result = controller.SteerTick(controller.MarkFrame(Frame()));
@@ -241,7 +245,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         pathing.NextStep = new NavStep(Vector3.Zero, false, Arrived: true, false);
 
         PlayerCommandFrame result = controller.SteerTick(controller.MarkFrame(Frame()));
@@ -257,7 +261,7 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Combat;
         FakeTarget enemy = new() { Anchor = new Vector3(15.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(ClickGoalKind.Attack, controller.Goal);
 
         PlayerCommandFrame far = controller.SteerTick(controller.MarkFrame(Frame()));
@@ -278,7 +282,7 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Building;
         FakeTarget enemy = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         PlayerCommandFrame first = controller.SteerTick(Frame());
         PlayerCommandFrame second = controller.SteerTick(Frame());
@@ -299,7 +303,7 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Combat;
         FakeTarget enemy = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         enemy.IsAlive = false;
         PlayerCommandFrame result = controller.SteerTick(Frame());
@@ -349,37 +353,87 @@ public class ClickMoveControllerTests
     }
 
     [Fact]
-    public void RightClickInCombat_FacesAndHoldsPrimaryWhileTheButtonIsDown_WithoutMoving()
+    public void RightClickInCombat_WalksAndNeverHoldsPrimary()
     {
         var (controller, host, pathing) = Create();
         host.Mode = PlayerInteractionMode.Combat;
         host.NextPick = Ground(8, 5);
 
         controller.OnFrame(Pointer(right: true), true);
-        PlayerCommandFrame held = controller.SteerTick(Frame());
+        PlayerCommandFrame held = controller.SteerTick(controller.MarkFrame(Frame()));
         controller.OnFrame(Pointer(right: true), true);
-        PlayerCommandFrame stillHeld = controller.SteerTick(Frame());
-        controller.OnFrame(Pointer(right: false), true);
-        PlayerCommandFrame released = controller.SteerTick(Frame());
+        PlayerCommandFrame stillHeld = controller.SteerTick(controller.MarkFrame(Frame()));
 
-        Assert.True(held.PrimaryUsePressed);
-        Assert.True(stillHeld.PrimaryUsePressed);
-        Assert.False(released.PrimaryUsePressed);
-        Assert.Equal(0f, held.MoveIntent.ForwardAxis);
-        Assert.Equal(0, pathing.PlanCalls);
-        Assert.False(controller.IsWalking);
+        Assert.False(held.PrimaryUsePressed);
+        Assert.False(stillHeld.PrimaryUsePressed);
+        Assert.Equal(ClickGoalKind.Walk, controller.Goal);
+        Assert.Equal(1, pathing.PlanCalls);
     }
 
     [Fact]
-    public void HeldLeftButton_RepathsTowardTheCursorAtMostEverySixteenTicks()
+    public void LeftButton_OpensNoGoalAtAll()
+    {
+        var (controller, host, pathing) = Create();
+        FakeTarget enemy = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
+        host.NextPick = Ground(12, 9);
+        controller.OnFrame(Pointer(left: true), true);
+        host.NextPick = Enemy(enemy);
+        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(left: true), true);
+
+        Assert.Equal(ClickGoalKind.None, controller.Goal);
+        Assert.Equal(0, pathing.PlanCalls);
+        Assert.Equal(0, host.PickCalls);
+    }
+
+    [Fact]
+    public void HeldRightButton_InBuildingMode_DoesNotWalkToTheCursor()
+    {
+        var (controller, host, pathing) = Create();
+        host.Mode = PlayerInteractionMode.Building;
+        host.NextPick = Ground(30, 5);
+        controller.OnFrame(Pointer(right: true), true);
+        controller.SteerTick(Frame());
+        for (int tick = 0; tick < ClickMoveController.HeldRepathTicks; tick++)
+        {
+            controller.SteerTick(Frame());
+        }
+
+        host.NextPick = Ground(40, 5);
+        controller.OnFrame(Pointer(right: true), true);
+
+        Assert.Equal(new NavCell(30, 1, 5), controller.GoalCell);
+        Assert.Equal(1, pathing.PlanCalls);
+    }
+
+    [Fact]
+    public void SteerTick_WalkingWhileTheCursorOwnsFacing_KeepsTheFacingAndProjectsTheTravelDirection()
+    {
+        var (controller, host, pathing) = Create();
+        host.AimOwnsFacing = true;
+        host.Facing = Vector3.UnitX;
+        host.NextPick = Ground(12, 9);
+        controller.OnFrame(Pointer(right: true), true);
+        // Travel along +Z while facing +X: Cross(+X, Up) is +Z, so this is a pure strafe.
+        pathing.NextStep = new NavStep(new Vector3(0f, 0f, 3f), false, false, false);
+
+        PlayerCommandFrame result = controller.SteerTick(controller.MarkFrame(Frame()));
+
+        Assert.Null(host.LastFacing);
+        Assert.Equal(0f, result.MoveIntent.ForwardAxis, 4);
+        Assert.Equal(1f, result.MoveIntent.StrafeAxis, 4);
+    }
+
+    [Fact]
+    public void HeldRightButton_RepathsTowardTheCursorAtMostEverySixteenTicks()
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(1, pathing.PlanCalls);
 
         host.NextPick = Ground(20, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(1, pathing.PlanCalls);
 
         for (int tick = 0; tick < ClickMoveController.HeldRepathTicks; tick++)
@@ -387,7 +441,7 @@ public class ClickMoveControllerTests
             controller.SteerTick(controller.MarkFrame(Frame()));
         }
 
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(2, pathing.PlanCalls);
         Assert.Equal(new NavCell(20, 1, 9), pathing.LastGoal);
     }
@@ -397,9 +451,9 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
-        controller.OnFrame(Pointer(left: false), allowGameplayInput: false);
+        controller.OnFrame(Pointer(right: false), allowGameplayInput: false);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.False(pathing.HasPath);
@@ -413,7 +467,7 @@ public class ClickMoveControllerTests
         host.NoclipActive = true;
         host.NextPick = Ground(12, 9);
 
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.Equal(0, pathing.PlanCalls);
@@ -424,7 +478,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         pathing.StuckForever = true;
 
         for (int n = 1; n <= PathFollower.MaxFailedReplans; n++)
@@ -446,7 +500,7 @@ public class ClickMoveControllerTests
     {
         FakeHost host = new() { NextPick = Ground(12, 5) };
         ClickMoveController controller = new(host, new NavPathing());
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         int ticks = 0;
         while (controller.Goal != ClickGoalKind.None && ticks < PathFollower.StuckWindowTicks * 20)
@@ -466,14 +520,14 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         pathing.NextStep = new NavStep(Vector3.Zero, false, true, false);
         controller.SteerTick(controller.MarkFrame(Frame()));
         Assert.Equal(ClickGoalKind.None, controller.Goal);
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
 
         host.NextPick = Ground(4, 4);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
         Assert.Equal(new NavCell(4, 1, 4), pathing.LastGoal);
@@ -485,7 +539,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         pathing.StuckForever = true;
         for (int n = 0; n <= PathFollower.MaxFailedReplans; n++)
         {
@@ -493,11 +547,11 @@ public class ClickMoveControllerTests
         }
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
 
         pathing.StuckForever = false;
         host.NextPick = Ground(3, 3);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
         Assert.Equal(new NavCell(3, 1, 3), pathing.LastGoal);
@@ -513,16 +567,16 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Combat;
         FakeTarget enemy = new() { Anchor = new Vector3(30.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         // The path ends at the nearest reachable spot, still out of range of the enemy.
         pathing.NextStep = new NavStep(Vector3.Zero, false, true, false);
         controller.SteerTick(controller.MarkFrame(Frame()));
         Assert.Equal(ClickGoalKind.Attack, controller.Goal);
         Assert.False(controller.IsWalking);
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
 
         host.NextPick = Ground(8, 5);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
         Assert.Null(controller.Target);
@@ -536,15 +590,15 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Combat;
         FakeTarget first = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
         host.NextPick = Enemy(first);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         first.IsAlive = false;
         controller.SteerTick(Frame());
         Assert.Equal(ClickGoalKind.None, controller.Goal);
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
 
         FakeTarget second = new() { Anchor = new Vector3(7.5f, 2f, 6.5f) };
         host.NextPick = Enemy(second);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.Attack, controller.Goal);
         Assert.Same(second, controller.Target);
@@ -558,18 +612,18 @@ public class ClickMoveControllerTests
         host.Mode = PlayerInteractionMode.Combat;
         FakeTarget enemy = new() { Anchor = new Vector3(30.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         // Dead: gameplay input is off for the whole death, whatever the buttons do.
-        controller.OnFrame(Pointer(left: false), allowGameplayInput: false);
-        controller.OnFrame(Pointer(left: true), allowGameplayInput: false);
+        controller.OnFrame(Pointer(right: false), allowGameplayInput: false);
+        controller.OnFrame(Pointer(right: true), allowGameplayInput: false);
         Assert.Equal(ClickGoalKind.None, controller.Goal);
-        controller.OnFrame(Pointer(left: false), allowGameplayInput: false);
+        controller.OnFrame(Pointer(right: false), allowGameplayInput: false);
 
         // Respawned: the next press is a fresh click.
-        host.Mode = PlayerInteractionMode.Building;
+        host.Mode = PlayerInteractionMode.Combat;
         host.NextPick = Ground(6, 7);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
         Assert.Equal(new NavCell(6, 1, 7), pathing.LastGoal);
@@ -580,13 +634,13 @@ public class ClickMoveControllerTests
     {
         var (controller, host, _) = Create();
         host.NextPick = Ground(6, 7);
-        controller.OnFrame(Pointer(left: true), allowGameplayInput: false);
+        controller.OnFrame(Pointer(right: true), allowGameplayInput: false);
 
-        controller.OnFrame(Pointer(left: true), allowGameplayInput: true);
+        controller.OnFrame(Pointer(right: true), allowGameplayInput: true);
         Assert.Equal(ClickGoalKind.None, controller.Goal);
 
-        controller.OnFrame(Pointer(left: false), true);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: false), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
     }
 
@@ -595,11 +649,11 @@ public class ClickMoveControllerTests
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(12, 9);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
 
         host.NoclipActive = true;
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
 
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         Assert.False(pathing.HasPath);
@@ -608,7 +662,7 @@ public class ClickMoveControllerTests
 
         host.NoclipActive = false;
         host.NextPick = Ground(2, 2);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
     }
 
@@ -641,13 +695,13 @@ public class ClickMoveControllerTests
     }
 
     [Fact]
-    public void LeftClickOnAnEnemy_InBuildingMode_AsksForCombatAndAttacksOnceInRange()
+    public void RightClickOnAnEnemy_InBuildingMode_AsksForCombatAndAttacksOnceInRange()
     {
         var (controller, host, _) = Create();
         host.Mode = PlayerInteractionMode.Building;
         FakeTarget enemy = new() { Anchor = new Vector3(6.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         PlayerCommandFrame first = controller.SteerTick(Frame());
         Assert.Equal(PlayerInteractionMode.Combat, first.RequestedMode.Mode);
@@ -660,11 +714,11 @@ public class ClickMoveControllerTests
     }
 
     [Fact]
-    public void HeldLeftButton_FollowsTheCursorAcrossSeveralCells()
+    public void HeldRightButton_FollowsTheCursorAcrossSeveralCells()
     {
         var (controller, host, pathing) = Create();
         host.NextPick = Ground(10, 5);
-        controller.OnFrame(Pointer(left: true), true);
+        controller.OnFrame(Pointer(right: true), true);
 
         for (int cell = 11; cell <= 13; cell++)
         {
@@ -674,13 +728,13 @@ public class ClickMoveControllerTests
             }
 
             host.NextPick = Ground(cell, 5);
-            controller.OnFrame(Pointer(left: true), true);
+            controller.OnFrame(Pointer(right: true), true);
             Assert.Equal(new NavCell(cell, 1, 5), pathing.LastGoal);
             Assert.Equal(new NavCell(cell, 1, 5), controller.GoalCell);
         }
 
         Assert.Equal(4, pathing.PlanCalls);
-        controller.OnFrame(Pointer(left: false), true);
+        controller.OnFrame(Pointer(right: false), true);
         Assert.Equal(ClickGoalKind.Walk, controller.Goal);
     }
 }

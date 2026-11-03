@@ -32,8 +32,17 @@ namespace Dream.Client.Scenes;
 //   size:<w>:<h>              resize the window (the same path as the Settings resolution)
 //   walkto:<x>:<z>:<maxFrames> click the ground at that cell (projected through last frame's camera, or
 //                             the screen edge toward it) until the character is within 1.5 m or the frames run out
-//   screenclick:<x>:<y>      left click at a window pixel (for the world or HUD click gate)
+//   screenclick:<x>:<y>      left click at a window pixel (for the world or HUD click gate); in Combat the left
+//                             button attacks and aims, so over the world this is "attack at this pixel"
+//   aim:<x>:<y>              latch the pointer at a window pixel, no button; it stays there through the
+//                             steps after (keys, status, snap...), so the cursor aim has a fixed cursor. Pick a
+//                             pixel over the world, not over the bar or a window
+//   aimenemy                 aim: at the nearest live enemy's pixel when the step begins
+//   holdleft:<frames>        left button down for that many frames at the latched pointer, then released
+//                             (Combat: the held attack; press on the first frame, repeats at the server's cadence)
 //   buildat:<x>:<z>          right click the ground at that cell
+//   (walkto, groundclick, holdmove and enemyclick:right use the right button, which is click-to-move;
+//    walk goals need Combat mode, so put g in the script first)
 //   cell:<x>:<z>             print which levels of that column hold a cell, and the player and goal
 //   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
@@ -145,6 +154,7 @@ public partial class PlayScene
     private bool _captureExpectsResult;
     private bool _captureWritesPng;
     private int _captureBeginWait;
+    // Where the pointer rests between steps: the last frame set, so aim: and every step after it keep one cursor.
     private ScriptedPointerFrame _captureLast;
     private Action<Vector2i>? _captureApplyClientSize;
     private UiScriptedPointer? _captureScriptedPointer;
@@ -156,6 +166,13 @@ public partial class PlayScene
     private bool _captureFightNoclipSent;
     private HudCaptureKeys _captureKeys;
     private bool _captureWaitIdle;
+    private System.Diagnostics.Stopwatch? _captureHoldLeftWatch;
+    private readonly Dictionary<int, int> _captureHitHealth = new();
+    private readonly HashSet<int> _captureHitSeen = new();
+    private readonly List<int> _captureHitDead = new();
+    private int _captureHitCount;
+    private int _captureHitFrame;
+    private bool _captureHoldLeftEnded;
     private int _captureTraceFrames;
     private HudCaptureStepSpec _captureWalk;
     private Vector3 _captureWalkStart;
@@ -189,6 +206,7 @@ public partial class PlayScene
             LogHudCaptureInventory("start");
         }
 
+        TrackCaptureHits();
         if (_capturePhase == CapturePhase.Begin)
         {
             // A rejection from the step before is still showing; the next one must be a new one.
@@ -221,6 +239,51 @@ public partial class PlayScene
 
         // Any other phase keeps the pointer where it was, buttons as they were (a held drag stays held).
         SetCapturePointer(_captureLast);
+    }
+
+    // During holdleft: the combat log this build lacks. Prints every drop of an enemy's health with the
+    // frame and the milliseconds since the press, so the first hit, the cadence and any hit on release show.
+    private void TrackCaptureHits()
+    {
+        if (_captureHoldLeftWatch is not { } watch)
+        {
+            return;
+        }
+
+        _captureHitFrame++;
+        string when = _captureHoldLeftEnded ? " AFTER THE HOLD STEP ENDED" : string.Empty;
+        _captureHitSeen.Clear();
+        foreach (EnemyActor enemy in _runtime.Enemies.ActiveActors)
+        {
+            int id = enemy.Combatant.Actor.Id;
+            int hp = enemy.IsActive ? enemy.Combatant.Health.CurrentHealth : 0;
+            _captureHitSeen.Add(id);
+            if (_captureHitHealth.TryGetValue(id, out int before) && hp < before)
+            {
+                _captureHitCount++;
+                Console.WriteLine($"[hud-capture] hit #{_captureHitCount}: enemy #{id} hp {before} -> {hp} at frame {_captureHitFrame} ({watch.Elapsed.TotalMilliseconds:0} ms){when}");
+            }
+
+            _captureHitHealth[id] = hp;
+        }
+
+        // A killed enemy leaves the active list: its last hit is the one that took it from hp to gone.
+        foreach (KeyValuePair<int, int> tracked in _captureHitHealth)
+        {
+            if (tracked.Value > 0 && !_captureHitSeen.Contains(tracked.Key))
+            {
+                _captureHitCount++;
+                Console.WriteLine($"[hud-capture] hit #{_captureHitCount}: enemy #{tracked.Key} hp {tracked.Value} -> gone (killed) at frame {_captureHitFrame} ({watch.Elapsed.TotalMilliseconds:0} ms){when}");
+                _captureHitDead.Add(tracked.Key);
+            }
+        }
+
+        foreach (int dead in _captureHitDead)
+        {
+            _captureHitHealth[dead] = 0;
+        }
+
+        _captureHitDead.Clear();
     }
 
     private void SetCapturePointer(ScriptedPointerFrame frame)
@@ -292,6 +355,8 @@ public partial class PlayScene
             }
 
             case HudCaptureVerb.Fight:
+                // The step steers with look deltas; the per-tick cursor aim would overwrite them.
+                SuppressCursorAim = true;
                 _capturePhase = CapturePhase.Idle;
                 _captureIdleFrames = spec.A;
                 _captureFightActive = true;
@@ -311,6 +376,42 @@ public partial class PlayScene
                 HudCapturePointerPlan.Click(_capturePointerFrames, new Vector2(spec.A, spec.B));
                 _capturePhase = CapturePhase.Pointer;
                 _captureWritesPng = false;
+                break;
+            case HudCaptureVerb.Aim:
+                HudCapturePointerPlan.Aim(_capturePointerFrames, new Vector2(spec.A, spec.B));
+                _capturePhase = CapturePhase.Pointer;
+                _captureWritesPng = false;
+                Console.WriteLine($"[hud-capture] aim {spec.A},{spec.B}: pointer latched, no button, over hud {ClassicHudHitTest.Over(in layout, _settings.InventoryVisible, new Vector2(spec.A, spec.B))}");
+                break;
+            case HudCaptureVerb.AimEnemy:
+            {
+                EnemyActor? aimTarget = NearestLiveEnemy(_runtime.Player.Camera.Position);
+                Camera? aimCamera = _render.LastWorldCamera;
+                Vector2 aimAt = default;
+                if (aimTarget is not null && aimCamera is not null
+                    && TryProjectToScreen(aimCamera.GetViewMatrix() * _render.ProjectionMatrix, aimTarget.Combatant.GetCombatAnchorWorldPosition(), _render.ViewportSize, out aimAt, out bool aimFront)
+                    && aimFront)
+                {
+                    HudCapturePointerPlan.Aim(_capturePointerFrames, aimAt);
+                    _capturePhase = CapturePhase.Pointer;
+                }
+
+                Console.WriteLine($"[hud-capture] aimenemy: {(aimTarget?.DisplayName ?? "no enemy")} pixel {aimAt.X:0},{aimAt.Y:0}, latched={_capturePointerFrames.Count > 0}");
+                _captureWritesPng = false;
+                break;
+            }
+
+            case HudCaptureVerb.HoldLeft:
+                HudCapturePointerPlan.HoldLeft(_capturePointerFrames, _captureLast.Position, spec.A);
+                _capturePhase = CapturePhase.Pointer;
+                _captureWritesPng = false;
+                _captureHoldLeftWatch = System.Diagnostics.Stopwatch.StartNew();
+                _captureHitHealth.Clear();
+                _captureHitCount = 0;
+                _captureHitFrame = 0;
+                _captureHoldLeftEnded = false;
+                Console.WriteLine($"[hud-capture] holdleft {spec.A} frames at {_captureLast.Position.X:0},{_captureLast.Position.Y:0}, mode {_runtime.InteractionMode}, attack interval {_runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds:0.000} s (client-side stats)");
+                LogCaptureStatus("holdleft begin");
                 break;
             case HudCaptureVerb.BuildAt:
             {
@@ -358,11 +459,11 @@ public partial class PlayScene
                 Vector3 player = _runtime.Player.GetWorldPosition();
                 if (TryCaptureWalkClickPoint(in layout, player, new Vector3(spec.A + 0.5f, player.Y, spec.B + 0.5f), out Vector2 groundAt))
                 {
-                    HudCapturePointerPlan.Click(_capturePointerFrames, groundAt);
+                    HudCapturePointerPlan.RightClick(_capturePointerFrames, groundAt);
                     _capturePhase = CapturePhase.Pointer;
                 }
 
-                Console.WriteLine($"[hud-capture] groundclick {spec.A},{spec.B}: pixel {groundAt.X:0},{groundAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
+                Console.WriteLine($"[hud-capture] groundclick {spec.A},{spec.B} (right button): pixel {groundAt.X:0},{groundAt.Y:0}, clicking={_capturePointerFrames.Count > 0}");
                 _captureWritesPng = false;
                 break;
             }
@@ -377,7 +478,7 @@ public partial class PlayScene
                 if (TryCaptureWalkClickPoint(in layout, player, from + new Vector3(0.5f, 0f, 0.5f), out holdFrom)
                     && TryCaptureWalkClickPoint(in layout, player, to + new Vector3(0.5f, 0f, 0.5f), out holdTo))
                 {
-                    HudCapturePointerPlan.HoldAndMove(_capturePointerFrames, holdFrom, holdTo, spec.C);
+                    HudCapturePointerPlan.HoldAndMove(_capturePointerFrames, holdFrom, holdTo, spec.C, right: true);
                     _capturePhase = CapturePhase.Pointer;
                     _captureTraceFrames = 20;
                 }
@@ -552,6 +653,14 @@ public partial class PlayScene
             LogHudCaptureInventory("after " + step);
         }
 
+        if (_captureHoldLeftWatch is { } watch && !_captureHoldLeftEnded)
+        {
+            // The watch keeps running through the steps after, so a hit that lands after the release shows up tagged.
+            _captureHoldLeftEnded = true;
+            Console.WriteLine($"[hud-capture] holdleft end: {watch.Elapsed.TotalSeconds:0.00} s wall clock, {_captureHitFrame} frames, {_captureHitCount} hits so far");
+            LogCaptureStatus("holdleft end");
+        }
+
         if (_captureKeys != HudCaptureKeys.None || _captureWaitIdle)
         {
             LogCaptureStatus(_captureWaitIdle ? "waitidle end" : "keys end");
@@ -561,6 +670,7 @@ public partial class PlayScene
         _hudCaptureSettle = 0;
         _capturePhase = CapturePhase.Begin;
         _captureFightActive = false;
+        SuppressCursorAim = false;
         _captureKeys = HudCaptureKeys.None;
         _captureWaitIdle = false;
         _captureTraceFrames = 0;
@@ -616,8 +726,17 @@ public partial class PlayScene
         }
 
         Console.WriteLine($"[hud-capture] enemies:{all}");
+        // Where the character stands, which way it faces (Camera.Front, the facing the server moves it
+        // with) and the forward/strafe axes the held keys resolve to against that facing, on one line.
+        Vector3 front = _runtime.Player.Camera.Front;
+        (float forwardAxis, float strafeAxis) = _tickCameraAxes == Vector2.Zero
+            ? (0f, 0f)
+            : PlayerController.Project(_tickCameraAxes, front);
         Console.WriteLine(
-            $"[hud-capture] status {tag}: pos {at.X:0.0},{at.Y:0.0},{at.Z:0.0} goal {_clickMove.Goal} cell {_clickMove.GoalCell.X},{_clickMove.GoalCell.Level},{_clickMove.GoalCell.Z} " +
+            $"[hud-capture] status {tag}: pos {at.X:0.00},{at.Y:0.00},{at.Z:0.00} facing {front.X:0.00},{front.Z:0.00} (yaw {MathHelper.RadiansToDegrees(MathF.Atan2(front.Z, front.X)):0}) " +
+            $"axes fwd {forwardAxis:0.00} strafe {strafeAxis:0.00} keys {_captureKeys} pointer {_captureLast.Position.X:0},{_captureLast.Position.Y:0} left {_captureLast.LeftDown} aimOwnsFacing {_cursorAim.OwnsFacing}");
+        Console.WriteLine(
+            $"[hud-capture] status {tag}: goal {_clickMove.Goal} cell {_clickMove.GoalCell.X},{_clickMove.GoalCell.Level},{_clickMove.GoalCell.Z} " +
             $"goalCellSolid {_runtime.Map.TryGetGeometryCellAtCell(_clickMove.GoalCell.X, _clickMove.GoalCell.Level, _clickMove.GoalCell.Z) is not null} walking {_clickMove.IsWalking} pathCells {_clickMove.LastPathCells} mode {_runtime.InteractionMode} noclip {_runtime.Player.IsNoclipEnabled} " +
             $"alive {_runtime.Player.Combatant.Health.IsAlive} hp {_runtime.Player.Combatant.Health.CurrentHealth} nearest {near} " +
             $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
@@ -668,7 +787,7 @@ public partial class PlayScene
         {
             _capturePointerFrames.Clear();
             _capturePointerIndex = 0;
-            HudCapturePointerPlan.Click(_capturePointerFrames, at);
+            HudCapturePointerPlan.RightClick(_capturePointerFrames, at);
             _captureWalkClicks++;
             _captureWalkRest = 0;
         }

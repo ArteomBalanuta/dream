@@ -39,7 +39,10 @@ internal enum HudCaptureVerb : byte
     HoldMove,
     Keys,
     Status,
-    WaitIdle
+    WaitIdle,
+    Aim,
+    HoldLeft,
+    AimEnemy
 }
 
 // Keys a capture script can hold, by name (keys:w+space:30).
@@ -204,6 +207,18 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 && keyFrames is > 0 and <= 2000:
                 spec = new(HudCaptureVerb.Keys, (int)held, keyFrames);
                 return true;
+            case "aim" when parts.Length == 3 && int.TryParse(parts[1], out int aimX) && int.TryParse(parts[2], out int aimY)
+                && aimX is >= 0 and <= 8192 && aimY is >= 0 and <= 8192:
+                // Latches the scripted pointer at a window pixel, no buttons; it stays there for the steps after.
+                spec = new(HudCaptureVerb.Aim, aimX, aimY);
+                return true;
+            case "aimenemy" when parts.Length == 1:
+                // Like aim, at the nearest live enemy's pixel, read when the step begins (enemies move).
+                spec = new(HudCaptureVerb.AimEnemy, 0, 0);
+                return true;
+            case "holdleft" when parts.Length == 2 && int.TryParse(parts[1], out int holdLeftFrames) && holdLeftFrames is > 0 and <= 2000:
+                spec = new(HudCaptureVerb.HoldLeft, holdLeftFrames, 0);
+                return true;
             case "status" when parts.Length == 1:
                 spec = new(HudCaptureVerb.Status, 0, 0);
                 return true;
@@ -321,16 +336,29 @@ internal static class HudCapturePointerPlan
         Rest(frames, at, 1);
     }
 
-    // Left button down on from, then carried to to over the frames and released: a held drag over the ground.
-    public static void HoldAndMove(List<ScriptedPointerFrame> frames, Vector2 from, Vector2 to, int count)
+    // Button down on from (the left one, or the right one for click-to-move), then carried to to over
+    // the frames and released: a held drag over the ground.
+    public static void HoldAndMove(List<ScriptedPointerFrame> frames, Vector2 from, Vector2 to, int count, bool right = false)
     {
         Rest(frames, from, HoverLeadFrames);
         for (int n = 0; n < count; n++)
         {
-            frames.Add(new ScriptedPointerFrame(Vector2.Lerp(from, to, (n + 1) / (float)count), true, false));
+            frames.Add(new ScriptedPointerFrame(Vector2.Lerp(from, to, (n + 1) / (float)count), !right, right));
         }
 
         Rest(frames, to, 1);
+    }
+
+    // The pointer rests on a window pixel with no button, long enough for Update to read it and the
+    // cursor aim to turn the character. The caller keeps it latched afterwards.
+    public static void Aim(List<ScriptedPointerFrame> frames, Vector2 at) => Rest(frames, at, HoverLeadFrames + HoldFrames);
+
+    // The left button held on at for count frames, then released: one press edge on the first frame, no
+    // further edge, so the attack cadence is the server's.
+    public static void HoldLeft(List<ScriptedPointerFrame> frames, Vector2 at, int count)
+    {
+        Rest(frames, at, count, left: true);
+        Rest(frames, at, 1);
     }
 
     public static void RightClick(List<ScriptedPointerFrame> frames, Vector2 at)

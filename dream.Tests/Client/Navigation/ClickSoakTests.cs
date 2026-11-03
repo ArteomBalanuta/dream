@@ -53,7 +53,7 @@ public class ClickSoakTests(ITestOutputHelper output)
         Timeout
     }
 
-    private sealed class Host(ClientWorldSession session) : IClickMoveHost
+    private sealed class Host(ClientWorldSession session, bool aimOwnsFacing) : IClickMoveHost
     {
         private readonly MapNavWorld _nav = new(session.Map);
 
@@ -67,7 +67,7 @@ public class ClickSoakTests(ITestOutputHelper output)
 
         public bool NoclipActive => false;
 
-        public PlayerInteractionMode Mode => PlayerInteractionMode.Building;
+        public PlayerInteractionMode Mode => PlayerInteractionMode.Combat;
 
         public bool TryPick(Vector2 screenPosition, out ClickPick pick)
         {
@@ -75,6 +75,10 @@ public class ClickSoakTests(ITestOutputHelper output)
             pick = WorldCursorPicker.Pick(_nav, Aim - (direction * 40f), direction, null);
             return pick.Kind != ClickPickKind.None;
         }
+
+        public Vector3 Facing => session.Player.Camera.Front;
+
+        public bool AimOwnsFacing => aimOwnsFacing;
 
         public void SetFacing(Vector3 direction) => session.Player.SetFacing(direction);
     }
@@ -231,12 +235,14 @@ public class ClickSoakTests(ITestOutputHelper output)
         return aim;
     }
 
-    private Dictionary<Outcome, int> Run(int clicks, int seed)
+    // aimOwnsFacing: the cursor holds the facing fixed (here +X, whichever way the path runs) and the walk
+    // sends the forward/strafe axes that travel the path from it.
+    private Dictionary<Outcome, int> Run(int clicks, int seed, bool aimOwnsFacing = false)
     {
         using ClientWorldSession session = new(WorldDefaults.StartupFloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         Map map = session.Map;
         MapNavWorld nav = new(map);
-        Host host = new(session);
+        Host host = new(session, aimOwnsFacing);
         Probe probe = new(nav);
         ClickMoveController controller = new(host, probe);
         Random random = new(seed);
@@ -248,7 +254,12 @@ public class ClickSoakTests(ITestOutputHelper output)
         ulong tick = 0;
         int longWalks = 0;
         WorldPointerState up = new(Vector2.Zero, false, false, false);
-        WorldPointerState down = new(Vector2.Zero, true, false, false);
+        WorldPointerState down = new(Vector2.Zero, false, true, false);
+
+        if (aimOwnsFacing)
+        {
+            session.Player.SetFacing(Vector3.UnitX);
+        }
 
         for (int i = 0; i < 64; i++)
         {
@@ -283,7 +294,7 @@ public class ClickSoakTests(ITestOutputHelper output)
                 Vector3 now = session.Player.GetWorldPosition();
                 float step = Horizontal(now, last);
                 walked += step;
-                pinned += command.MoveIntent.ForwardAxis != 0f && step < 0.02f ? 1 : 0;
+                pinned += (command.MoveIntent.ForwardAxis != 0f || command.MoveIntent.StrafeAxis != 0f) && step < 0.02f ? 1 : 0;
                 last = now;
                 ticks++;
             }
@@ -345,6 +356,9 @@ public class ClickSoakTests(ITestOutputHelper output)
 
     [Fact]
     public void ShortSoak_OnTheGeneratedTerrain() => AssertClean(Run(70, 11));
+
+    [Fact]
+    public void ShortSoak_WithTheCursorOwningFacing() => AssertClean(Run(70, 11, aimOwnsFacing: true));
 
     [LoadFact]
     public void LongSoak_OnTheGeneratedTerrain()
