@@ -26,6 +26,10 @@ public sealed class DesktopClientConfig
     // Render frame cap in FPS; 0 means uncapped.
     public int MaxFramesPerSecond { get; set; } = FrameRateCap.Default;
 
+    // Multisample count of the window's default framebuffer (0, 2 or 4). Consumed at window creation,
+    // so a change takes effect on the next launch.
+    public int MsaaSamples { get; set; } = MsaaSettings.Default;
+
     // Makes the F3 key and the developer controls in Settings available. Display only: it never
     // reaches the server. DREAM_ADMIN_HUD overrides it for one run and is never saved.
     public bool AdminHud { get; set; }
@@ -88,6 +92,7 @@ public sealed class DesktopClientConfig
 
         FloatingCombatText = FloatingCombatText.Clamp();
         MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
+        MsaaSamples = MsaaSettings.Sanitize(MsaaSamples);
         UiScale = HudOptions.SanitizeUiScale(UiScale);
         VolumeMaster = SanitizeVolume(VolumeMaster, 0.8f);
         VolumeSfx = SanitizeVolume(VolumeSfx, 0.8f);
