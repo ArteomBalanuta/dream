@@ -206,3 +206,25 @@ the lights alone contribute about 0.004. In the target, bright pixels are fire *
 fire lights. A1 is therefore being satisfied more thinly than intended. If the baked terrain (darker
 than the photo terrain this was tuned against) pulls it below 0.020, the answer is more or better
 placed light, not a lower gate.
+
+## MSAA, and one unexplained capture
+
+4x MSAA is on the default framebuffer: no FBO, no alpha-to-coverage, no sample shading. MEASURED:
+the driver grants 4 samples; 0x vs 4x captures differ on 0.32% of pixels against a run-to-run noise
+floor of 0.155%, **98.9% of the differing pixels lie within 2 px of an edge, and 100% of those
+differing by more than 32 levels do**. Interior pixels move at most 15 levels. That spatial
+distribution, not the raw percentage, is the proof the change is edges-only. Cost is about 0.085 ms
+per frame, roughly 0.055 ms of it in swap where the resolve happens - about 1.2% of a 144 FPS budget,
+though the test scene was too light to measure the fill-rate cost properly.
+
+**Unresolved, recorded rather than closed.** The implementer's first 4x run wrote 91-byte 1x1 PNGs,
+i.e. the window reported a 1x1 `ClientSize`. It did not reproduce for them, and I then ran three more
+4x captures which all produced clean 1440x1024 frames with 4 samples granted. So it is not
+reproducible at roughly 1 in 8 runs and is more likely a transient window-creation race than an
+MSAA defect - but it was never explained. If capture runs ever start producing tiny PNGs, start here.
+
+Cutout (alpha-mask) edges are deliberately NOT anti-aliased: `discard` kills all samples. Alpha-to-
+coverage would fix it and was rejected for this change - it needs fragment alpha to carry the mask
+value and dithers coverage noisily on small hard-edged textures. Anisotropic filtering is a separate
+follow-up: it would sharpen the over-blurred distant ground, which is an art-direction call, whereas
+MSAA is strictly "same image, smoother edges".
