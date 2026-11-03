@@ -333,10 +333,19 @@ public sealed partial class DedicatedServerHost
             ApplyAccountUpdate(update);
         }
 
-        if (runtime == null
-            || StandingRefreshIntervalTicks == 0
-            || tick % StandingRefreshIntervalTicks != 0
-            || runtime.AccountRepository is not { } accounts
+        if (runtime == null || StandingRefreshIntervalTicks == 0 || tick % StandingRefreshIntervalTicks != 0)
+        {
+            return;
+        }
+
+        QueueStandingRefresh(runtime);
+    }
+
+    // The cadence work lives in its own method: the lambda below captures locals, and the compiler allocates
+    // a closure object when the scope of a captured local is entered, which would cost every tick 40 bytes.
+    private void QueueStandingRefresh(WorldSessionRuntime runtime)
+    {
+        if (runtime.AccountRepository is not { } accounts
             || runtime.PersistenceWrites is not { } writes
             || Interlocked.CompareExchange(ref _standingRefreshInFlight, 1, 0) != 0)
         {

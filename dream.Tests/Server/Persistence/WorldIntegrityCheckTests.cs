@@ -541,7 +541,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         db.ExecuteScript(
             Profile + Item(10, "gear.iron-blade") + Item(11, "gear.iron-blade") + Item(12, "tool.torch") +
             "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Strength\",\"Flat\",6]]}' WHERE item_instance_id = 10;" +
-            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Agility\",\"Flat\",6]]}' WHERE item_instance_id = 11;");
+            "UPDATE item_instances SET rolled_modifiers = '{\"v\":1,\"r\":\"Rare\",\"m\":[[\"Luck\",\"Flat\",6]]}' WHERE item_instance_id = 11;");
 
         WorldIntegrityReport report = Check(db);
 
