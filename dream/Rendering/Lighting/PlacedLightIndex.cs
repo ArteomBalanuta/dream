@@ -30,8 +30,9 @@ public sealed class PlacedLightIndex
     public const float BrazierRadius = LampLightIndex.LampRadius;
 
     // Linear RGB times intensity: a deep orange fire, hotter than the held torch (1.6) so a brazier
-    // is the brightest thing on the ground.
-    public static readonly Vector3 BrazierColor = new Vector3(1.0f, 0.72f, 0.46f) * 1.68f;
+    // is the brightest thing on the ground. 3.0 with the 1/(1+1.5s) core on the baked tiles: lower and the night bright
+    // tail drops under the 0.020 gate; higher only adds white from the lamp-class FX halo (see PlacedLightIndexTests).
+    public static readonly Vector3 BrazierColor = new Vector3(1.0f, 0.72f, 0.46f) * 3.0f;
 
     public const int Spacing = 16;
     public const int Jitter = 1;

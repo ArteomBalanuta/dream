@@ -19,9 +19,8 @@ namespace Dream.Tests.Rendering.Lighting;
 //
 // Differences from a captured frame: mean-colour albedo instead of texels (so no texture grain) and no
 // actors, flames or FX. The thresholds are check_look.py's constants and move with it; they are not loosened here. Each column's
-// surface is the material the world generator gives it, at today's measured albedo: the mean diffuse
-// of that material's texture (see MaterialAlbedo). WS-A is replacing the surface albedo; re-measure
-// MaterialAlbedo when that merges.
+// surface is the material the world generator gives it, at the baked tiles' measured mean albedo (see
+// MaterialAlbedo).
 public class GrimLookHistogramTests(ITestOutputHelper output)
 {
     // check_look.py: BLACK_V / BLACK_SHARE_MIN / BRIGHT_V / BRIGHT_SHARE_MIN / MEAN_V_MAX / MEAN_SAT_MAX.
@@ -33,19 +32,19 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
     private const float MeanVMax = 0.18f;
     private const float MeanSatMax = 0.38f;
 
-    // Mean RGB of each material's diffuse texture as shipped today (measured with PIL over the
-    // PolyHaven JPGs and grass_top.png, the textures StaticTerrainMaterialCatalog points at).
+    // Mean RGB of each material's baked terrain tile (tools/ui-assets/terrain/*.png, the forge tiles
+    // StaticTerrainMaterialCatalog now points at; measured with PIL; colour space is sampled as linear).
     private static Vector3 MaterialAlbedo(GeometryMaterialId material) => material switch
     {
-        GeometryMaterialId.Grass => new Vector3(0.304f, 0.482f, 0.152f),
-        GeometryMaterialId.Dirt => new Vector3(0.475f, 0.393f, 0.237f),
-        GeometryMaterialId.Stone => new Vector3(0.578f, 0.544f, 0.501f),
-        GeometryMaterialId.Sand => new Vector3(0.648f, 0.586f, 0.436f),
-        GeometryMaterialId.Mud => new Vector3(0.368f, 0.337f, 0.296f),
-        GeometryMaterialId.Snow => new Vector3(0.599f, 0.595f, 0.577f),
-        GeometryMaterialId.Rock => new Vector3(0.488f, 0.416f, 0.339f),
-        GeometryMaterialId.GrassPath => new Vector3(0.451f, 0.405f, 0.301f),
-        _ => new Vector3(0.475f, 0.393f, 0.237f),
+        GeometryMaterialId.Grass => new Vector3(0.262f, 0.295f, 0.230f),
+        GeometryMaterialId.Dirt => new Vector3(0.307f, 0.268f, 0.233f),
+        GeometryMaterialId.Stone => new Vector3(0.292f, 0.292f, 0.286f),
+        GeometryMaterialId.Sand => new Vector3(0.318f, 0.293f, 0.262f),
+        GeometryMaterialId.Mud => new Vector3(0.273f, 0.245f, 0.217f),
+        GeometryMaterialId.Snow => new Vector3(0.266f, 0.280f, 0.295f),
+        GeometryMaterialId.Rock => new Vector3(0.284f, 0.276f, 0.264f),
+        GeometryMaterialId.GrassPath => new Vector3(0.312f, 0.317f, 0.259f),
+        _ => new Vector3(0.307f, 0.268f, 0.233f),
     };
 
     // Where the capture harness's player stood in the captures (x, z): the spawn corner of the 56 x 56 world.
@@ -150,7 +149,7 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
         }
 
         Assert.True(tally.BlackShare >= BlackShareMin);
-        Assert.True(tally.BrightShare < BrightShareMin);
+        Assert.True(tally.BrightShare < ModelBrightShareMin);
     }
 
     private sealed class Tally
@@ -266,7 +265,7 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
             float d2 = Vector3.Dot(toLight, toLight);
             float s = d2 / (light.Radius * light.Radius);
             float f = Math.Clamp(1f - s, 0f, 1f);
-            f = f * f / (1f + 0.75f * s);
+            f = f * f / (1f + 1.5f * s);
             float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
             sum += light.Color * (f * (0.25f + 0.75f * lambert));
         }

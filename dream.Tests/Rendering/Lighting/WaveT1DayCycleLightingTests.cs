@@ -207,7 +207,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         Assert.Equal(Vector3.Zero, PointLight(Vector3.UnitY, torch - new Vector3(0f, TorchRadius + 0.01f, 0f), torch, TorchRadius, torchColor));
     }
 
-    // CPU mirror of dreamPointLights in pointLights.glsl for one light: windowed (1 - s)^2 / (1 + 0.75 s) falloff, s = d^2/r^2,
+    // CPU mirror of dreamPointLights in pointLights.glsl for one light: windowed (1 - s)^2 / (1 + 1.5 s) falloff, s = d^2/r^2,
     // and a 0.25 wrap on the Lambert term.
     private static Vector3 PointLight(Vector3 normal, Vector3 fragPos, Vector3 position, float radius, Vector3 color)
     {
@@ -216,7 +216,7 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         float d2 = Vector3.Dot(toLight, toLight);
         float s = d2 / (radius * radius);
         float f = Math.Clamp(1f - s, 0f, 1f);
-        f = f * f / (1f + 0.75f * s);
+        f = f * f / (1f + 1.5f * s);
         float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
         return color * (f * (0.25f + 0.75f * lambert));
     }
